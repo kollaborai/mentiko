@@ -1,6 +1,8 @@
-# dependencies (builder runs npm ci)
+# dependencies (builder runs npm ci / npm install)
 web/node_modules/
 node_modules/
+lib/mentiko-mcp/node_modules/
+lib/mentiko-mcp/dist/
 
 # build output (builder runs next build)
 web/.next/

@@ -73,44 +73,56 @@ RUN echo "=== assembling platform ===" && \
       > /context/version.json
 
 # compile ws-terminal.ts
-RUN if [ -f /context/server/ws-terminal.ts ]; then \
+# IMPORTANT: esbuild reads tsconfig.json by walking up from the INPUT file,
+# not cwd. so we use the source path /build/web/server/*.ts (which is under
+# the tsconfig tree) and cd into /build/web first to anchor relative imports
+# correctly. mirrors scripts/deploy/assemble-platform-context.sh in
+# mentiko-control-plane — same pattern that's been proven on tenant builds.
+RUN if [ -f /build/web/server/ws-terminal.ts ]; then \
       echo "=== compiling ws-terminal.ts ===" && \
-      npx --yes esbuild /context/server/ws-terminal.ts \
+      cd /build/web && \
+      npx --yes esbuild /build/web/server/ws-terminal.ts \
         --bundle --platform=node --target=node20 \
         --external:ws \
         --outfile=/context/server/ws-terminal.js && \
-      rm /context/server/ws-terminal.ts; \
+      rm -f /context/server/ws-terminal.ts; \
     fi
 
-# compile background-worker.ts
-RUN if [ -f /context/server/background-worker.ts ]; then \
+# compile background-worker.ts (same cd-into-web pattern for @/* alias resolution)
+RUN if [ -f /build/web/server/background-worker.ts ]; then \
       echo "=== compiling background-worker.ts ===" && \
-      NODE_PATH=/build/web/node_modules npx --yes esbuild /context/server/background-worker.ts \
+      cd /build/web && \
+      npx --yes esbuild /build/web/server/background-worker.ts \
         --bundle --platform=node --target=node20 \
         --outfile=/context/server/background-worker.js && \
       rm -f /context/server/background-worker.ts /context/server/background-worker.cjs; \
     fi
 
-# compile process-manager.ts
-RUN if [ -f /context/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \
+# compile process-manager.ts (tsc — needs same anchor; use relative paths
+# from web/ so tsconfig.json auto-discovery picks up web/tsconfig.json)
+RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \
       echo "=== compiling process-manager.ts ===" && \
+      cd /build/web && \
       npx --yes tsc --outDir /tmp/pm-out --skipLibCheck --esModuleInterop \
         --module commonjs --target es2022 --moduleResolution node \
-        /context/lib/pm-types.ts /context/lib/kollabor-mcp-server-env.ts /context/lib/process-manager.ts && \
+        lib/pm-types.ts lib/kollabor-mcp-server-env.ts lib/process-manager.ts && \
       cp /tmp/pm-out/process-manager.js /context/lib/process-manager.js && \
       cp /tmp/pm-out/pm-types.js /context/lib/pm-types.js && \
       cp /tmp/pm-out/kollabor-mcp-server-env.js /context/lib/kollabor-mcp-server-env.js && \
       rm -rf /tmp/pm-out; \
     fi
 
-# compile mentiko-mcp — bundle TypeScript into /context/lib/mentiko-mcp/server.js.
-# The bin/mentiko-mcp bash shim prefers this bundle in prod and falls back to
-# tsx in dev. We keep the shim intact so the entrypoint can call it directly.
-RUN if [ -f /context/lib/mentiko-mcp/server.ts ]; then \
-      echo "=== compiling mentiko-mcp ===" && \
-      NODE_PATH=/build/web/node_modules npx --yes esbuild /context/lib/mentiko-mcp/server.ts \
-        --bundle --platform=node --target=node20 \
-        --outfile=/context/lib/mentiko-mcp/server.js && \
+# compile mentiko-mcp — uses the lib/mentiko-mcp workspace package's own
+# build, which produces dist/server.js cleanly without cross-project alias
+# resolution issues. The bin/mentiko-mcp bash shim prefers this bundle in
+# prod and falls back to tsx in dev.
+RUN if [ -f /build/lib/mentiko-mcp/package.json ]; then \
+      echo "=== building mentiko-mcp package ===" && \
+      cd /build/lib/mentiko-mcp && \
+      npm install --no-audit --no-fund && \
+      npm run build && \
+      mkdir -p /context/lib/mentiko-mcp && \
+      cp /build/lib/mentiko-mcp/dist/server.js /context/lib/mentiko-mcp/server.js && \
       rm -f /context/lib/mentiko-mcp/server.ts \
             /context/lib/mentiko-mcp/dispatch.ts \
             /context/lib/mentiko-mcp/tools.ts && \

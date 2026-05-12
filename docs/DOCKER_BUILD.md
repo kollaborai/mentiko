@@ -115,27 +115,6 @@ docker build --build-arg BASE_TAG=local -t mentiko:local .
 This skips the workflow entirely. Useful for iterating on
 `Dockerfile.base` before pushing.
 
-## known limitation: inline esbuild/tsc steps
-
-The platform `Dockerfile` runs three inline compile steps (ws-terminal,
-background-worker, process-manager, mentiko-mcp). These have a pre-existing
-issue: when the source uses TypeScript path aliases (`@/lib/*` etc.), esbuild
-can't resolve them because it runs from outside the `web/` tsconfig tree.
-
-This is **not** exercised by the control-plane build pipeline (which
-pre-compiles these files via `scripts/deploy/assemble-platform-context.sh`
-in a `cd web/` shell before docker even starts). Self-host `docker build .`
-hits the issue.
-
-If you're self-hosting and hit `Could not resolve "@/lib/..."` during build,
-the workaround is to either:
-  - use the pre-built published image: `docker pull ghcr.io/kollaborai/mentiko:latest`
-  - or run the cp-style pre-assemble outside docker first (script TBD)
-
-Tracking issue: inline compile steps need the cp pipeline's
-`cd web/` + source-input pattern. Fix is independent of the base
-extraction work documented above.
-
 ## regression test
 
 After any change here, the smoke test is:

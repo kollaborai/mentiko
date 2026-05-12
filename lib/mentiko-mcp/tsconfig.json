@@ -9,11 +9,8 @@
     "allowJs": false,
     "noEmit": true,
     "types": ["node"],
-    "typeRoots": ["../../web/node_modules/@types"],
-    "baseUrl": "../..",
-    "paths": {
-      "@modelcontextprotocol/*": ["web/node_modules/@modelcontextprotocol/*"]
-    }
+    "baseUrl": ".",
+    "outDir": "dist"
   },
   "include": ["*.ts", "handlers/*.ts"]
 }
