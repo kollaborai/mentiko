@@ -1,14 +1,11 @@
-# Dockerfile - mentiko platform (self-hosted, public)
+# Dockerfile - mentiko platform (self-hosted)
 #
 # builds the mentiko platform image. inherits the tools layer from
 # ghcr.io/kollaborai/mentiko-base — see Dockerfile.base in this repo.
 #
 # multi-arch: docker will auto-pick amd64 or arm64 based on host.
-# both self-hosters and managed tenants consume the same base image,
-# guaranteeing tool parity between "what you run locally" and
-# "what we run for hosted customers."
 #
-# quick start (self-host):
+# quick start:
 #   cp .env.example .env
 #   docker compose -f docker-compose.production.yml up -d
 #   open http://localhost:3000
@@ -76,8 +73,7 @@ RUN echo "=== assembling platform ===" && \
 # IMPORTANT: esbuild reads tsconfig.json by walking up from the INPUT file,
 # not cwd. so we use the source path /build/web/server/*.ts (which is under
 # the tsconfig tree) and cd into /build/web first to anchor relative imports
-# correctly. mirrors scripts/deploy/assemble-platform-context.sh in
-# mentiko-control-plane — same pattern that's been proven on tenant builds.
+# correctly.
 RUN if [ -f /build/web/server/ws-terminal.ts ]; then \
       echo "=== compiling ws-terminal.ts ===" && \
       cd /build/web && \

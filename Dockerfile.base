@@ -4,11 +4,8 @@
 # node, python, bun, uv, AI CLIs, git tools, terminal tools, the works.
 # rebuild only when tools change (monthly or less via scheduled CI).
 #
-# CONSUMERS:
-#   - this repo's Dockerfile         (FROM ...base:<sha>) -- public self-host image
-#   - mentiko-control-plane          (FROM ...base:<sha>) -- private tenant image
-#
-# both consumers get the EXACT same tool layer => self-host == tenant.
+# CONSUMER:
+#   - this repo's Dockerfile         (FROM ...base:<sha>)
 #
 # DESIGN RULES:
 #   - this image contains NO runtime config (no USER, CMD, ENTRYPOINT,
@@ -260,8 +257,8 @@ RUN echo "=== npm dev tools ===" && \
     { npm install -g @biomejs/biome || echo "WARNING: biome install failed, skipping"; }
 
 # AI CLI tools (non-fatal: some may fail on first release or network issues)
-# Claude Code 2.1.128 crashes in Podman tenant auth login with a Bun segfault.
-# Keep this pinned until a future upgrade passes the tenant Podman auth smoke.
+# Claude Code 2.1.128 has a known Bun segfault on Podman auth login.
+# Keep this pinned until a future upgrade passes the rootless-container smoke.
 ARG CLAUDE_CODE_VERSION=2.1.129
 RUN echo "=== claude-code (pinned ${CLAUDE_CODE_VERSION}) ===" && \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -311,7 +308,7 @@ RUN echo "=== zsh config ===" && \
 
 RUN echo "=== shell config skel ===" && \
     printf '%s\n' \
-      '# tenant VPS: Quadlet ReadOnly=true — /usr/local is RO; user-global npm lives on mounted $HOME' \
+      '# read-only-rootfs runtimes (Quadlet ReadOnly=true, etc): /usr/local is RO, user-global npm lives on $HOME' \
       'export NPM_CONFIG_PREFIX="${HOME}/.local"' \
       'mkdir -p "${NPM_CONFIG_PREFIX}/bin"' \
       'export PATH="${HOME}/.local/bin:/opt/mentiko/bin:/usr/local/bin:$PATH"' \
@@ -334,7 +331,7 @@ RUN echo "=== shell config skel ===" && \
       'alias http="xh"' \
       > /opt/mentiko/skel/.zshrc && \
     printf '%s\n' \
-      '# tenant VPS: Quadlet ReadOnly=true — /usr/local is RO; user-global npm lives on mounted $HOME' \
+      '# read-only-rootfs runtimes (Quadlet ReadOnly=true, etc): /usr/local is RO, user-global npm lives on $HOME' \
       'export NPM_CONFIG_PREFIX="${HOME}/.local"' \
       'mkdir -p "${NPM_CONFIG_PREFIX}/bin"' \
       'export PATH="${HOME}/.local/bin:/opt/mentiko/bin:/usr/local/bin:$PATH"' \
@@ -374,4 +371,4 @@ RUN echo "=== shell config skel ===" && \
 WORKDIR /opt/mentiko
 
 # no USER, CMD, ENTRYPOINT, EXPOSE, HEALTHCHECK, VOLUME, or runtime ENV.
-# consumers (Dockerfile, control-plane Dockerfile.tenant) set those.
+# consumers set those (see this repo's Dockerfile).

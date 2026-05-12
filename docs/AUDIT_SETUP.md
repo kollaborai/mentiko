@@ -91,7 +91,7 @@ NAMESPACE_ID=default
 ```yaml
 services:
   platform:
-    image: ghcr.io/kollaborai/mentiko-tenant:latest
+    image: ghcr.io/<your-org>/mentiko:latest
     environment:
       AUDIT_S3_ENDPOINT: "https://<region>.<provider>.com"
       AUDIT_REMOTE_URL: "s3://<your-audit-bucket>/tenants/{NAMESPACE_ID}/"
@@ -113,13 +113,13 @@ kubectl create secret generic audit-remote \
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mentiko-tenant
+  name: mentiko
 spec:
   template:
     spec:
       containers:
       - name: platform
-        image: ghcr.io/kollaborai/mentiko-tenant:latest
+        image: ghcr.io/<your-org>/mentiko:latest
         env:
         - name: AUDIT_S3_ENDPOINT
           value: "https://<region>.<provider>.com"

@@ -25,9 +25,7 @@ arch for your host automatically.
   rebuilt on every code change.
   built from `Dockerfile` at the repo root.
 
-both images are **public**. self-hosters and managed tenants pull the
-same `mentiko-base` bytes, so "what we run for hosted customers" and
-"what you can run on your own server" share their entire tool layer.
+Both images are **public**.
 
 ## the build pipelines
 
@@ -117,9 +115,7 @@ This skips the workflow entirely. Useful for iterating on
 
 ## regression test
 
-The platform image is built locally from this repo (the published
-image is currently `mentiko-tenant`, a private image used by the
-managed service). Self-host smoke test:
+Build the platform image locally and run it:
 
 ```
 docker build -t mentiko:local .
@@ -131,9 +127,6 @@ docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
 On a fresh Mac (arm64), Linux (amd64), or anywhere else with Docker,
 this should produce a working platform image. If the build fails or
 behavior changes between hosts, that's a regression — file an issue.
-
-Once a public `ghcr.io/kollaborai/mentiko` image is published, this
-section should be updated to `docker pull` instead of `docker build`.
 
 ## related
 

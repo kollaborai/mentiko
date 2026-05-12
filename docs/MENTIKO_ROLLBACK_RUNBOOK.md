@@ -17,7 +17,7 @@ self-hoster. Operator-specific procedures should live outside this public repo.
 
 A mentiko deployment typically has:
 
-- **App container(s)**: the platform (`ghcr.io/kollaborai/mentiko-tenant`),
+- **App container(s)**: the platform (`ghcr.io/<your-org>/mentiko`),
   pulled from GHCR, run under docker-compose, podman Quadlet, or k8s.
 - **Database**: postgres 16 (for multi-tenant deployments) or sqlite
   (`~/.mentiko/data/auth.db` for the tenant/single-instance case).
@@ -42,7 +42,7 @@ docker compose pull app
 docker compose up -d --force-recreate app
 
 # Podman Quadlet deployment — flip image digest in the .container file:
-sudo sed -i "s|^Image=.*|Image=ghcr.io/kollaborai/mentiko-tenant@sha256:<previous-digest>|" \
+sudo sed -i "s|^Image=.*|Image=ghcr.io/<your-org>/mentiko@sha256:<previous-digest>|" \
   /etc/containers/systemd/mentiko-<slug>.container
 sudo systemctl daemon-reload
 sudo systemctl restart mentiko-<slug>
@@ -59,8 +59,8 @@ ALTER TABLE <table> DROP COLUMN IF EXISTS <problematic_column>;
 ### How it works
 
 - The platform image is published to GHCR with both `:latest` and per-commit tags:
-  - `ghcr.io/kollaborai/mentiko-tenant:latest`
-  - `ghcr.io/kollaborai/mentiko-tenant:<commit-sha>`
+  - `ghcr.io/<your-org>/mentiko:latest`
+  - `ghcr.io/<your-org>/mentiko:<commit-sha>`
 - For reproducible rollbacks, **always pin to a specific tag or digest**
   in production — don't rely on `:latest` moving backward.
 
@@ -68,15 +68,15 @@ ALTER TABLE <table> DROP COLUMN IF EXISTS <problematic_column>;
 
 ```bash
 # Option 1: GHCR API (requires GH token, but public list works too)
-gh api /orgs/kollaborai/packages/container/mentiko-tenant/versions \
+gh api /orgs/<your-org>/packages/container/mentiko/versions \
   --jq '.[].metadata.container.tags[]' | head -20
 
 # Option 2: Recent CI builds (if you're the one doing CI)
 gh run list --repo kollaborai/mentiko --limit 10
 
 # Option 3: Local image cache on your host
-docker images ghcr.io/kollaborai/mentiko-tenant
-# or: sudo podman images ghcr.io/kollaborai/mentiko-tenant
+docker images ghcr.io/<your-org>/mentiko
+# or: sudo podman images ghcr.io/<your-org>/mentiko
 ```
 
 ### Rollback procedure (docker-compose)
@@ -87,7 +87,7 @@ ssh <your-ssh-user>@<your-vps>
 cd /opt/mentiko
 
 # Step 2: Pull the previous image
-docker pull ghcr.io/kollaborai/mentiko-tenant:<previous-commit-sha>
+docker pull ghcr.io/<your-org>/mentiko:<previous-commit-sha>
 
 # Step 3: Edit your compose file to pin the rollback tag
 # (Replace `:latest` with `:<previous-commit-sha>`.)
@@ -108,7 +108,7 @@ image by digest. Rollback is to flip `Image=` back to the previous digest
 and restart the service.
 
 ```bash
-sudo sed -i "s|^Image=.*|Image=ghcr.io/kollaborai/mentiko-tenant@sha256:<previous-digest>|" \
+sudo sed -i "s|^Image=.*|Image=ghcr.io/<your-org>/mentiko@sha256:<previous-digest>|" \
   /etc/containers/systemd/mentiko-<slug>.container
 sudo systemctl daemon-reload
 sudo systemctl restart mentiko-<slug>
@@ -255,13 +255,13 @@ This gives you a cheap rollback target without needing to hit GHCR.
 
 ```bash
 # List recent tags for the tenant image
-gh api /orgs/kollaborai/packages/container/mentiko-tenant/versions \
+gh api /orgs/<your-org>/packages/container/mentiko/versions \
   --jq '.[] | select(.metadata.container.tags | length > 0) |
          {tags: .metadata.container.tags[0], updated: .updated_at}' | \
   head -10
 
 # List recent digests
-gh api /orgs/kollaborai/packages/container/mentiko-tenant/versions \
+gh api /orgs/<your-org>/packages/container/mentiko/versions \
   --jq '.[] | {digest: .metadata.container.digest, updated: .updated_at}' | \
   head -10
 ```
@@ -388,10 +388,10 @@ docker exec -it <container> sh                    # shell inside
 
 ```bash
 # Public registry, pull without auth:
-docker pull ghcr.io/kollaborai/mentiko-tenant:<tag>
+docker pull ghcr.io/<your-org>/mentiko:<tag>
 
 # List tags you already have locally:
-docker images ghcr.io/kollaborai/mentiko-tenant
+docker images ghcr.io/<your-org>/mentiko
 ```
 
 ### Database

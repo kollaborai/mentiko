@@ -14,8 +14,6 @@
 services:
   mentiko:
     build: .
-    # or use pre-built image instead of building:
-    # image: ghcr.io/kollaborai/mentiko-tenant:latest
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"

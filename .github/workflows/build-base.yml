@@ -5,9 +5,8 @@
 # for arm64 — both free for public repos), then publishes a fat manifest
 # under :<commit-sha> AND :latest.
 #
-# the resulting image is consumed by:
-#   - this repo's Dockerfile         (via FROM ...mentiko-base:${BASE_TAG})
-#   - mentiko-control-plane's tenant Dockerfile (eventually)
+# the resulting image is consumed by this repo's Dockerfile
+# (via FROM ...mentiko-base:${BASE_TAG}).
 #
 # rebuild triggers:
 #   - push to Dockerfile.base on main
