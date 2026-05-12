@@ -1,0 +1,44 @@
+# dependencies (builder runs npm ci)
+web/node_modules/
+node_modules/
+
+# build output (builder runs next build)
+web/.next/
+web/out/
+
+# git
+.git/
+.gitignore
+
+# dev/test artifacts
+web/.env*
+web/coverage/
+web/e2e/
+web/__mocks__/
+web/**/*.test.ts
+web/**/*.test.tsx
+web/**/*.spec.ts
+
+# ide
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# os
+.DS_Store
+Thumbs.db
+
+# docs (not needed in image)
+docs/
+*.md
+LICENSE
+
+# claude code worktrees + trash
+.claude/
+.trash/
+ 
+# debug artifacts
+web/debug/
+memory/
+__pycache__/

@@ -1,0 +1,311 @@
+"use client";
+
+import { type ComponentType, type CSSProperties } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  Abstract106Shapes,
+  Abstract148Shapes,
+  Abstract44Shapes,
+  Abstract103Shapes,
+  Abstract43Shapes,
+  Abstract40Shapes,
+} from "@aliimam/vectors";
+import { ArrowLeftFilled, DocumentTextFilled, MagicStarFilled } from "@aliimam/icons";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card";
+
+const VECTORS: ComponentType<{ size?: number }>[] = [
+  Abstract106Shapes,
+  Abstract148Shapes,
+  Abstract44Shapes,
+  Abstract103Shapes,
+  Abstract43Shapes,
+  Abstract40Shapes,
+];
+
+const p = "#71717a";
+const l = "#a1a1aa";
+const d = "#3f3f46";
+const bg = "transparent";
+
+const PATTERNS: CSSProperties[] = [
+  // crosshatch
+  {
+    backgroundImage: `repeating-linear-gradient(45deg, ${p} 0, ${p} 8px, transparent 0, transparent 50%), repeating-linear-gradient(-45deg, ${p} 0, ${p} 8px, transparent 0, transparent 50%)`,
+    backgroundPosition: "0 0, 20px 0",
+    backgroundSize: "40px 40px",
+    opacity: 0.06,
+  },
+  // radial dots
+  {
+    backgroundImage: `repeating-radial-gradient(circle at 0 0, transparent 0, ${bg} 30px), repeating-linear-gradient(${d}88, ${p})`,
+    opacity: 0.07,
+  },
+  // diamonds large
+  {
+    backgroundImage: `linear-gradient(135deg, ${d} 25%, transparent 25%), linear-gradient(225deg, ${d} 25%, transparent 25%), linear-gradient(45deg, ${d} 25%, transparent 25%), linear-gradient(315deg, ${d} 25%, transparent 25%)`,
+    backgroundPosition: "30px 0, 30px 0, 0 0, 0 0",
+    backgroundSize: "60px 60px",
+    opacity: 0.1,
+  },
+  // diagonal stripes
+  {
+    background: `repeating-linear-gradient(45deg, ${l}, ${l} 7.5px, transparent 7.5px, transparent 37.5px)`,
+    opacity: 0.05,
+  },
+  // sunburst
+  {
+    background: `repeating-conic-gradient(${p} 0deg 10deg, transparent 10deg 20deg)`,
+    opacity: 0.06,
+  },
+  // grid fine
+  {
+    backgroundImage: `linear-gradient(${p} 2px, transparent 2px), linear-gradient(90deg, ${p} 2px, transparent 2px), linear-gradient(${p} 1px, transparent 1px), linear-gradient(90deg, ${p} 1px, transparent 1px)`,
+    backgroundSize: "30px 30px, 30px 30px, 6px 6px, 6px 6px",
+    backgroundPosition: "-2px -2px, -2px -2px, -1px -1px, -1px -1px",
+    opacity: 0.05,
+  },
+];
+
+function hashString(s: string, seed = 0): number {
+  let h = seed;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+// ─── types ──────────────────────────────────────────────────
+
+type IconComponent = ComponentType<{ className?: string }>;
+
+interface BannerAction {
+  label?: string;
+  href?: string;
+  onClick?: () => void;
+  icon: IconComponent;
+  iconColor?: string;
+  variant?: "default" | "ghost" | "outline";
+  generate?: boolean;
+}
+
+interface BannerDoc {
+  label: string;
+  href: string;
+  icon?: IconComponent;
+}
+
+interface PageBannerProps {
+  title: string;
+  subtitle: string;
+  icon?: ComponentType<{ size?: number; className?: string }>;
+  sectionColor?: string; // hex color for watermark icon (blue=#3b82f6, royal=#2563eb, etc.)
+  actions?: BannerAction[];
+  docs?: BannerDoc[];
+  children?: React.ReactNode;
+  backHref?: string;  // explicit back link (shown on all screen sizes)
+  backLabel?: string; // label next to arrow (default: "Back")
+}
+
+// ─── action button (icon-only) ──────────────────────────────
+
+function ActionButton({ action }: { action: BannerAction }) {
+  const Icon = action.icon;
+
+  const classes = action.generate
+    ? "inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer text-purple-400 hover:text-purple-300 hover:bg-purple-500/10"
+    : "inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer text-foreground/40 hover:text-foreground/60 hover:bg-foreground/5";
+
+  const iconEl = action.generate ? (
+    <MagicStarFilled className="h-4 w-4" />
+  ) : (
+    <Icon className="h-4 w-4" />
+  );
+
+  const colorStyle = !action.generate && action.iconColor
+    ? { color: action.iconColor }
+    : undefined;
+
+  const testId = action.label ? `action-${action.label.toLowerCase().replace(/\s+/g, "-")}` : undefined;
+
+  const inner = action.href ? (
+    <Link
+      href={action.href}
+      className={classes}
+      style={colorStyle}
+      data-testid={testId}
+      aria-label={action.label}
+    >
+      {iconEl}
+    </Link>
+  ) : (
+    <button
+      type="button"
+      onClick={action.onClick}
+      className={classes}
+      style={colorStyle}
+      data-testid={testId}
+      aria-label={action.label}
+    >
+      {iconEl}
+    </button>
+  );
+
+  if (!action.label) return inner;
+
+  // use entity hover card for href-based actions with route metadata
+  if (action.href && hasRouteMeta(action.href)) {
+    return (
+      <EntityHoverCard type="route" href={action.href}>
+        {inner}
+      </EntityHoverCard>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{inner}</TooltipTrigger>
+      <TooltipContent side="bottom">{action.label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+// ─── page banner ────────────────────────────────────────────
+
+export function PageBanner({
+  title,
+  subtitle,
+  icon,
+  sectionColor,
+  actions,
+  docs,
+  children,
+  backHref,
+  backLabel,
+}: PageBannerProps) {
+  const router = useRouter();
+  const hash = hashString(title);
+  const pattern = PATTERNS[hash % PATTERNS.length];
+
+  // if icon provided, use it as watermark; otherwise fall back to abstract vectors
+  const isCustomIcon = !!icon;
+  const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
+
+  return (
+    <div className="shrink-0 px-4 pt-4 pb-3">
+      <div className="relative rounded-xl bg-transparent overflow-hidden p-6">
+        {/* pattern background - fades to transparent from center to right */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            ...pattern,
+            mask: "linear-gradient(to right, black 50%, transparent 100%)",
+            WebkitMask: "linear-gradient(to right, black 50%, transparent 100%)",
+          }}
+        />
+
+        {/* watermark - right side, large and pushed to edge */}
+        <div
+          className="absolute -right-4 top-0 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none"
+          style={{
+            mask: "linear-gradient(to right, transparent 10%, black 50%)",
+            WebkitMask: "linear-gradient(to right, transparent 10%, black 50%)",
+          }}
+        >
+          <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: 0.15 }}>
+            {isCustomIcon ? (
+              <WatermarkIcon size={400} className="h-64 w-64" />
+            ) : (
+              <WatermarkIcon size={400} />
+            )}
+          </div>
+        </div>
+
+        {/* content */}
+        <div className="relative z-10">
+          {/* back button - always visible when backHref provided, mobile-only otherwise */}
+          {backHref ? (
+            <Link
+              href={backHref}
+              className="flex items-center gap-1.5 mb-2 -ml-1 px-2 py-1.5 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
+            >
+              <ArrowLeftFilled className="h-4 w-4" />
+              <span className="text-xs">{backLabel || "Back"}</span>
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="sm:hidden flex items-center gap-1.5 mb-2 -ml-1 px-2 py-1.5 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
+            >
+              <ArrowLeftFilled className="h-4 w-4" />
+              <span className="text-xs">Back</span>
+            </button>
+          )}
+
+          {/* row 1: title */}
+          <h1 className="text-4xl font-black tracking-tighter">
+            {title}
+          </h1>
+
+          {/* row 2: subtitle */}
+          <p className="text-sm text-foreground/50 mt-1.5 max-w-2xl leading-relaxed">
+            {subtitle}
+          </p>
+
+          {/* row 3: action icons + doc icons */}
+          {((actions && actions.length > 0) || (docs && docs.length > 0)) && (
+            <TooltipProvider delayDuration={200}>
+            <div className="flex items-center gap-1 flex-wrap mt-3">
+              {actions?.map((action, i) => (
+                <ActionButton key={i} action={action} />
+              ))}
+
+              {docs && docs.length > 0 && actions && actions.length > 0 && (
+                <span className="w-px h-4 bg-foreground/10 mx-1" />
+              )}
+
+              {docs?.map((doc) => {
+                const DocIcon = doc.icon || DocumentTextFilled;
+                const docLink = (
+                  <Link
+                    href={doc.href}
+                    className="inline-flex items-center justify-center p-1 rounded-md transition-colors cursor-pointer hover:bg-foreground/5"
+                    style={{ color: "#f59e0b" }}
+                  >
+                    <DocIcon className="h-4 w-4 opacity-50 hover:opacity-80 transition-opacity" />
+                  </Link>
+                );
+
+                if (hasRouteMeta(doc.href)) {
+                  return (
+                    <EntityHoverCard key={doc.href} type="route" href={doc.href}>
+                      {docLink}
+                    </EntityHoverCard>
+                  );
+                }
+
+                return (
+                  <Tooltip key={doc.href}>
+                    <TooltipTrigger asChild>{docLink}</TooltipTrigger>
+                    <TooltipContent side="bottom">{doc.label}</TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+            </TooltipProvider>
+          )}
+
+          {/* custom content */}
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}

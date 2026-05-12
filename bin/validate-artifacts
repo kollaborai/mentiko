@@ -1,0 +1,180 @@
+#!/usr/bin/env node
+'use strict';
+
+const { readFileSync, readdirSync } = require('fs');
+const { join } = require('path');
+
+const ARTIFACTS_DIR = process.env.MENTIKO_GLOBAL_ROOT
+  ? join(process.env.MENTIKO_GLOBAL_ROOT, 'marketplace', 'artifacts')
+  : join(process.env.HOME, '.mentiko', 'marketplace', 'artifacts');
+
+const REQUIRED_FIELDS = ['id', 'name', 'format', 'category', 'description', 'schema', 'validation_rules'];
+const VALID_FORMATS = ['json', 'markdown', 'patch', 'text', 'csv', 'code'];
+const VALID_CATEGORIES = ['analysis', 'security', 'data', 'cli', 'web', 'api', 'business', 'devops'];
+
+function extractFrontmatter(content) {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return null;
+  return match[1];
+}
+
+function extractBody(content) {
+  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+  if (!match) return null;
+  return match[1].trim();
+}
+
+function getFieldValue(frontmatter, field) {
+  // Match "field: value" on its own line (handles simple scalar values)
+  const scalarMatch = frontmatter.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
+  if (scalarMatch) return scalarMatch[1].trim();
+
+  // Match multiline block values (field followed by object/array on next line)
+  const blockMatch = frontmatter.match(new RegExp(`^${field}:\\s*$`, 'm'));
+  if (blockMatch) return '__block__';
+
+  return null;
+}
+
+function checkArtifact(filePath, filename) {
+  let content;
+  try {
+    content = readFileSync(filePath, 'utf8');
+  } catch (e) {
+    return { filename, status: 'error', missing: [], errors: [`could not read file: ${e.message}`] };
+  }
+
+  const errors = [];
+  const missing = [];
+
+  // Check frontmatter exists
+  const frontmatter = extractFrontmatter(content);
+  if (!frontmatter) {
+    return { filename, status: 'fail', missing: ['frontmatter'], errors: ['no YAML frontmatter found (expected --- delimiters)'] };
+  }
+
+  // Check all required fields are present
+  for (const field of REQUIRED_FIELDS) {
+    const value = getFieldValue(frontmatter, field);
+    if (!value) {
+      missing.push(field);
+    }
+  }
+
+  // Check format is valid
+  const format = getFieldValue(frontmatter, 'format');
+  if (format && !VALID_FORMATS.includes(format)) {
+    errors.push(`invalid format "${format}" — must be one of: ${VALID_FORMATS.join(', ')}`);
+  }
+
+  // Check category is valid
+  const category = getFieldValue(frontmatter, 'category');
+  if (category && !VALID_CATEGORIES.includes(category)) {
+    errors.push(`invalid category "${category}" — must be one of: ${VALID_CATEGORIES.join(', ')}`);
+  }
+
+  // Check body is not empty
+  const body = extractBody(content);
+  if (!body || body.length < 10) {
+    errors.push('body section is empty or too short (add example content after the closing --- marker)');
+  }
+
+  // Check description is not a placeholder
+  const description = getFieldValue(frontmatter, 'description');
+  if (description && description.includes('{')) {
+    errors.push('description contains placeholder text (curly braces) — replace with actual description');
+  }
+
+  // Check id matches filename (without .md)
+  const id = getFieldValue(frontmatter, 'id');
+  const expectedId = filename.replace(/\.md$/, '');
+  if (id && id !== expectedId) {
+    errors.push(`id "${id}" does not match filename "${expectedId}" — they should match`);
+  }
+
+  // Check author field is present (warning only)
+  const author = getFieldValue(frontmatter, 'author');
+  const warnings = [];
+  if (!author) {
+    warnings.push('author field missing (recommended)');
+  }
+
+  const version = getFieldValue(frontmatter, 'version');
+  if (!version) {
+    warnings.push('version field missing (recommended)');
+  }
+
+  const allOk = missing.length === 0 && errors.length === 0;
+  return {
+    filename,
+    status: allOk ? 'pass' : 'fail',
+    missing,
+    errors,
+    warnings,
+  };
+}
+
+function padEnd(str, len) {
+  return String(str).padEnd(len, ' ');
+}
+
+function main() {
+  let files;
+  try {
+    files = readdirSync(ARTIFACTS_DIR).filter(f => f.endsWith('.md'));
+  } catch (e) {
+    console.error(`error: cannot read artifacts directory: ${ARTIFACTS_DIR}`);
+    console.error(`  ${e.message}`);
+    console.error('');
+    console.error('set MENTIKO_GLOBAL_ROOT or ensure ~/.mentiko/marketplace/artifacts/ exists');
+    process.exit(1);
+  }
+
+  if (files.length === 0) {
+    console.log(`no .md files found in ${ARTIFACTS_DIR}`);
+    process.exit(0);
+  }
+
+  const results = files.map(f => checkArtifact(join(ARTIFACTS_DIR, f), f));
+
+  const passing = results.filter(r => r.status === 'pass');
+  const failing = results.filter(r => r.status === 'fail' || r.status === 'error');
+
+  // Print header
+  const col1 = 38;
+  const col2 = 8;
+  const col3 = 45;
+  console.log('');
+  console.log(`artifact validation: ${ARTIFACTS_DIR}`);
+  console.log('');
+  console.log(`${padEnd('file', col1)} ${padEnd('status', col2)} details`);
+  console.log(`${'-'.repeat(col1)} ${'-'.repeat(col2)} ${'-'.repeat(col3)}`);
+
+  for (const r of results) {
+    const statusGlyph = r.status === 'pass' ? '✔' : '✖';
+    let details = '';
+
+    if (r.status === 'pass') {
+      details = r.warnings && r.warnings.length > 0
+        ? `warn: ${r.warnings.join('; ')}`
+        : 'ok';
+    } else {
+      const parts = [];
+      if (r.missing && r.missing.length > 0) parts.push(`missing: ${r.missing.join(', ')}`);
+      if (r.errors && r.errors.length > 0) parts.push(r.errors.join('; '));
+      details = parts.join(' | ');
+    }
+
+    console.log(`${statusGlyph} ${padEnd(r.filename, col1 - 2)} ${padEnd(r.status, col2)} ${details}`);
+  }
+
+  console.log('');
+  console.log(`results:  ${passing.length} passed  ${failing.length} failed  ${results.length} total`);
+  console.log('');
+
+  if (failing.length > 0) {
+    process.exit(1);
+  }
+}
+
+main();

@@ -1,0 +1,151 @@
+"use client";
+
+import { TickSquareFilled, SquareRounded, Trash2, TickCircleFilled, AddFilled, MagicStarFilled } from "@aliimam/icons";
+import { Button } from "@/components/ui/button";
+import type {
+  TaskFilterStatus,
+  TaskFilterType,
+  TaskSortBy,
+} from "@/lib/task-types";
+import {
+  WorkflowSidebarFilters,
+  WorkflowSidebarSearchInput,
+  WorkflowSidebarSegmentedControl,
+} from "@/components/ui/workflow-sidebar";
+
+interface TaskFiltersProps {
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  filterStatus: TaskFilterStatus;
+  onFilterStatusChange: (status: TaskFilterStatus) => void;
+  filterType: TaskFilterType;
+  onFilterTypeChange: (type: TaskFilterType) => void;
+  sortBy: TaskSortBy;
+  onSortChange: (sort: TaskSortBy) => void;
+  totalCount: number;
+  filteredCount: number;
+  selectMode?: boolean;
+  onToggleSelectMode?: () => void;
+  selectedCount?: number;
+  onBulkClose?: () => void;
+  onBulkDelete?: () => void;
+  onCreate?: () => void;
+  onGenerate?: () => void;
+}
+
+const statusOptions: { value: TaskFilterStatus; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "ready", label: "Ready" },
+  { value: "in_progress", label: "Active" },
+  { value: "closed", label: "Closed" },
+];
+
+const typeOptions: { value: TaskFilterType; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "feature", label: "Feat" },
+  { value: "task", label: "Task" },
+  { value: "bug", label: "Bug" },
+  { value: "chore", label: "Chore" },
+];
+
+const sortOptions: { value: TaskSortBy; label: string }[] = [
+  { value: "priority", label: "Priority" },
+  { value: "updated", label: "Updated" },
+  { value: "created", label: "Created" },
+  { value: "title", label: "Title" },
+];
+
+export function TaskFilters({
+  searchQuery,
+  onSearchChange,
+  filterStatus,
+  onFilterStatusChange,
+  filterType,
+  onFilterTypeChange,
+  sortBy,
+  onSortChange,
+  totalCount,
+  filteredCount,
+  selectMode,
+  onToggleSelectMode,
+  selectedCount = 0,
+  onBulkClose,
+  onBulkDelete,
+  onCreate,
+  onGenerate,
+}: TaskFiltersProps) {
+  return (
+    <WorkflowSidebarFilters>
+      <div className="flex items-center gap-1.5">
+        <WorkflowSidebarSearchInput
+          value={searchQuery}
+          onChange={onSearchChange}
+          placeholder="Search tasks"
+        />
+        {onCreate && (
+          <Button size="sm" variant="default" className="shrink-0" onClick={onCreate} title="New task">
+            <AddFilled className="h-3 w-3" />
+          </Button>
+        )}
+        {onGenerate && (
+          <Button size="sm" variant="default" className="shrink-0" onClick={onGenerate} title="Generate task with AI">
+            <MagicStarFilled className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
+      <WorkflowSidebarSegmentedControl
+        options={statusOptions}
+        value={filterStatus}
+        onChange={onFilterStatusChange}
+      />
+      <WorkflowSidebarSegmentedControl
+        options={typeOptions}
+        value={filterType}
+        onChange={onFilterTypeChange}
+        buttonClassName="text-[9px]"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] text-muted-foreground">
+          {filteredCount} of {totalCount}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {onToggleSelectMode && (
+            <Button
+              size="xs"
+              variant={selectMode ? "default" : "ghost"}
+              className="text-[10px]"
+              onClick={onToggleSelectMode}
+            >
+              {selectMode ? <TickSquareFilled className="h-3 w-3" /> : <SquareRounded className="h-3 w-3" />}
+              {selectMode ? "Done" : "Select"}
+            </Button>
+          )}
+          {selectMode && selectedCount > 0 && (
+            <>
+              <Button size="xs" variant="ghost" className="text-[10px]" onClick={onBulkClose}>
+                <TickCircleFilled className="h-3 w-3" />
+                Close ({selectedCount})
+              </Button>
+              <Button size="xs" variant="destructive" className="text-[10px]" onClick={onBulkDelete}>
+                <Trash2 className="h-3 w-3" />
+                Delete ({selectedCount})
+              </Button>
+            </>
+          )}
+          <select
+            value={sortBy}
+            onChange={(e) => onSortChange(e.target.value as TaskSortBy)}
+            className="h-7 rounded-lg bg-card px-2 text-[10px] text-muted-foreground outline-none"
+          >
+            {sortOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </WorkflowSidebarFilters>
+  );
+}

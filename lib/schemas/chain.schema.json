@@ -1,0 +1,682 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "mentiko",
+  "description": "AI agent chain definition with advanced routing patterns and agent profile support",
+  "type": "object",
+  "required": ["name", "agents"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Chain name"
+    },
+    "version": {
+      "type": "string",
+      "default": "1.0"
+    },
+    "description": {
+      "type": "string"
+    },
+    "default_agent_profile": {
+      "type": "string",
+      "description": "Default agent profile ID for all agents in this chain. Resolved from namespaces/{id}/agent-profiles/{id}.json."
+    },
+    "config": {
+      "type": "object",
+      "description": "Chain-level configuration",
+      "properties": {
+        "monitor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable AI monitor for all agents"
+        },
+        "monitor_interval": {
+          "type": "integer",
+          "default": 60,
+          "description": "Seconds between monitor checks"
+        },
+        "max_rounds": {
+          "type": "integer",
+          "default": 3,
+          "description": "Max iteration rounds before stopping"
+        },
+        "project_root": {
+          "type": "string",
+          "default": "auto",
+          "description": "Project root (auto = git root or cwd)"
+        },
+        "session_prefix": {
+          "type": "string",
+          "description": "Prefix for all pty sessions in this chain"
+        },
+        "on_complete": {
+          "type": "string",
+          "pattern": "^(stop|notify|webhook|chain:.+)$",
+          "default": "stop",
+          "description": "What to do when chain completes. Use 'chain:<name>' to auto-launch another chain."
+        },
+        "webhook_url": {
+          "type": "string",
+          "description": "URL to POST when chain completes (if on_complete=webhook)"
+        },
+        "schedule": {
+          "type": "string",
+          "description": "Cron expression for scheduled execution (e.g. '0 9 * * *' for daily at 9am)"
+        },
+        "timezone": {
+          "type": "string",
+          "default": "UTC",
+          "description": "Timezone for schedule (e.g. 'America/New_York', 'UTC')"
+        },
+        "slack": {
+          "type": "object",
+          "description": "Slack webhook configuration for event notifications",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable Slack notifications"
+            },
+            "webhook_url": {
+              "type": "string",
+              "description": "Slack webhook URL (or use SLACK_WEBHOOK_URL env var)"
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["chain_start", "chain_complete", "chain_error", "agent_error", "agent_timeout"]
+              },
+              "description": "Events to notify in Slack",
+              "default": ["chain_start", "chain_complete", "agent_error"]
+            },
+            "web_url": {
+              "type": "string",
+              "description": "Base URL for web UI (used to build links in Slack messages)"
+            }
+          }
+        },
+        "email": {
+          "type": "object",
+          "description": "Email notification configuration for chain completion",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable email notifications"
+            },
+            "to": {
+              "type": "string",
+              "description": "Recipient email address (or CHAIN_EMAIL_TO env var)"
+            },
+            "from": {
+              "type": "string",
+              "default": "noreply@mentiko.local",
+              "description": "Sender email address (or CHAIN_EMAIL_FROM env var)"
+            },
+            "method": {
+              "type": "string",
+              "enum": ["auto", "mail", "sendmail", "api"],
+              "default": "auto",
+              "description": "How to send email (auto tries all, api uses http endpoint)"
+            },
+            "smtp": {
+              "type": "string",
+              "description": "SMTP server for sendmail (or CHAIN_EMAIL_SMTP env var)"
+            },
+            "api_url": {
+              "type": "string",
+              "description": "Email API URL (Mailgun, SendGrid, etc - or CHAIN_EMAIL_API_URL env var)"
+            },
+            "api_key": {
+              "type": "string",
+              "description": "Email API key (or CHAIN_EMAIL_API_KEY env var)"
+            },
+            "on_events": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["chain_complete", "chain_error", "agent_error"]
+              },
+              "default": ["chain_complete"],
+              "description": "Which events trigger email notifications"
+            }
+          }
+        },
+        "integrations": {
+          "type": "object",
+          "description": "Third-party integration configuration",
+          "properties": {
+            "github": {
+              "type": "object",
+              "description": "GitHub integration - create issues on errors",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "token": {
+                  "type": "string",
+                  "description": "GitHub personal access token"
+                },
+                "owner": {
+                  "type": "string",
+                  "description": "Repository owner/org"
+                },
+                "repo": {
+                  "type": "string",
+                  "description": "Repository name"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Labels to add to created issues"
+                }
+              }
+            },
+            "teams": {
+              "type": "object",
+              "description": "Microsoft Teams integration - send webhook notifications",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "webhook_url": {
+                  "type": "string",
+                  "description": "Teams webhook URL"
+                },
+                "events": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Events to notify (default: all)"
+                }
+              }
+            }
+          }
+        },
+        "webhooks": {
+          "type": "object",
+          "description": "Webhook configuration for event notifications",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable webhook notifications"
+            },
+            "urls": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "List of webhook URLs to notify"
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["agent_started", "agent_complete", "agent_error", "agent_timeout", "chain_started", "chain_complete", "chain_error"]
+              },
+              "description": "Events to subscribe to"
+            },
+            "retry": {
+              "type": "object",
+              "description": "Retry policy for failed webhook deliveries",
+              "properties": {
+                "max_attempts": {
+                  "type": "integer",
+                  "default": 3,
+                  "description": "Maximum number of retry attempts"
+                },
+                "backoff_base": {
+                  "type": "integer",
+                  "default": 2,
+                  "description": "Exponential backoff base (2 = double each time)"
+                },
+                "initial_delay": {
+                  "type": "integer",
+                  "default": 1,
+                  "description": "Initial delay in seconds before first retry"
+                },
+                "max_delay": {
+                  "type": "integer",
+                  "default": 60,
+                  "description": "Maximum delay between retries in seconds"
+                }
+              }
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Additional HTTP headers to send with webhook requests"
+            },
+            "secret": {
+              "type": "string",
+              "description": "Optional secret for HMAC signature (sent in X-Webhook-Signature header)"
+            }
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "description": "Remote workspace configuration for agent execution",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["local", "ssh", "docker"],
+              "default": "local",
+              "description": "Workspace execution type"
+            },
+            "ssh": {
+              "type": "object",
+              "description": "SSH workspace configuration (required when type=ssh)",
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Remote hostname or IP"
+                },
+                "user": {
+                  "type": "string",
+                  "description": "SSH user"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Working directory on remote host"
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Path to SSH private key (optional, uses default if not specified)"
+                },
+                "port": {
+                  "type": "integer",
+                  "default": 22,
+                  "description": "SSH port"
+                }
+              },
+              "required": ["host", "user", "path"]
+            },
+            "docker": {
+              "type": "object",
+              "description": "Docker workspace configuration (required when type=docker)",
+              "properties": {
+                "container": {
+                  "type": "string",
+                  "description": "Container name or ID"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Working directory inside container"
+                },
+                "user": {
+                  "type": "string",
+                  "description": "User to run commands as inside container (optional)"
+                }
+              },
+              "required": ["container", "path"]
+            }
+          }
+        }
+      }
+    },
+    "gateways": {
+      "type": "object",
+      "description": "Gateway definitions for environment variable injection. Use for setting provider-specific env vars (API keys, endpoints, etc). Agent profiles determine the CLI/model used.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cli": {
+            "type": "string",
+            "description": "CLI command for this gateway"
+          },
+          "cli_args": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Default CLI arguments for this gateway"
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables to set for this gateway",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "description": "Agent definitions. Each agent can be an inline object, a $ref to a standalone agent, or a $ref with overrides.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["id", "name", "triggers", "emits"],
+            "description": "Inline agent definition with all fields specified",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique agent identifier within this chain"
+              },
+              "name": {
+                "type": "string",
+                "description": "Human-readable agent name"
+              },
+              "role": {
+                "type": "string",
+                "description": "What this agent does"
+              },
+              "session_prefix": {
+                "type": "string",
+                "description": "Override pty session prefix (default: chain prefix + id)"
+              },
+              "agent_profile": {
+                "type": "string",
+                "description": "Agent profile ID to use for this agent. Resolved from namespaces/{id}/agent-profiles/{id}.json. Overrides chain default_agent_profile."
+              },
+              "triggers": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Events that start this agent"
+              },
+              "emits": {
+                "type": "string",
+                "description": "Event emitted on completion"
+              },
+              "monitor": {
+                "type": "boolean",
+                "description": "Override chain-level monitor setting"
+              },
+              "monitor_interval": {
+                "type": "integer",
+                "description": "Override chain-level monitor interval"
+              },
+              "spec": {
+                "type": "string",
+                "description": "Path to external .md spec file (optional)"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Inline agent instructions (used if no spec file)"
+              },
+              "timeout": {
+                "type": "integer",
+                "default": 0,
+                "minimum": -1,
+                "description": "Agent timeout in seconds (0 = no timeout, -1 = use chain default)"
+              },
+              "retry": {
+                "type": "object",
+                "description": "Retry configuration for this agent",
+                "properties": {
+                  "max_retries": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Maximum number of retry attempts on failure"
+                  },
+                  "backoff": {
+                    "type": "string",
+                    "enum": ["fixed", "exponential", "linear"],
+                    "default": "exponential",
+                    "description": "Backoff strategy for retries"
+                  },
+                  "initial_delay": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Initial delay before first retry (seconds)"
+                  },
+                  "max_delay": {
+                    "type": "integer",
+                    "default": 300,
+                    "description": "Maximum delay between retries (seconds)"
+                  },
+                  "backoff_multiplier": {
+                    "type": "number",
+                    "default": 2.0,
+                    "description": "Multiplier for exponential backoff"
+                  }
+                }
+              },
+              "on_error": {
+                "type": "string",
+                "description": "Agent ID to route to when this agent fails or times out"
+              },
+              "on_timeout": {
+                "type": "string",
+                "description": "Agent ID to route to when this agent times out (overrides on_error if specified)"
+              },
+              "context": {
+                "type": "object",
+                "properties": {
+                  "read_first": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Files agent should read before starting"
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "description": "Working directory for this agent's output"
+                  }
+                }
+              },
+              "authorities": {
+                "type": "object",
+                "properties": {
+                  "can": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "needs_approval": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
+              "wait_for_events": {
+                "type": "object",
+                "description": "Fan-in: wait for multiple source events before triggering",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "List of event names to wait for"
+                  },
+                  "wait_for": {
+                    "type": "string",
+                    "enum": ["all", "any", "quorum"],
+                    "default": "all",
+                    "description": "Fan-in strategy: all events, any event, or quorum"
+                  },
+                  "quorum": {
+                    "type": "integer",
+                    "description": "Minimum events for quorum (required if wait_for=quorum)"
+                  },
+                  "timeout": {
+                    "type": "integer",
+                    "default": 3600,
+                    "description": "Max seconds to wait for events before giving up (0 = no timeout)"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["$ref"],
+            "description": "Reference to a standalone agent. The agent is loaded from agents/{id}/agent.json or namespaces/{id}/agents/{id}/agent.json.",
+            "properties": {
+              "$ref": {
+                "type": "string",
+                "description": "Agent ID to reference from the standalone agent registry"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["$ref"],
+            "description": "Reference to a standalone agent with field overrides. The agent is loaded from agents/{id}/agent.json or namespaces/{id}/agents/{id}/agent.json, then merged with the override fields.",
+            "properties": {
+              "$ref": {
+                "type": "string",
+                "description": "Agent ID to reference from the standalone agent registry"
+              },
+              "agent_profile": {
+                "type": "string",
+                "description": "Override agent profile for this referenced agent"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Override prompt for this referenced agent"
+              },
+              "triggers": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Override triggers for this referenced agent"
+              },
+              "emits": {
+                "type": "string",
+                "description": "Override emits for this referenced agent"
+              },
+              "timeout": {
+                "type": "integer",
+                "minimum": -1,
+                "description": "Override timeout for this referenced agent"
+              },
+              "retry": {
+                "type": "object",
+                "description": "Override retry configuration for this referenced agent",
+                "properties": {
+                  "max_retries": { "type": "integer" },
+                  "backoff": { "type": "string", "enum": ["fixed", "exponential", "linear"] },
+                  "initial_delay": { "type": "integer" },
+                  "max_delay": { "type": "integer" },
+                  "backoff_multiplier": { "type": "number" }
+                }
+              },
+              "on_error": {
+                "type": "string",
+                "description": "Override on_error routing"
+              },
+              "on_timeout": {
+                "type": "string",
+                "description": "Override on_timeout routing"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "branches": {
+      "type": "object",
+      "description": "Conditional routing for events to specific agents",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Agent ID to route to when this event is emitted"
+          },
+          {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Multiple agent IDs for fan-out (parallel execution)"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "fan_out": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Agent IDs to trigger in parallel"
+              },
+              "fan_in": {
+                "type": "string",
+                "description": "Agent ID to trigger after all fan-out agents complete"
+              },
+              "default": {
+                "type": "string",
+                "description": "Default agent ID if no conditions match"
+              },
+              "conditions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "if": {
+                      "type": "string",
+                      "description": "Event pattern or condition to match"
+                    },
+                    "then": {
+                      "type": "string",
+                      "description": "Agent ID to route to when condition matches"
+                    }
+                  },
+                  "required": ["if", "then"]
+                }
+              },
+              "on_error": {
+                "type": "string",
+                "description": "Agent ID to route to when any fan-out agent fails"
+              },
+              "wait_for": {
+                "type": "string",
+                "enum": ["all", "any", "quorum"],
+                "default": "all",
+                "description": "Fan-in strategy: all complete, any complete, or quorum"
+              },
+              "quorum": {
+                "type": "integer",
+                "description": "Minimum number of agents for quorum (required if wait_for=quorum)"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "routing": {
+      "type": "object",
+      "description": "Advanced routing configuration",
+      "properties": {
+        "default_timeout": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "Default agent timeout in seconds (0 = no timeout)"
+        },
+        "default_retry": {
+          "type": "object",
+          "description": "Default retry configuration for all agents",
+          "properties": {
+            "max_retries": {
+              "type": "integer",
+              "default": 0,
+              "description": "Maximum number of retry attempts"
+            },
+            "backoff": {
+              "type": "string",
+              "enum": ["fixed", "exponential", "linear"],
+              "default": "exponential"
+            },
+            "initial_delay": {
+              "type": "integer",
+              "default": 5
+            },
+            "max_delay": {
+              "type": "integer",
+              "default": 300
+            },
+            "backoff_multiplier": {
+              "type": "number",
+              "default": 2.0
+            }
+          }
+        },
+        "error_handler": {
+          "type": "string",
+          "description": "Default agent ID to handle all errors"
+        },
+        "timeout_agent": {
+          "type": "string",
+          "description": "Agent ID to route to when any agent times out (overrides agent-level on_timeout)"
+        },
+        "timeout_handler": {
+          "type": "string",
+          "description": "Default agent ID to handle all timeouts"
+        }
+      }
+    }
+  }
+}

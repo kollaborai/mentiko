@@ -1,0 +1,43 @@
+name: Auth Coverage Gate
+
+on:
+  pull_request:
+    paths:
+      - "web/app/api/**/route.ts"
+      - "docs/AUTH_COVERAGE.md"
+      - "scripts/check-auth-coverage.mjs"
+      - ".github/workflows/auth-coverage.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "web/app/api/**/route.ts"
+      - "docs/AUTH_COVERAGE.md"
+      - "scripts/check-auth-coverage.mjs"
+      - ".github/workflows/auth-coverage.yml"
+  workflow_dispatch:
+
+jobs:
+  auth-coverage:
+    name: Verify every API route is categorized
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check auth coverage
+        run: node scripts/check-auth-coverage.mjs
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          echo "::error::New API routes landed without a matching entry in docs/AUTH_COVERAGE.md."
+          echo "::error::Run 'node scripts/check-auth-coverage.mjs --report' locally, then add each"
+          echo "::error::route to the correct section (authenticated / public-by-design / unclear / likely bug)."

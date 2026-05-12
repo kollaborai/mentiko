@@ -1,0 +1,148 @@
+#!/bin/bash
+# peer-chain - connect two agent sessions together
+#
+# usage:
+#   peer-chain agent-a agent-b [--profile <id>]
+#
+# each session gets CLAUDE_PEER pointing to the other
+# completion events are forwarded to peer
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MENTIKO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/../lib/config.sh"
+source "$SCRIPT_DIR/../lib/agent-profile.sh"
+
+SESSION_A="${1:-}"
+SESSION_B="${2:-}"
+PROFILE_ID=""
+
+if [[ -z "$SESSION_A" || -z "$SESSION_B" ]]; then
+    echo "  usage: peer-chain agent-a agent-b [--profile <id>]"
+    exit 1
+fi
+
+# parse optional flags after positional args
+shift 2
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) PROFILE_ID="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+NAMESPACE_ID="${NAMESPACE_ID:-default}"
+DATE_SUFFIX=$(date +%Y%m%d-%H%M%S)
+
+# resolve profile: --profile flag > namespace default
+if [[ -z "$PROFILE_ID" ]]; then
+    PROFILE_ID=$(find_default_profile)
+fi
+
+if [[ -z "$PROFILE_ID" ]]; then
+    echo "  error: no agent profile found"
+    echo "  set a default in settings or pass --profile <id>"
+    exit 1
+fi
+
+PROFILE_FILE="$NAMESPACE_ROOT/agent-profiles/${PROFILE_ID}.json"
+if [[ ! -f "$PROFILE_FILE" ]]; then
+    echo "  error: profile '$PROFILE_ID' not found"
+    exit 1
+fi
+
+CLI_CMD=$(build_profile_command "$PROFILE_FILE" --interactive)
+PROFILE_NAME=$(jq -r '.name // .id' "$PROFILE_FILE")
+
+# full session names
+FULL_A="${SESSION_A}-${DATE_SUFFIX}"
+FULL_B="${SESSION_B}-${DATE_SUFFIX}"
+
+# peer hook script
+HOOK_SCRIPT="$NAMESPACE_ROOT/lib/peer-hook.sh"
+mkdir -p "$(dirname "$HOOK_SCRIPT")"
+cat > "$HOOK_SCRIPT" << 'HOOK'
+#!/bin/bash
+# peer-hook.sh - called when agent completes
+# reads from stdin, forwards to peer
+
+PEER="${CLAUDE_PEER:-}"
+if [[ -z "$PEER" ]]; then
+  exit 0
+fi
+
+# read the message from stdin
+MESSAGE=$(cat)
+
+# format with timestamp and sender
+FORMATTED="
+━━━ peer message ━━━
+from: ${CLAUDE_ID:-unknown}
+time: $(date -Iseconds)
+
+${MESSAGE}
+━━━━━━━━━━━━━━━━━━━━━━
+"
+
+# send to peer
+"$BIN_DIR/p" send "$PEER" "$FORMATTED"
+
+# trigger an enter so peer sees it
+sleep 1
+"$BIN_DIR/p" send "$PEER" ""
+HOOK
+
+chmod +x "$HOOK_SCRIPT"
+
+echo "  peer chain setup:"
+echo "    agent-a: $FULL_A"
+echo "    agent-b: $FULL_B"
+echo "    peer:    $FULL_B → $FULL_A → $FULL_B"
+echo ""
+
+# start pty manager if needed
+if ! "$BIN_DIR/p" status >/dev/null 2>&1; then
+  echo "  starting pty-manager daemon..."
+  "$BIN_DIR/p" daemon >/dev/null 2>&1 &
+  sleep 1
+fi
+
+# spawn session A
+echo "  spawning $FULL_A..."
+"$BIN_DIR/p" spawn "$FULL_A" env \
+  CLAUDE_PEER="$FULL_B" \
+  CLAUDE_ID="$FULL_A" \
+  CLAUDE_HOOK="$HOOK_SCRIPT" \
+  CLAUDECODE="" \
+  bash
+
+sleep 1
+
+# spawn session B
+echo "  spawning $FULL_B..."
+"$BIN_DIR/p" spawn "$FULL_B" env \
+  CLAUDE_PEER="$FULL_A" \
+  CLAUDE_ID="$FULL_B" \
+  CLAUDE_HOOK="$HOOK_SCRIPT" \
+  CLAUDECODE="" \
+  bash
+
+# start CLI from agent profile
+sleep 1
+echo "  starting $PROFILE_NAME in sessions..."
+"$BIN_DIR/p" send "$FULL_A" "$CLI_CMD" && sleep 2
+"$BIN_DIR/p" send "$FULL_B" "$CLI_CMD" && sleep 2
+
+echo ""
+echo "  sessions ready:"
+echo "    p attach $FULL_A"
+echo "    p attach $FULL_B"
+echo ""
+echo "  view both:"
+echo "    p capture all 20"
+echo ""
+echo "  send to peer:"
+echo "    export CLAUDE_PEER='$FULL_B'"
+echo "    echo 'hello' | peer-send"
+echo ""

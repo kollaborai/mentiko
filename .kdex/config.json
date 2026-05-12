@@ -1,0 +1,53 @@
+{
+  "version": "0.1.0",
+  "hash_algorithm": "sha256",
+  "ignore_patterns": [
+    "__pycache__/**",
+    "*.pyc",
+    ".git/**",
+    "node_modules/**",
+    ".venv/**",
+    "*.egg-info/**",
+    ".tox/**",
+    ".mypy_cache/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    ".next/**",
+    ".turbo/**",
+    "web/.next/**",
+    "web/node_modules/**",
+    "dist/**",
+    "*.lock",
+    "package-lock.json",
+    "*.map",
+    "*.d.ts",
+    ".kdex/**",
+    "workspace/**",
+    "docs/**",
+    "scripts/**",
+    "__mocks__/**",
+    "web/__mocks__/**",
+    "*.test.*",
+    "*.spec.*",
+    "e2e/**",
+    "web/e2e/**",
+    "tests/**",
+    "*.backup",
+    "*.bak",
+    "web/public/**"
+  ],
+  "article_types": [
+    "component",
+    "pattern",
+    "guide",
+    "concept",
+    "decision"
+  ],
+  "auto_categories": true,
+  "max_linked_files_per_article": 20,
+  "index_format": "table",
+  "llm": {
+    "provider": "command",
+    "command": "zsh -ic 'source ~/.zshrc && glm -p'"
+  }
+}

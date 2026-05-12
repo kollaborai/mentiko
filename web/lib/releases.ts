@@ -1,0 +1,321 @@
+export interface Release {
+  version: string;
+  date: string;
+  title: string;
+  description: string;
+  category: "new" | "fix" | "improvement" | "security";
+  docsHref?: string;
+}
+
+export const releases: Release[] = [
+  // --- v0.3.x (April 2026) ---
+  {
+    version: "v0.3.3",
+    date: "April 25, 2026",
+    title: "Request Consolidation & Rate Limit Fix",
+    description:
+      "Fixed middleware export name so Next.js actually runs it. Shared stores for runs, chains, and agents replace 28+ independent component fetches — dashboard fires one request per data type instead of one per component. Burst limit raised from 20 to 60 req/10s to match real dashboard load.",
+    category: "fix",
+  },
+  {
+    version: "v0.3.2",
+    date: "April 13, 2026",
+    title: "Detail Header Redesign & Inline Chain Editing",
+    description:
+      "All detail panel headers across the app now feature an animated holographic dot pattern on a dark rounded pill. Chain editing opens inline in the detail panel instead of navigating to a separate page. Consistent bold tracking-tighter typography across all detail headers. New reusable DetailHeader component powers the unified style.",
+    category: "improvement",
+  },
+  {
+    version: "v0.3.1",
+    date: "April 13, 2026",
+    title: "Epic Selection & Auto-Run Service",
+    description:
+      "Epics are now selectable in list and overview views. Auto-run background service wired into the worker -- tasks with auto-run enabled execute automatically when dependencies resolve. Concurrency-aware scheduling respects max concurrent runs. Retry limit (3 attempts) prevents infinite loops. Task reconciler runs every 60s to sync completed runs back to task status.",
+    category: "new",
+    docsHref: "/docs/tasks",
+  },
+
+  // --- v0.3.x (March 2026 late) ---
+  {
+    version: "v0.3.0",
+    date: "March 16, 2026",
+    title: "Guided Decision Flow",
+    description:
+      "AI-powered 3-round guided decision wizard. Tradeoff cards, tailored options with match scores, execution plans with task generation. Briefing mode with 5-card carousel. Research summary on start screen.",
+    category: "new",
+    docsHref: "/docs/decisions",
+  },
+  {
+    version: "v0.2.9",
+    date: "March 16, 2026",
+    title: "Smart Run Resume & Reconciliation",
+    description:
+      "Resume failed runs from the point of failure, skipping completed agents. Run reconciler cleans orphaned runs on startup and every 60 seconds. Watchdog checks PTY session alive before status logic. Stop API propagates status to linked tasks.",
+    category: "new",
+    docsHref: "/docs/runs",
+  },
+  {
+    version: "v0.2.8",
+    date: "March 16, 2026",
+    title: "Workspace Auto-Run & Rate Limiting",
+    description:
+      "Tri-state auto-run per workspace (enabled/disabled/inherit). Rate limiting with X-RateLimit-Remaining headers. Notification snooze with duration picker.",
+    category: "new",
+    docsHref: "/docs/workspaces",
+  },
+  {
+    version: "v0.2.7",
+    date: "March 16, 2026",
+    title: "Documentation Expansion",
+    description:
+      "14 new docs pages covering schedules, events, webhooks, email, tasks, decisions, conversations, notifications, artifacts, generation, activity, metrics, workspaces, and security. Help links wired throughout the UI.",
+    category: "improvement",
+    docsHref: "/docs",
+  },
+
+  // --- v0.2.x (March 2026 mid) ---
+  {
+    version: "v0.2.6",
+    date: "March 15, 2026",
+    title: "Schedules System",
+    description:
+      "Full CRUD schedule management with a standalone background worker daemon. Circuit breaker with auto-pause. Multi-step create dialog with chain and workspace pickers. Inline run history panel. Workspace validation and retry logic.",
+    category: "new",
+    docsHref: "/docs/schedules",
+  },
+  {
+    version: "v0.2.5",
+    date: "March 15, 2026",
+    title: "UI Consistency Pass",
+    description:
+      "All pages migrated to unified header and sidebar components. Navigation patterns standardized across workflows, events, webhooks, and tasks. Consistent icon system across the entire UI.",
+    category: "improvement",
+    docsHref: "/docs/ui-library",
+  },
+  {
+    version: "v0.2.4",
+    date: "March 13, 2026",
+    title: "Marketplace Redesign",
+    description:
+      "Marketplace rebuilt with shared card components. Tabbed chain detail page with read-only mode. Agent catalog with inline extractor and 30 artifact templates. Chain generation with post-processor pipeline.",
+    category: "improvement",
+  },
+  {
+    version: "v0.2.3",
+    date: "March 13, 2026",
+    title: "Org Switcher & CI/CD Pipeline",
+    description:
+      "Multi-org sidebar switcher. Org creation auto-provisions namespace filesystem. SSH key management UI. Linux user isolation on signup. CI/CD pipeline trigger support.",
+    category: "new",
+  },
+  {
+    version: "v0.2.2",
+    date: "March 13, 2026",
+    title: "Pill Navigation",
+    description:
+      "Redesigned navigation with pill-style tabs. Settings click-nav. Shine border effect. Dot grid background. Workflow children properly nested.",
+    category: "improvement",
+  },
+  {
+    version: "v0.2.1",
+    date: "March 12, 2026",
+    title: "Dashboard & Secrets Redesign",
+    description:
+      "Dashboard rebuilt with modular grid layout. Agent profiles reference secrets via {secret:NAME} syntax. Credentials masked in env vars. Secret picker in agent config credentials. Decision review workspace refined.",
+    category: "improvement",
+  },
+  {
+    version: "v0.2.0",
+    date: "March 11, 2026",
+    title: "AI Decisions & Data Hierarchy",
+    description:
+      "AI-powered decision dashboard with research, options, recommendation, and approval flow. 4-tier data hierarchy (namespace > org > project) with backward-compatible path collapse. Async job runner for all AI operations. Comprehensive API documentation.",
+    category: "new",
+    docsHref: "/docs/decisions",
+  },
+
+  // --- v0.1.x (Late Feb - Early Mar 2026) ---
+  {
+    version: "v0.1.9",
+    date: "March 10, 2026",
+    title: "Marketplace Restructure",
+    description:
+      "Marketplace separated into agents, chains, templates, and artifacts. Install buttons replace Use buttons. Builtin agents removed from loading path. Full-width marketplace pages. Auth table migration with better-auth getMigrations.",
+    category: "improvement",
+  },
+  {
+    version: "v0.1.8",
+    date: "March 9, 2026",
+    title: "Settings Overhaul & Terminal Improvements",
+    description:
+      "Settings redesign with 15 sub-pages. Loop detection for chain execution. Floating terminal panel with drag, resize, and localStorage persistence. PTY sessions viewer. Task generation with real-time streaming output.",
+    category: "improvement",
+  },
+  {
+    version: "v0.1.7",
+    date: "March 8, 2026",
+    title: "Secrets Vault & Developer Tools",
+    description:
+      "AES-256-GCM encrypted secrets system. Generation and artifact templates consolidated at /templates. HMAC webhook secrets encrypted at rest. Plugin system with Linear GraphQL integration. Data export with configurable retention.",
+    category: "new",
+    docsHref: "/docs/security",
+  },
+  {
+    version: "v0.1.6",
+    date: "March 7, 2026",
+    title: "Webhooks, Events & Plugins",
+    description:
+      "Inbound webhook support for external chain triggers. 10 expanded event types with test fire. Event registry with platform event catalog. Plugin architecture with chain-stopped dispatch. Task provider abstraction (native/Linear/Notion/Jira).",
+    category: "new",
+    docsHref: "/docs/webhooks",
+  },
+  {
+    version: "v0.1.5",
+    date: "March 6, 2026",
+    title: "Orchestration Hardening",
+    description:
+      "Token tracking with per-agent usage and cost pricing. Compute cost tracking with VPS uptime billing. Agent heartbeat and stale detection. Agent activity capture (git diffs, file changes, conversations). Human-in-the-loop approval gates.",
+    category: "new",
+    docsHref: "/docs/runs",
+  },
+  {
+    version: "v0.1.4",
+    date: "March 5, 2026",
+    title: "Email Infrastructure",
+    description:
+      "Full email system: inbound routing, outbound SMTP, inbox management, bounce handling, suppression lists, sender reputation, unsubscribe. 200+ email tests. GDPR account deletion. Password reset flow. Terms of service and privacy policy pages.",
+    category: "new",
+    docsHref: "/docs/email",
+  },
+  {
+    version: "v0.1.3",
+    date: "March 4, 2026",
+    title: "Stripe Billing & Monitoring",
+    description:
+      "Stripe billing portal with subscription management and webhook handler. Session management with device detection and revoke. Health checks (DB, disk, memory). Sentry error monitoring. SEO (robots, sitemap, OG metadata). Error pages (404/500).",
+    category: "new",
+  },
+  {
+    version: "v0.1.2",
+    date: "March 3, 2026",
+    title: "Authentication & Multi-Tenant",
+    description:
+      "Better-auth integration with multi-tenant provisioning. Docker deployment with Compose and Caddy reverse proxy. Rebrand to Mentiko. Admin RBAC with is_admin flag. Invite system. Swappable infrastructure providers per tenant.",
+    category: "new",
+    docsHref: "/docs/security",
+  },
+  {
+    version: "v0.1.1",
+    date: "March 1, 2026",
+    title: "PTY Manager & File Editor",
+    description:
+      "PTY manager daemon replacing tmux for session isolation. File editor with Monaco and split panes. Workspace-wide file search (cmd+shift+f). Security hardening with shell escape and rate limiting. Session replay.",
+    category: "new",
+    docsHref: "/docs/workspaces",
+  },
+  {
+    version: "v0.1.0",
+    date: "February 28, 2026",
+    title: "Workspaces & Agent Profiles",
+    description:
+      "Workspace system with project switching and scoped pages. Workspace-scoped tasks and schedules. Agent profiles with logging and workspace defaults. Task-to-chain lifecycle. Watchdog daemon for stalled run detection. Notification system.",
+    category: "new",
+    docsHref: "/docs/workspaces",
+  },
+
+  // --- v0.0.x (Feb 2026) ---
+  {
+    version: "v0.0.9",
+    date: "February 27, 2026",
+    title: "Organizations & RBAC",
+    description:
+      "Organizations with role-based access control (owner/admin/member/guest). Agent registry page and API. Webhook system with GitHub integration. Standalone agent data model with LLM generation and skill import. Agent marketplace with ratings.",
+    category: "new",
+  },
+  {
+    version: "v0.0.8",
+    date: "February 27, 2026",
+    title: "Native Task Integration",
+    description:
+      "Task tracking integration with chain API improvements. Animated dropdown navbar. Task tree with drag-and-drop and show/hide closed toggle. Chain view for task dependencies. Cron scheduler with skip-if-active.",
+    category: "new",
+    docsHref: "/docs/tasks",
+  },
+  {
+    version: "v0.0.7",
+    date: "February 26, 2026",
+    title: "Config Profiles & Settings",
+    description:
+      "Named config profiles (execution, model, workspace, retry, gateway). Profile editor and selector components. Bash resolver for config profiles. Settings page with profiles tab integration into chain editor.",
+    category: "new",
+    docsHref: "/docs/config-profiles",
+  },
+  {
+    version: "v0.0.6",
+    date: "February 26, 2026",
+    title: "Design System",
+    description:
+      "Flat, borderless design system with custom theme tokens. Dark mode with system toggle. Inter + JetBrains Mono fonts. Security audit with 60 issues fixed. Docs site with 8 initial pages.",
+    category: "improvement",
+    docsHref: "/docs/ui-library",
+  },
+  {
+    version: "v0.0.5",
+    date: "February 26, 2026",
+    title: "Run System & Conversation Viewer",
+    description:
+      "Run pages with history and run-id filtering. Conversation viewer sorted by most recent activity. Session composer replacing basic chat composer. Run comparison feature. 285 unit tests passing.",
+    category: "new",
+    docsHref: "/docs/runs",
+  },
+  {
+    version: "v0.0.4",
+    date: "February 25, 2026",
+    title: "Real-Time & Debugging",
+    description:
+      "WebSocket real-time updates. Debug system with breakpoints, state inspector, and console. SSE event stream. Templates and multi-chain support. Chain profiling and validation. Event log with status badges.",
+    category: "new",
+  },
+  {
+    version: "v0.0.3",
+    date: "February 25, 2026",
+    title: "Visual Editor & Parallel Agents",
+    description:
+      "Visual chain editor with drag-and-drop nodes. Chain import/export functionality. Remote workspace support (SSH, Docker). Parallel agents with conditional branching. Fork/join visualization for parallel branches. Run object system with webhooks.",
+    category: "new",
+    docsHref: "/docs/chains",
+  },
+  {
+    version: "v0.0.2",
+    date: "February 25, 2026",
+    title: "Multi-Gateway & Multi-Tenancy",
+    description:
+      "Multi-gateway support for different AI providers. Multi-tenancy with namespace isolation. Chain generator end-to-end pipeline. List-detail layouts with goal tab and agent introspection. Live status indicators.",
+    category: "new",
+  },
+  {
+    version: "v0.0.1",
+    date: "February 24, 2026",
+    title: "Foundation",
+    description:
+      "Event-driven AI agent orchestration with terminal session isolation. JSON chain runner with parameterized execution. AI chain generator. Web UI with conversation viewer. Dark mode. Flat borderless design.",
+    category: "new",
+    docsHref: "/docs/getting-started",
+  },
+];
+
+export const LATEST_VERSION = releases[0].version;
+export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
+
+export function getUnseenCount(): number {
+  if (typeof window === "undefined") return 0;
+  const lastSeen = localStorage.getItem(UPDATES_STORAGE_KEY);
+  if (!lastSeen) return releases.length;
+  const idx = releases.findIndex((r) => r.version === lastSeen);
+  return idx === -1 ? releases.length : idx;
+}
+
+export function markUpdatesRead(): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(UPDATES_STORAGE_KEY, LATEST_VERSION);
+}

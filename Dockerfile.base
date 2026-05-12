@@ -1,0 +1,377 @@
+# Dockerfile.base - mentiko base image (tools layer, public)
+#
+# the developer toolkit. everything a dev or AI agent needs pre-installed.
+# node, python, bun, uv, AI CLIs, git tools, terminal tools, the works.
+# rebuild only when tools change (monthly or less via scheduled CI).
+#
+# CONSUMERS:
+#   - this repo's Dockerfile         (FROM ...base:<sha>) -- public self-host image
+#   - mentiko-control-plane          (FROM ...base:<sha>) -- private tenant image
+#
+# both consumers get the EXACT same tool layer => self-host == tenant.
+#
+# DESIGN RULES:
+#   - this image contains NO runtime config (no USER, CMD, ENTRYPOINT,
+#     EXPOSE, HEALTHCHECK, VOLUME, or runtime ENV). consumers set those.
+#   - multi-arch: amd64 + arm64. all download URLs branch on $TARGETARCH.
+#   - mentiko user is created EARLY so subsequent layers can chown.
+#   - skel files are baked at /opt/mentiko/skel/ AND copied into
+#     /home/mentiko at build time. consumers that bind-mount /home get
+#     the skel; consumers that don't still have a configured shell.
+#   - system-wide PATH writes (/etc/profile.d, /etc/bash.bashrc,
+#     /etc/environment) guarantee PATH works even when bind mounts
+#     hide /home/mentiko.
+#
+# BUILD (typically via .github/workflows/build-base.yml, native per arch):
+#   docker buildx build --platform linux/amd64 -f Dockerfile.base -t mentiko-base:test .
+#   docker buildx build --platform linux/arm64 -f Dockerfile.base -t mentiko-base:test .
+#
+# PUBLISHED AS:
+#   ghcr.io/kollaborai/mentiko-base:<commit-sha>   (fat manifest, multi-arch)
+#   ghcr.io/kollaborai/mentiko-base:latest          (fat manifest, multi-arch)
+
+FROM node:22-slim
+
+ARG TARGETARCH
+
+# ---------------------------------------------------------------------------
+# 1. mentiko user (UID 1001) - created early so chown works throughout
+# ---------------------------------------------------------------------------
+
+RUN echo "=== creating mentiko user (uid 1001) ===" && \
+    groupadd -g 1001 mentiko && \
+    useradd -u 1001 -g mentiko -m -d /home/mentiko -s /bin/zsh mentiko
+
+# ---------------------------------------------------------------------------
+# 2. system packages (apt)
+# ---------------------------------------------------------------------------
+
+RUN echo "=== system packages ===" && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    # shells
+    zsh \
+    bash \
+    tmux \
+    bubblewrap \
+    # languages + build tools
+    python3 \
+    python3-pip \
+    python3-venv \
+    pipx \
+    make \
+    gcc \
+    g++ \
+    # core utils
+    git \
+    sqlite3 \
+    curl \
+    wget \
+    jq \
+    unzip \
+    procps \
+    tini \
+    ca-certificates \
+    less \
+    man-db \
+    openssh-client \
+    rsync \
+    # modern unix replacements
+    ripgrep \
+    fd-find \
+    fzf \
+    bat \
+    # editors + viewers
+    vim \
+    neovim \
+    # monitoring
+    htop \
+    tree \
+    # shell linting
+    shellcheck \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+    && ln -sf /usr/bin/batcat /usr/local/bin/bat
+
+# ---------------------------------------------------------------------------
+# 3. directory structure
+# ---------------------------------------------------------------------------
+
+RUN echo "=== directory structure ===" && \
+    mkdir -p /opt/mentiko/bin /opt/mentiko/skel \
+             /opt/pipx \
+             /app/data \
+             /app/namespaces \
+             /home/mentiko/.pty-manager && \
+    chown -R mentiko:mentiko /opt/mentiko /app /opt/pipx /home/mentiko/.pty-manager
+
+ENV PIPX_HOME=/opt/pipx
+ENV PIPX_BIN_DIR=/usr/local/bin
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+
+# ---------------------------------------------------------------------------
+# 4. system-wide PATH writes (mount-safe layer)
+# works even when bind mounts hide /home/mentiko and .bashrc/.zshrc
+# haven't been seeded yet.
+# ---------------------------------------------------------------------------
+
+RUN echo 'export PATH="/opt/mentiko/bin:/usr/local/bin:$PATH"' > /etc/profile.d/mentiko.sh && \
+    chmod +x /etc/profile.d/mentiko.sh && \
+    echo 'export PATH="/opt/mentiko/bin:/usr/local/bin:$PATH"' >> /etc/bash.bashrc && \
+    echo 'PATH="/opt/mentiko/bin:/usr/local/bin:$PATH"' >> /etc/environment
+
+# ---------------------------------------------------------------------------
+# 5. REQUIRED tools (build MUST fail if these fail)
+# ---------------------------------------------------------------------------
+
+RUN echo "=== pty-mgr (required) ===" && \
+    ARCH_SUFFIX=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
+    PTY_MGR_TAG=$(curl -fsSL "https://api.github.com/repos/kollaborai/pty-mgr/releases/latest" \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4) && \
+    echo "installing pty-mgr ${PTY_MGR_TAG} (linux-${ARCH_SUFFIX})..." && \
+    curl -fsSL "https://github.com/kollaborai/pty-mgr/releases/download/${PTY_MGR_TAG}/pty-mgr-linux-${ARCH_SUFFIX}" \
+      -o /usr/local/bin/pty-mgr && \
+    chmod +x /usr/local/bin/pty-mgr
+
+# ---------------------------------------------------------------------------
+# 6. IMPORTANT tools (build fails if these fail)
+# ---------------------------------------------------------------------------
+
+RUN echo "=== bun ===" && \
+    curl -fsSL https://bun.sh/install | bash && \
+    ln -s /root/.bun/bin/bun /usr/local/bin/bun && \
+    ln -s /root/.bun/bin/bunx /usr/local/bin/bunx
+
+RUN echo "=== uv ===" && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -s /root/.local/bin/uv /usr/local/bin/uv && \
+    ln -s /root/.local/bin/uvx /usr/local/bin/uvx
+
+RUN echo "=== rclone ===" && \
+    curl -s https://rclone.org/install.sh | bash
+
+RUN echo "=== gh ===" && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y gh && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 7. DEV tools (non-fatal warn-and-continue) - all multi-arch
+# ---------------------------------------------------------------------------
+
+RUN echo "=== lazygit ===" && \
+    LAZYGIT_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") && \
+    LAZYGIT_VERSION=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_${LAZYGIT_ARCH}.tar.gz" \
+      | tar xz -C /usr/local/bin lazygit \
+    || echo "WARNING: lazygit install failed, skipping"
+
+RUN echo "=== delta ===" && \
+    DELTA_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || echo "x86_64-unknown-linux-musl") && \
+    DELTA_VERSION=$(curl -fsSL https://api.github.com/repos/dandavison/delta/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4) && \
+    curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/delta-${DELTA_VERSION}-${DELTA_TRIPLE}.tar.gz" \
+      | tar xz --strip-components=1 -C /usr/local/bin "delta-${DELTA_VERSION}-${DELTA_TRIPLE}/delta" \
+    || echo "WARNING: delta install failed, skipping"
+
+RUN echo "=== eza ===" && \
+    EZA_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || echo "x86_64-unknown-linux-musl") && \
+    EZA_VERSION=$(curl -fsSL https://api.github.com/repos/eza-community/eza/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/eza-community/eza/releases/download/v${EZA_VERSION}/eza_${EZA_TRIPLE}.tar.gz" \
+      | tar xz -C /usr/local/bin \
+    || echo "WARNING: eza install failed, skipping"
+
+RUN echo "=== zoxide ===" && \
+    curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh \
+      | bash -s -- --bin-dir /usr/local/bin --man-dir /usr/local/share/man \
+    || echo "WARNING: zoxide install failed, skipping"
+
+RUN echo "=== starship ===" && \
+    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes \
+    || echo "WARNING: starship install failed, skipping"
+
+RUN echo "=== dust ===" && \
+    DUST_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-musl" || echo "x86_64-unknown-linux-musl") && \
+    DUST_VERSION=$(curl -fsSL https://api.github.com/repos/bootandy/dust/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/bootandy/dust/releases/download/v${DUST_VERSION}/dust-v${DUST_VERSION}-${DUST_TRIPLE}.tar.gz" \
+      | tar xz --strip-components=1 -C /usr/local/bin "dust-v${DUST_VERSION}-${DUST_TRIPLE}/dust" \
+    || echo "WARNING: dust install failed, skipping"
+
+RUN echo "=== hyperfine ===" && \
+    HYPERFINE_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || echo "x86_64-unknown-linux-musl") && \
+    HYPERFINE_VERSION=$(curl -fsSL https://api.github.com/repos/sharkdp/hyperfine/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine-v${HYPERFINE_VERSION}-${HYPERFINE_TRIPLE}.tar.gz" \
+      | tar xz --strip-components=1 -C /usr/local/bin "hyperfine-v${HYPERFINE_VERSION}-${HYPERFINE_TRIPLE}/hyperfine" \
+    || echo "WARNING: hyperfine install failed, skipping"
+
+RUN echo "=== watchexec ===" && \
+    WATCHEXEC_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || echo "x86_64-unknown-linux-musl") && \
+    WATCHEXEC_VERSION=$(curl -fsSL https://api.github.com/repos/watchexec/watchexec/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${WATCHEXEC_TRIPLE}.tar.xz" \
+      | tar xJ --strip-components=1 -C /usr/local/bin "watchexec-${WATCHEXEC_VERSION}-${WATCHEXEC_TRIPLE}/watchexec" \
+    || echo "WARNING: watchexec install failed, skipping"
+
+RUN echo "=== xh ===" && \
+    XH_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-musl" || echo "x86_64-unknown-linux-musl") && \
+    XH_VERSION=$(curl -fsSL https://api.github.com/repos/ducaale/xh/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/ducaale/xh/releases/download/v${XH_VERSION}/xh-v${XH_VERSION}-${XH_TRIPLE}.tar.gz" \
+      | tar xz --strip-components=1 -C /usr/local/bin "xh-v${XH_VERSION}-${XH_TRIPLE}/xh" \
+    || echo "WARNING: xh install failed, skipping"
+
+RUN echo "=== jless ===" && \
+    JLESS_TRIPLE=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64-unknown-linux-gnu" || echo "x86_64-unknown-linux-gnu") && \
+    JLESS_VERSION=$(curl -fsSL https://api.github.com/repos/PaulJuliworths/jless/releases/latest 2>/dev/null \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//' || echo "") && \
+    if [ -n "$JLESS_VERSION" ]; then \
+      curl -fsSL "https://github.com/PaulJuliworths/jless/releases/download/v${JLESS_VERSION}/jless-v${JLESS_VERSION}-${JLESS_TRIPLE}.zip" \
+        -o /tmp/jless.zip && unzip -o /tmp/jless.zip -d /usr/local/bin && rm /tmp/jless.zip && chmod +x /usr/local/bin/jless; \
+    else echo "WARNING: jless install failed, skipping"; fi
+
+RUN echo "=== yq ===" && \
+    YQ_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    YQ_VERSION=$(curl -fsSL https://api.github.com/repos/mikefarah/yq/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4) && \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${YQ_ARCH}" \
+      -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq \
+    || echo "WARNING: yq install failed, skipping"
+
+RUN echo "=== direnv ===" && \
+    DIRENV_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    DIRENV_VERSION=$(curl -fsSL https://api.github.com/repos/direnv/direnv/releases/latest \
+      | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/v//') && \
+    curl -fsSL "https://github.com/direnv/direnv/releases/download/v${DIRENV_VERSION}/direnv.linux-${DIRENV_ARCH}" \
+      -o /usr/local/bin/direnv && chmod +x /usr/local/bin/direnv \
+    || echo "WARNING: direnv install failed, skipping"
+
+# ---------------------------------------------------------------------------
+# 8. global npm tools
+# ---------------------------------------------------------------------------
+
+RUN echo "=== npm dev tools ===" && \
+    { npm install -g @ast-grep/cli || echo "WARNING: ast-grep install failed, skipping"; } && \
+    { npm install -g @biomejs/biome || echo "WARNING: biome install failed, skipping"; }
+
+# AI CLI tools (non-fatal: some may fail on first release or network issues)
+# Claude Code 2.1.128 crashes in Podman tenant auth login with a Bun segfault.
+# Keep this pinned until a future upgrade passes the tenant Podman auth smoke.
+ARG CLAUDE_CODE_VERSION=2.1.129
+RUN echo "=== claude-code (pinned ${CLAUDE_CODE_VERSION}) ===" && \
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    || echo "WARNING: @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} install failed, skipping"
+
+RUN echo "=== AI CLI tools ===" && \
+    for pkg in \
+      @google/gemini-cli \
+      @openai/codex \
+      opencode-ai; do \
+    npm install -g "$pkg" || echo "WARNING: $pkg install failed, skipping"; \
+    done
+
+# ---------------------------------------------------------------------------
+# 9. python tools (uv for kollab, pipx for aider)
+# ---------------------------------------------------------------------------
+
+RUN echo "=== uv venv: kollab + kollabor-engine ===" && \
+    uv venv --seed --python 3.12 /opt/pipx/venvs/kollab && \
+    /opt/pipx/venvs/kollab/bin/python -m pip install --no-cache-dir kollab kollabor-engine && \
+    ln -sf /opt/pipx/venvs/kollab/bin/kollab /usr/local/bin/kollab \
+    || echo "WARNING: kollab install failed, skipping"
+
+RUN echo "=== pipx: aider-chat ===" && \
+    pipx install aider-chat \
+    || echo "WARNING: aider-chat install failed, skipping"
+
+# ---------------------------------------------------------------------------
+# 10. zsh configuration (oh-my-zsh + plugins + starship)
+# (native runtime deps — ws, @xterm/headless, better-sqlite3 — are installed
+# by the consumer Dockerfile AFTER its COPY, because next.js standalone
+# output may bundle some of them and would overwrite a base install.)
+# ---------------------------------------------------------------------------
+
+RUN echo "=== zsh config ===" && \
+    su - mentiko -s /bin/bash -c ' \
+    curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | sh -s -- --unattended && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting \
+    ' || echo "WARNING: zsh config failed (non-fatal)"
+
+# ---------------------------------------------------------------------------
+# 11. shell config skel + copy into /home/mentiko at build
+# skel survives bind-mounted /home; baked-in /home/mentiko works without mount.
+# uses printf to avoid Docker BuildKit heredoc parsing issues
+# ---------------------------------------------------------------------------
+
+RUN echo "=== shell config skel ===" && \
+    printf '%s\n' \
+      '# tenant VPS: Quadlet ReadOnly=true — /usr/local is RO; user-global npm lives on mounted $HOME' \
+      'export NPM_CONFIG_PREFIX="${HOME}/.local"' \
+      'mkdir -p "${NPM_CONFIG_PREFIX}/bin"' \
+      'export PATH="${HOME}/.local/bin:/opt/mentiko/bin:/usr/local/bin:$PATH"' \
+      'export ZSH="$HOME/.oh-my-zsh"' \
+      'plugins=(git)' \
+      '[ -d "${ZSH_CUSTOM:-$ZSH/custom}/plugins/zsh-autosuggestions" ] && plugins+=(zsh-autosuggestions)' \
+      '[ -d "${ZSH_CUSTOM:-$ZSH/custom}/plugins/zsh-syntax-highlighting" ] && plugins+=(zsh-syntax-highlighting)' \
+      'command -v direnv >/dev/null 2>&1 && plugins+=(direnv)' \
+      'command -v fzf >/dev/null 2>&1 && [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ] && plugins+=(fzf)' \
+      '[ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"' \
+      'command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"' \
+      'command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"' \
+      'alias ls="eza"' \
+      'alias ll="eza -la --git"' \
+      'alias lt="eza -T --git-ignore"' \
+      'alias cat="bat --paging=never"' \
+      'alias diff="delta"' \
+      'alias du="dust"' \
+      'alias top="htop"' \
+      'alias http="xh"' \
+      > /opt/mentiko/skel/.zshrc && \
+    printf '%s\n' \
+      '# tenant VPS: Quadlet ReadOnly=true — /usr/local is RO; user-global npm lives on mounted $HOME' \
+      'export NPM_CONFIG_PREFIX="${HOME}/.local"' \
+      'mkdir -p "${NPM_CONFIG_PREFIX}/bin"' \
+      'export PATH="${HOME}/.local/bin:/opt/mentiko/bin:/usr/local/bin:$PATH"' \
+      'command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"' \
+      'command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init bash)"' \
+      'command -v direnv >/dev/null 2>&1 && eval "$(direnv hook bash)"' \
+      'alias ls="eza"' \
+      'alias ll="eza -la --git"' \
+      'alias cat="bat --paging=never"' \
+      > /opt/mentiko/skel/.bashrc && \
+    echo '[ -f ~/.bashrc ] && source ~/.bashrc' > /opt/mentiko/skel/.bash_profile && \
+    echo '[ -f ~/.zshrc ] && source ~/.zshrc' > /opt/mentiko/skel/.zprofile && \
+    printf '%s\n' \
+      '[core]' \
+      '    pager = delta' \
+      '[interactive]' \
+      '    diffFilter = delta --color-only' \
+      '[delta]' \
+      '    navigate = true' \
+      '    side-by-side = true' \
+      '    line-numbers = true' \
+      '[merge]' \
+      '    conflictstyle = diff3' \
+      '[diff]' \
+      '    colorMoved = default' \
+      > /opt/mentiko/skel/.gitconfig && \
+    chown -R mentiko:mentiko /opt/mentiko/skel && \
+    cp /opt/mentiko/skel/.zshrc /home/mentiko/.zshrc && \
+    cp /opt/mentiko/skel/.bashrc /home/mentiko/.bashrc && \
+    cp /opt/mentiko/skel/.bash_profile /home/mentiko/.bash_profile && \
+    cp /opt/mentiko/skel/.zprofile /home/mentiko/.zprofile && \
+    cp /opt/mentiko/skel/.gitconfig /home/mentiko/.gitconfig && \
+    chown mentiko:mentiko /home/mentiko/.zshrc /home/mentiko/.bashrc \
+                         /home/mentiko/.bash_profile /home/mentiko/.zprofile \
+                         /home/mentiko/.gitconfig
+
+WORKDIR /opt/mentiko
+
+# no USER, CMD, ENTRYPOINT, EXPOSE, HEALTHCHECK, VOLUME, or runtime ENV.
+# consumers (Dockerfile, control-plane Dockerfile.tenant) set those.

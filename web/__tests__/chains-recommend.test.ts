@@ -1,0 +1,138 @@
+/**
+ * @jest-environment node
+ *
+ * Tests for POST /api/chains/recommend
+ * - profile catalog injection into generation prompt
+ * - direct workspacePath param
+ */
+
+import { POST } from "@/app/api/chains/recommend/route";
+
+// ---- mocks ----------------------------------------------------------------
+
+const mockCheckAuth = jest.fn().mockResolvedValue(true);
+jest.mock("@/lib/api-auth", () => ({
+  checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
+}));
+
+const mockGetNamespaceId = jest.fn().mockReturnValue("default");
+const mockGetOrgId = jest.fn().mockReturnValue("default");
+jest.mock("@/lib/namespace-config", () => ({
+  getNamespaceIdFromRequest: (...args: unknown[]) => mockGetNamespaceId(...args),
+  getOrgIdFromRequest: (...args: unknown[]) => mockGetOrgId(...args),
+}));
+
+const mockSessionUser = jest.fn().mockReturnValue({ id: "user-1" });
+jest.mock("@/lib/auth-bridge", () => ({
+  getSessionUser: (...args: unknown[]) => mockSessionUser(...args),
+}));
+
+jest.mock("@/lib/schema-loader", () => ({
+  getChainSchema: () => '{"type": "object"}',
+}));
+
+const mockTemplate = { content: "USER: {{USER_PROMPT}}\nAGENTS: {{AGENT_CATALOG}}\nPROFILES: {{PROFILE_CATALOG}}\nWS: {{WORKSPACE_CONTEXT}}" };
+jest.mock("@/lib/generation-template-storage", () => ({
+  getTemplate: () => mockTemplate,
+}));
+
+jest.mock("@/lib/template-resolver", () => ({
+  resolveTemplate: (_t: string, vars: Record<string, string>) => {
+    let result = _t;
+    for (const [k, v] of Object.entries(vars)) {
+      result = result.replace(`{{${k}}}`, v || "");
+    }
+    return result;
+  },
+}));
+
+const mockCreateJob = jest.fn().mockReturnValue({ id: "job-123", status: "running" });
+const mockDeleteJob = jest.fn().mockReturnValue(true);
+jest.mock("@/lib/job-store", () => ({
+  createJob: (...args: unknown[]) => mockCreateJob(...args),
+  deleteJob: (...args: unknown[]) => mockDeleteJob(...args),
+}));
+
+jest.mock("@/lib/job-runner-launch", () => ({
+  launchJobRunner: jest.fn(),
+}));
+
+const mockAgentCatalog = "AGENT_CATALOG_DATA";
+jest.mock("@/lib/agent-catalog", () => ({
+  buildAgentCatalog: () => mockAgentCatalog,
+}));
+
+const mockProfileCatalog = "PROFILE_CATALOG_DATA";
+jest.mock("@/lib/profile-catalog", () => ({
+  buildProfileCatalog: () => mockProfileCatalog,
+}));
+
+const mockResolveWorkspace = jest.fn().mockReturnValue("/ws/path");
+jest.mock("@/lib/workspace-auth", () => ({
+  resolveAuthorizedWorkspacePath: (...args: unknown[]) => mockResolveWorkspace(...args),
+}));
+
+jest.mock("@/lib/api-response", () => ({
+  withErrorHandling: (fn: Function) => fn,
+  apiSuccess: (data: unknown) => ({ json: () => data, status: 200 }),
+}));
+
+jest.mock("@/lib/api-errors", () => ({
+  BadRequest: class extends Error { constructor(m: string) { super(m); } },
+  Unauthorized: class extends Error { constructor() { super(); } },
+  NotFound: class extends Error { constructor(m: string) { super(m); } },
+  InternalServerError: class extends Error { constructor(m: string) { super(m); } },
+}));
+
+jest.mock("@/lib/task-store", () => ({
+  taskGet: jest.fn().mockReturnValue(null),
+  taskUpdate: jest.fn(),
+}));
+
+// ---- tests ----------------------------------------------------------------
+
+function makeRequest(body: Record<string, unknown>) {
+  return {
+    json: () => Promise.resolve(body),
+    nextUrl: { origin: "http://localhost:3000" },
+  } as unknown as Parameters<typeof POST>[0];
+}
+
+describe("POST /api/chains/recommend", () => {
+  beforeEach(() => {
+    mockCreateJob.mockClear();
+  });
+
+  it("injects profile catalog into generation prompt", async () => {
+    await POST(makeRequest({ prompt: "build me a chain" }));
+
+    const jobArg = mockCreateJob.mock.calls[0][1] as { prompt: string };
+    expect(jobArg.prompt).toContain("PROFILE_CATALOG_DATA");
+    expect(jobArg.prompt).toContain("AGENT_CATALOG_DATA");
+  });
+
+  it("accepts direct workspacePath param", async () => {
+    await POST(makeRequest({ prompt: "build me a chain", workspacePath: "/my/workspace" }));
+
+    expect(mockResolveWorkspace).toHaveBeenCalledWith(
+      "default", "default", "/my/workspace", "user-1"
+    );
+  });
+
+  it("requires prompt", async () => {
+    await expect(POST(makeRequest({}))).rejects.toThrow("prompt is required");
+  });
+
+  it("creates job with type generate", async () => {
+    await POST(makeRequest({ prompt: "build me a chain" }));
+
+    expect(mockCreateJob).toHaveBeenCalledWith(
+      "generate",
+      expect.anything(),
+      undefined,
+      undefined,
+      "user-1",
+      "default",
+    );
+  });
+});

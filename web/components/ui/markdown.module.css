@@ -1,0 +1,352 @@
+/* web/components/ui/markdown.module.css */
+
+.root {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.compact {
+  font-size: 12px;
+}
+
+/* ── headings ── */
+
+.root h1 {
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 24px;
+  font-weight: 900;
+  margin: 24px 0 10px 0;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.root h1:first-child {
+  margin-top: 0;
+}
+
+.compact h1 {
+  font-size: 18px;
+  margin: 16px 0 6px 0;
+}
+
+.root h2 {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 18px;
+  font-weight: 800;
+  margin: 20px 0 8px 0;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.compact h2 {
+  font-size: 15px;
+  margin: 12px 0 4px 0;
+}
+
+.root h3 {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 15px;
+  font-weight: 700;
+  margin: 16px 0 6px 0;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.compact h3 {
+  font-size: 13px;
+  margin: 10px 0 4px 0;
+}
+
+.root h4,
+.root h5,
+.root h6 {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 20px 0 6px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.compact h4,
+.compact h5,
+.compact h6 {
+  font-size: 12px;
+  margin: 10px 0 4px 0;
+}
+
+/* ── paragraphs ── */
+
+.root p {
+  margin: 0 0 8px 0;
+}
+
+.compact p {
+  margin: 0 0 4px 0;
+}
+
+.root p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── inline ── */
+
+.root strong {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+.root em {
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.root code:not(pre code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* ── links ── */
+
+.root a {
+  color: rgba(200, 200, 200, 0.9);
+  text-decoration: none;
+  box-shadow: 0 1px 0 0 rgba(200, 200, 200, 0.3);
+  transition: all 0.15s ease;
+}
+
+.root a:hover {
+  color: rgba(200, 200, 200, 1);
+  box-shadow: 0 1px 0 0 rgba(200, 200, 200, 0.6);
+}
+
+/* ── code blocks ── */
+
+.codeBlock {
+  margin: 16px 0;
+  border-radius: 8px;
+  background: #0a0a0a;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.compact .codeBlock {
+  margin: 8px 0;
+  border-radius: 6px;
+}
+
+.codeLang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.25);
+  padding: 8px 14px 0;
+}
+
+.codeBlock pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.codeBlock code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(200, 200, 208, 0.9);
+}
+
+/* ── lists ── */
+
+.root ul,
+.root ol {
+  margin: 8px 0 14px 0;
+  padding-left: 24px;
+}
+
+.compact ul,
+.compact ol {
+  margin: 4px 0 8px 0;
+  padding-left: 20px;
+}
+
+.root ul {
+  list-style: disc;
+}
+
+.root ol {
+  list-style: decimal;
+}
+
+.root li {
+  margin: 4px 0;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.compact li {
+  margin: 2px 0;
+}
+
+.root li::marker {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* ── task lists (gfm) ── */
+
+.root ul:has(> li > input[type="checkbox"]) {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.root li > input[type="checkbox"] {
+  margin-right: 8px;
+  accent-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── blockquotes ── */
+
+.root blockquote {
+  margin: 14px 0;
+  padding: 8px 16px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+}
+
+.compact blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+}
+
+/* ── tables ── */
+
+.root table {
+  width: 100%;
+  margin: 14px 0;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.compact table {
+  margin: 8px 0;
+  font-size: 11px;
+}
+
+.root thead th {
+  text-align: left;
+  padding: 6px 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.root tbody td {
+  padding: 6px 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.root tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* ── hr ── */
+
+.root hr {
+  border: none;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 24px 0;
+}
+
+.compact hr {
+  margin: 12px 0;
+}
+
+/* ── images ── */
+
+.root img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 12px 0;
+}
+
+/* ── strikethrough ── */
+
+.root del {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* ── mermaid ── */
+
+.mermaidContainer {
+  margin: 16px 0;
+  border-radius: 8px;
+  background: #0a0a0a;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.compact .mermaidContainer {
+  margin: 8px 0;
+}
+
+.mermaidSvg {
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+}
+
+.mermaidSvg:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mermaidEditor {
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaidTextarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(200, 200, 208, 0.9);
+  background: #0a0a0a;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 14px;
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+}
+
+.mermaidPreview {
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  min-height: 60px;
+}
+
+.mermaidError {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: rgba(244, 63, 94, 0.8);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+.mermaidHint {
+  padding: 4px 14px 8px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.2);
+  text-align: right;
+}

@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "processes": [
+    {
+      "name": "pty-mgr",
+      "cmd": "../bin/pty-mgr",
+      "args": ["daemon"],
+      "env": {},
+      "cwd": ".",
+      "readiness": {
+        "type": "socket",
+        "path": "$HOME/.pty-manager/default.sock",
+        "timeout": 10000,
+        "interval": 250
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 5,
+        "baseDelay": 1000,
+        "maxDelay": 10000,
+        "resetAfter": 30000,
+        "jitter": true
+      },
+      "critical": true,
+      "order": 1
+    },
+    {
+      "name": "ws-terminal",
+      "cmd": "npx",
+      "args": ["tsx", "server/ws-terminal.ts"],
+      "env": {
+        "WS_TERMINAL_PORT": "3099"
+      },
+      "cwd": ".",
+      "dependsOn": ["pty-mgr"],
+      "readiness": {
+        "type": "port",
+        "port": 3099,
+        "timeout": 8000,
+        "interval": 250
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 5,
+        "baseDelay": 1000,
+        "maxDelay": 10000,
+        "resetAfter": 30000
+      },
+      "critical": true,
+      "order": 2
+    },
+    {
+      "name": "worker",
+      "cmd": "npx",
+      "args": ["tsx", "server/background-worker.ts"],
+      "env": {},
+      "cwd": ".",
+      "readiness": {
+        "type": "timer",
+        "timeout": 3000
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 5,
+        "baseDelay": 2000,
+        "maxDelay": 15000,
+        "resetAfter": 60000
+      },
+      "critical": false,
+      "order": 2
+    },
+    {
+      "name": "platform",
+      "cmd": "npx",
+      "args": ["next", "dev"],
+      "env": {
+        "PORT": "3000"
+      },
+      "cwd": ".",
+      "dependsOn": ["ws-terminal"],
+      "readiness": {
+        "type": "http",
+        "url": "http://127.0.0.1:3000/api/health",
+        "timeout": 30000,
+        "interval": 1000
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 3,
+        "baseDelay": 2000,
+        "maxDelay": 15000,
+        "resetAfter": 60000
+      },
+      "critical": true,
+      "order": 3
+    },
+    {
+      "name": "kollabor-engine",
+      "cmd": "python",
+      "args": ["-m", "kollabor_engine", "serve", "--port", "7433"],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "INTERNAL_SERVICE_SECRET": "$INTERNAL_SERVICE_SECRET"
+      },
+      "cwd": ".",
+      "dependsOn": ["pty-mgr"],
+      "readiness": {
+        "type": "http",
+        "url": "http://127.0.0.1:7433/health",
+        "timeout": 5000,
+        "interval": 500
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 3,
+        "baseDelay": 2000,
+        "maxDelay": 15000,
+        "resetAfter": 60000
+      },
+      "critical": false,
+      "order": 4
+    }
+  ]
+}

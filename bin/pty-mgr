@@ -1,0 +1,39 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname -- "$0")" && pwd)"
+SELF_PATH="$SCRIPT_DIR/$(basename -- "$0")"
+
+if [ -n "${PTY_MGR_BIN:-}" ] && [ -x "$PTY_MGR_BIN" ]; then
+  exec "$PTY_MGR_BIN" "$@"
+fi
+
+if [ -n "${MENTIKO_PTY_MGR_BIN:-}" ] && [ -x "$MENTIKO_PTY_MGR_BIN" ]; then
+  exec "$MENTIKO_PTY_MGR_BIN" "$@"
+fi
+
+if [ -x "$SCRIPT_DIR/pty-mgr-real" ]; then
+  exec "$SCRIPT_DIR/pty-mgr-real" "$@"
+fi
+
+if [ -x "$SCRIPT_DIR/pty-mgr-bin" ]; then
+  exec "$SCRIPT_DIR/pty-mgr-bin" "$@"
+fi
+
+if command -v pty-mgr >/dev/null 2>&1; then
+  CANDIDATE="$(command -v pty-mgr)"
+  CANDIDATE_DIR="$(cd "$(dirname -- "$CANDIDATE")" && pwd)"
+  CANDIDATE_PATH="$CANDIDATE_DIR/$(basename -- "$CANDIDATE")"
+  if [ "$CANDIDATE_PATH" != "$SELF_PATH" ]; then
+    exec "$CANDIDATE_PATH" "$@"
+  fi
+fi
+
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$ROOT_DIR/lib/pty-manager.mjs" ]; then
+  export NODE_PATH="$ROOT_DIR/web/node_modules${NODE_PATH:+:$NODE_PATH}"
+  exec node "$ROOT_DIR/lib/pty-manager.mjs" "$@"
+fi
+
+echo "error: unable to locate an executable pty-mgr binary. Set PTY_MGR_BIN, add bin/pty-mgr-real or bin/pty-mgr-bin, or install pty-mgr on PATH." >&2
+exit 127

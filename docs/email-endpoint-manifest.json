@@ -1,0 +1,207 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/email/inboxes/:id/messages",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "List paginated messages from an inbox folder",
+    "behaviors": [
+      "Whitelists folder parameter: unread, processed, or failed",
+      "Enforces pagination bounds: limit 1-100 (default 50), offset >= 0",
+      "Returns messages array with total count for pagination",
+      "Validates inbox exists before listing"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/secret/rotate",
+    "auth": "Session authentication (requirePermission: manage_org)",
+    "description": "Rotate inbox HMAC secret and return new secret in plaintext",
+    "behaviors": [
+      "Increments inbox secretVersion",
+      "Previous secret version remains valid for 24-hour overlap period",
+      "Returns new secret and version in response body",
+      "Logs rotation event to audit log"
+    ],
+    "securityNotes": [
+      "New secret returned in plaintext exactly once — store immediately, it cannot be retrieved again",
+      "Requires manage_org permission (elevated access)"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/quota",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Get disk and send quota usage for current namespace",
+    "behaviors": [
+      "Returns disk usage in bytes and MB with quota",
+      "Returns send count with daily quota and reset time (midnight UTC)",
+      "Defaults: 500MB disk, 1000 sends/day via env vars"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/poll",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Return unread email counts per inbox for UI badge display",
+    "behaviors": [
+      "Counts JSON files in unread/ subfolder for each inbox",
+      "Returns counts object keyed by inbox ID plus total"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/unsubscribe",
+    "auth": "None (public endpoint, rate-limited only)",
+    "description": "Validate unsubscribe token and suppress email address",
+    "behaviors": [
+      "Validates JWT token containing email, namespace, org, outboundId",
+      "Adds suppression record to email-suppression.jsonl",
+      "Returns success message with email address",
+      "Logs unsubscribe event to audit log"
+    ],
+    "securityNotes": [
+      "No authentication required — rate-limited only",
+      "Rate limit: 10 requests per minute per IP",
+      "Tokens are single-use and time-bounded",
+      "Uses leftmost IP from x-forwarded-for header (can be spoofed)"
+    ]
+  },
+  {
+    "method": "OPTIONS",
+    "path": "/api/email/unsubscribe",
+    "auth": "None",
+    "description": "CORS preflight support for unsubscribe endpoint",
+    "behaviors": [
+      "Returns 204 with CORS headers for POST and OPTIONS"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/resubscribe",
+    "auth": "None (public endpoint, rate-limited only)",
+    "description": "Validate resubscribe token and remove email suppression",
+    "behaviors": [
+      "Validates JWT token containing email, namespace, org",
+      "Removes suppression only for soft_bounce, unsubscribe, manual reasons",
+      "Hard bounce suppressions cannot be removed via resubscribe",
+      "Returns success if suppression removed, error if not suppressed",
+      "Logs resubscribe event to audit log"
+    ],
+    "securityNotes": [
+      "No authentication required — rate-limited only",
+      "Rate limit: 10 requests per minute per IP",
+      "Tokens are single-use and time-bounded",
+      "Uses leftmost IP from x-forwarded-for header (can be spoofed)"
+    ]
+  },
+  {
+    "method": "OPTIONS",
+    "path": "/api/email/resubscribe",
+    "auth": "None",
+    "description": "CORS preflight support for resubscribe endpoint",
+    "behaviors": [
+      "Returns 204 with CORS headers for POST and OPTIONS"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/reputation",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Return email reputation status with bounce/complaint rates and thresholds",
+    "behaviors": [
+      "Returns status: healthy, warning, paused, or suspended",
+      "Includes bounce rate, complaint rate, sent counts (7d, 30d)",
+      "Returns threshold values for warning/paused/suspended states",
+      "Org-level suspension overrides evaluation status"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/reputation/history",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Return daily reputation metrics over time",
+    "behaviors": [
+      "Query parameter: days (default 30, max 90)",
+      "Returns history array with daily metrics"
+    ],
+    "securityNotes": []
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/process",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Process unread emails and fire configured chain triggers",
+    "behaviors": [
+      "Processes inboxes in parallel",
+      "Atomically claims emails to prevent double-processing",
+      "Fires chain run for each claimed email",
+      "Moves emails to processed/failed based on result",
+      "Returns counts: processed, skipped, errors array"
+    ],
+    "securityNotes": [
+      "Uses minimal auth marker (email-processor=true cookie) when invoking chain run"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/inbound",
+    "auth": "Provider-specific signature verification (varies by source)",
+    "description": "Receive inbound webhook emails from external providers",
+    "behaviors": [
+      "Validates content-length header (max 25MB)",
+      "Checks disk quota before processing (rejects with 507 if exceeded)",
+      "Extracts namespace from header, body, query param, or env",
+      "Auth varies by provider: Resend HMAC-SHA256, Postmark HMAC token, SendGrid ECDSA (not implemented), Haraka/custom bearer token",
+      "Rate-limits auth failures: 5 failures in 5 min = 1hr IP block",
+      "Supports 24h secret version overlap for rotation",
+      "Normalizes email to internal format, blocks attachments in v1",
+      "Writes to disk and logs to audit trail",
+      "Failed emails (quota, auth) logged to rejected.jsonl"
+    ],
+    "securityNotes": [
+      "Resend: HMAC-SHA256 signature verification via x-svix-signature header",
+      "Postmark: HMAC token comparison via x-postmark-signature header",
+      "SendGrid: ECDSA signature verification NOT implemented in v1 (accepts all)",
+      "Haraka: Bearer token (HMAC-derived secret or HARAKA_API_KEY env var)",
+      "Custom: Bearer token (HMAC-derived secret with version overlap)",
+      "Auth failure rate limiting: 5 failures in 5 minutes triggers 1-hour IP block",
+      "IP-based rate limiting uses x-forwarded-for leftmost IP (spoofable)"
+    ]
+  },
+  {
+    "method": "GET",
+    "path": "/api/email/smtp-status",
+    "auth": "Session authentication (requirePermission: view_chains)",
+    "description": "Get SMTP delivery configuration status",
+    "behaviors": [
+      "Detects mode: resend, auth, relay, or none",
+      "Returns configured status, host, port, masked user",
+      "Shows inbound email status when TENANT_ID and SMTP_FROM domain match"
+    ],
+    "securityNotes": [
+      "Masks SMTP username (shows first 3 chars + ***)"
+    ]
+  },
+  {
+    "method": "POST",
+    "path": "/api/email/smtp-test",
+    "auth": "Session authentication (requirePermission: manage_org)",
+    "description": "Send test email to verify SMTP configuration",
+    "behaviors": [
+      "Requires 'to' field in request body",
+      "Sends test email with fixed subject and body",
+      "Uses nodemailer for delivery (optional dependency)",
+      "Returns success or SMTP error message"
+    ],
+    "securityNotes": [
+      "Requires manage_org permission (elevated access)",
+      "Sends real email to specified address"
+    ]
+  }
+]

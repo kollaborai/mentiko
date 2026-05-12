@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "allowJs": false,
+    "noEmit": true,
+    "types": ["node"],
+    "typeRoots": ["../../web/node_modules/@types"],
+    "baseUrl": "../..",
+    "paths": {
+      "@modelcontextprotocol/*": ["web/node_modules/@modelcontextprotocol/*"]
+    }
+  },
+  "include": ["*.ts", "handlers/*.ts"]
+}

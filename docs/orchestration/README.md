@@ -1,0 +1,485 @@
+# orchestration docs
+
+documentation for the mentiko orchestration layer. this is the brain
+of mentiko - it coordinates agent execution, handles events, manages
+chain lifecycle, and provides the infrastructure for multi-agent
+workflows.
+
+see: [../architecture.md](../architecture.md) for system-wide architecture.
+
+overview
+========
+
+the orchestration layer is a bash-based event-driven system that:
+
+  - reads chain.json definitions
+  - spawns AI agents in isolated PTY sessions
+  - monitors agent output for completion signals
+  - captures artifacts (git diffs, files changed, conversations)
+  - emits events to trigger next agents or chains
+  - tracks execution state in run.json objects
+  - detects and handles stalled runs
+  - supports retry, fan-out/fan-in, and error routing
+
+architecture philosophy
+=======================
+
+not a loop
+  chain-runner.sh launches ONE agent then exits. the next agent
+  is launched by chain-runner-complete.sh (called by the monitor).
+  this prevents cascading failures and enables event-driven chaining.
+
+event-driven
+  agents emit events when they complete. the next agent is triggered
+  by matching events, not by hard-coded sequence. enables flexible
+  pipelines and cross-chain automation.
+
+fault isolation
+  each agent runs in its own PTY session with a companion monitor
+  session. a crash in one agent doesn't crash the entire chain.
+
+file-based state
+  run objects (run.json), event files, state files, and debug state
+  are all written to disk. enables recovery, inspection, and auditing.
+
+namespace-aware
+  all paths resolve through the 3-tier hierarchy:
+  namespace > organization > project.
+
+core components
+===============
+
+execution layer
+---------------
+
+[chain-runner-flow.md](./chain-runner-flow.md)
+  main orchestrator. 8-phase execution flow:
+    0. initialization (source libs, start daemons)
+    1. argument parsing
+    2. chain.json validation
+    3. agent resolution (profiles, configs)
+    4. run initialization (create run.json)
+    5. agent launch (create PTY, send instructions)
+    6. execution (agent runs, monitor watches)
+    7. agent completion (via chain-runner-complete.sh)
+    8. cleanup (on_complete: stop/keep/archive)
+
+  key point: NOT a loop. launches one agent, exits.
+
+[chain-runner-complete.md](./chain-runner-complete.md)
+  completion handler. 9-phase process when agent finishes:
+    1. derive agent identity from session name
+    2. capture final output
+    3. find event file written by agent
+    4. kill monitor and agent sessions
+    5. capture artifacts (diff, files-changed, conversations)
+    6. update run.json with agent status
+    7. emit event to EVENTS_DIR/
+    8. find next agent (via branch mapping or triggers)
+    9. launch next agent or complete chain
+
+  called by: monitor session when AGENT_COMPLETE detected.
+
+[agent-functions.md](./agent-functions.md)
+  function library for PTY session management. sourced by
+  chain-runner.sh and other tools.
+
+  key functions:
+    - new-agent-session        create PTY + launch agent
+    - monitor-chain-agent      watch for AGENT_COMPLETE
+    - monitor-with-ai          legacy monitor (grep-based)
+    - ensure-event-file        fallback event writer
+    - send-message             interactive agent communication
+    - peek-session             view session output
+
+daemon layer
+------------
+
+[watchdog.md](./watchdog.md)
+  stalled run detection daemon. runs every 60 seconds.
+
+  flow:
+    1. list all runs with status "running"
+    2. for each run, check agent session exists
+    3. check process alive (local workspaces only)
+    4. if no session for >10 min starting or >5 min running
+    5. mark run as "stopped"
+    6. emit run-stalled event
+
+  grace periods:
+    - <10 seconds: starting (session may not exist yet)
+    - <5 minutes: monitor initializing (companion session spinning up)
+
+[chain-watcher.md](./chain-watcher.md)
+  event-driven chain trigger daemon. watches EVENTS_DIR/ for
+  new event files.
+
+  flow:
+    1. scan EVENTS_DIR/ for unprocessed events
+    2. read event: name, source, timestamp, data
+    3. search chains for matching triggers
+    4. launch matching chains via chain-runner.sh
+    5. mark event as processed
+
+  enables:
+    - agent chaining (event triggers next agent in chain)
+    - cross-chain automation (one chain triggers another)
+    - manual triggers (emit-event from cli)
+
+supporting libraries
+====================
+
+[session-transport.md](./session-transport.md)
+  pty-manager abstraction layer.
+
+  functions:
+    - transport_init           ensure daemon running
+    - transport_new_session    spawn PTY session
+    - transport_send_keys      send text + enter
+    - transport_send_raw       send text without enter
+    - transport_capture        capture output
+    - transport_has_session    check alive
+    - transport_kill_session   kill and remove
+    - transport_list_sessions  list all sessions
+    - transport_pid            get process pid
+
+  all workspaces: uses pty-manager daemon (bin/p)
+  remote workspaces: local PTY session that SSHs or docker-execs in
+
+[run-lib.md](./run-lib.md)
+  run object lifecycle management.
+
+  functions:
+    - create-run              create run-{id}/run.json
+    - update-run-status       update status field
+    - add-run-session         register session with run
+    - update-run-agent        update agent status
+    - get-run                 read run.json
+    - list-runs               list all runs
+    - cleanup-old-runs        delete old runs
+    - write-debug-state       track execution steps
+    - update-task-from-run    propagate to linked task
+
+  run.json schema:
+    - id, chain, goal, started, completed, status
+    - sessions[] (all sessions in run)
+    - agents[] (id, name, session, status, timestamps)
+    - artifacts[] (agent outputs: diff, files-changed, etc)
+
+[event-trigger.md](./event-trigger.md)
+  file-based event system.
+
+  functions:
+    - emit-event           write event file to EVENTS_DIR/
+    - list-events          show all events (optionally unprocessed)
+    - mark-processed       mark event as processed
+    - archive-all-events   move events to archive/
+    - clean-events         delete old archived events
+
+  event file format:
+    event: agent-complete
+    source: agent-id
+    timestamp: 2026-03-12T10:00:00-07:00
+    processed: false
+    data: {...}
+
+[routing-lib.md](./routing-lib.md)
+  advanced routing patterns.
+
+  functions:
+    - fan-group-create          create fan-out state
+    - fan-group-agent-complete  mark agent done
+    - fan-group-check-trigger   check if fan-in ready
+    - retry-calculate-delay     exponential backoff
+    - branch-parse              parse branch config
+    - error-handler-resolve     find error handler
+    - timeout-check-agent       check timeout exceeded
+
+  patterns:
+    - fan-out: one event triggers multiple agents
+    - fan-in: wait for all/any/quorum before continuing
+    - retry: exponential, linear, fixed backoff
+    - error routing: on_error, on_timeout handlers
+    - conditional branching: if/then/else logic
+
+data flow
+=========
+
+1. user starts chain (cli or web ui)
+   input: chain.json path, optional --workspace, --task, --start
+
+   chain-runner.sh:
+     -> sources libraries (config, agent-functions, event-trigger, etc)
+     -> ensures watchdog daemon running
+     -> ensures chain-watcher daemon running
+     -> validates chain.json (jq syntax, required fields)
+     -> resolves executor (claude, codex, aider, kollabor)
+     -> resolves agent profiles (env vars, cli args)
+     -> creates run object (run-{timestamp}/run.json)
+     -> finds starting agent (trigger: "manual-start" or first agent)
+     -> builds profile command (env vars sourced from temp file)
+
+2. agent launch
+   launch_chain_agent function:
+     -> pre-flight: budget check, circuit breaker, approval gate
+     -> creates PTY session (transport_new_session)
+     -> writes git-before.txt (for diff capture later)
+     -> sends agent instructions (multi-line via heredoc)
+     -> writes state file (STATE_DIR/{agent-id}.state)
+     -> starts heartbeat api (POST /api/runs/{id}/heartbeat every 60s)
+     -> creates monitor session (monitor-{session-name})
+     -> monitor runs monitor-chain-agent function
+
+3. agent execution (in agent PTY session)
+   agent runs:
+     -> reads instructions
+     -> performs work (writes code, runs commands, etc)
+     -> writes AGENT_COMPLETE to output when done
+
+   monitor session (running monitor-chain-agent):
+     -> watches agent output for "AGENT_COMPLETE"
+     -> handles timeout (agent.timeout config)
+     -> handles stall detection (no output for N intervals)
+     -> on detection: calls chain-runner-complete.sh
+
+4. agent completion
+   chain-runner-complete.sh:
+     -> kills monitor and agent sessions
+     -> captures final output (transport_capture)
+     -> git diff (before..HEAD) -> artifacts/{agent-id}-diff.patch
+     -> captures files changed -> artifacts/{agent-id}-files-changed.json
+     -> captures conversations -> artifacts/{agent-id}-conversations.json
+     -> updates run.json (agent status, artifacts manifest)
+     -> emits event file to EVENTS_DIR/
+     -> finds next agent (branch mapping or trigger matching)
+     -> relaunches chain-runner.sh with --start {next-agent-id}
+
+5. next agent triggered
+   two paths:
+
+   a) same chain (next agent):
+      -> chain-runner-complete.sh re-invokes chain-runner.sh
+      -> RUN_ID preserved via env
+      -> next agent launched in same run
+
+   b) cross-chain (chain-watcher):
+      -> chain-watcher detects new event file
+      -> matches against chain event_triggers
+      -> launches new chain-runner.sh instance
+      -> MENTIKO_PARENT_RUN_ID set for tracking
+
+6. chain completion
+   when no next agent found:
+     -> run.json status = "completed"
+     -> completed timestamp set
+     -> webhook sent (chain.webhook config)
+     -> slack notification sent
+     -> linked task updated (if taskId in run.json)
+     -> chain chaining (if on_complete = "chain:{name}")
+     -> metrics recorded
+     -> cleanup based on on_complete (stop/keep/archive)
+
+execution modes
+===============
+
+local workspace (default)
+  - PROJECT_ROOT = git rev-parse --show-toplevel
+  - sessions created via pty-manager daemon
+  - transport_* functions talk to bin/p
+  - process liveness checks work
+
+ssh workspace
+  - SSH_HOST, SSH_USER, SSH_PATH, SSH_KEY, SSH_PORT
+  - sessions created via pty-manager (local PTY that SSHs into remote host)
+  - transport_* functions used for all operations
+  - no process liveness (can't check remote pid)
+
+docker workspace
+  - DOCKER_CONTAINER, DOCKER_PATH, DOCKER_USER
+  - sessions created via pty-manager (local PTY that docker-execs into container)
+  - transport_* functions used for all operations
+  - no process liveness (container isolates pid namespace)
+
+path resolution (namespace-aware)
+==================================
+
+3-tier hierarchy:
+  namespace -> organization -> project
+
+paths collapse for "default" org:
+  ~/.mentiko/namespaces/default/runs/
+  (NOT ~/.mentiko/namespaces/default/orgs/default/runs/)
+
+non-default org:
+  ~/.mentiko/namespaces/{ns}/orgs/{org}/runs/
+
+project (encoded cwd):
+  ~/.mentiko/namespaces/{ns}/orgs/{org}/projects/{encoded-cwd}/runs/
+
+key directories:
+  RUNS_DIR      projectRoot/runs/           (run objects)
+  EVENTS_DIR    projectRoot/events/         (event files)
+  STATE_DIR     projectRoot/state/          (agent state)
+  DEBUG_DIR     projectRoot/debug/          (debug state)
+  REPORTS_DIR   projectRoot/reports/agent-reports/
+  ARTIFACTS_DIR runsDir/{runId}/artifacts/  (agent outputs)
+
+env vars for child processes:
+  MENTIKO_GLOBAL_ROOT     ~/.mentiko
+  MENTIKO_NAMESPACE_ROOT  ~/.mentiko/namespaces/{id}
+  MENTIKO_ORG_ROOT        resolved org root
+  MENTIKO_PROJECT_ROOT    resolved project root
+  NAMESPACE_ID            namespace id (default: "default")
+  ORG_ID                  org id (default: "default")
+  MENTIKO_RUN_ID          run id
+  MENTIKO_PARENT_RUN_ID   parent run id (chain chaining)
+
+key concepts
+============
+
+event-driven chaining
+  agents emit events (event file to EVENTS_DIR/). next agent
+  triggered by matching event name in triggers[] or branches{}.
+  enables flexible pipelines without hardcoding dependencies.
+
+  example:
+    agent A emits "build-complete" -> agent B with trigger "build-complete" starts
+
+fault isolation
+  each agent in separate PTY session. companion monitor session
+  watches it. crash in one agent doesn't crash entire chain.
+  monitor can detect failure and trigger error handler.
+
+resumability
+  run.json tracks all agents and their status. can restart from
+  any agent with --start <id>. run id preserved across restarts.
+
+stall detection
+  watchdog checks running runs every 60s. if agent session dead
+  for >5 min (or >10s if starting), marks run as "stopped".
+  prevents infinite hangs.
+
+cross-chain triggers
+  chain-watcher watches EVENTS_DIR/. one chain's completion
+  can trigger another chain's start. enables multi-chain workflows.
+
+fan-out / fan-in
+  single event can trigger multiple agents in parallel (fan-out).
+  wait for all/any/quorum to complete before continuing (fan-in).
+  implemented via routing-lib.sh fan-group functions.
+
+artifact capture
+  on agent completion, capture:
+    - git diff (before..HEAD) as patch
+    - files changed (name-status list)
+    - conversations (claude .jsonl files)
+    - output (head + tail of session)
+  stored in runs/{runId}/artifacts/
+
+task integration
+  chains can be linked to tasks via --task flag.
+  run status propagated back to task metadata.
+  on completion, task auto-closed with summary.
+
+monitor vs chain-watcher
+========================
+
+two "watchers", different purposes:
+
+  monitor session (per-agent)
+    - monitor-{session-name} PTY session
+    - runs monitor-chain-agent function
+    - watches ONE agent's output for AGENT_COMPLETE
+    - handles timeout and stall detection for that agent
+    - calls chain-runner-complete.sh when agent done
+    - lifecycle: tied to agent (dies with it)
+
+  chain-watcher (global daemon)
+    - mentiko-chain-watcher singleton session
+    - watches EVENTS_DIR/ for new event files
+    - matches events against ALL chains' triggers
+    - launches new chains (entire chain-runner.sh instances)
+    - lifecycle: persists indefinitely
+
+quick reference: file locations
+================================
+
+core orchestration:
+  lib/chain-runner.sh              main orchestrator
+  lib/chain-runner-complete.sh     completion handler
+  lib/launch-agent.sh              legacy agent launcher
+
+libraries:
+  lib/agent-functions.sh           PTY session functions
+  lib/session-transport.sh         pty-manager abstraction
+  lib/run-lib.sh                   run object management
+  lib/event-trigger.sh             event system
+  lib/routing-lib.sh               fan-out/fan-in, retry
+  lib/agent-profile.sh             profile resolution
+  lib/config.sh                    path resolution
+  lib/agent-activity-capture.sh    artifact capture
+
+daemons:
+  lib/watchdog.sh                  stall detection
+  lib/scheduler.sh                 cron schedules
+  lib/chain-watcher.sh             event watcher (via chain-event-watcher)
+
+supporting:
+  lib/error-handling.sh            circuit breaker
+  lib/retry-utils.sh               retry logic
+  lib/approval-gate.sh             human approval
+  lib/budget-check.sh              spending limits
+  lib/webhook-sender.sh            webhook notifications
+  lib/slack-integration.sh         slack notifications
+  lib/metrics.sh                   performance metrics
+  lib/profiler.sh                  agent profiling
+
+binary:
+  bin/p                            pty-manager daemon (node.js)
+
+troubleshooting
+===============
+
+agent stuck, not completing?
+  - check monitor session exists: transport_has_session "monitor-{session}"
+  - check agent output for "AGENT_COMPLETE" string
+  - check state file: STATE_DIR/{agent-id}.state
+  - check agent.timeout in chain.json
+
+next agent not launching?
+  - check event file written to EVENTS_DIR/
+  - list-events to see pending events
+  - verify event name matches next agent's triggers[]
+  - check branches{} mapping in chain.json
+
+run marked "stopped" prematurely?
+  - watchdog timing race (<10s grace period for starting)
+  - monitor session killed as "orphan"
+  - check watchdog logs for stall detection
+  - adjust watchdog grace periods if needed
+
+artifacts not captured?
+  - check RUN_ID is set in environment
+  - check artifacts dir exists: runs/{runId}/artifacts/
+  - verify git-before.txt exists (for diff capture)
+  - check agent-activity-capture.sh sourced
+
+pty-manager issues?
+  - check daemon running: ./bin/p status
+  - check sessions: ./bin/p list
+  - restart daemon: ./bin/p daemon
+  - check for orphaned sessions: kill dead sessions first
+
+namespace path bugs?
+  - #1 recurring issue: namespace path mismatches
+  - web API writes to namespaced paths, bash reads from legacy flat paths
+  - fix: always pass MENTIKO_ROOT from API spawn env
+  - verify paths: echo $RUNS_DIR, echo $EVENTS_DIR
+
+related docs
+============
+
+[../run-tracking.md](../run-tracking.md)         - run directory structure
+[../tutorial/chain-anatomy.md](../tutorial/chain-anatomy.md)   - chain.json schema
+[../tutorial/event-system.md](../tutorial/event-system.md)     - event system guide
+[../architecture.md](../architecture.md)       - system-wide architecture

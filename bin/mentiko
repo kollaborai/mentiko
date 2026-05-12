@@ -1,0 +1,404 @@
+#!/bin/bash
+# mentiko - CLI entry point
+#
+# usage:
+#   mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
+#   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
+#   mentiko launch <spec-file> [--monitor]
+#   mentiko validate <chain.json> [--strict]
+#   mentiko graph <chain.json>
+#   mentiko peek <session-name> [lines]
+#   mentiko send <session-name> "message"
+#   mentiko kill <session-name>
+#   mentiko kill-all
+#   mentiko list
+#   mentiko events [--unprocessed]
+#   mentiko emit <event-name> <source>
+#   mentiko init [directory]
+#   mentiko monitor <session-name> "end state" [profile] [interval]
+#   mentiko audit [summary|export-json|export-csv|query|archive|clear]
+#   mentiko seed
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/../lib"
+
+# Set MENTIKO_ROOT to project root before sourcing config.sh.
+# config.sh falls back to dirname of config.sh (= lib/) which puts
+# namespaces at lib/namespaces/ instead of namespaces/.
+export MENTIKO_ROOT="${MENTIKO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Load config
+source "$LIB_DIR/config.sh"
+
+# Load transport layer for pty-manager
+source "$LIB_DIR/session-transport.sh"
+
+CMD="${1:-help}"
+shift || true
+
+# Load audit log (suppress errors if not available)
+source "$LIB_DIR/audit-log.sh" 2>/dev/null || true
+
+# log cli command
+if declare -f audit-log-cli-command > /dev/null; then
+    audit-log-cli-command "$CMD" "$*" 2>/dev/null || true
+fi
+
+case "$CMD" in
+
+    # -------------------------------------------------------------------
+    # JSON chain mode (new)
+    # -------------------------------------------------------------------
+
+    run)
+        bash "$LIB_DIR/chain-runner.sh" "$@"
+        ;;
+
+    generate)
+        bash "$LIB_DIR/chain-generator.sh" "$@"
+        ;;
+
+    validate)
+        bash "$LIB_DIR/validate.sh" "$@"
+        ;;
+
+    graph)
+        CHAIN="${1:-}"
+        if [[ -z "$CHAIN" || ! -f "$CHAIN" ]]; then
+            echo "usage: mentiko graph <chain.json>"
+            exit 1
+        fi
+        bash "$LIB_DIR/chain-runner.sh" "$CHAIN" --dry-run
+        ;;
+
+    seed)
+        # seed namespace with example agents, chains, and config profiles
+        SEED_SCRIPT="$SCRIPT_DIR/../web/scripts/seed.ts"
+        if [[ ! -f "$SEED_SCRIPT" ]]; then
+            echo "  error: seed script not found: $SEED_SCRIPT"
+            exit 1
+        fi
+        if command -v npx &>/dev/null && npx tsx --version &>/dev/null 2>&1; then
+            NAMESPACE_ID="${NAMESPACE_ID:-default}" npx tsx "$SEED_SCRIPT"
+        elif command -v tsx &>/dev/null; then
+            NAMESPACE_ID="${NAMESPACE_ID:-default}" tsx "$SEED_SCRIPT"
+        else
+            echo "  error: tsx not found. install with: npm install -g tsx"
+            exit 1
+        fi
+        ;;
+
+    list_schedules|create_schedule|update_schedule|delete_schedule|run_schedule_now|list_applications|register_application|update_application|delete_application)
+        node "$LIB_DIR/mentiko-cli-schedules.mjs" "$CMD" "$@"
+        ;;
+
+    # -------------------------------------------------------------------
+    # spec mode (legacy, still works)
+    # -------------------------------------------------------------------
+
+    launch)
+        bash "$LIB_DIR/launch-agent.sh" "$@"
+        ;;
+
+    peek)
+        SESSION="${1:-}"
+        LINES="${2:-50}"
+
+        if [[ -z "$SESSION" ]]; then
+            echo "usage: mentiko peek <session-name> [lines]"
+            exit 1
+        fi
+
+        if ! transport_has_session "$SESSION" 2>/dev/null; then
+            echo "  error: session not found: $SESSION"
+            exit 1
+        fi
+
+        transport_capture "$SESSION" "$LINES"
+        ;;
+
+    send)
+        SESSION="${1:-}"
+        MESSAGE="${2:-}"
+
+        if [[ -z "$SESSION" || -z "$MESSAGE" ]]; then
+            echo "usage: mentiko send <session-name> \"message\""
+            exit 1
+        fi
+
+        if ! transport_has_session "$SESSION" 2>/dev/null; then
+            echo "  error: session not found: $SESSION"
+            exit 1
+        fi
+
+        transport_send_keys "$SESSION" "$MESSAGE"
+        echo "  sent to $SESSION"
+
+        if declare -f audit-log-agent-action > /dev/null; then
+            audit-log-agent-action "send" "$SESSION" "message: ${MESSAGE:0:100}" 2>/dev/null || true
+        fi
+        ;;
+
+    kill)
+        SESSION="${1:-}"
+
+        if [[ -z "$SESSION" ]]; then
+            echo "usage: mentiko kill <session-name>"
+            exit 1
+        fi
+
+        if ! transport_has_session "$SESSION" 2>/dev/null; then
+            echo "  error: session not found: $SESSION"
+            exit 1
+        fi
+
+        transport_kill_session "$SESSION"
+        echo "  killed: $SESSION"
+
+        if declare -f audit-log-agent-action > /dev/null; then
+            audit-log-agent-action "kill" "$SESSION" 2>/dev/null || true
+        fi
+        ;;
+
+    kill-all)
+        killed=0
+        for session in $(transport_list_sessions); do
+            transport_kill_session "$session"
+            ((killed++))
+        done
+        echo "  killed $killed sessions"
+        ;;
+
+    list)
+        sessions=$(transport_list_sessions)
+        if [[ -z "$sessions" ]]; then
+            echo "  no active sessions"
+        else
+            echo "$sessions"
+        fi
+        ;;
+
+    events)
+        UNPROCESSED_ONLY=""
+        if [[ "${1:-}" == "--unprocessed" ]]; then
+            UNPROCESSED_ONLY="true"
+        fi
+
+        if [[ ! -d "$EVENTS_DIR" ]]; then
+            echo "  no events directory"
+            exit 1
+        fi
+
+        for event_file in "$EVENTS_DIR"/*.event; do
+            if [[ -f "$event_file" ]]; then
+                processed=$(grep "^processed:" "$event_file" 2>/dev/null | cut -d: -f2 | tr -d ' ')
+                if [[ "$UNPROCESSED_ONLY" == "true" ]]; then
+                    if [[ "$processed" != "true" ]]; then
+                        echo "  $(basename "$event_file")"
+                    fi
+                else
+                    status=""
+                    [[ "$processed" == "true" ]] && status=" (processed)"
+                    echo "  $(basename "$event_file")$status"
+                fi
+            fi
+        done
+        ;;
+
+    emit)
+        EVENT_NAME="${1:-}"
+        SOURCE="${2:-}"
+
+        if [[ -z "$EVENT_NAME" || -z "$SOURCE" ]]; then
+            echo "usage: mentiko emit <event-name> <source>"
+            exit 1
+        fi
+
+        mkdir -p "$EVENTS_DIR"
+
+        event_file="$EVENTS_DIR/${SOURCE}-${EVENT_NAME}.event"
+        cat > "$event_file" <<EOF
+event: $EVENT_NAME
+source: $SOURCE
+timestamp: $(date -Iseconds)
+processed: false
+data:
+EOF
+
+        echo "  emitted: $EVENT_NAME from $SOURCE"
+        echo "  file: $event_file"
+
+        if declare -f audit-log-event-emit > /dev/null; then
+            audit-log-event-emit "$EVENT_NAME" "$SOURCE" 2>/dev/null || true
+        fi
+        ;;
+
+    init)
+        TARGET_DIR="${1:-.}"
+        mkdir -p "$TARGET_DIR/agents"/{state,events,specs}
+        mkdir -p "$TARGET_DIR/reports"
+        cat > "$TARGET_DIR/chain.json" <<'EOF'
+{
+  "name": "my-chain",
+  "description": "A simple agent chain",
+  "version": "1.0",
+  "namespace_id": "default",
+  "config": {
+    "cli": "claude",
+    "monitor": true,
+    "max_rounds": 3,
+    "session_prefix": "my-chain"
+  },
+  "agents": [
+    {
+      "id": "worker",
+      "name": "Worker Agent",
+      "role": "Does the work",
+      "triggers": ["manual-start"],
+      "emits": "work-complete",
+      "spec": { "$ref": "agents/my-agent/spec.md" }
+    }
+  ]
+}
+EOF
+        # create example agent spec
+        mkdir -p "$TARGET_DIR/agents/my-agent"
+        cat > "$TARGET_DIR/agents/my-agent/spec.md" <<'EOF'
+# Worker Agent
+
+Complete the assigned task efficiently.
+EOF
+        echo "  initialized mentiko in $TARGET_DIR"
+        echo "  edit chain.json to define your agents"
+        ;;
+
+    # -------------------------------------------------------------------
+    # mentiko-monitor (profile-aware agent monitor)
+    # -------------------------------------------------------------------
+
+    monitor)
+        bash "$LIB_DIR/mentiko-monitor.sh" "$@"
+        ;;
+
+    # -------------------------------------------------------------------
+    # audit logging
+    # -------------------------------------------------------------------
+
+    audit)
+        AUDIT_SUBCMD="${1:-summary}"
+        shift || true
+
+        case "$AUDIT_SUBCMD" in
+            summary)
+                SINCE="${1:-}"
+                if declare -f audit-summary > /dev/null; then
+                    audit-summary "$SINCE"
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            export-json)
+                OUTPUT="${1:-}"
+                SINCE="${2:-}"
+                EVENT="${3:-}"
+                if declare -f audit-export-json > /dev/null; then
+                    audit-export-json "$OUTPUT" "$SINCE" "$EVENT"
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            export-csv)
+                OUTPUT="${1:-}"
+                SINCE="${2:-}"
+                EVENT="${3:-}"
+                if declare -f audit-export-csv > /dev/null; then
+                    audit-export-csv "$OUTPUT" "$SINCE" "$EVENT"
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            query)
+                TYPE="${1:-all}"
+                VALUE="${2:-}"
+                SINCE="${3:-}"
+                LIMIT="${4:-100}"
+                if declare -f audit-query > /dev/null; then
+                    audit-query "$TYPE" "$VALUE" "$SINCE" "$LIMIT"
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            archive)
+                DAYS="${1:-30}"
+                if declare -f audit-archive > /dev/null; then
+                    audit-archive "$DAYS"
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            clear)
+                if [[ "${1:-}" != "--confirm" ]]; then
+                    echo "  warning: this will delete all audit logs"
+                    echo "  usage: mentiko audit clear --confirm"
+                    exit 1
+                fi
+                if declare -f audit-clear > /dev/null; then
+                    audit-clear --confirm
+                else
+                    echo "  error: audit-log.sh not available"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "  audit subcommands:"
+                echo "    summary [since]     - show audit log summary"
+                echo "    export-json [file] [since] [event-type]"
+                echo "    export-csv [file] [since] [event-type]"
+                echo "    query <type> <value> [since] [limit]"
+                echo "      types: all, event_type, user, chain, run_id, auth"
+                echo "    archive [days]      - archive old logs"
+                echo "    clear --confirm     - delete all logs"
+                ;;
+        esac
+        ;;
+
+    *)
+        cat <<'EOF'
+mentiko - AI agent chain orchestration
+
+usage:
+  mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
+  mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
+  mentiko launch <spec-file> [--monitor]
+  mentiko validate <chain.json> [--strict]
+  mentiko graph <chain.json>
+  mentiko peek <session-name> [lines]
+  mentiko send <session-name> "message"
+  mentiko kill <session-name>
+  mentiko kill-all
+  mentiko list
+  mentiko events [--unprocessed]
+  mentiko emit <event-name> <source>
+  mentiko init [directory]
+  mentiko monitor <session> "end state" [profile] [interval]
+  mentiko audit [summary|export-json|export-csv|query|archive|clear]
+  mentiko seed
+
+examples:
+  mentiko run examples/my-chain/chain.json --workspace ~/projects/my-app
+  mentiko validate examples/my-chain/chain.json
+  mentiko monitor my-agent "build passes" mentiko 60
+  mentiko audit summary
+  mentiko audit export-json logs.json
+  mentiko audit export-csv logs.csv "2025-01-01"
+  mentiko audit query auth "" "7 days ago"
+EOF
+        ;;
+esac

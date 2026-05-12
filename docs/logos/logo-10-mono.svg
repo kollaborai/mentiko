@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" fill="#0a0a0a" rx="20"/>
+  <g fill="#e5e5e5">
+    <!-- ac monogram -->
+    <rect x="45" y="45" width="25" height="110" rx="4"/>
+    <rect x="80" y="45" width="25" height="60" rx="4"/>
+    <rect x="115" y="45" width="25" height="110" rx="4"/>
+    <rect x="150" y="45" width="25" height="40" rx="4"/>
+    <rect x="45" y="165" width="25" height="10" rx="2"/>
+    <rect x="115" y="165" width="25" height="10" rx="2"/>
+  </g>
+</svg>

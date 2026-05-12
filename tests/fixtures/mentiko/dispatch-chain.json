@@ -1,0 +1,4 @@
+{
+  "name": "dispatch-test-chain",
+  "description": "chain fixture used for mentiko cli dispatch tests"
+}

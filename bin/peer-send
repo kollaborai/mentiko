@@ -1,0 +1,72 @@
+#!/bin/bash
+# peer-send - send output to claude peer
+#
+# usage:
+#   peer-send "message"
+#   echo "work complete" | peer-send
+#   cat result.md | peer-send
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/config.sh"
+
+PEER="${CLAUDE_PEER:-}"
+SENDER="${CLAUDE_ID:-unknown}"
+
+if [[ -z "$PEER" ]]; then
+  echo "  error: CLAUDE_PEER not set"
+  echo "  export CLAUDE_PEER=<session-name>"
+  exit 1
+fi
+
+# get message from stdin or arg
+if [[ -t 0 ]]; then
+  # stdin is terminal, use arg
+  MESSAGE="${1:-}"
+else
+  # stdin is piped
+  MESSAGE=$(cat)
+fi
+
+if [[ -z "$MESSAGE" ]]; then
+  echo "  usage: peer-send <message> | echo ... | peer-send"
+  exit 1
+fi
+
+# check peer exists
+if ! "$BIN_DIR/p" alive "$PEER" >/dev/null 2>&1; then
+  echo "  error: peer '$PEER' not found"
+  "$BIN_DIR/p" list 2>/dev/null || true
+  exit 1
+fi
+
+# clean up message via haiku
+echo "  cleaning message via haiku..."
+CLEAN_PROMPT="You are a message relay between two AI agents collaborating on a task. Extract ONLY the agent's actual response from this terminal capture. Remove all terminal UI elements: status bars, token counts, permission prompts, bash prompts, escape sequences, tool call formatting, and any previous peer messages that were sent TO this agent. Return ONLY the agent's own words and any code/files they produced. No commentary from you."
+
+CLEANED=$(echo "$MESSAGE" | claude "$CLEAN_PROMPT" -p --model haiku 2>/dev/null) || CLEANED=""
+
+if [[ -z "$CLEANED" ]]; then
+  echo "  cleanup failed, sending raw"
+  CLEANED="$MESSAGE"
+fi
+
+# format
+FORMATTED="
+━━━ peer message ━━━
+from: $SENDER
+time: $(date -Iseconds)
+
+$CLEANED
+━━━━━━━━━━━━━━━━━━━━━━
+"
+
+# send
+echo "  sending to $PEER..."
+"$BIN_DIR/p" send "$PEER" "$FORMATTED"
+sleep 1
+"$BIN_DIR/p" send "$PEER" ""
+
+echo "  sent. peer should see it now."
+echo "  view: p capture $PEER 10"

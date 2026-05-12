@@ -1,0 +1,39 @@
+#!/bin/bash
+# mentiko-mcp entrypoint.
+#
+# Production: prefers the bundled /app/lib/mentiko-mcp/server.js built by
+# the platform Docker image via esbuild.
+# Development: falls back to running the TypeScript source via tsx from
+# the repo root.
+set -e
+
+# Resolve paths relative to this script (symlink-safe-ish)
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+REPO_ROOT="$(cd "$BIN_DIR/.." && pwd)"
+
+# Production bundle locations to try, in order:
+for candidate in \
+  "/opt/mentiko/lib/mentiko-mcp/server.js" \
+  "/app/lib/mentiko-mcp/server.js" \
+  "$REPO_ROOT/lib/mentiko-mcp/dist/server.js"; do
+  if [ -f "$candidate" ]; then
+    exec node "$candidate" "$@"
+  fi
+done
+
+# Dev fallback: run TS source via tsx. Requires the repo's web/node_modules
+# (which has @modelcontextprotocol/sdk + tsx as deps).
+export NODE_PATH="$REPO_ROOT/web/node_modules"
+
+# Best-effort: pick up BETTER_AUTH_SECRET + MENTIKO_INBOX_KEY from web/.env.local
+# during local dev so the subprocess matches the next.js process env.
+if [ -f "$REPO_ROOT/web/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$REPO_ROOT/web/.env.local"
+  set +a
+fi
+
+exec npx --yes tsx "$REPO_ROOT/lib/mentiko-mcp/server.ts" "$@"

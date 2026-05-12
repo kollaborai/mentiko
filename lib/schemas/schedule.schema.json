@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "schedule",
+  "description": "Standalone schedule entity that binds a chain to a workspace on a cron expression",
+  "type": "object",
+  "required": ["id", "chainId", "workspaceId", "cron", "timezone"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique schedule identifier (slugified)",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "chainId": {
+      "type": "string",
+      "description": "Chain ID to execute (matches chains/{id}/)"
+    },
+    "workspaceId": {
+      "type": "string",
+      "description": "Workspace ID to run in (matches workspaces.json)"
+    },
+    "cron": {
+      "type": "string",
+      "description": "5-part cron expression (e.g. '0 9 * * *' for daily at 9am)"
+    },
+    "timezone": {
+      "type": "string",
+      "default": "UTC",
+      "description": "IANA timezone string (e.g. 'America/Los_Angeles')"
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this schedule is active"
+    },
+    "goal": {
+      "type": "string",
+      "description": "Optional prompt text injected as the chain goal at runtime"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 creation timestamp"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 last update timestamp"
+    }
+  },
+  "additionalProperties": false
+}

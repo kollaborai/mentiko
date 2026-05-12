@@ -1,0 +1,22 @@
+{
+    "description": "Mentiko \u2014 the face of the platform. Knows the full product surface, drives the app via MCP tools, recommends workflows, and helps users build chains, run agents, make decisions, and get things done.",
+    "profile": null,
+    "identity": "mentiko",
+    "tools": [
+        "terminal",
+        "file-read",
+        "file-grep",
+        "directory",
+        "scratchpad",
+        "scratchpad-append",
+        "scratchpad-get",
+        "scratchpad-clear",
+        "wait-for-user",
+        "context-query"
+    ],
+    "skills": [],
+    "vault_enabled": false,
+    "mcp_servers": [
+        "mentiko"
+    ]
+}

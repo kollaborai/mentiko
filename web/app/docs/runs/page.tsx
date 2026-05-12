@@ -1,0 +1,152 @@
+"use client";
+
+import { PageBanner } from "@/components/ui/page-banner";
+import { RouteSquareFilled, LinkFilled, BotMessageSquare, BoxFilled } from "@aliimam/icons";
+
+const CodeBlock = ({ children }: { children: string }) => (
+  <pre className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto mb-4">
+    {children}
+  </pre>
+);
+
+export default function RunsDocPage() {
+  return (
+    <div>
+      <PageBanner
+        title="Runs"
+        subtitle="Chain executions with real-time output tracking. Each run represents one instance of a chain being executed, with agent statuses, live output, and captured artifacts."
+        icon={RouteSquareFilled}
+        sectionColor="#f59e0b"
+        actions={[
+          { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
+          { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
+          { label: "Agents", href: "/agents", icon: BotMessageSquare, iconColor: "#b07ee8" },
+          { label: "Artifacts", href: "/artifacts", icon: BoxFilled, iconColor: "#b07ee8" },
+        ]}
+      />
+      <div className="px-6 pb-6 max-w-3xl">
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Run Lifecycle</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          A run progresses through these states as the chain executes:
+        </p>
+        <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60 mb-3">
+          <div><span className="text-foreground/70">pending</span> - queued, not yet started</div>
+          <div><span className="text-foreground/70">running</span> - agents executing</div>
+          <div><span className="text-foreground/70">completed</span> - all agents finished successfully</div>
+          <div><span className="text-foreground/70">failed</span> - one or more agents failed</div>
+          <div><span className="text-foreground/70">cancelled</span> - manually stopped</div>
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Agent Status Within Runs</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Each agent in the run has its own status tracked independently:
+        </p>
+        <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60 mb-3">
+          <div><span className="text-foreground/70">idle</span> - not yet started</div>
+          <div><span className="text-foreground/70">pending</span> - waiting for upstream events</div>
+          <div><span className="text-foreground/70">running</span> - agent is actively working</div>
+          <div><span className="text-foreground/70">completed</span> - agent finished successfully</div>
+          <div><span className="text-foreground/70">failed</span> - agent failed (timeout, crash, etc.)</div>
+          <div><span className="text-foreground/70">paused</span> - waiting for human approval</div>
+          <div><span className="text-foreground/70">cancelled</span> - agent was cancelled before completion</div>
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Live Output</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Runs capture agent output in two views:
+        </p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
+          <div><span className="text-foreground/70">Terminal</span> - raw PTY output with ANSI colors (xterm.js)</div>
+          <div><span className="text-foreground/70">Conversation</span> - parsed JSONL messages with tool calls</div>
+        </div>
+        <p className="text-xs text-foreground/60 leading-relaxed">
+          For running agents, the terminal view shows live output. For completed agents,
+          output loads from captured artifacts. The system auto-switches to terminal view
+          for live agents with no conversation data.
+        </p>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">PTY Sessions</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Each agent runs in an isolated PTY session managed by pty-manager. Sessions
+          are created before the agent starts and destroyed after completion.
+        </p>
+        <CodeBlock>{`// session naming convention
+{runId}-{agentId}       // e.g. run-abc123-researcher
+monitor-{runId}-{agentId}  // watchdog monitor session
+
+// session lifecycle
+1. pty-manager creates session
+2. chain-runner launches agent in session
+3. output streamed to run artifacts
+4. session destroyed on completion`}</CodeBlock>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Resuming Stopped Runs</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Stopped or errored runs can be resumed from the point of failure. The system
+          skips completed agents and restarts from the first pending or errored agent.
+        </p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
+          <div>1. Click &quot;Resume&quot; on a stopped run</div>
+          <div>2. System checks agent statuses in run.json</div>
+          <div>3. Restarts from first incomplete agent</div>
+          <div>4. Preserves output from completed agents</div>
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Run Artifacts</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Each run captures artifacts in <code className="text-foreground/70 bg-muted px-1 rounded">namespaces/{"{id}"}/runs/{"{runId}"}/artifacts/</code>:
+        </p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
+          <div><code className="text-foreground/70">{"{agentId}"}-diff.patch</code> - git diff from agent changes</div>
+          <div><code className="text-foreground/70">{"{agentId}"}-files-changed.json</code> - list of modified files</div>
+          <div><code className="text-foreground/70">{"{agentId}"}-conversations.json</code> - index of conversation JSONL paths</div>
+          <div><code className="text-foreground/70">{"{agentId}"}-output.txt</code> - raw terminal output</div>
+          <div><code className="text-foreground/70">{"{agentId}"}-events.json</code> - events fired by agent</div>
+        </div>
+        <p className="text-xs text-foreground/60 leading-relaxed">
+          View artifacts in the run detail panel under the &quot;Artifacts&quot; tab.
+          The run directory also contains <code className="text-foreground/70 bg-muted px-1 rounded">run.json</code> (metadata) and <code className="text-foreground/70 bg-muted px-1 rounded">output.log</code> (combined output for the run).
+        </p>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Run Monitoring</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          The background worker reconciler monitors runs for inconsistencies and
+          cleans up orphaned PTY sessions.
+        </p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
+          <div>Checks PTY session aliveness</div>
+          <div>Cleans up orphaned sessions (monitor-* prefix excluded)</div>
+          <div>Runs every 60 seconds via the background worker daemon</div>
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Cleaning Up Stale States</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Stale runs can accumulate from crashes or force kills. Use the cleanup tools
+          to remove them:
+        </p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
+          <div>Stop: marks run as stopped, kills PTY sessions</div>
+          <div>Delete: removes run directory and all artifacts</div>
+          <div>Reconciler: auto-cleans orphaned runs on boot</div>
+        </div>
+      </section>
+      </div>
+    </div>
+  );
+}

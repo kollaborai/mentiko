@@ -1,0 +1,103 @@
+name: Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        default: 'qa'
+        type: choice
+        options:
+          - qa
+          - prod
+
+jobs:
+  smoke-test:
+    name: Smoke Test (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Determine target URL
+        id: target
+        run: |
+          if [ "${{ github.event.inputs.environment }}" = "prod" ]; then
+            echo "url=https://app.example.com" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.environment }}" = "qa" ]; then
+            echo "url=https://qa.mentiko.com" >> $GITHUB_OUTPUT
+          else
+            echo "url=http://localhost:3000" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup local dev server (if testing dev)
+        if: github.event.inputs.environment == ''
+        run: |
+          cd web
+          npm ci
+          npm run build
+          mkdir -p ../smoke-test-results
+          npm run start &
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install -g puppeteer
+
+      - name: Run smoke tests
+        env:
+          SMOKE_BASE_URL: ${{ steps.target.outputs.url }}
+          SMOKE_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+          SMOKE_HEADLESS: true
+        run: |
+          node scripts/smoke-test-advanced.mjs
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: smoke-test-results/
+
+      - name: Comment PR with results
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('smoke-test-results/summary.json', 'utf8'));
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Smoke Test Failed
+              **Environment:** ${process.env.SMOKE_BASE_URL}
+              **Time:** ${summary.elapsed}s
+              **Passed:** ${summary.passed}
+              **Failed:** ${summary.failed}
+              **Warnings:** ${summary.warnings}
+              `
+            });
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Smoke tests failed for ${{ steps.target.outputs.url }}"
+          exit 1

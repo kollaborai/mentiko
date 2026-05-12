@@ -1,0 +1,141 @@
+/**
+ * mentiko-mcp-bar-client.ts
+ *
+ * SSE subscriber for UI effects dispatched by the mentiko-mcp stdio
+ * subprocess. Effects are session-scoped: the JWT from the engine session
+ * create response is passed as ?sessionToken= so effects route only to
+ * the tab that initiated the agent turn.
+ *
+ * Token expiry handling: on 401 from stream, calls the refresh-token
+ * endpoint, updates sessionStorage, and reconnects.
+ */
+
+import { UIEffect } from "./mentiko-mcp-inbox";
+
+export type EffectHandler = (effect: UIEffect) => void;
+
+const SESSION_TOKEN_KEY = "mentiko-session-token";
+const LEGACY_SESSION_ID_KEY = "mentiko-kollabor-session-id";
+const SESSION_ID_KEY = "mentiko-kollabor-session-id-v2";
+
+export function getStoredSessionToken(): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+}
+
+export function storeSessionToken(token: string): void {
+  if (typeof sessionStorage === "undefined") return;
+  try { sessionStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
+}
+
+export function clearSessionToken(): void {
+  if (typeof sessionStorage === "undefined") return;
+  try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
+}
+
+export class MCPBarClient {
+  private eventSource: EventSource | null = null;
+  private onEffect: EffectHandler;
+  private closed = false;
+  private refreshing = false;
+
+  constructor(onEffect: EffectHandler) {
+    this.onEffect = onEffect;
+  }
+
+  connect() {
+    if (this.eventSource) return;
+
+    const token = getStoredSessionToken();
+    if (!token) return;
+
+    const url = `/api/mentiko-mcp/stream?sessionToken=${encodeURIComponent(token)}`;
+
+    const es = new EventSource(url);
+    this.eventSource = es;
+
+    es.onmessage = (event) => {
+      try {
+        const effect = JSON.parse(event.data) as UIEffect;
+        this.onEffect(effect);
+      } catch (err) {
+        console.error("[mcp-bar] effect parse error:", err);
+      }
+    };
+
+    es.onerror = () => {
+      if (this.closed) return;
+      es.close();
+      this.eventSource = null;
+
+      // Check if error might be auth-related (401) — try refresh first
+      const sessionId = (() => {
+        if (typeof localStorage === "undefined") return null;
+        try {
+          localStorage.removeItem(LEGACY_SESSION_ID_KEY);
+          return localStorage.getItem(SESSION_ID_KEY);
+        } catch { return null; }
+      })();
+
+      if (sessionId && !this.refreshing) {
+        this.refreshing = true;
+        fetch(`/api/kollabor/engine/sessions/${encodeURIComponent(sessionId)}/refresh-token`, {
+          method: "POST",
+          credentials: "same-origin",
+        })
+          .then((res) => res.ok ? res.json() : null)
+          .then((data) => {
+            this.refreshing = false;
+            if (data?.session_token) {
+              storeSessionToken(data.session_token);
+            }
+            if (!this.closed) {
+              setTimeout(() => this.connect(), 500);
+            }
+          })
+          .catch(() => {
+            this.refreshing = false;
+            if (!this.closed) {
+              setTimeout(() => this.connect(), 3000);
+            }
+          });
+      } else {
+        setTimeout(() => {
+          if (!this.closed) this.connect();
+        }, 3000);
+      }
+    };
+  }
+
+  disconnect() {
+    this.closed = true;
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+  }
+}
+
+/**
+ * POST the user's reply for a synchronous ask_* tool.
+ * Auth: signed-in session cookie. sessionId from sessionStorage token.
+ */
+export async function replyToTool(
+  toolId: string,
+  result: unknown,
+): Promise<void> {
+  const token = getStoredSessionToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch("/api/mentiko-mcp/reply", {
+    method: "POST",
+    credentials: "same-origin",
+    headers,
+    body: JSON.stringify({ toolId, result }),
+  });
+  if (!res.ok) {
+    throw new Error(`reply failed: ${res.status}`);
+  }
+}

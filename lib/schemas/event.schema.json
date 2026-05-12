@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Chain Event",
+  "description": "Schema for events generated during chain execution",
+  "type": "object",
+  "required": ["id", "type", "source", "timestamp", "processed"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique event identifier",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "description": "Event type name",
+      "enum": [
+        "manual-start",
+        "chain-started",
+        "chain-complete",
+        "chain-error",
+        "agent-started",
+        "agent-complete",
+        "agent-error",
+        "agent-timeout",
+        "webhook-triggered",
+        "schedule-triggered",
+        "fan-in-complete",
+        "fan-out-complete"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "description": "Source of the event (agent id or 'system')"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when event was created",
+      "format": "date-time"
+    },
+    "processed": {
+      "type": "boolean",
+      "description": "Whether this event has been handled",
+      "default": false
+    },
+    "data": {
+      "type": "object",
+      "description": "Event payload",
+      "properties": {
+        "chainId": {
+          "type": "string",
+          "description": "Chain identifier"
+        },
+        "chainName": {
+          "type": "string",
+          "description": "Chain name"
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run identifier"
+        },
+        "agentId": {
+          "type": "string",
+          "description": "Agent identifier"
+        },
+        "agentName": {
+          "type": "string",
+          "description": "Agent name"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Session identifier"
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message"
+        },
+        "output": {
+          "type": "string",
+          "description": "Agent output"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional event metadata",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

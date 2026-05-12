@@ -1,0 +1,103 @@
+# namespaces is all tenant runtime data — never commit
+# (runs, events, state, agent profiles w/ API keys, chains, schedules, etc.)
+# use namespaces/.gitkeep to preserve the directory on fresh clone
+namespaces/*
+!namespaces/.gitkeep
+
+# web app can also write a local namespaces dir (dev mode)
+web/namespaces/
+
+# obsolete local runtime paths
+lib/namespaces/
+
+# env files (never commit secrets)
+.env
+.env.local
+.env.production
+.env.production.local
+.env.development.local
+.env.test.local
+
+# os
+.DS_Store
+
+# machine-local editor/AI configs (keep on disk, don't commit)
+.gemini/settings.json
+.claude/settings.local.json
+
+# local AI tool state
+.claude/
+
+# next.js
+.next/
+web/.next/
+
+# leaked runtime artifacts
+web/web/
+web/agents/
+# root-level workspace/ only (allow web/components/workspace/)
+/workspace/
+
+# client-specific work (never commit)
+examples/robin-engagement/
+docs/clients/
+
+# agent reports (runtime output, belongs in namespaces/)
+reports/
+
+# marketplace published chains (user-generated runtime data)
+namespaces/*/marketplace/
+
+# ratings data (runtime, belongs in namespaces/)
+ratings.json
+
+# agents/ runtime data subdirs (belong in namespaces/)
+# keep agent definition dirs (code-reviewer/, researcher/, etc.)
+agents/debug/
+agents/events/
+agents/state/
+agents/jobs/
+agents/metrics/
+agents/notifications/
+agents/profiles/
+agents/runs/
+agents/schedules/
+agents/watchdog-hooks/
+agents/ratings.json
+
+# monitor state
+.mentiko_monitor/
+
+# peer-swarm runtime artifacts
+**/peer-output/
+**/lib/peer-hook.sh
+*.orig
+
+# platform build output (local Docker builds)
+platform-build/
+
+# temp
+/tmp/
+*.log
+*.bak
+*.pyc
+__pycache__/
+trash/
+.superpowers/brainstorm/
+
+# node
+node_modules/
+package-lock.json
+
+# webhook state
+.mentiko_webhooks/
+
+# retired tool caches
+.trash/
+.bv/
+.dolt/
+*.db
+
+# enterprise edition
+enterprise/
+web/lib/job-store.ts.bak

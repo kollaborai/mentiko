@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent Definition",
+  "description": "Schema for a single agent in a chain",
+  "type": "object",
+  "required": ["id", "name", "triggers", "emits"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique agent identifier within the chain",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable agent name",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "description": "What this agent does"
+    },
+    "session_prefix": {
+      "type": "string",
+      "description": "Override pty session prefix"
+    },
+    "agent_profile": {
+      "type": "string",
+      "description": "Agent profile ID to use for this agent (overrides chain default)"
+    },
+    "triggers": {
+      "type": "array",
+      "description": "Events that start this agent",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "emits": {
+      "type": "string",
+      "description": "Event emitted on completion"
+    },
+    "monitor": {
+      "type": "boolean",
+      "description": "Override chain-level monitor setting"
+    },
+    "monitor_interval": {
+      "type": "integer",
+      "description": "Override chain-level monitor interval (seconds)",
+      "minimum": 1
+    },
+    "spec": {
+      "type": "string",
+      "description": "Path to external .md spec file"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Inline agent instructions"
+    },
+    "timeout": {
+      "type": "integer",
+      "description": "Agent timeout in seconds (0 = no timeout, -1 = use chain default)",
+      "default": 0,
+      "minimum": -1
+    },
+    "retry": {
+      "type": "object",
+      "description": "Retry configuration",
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "description": "Maximum number of retry attempts",
+          "default": 0,
+          "minimum": 0
+        },
+        "backoff": {
+          "type": "string",
+          "description": "Backoff strategy",
+          "enum": ["fixed", "exponential", "linear"],
+          "default": "exponential"
+        },
+        "initial_delay": {
+          "type": "integer",
+          "description": "Initial delay before first retry (seconds)",
+          "default": 5,
+          "minimum": 0
+        },
+        "max_delay": {
+          "type": "integer",
+          "description": "Maximum delay between retries (seconds)",
+          "default": 300,
+          "minimum": 1
+        },
+        "backoff_multiplier": {
+          "type": "number",
+          "description": "Multiplier for exponential backoff",
+          "default": 2.0,
+          "minimum": 1.0
+        }
+      }
+    },
+    "on_error": {
+      "type": "string",
+      "description": "Agent ID to route to when this agent fails"
+    },
+    "on_timeout": {
+      "type": "string",
+      "description": "Agent ID to route to when this agent times out"
+    },
+    "context": {
+      "type": "object",
+      "description": "Context configuration",
+      "properties": {
+        "read_first": {
+          "type": "array",
+          "description": "Files agent should read before starting",
+          "items": { "type": "string" }
+        },
+        "workspace": {
+          "type": "string",
+          "description": "Working directory for this agent's output"
+        }
+      }
+    },
+    "authorities": {
+      "type": "object",
+      "description": "Authorization configuration",
+      "properties": {
+        "can": {
+          "type": "array",
+          "description": "Actions this agent can perform",
+          "items": { "type": "string" }
+        },
+        "needs_approval": {
+          "type": "array",
+          "description": "Actions requiring explicit approval",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "wait_for_events": {
+      "type": "object",
+      "description": "Fan-in: wait for multiple events before triggering",
+      "properties": {
+        "events": {
+          "type": "array",
+          "description": "List of event names to wait for",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "wait_for": {
+          "type": "string",
+          "description": "Fan-in strategy",
+          "enum": ["all", "any", "quorum"],
+          "default": "all"
+        },
+        "quorum": {
+          "type": "integer",
+          "description": "Minimum events for quorum",
+          "minimum": 1
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Max seconds to wait (0 = no timeout)",
+          "default": 3600,
+          "minimum": 0
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Artifact declarations for what this agent produces and consumes",
+      "properties": {
+        "produces": {
+          "type": "array",
+          "description": "Artifacts this agent creates in the run space",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Artifact identifier (used in filename: {agent-id}.{artifact-id}.{ext})",
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "type": {
+                "type": "string",
+                "description": "Artifact file type",
+                "enum": ["markdown", "json", "code", "patch", "csv", "text", "image"],
+                "default": "markdown"
+              },
+              "template": {
+                "type": "string",
+                "description": "Artifact template ID to follow (from artifact-templates library)"
+              },
+              "description": {
+                "type": "string",
+                "description": "What this artifact contains"
+              }
+            }
+          }
+        },
+        "consumes": {
+          "type": "array",
+          "description": "Artifacts this agent reads from upstream agents",
+          "items": {
+            "type": "object",
+            "required": ["from", "artifact"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "Agent ID that produces this artifact"
+              },
+              "artifact": {
+                "type": "string",
+                "description": "Artifact ID to consume"
+              },
+              "required": {
+                "type": "boolean",
+                "description": "Whether this artifact must exist before agent starts",
+                "default": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

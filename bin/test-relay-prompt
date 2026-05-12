@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+#
+# test-relay-prompt.sh - test different moderator prompts against saved captures
+#
+# usage:
+#   ./scripts/test-relay-prompt.sh                          # run current prompt against default capture
+#   ./scripts/test-relay-prompt.sh /path/to/capture.txt     # run against specific capture
+#   ./scripts/test-relay-prompt.sh --prompt "custom prompt"  # test a custom prompt
+#   ./scripts/test-relay-prompt.sh --list                   # list saved captures
+#   ./scripts/test-relay-prompt.sh --save                   # save all captures from a run
+#
+# the script pipes the prompt + capture to haiku via claude CLI
+# and shows you exactly what comes back.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CAPTURES_DIR="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}/relay-captures"
+mkdir -p "$CAPTURES_DIR"
+
+# defaults
+CAPTURE_FILE=""
+CUSTOM_PROMPT=""
+MODEL="haiku"
+LIST_MODE=false
+SAVE_MODE=false
+RUN_ID=""
+
+# current production prompt
+DEFAULT_PROMPT='You are relaying messages between two AI agents who are collaborating
+on a project. They do not know they are talking to AI -- they think a
+human project lead is passing messages between them. You must maintain
+this illusion.
+
+Below is a terminal capture from one agent'"'"'s session. Your job:
+
+1. Read the terminal output and find the agent'"'"'s most recent response.
+   Ignore all terminal chrome (prompt lines, status bars, ANSI codes,
+   tool call output, thinking indicators, file contents from Read/cat).
+   Focus on what the agent SAID, not what tools it ran.
+
+2. Rewrite their response in first person, as if you are a human
+   project lead paraphrasing what this agent found/decided/built.
+   Keep it direct and natural. No headers, no labels, no "FROM:",
+   no role names. Just talk like a person passing along information.
+
+3. Preserve ALL substance: findings, decisions, code references,
+   questions, action items, analysis. Do not summarize or shorten.
+   Up to 1000 words is fine. Keep their structure (bullets, lists,
+   paragraphs) but strip any AI-isms like "I'"'"'d be happy to" or
+   "Certainly!".
+
+4. If the agent asked questions, include those questions so the other
+   agent can answer them.
+
+5. If the terminal capture shows the agent is still running tool calls
+   with no text response yet, write: "still working on it, give them
+   a minute" and nothing else.
+
+EXAMPLES:
+
+Terminal shows agent analyzed a codebase:
+  "looked through the whole codebase. here'"'"'s what i found:
+   - auth is solid, nextauth v5 with timing protection
+   - 17 tables in the schema, well designed
+   - no tests though, just one smoke test
+   - mobile app is scaffolded but screens are placeholder
+   - stripe integration works but crypto payments are unclear
+   couple questions: are the crypto routes actually used or dead code?
+   and should we commit the uncommitted auth fixes first?"
+
+Terminal shows agent made code changes:
+  "fixed the proxy middleware and removed the dead /admin routes from
+   the web app. build passes clean now. also committed the security
+   fixes that were sitting uncommitted.
+   ready to move on to setting up the production database."
+
+Terminal shows agent is mid-tool-call with no response:
+  "still working on it, give them a minute"
+
+LAST LINE RULE:
+Your very last line must be exactly STATUS:DONE or STATUS:CONTINUE
+- STATUS:DONE = the agent has explicitly stated they are finished,
+  the collaboration is complete, there is nothing left to do. this
+  is rare. only use it when the agent clearly says "done" or "complete"
+  or "finished" with no follow-up questions or next steps.
+- STATUS:CONTINUE = everything else. the agent shared findings,
+  asked questions, made progress, is still working, or there is
+  any remaining work. this is the default.'
+
+usage() {
+  echo "usage: $0 [options] [capture-file]"
+  echo ""
+  echo "options:"
+  echo "  --prompt \"text\"    use custom prompt instead of default"
+  echo "  --model name       model to use (default: haiku)"
+  echo "  --list             list saved captures"
+  echo "  --save RUN_ID      save all captures from a link run"
+  echo "  --diff             run default + custom prompt, show diff"
+  echo "  -h, --help         show this"
+  exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prompt) CUSTOM_PROMPT="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --list) LIST_MODE=true; shift ;;
+    --save) SAVE_MODE=true; RUN_ID="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    *) CAPTURE_FILE="$1"; shift ;;
+  esac
+done
+
+# list saved captures
+if $LIST_MODE; then
+  echo "saved captures in $CAPTURES_DIR:"
+  echo ""
+  for f in "$CAPTURES_DIR"/*.txt; do
+    [[ -f "$f" ]] || continue
+    size=$(wc -c < "$f" | tr -d ' ')
+    echo "  $(basename "$f")  ${size}b"
+  done
+  exit 0
+fi
+
+# save captures from a run
+if $SAVE_MODE; then
+  if [[ -z "$RUN_ID" ]]; then
+    echo "error: --save requires a run ID"
+    exit 1
+  fi
+
+  # find the run
+  MENTIKO_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
+  RUN_FILE="$MENTIKO_ROOT/namespaces/default/runs/$RUN_ID/run.json"
+  if [[ ! -f "$RUN_FILE" ]]; then
+    echo "error: run not found: $RUN_FILE"
+    exit 1
+  fi
+
+  CWD=$(python3 -c "import json; print(json.load(open('$RUN_FILE')).get('workspacePath',''))")
+  STARTED=$(python3 -c "import json; print(json.load(open('$RUN_FILE')).get('started',''))")
+  COMPLETED=$(python3 -c "import json; print(json.load(open('$RUN_FILE')).get('completed',''))")
+
+  if [[ -z "$CWD" ]]; then
+    echo "error: run has no workspacePath"
+    exit 1
+  fi
+
+  SLUG=$(echo "$CWD" | tr '/' '-')
+  JSONL_DIR="$HOME/.claude/projects/$SLUG"
+
+  if [[ ! -d "$JSONL_DIR" ]]; then
+    echo "error: JSONL dir not found: $JSONL_DIR"
+    exit 1
+  fi
+
+  echo "saving captures from $RUN_ID"
+  echo "  workspace: $CWD"
+  echo "  jsonl dir: $JSONL_DIR"
+  echo "  time window: $STARTED -> $COMPLETED"
+  echo ""
+
+  count=0
+  python3 -c "
+import json, os, glob
+
+started = '$STARTED'
+completed = '$COMPLETED'
+jsonl_dir = '$JSONL_DIR'
+captures_dir = '$CAPTURES_DIR'
+run_id = '$RUN_ID'
+
+from datetime import datetime
+start_ms = datetime.fromisoformat(started.replace('Z', '+00:00')).timestamp() * 1000
+end_ms = datetime.fromisoformat(completed.replace('Z', '+00:00')).timestamp() * 1000
+
+files = []
+for f in glob.glob(os.path.join(jsonl_dir, '*.jsonl')):
+    st = os.stat(f)
+    birth = st.st_birthtime * 1000
+    if birth >= start_ms - 60000 and birth <= end_ms + 60000:
+        files.append((birth, f))
+
+files.sort()
+idx = 0
+for birth, f in files:
+    try:
+        first_user = None
+        for line in open(f):
+            d = json.loads(line)
+            if d.get('type') == 'user':
+                c = d.get('message',{}).get('content','')
+                txt = c if isinstance(c, str) else ''
+                if isinstance(c, list):
+                    for b in c:
+                        if b.get('type') == 'text':
+                            txt = b.get('text','')
+                            break
+                first_user = txt
+                break
+        if not first_user or 'Extract the most recent response' not in first_user:
+            continue
+
+        # extract capture
+        parts = first_user.split('--- TERMINAL CAPTURE ---')
+        if len(parts) < 2:
+            continue
+        capture = parts[1].strip()
+
+        # get response
+        response = ''
+        for line in open(f):
+            d = json.loads(line)
+            if d.get('type') == 'assistant':
+                c = d.get('message',{}).get('content','')
+                if isinstance(c, str):
+                    response = c
+                elif isinstance(c, list):
+                    for b in c:
+                        if b.get('type') == 'text':
+                            response += b.get('text','')
+                break
+
+        idx += 1
+        basename = f'{run_id}-{idx:02d}'
+
+        # save capture
+        with open(os.path.join(captures_dir, f'{basename}-capture.txt'), 'w') as out:
+            out.write(capture)
+
+        # save response
+        with open(os.path.join(captures_dir, f'{basename}-response.txt'), 'w') as out:
+            out.write(response)
+
+        status = 'empty' if not response.replace('STATUS:CONTINUE','').replace('STATUS:DONE','').strip() else 'has-content'
+        print(f'  #{idx:2d}  {os.path.basename(f)[:12]}...  capture={len(capture):5d}b  response={len(response):4d}b  [{status}]')
+    except:
+        pass
+
+print(f'\\nsaved {idx} captures to {captures_dir}/')
+"
+  exit 0
+fi
+
+# default capture file
+if [[ -z "$CAPTURE_FILE" ]]; then
+  # use the saved test fixture if it exists
+  if [[ -f /tmp/relay-test-capture.txt ]]; then
+    CAPTURE_FILE="/tmp/relay-test-capture.txt"
+  else
+    echo "error: no capture file specified and /tmp/relay-test-capture.txt not found"
+    echo "  use: $0 --save RUN_ID   to save captures first"
+    exit 1
+  fi
+fi
+
+if [[ ! -f "$CAPTURE_FILE" ]]; then
+  echo "error: file not found: $CAPTURE_FILE"
+  exit 1
+fi
+
+PROMPT="${CUSTOM_PROMPT:-$DEFAULT_PROMPT}"
+CAPTURE=$(cat "$CAPTURE_FILE")
+SIZE=$(wc -c < "$CAPTURE_FILE" | tr -d ' ')
+
+echo "relay prompt test"
+echo "  capture: $CAPTURE_FILE (${SIZE}b)"
+echo "  model: $MODEL"
+echo "  prompt: ${PROMPT:0:80}..."
+echo ""
+echo "--- sending to $MODEL ---"
+echo ""
+
+# build the full input
+tmp=$(mktemp /tmp/relay-test-XXXXXX)
+{
+  echo "$PROMPT"
+  echo ""
+  echo "--- TERMINAL CAPTURE ---"
+  echo ""
+  cat "$CAPTURE_FILE"
+} > "$tmp"
+
+# run it
+start_time=$(date +%s)
+result=$(claude --print --model "$MODEL" < "$tmp" 2>/dev/null) || result="(cli error)"
+end_time=$(date +%s)
+elapsed=$((end_time - start_time))
+rm -f "$tmp"
+
+echo "--- response (${#result} chars, ${elapsed}s) ---"
+echo ""
+echo "$result"
+echo ""
+echo "--- end ---"
