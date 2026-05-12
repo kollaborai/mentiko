@@ -1,10 +1,12 @@
 {
   "name": "@kollaborai/mentiko-mcp",
   "version": "0.1.0",
-  "description": "Mentiko MCP server — exposes Mentiko platform operations to MCP clients (Claude Desktop, Claude Code, etc.)",
-  "private": true,
-  "type": "module",
+  "description": "Mentiko MCP server for Claude Desktop, Claude Code, and other MCP clients.",
+  "private": false,
   "main": "dist/server.js",
+  "exports": {
+    ".": "./dist/server.js"
+  },
   "bin": {
     "mentiko-mcp": "dist/server.js"
   },
@@ -12,14 +14,38 @@
     "dist"
   ],
   "scripts": {
-    "build": "esbuild server.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.js",
+    "build": "esbuild server.ts --bundle --platform=node --target=node20 --format=cjs --banner:js='#!/usr/bin/env node' --outfile=dist/server.js && chmod +x dist/server.js",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "tsx server.ts",
+    "prepublishOnly": "npm run typecheck && npm run build",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+  "keywords": [
+    "mentiko",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-desktop",
+    "claude-code",
+    "agents",
+    "automation"
+  ],
+  "author": "KollaborAI",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/kollaborai/mentiko#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kollaborai/mentiko.git",
+    "directory": "lib/mentiko-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/kollaborai/mentiko/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",

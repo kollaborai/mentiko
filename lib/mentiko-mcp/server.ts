@@ -39,8 +39,10 @@ function fuzzyMatch(query: string, target: string): number {
   return 0;
 }
 
+const SERVER_VERSION = "0.1.0";
+
 const server = new Server(
-  { name: "mentiko-mcp", version: "0.3.0" },
+  { name: "mentiko-mcp", version: SERVER_VERSION },
   { capabilities: { tools: {} } },
 );
 
@@ -721,7 +723,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    `[mentiko-mcp] stdio server ready v0.3.0 (INBOX_KEY=${process.env.MENTIKO_INBOX_KEY ? "set" : "MISSING"}, WEB_URL=${process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000"})`,
+    `[mentiko-mcp] stdio server ready v${SERVER_VERSION} (INBOX_KEY=${process.env.MENTIKO_INBOX_KEY ? "set" : "MISSING"}, WEB_URL=${process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000"})`,
   );
 }
 

@@ -1,0 +1,52 @@
+name: publish mentiko-mcp
+
+on:
+  push:
+    tags:
+      - "mentiko-mcp-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref_name, 'mentiko-mcp-v')
+        working-directory: lib/mentiko-mcp
+        run: |
+          tag_version="${GITHUB_REF_NAME#mentiko-mcp-v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "::error::tag version $tag_version does not match package version $package_version"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        working-directory: lib/mentiko-mcp
+        run: npm install --no-audit --no-fund
+
+      - name: Type check
+        working-directory: lib/mentiko-mcp
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: lib/mentiko-mcp
+        run: npm run build
+
+      - name: Publish
+        working-directory: lib/mentiko-mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

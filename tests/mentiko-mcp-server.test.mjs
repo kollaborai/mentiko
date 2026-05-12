@@ -14,10 +14,12 @@ import { execFileSync } from "child_process";
 const REPO_ROOT = join(import.meta.dirname, "..");
 const SERVER_FILE = join(REPO_ROOT, "lib", "mentiko-mcp", "server.ts");
 const TOOLS_FILE = join(REPO_ROOT, "lib", "mentiko-mcp", "tools.ts");
+const PACKAGE_FILE = join(REPO_ROOT, "lib", "mentiko-mcp", "package.json");
 const NODE_BIN = dirname(execFileSync("which", ["node"], { encoding: "utf-8" }).trim());
 
 const src = readFileSync(SERVER_FILE, "utf-8");
 const toolsSrc = readFileSync(TOOLS_FILE, "utf-8");
+const packageJson = JSON.parse(readFileSync(PACKAGE_FILE, "utf-8"));
 
 let passed = 0;
 let failed = 0;
@@ -243,9 +245,12 @@ test("every tool name in ALL_TOOLS is referenced in server or falls to default d
   assert(src.includes('dispatchEffect(name, args)'), "should have default dispatch fallback");
 });
 
-test("server version is 0.3.0", () => {
-  assert(src.includes('version: "0.3.0"'), "server version should be 0.3.0");
-  assert(src.includes("v0.3.0"), "startup log should include v0.3.0");
+test("server version matches package.json", () => {
+  assert(
+    src.includes(`const SERVER_VERSION = "${packageJson.version}"`),
+    "server version should match package.json",
+  );
+  assert(src.includes("v${SERVER_VERSION}"), "startup log should include SERVER_VERSION");
 });
 
 test("permission check for tier-B has approve-always option", () => {
