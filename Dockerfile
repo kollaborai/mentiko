@@ -52,13 +52,13 @@ WORKDIR /build/web
 
 RUN echo "=== next.js build (webpack) ===" && \
     ./node_modules/.bin/next build --webpack && \
-    test -f .next/standalone/web/server.js || (echo "FATAL: standalone build missing server.js" && exit 1)
+    test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1)
 
 # assemble platform context
 RUN echo "=== assembling platform ===" && \
     mkdir -p /context/.next/static /context/public /context/bin \
              /context/lib /context/server && \
-    cp -r .next/standalone/web/. /context/ && \
+    cp -r .next/standalone/. /context/ && \
     cp -r .next/static/. /context/.next/static/ && \
     cp -r public/. /context/public/ 2>/dev/null || true && \
     cp -r /build/bin/. /context/bin/ 2>/dev/null || true && \
