@@ -29,6 +29,11 @@
 #   for reproducible builds, pass --build-arg BASE_TAG=<commit-sha>.
 #   see docs/DOCKER_BUILD.md.
 
+# BASE_TAG must be declared BEFORE the first FROM to be usable in a later
+# FROM line. controls which mentiko-base is consumed. default :latest.
+# for reproducible builds, pass --build-arg BASE_TAG=<commit-sha>.
+ARG BASE_TAG=latest
+
 # ===========================================================================
 # BUILDER STAGE — npm build + assemble platform
 # (uses plain node:22-slim — needs npm + full source, no tools layer needed)
@@ -116,7 +121,6 @@ RUN if [ -f /context/lib/mentiko-mcp/server.ts ]; then \
 # RUNTIME STAGE — inherit tools from mentiko-base, drop in the app
 # ===========================================================================
 
-ARG BASE_TAG=latest
 FROM ghcr.io/kollaborai/mentiko-base:${BASE_TAG}
 
 WORKDIR /opt/mentiko
