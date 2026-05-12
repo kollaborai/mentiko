@@ -22,8 +22,11 @@ arch for your host automatically.
 `ghcr.io/kollaborai/mentiko`
   the platform image. inherits from `mentiko-base`, adds the next.js build
   and runtime config. this is what `docker compose up` runs.
-  rebuilt on every code change.
   built from `Dockerfile` at the repo root.
+  published by `.github/workflows/build-platform.yml` on:
+    - push of a tag matching `v*` (e.g. `v0.3.5`) — releases
+    - manual `workflow_dispatch` from the Actions UI
+  tags: `:latest`, `:<commit-sha>`, and `:v0.3.5` (when triggered by tag).
 
 Both images are **public**.
 
@@ -48,9 +51,38 @@ Rebuild triggers:
 GitHub-hosted runners are free for public repositories, including the
 `ubuntu-24.04-arm` arm64 runner used here.
 
-`mentiko` (the platform image) is built however you build it today
-(self-host: `docker build` locally; managed: your existing CI). Its
-`FROM` line uses `mentiko-base` via a `BASE_TAG` build arg.
+`mentiko` (the platform image) is built by
+`.github/workflows/build-platform.yml`. Same three-job pattern as the
+base image:
+
+```
+platform-amd64 (ubuntu-latest)        → push :<sha>-amd64
+platform-arm64 (ubuntu-24.04-arm)     → push :<sha>-arm64
+manifest       (waits on both)        → create + push :<sha>, :latest,
+                                        and :<semver-tag> if applicable,
+                                        all as fat manifests pointing
+                                        at both arch-specific tags
+```
+
+Build triggers:
+  - push of a tag matching `v*` — creates `:<commit-sha>`, `:latest`,
+    and `:<semver-tag>`
+  - manual `workflow_dispatch` — creates `:<commit-sha>` and `:latest`
+    only (no semver tag for an ad-hoc dispatch)
+
+The workflow accepts a `base_tag` input on `workflow_dispatch` that
+controls which `mentiko-base` to FROM. Default `latest`. Pass a SHA
+for reproducible builds.
+
+To cut a release:
+
+```
+git tag v0.3.5
+git push origin v0.3.5
+```
+
+That triggers the workflow, builds both arches, and publishes the
+manifest tags. Self-hosters can then `docker pull ghcr.io/kollaborai/mentiko:v0.3.5`.
 
 ## tags and pinning
 
@@ -115,7 +147,18 @@ This skips the workflow entirely. Useful for iterating on
 
 ## regression test
 
-Build the platform image locally and run it:
+Two ways to smoke test.
+
+**Pull the published image:**
+
+```
+docker pull ghcr.io/kollaborai/mentiko:latest
+docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
+  -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
+  ghcr.io/kollaborai/mentiko:latest
+```
+
+**Build from source locally:**
 
 ```
 docker build -t mentiko:local .
@@ -124,8 +167,7 @@ docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
   mentiko:local
 ```
 
-On a fresh Mac (arm64), Linux (amd64), or anywhere else with Docker,
-this should produce a working platform image. If the build fails or
+Both should produce a working platform image. If the build fails or
 behavior changes between hosts, that's a regression — file an issue.
 
 ## related
