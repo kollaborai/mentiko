@@ -117,18 +117,23 @@ This skips the workflow entirely. Useful for iterating on
 
 ## regression test
 
-After any change here, the smoke test is:
+The platform image is built locally from this repo (the published
+image is currently `mentiko-tenant`, a private image used by the
+managed service). Self-host smoke test:
 
 ```
-docker pull ghcr.io/kollaborai/mentiko:latest
+docker build -t mentiko:local .
 docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
   -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
-  ghcr.io/kollaborai/mentiko:latest
+  mentiko:local
 ```
 
 On a fresh Mac (arm64), Linux (amd64), or anywhere else with Docker,
-this should boot the platform identically. If behavior changes between
-hosts or between releases, that's a regression — file an issue.
+this should produce a working platform image. If the build fails or
+behavior changes between hosts, that's a regression — file an issue.
+
+Once a public `ghcr.io/kollaborai/mentiko` image is published, this
+section should be updated to `docker pull` instead of `docker build`.
 
 ## related
 
