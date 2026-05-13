@@ -45,7 +45,33 @@ jobs:
         working-directory: lib/mentiko-mcp
         run: npm run build
 
+      - name: Resolve package version
+        id: package
+        working-directory: lib/mentiko-mcp
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm version
+        id: published
+        run: |
+          package="${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }}"
+          if npm view "$package" version >/dev/null 2>&1; then
+            echo "$package is already published; skipping npm publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$package is not published yet."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify npm auth
+        if: steps.published.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm whoami
+
       - name: Publish
+        if: steps.published.outputs.exists != 'true'
         working-directory: lib/mentiko-mcp
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
