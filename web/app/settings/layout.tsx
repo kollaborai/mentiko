@@ -8,6 +8,7 @@ import {
   Setting2Filled, DocumentTextFilled, CommandSquareFilled,
   ChartFilled, ActivityFilled, TrendUpFilled, MessageQuestionFilled,
   ArrowLeftFilled, KeyFilled, MenuFilled, CloseCircleFilled,
+  CloudConnectionFilled,
 } from "@aliimam/icons";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -59,6 +60,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
       label: "workspace",
       items: [
         { id: "agent-configs", label: "Agent Configs", icon: BotMessageSquare,  href: "/settings/agent-configs" },
+        { id: "mcp",           label: "MCP",           icon: CloudConnectionFilled, href: "/settings/mcp" },
         { id: "email",         label: "Email",          icon: SmsFilled,  href: "/settings/email" },
       ],
     },
@@ -94,6 +96,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
     if (pathname === "/settings/sessions") return "sessions";
     if (pathname === "/settings/ssh-keys") return "ssh-keys";
     if (pathname === "/settings/agent-configs") return "agent-configs";
+    if (pathname === "/settings/mcp") return "mcp";
     if (pathname === "/settings/email") return "email";
     if (pathname === "/settings/data") return "data";
     if (pathname === "/settings/system") return "system";

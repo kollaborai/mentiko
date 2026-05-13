@@ -33,6 +33,7 @@ import {
   PeopleFilled,
   ShopFilled,
   Rocket,
+  CloudConnectionFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 
@@ -124,6 +125,7 @@ const categories: Category[] = [
       { label: "Links", href: "/docs/links", description: "two-peer collaboration and live terminal workflows", icon: PeopleFilled, color: "#5b9ef5" },
       { label: "Security", href: "/docs/security", description: "auth and security model", icon: Shield, color: "#a0927b" },
       { label: "Icon System", href: "/docs/icon-system", description: "icon + color identity reference", icon: ColorSwatchFilled, color: "#f59e0b" },
+      { label: "MCP", href: "/docs/mcp", description: "model context protocol integration", icon: CloudConnectionFilled, color: "#5cb88a" },
     ],
   },
 ];
