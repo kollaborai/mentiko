@@ -8,6 +8,26 @@ export interface Release {
 }
 
 export const releases: Release[] = [
+  // --- v0.4.x (May 2026) ---
+  {
+    version: "v0.4.1",
+    date: "May 12, 2026",
+    title: "Resend Email Provider & Self-Hosted Improvements",
+    description:
+      "Resend is now the preferred email provider with automatic fallback to SMTP. Browser WebSocket URL is now runtime-derived so self-hosters no longer need to hardcode it. Public Dockerfile builds end-to-end for self-hosters with the correct architecture.",
+    category: "improvement",
+    docsHref: "/docs/email",
+  },
+  {
+    version: "v0.4.0",
+    date: "May 12, 2026",
+    title: "Mentiko MCP — NPM Package & Docker Image",
+    description:
+      "mentiko-mcp is now a standalone publishable npm package under the @mentiko scope. A GitHub Actions pipeline publishes multi-arch Docker images to ghcr.io/kollaborai/mentiko. CI skips already-published versions to prevent re-publish failures.",
+    category: "new",
+    docsHref: "/docs/mcp",
+  },
+
   // --- v0.3.x (April 2026) ---
   {
     version: "v0.3.3",
