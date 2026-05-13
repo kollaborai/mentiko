@@ -1,11 +1,33 @@
-import { replyToTool } from "../mentiko-mcp-bar-client";
+import { MCPBarClient, replyToTool, syncSessionToken } from "../mentiko-mcp-bar-client";
+
+class MockEventSource {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
+  static instances: MockEventSource[] = [];
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+  url: string;
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    MockEventSource.instances.push(this);
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
 
 describe("replyToTool", () => {
   beforeEach(() => {
     sessionStorage.clear();
     localStorage.clear();
     jest.clearAllMocks();
-    (global as typeof globalThis & { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({ ok: true });
+    MockEventSource.instances = [];
+    (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource = MockEventSource;
+    (globalThis as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({ ok: true });
   });
 
   test("posts reply with bearer token and local engine session fallback", async () => {
@@ -45,5 +67,29 @@ describe("replyToTool", () => {
       result: "ok",
       sessionId: "legacy-session",
     });
+  });
+
+  test("syncSessionToken clears stale tokens when the session has no fresh token", () => {
+    sessionStorage.setItem("mentiko-session-token", "stale-token");
+
+    syncSessionToken(undefined);
+
+    expect(sessionStorage.getItem("mentiko-session-token")).toBeNull();
+  });
+
+  test("clears stale tokens when stream refresh returns no replacement token", async () => {
+    sessionStorage.setItem("mentiko-session-token", "stale-token");
+    localStorage.setItem("mentiko-kollabor-session-id-v2", "session-a");
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    const client = new MCPBarClient(jest.fn());
+    client.connect();
+    MockEventSource.instances[0].onerror?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sessionStorage.getItem("mentiko-session-token")).toBeNull();
   });
 });

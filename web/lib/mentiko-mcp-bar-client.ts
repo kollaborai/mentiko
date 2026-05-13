@@ -33,6 +33,14 @@ export function clearSessionToken(): void {
   try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
 }
 
+export function syncSessionToken(token: string | null | undefined): void {
+  if (token) {
+    storeSessionToken(token);
+    return;
+  }
+  clearSessionToken();
+}
+
 export function getStoredSessionId(): string | null {
   if (typeof localStorage === "undefined") return null;
   try {
@@ -59,9 +67,18 @@ export class MCPBarClient {
     if (this.eventSource) return;
 
     const token = getStoredSessionToken();
-    if (!token) return;
-
-    const url = `/api/mentiko-mcp/stream?sessionToken=${encodeURIComponent(token)}`;
+    let url: string;
+    if (token) {
+      url = `/api/mentiko-mcp/stream?sessionToken=${encodeURIComponent(token)}`;
+    } else {
+      // dev fallback: no signed token (user not logged in). pass the engine
+      // session id so the server route can match the bucket the MCP
+      // subprocess dispatches into (MENTIKO_SESSION_ID).
+      const sid = getStoredSessionId();
+      url = sid
+        ? `/api/mentiko-mcp/stream?sessionId=${encodeURIComponent(sid)}`
+        : `/api/mentiko-mcp/stream`;
+    }
 
     const es = new EventSource(url);
     this.eventSource = es;
@@ -100,6 +117,8 @@ export class MCPBarClient {
             this.refreshing = false;
             if (data?.session_token) {
               storeSessionToken(data.session_token);
+            } else {
+              clearSessionToken();
             }
             if (!this.closed) {
               setTimeout(() => this.connect(), 500);
@@ -107,11 +126,13 @@ export class MCPBarClient {
           })
           .catch(() => {
             this.refreshing = false;
+            clearSessionToken();
             if (!this.closed) {
               setTimeout(() => this.connect(), 3000);
             }
           });
       } else {
+        clearSessionToken();
         setTimeout(() => {
           if (!this.closed) this.connect();
         }, 3000);

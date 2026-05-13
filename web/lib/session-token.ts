@@ -1,4 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
+import { resolveAppSecret } from "./dev-secret";
 import { isOrgRole, type OrgRole } from "./org-types";
 
 const ISSUER  = "mentiko-web";
@@ -6,9 +7,7 @@ const AUDIENCE = "mentiko-mcp-ops";
 const TTL_SECONDS = 86400; // 24h — matches practical engine session lifetime; revocation via token blocklist is follow-up work
 
 function getSecret(): Uint8Array {
-  const s = process.env.BETTER_AUTH_SECRET;
-  if (!s) throw new Error("BETTER_AUTH_SECRET is not set — cannot mint session token");
-  return new TextEncoder().encode(s);
+  return new TextEncoder().encode(resolveAppSecret("session-token"));
 }
 
 export interface SessionTokenClaims {

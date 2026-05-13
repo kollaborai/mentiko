@@ -36,6 +36,7 @@ jest.mock("@aliimam/icons", () => {
     ExportFilled: Icon,
     KeyFilled: Icon,
     LockFilled: Icon,
+    MagicStarFilled: Icon,
     MenuFilled: Icon,
     MessageQuestionFilled: Icon,
     NotificationFilled: Icon,

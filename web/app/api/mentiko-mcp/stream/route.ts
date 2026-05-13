@@ -16,7 +16,9 @@ export const dynamic = "force-dynamic";
  *   - production (DATABASE_URL set): hard-fail if no valid token.
  */
 export async function GET(req: Request) {
-  const sessionToken = new URL(req.url).searchParams.get("sessionToken");
+  const url = new URL(req.url);
+  const sessionToken = url.searchParams.get("sessionToken");
+  const sessionIdParam = url.searchParams.get("sessionId");
   const isDev = !process.env.DATABASE_URL;
   let sessionId: string;
 
@@ -28,8 +30,10 @@ export async function GET(req: Request) {
       return new NextResponse("Invalid session token", { status: 401 });
     }
   } else if (isDev) {
-    // dev fallback: no token required when DATABASE_URL not set
-    sessionId = "global";
+    // dev fallback: no token required when DATABASE_URL not set.
+    // accept ?sessionId= so the bar can route effects to the engine session
+    // it created (matches MENTIKO_SESSION_ID set on the MCP subprocess).
+    sessionId = sessionIdParam || "global";
   } else {
     // production: hard fail
     return new NextResponse("Unauthorized: session token required", { status: 401 });

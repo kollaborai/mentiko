@@ -52,14 +52,19 @@ async function proxyEngine(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // B4: block PATCH and DELETE — no legitimate browser use; prevents direct
-  // mutation of engine session state (e.g. session.user_token) via the proxy.
-  if (request.method === "PATCH" || request.method === "DELETE") {
-    return NextResponse.json({ error: "method not allowed" }, { status: 405 });
-  }
-
   const { path: pathParts = [] } = await context.params;
   const path = pathParts.map((part) => encodeURIComponent(part)).join("/");
+
+  // B4: block PATCH and DELETE — no legitimate browser use; prevents direct
+  // mutation of engine session state (e.g. session.user_token) via the proxy.
+  // Exception: DELETE /profiles/{name} is allowed for profile management UI.
+  const isProfileDelete =
+    request.method === "DELETE" &&
+    pathParts.length === 2 &&
+    pathParts[0] === "profiles";
+  if (request.method === "PATCH" || (request.method === "DELETE" && !isProfileDelete)) {
+    return NextResponse.json({ error: "method not allowed" }, { status: 405 });
+  }
   const upstreamUrl = `${ENGINE_BASE_URL}/${path}${request.nextUrl.search}`;
   const isHealth = request.method === "GET" && path === "health";
 
@@ -87,17 +92,33 @@ async function proxyEngine(
 
       try {
         const user = await getSessionUser(request);
-        if (user) {
-          session_token = await mintSessionToken({
-            sub: user.id,
-            jti: engineSessionId,
-            ns:  user.namespaceId ?? "default",
-            org: user.orgId ?? "default",
-            role: user.role,
-          });
+        if (!user) {
+          return NextResponse.json(
+            { error: "session token unavailable: user session required" },
+            { status: 401 },
+          );
+        } else {
+          try {
+            session_token = await mintSessionToken({
+              sub: user.id,
+              jti: engineSessionId,
+              ns:  user.namespaceId ?? "default",
+              org: user.orgId ?? "default",
+              role: user.role,
+            });
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return NextResponse.json(
+              { error: `session token unavailable: ${msg}` },
+              { status: 503 },
+            );
+          }
         }
       } catch {
-        // BETTER_AUTH_SECRET not set in dev — session works but MCP ops won't have token
+        return NextResponse.json(
+          { error: "session token unavailable: could not resolve user session" },
+          { status: 401 },
+        );
       }
 
       // Inject session_id and user_token into the body so the engine uses them at init time

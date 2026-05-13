@@ -26,7 +26,7 @@ import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
 import {
   MCPBarClient,
   getStoredSessionToken,
-  storeSessionToken,
+  syncSessionToken,
 } from "@/lib/mentiko-mcp-bar-client";
 import type { UIEffect } from "@/lib/mentiko-mcp-inbox";
 import { showToast } from "@/components/notifications-panel";
@@ -491,8 +491,13 @@ export function FloatingKollaborBar() {
           setEngineError("engine offline");
           return;
         }
+        const activeProfile = await fetch("/api/kollabor/profiles/active", { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => (typeof j?.active === "string" && j.active ? j.active : "mentiko"))
+          .catch(() => "mentiko");
+
         const sessionRequest: Parameters<typeof getOrCreateSession>[0] = {
-          profile: "mentiko",
+          profile: activeProfile,
           agent: "mentiko",
           approval_mode: "auto_approve_edits",
           mcp_servers: ["mentiko"],
@@ -512,8 +517,9 @@ export function FloatingKollaborBar() {
 
         const { sessionId: sid, sessionToken } = await getOrCreateSession(sessionRequest);
         if (cancelled) return;
-        // Store session token in sessionStorage for session-scoped SSE + ops auth
-        if (sessionToken) storeSessionToken(sessionToken);
+        // Keep SSE auth aligned with this engine session. If no fresh token
+        // comes back, clear stale JWTs so the client uses this session id.
+        syncSessionToken(sessionToken);
         setSessionId(sid);
         setConnected(true);
         setConnecting(false);
