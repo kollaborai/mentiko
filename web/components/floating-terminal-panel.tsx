@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
 import { unwrapApiData } from "@/lib/api-client";
+import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 
 interface PtySession {
   name: string;
@@ -137,10 +138,8 @@ export function FloatingTerminalPanel() {
       const res = await fetch("/api/terminal/token");
       const data = unwrapApiData<{ token?: string }>(await res.json());
       if (data.token) {
-        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        const url = isLocal
-          ? `ws://localhost:3099?token=${data.token}`
-          : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/terminal?token=${data.token}`;
+        const base = await getTerminalWsBaseUrl();
+        const url = `${base}?token=${data.token}`;
         setWsUrl(url);
         setWsStatus("running");
         return url;

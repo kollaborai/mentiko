@@ -15,6 +15,10 @@ services:
   mentiko:
     build: .
     restart: unless-stopped
+    # Container internals are fixed at 3000 / 3099 (next.js + ws-terminal
+    # readiness probes are hardcoded). Use these env vars to remap the HOST
+    # side of the mapping only. For different container-internal ports you
+    # need a reverse proxy in front of the container (see MENTIKO_TERMINAL_PROXY).
     ports:
       - "${PORT:-3000}:3000"
       - "${WS_PORT:-3099}:3099"
@@ -30,6 +34,15 @@ services:
       MENTIKO_GLOBAL_ROOT: /app
       MENTIKO_CODE_ROOT: /opt/mentiko
       NAMESPACE_ID: default
+      # terminal ws bridge — the public-facing port the browser will hit.
+      # Matches the host side of the port mapping above. The container's
+      # internal ws-terminal listener stays on 3099.
+      WS_PORT: ${WS_PORT:-3099}
+      # set MENTIKO_TERMINAL_PROXY=true if fronted by a reverse proxy that
+      # routes /ws/terminal to the container's port 3099.
+      MENTIKO_TERMINAL_PROXY: ${MENTIKO_TERMINAL_PROXY:-}
+      WS_TERMINAL_PROXY_PATH: ${WS_TERMINAL_PROXY_PATH:-}
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
       # admin bootstrap (comma-separated emails that get admin role on first login)
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # AI provider keys are managed in the secrets vault UI (/settings/secrets)
@@ -38,6 +51,13 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # email delivery (optional — pick Resend OR generic SMTP; Resend wins if both set)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       # error monitoring (optional)
       SENTRY_DSN: ${SENTRY_DSN:-}
       NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}

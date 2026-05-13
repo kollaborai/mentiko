@@ -130,9 +130,10 @@ function HookedUserProvider({
   hooks: { useSession: any; useActiveOrganization: any };
 }) {
   const { data: session, isPending, error: sessionError, refetch } = hooks.useSession();
-  // only call org hook when session exists to avoid 401s on unauthenticated pages
-  const useOrg = session?.user ? hooks.useActiveOrganization : noopHook;
-  const { data: activeOrg } = useOrg();
+  // Always call the org hook unconditionally — React requires the same hook
+  // chain on every render. Discard the result when there is no session.
+  const { data: activeOrgRaw } = hooks.useActiveOrganization();
+  const activeOrg = session?.user ? activeOrgRaw : null;
 
   const user: User | null = session?.user
     ? {

@@ -8,7 +8,7 @@
  *
  * Props:
  *   session   - PTY session name to attach to
- *   wsUrl     - WebSocket URL (default: ws://localhost:3099)
+ *   wsUrl     - WebSocket URL (caller must construct via getTerminalWsBaseUrl)
  *   readOnly  - disable keyboard input (default: false)
  *   onStatus  - callback for connection status changes
  */
@@ -26,7 +26,7 @@ export type TerminalStatus =
 
 interface TerminalViewerProps {
   session: string;
-  wsUrl?: string;
+  wsUrl: string;
   readOnly?: boolean;
   className?: string;
   contentClassName?: string;
@@ -37,7 +37,7 @@ interface TerminalViewerProps {
 
 export function TerminalViewer({
   session,
-  wsUrl = "ws://localhost:3099",
+  wsUrl,
   readOnly = false,
   className = "",
   contentClassName = "",

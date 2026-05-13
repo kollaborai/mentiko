@@ -37,6 +37,10 @@ const ENV_WHITELIST = [
   'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM',
   'SHELL', 'HOSTNAME', 'TZ', 'NODE_ENV', 'PORT',
   'NODE_PATH', 'NPM_CONFIG_PREFIX',
+  // terminal bridge: operator-configurable port + proxy mode + origin allowlist
+  'WS_PORT', 'WS_TERMINAL_PORT', 'WS_TERMINAL_HOST',
+  'MENTIKO_TERMINAL_PROXY', 'WS_TERMINAL_PROXY_PATH',
+  'WS_ALLOWED_ORIGINS',
   // platform auth + runtime config -- must be passed to next.js
   'BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'AUTH_SECRET',
   'DATABASE_URL', 'MENTIKO_ROOT', 'MENTIKO_GLOBAL_ROOT',
@@ -164,7 +168,18 @@ function topoSort(procs: ProcessConfig[]): string[] {
 function buildEnv(procEnv?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const k of ENV_WHITELIST) if (process.env[k]) env[k] = process.env[k]!;
-  if (procEnv) for (const [k, v] of Object.entries(procEnv)) env[k] = expandEnv(v);
+  if (procEnv) {
+    for (const [k, v] of Object.entries(procEnv)) {
+      // Container/operator env wins over processes.json defaults. Without
+      // this, hardcoded "PORT": "3000" in the config would shadow an
+      // operator's `docker run -e PORT=13000`.
+      if (process.env[k]) {
+        env[k] = process.env[k]!;
+      } else {
+        env[k] = expandEnv(v);
+      }
+    }
+  }
   return env;
 }
 
@@ -420,9 +435,74 @@ async function shutdown() {
 
 // -- IPC server --
 
+// path is duplicated in startIpc + shutdownPriorPm by design — both functions
+// need to know the same socket location without ordering dependencies.
+function pmSocketPath(): string {
+  return path.join(os.homedir(), '.mentiko-pm', 'pm.sock');
+}
+
+// If a previous process-manager is still running, send it a shutdown over IPC
+// and wait for it to release the socket. Without this, two PMs coexist and
+// both keep their kollabor-engine/worker/etc subprocesses alive — leading to
+// EADDRINUSE crash loops on ports 7433, 3099, etc.
+async function shutdownPriorPm(): Promise<void> {
+  const sockPath = pmSocketPath();
+  if (!fs.existsSync(sockPath)) return;
+
+  // try connecting. If the socket is stale (no listener), unlink and continue.
+  const connectable = await new Promise<boolean>((resolve) => {
+    const client = net.createConnection(sockPath);
+    const done = (ok: boolean) => { try { client.destroy(); } catch {} resolve(ok); };
+    client.once('connect', () => done(true));
+    client.once('error', () => done(false));
+    setTimeout(() => done(false), 500);
+  });
+
+  if (!connectable) {
+    try { fs.unlinkSync(sockPath); } catch {}
+    return;
+  }
+
+  // someone's listening. send a shutdown request.
+  await new Promise<void>((resolve) => {
+    const client = net.createConnection(sockPath);
+    let acked = false;
+    client.once('connect', () => {
+      const req = { id: crypto.randomBytes(4).toString('hex'), cmd: 'shutdown' };
+      client.write(JSON.stringify(req) + '\n');
+    });
+    client.on('data', () => { acked = true; client.destroy(); });
+    client.once('close', () => resolve());
+    client.once('error', () => resolve());
+    setTimeout(() => { if (!acked) { try { client.destroy(); } catch {} resolve(); } }, 1000);
+  });
+  log('prior process-manager acked shutdown, waiting for it to exit...');
+
+  // wait for the prior PM to actually exit (socket disappears or becomes stale).
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    if (!fs.existsSync(sockPath)) return;
+    // socket file may persist even after server closes; probe it.
+    const stillListening = await new Promise<boolean>((resolve) => {
+      const probe = net.createConnection(sockPath);
+      probe.once('connect', () => { probe.destroy(); resolve(true); });
+      probe.once('error', () => resolve(false));
+      setTimeout(() => { try { probe.destroy(); } catch {} resolve(false); }, 250);
+    });
+    if (!stillListening) {
+      try { fs.unlinkSync(sockPath); } catch {}
+      return;
+    }
+  }
+  // prior PM ignored shutdown — log and continue; port-killer will handle the rest.
+  logErr('prior process-manager did not exit within 8s, continuing anyway');
+  try { fs.unlinkSync(sockPath); } catch {}
+}
+
 function startIpc() {
-  const sockDir = path.join(os.homedir(), '.mentiko-pm');
-  const sockPath = path.join(sockDir, 'pm.sock');
+  const sockPath = pmSocketPath();
+  const sockDir = path.dirname(sockPath);
   fs.mkdirSync(sockDir, { recursive: true, mode: 0o700 });
   if (fs.existsSync(sockPath)) fs.unlinkSync(sockPath);
 
@@ -682,6 +762,13 @@ async function housekeep() {
     log(`mentiko-mcp: registered at ${settingsPath} (cmd=${cmd})`);
   } catch (e: unknown) {
     logErr(`mentiko-mcp settings write failed: ${errorMessage(e)}`);
+  }
+
+  // dev mode: if another process-manager is already running, ask it to shut
+  // down before we start. Without this, two PMs run side-by-side, each with
+  // their own kollabor-engine/worker children, fighting over 7433 etc.
+  if (isDev) {
+    try { await shutdownPriorPm(); } catch (e: unknown) { logErr(`prior-pm shutdown failed: ${errorMessage(e)}`); }
   }
 
   // dev mode: kill stale processes on ports we need, then wait for ports to free

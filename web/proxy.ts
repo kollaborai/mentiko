@@ -92,6 +92,18 @@ const publicPaths = [
   "/api/invite",
   "/api/unsubscribe",
   "/api/email",
+  // PWA + browser-fetched assets. Without these the browser hits the
+  // unauthenticated /login redirect, which can deadlock document loads
+  // (manifest.json is fetched during <link rel="manifest"> processing).
+  "/manifest.json",
+  "/favicon.ico",
+  "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/apple-touch-icon.png",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/sw.js",
 ];
 
 export async function proxy(request: NextRequest) {

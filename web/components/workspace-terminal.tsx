@@ -6,6 +6,7 @@ import { CommandSquareFilled as Terminal, RefreshFilled as RefreshCw, CopyFilled
 import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { getApiErrorMessage, unwrapApiData } from "@/lib/api-client";
+import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 
 interface AuthCommand {
   cli: string;
@@ -88,11 +89,8 @@ export function WorkspaceTerminal({
         return;
       }
 
-      const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-      const url = isLocal
-        ? `ws://localhost:${parseInt(process.env.NEXT_PUBLIC_WS_TERMINAL_PORT || "3099", 10)}?token=${tokenData.token}`
-        : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/terminal?token=${tokenData.token}`;
-      setWsUrl(url);
+      const base = await getTerminalWsBaseUrl();
+      setWsUrl(`${base}?token=${tokenData.token}`);
       setSessionName(spawnData.name || name);
       setStatus("ready");
     } catch {

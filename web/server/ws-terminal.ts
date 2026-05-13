@@ -39,22 +39,77 @@ const DAEMON_NAME = process.env.PTY_DAEMON || "default";
 const SOCKET_PATH = join(homedir(), ".pty-manager", `${DAEMON_NAME}.sock`);
 const TOKEN_PATH = join(homedir(), ".pty-manager", "ws-token");
 
-const ALLOWED_ORIGINS = new Set([
+// localhost defaults cover `npm run dev` directly. Anything else (including
+// docker with remapped host ports) gets added below from BETTER_AUTH_URL.
+const ALLOWED_ORIGINS = new Set<string>([
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   `http://localhost:${WS_PORT}`,
+  `http://127.0.0.1:${WS_PORT}`,
 ]);
 
-// in production, nginx proxies /ws/terminal -> localhost:3099
-// the origin header will be the tenant domain (https://slug.mentiko.com)
-// when proxied via nginx, origin is trusted (nginx only proxies from the correct domain)
+// Auto-allow the operator's public URL. BETTER_AUTH_URL is required
+// configuration anyway (cookie domain), so this avoids forcing operators
+// to also set WS_ALLOWED_ORIGINS just to whitelist their own public host.
+try {
+  const u = new URL(process.env.BETTER_AUTH_URL || "");
+  if (u.origin) ALLOWED_ORIGINS.add(u.origin);
+} catch {}
+
+// extra origins for self-hosted deployments:
+//   WS_ALLOWED_ORIGINS="https://app.example.com,https://*.example.com"
+// each entry is either an exact origin or a wildcard host pattern (one leading *).
+const EXTRA_ALLOWED = (process.env.WS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+function matchesPattern(originUrl: URL, pattern: string): boolean {
+  try {
+    if (pattern.includes("://")) {
+      // protocol-qualified pattern; pattern may contain a wildcard host like
+      // https://*.example.com — URL() can't parse that, so split protocol off.
+      const sep = pattern.indexOf("://");
+      const proto = pattern.slice(0, sep + 1);
+      const rest = pattern.slice(sep + 3);
+      if (originUrl.protocol !== proto) return false;
+      return hostMatches(originUrl.hostname, rest);
+    }
+    return hostMatches(originUrl.hostname, pattern);
+  } catch {
+    return false;
+  }
+}
+
+function hostMatches(hostname: string, pattern: string): boolean {
+  if (pattern.startsWith("*.")) {
+    const suffix = pattern.slice(1); // ".example.com"
+    return (
+      hostname === suffix.slice(1) || hostname.endsWith(suffix)
+    );
+  }
+  return hostname === pattern;
+}
+
+// Token auth (single-use, short TTL) is the primary security control.
+// Origin checks add defense-in-depth against CSRF-style attacks that
+// reuse a leaked token from a browser context.
+//
+//   * empty Origin: allowed in dev (curl, server-to-server), rejected in prod
+//   * exact match in ALLOWED_ORIGINS: allowed
+//   * matches one of WS_ALLOWED_ORIGINS (env): allowed
 function isAllowedOrigin(origin: string | undefined): boolean {
-  if (!origin) return true; // no origin = server-side or curl, allow (token auth covers it)
+  if (!origin) {
+    return !IS_PRODUCTION;
+  }
   if (ALLOWED_ORIGINS.has(origin)) return true;
-  // allow any *.mentiko.com origin in production (nginx-proxied)
   try {
     const url = new URL(origin);
-    if (url.hostname.endsWith(".mentiko.com") || url.hostname === "mentiko.com") return true;
+    for (const pattern of EXTRA_ALLOWED) {
+      if (matchesPattern(url, pattern)) return true;
+    }
   } catch {}
   return false;
 }

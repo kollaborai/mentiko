@@ -89,11 +89,14 @@ function HookedNamespaceProvider({
   setFallbackNamespace: (ns: string) => void;
 }) {
   const { data: session } = hooks.useSession();
-  // only call org hooks when session exists to avoid 401s on unauthenticated pages
-  const useOrg = session?.user ? hooks.useActiveOrganization : noopOrgHook;
-  const useOrgList = session?.user ? hooks.useListOrganizations : noopOrgHook;
-  const { data: activeOrg } = useOrg();
-  const { data: orgList } = useOrgList();
+  // Always call both org hooks unconditionally — React requires the same hook
+  // chain on every render. Discard the results when there is no session.
+  // (better-auth's hooks tolerate being called without a session; they just
+  // return null/null without making the request.)
+  const { data: activeOrgRaw } = hooks.useActiveOrganization();
+  const { data: orgListRaw } = hooks.useListOrganizations();
+  const activeOrg = session?.user ? activeOrgRaw : null;
+  const orgList = session?.user ? orgListRaw : null;
 
   const namespaceId = (activeOrg as Record<string, unknown>)?.slug as string || fallbackNamespace;
 

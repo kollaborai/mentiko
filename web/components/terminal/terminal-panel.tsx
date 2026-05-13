@@ -16,6 +16,7 @@ import {
   RefreshFilled as RefreshCw,
   CloseCircleFilled as XCircle,
 } from "@aliimam/icons";
+import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 
 function useWsToken() {
   const [token, setToken] = useState<string | null>(null);
@@ -76,18 +77,20 @@ export function TerminalPanel({
   const [statusMsg, setStatusMsg] = useState<string | undefined>();
   const [reconnectKey, setReconnectKey] = useState(0);
   const [showTerminal, setShowTerminal] = useState(sessionAlive);
+  const [fetchedWsUrl, setFetchedWsUrl] = useState<string | null>(null);
 
-  // build authenticated ws URL
-  // in production, connect through the /ws/terminal proxy (nginx/caddy)
-  // in local dev, connect directly to ws-terminal on port 3099
-  const resolvedWsUrl = (() => {
-    if (wsUrl) return wsUrl;
-    if (typeof window === "undefined") return "ws://localhost:3099";
-    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-    if (isLocal) return `ws://localhost:${process.env.NEXT_PUBLIC_WS_TERMINAL_PORT || "3099"}`;
-    return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/terminal`;
-  })();
-  const authWsUrl = wsToken
+  // resolve ws base URL from server config when no explicit override is passed
+  useEffect(() => {
+    if (wsUrl) return;
+    let cancelled = false;
+    getTerminalWsBaseUrl()
+      .then((base) => { if (!cancelled) setFetchedWsUrl(base); })
+      .catch(() => { if (!cancelled) setFetchedWsUrl(null); });
+    return () => { cancelled = true; };
+  }, [wsUrl]);
+
+  const resolvedWsUrl = wsUrl ?? fetchedWsUrl;
+  const authWsUrl = wsToken && resolvedWsUrl
     ? `${resolvedWsUrl}?token=${wsToken}`
     : null;
 
