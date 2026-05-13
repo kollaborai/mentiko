@@ -44,6 +44,10 @@ export default function WelcomeSetPasswordPage() {
         setLoading(false);
         return;
       }
+      // Force a fresh session fetch so the gate sees mustChangePassword=false
+      // before we navigate. Without this, the cached cookie (TTL ~5min) still
+      // has the old value and the gate bounces the user back immediately.
+      await authClient.getSession({ disableCookieCache: true });
       router.replace("/dashboard");
       router.refresh();
     } catch {
