@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-04-23, updated after FUTURE-7)
+# api route auth coverage (as of 2026-05-13)
 
 ## summary
-- total routes: 307
-- authenticated: 291   (backfilled 20 undocumented-but-authenticated routes in FUTURE-7; doc now mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 316
+- authenticated: 300   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 16
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -29,6 +29,7 @@ unclear, likely bug) and add an entry under the matching heading.
 Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePermission`, `getSessionUser`, `checkOpsAuth`, or `BETTER_AUTH_SECRET` bearer token verification:
 
 - activity/route.ts
+- account/finish-password-setup/route.ts
 - agent-health/route.ts
 - agent-profiles/[id]/resolved-env/route.ts
 - agent-profiles/[id]/route.ts
@@ -79,8 +80,6 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - chains/[id]/versions/restore/route.ts
 - chains/[id]/versions/route.ts
 - chains/[id]/webhooks/route.ts
-- chains/generate-v2/route.ts
-- chains/generate/route.ts
 - chains/import/route.ts
 - chains/list/route.ts
 - chains/recommend/route.ts
@@ -152,15 +151,20 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - kollabor/engine/[...path]/route.ts
 - kollabor/engine/sessions/[id]/refresh-token/route.ts
 - jobs/[id]/complete/route.ts
+- kollabor/profiles/active/route.ts
+- kollabor/profiles/save/route.ts
+- kollabor/setup/mentiko/route.ts
 - links/generate/route.ts
 - links/generate/apply/route.ts
 - links/list/route.ts
 - links/run/route.ts
 - links/runs/[runId]/escalate/route.ts
 - links/runs/[runId]/escalations/route.ts
+- links/runs/[runId]/generate-summary/route.ts
 - links/runs/[runId]/moderator/route.ts
 - links/runs/[runId]/reply/route.ts
 - links/runs/[runId]/stop/route.ts
+- links/runs/[runId]/summary/route.ts
 - links/runs/[runId]/transcript/route.ts
 - links/save/route.ts
 - links/[id]/route.ts
@@ -268,6 +272,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - setup/route.ts
 - ssh-keys/route.ts
 - system/cli-auth/route.ts
+- system/codex-token/route.ts
 - system/detect-cli/route.ts
 - system/logs/route.ts
 - system/settings/route.ts
@@ -297,6 +302,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - templates/list/route.ts
 - templates/route.ts
 - terminal/capture/route.ts
+- terminal/config/route.ts
 - terminal/spawn/route.ts
 - terminal/status/route.ts
 - terminal/token/route.ts
