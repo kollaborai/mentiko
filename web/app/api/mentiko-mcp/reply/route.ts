@@ -33,7 +33,7 @@ export async function GET(req: Request) {
  *
  * Called by the browser bar when the user answers an ask_* prompt.
  * Auth: signed-in session cookie (primary).
- * sessionId extracted from JWT bearer token (preferred) or request body.
+ * sessionId comes from a verified JWT bearer token or explicit request body.
  */
 export async function POST(req: Request) {
   const cookieOk = await validateRequest(req);
@@ -41,31 +41,35 @@ export async function POST(req: Request) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  let body: any;
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
     return new NextResponse("Invalid JSON", { status: 400 });
   }
 
-  const { toolId, result, sessionId: bodySessionId } = body ?? {};
+  const bodyRecord =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const { toolId, result, sessionId: bodySessionId } = bodyRecord;
   if (typeof toolId !== "string" || !toolId) {
     return new NextResponse("Missing toolId", { status: 400 });
   }
 
-  // Resolve sessionId: JWT bearer token (preferred) or body field
-  let sessionId = "global";
+  let sessionId: string | null = null;
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     try {
       const claims = await verifySessionToken(authHeader.slice(7));
       sessionId = claims.jti;
     } catch {
-      // token invalid — fall through to body sessionId
+      return new NextResponse("Invalid session token", { status: 401 });
     }
   }
-  if (sessionId === "global" && typeof bodySessionId === "string" && bodySessionId) {
+  if (!sessionId && typeof bodySessionId === "string" && bodySessionId) {
     sessionId = bodySessionId;
+  }
+  if (!sessionId) {
+    return new NextResponse("Missing sessionId", { status: 400 });
   }
 
   storeResult(sessionId, toolId, result);

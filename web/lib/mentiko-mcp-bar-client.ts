@@ -33,6 +33,18 @@ export function clearSessionToken(): void {
   try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
 }
 
+export function getStoredSessionId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return (
+      localStorage.getItem(SESSION_ID_KEY) ||
+      localStorage.getItem(LEGACY_SESSION_ID_KEY)
+    );
+  } catch {
+    return null;
+  }
+}
+
 export class MCPBarClient {
   private eventSource: EventSource | null = null;
   private onEffect: EffectHandler;
@@ -118,13 +130,14 @@ export class MCPBarClient {
 
 /**
  * POST the user's reply for a synchronous ask_* tool.
- * Auth: signed-in session cookie. sessionId from sessionStorage token.
+ * Auth: signed-in session cookie. sessionId from JWT or local storage fallback.
  */
 export async function replyToTool(
   toolId: string,
   result: unknown,
 ): Promise<void> {
   const token = getStoredSessionToken();
+  const sessionId = getStoredSessionId();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
@@ -133,7 +146,11 @@ export async function replyToTool(
     method: "POST",
     credentials: "same-origin",
     headers,
-    body: JSON.stringify({ toolId, result }),
+    body: JSON.stringify({
+      toolId,
+      result,
+      ...(sessionId ? { sessionId } : {}),
+    }),
   });
   if (!res.ok) {
     throw new Error(`reply failed: ${res.status}`);

@@ -14,6 +14,10 @@ const DELIVERY_POLL_INTERVAL_MS = 500;
 const DELIVERY_TIMEOUT_MS = 3000;
 const DEFAULT_REPLY_TIMEOUT_MS = 5 * 60 * 1000;
 
+interface DispatchEffectOptions {
+  waitForDelivery?: boolean;
+}
+
 function inboxKey(): string {
   const k = process.env.MENTIKO_INBOX_KEY;
   if (!k) {
@@ -71,6 +75,7 @@ async function waitForDelivery(effectId: string): Promise<void> {
 export async function dispatchEffect(
   kind: string,
   payload: Record<string, unknown>,
+  options: DispatchEffectOptions = {},
 ): Promise<{ ok: true; id?: string }> {
   const res = await withTimeout(
     fetch(`${WEB_URL}/api/mentiko-mcp/dispatch`, {
@@ -87,7 +92,7 @@ export async function dispatchEffect(
     throw new Error(`dispatch failed: ${res.status} ${body}`);
   }
   const data = (await res.json()) as { ok: true; id?: string };
-  if (data.id) {
+  if (options.waitForDelivery && data.id) {
     await waitForDelivery(data.id);
   }
   return data;
@@ -100,13 +105,14 @@ export async function waitForResult(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
+      const url = new URL(`${WEB_URL}/api/mentiko-mcp/reply`);
+      url.searchParams.set("toolId", toolId);
+      url.searchParams.set("sessionId", SESSION_ID);
+
       const res = await withTimeout(
-        fetch(
-          `${WEB_URL}/api/mentiko-mcp/reply?toolId=${encodeURIComponent(toolId)}`,
-          {
-            headers: { "X-Mentiko-Inbox-Key": inboxKey() },
-          },
-        ),
+        fetch(url, {
+          headers: { "X-Mentiko-Inbox-Key": inboxKey() },
+        }),
       );
       if (res.status === 200) {
         const data = (await res.json()) as { result: unknown };

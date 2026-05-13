@@ -142,21 +142,27 @@ async function checkPermission(
     : ["approve", "approve always", "deny"];
 
   const toolId = genToolId(`perm_${toolName}`);
-  await dispatchEffect("ask_choice", {
-    prompt: question,
-    options,
-    toolId,
-    _riskLevel: riskLabel,
-  });
-
   let result: unknown;
   try {
+    await dispatchEffect(
+      "ask_choice",
+      {
+        prompt: question,
+        options,
+        toolId,
+        _riskLevel: riskLabel,
+      },
+      { waitForDelivery: true },
+    );
     result = await waitForResult(toolId);
   } catch {
-    // no UI response (headless/engine session) — default allow for tier-B, deny for tier-C
-    return { allowed: !isC, approvedAlwaysGranted: false };
+    // No UI response means no approval. Permission-gated tools must fail closed.
+    return { allowed: false, approvedAlwaysGranted: false };
   }
-  const choice = typeof result === "string" ? result : (result as any)?.value ?? (result as any)?.choice ?? "";
+  const choice =
+    typeof result === "string"
+      ? result
+      : (result as any)?.value ?? (result as any)?.choice ?? "";
 
   if (choice === "deny") return { allowed: false, approvedAlwaysGranted: false };
 
@@ -687,7 +693,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     // ---------- synchronous user prompts ----------
     if (name === "ask_confirm" || name === "ask_input" || name === "ask_choice") {
       const toolId = genToolId(name);
-      await dispatchEffect(name, { ...args, toolId });
+      await dispatchEffect(name, { ...args, toolId }, { waitForDelivery: true });
       const result = await waitForResult(toolId);
       return textResult(JSON.stringify(result));
     }

@@ -263,9 +263,12 @@ test("permission check for tier-C has no approve-always option", () => {
   assert(cOptionsMatch, "tier-C should only have approve and deny options");
 });
 
-test("headless fallback allows tier-B and denies tier-C", () => {
-  // When no UI response, tier-B defaults allow, tier-C defaults deny
-  assert(src.includes("allowed: !isC"), "headless fallback should use !isC");
+test("headless fallback denies tier-B and tier-C when the bar cannot answer", () => {
+  assert(!src.includes("allowed: !isC"), "headless fallback must not auto-allow tier-B");
+  assert(
+    src.includes("allowed: false"),
+    "headless fallback should deny permission-gated tools",
+  );
 });
 
 // ── Run ──
