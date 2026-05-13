@@ -23,6 +23,7 @@ import {
 } from "@/lib/kollabor-engine-client";
 import { KollaborPermissionPrompt } from "@/components/kollabor-permission-prompt";
 import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
+import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   MCPBarClient,
   getStoredSessionToken,
@@ -34,6 +35,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { unwrapApiData } from "@/lib/api-client";
 import { isRecoverableKollaborSessionError } from "@/lib/kollabor-session-errors";
+import { normalizeTaskNavigationRoute } from "@/lib/task-routes";
+import { repairAgentTextSpacing } from "@/lib/agent-message-text";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -41,6 +44,41 @@ function randomId(): string {
 
 const SHOULD_OFFER_CODEX_INLINE_AUTH = false;
 const HIDDEN_TOOL_CHIP_NAMES = new Set(["ask_confirm", "ask_input", "ask_choice"]);
+const TASK_DIGEST_ID_RE = /\b(?:EPIC|TASK|CHOR)-\d{3}\b/g;
+
+type TaskDigestKind = "EPIC" | "TASK" | "CHOR";
+type TaskDigestStatus = "open" | "blocked" | "done" | "stopped";
+type TaskDigestItem = {
+  id: string;
+  kind: TaskDigestKind;
+  title: string;
+  priority?: string;
+  status: TaskDigestStatus;
+};
+type TaskDigestGroup = {
+  epic: TaskDigestItem;
+  items: TaskDigestItem[];
+};
+type TaskDigest = {
+  intro: string;
+  groups: TaskDigestGroup[];
+  looseItems: TaskDigestItem[];
+};
+
+function px(value: number): string {
+  return `${Number(value.toFixed(2))}px`;
+}
+
+function agentFontVars(scale: number): React.CSSProperties {
+  return {
+    "--mentiko-agent-message-font-size": px(14 * scale),
+    "--mentiko-agent-message-line-height": px(22 * scale),
+    "--mentiko-agent-input-font-size": px(14 * scale),
+    "--mentiko-agent-input-line-height": px(20 * scale),
+    "--mentiko-agent-chip-font-size": px(11 * scale),
+    "--mentiko-agent-chip-line-height": px(14 * scale),
+  } as React.CSSProperties;
+}
 
 function stringPayload(payload: Record<string, unknown>, key: string): string | undefined {
   const value = payload[key];
@@ -94,10 +132,11 @@ export function FloatingKollaborBar() {
     resolveAsk,
   } = useKollaborBarStore();
 
-  const { offsetX, offsetY, setOffset, scale, setScale } = useKollaborBarStore();
+  const { offsetX, offsetY, setOffset, scale, setScale, fontScale } = useKollaborBarStore();
   const { prefs: pillPrefs } = usePillNavPreferences();
   const shineColors =
     COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const fontVars = useMemo(() => agentFontVars(fontScale), [fontScale]);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const sendingRef = useRef<boolean>(false);
@@ -133,7 +172,7 @@ export function FloatingKollaborBar() {
       switch (kind) {
         case "navigate": {
           const route = stringPayload(payload, "route");
-          if (route) routerRef.current.push(route);
+          if (route) routerRef.current.push(normalizeTaskNavigationRoute(route));
           break;
         }
         case "go_back":
@@ -859,18 +898,54 @@ export function FloatingKollaborBar() {
           />
         )}
       </AnimatePresence>
-    <div
-      className="fixed z-40 w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
-      style={{
-        left: "50%",
-        bottom: `${barBottom}px`,
-        transform: `translateX(calc(-50% + ${effOffsetX}px)) scale(${effScale.toFixed(3)})`,
-        transformOrigin: "bottom center",
-        transition: dragging ? "none" : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
-        willChange: "transform",
-      }}
-    >
-      {/* floating bubbles — no card, no background, just stacked */}
+      <div
+        className="fixed z-40 w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
+        style={{
+          ...fontVars,
+          left: "50%",
+          bottom: `${barBottom}px`,
+          transform: `translateX(calc(-50% + ${effOffsetX}px)) scale(${effScale.toFixed(3)})`,
+          transformOrigin: "bottom center",
+          transition: dragging ? "none" : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
+          willChange: "transform",
+        }}
+      >
+        <style>{`
+          .mentiko-agent-markdown,
+          .mentiko-agent-markdown p,
+          .mentiko-agent-markdown li,
+          .mentiko-agent-markdown blockquote {
+            font-size: var(--mentiko-agent-message-font-size);
+            line-height: var(--mentiko-agent-message-line-height);
+            letter-spacing: 0;
+          }
+          .mentiko-agent-markdown p {
+            margin: 0 0 0.45em;
+          }
+          .mentiko-agent-markdown p:last-child,
+          .mentiko-agent-markdown li:last-child {
+            margin-bottom: 0;
+          }
+          .mentiko-agent-markdown ul,
+          .mentiko-agent-markdown ol {
+            margin: 0.35em 0 0.55em;
+            padding-left: 1.15em;
+          }
+          .mentiko-agent-markdown li {
+            margin: 0.12em 0;
+          }
+          .mentiko-agent-markdown blockquote {
+            margin: 0.45em 0;
+            border-left: 1px solid rgba(255,255,255,0.16);
+            padding-left: 0.75em;
+            color: rgba(255,255,255,0.74);
+          }
+          .mentiko-agent-markdown code,
+          .mentiko-agent-markdown pre {
+            font-size: calc(var(--mentiko-agent-message-font-size) * 0.92);
+          }
+        `}</style>
+        {/* floating bubbles — no card, no background, just stacked */}
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div
@@ -1044,7 +1119,11 @@ export function FloatingKollaborBar() {
           }
           rows={1}
           className="relative z-[2] flex-1 min-w-0 resize-none bg-transparent outline-none text-sm leading-5 placeholder:text-muted-foreground/60 py-1.5 pr-2 max-h-32 overflow-y-auto"
-          style={{ fieldSizing: "content" } as React.CSSProperties}
+          style={{
+            fieldSizing: "content",
+            fontSize: "var(--mentiko-agent-input-font-size)",
+            lineHeight: "var(--mentiko-agent-input-line-height)",
+          } as React.CSSProperties}
         />
         {hasSetupLink && (
           <button
@@ -1128,6 +1207,7 @@ function MessageBubble({
   }
 
   const isUser = message.role === "user";
+  const tools = visibleToolChips(message.tools);
   return (
     <motion.div
       initial={{ opacity: 0, y: 6, scale: 0.98 }}
@@ -1136,23 +1216,23 @@ function MessageBubble({
       className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
     >
       {/* render committed tool chips first (if any) */}
-      {visibleToolChips(message.tools).map((tool, index) => (
-        <CommittedToolChip key={toolChipKey(tool, index)} tool={tool} />
-      ))}
+      <ToolChipCluster tools={tools} />
       {/* then the text bubble (skip if no text, e.g. tool-only turns) */}
       {message.content && (
         <div
           className={cn(
-            "max-w-[85%] text-sm leading-relaxed break-words",
+            "text-sm leading-relaxed break-words",
             isUser
-              ? "rounded-2xl px-3.5 py-2 bg-muted/70 text-foreground whitespace-pre-wrap"
-              : "px-1 text-foreground/90 prose prose-sm prose-invert max-w-none",
+              ? "max-w-[78%] rounded-[1.25rem] px-3 py-1.5 bg-muted/70 text-foreground whitespace-pre-wrap"
+              : "mentiko-agent-markdown max-w-[92%] px-0.5 text-foreground/90",
           )}
+          style={{
+            fontSize: "var(--mentiko-agent-message-font-size)",
+            lineHeight: "var(--mentiko-agent-message-line-height)",
+          }}
         >
           {isUser ? message.content : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content}
-            </ReactMarkdown>
+            <AgentMessageContent content={message.content} />
           )}
         </div>
       )}
@@ -1173,26 +1253,238 @@ function DraftBubble({
       className="flex flex-col gap-1 items-start"
     >
       {!draft.text && draft.tools.length === 0 && (
-        <div className="px-2 py-1 text-xs text-muted-foreground flex items-center gap-1.5">
-          <span className="inline-flex gap-0.5">
-            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: "0ms" }} />
-            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: "150ms" }} />
-            <span className="w-1 h-1 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: "300ms" }} />
-          </span>
+        <div className="px-1 py-1.5">
+          <AgentWaitSpinner />
         </div>
       )}
-      {visibleToolChips(draft.tools).map((tool, index) => (
-        <CommittedToolChip key={toolChipKey(tool, index)} tool={tool} />
-      ))}
+      <ToolChipCluster tools={visibleToolChips(draft.tools)} />
       {draft.text && (
-        <div className="max-w-[85%] text-sm leading-relaxed break-words px-1 text-foreground/90 prose prose-sm prose-invert max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {draft.text}
-          </ReactMarkdown>
-          <span className="inline-block w-[1ch] animate-pulse">▍</span>
+        <div
+          className="mentiko-agent-markdown max-w-[92%] text-sm leading-relaxed break-words px-0.5 text-foreground/90"
+          style={{
+            fontSize: "var(--mentiko-agent-message-font-size)",
+            lineHeight: "var(--mentiko-agent-message-line-height)",
+          }}
+        >
+          <AgentMessageContent content={draft.text} />
+          <div className="mt-1.5 flex items-center pl-0.5">
+            <AgentWaitSpinner />
+          </div>
         </div>
       )}
     </motion.div>
+  );
+}
+
+function AgentMessageContent({ content }: { content: string }) {
+  const displayContent = repairAgentTextSpacing(content);
+  const taskDigest = parseTaskDigest(displayContent);
+
+  if (taskDigest) {
+    return <TaskDigestView digest={taskDigest} />;
+  }
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+      {displayContent}
+    </ReactMarkdown>
+  );
+}
+
+function AgentWaitSpinner() {
+  return (
+    <WaveSpinner
+      size="xs"
+      color="#b07ee8"
+      animation="ripple"
+      dotShape="circle"
+      aria-label="Mentiko is thinking"
+      className="opacity-85"
+    />
+  );
+}
+
+function parseTaskDigest(content: string): TaskDigest | null {
+  const matches = Array.from(content.matchAll(TASK_DIGEST_ID_RE));
+  if (matches.length < 2) return null;
+
+  const firstIndex = matches[0]?.index ?? 0;
+  const intro = normalizeDigestText(content.slice(0, firstIndex)).replace(/:$/, "");
+  const groups: TaskDigestGroup[] = [];
+  const groupsByEpicId = new Map<string, TaskDigestGroup>();
+  const looseItems: TaskDigestItem[] = [];
+  const looseItemIds = new Set<string>();
+  let currentGroup: TaskDigestGroup | null = null;
+
+  matches.forEach((match, index) => {
+    const id = match[0];
+    const start = (match.index ?? 0) + id.length;
+    const end = matches[index + 1]?.index ?? content.length;
+    const item = createTaskDigestItem(id, content.slice(start, end));
+
+    if (item.kind === "EPIC") {
+      currentGroup = groupsByEpicId.get(item.id) ?? null;
+      if (!currentGroup) {
+        currentGroup = { epic: item, items: [] };
+        groupsByEpicId.set(item.id, currentGroup);
+        groups.push(currentGroup);
+      }
+      return;
+    }
+
+    if (currentGroup) {
+      if (!currentGroup.items.some((existing) => existing.id === item.id)) {
+        currentGroup.items.push(item);
+      }
+    } else if (!looseItemIds.has(item.id)) {
+      looseItemIds.add(item.id);
+      looseItems.push(item);
+    }
+  });
+
+  if (groups.length === 0 && looseItems.length < 2) return null;
+  return { intro, groups, looseItems };
+}
+
+function createTaskDigestItem(id: string, rawTitle: string): TaskDigestItem {
+  const kind = id.slice(0, id.indexOf("-")) as TaskDigestKind;
+  const titleWithMeta = cleanDigestTitle(rawTitle);
+  const priority = titleWithMeta.match(/\bP[0-4]\b/i)?.[0].toUpperCase();
+  const title = titleWithMeta
+    .replace(/\(\s*P[0-4]\s*\)/i, "")
+    .replace(/\(\s*P[0-4]\s*,\s*/i, "(")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return {
+    id,
+    kind,
+    title: title || "Untitled",
+    priority,
+    status: inferTaskDigestStatus(titleWithMeta),
+  };
+}
+
+function cleanDigestTitle(rawTitle: string): string {
+  return rawTitle
+    .replace(/^[\s:;,.•*]*(?:->|=>|[-–—→])?\s*/, "")
+    .replace(/\s*[○●◯]\s*$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeDigestText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function inferTaskDigestStatus(text: string): TaskDigestStatus {
+  if (/blocked/i.test(text)) return "blocked";
+  if (/cancelled|stopped|failed/i.test(text)) return "stopped";
+  if (/completed|done/i.test(text)) return "done";
+  return "open";
+}
+
+function TaskDigestView({ digest }: { digest: TaskDigest }) {
+  return (
+    <div className="space-y-2.5">
+      {digest.intro && (
+        <p className="text-foreground/88">
+          {digest.intro}
+        </p>
+      )}
+
+      <div className="space-y-2">
+        {digest.groups.map((group, index) => (
+          <TaskDigestGroupView key={`${group.epic.id}-${index}`} group={group} />
+        ))}
+        {digest.looseItems.length > 0 && (
+          <div className="space-y-1">
+            {digest.looseItems.map((item, index) => (
+              <TaskDigestRow key={`${item.id}-${index}`} item={item} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskDigestGroupView({ group }: { group: TaskDigestGroup }) {
+  return (
+    <section className="rounded-md border border-border/35 bg-background/20 p-2.5">
+      <div className="grid min-w-0 grid-cols-[5.75rem_minmax(0,1fr)_auto] items-start gap-2">
+        <TaskDigestIdBadge item={group.epic} />
+        <span className="min-w-0 font-semibold leading-snug text-foreground/95">
+          {group.epic.title}
+        </span>
+        <TaskDigestMeta item={group.epic} className="justify-self-end pt-0.5" />
+      </div>
+
+      {group.items.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {group.items.map((item, index) => (
+            <TaskDigestRow key={`${group.epic.id}-${item.id}-${index}`} item={item} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TaskDigestRow({ item }: { item: TaskDigestItem }) {
+  return (
+    <div className="grid min-w-0 grid-cols-[5.75rem_minmax(0,1fr)_auto] items-start gap-2 rounded-md bg-foreground/[0.035] px-2 py-1.5">
+      <TaskDigestIdBadge item={item} compact />
+      <span className="min-w-0 leading-snug text-foreground/82">{item.title}</span>
+      <TaskDigestMeta item={item} className="justify-self-end pt-0.5" />
+    </div>
+  );
+}
+
+function TaskDigestIdBadge({ item, compact = false }: { item: TaskDigestItem; compact?: boolean }) {
+  const tone =
+    item.kind === "EPIC"
+      ? "border-purple-300/30 bg-purple-400/10 text-purple-100"
+      : item.kind === "CHOR"
+        ? "border-cyan-300/25 bg-cyan-400/10 text-cyan-100"
+        : "border-foreground/15 bg-foreground/[0.06] text-foreground/75";
+
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded border font-mono font-medium leading-none",
+        compact ? "mt-0.5 w-full px-1.5 py-1 text-[10px]" : "w-full px-1.5 py-1 text-[10px]",
+        tone,
+      )}
+    >
+      {item.id}
+    </span>
+  );
+}
+
+function TaskDigestMeta({ item, className }: { item: TaskDigestItem; className?: string }) {
+  if (!item.priority && item.status === "open") return null;
+
+  return (
+    <span className={cn("flex shrink-0 flex-wrap items-center gap-1", className)}>
+      {item.priority && (
+        <span className="rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-200/85">
+          {item.priority}
+        </span>
+      )}
+      {item.status !== "open" && (
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-[10px] font-medium leading-none",
+            item.status === "blocked" && "bg-red-400/10 text-red-200/85",
+            item.status === "stopped" && "bg-orange-400/10 text-orange-200/85",
+            item.status === "done" && "bg-green-400/10 text-green-200/85",
+          )}
+        >
+          {item.status}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -1204,6 +1496,51 @@ function visibleToolChips(tools?: DraftTool[]): DraftTool[] {
   return (tools ?? []).filter((tool) => !HIDDEN_TOOL_CHIP_NAMES.has(tool.name));
 }
 
+function formatToolArgs(args: unknown): string {
+  if (args === null || args === undefined) return "";
+  if (typeof args === "string") return args.trim();
+  const serialized = JSON.stringify(args);
+  if (!serialized || serialized === "{}" || serialized === "[]" || serialized === "null" || serialized === "\"\"") {
+    return "";
+  }
+  return serialized.slice(0, 80);
+}
+
+function ToolChipCluster({ tools }: { tools: DraftTool[] }) {
+  if (tools.length === 0) return null;
+
+  const doneTools = tools.filter((tool) => tool.status === "done");
+  const otherTools = tools.filter((tool) => tool.status !== "done");
+  const shouldSummarize = doneTools.length >= 3;
+
+  return (
+    <div className="flex max-w-[92%] flex-wrap items-center gap-1">
+      {shouldSummarize && <ToolSummaryChip tools={doneTools} />}
+      {(shouldSummarize ? otherTools : tools).map((tool, index) => (
+        <CommittedToolChip key={toolChipKey(tool, index)} tool={tool} />
+      ))}
+    </div>
+  );
+}
+
+function ToolSummaryChip({ tools }: { tools: DraftTool[] }) {
+  const toolNames = tools.map((tool) => tool.name).join(", ");
+  return (
+    <div
+      className="inline-flex h-5 items-center gap-1 rounded-full border border-border/35 bg-background/30 px-1.5 text-muted-foreground/65 backdrop-blur whitespace-nowrap"
+      title={toolNames}
+      aria-label={`${tools.length} tools ran: ${toolNames}`}
+      style={{
+        fontSize: "calc(var(--mentiko-agent-chip-font-size) * 0.92)",
+        lineHeight: "1",
+      }}
+    >
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+      <span className="text-foreground/70">{tools.length} tools ran</span>
+    </div>
+  );
+}
+
 function CommittedToolChip({ tool }: { tool: DraftTool }) {
   const label =
     tool.status === "running"
@@ -1211,16 +1548,17 @@ function CommittedToolChip({ tool }: { tool: DraftTool }) {
       : tool.status === "done"
         ? "ran"
         : "failed";
-  const argsStr =
-    typeof tool.args === "string"
-      ? tool.args
-      : JSON.stringify(tool.args ?? "").slice(0, 80);
+  const argsStr = formatToolArgs(tool.args);
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/60 backdrop-blur px-2.5 py-1 text-[11px] leading-none text-muted-foreground max-w-[85%]",
+        "inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-full border border-border/45 bg-background/45 px-2 py-0.5 text-muted-foreground/85 backdrop-blur",
       )}
-      title={argsStr}
+      title={argsStr ? `${tool.name}: ${argsStr}` : tool.name}
+      style={{
+        fontSize: "var(--mentiko-agent-chip-font-size)",
+        lineHeight: "var(--mentiko-agent-chip-line-height)",
+      }}
     >
       <span
         className={cn(

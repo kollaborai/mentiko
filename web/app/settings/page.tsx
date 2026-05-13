@@ -17,7 +17,6 @@ import {
   SmsFilled,
   ShieldTickFilled,
   PeopleFilled,
-  CloudConnectionFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 
@@ -44,7 +43,6 @@ const SETTINGS_GROUPS = [
     items: [
       { id: "agent-configs",  label: "Agent Configs",  description: "CLI execution profiles for agents",                     href: "/settings/agent-configs",  icon: BotMessageSquare,      watermarkColor: "#b07ee8" },
       { id: "mentiko-agent", label: "Mentiko Agent",  description: "AI provider profiles for the Mentiko floating bar",    href: "/settings/mentiko-agent",  icon: MagicStarFilled,       watermarkColor: "#b07ee8" },
-      { id: "mcp",           label: "MCP",            description: "Model Context Protocol setup and client integration",  href: "/settings/mcp",            icon: CloudConnectionFilled, watermarkColor: "#5cb88a" },
       { id: "generation", label: "Generation", description: "Prompt templates for AI chain generation", href: "/settings/generation", icon: MagicStarFilled, watermarkColor: "#f59e0b" },
       { id: "artifacts", label: "Artifacts", description: "Artifact output templates", href: "/settings/artifacts", icon: BoxFilled, watermarkColor: "#b07ee8" },
     ],

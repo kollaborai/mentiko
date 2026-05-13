@@ -8,7 +8,7 @@ import {
   Setting2Filled, DocumentTextFilled, CommandSquareFilled,
   ChartFilled, ActivityFilled, TrendUpFilled, MessageQuestionFilled,
   ArrowLeftFilled, KeyFilled, MenuFilled, CloseCircleFilled,
-  CloudConnectionFilled, MagicStarFilled,
+  MagicStarFilled,
 } from "@aliimam/icons";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -61,7 +61,6 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
       items: [
         { id: "agent-configs",  label: "Agent Configs",   icon: BotMessageSquare,      href: "/settings/agent-configs" },
         { id: "mentiko-agent", label: "Mentiko Agent",  icon: MagicStarFilled,       href: "/settings/mentiko-agent" },
-        { id: "mcp",           label: "MCP",            icon: CloudConnectionFilled, href: "/settings/mcp" },
         { id: "email",         label: "Email",          icon: SmsFilled,  href: "/settings/email" },
       ],
     },
@@ -98,7 +97,6 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
     if (pathname === "/settings/ssh-keys") return "ssh-keys";
     if (pathname === "/settings/agent-configs") return "agent-configs";
     if (pathname === "/settings/mentiko-agent") return "mentiko-agent";
-    if (pathname === "/settings/mcp") return "mcp";
     if (pathname === "/settings/email") return "email";
     if (pathname === "/settings/data") return "data";
     if (pathname === "/settings/system") return "system";
@@ -191,7 +189,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
             className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-foreground/35 hover:text-foreground/70 rounded-md hover:bg-foreground/5 transition-colors"
           >
             <ArrowLeftFilled className="h-3 w-3 shrink-0" />
-            <span>back to app</span>
+            <span>Back to App</span>
           </Link>
         </div>
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import SettingsLayout from "./layout";
 
 const push = jest.fn();
@@ -55,7 +55,7 @@ describe("SettingsLayout", () => {
     push.mockReset();
   });
 
-  it("includes MCP in the settings sidebar navigation", () => {
+  it("does not include docs-only MCP in the settings sidebar navigation", () => {
     render(
       <SettingsLayout>
         <div>settings content</div>
@@ -63,10 +63,7 @@ describe("SettingsLayout", () => {
     );
 
     const sidebar = screen.getByTestId("settings-sidebar-nav");
-    const mcpButton = within(sidebar).getByRole("button", { name: /mcp/i });
 
-    expect(mcpButton).toBeInTheDocument();
-    fireEvent.click(mcpButton);
-    expect(push).toHaveBeenCalledWith("/settings/mcp");
+    expect(within(sidebar).queryByRole("button", { name: /mcp/i })).not.toBeInTheDocument();
   });
 });

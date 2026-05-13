@@ -27,6 +27,7 @@ import {
   ChartFilled,
   CodeFilled as Code,
   CommandSquareFilled as Terminal,
+  CloudConnectionFilled,
   CategoryFilled,
   Palette,
   Shield,
@@ -97,6 +98,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "API Reference", href: "/docs/api", icon: Code },
       { label: "CLI Reference", href: "/docs/config-profiles", icon: Terminal },
+      { label: "MCP", href: "/docs/mcp", icon: CloudConnectionFilled },
       { label: "Templates", href: "/docs/templates", icon: CategoryFilled },
       { label: "Marketplace", href: "/docs/marketplace", icon: ShopFilled },
       { label: "Links", href: "/docs/links", icon: PeopleFilled },

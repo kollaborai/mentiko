@@ -140,7 +140,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             }
           }}
         >
-          skip to main content
+          Skip to main content
         </a>
         <div className="relative flex h-screen flex-col">
           <div

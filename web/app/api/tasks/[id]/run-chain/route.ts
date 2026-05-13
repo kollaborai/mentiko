@@ -9,6 +9,7 @@ import { taskGet, taskUpdate, taskGetComments, validateTaskId } from "@/lib/task
 import { createNotification } from "@/lib/notification-server";
 import { apiError } from "@/lib/api-response";
 import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
+import { taskDetailHref } from "@/lib/task-routes";
 import type { TaskChainBinding } from "@/lib/task-types";
 
 export const dynamic = "force-dynamic";
@@ -177,7 +178,7 @@ export const POST = requirePermission("manage_tasks")(async (
           chainId: binding.chain_id,
           runId,
           error: errorMsg,
-          actionUrl: `/tasks?id=${safeId}`,
+          actionUrl: taskDetailHref(safeId),
           actionLabel: "View Task",
         },
       });

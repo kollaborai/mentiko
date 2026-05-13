@@ -339,7 +339,8 @@ describe('FloatingPillNav', () => {
       render(<FloatingPillNav />)
       // settings is a popover, the trigger button should be present
       expect(screen.getByTitle('Settings')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Agent Configs' })).toBeInTheDocument()
     })
 
     it('activates marketplace for /marketplace path', () => {

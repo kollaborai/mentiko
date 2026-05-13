@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  appendAgentDraftText,
+  repairAgentTextSpacing,
+} from "./agent-message-text";
 
 export type DraftTool = {
   callId: string;
@@ -23,7 +27,7 @@ export interface KollaborAskRequest {
   toolId: string;
   kind: "ask_confirm" | "ask_input" | "ask_choice";
   prompt: string;
-  options?: any[];
+  options?: unknown[];
   placeholder?: string;
 }
 
@@ -38,7 +42,7 @@ export interface KollaborMessage {
   tools?: DraftTool[];
   thinking?: boolean;
   permission?: KollaborPermission;
-  ask?: KollaborAskRequest & { result?: any };
+  ask?: KollaborAskRequest & { result?: unknown };
 }
 
 export interface KollaborDrafting {
@@ -60,6 +64,8 @@ interface KollaborBarState {
   offsetY: number;
   // user-controlled size multiplier, default 1.0, clamped [0.6, 1.6]
   scale: number;
+  // message/input text multiplier, default 1.0, clamped [0.8, 1.35]
+  fontScale: number;
 
   // engine session + streaming state
   sessionId: string | null;
@@ -77,6 +83,7 @@ interface KollaborBarState {
   clearMessages: () => void;
   setOffset: (x: number, y: number) => void;
   setScale: (s: number) => void;
+  setFontScale: (s: number) => void;
 
   // engine session setters
   setSessionId: (v: string | null) => void;
@@ -100,16 +107,20 @@ interface KollaborBarState {
 
   // ask prompt lifecycle
   pushAskRequest: (req: KollaborAskRequest) => void;
-  resolveAsk: (messageId: string, result: any) => void;
+  resolveAsk: (messageId: string, result: unknown) => void;
 }
 
 const LS_KEY = "mentiko-kollabor-transcript";
 const LS_OFFSET_KEY = "mentiko-kollabor-offset";
 const LS_SCALE_KEY = "mentiko-kollabor-scale";
+const LS_FONT_SCALE_KEY = "mentiko-kollabor-font-scale";
 const LS_SESSION_KEY = "mentiko-kollabor-session-id";
 
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 1.6;
+export const FONT_SCALE_DEFAULT = 1;
+export const FONT_SCALE_MIN = 0.8;
+export const FONT_SCALE_MAX = 1.35;
 
 function loadScale(): number {
   if (typeof window === "undefined") return 1;
@@ -128,6 +139,28 @@ function saveScale(s: number) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(LS_SCALE_KEY, String(s));
+  } catch {
+    // ignore
+  }
+}
+
+function loadFontScale(): number {
+  if (typeof window === "undefined") return FONT_SCALE_DEFAULT;
+  try {
+    const raw = localStorage.getItem(LS_FONT_SCALE_KEY);
+    if (!raw) return FONT_SCALE_DEFAULT;
+    const n = parseFloat(raw);
+    if (Number.isNaN(n)) return FONT_SCALE_DEFAULT;
+    return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n));
+  } catch {
+    return FONT_SCALE_DEFAULT;
+  }
+}
+
+function saveFontScale(s: number) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(LS_FONT_SCALE_KEY, String(s));
   } catch {
     // ignore
   }
@@ -180,6 +213,10 @@ function loadTranscript(): KollaborMessage[] {
             m.role === "system" ||
             m.role === "permission"),
       )
+      .map((m) => ({
+        ...m,
+        content: m.role === "assistant" ? repairAgentTextSpacing(m.content) : m.content,
+      }))
       .slice(-50);
     return normalized;
   } catch {
@@ -239,6 +276,7 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
     offsetX: initialOffset.x,
     offsetY: initialOffset.y,
     scale: loadScale(),
+    fontScale: loadFontScale(),
 
     sessionId: loadSessionId(),
     drafting: null,
@@ -269,6 +307,11 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
       saveScale(clamped);
       set({ scale: clamped });
     },
+    setFontScale: (s) => {
+      const clamped = Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, s));
+      saveFontScale(clamped);
+      set({ fontScale: clamped });
+    },
 
     setSessionId: (v) => {
       saveSessionId(v);
@@ -287,7 +330,7 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
         console.warn("[kollabor-bar-store] appendDraftText called with no active draft");
         return;
       }
-      set({ drafting: { ...d, text: d.text + t } });
+      set({ drafting: { ...d, text: appendAgentDraftText(d.text, t) } });
     },
     setDraftThinking: (v) => {
       const d = get().drafting;
@@ -321,7 +364,7 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
         const msg: KollaborMessage = {
           id: newMessageId("a"),
           role: "assistant",
-          content: d.text,
+          content: repairAgentTextSpacing(d.text),
           timestamp: Date.now(),
           tools: d.tools.length > 0 ? d.tools : undefined,
           thinking: d.thinking || undefined,

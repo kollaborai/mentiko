@@ -10,6 +10,7 @@ import { join } from "path";
 import config from "@/lib/config";
 import { taskList } from "@/lib/task-store";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspace-params";
+import { taskDetailHref } from "@/lib/task-routes";
 
 export const dynamic = "force-dynamic";
 
@@ -183,7 +184,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           status: issue.status,
           issue_type: issue.issue_type,
           priority: issue.priority,
-          url: `/tasks/${issue.id}`,
+          url: taskDetailHref(issue.id),
         });
       }
     }

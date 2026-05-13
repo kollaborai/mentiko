@@ -16,6 +16,12 @@ import {
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { cn } from "@/lib/utils";
 import type { SecretMeta } from "@/lib/secrets-store";
+import {
+  FONT_SCALE_DEFAULT,
+  FONT_SCALE_MAX,
+  FONT_SCALE_MIN,
+  useKollaborBarStore,
+} from "@/lib/kollabor-bar-store";
 
 interface EngineProfile {
   name: string;
@@ -64,6 +70,15 @@ const EMPTY_FORM = {
   description: "",
 };
 
+const FONT_SCALE_PRESETS = [
+  { label: "Small", value: 0.9 },
+  { label: "Default", value: FONT_SCALE_DEFAULT },
+  { label: "Large", value: 1.2 },
+];
+
+const PROFILE_ACTION_BUTTON_CLASS = "h-7 w-20 px-0 text-xs justify-center";
+const PROFILE_ICON_BUTTON_CLASS = "h-7 w-7 p-0 justify-center";
+
 export default function MentikoAgentSettingsPage() {
   const [profiles, setProfiles]           = useState<EngineProfile[]>([]);
   const [activeProfile, setActiveProfile] = useState<string>("");
@@ -78,13 +93,14 @@ export default function MentikoAgentSettingsPage() {
   const [testResults, setTestResults]         = useState<Record<string, { success: boolean; message: string }>>({});
   const [activating, setActivating]       = useState<string | null>(null);
   const [deleting, setDeleting]           = useState<string | null>(null);
+  const { fontScale, setFontScale }       = useKollaborBarStore();
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/kollabor/engine/profiles", { credentials: "same-origin" });
-      if (!res.ok) throw new Error(`failed to load profiles: ${res.status}`);
+      if (!res.ok) throw new Error(`Failed to load profiles: ${res.status}`);
       const data = (await res.json()) as ProfilesResponse;
       setProfiles(data.profiles ?? []);
       setActiveProfile(data.active ?? "");
@@ -140,6 +156,10 @@ export default function MentikoAgentSettingsPage() {
     }));
   }
 
+  function handleFontScaleChange(value: number) {
+    setFontScale(Math.round(value * 20) / 20);
+  }
+
   async function handleSave() {
     if (!form.name.trim() || !form.provider) return;
     setSaving(true);
@@ -163,7 +183,7 @@ export default function MentikoAgentSettingsPage() {
 
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
-        throw new Error(err.error ?? err.detail ?? `save failed: ${res.status}`);
+        throw new Error(err.error ?? err.detail ?? `Save failed: ${res.status}`);
       }
 
       setDialogOpen(false);
@@ -183,7 +203,7 @@ export default function MentikoAgentSettingsPage() {
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(err.detail ?? `delete failed: ${res.status}`);
+        throw new Error(err.detail ?? `Delete failed: ${res.status}`);
       }
       await loadProfiles();
     } catch (e: unknown) {
@@ -202,7 +222,7 @@ export default function MentikoAgentSettingsPage() {
         credentials: "same-origin",
         body:        JSON.stringify({ name }),
       });
-      if (!res.ok) throw new Error(`failed to set active profile: ${res.status}`);
+      if (!res.ok) throw new Error(`Failed to set active profile: ${res.status}`);
       setActiveProfile(name);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -213,7 +233,7 @@ export default function MentikoAgentSettingsPage() {
 
   async function handleTest(name: string) {
     setTestingProfile(name);
-    setTestResults((r) => ({ ...r, [name]: { success: false, message: "testing..." } }));
+    setTestResults((r) => ({ ...r, [name]: { success: false, message: "Testing..." } }));
     try {
       const res = await fetch(`/api/kollabor/engine/profiles/${encodeURIComponent(name)}/test`, {
         method: "POST", credentials: "same-origin",
@@ -223,13 +243,13 @@ export default function MentikoAgentSettingsPage() {
         ...r,
         [name]: {
           success: data.success,
-          message: data.message ?? data.error ?? (data.success ? "connection ok" : "failed"),
+          message: data.message ?? data.error ?? (data.success ? "Connection OK" : "Failed"),
         },
       }));
     } catch (e: unknown) {
       setTestResults((r) => ({
         ...r,
-        [name]: { success: false, message: e instanceof Error ? e.message : "test failed" },
+        [name]: { success: false, message: e instanceof Error ? e.message : "Test failed" },
       }));
     } finally {
       setTestingProfile(null);
@@ -255,8 +275,8 @@ export default function MentikoAgentSettingsPage() {
       <div className="px-6 pb-6 max-w-3xl">
         <div className="flex items-center justify-between mb-4">
           <p className="text-xs text-muted-foreground">
-            active:{" "}
-            <span className="text-foreground font-medium">{activeProfile || "none"}</span>
+            Active profile:{" "}
+            <span className="text-foreground font-medium">{activeProfile || "None"}</span>
           </p>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={loadProfiles} disabled={loading}>
@@ -264,8 +284,51 @@ export default function MentikoAgentSettingsPage() {
             </Button>
             <Button size="sm" onClick={openCreate}>
               <AddFilled className="h-3.5 w-3.5 mr-1.5" />
-              add profile
+              Add Profile
             </Button>
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-md border border-border/40 bg-background p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Agent Text Size</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Floating bar input, markdown paragraphs, and tool chips
+              </p>
+            </div>
+            <span className="text-xs font-mono text-muted-foreground">
+              {Math.round(fontScale * 100)}%
+            </span>
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            <input
+              type="range"
+              min={FONT_SCALE_MIN}
+              max={FONT_SCALE_MAX}
+              step={0.05}
+              value={fontScale}
+              onChange={(e) => handleFontScaleChange(parseFloat(e.target.value))}
+              className="flex-1 h-1 accent-primary"
+            />
+            <div className="flex gap-1">
+              {FONT_SCALE_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => handleFontScaleChange(preset.value)}
+                  className={cn(
+                    "px-2 py-1 rounded text-[10px]",
+                    fontScale === preset.value
+                      ? "bg-accent text-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -280,15 +343,15 @@ export default function MentikoAgentSettingsPage() {
         )}
 
         {loading ? (
-          <div className="text-xs text-muted-foreground">loading...</div>
+          <div className="text-xs text-muted-foreground">Loading...</div>
         ) : profiles.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <CloudConnectionFilled className="h-8 w-8 mx-auto mb-3 opacity-30" />
-            <p className="text-sm mb-1">no profiles configured</p>
-            <p className="text-xs mb-4">add a provider profile to use the Mentiko floating bar</p>
+            <p className="text-sm mb-1">No profiles configured</p>
+            <p className="text-xs mb-4">Add a provider profile to use the Mentiko floating bar.</p>
             <Button size="sm" onClick={openCreate}>
               <AddFilled className="h-3.5 w-3.5 mr-1.5" />
-              add profile
+              Add Profile
             </Button>
           </div>
         ) : (
@@ -312,12 +375,12 @@ export default function MentikoAgentSettingsPage() {
                           <span className="text-sm font-medium">{profile.name}</span>
                           {isActive && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">
-                              active
+                              Active
                             </span>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground truncate">
-                          {profile.provider} · {profile.model || "no model set"}
+                          {profile.provider} · {profile.model || "No model set"}
                           {profile.base_url ? ` · ${profile.base_url}` : ""}
                         </p>
                         {profile.description && (
@@ -340,31 +403,32 @@ export default function MentikoAgentSettingsPage() {
                     <div className="flex items-center gap-1.5 shrink-0">
                       {!isActive && (
                         <Button
-                          variant="ghost" size="sm" className="text-xs h-7 px-2"
+                          variant="ghost" size="sm" className={PROFILE_ACTION_BUTTON_CLASS}
                           onClick={() => handleSetActive(profile.name)}
                           disabled={activating === profile.name}
                         >
-                          {activating === profile.name ? "setting..." : "set active"}
+                          {activating === profile.name ? "Setting..." : "Set Active"}
                         </Button>
                       )}
                       <Button
-                        variant="ghost" size="sm" className="text-xs h-7 px-2"
+                        variant="ghost" size="sm" className={PROFILE_ACTION_BUTTON_CLASS}
                         onClick={() => handleTest(profile.name)}
                         disabled={testingProfile === profile.name}
                       >
-                        {testingProfile === profile.name ? "testing..." : "test"}
+                        {testingProfile === profile.name ? "Testing..." : "Test"}
                       </Button>
                       <Button
-                        variant="ghost" size="sm" className="h-7 px-2"
+                        variant="ghost" size="sm" className={PROFILE_ACTION_BUTTON_CLASS}
                         onClick={() => openEdit(profile)}
                       >
-                        edit
+                        Edit
                       </Button>
                       <Button
-                        variant="ghost" size="sm"
-                        className="h-7 px-2 text-destructive hover:text-destructive"
+                        variant="ghost" size="icon-sm"
+                        className={cn(PROFILE_ICON_BUTTON_CLASS, "text-destructive hover:text-destructive")}
                         onClick={() => handleDelete(profile.name)}
                         disabled={deleting === profile.name}
+                        aria-label={`Delete ${profile.name}`}
                       >
                         <TrashFilled className="h-3.5 w-3.5" />
                       </Button>
@@ -380,25 +444,25 @@ export default function MentikoAgentSettingsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? `edit "${editing.name}"` : "add profile"}</DialogTitle>
+            <DialogTitle>{editing ? `Edit "${editing.name}"` : "Add Profile"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             {!editing && (
               <div className="space-y-1.5">
-                <Label htmlFor="profile-name" className="text-xs">profile name</Label>
+                <Label htmlFor="profile-name" className="text-xs">Profile Name</Label>
                 <Input
                   id="profile-name"
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. my-claude"
+                  placeholder="Example: my-claude"
                   className="text-sm"
                 />
               </div>
             )}
 
             <div className="space-y-1.5">
-              <Label htmlFor="provider" className="text-xs">provider</Label>
+              <Label htmlFor="provider" className="text-xs">Provider</Label>
               <select
                 id="provider"
                 value={form.provider}
@@ -412,12 +476,12 @@ export default function MentikoAgentSettingsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="model" className="text-xs">model</Label>
+              <Label htmlFor="model" className="text-xs">Model</Label>
               <Input
                 id="model"
                 value={form.model}
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-                placeholder="e.g. claude-sonnet-4-6"
+                placeholder="Example: claude-sonnet-4-6"
                 className="text-sm"
               />
             </div>
@@ -425,14 +489,14 @@ export default function MentikoAgentSettingsPage() {
             {needsApiKey(form.provider) && (
               <div className="space-y-1.5">
                 <Label htmlFor="api-key-secret" className="text-xs">
-                  api key
-                  <span className="ml-1 text-muted-foreground font-normal">— pick from secrets vault</span>
+                  API Key
+                  <span className="ml-1 text-muted-foreground font-normal">- Select from Secrets</span>
                 </Label>
                 {secrets.length === 0 ? (
                   <div className="text-xs text-muted-foreground px-1">
-                    no secrets found.{" "}
+                    No secrets found.{" "}
                     <a href="/settings/secrets" className="underline text-primary" target="_blank">
-                      add one in secrets settings
+                      Add one in Secrets settings
                     </a>
                     {" "}first.
                   </div>
@@ -443,7 +507,7 @@ export default function MentikoAgentSettingsPage() {
                     onChange={(e) => setForm((f) => ({ ...f, api_key_secret: e.target.value }))}
                     className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
                   >
-                    <option value="">{editing ? "keep existing key" : "select a secret..."}</option>
+                    <option value="">{editing ? "Keep existing key" : "Select a secret..."}</option>
                     {secrets.map((s) => (
                       <option key={s.id} value={s.name}>
                         {s.name} ({s.envVar})
@@ -452,14 +516,14 @@ export default function MentikoAgentSettingsPage() {
                   </select>
                 )}
                 <p className="text-[11px] text-muted-foreground/60">
-                  the key is resolved server-side and written to the engine config — never sent to the browser.
+                  The key is resolved server-side and written to the engine config. It is never sent to the browser.
                 </p>
               </div>
             )}
 
             {needsBaseUrl(form.provider) && (
               <div className="space-y-1.5">
-                <Label htmlFor="base-url" className="text-xs">base url</Label>
+                <Label htmlFor="base-url" className="text-xs">Base URL</Label>
                 <Input
                   id="base-url"
                   value={form.base_url}
@@ -471,21 +535,21 @@ export default function MentikoAgentSettingsPage() {
             )}
 
             <div className="space-y-1.5">
-              <Label htmlFor="description" className="text-xs">description (optional)</Label>
+              <Label htmlFor="description" className="text-xs">Description (Optional)</Label>
               <Input
                 id="description"
                 value={form.description}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="e.g. Claude for complex tasks"
+                placeholder="Example: Claude for complex tasks"
                 className="text-sm"
               />
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>cancel</Button>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || !form.name.trim()}>
-              {saving ? "saving..." : editing ? "save changes" : "add profile"}
+              {saving ? "Saving..." : editing ? "Save Changes" : "Add Profile"}
             </Button>
           </DialogFooter>
         </DialogContent>
