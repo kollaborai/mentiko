@@ -91,6 +91,7 @@ jest.mock('@aliimam/icons', () => {
     ChartFilled: icon('chart'),
     ActivityFilled: icon('activity'),
     TrendUpFilled: icon('trend-up'),
+    CloudConnectionFilled: icon('cloud-connection'),
     ClockFilled: icon('clock'),
     DirectSendFilled: icon('direct-send'),
     LinkFilled: icon('link'),
@@ -155,6 +156,16 @@ function getGripHandle() {
   return screen.getByTitle(/lock position|unlock position/i)
 }
 
+function getLinkByHref(href: string) {
+  const link = document.querySelector(`a[href="${href}"]`)
+  expect(link).toBeInTheDocument()
+  return link
+}
+
+function getLinksByHref(href: string) {
+  return Array.from(document.querySelectorAll(`a[href="${href}"]`))
+}
+
 // ─── tests ──────────────────────────────────────────────────
 
 describe('FloatingPillNav', () => {
@@ -165,11 +176,11 @@ describe('FloatingPillNav', () => {
       expect(screen.getByTitle('Search & Navigate (Cmd+K)')).toBeInTheDocument()
     })
 
-    it('renders grip handle with unlock state by default', () => {
+    it('renders grip handle locked by default', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
-      expect(grip).toHaveAttribute('title', 'Lock position')
-      expect(grip.querySelector('[data-testid="icon-grip-horizontal"]')).toBeInTheDocument()
+      expect(grip).toHaveAttribute('title', 'Unlock position')
+      expect(grip.querySelector('[data-testid="icon-lock"]')).toBeInTheDocument()
     })
 
     it('renders category icons', () => {
@@ -181,43 +192,43 @@ describe('FloatingPillNav', () => {
   })
 
   describe('lock toggle behavior', () => {
-    it('toggles to locked on grip click', () => {
+    it('toggles to unlocked on grip click', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
 
-      // initially unlocked - shows grip icon
-      expect(grip.querySelector('[data-testid="icon-grip-horizontal"]')).toBeInTheDocument()
-      expect(grip.querySelector('[data-testid="icon-lock"]')).not.toBeInTheDocument()
-
-      // click to lock
-      fireEvent.click(grip)
-
-      // now locked - shows lock icon
-      expect(grip).toHaveAttribute('title', 'Unlock position')
+      // initially locked - shows lock icon
       expect(grip.querySelector('[data-testid="icon-lock"]')).toBeInTheDocument()
       expect(grip.querySelector('[data-testid="icon-grip-horizontal"]')).not.toBeInTheDocument()
+
+      // click to unlock
+      fireEvent.click(grip)
+
+      // now unlocked - shows grip icon
+      expect(grip).toHaveAttribute('title', 'Lock position')
+      expect(grip.querySelector('[data-testid="icon-grip-horizontal"]')).toBeInTheDocument()
+      expect(grip.querySelector('[data-testid="icon-lock"]')).not.toBeInTheDocument()
     })
 
-    it('toggles back to unlocked on second click', () => {
+    it('toggles back to locked on second click', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
 
-      fireEvent.click(grip) // lock
       fireEvent.click(grip) // unlock
+      fireEvent.click(grip) // lock
 
-      expect(grip).toHaveAttribute('title', 'Lock position')
-      expect(grip.querySelector('[data-testid="icon-grip-horizontal"]')).toBeInTheDocument()
+      expect(grip).toHaveAttribute('title', 'Unlock position')
+      expect(grip.querySelector('[data-testid="icon-lock"]')).toBeInTheDocument()
     })
 
     it('persists lock state to localStorage', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
 
-      fireEvent.click(grip) // lock
-      expect(localStorageMap.get('mentiko-pill-locked')).toBe('true')
-
       fireEvent.click(grip) // unlock
       expect(localStorageMap.get('mentiko-pill-locked')).toBe('false')
+
+      fireEvent.click(grip) // lock
+      expect(localStorageMap.get('mentiko-pill-locked')).toBe('true')
     })
 
     it('restores lock state from localStorage on mount', () => {
@@ -235,9 +246,6 @@ describe('FloatingPillNav', () => {
     it('blocks pointer drag when locked', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
-
-      // lock it
-      fireEvent.click(grip)
 
       // get the pill container (parent of grip)
       const pill = grip.closest('[class*="bg-"]')!
@@ -295,35 +303,35 @@ describe('FloatingPillNav', () => {
       // the home category shows "mentiko" brand label text when active
       expect(screen.getByText('mentiko')).toBeInTheDocument()
       // and its children (Updates, Docs) should be visible
-      expect(screen.getByTitle('Updates')).toBeInTheDocument()
-      expect(screen.getByTitle('Docs')).toBeInTheDocument()
+      expect(getLinkByHref('/updates')).toBeInTheDocument()
+      expect(getLinkByHref('/docs')).toBeInTheDocument()
     })
 
     it('activates workspace category for /runs', () => {
       mockPathname = '/runs'
       render(<FloatingPillNav />)
       // workspace children should be visible when active
-      expect(screen.getByTitle('Tasks')).toBeInTheDocument()
-      expect(screen.getByTitle('Chat')).toBeInTheDocument()
+      expect(getLinkByHref('/tasks')).toBeInTheDocument()
+      expect(getLinkByHref('/conversations')).toBeInTheDocument()
     })
 
     it('activates workspace category for /tasks', () => {
       mockPathname = '/tasks'
       render(<FloatingPillNav />)
-      expect(screen.getByTitle('Tasks')).toBeInTheDocument()
+      expect(getLinkByHref('/tasks')).toBeInTheDocument()
     })
 
     it('activates workflows category for /chains', () => {
       mockPathname = '/chains'
       render(<FloatingPillNav />)
-      expect(screen.getByTitle('Agents')).toBeInTheDocument()
-      expect(screen.getByTitle('Artifacts')).toBeInTheDocument()
+      expect(getLinkByHref('/agents')).toBeInTheDocument()
+      expect(getLinkByHref('/artifacts')).toBeInTheDocument()
     })
 
     it('activates workflows category for /agents', () => {
       mockPathname = '/agents'
       render(<FloatingPillNav />)
-      expect(screen.getByTitle('Agents')).toBeInTheDocument()
+      expect(getLinkByHref('/agents')).toBeInTheDocument()
     })
 
     it('activates settings for /settings path', () => {
@@ -331,13 +339,14 @@ describe('FloatingPillNav', () => {
       render(<FloatingPillNav />)
       // settings is a popover, the trigger button should be present
       expect(screen.getByTitle('Settings')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
     })
 
     it('activates marketplace for /marketplace path', () => {
       mockPathname = '/marketplace'
       render(<FloatingPillNav />)
       // marketplace children should be visible
-      expect(screen.getByTitle('Templates')).toBeInTheDocument()
+      expect(getLinkByHref('/marketplace/templates')).toBeInTheDocument()
     })
   })
 
@@ -363,8 +372,8 @@ describe('FloatingPillNav', () => {
       // recents from other categories should be rendered as dimmed items
       // /agents is workflows category, /tasks is workspace - both differ from home
       // they should show up in the recents section
-      expect(screen.getByTitle('Agents')).toBeInTheDocument()
-      expect(screen.getByTitle('Tasks')).toBeInTheDocument()
+      expect(getLinkByHref('/agents')).toBeInTheDocument()
+      expect(getLinkByHref('/tasks')).toBeInTheDocument()
     })
 
     it('does not show recents from the active category', () => {
@@ -375,9 +384,8 @@ describe('FloatingPillNav', () => {
 
       render(<FloatingPillNav />)
 
-      // /tasks should appear as a child nav item (active category), not as a recent
-      // there should only be one element with title "Tasks"
-      const taskLinks = screen.getAllByTitle('Tasks')
+      // /tasks should appear as a child nav item (active category), not as a recent.
+      const taskLinks = getLinksByHref('/tasks')
       expect(taskLinks).toHaveLength(1)
     })
   })
@@ -386,9 +394,6 @@ describe('FloatingPillNav', () => {
     it('does not respond to edge mousemove when locked', () => {
       render(<FloatingPillNav />)
       const grip = getGripHandle()
-
-      // lock it
-      fireEvent.click(grip)
 
       // simulate mouse near screen edge
       act(() => {

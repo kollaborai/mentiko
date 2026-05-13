@@ -17,6 +17,7 @@ import {
   ChartFilled, ActivityFilled, TrendUpFilled,
   ClockFilled, DirectSendFilled, LinkFilled, SendFilled,
   AddFilled, CodeFilled, Webhook,
+  CloudConnectionFilled,
 } from "@aliimam/icons";
 import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
@@ -158,6 +159,7 @@ const SETTINGS_MENU: SettingsMenuGroup[] = [
     label: "Workspace",
     items: [
       { id: "agent-configs", label: "Agent Configs", href: "/settings/agent-configs", icon: <BotMessageSquare className="h-3.5 w-3.5" /> },
+      { id: "mcp",           label: "MCP",           href: "/settings/mcp",           icon: <CloudConnectionFilled className="h-3.5 w-3.5" /> },
       { id: "email",         label: "Email",         href: "/settings/email",         icon: <SmsFilled className="h-3.5 w-3.5" /> },
     ],
   },

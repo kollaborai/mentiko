@@ -33,6 +33,7 @@ import { showToast } from "@/components/notifications-panel";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { unwrapApiData } from "@/lib/api-client";
+import { isRecoverableKollaborSessionError } from "@/lib/kollabor-session-errors";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -698,8 +699,8 @@ export function FloatingKollaborBar() {
             break;
           case "error": {
             const msg = "message" in ev ? ev.message : "engine error";
-            // Session expired (engine restarted) — clear stale ID and reconnect immediately
-            if (String(msg).includes("Session not found") || String(msg).includes("404")) {
+            // Session expired or engine restarted: clear stale IDs and reconnect.
+            if (isRecoverableKollaborSessionError(msg)) {
               if (typeof window !== "undefined") {
                 try {
                   window.localStorage.removeItem("mentiko-kollabor-session-id");
