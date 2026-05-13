@@ -45,7 +45,7 @@ them a harness:
 - Inspect live runs, terminal output, conversations, generated artifacts, file changes, schedules, and workspace context.
 - Work in the browser with a built-in workspace code editor and live terminal interface.
 - Operate local, SSH, and Docker workspaces with namespace, organization, and project scoped storage under `~/.mentiko`.
-- Self-host the platform with container-oriented deployment assets.
+- Self-host the platform from a published multi-arch docker image, or build from source.
 
 ## Feature Tour
 
@@ -58,7 +58,7 @@ them a harness:
 | Live operations | Dashboard, activity feed, run detail views, terminal output, conversations, artifacts, file changes, metrics, logs, and status history |
 | Workspace cockpit | Browser code editor, file tree, search-in-files, split panes, markdown preview, and an interactive terminal for each workspace |
 | Workspaces | Local, SSH, and Docker execution contexts with scoped environment variables, secrets, and workspace-aware paths |
-| Self-hosting | Better Auth, secret storage, audit logging, route coverage checks, process supervision, and tenant container packaging |
+| Self-hosting | Better Auth, secret storage, audit logging, route coverage checks, process supervision, and a published multi-arch docker image |
 
 ## Highlights
 
@@ -70,7 +70,7 @@ them a harness:
 | Web operations | Live run output, task state, conversations, artifacts, schedules, decisions, links, terminals, and code editing |
 | Workspaces | Local, SSH, and Docker execution contexts |
 | Security posture | Session-based auth, namespace/org/project data roots, secret storage, audit logging, and route coverage checks |
-| Deployment | Container-oriented tenant packaging with build and rollback runbooks |
+| Deployment | Published multi-arch docker image, container-oriented, with build and rollback runbooks |
 
 ## Why It Exists
 
@@ -112,6 +112,67 @@ so they can be removed.
 
 ## Quick Start
 
+### Docker (recommended)
+
+Pull the published image and run it. The image is multi-arch (works on
+arm64 Macs and amd64 Linux) and contains the full platform — no build
+required.
+
+```bash
+docker run -d \
+  --name mentiko \
+  --restart unless-stopped \
+  -p 3000:3000 -p 3099:3099 \
+  -v mentiko-data:/app \
+  -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
+  ghcr.io/kollaborai/mentiko:latest
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+- Port `3000` is the web UI.
+- Port `3099` is the terminal websocket bridge (in-app terminals need this).
+- Data persists in the `mentiko-data` docker volume — back this up.
+- `BETTER_AUTH_SECRET` signs sessions. Keep it stable across restarts; if
+  you lose it, all sessions are invalidated.
+
+For a stable secret across restarts:
+
+```bash
+echo "BETTER_AUTH_SECRET=$(openssl rand -hex 32)" > .env
+docker run -d \
+  --name mentiko \
+  --restart unless-stopped \
+  -p 3000:3000 -p 3099:3099 \
+  -v mentiko-data:/app \
+  --env-file .env \
+  ghcr.io/kollaborai/mentiko:latest
+```
+
+Logs: `docker logs -f mentiko`. Stop: `docker stop mentiko`.
+
+For production, put a reverse proxy (caddy, nginx, traefik) in front of
+port 3000 to terminate TLS. Set `BETTER_AUTH_URL=https://your-domain` so
+authentication cookies and OAuth redirects work correctly.
+
+Pin to a specific version (recommended for production) instead of `:latest`:
+
+```bash
+docker pull ghcr.io/kollaborai/mentiko:v0.3.5
+```
+
+See [docs/DOCKER_BUILD.md](docs/DOCKER_BUILD.md) for how the image is
+built, the multi-arch story, and how to build locally from source.
+
+### Docker Compose
+
+The repo ships a `docker-compose.production.yml` that builds from source
+locally. If you prefer to pull the published image instead, point its
+`image:` line at `ghcr.io/kollaborai/mentiko:latest` and remove the
+`build: .` line.
+
+### Local development (no Docker)
+
 Clone the repo:
 
 ```bash
@@ -119,7 +180,7 @@ git clone https://github.com/kollaborai/mentiko.git
 cd mentiko
 ```
 
-Run the web app:
+Run the web app in dev mode:
 
 ```bash
 cd web
@@ -140,6 +201,8 @@ emails are printed in the dev server logs instead of being sent.
 For production or shared deployments, set `BETTER_AUTH_SECRET`, configure the
 correct public URL via `BETTER_AUTH_URL`, and keep runtime data outside the repo
 under `~/.mentiko` or your configured data root.
+
+### CLI
 
 Use the CLI from the repo root:
 
@@ -245,6 +308,7 @@ Start here:
 - [Agent links](docs/peer-collaboration.md)
 - [Decisions API](docs/DECISIONS_API.md)
 - [Deployment](docs/deployment.md)
+- [Docker build + multi-arch image](docs/DOCKER_BUILD.md)
 - [Configuration profiles](docs/CONFIG_PROFILES_SPEC.md)
 - [Auth route coverage](docs/AUTH_COVERAGE.md)
 - [Security deployment checklist](docs/SECURITY_DEPLOYMENT_CHECKLIST.md)
