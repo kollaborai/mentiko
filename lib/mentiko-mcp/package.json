@@ -1,5 +1,5 @@
 {
-  "name": "@kollaborai/mentiko-mcp",
+  "name": "@mentiko/mentiko-mcp",
   "version": "0.1.0",
   "description": "Mentiko MCP server for Claude Desktop, Claude Code, and other MCP clients.",
   "private": false,

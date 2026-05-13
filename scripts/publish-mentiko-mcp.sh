@@ -44,7 +44,7 @@ fi
 cd "$package_dir"
 
 name="$(node -p "require('./package.json').name")"
-if [[ "$name" != "@kollaborai/mentiko-mcp" ]]; then
+if [[ "$name" != "@mentiko/mentiko-mcp" ]]; then
   printf 'unexpected package name: %s\n' "$name" >&2
   exit 1
 fi
@@ -57,9 +57,9 @@ npm pack --dry-run
 
 if [[ "$mode" == "--dry-run" ]]; then
   npm publish --access public --dry-run
-  printf 'dry run complete for @kollaborai/mentiko-mcp@%s\n' "$package_version"
+  printf 'dry run complete for @mentiko/mentiko-mcp@%s\n' "$package_version"
   exit 0
 fi
 
 npm publish --access public
-printf 'published @kollaborai/mentiko-mcp@%s\n' "$package_version"
+printf 'published @mentiko/mentiko-mcp@%s\n' "$package_version"

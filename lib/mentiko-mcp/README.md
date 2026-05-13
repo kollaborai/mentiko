@@ -1,4 +1,4 @@
-# @kollaborai/mentiko-mcp
+# @mentiko/mentiko-mcp
 
 Mentiko MCP is the stdio Model Context Protocol server for the Mentiko
 platform. It lets MCP clients inspect and operate a running Mentiko instance:
@@ -14,13 +14,13 @@ environment variables below.
 Run it directly:
 
 ```bash
-npx @kollaborai/mentiko-mcp@latest
+npx @mentiko/mentiko-mcp@latest
 ```
 
 Or install it:
 
 ```bash
-npm install @kollaborai/mentiko-mcp
+npm install @mentiko/mentiko-mcp
 ```
 
 The package requires Node.js 20 or newer.
@@ -60,7 +60,7 @@ Add a server entry:
   "mcpServers": {
     "mentiko": {
       "command": "npx",
-      "args": ["-y", "@kollaborai/mentiko-mcp@latest"],
+      "args": ["-y", "@mentiko/mentiko-mcp@latest"],
       "env": {
         "MENTIKO_WEB_URL": "http://127.0.0.1:3000",
         "MENTIKO_SESSION_ID": "your-session-id",
@@ -84,7 +84,7 @@ claude mcp add mentiko -- env \
   MENTIKO_SESSION_ID=your-session-id \
   MENTIKO_SESSION_TOKEN=your-session-token \
   MENTIKO_INBOX_KEY=your-inbox-key \
-  npx -y @kollaborai/mentiko-mcp@latest
+  npx -y @mentiko/mentiko-mcp@latest
 ```
 
 ## Local Development
