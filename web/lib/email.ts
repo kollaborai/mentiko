@@ -1,7 +1,7 @@
 /**
  * Shared email utility for Mentiko.
- * Uses nodemailer with SMTP config from env vars.
- * Falls back to console.log in dev when SMTP_USER is not set.
+ * Provider preference: RESEND_API_KEY (smtp.resend.com) > generic SMTP_*.
+ * Falls back to console.log in dev when neither is configured.
  */
 
 export interface EmailOptions {
@@ -11,6 +11,7 @@ export interface EmailOptions {
   html: string;
 }
 
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const SMTP_HOST = process.env.SMTP_HOST || "smtp.titan.email";
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || "465");
 const SMTP_USER = process.env.SMTP_USER || "";
@@ -20,19 +21,21 @@ const SMTP_FROM =
   process.env.SMTP_USER ||
   "Mentiko <support@mentiko.com>";
 
-const hasSmtp = Boolean(SMTP_USER && SMTP_PASS);
+const useResend = Boolean(RESEND_API_KEY);
+const useSmtp = Boolean(SMTP_USER && SMTP_PASS);
+const hasProvider = useResend || useSmtp;
 
 /**
  * Send an email. Returns true on success, false on failure.
  * Never throws — logs errors instead.
  */
 export async function sendEmail(opts: EmailOptions): Promise<boolean> {
-  if (!hasSmtp) {
+  if (!hasProvider) {
     // dev mode: log to console, don't block
     console.log(`[email] dev mode — would send to ${opts.to}`);
     console.log(`[email]   subject: ${opts.subject}`);
     if (process.env.NODE_ENV === "production") {
-      console.log("[email]   SMTP is not configured; message body suppressed in production logs.");
+      console.log("[email]   No email provider configured (set RESEND_API_KEY or SMTP_USER/SMTP_PASS); message body suppressed in production logs.");
     } else {
       console.log(`[email]   text:\n${opts.text}`);
     }
@@ -41,12 +44,19 @@ export async function sendEmail(opts: EmailOptions): Promise<boolean> {
 
   try {
     const nodemailerMod = await import("nodemailer");
-    const transport = nodemailerMod.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
-      auth: { user: SMTP_USER, pass: SMTP_PASS },
-    });
+    const transport = useResend
+      ? nodemailerMod.createTransport({
+          host: "smtp.resend.com",
+          port: 465,
+          secure: true,
+          auth: { user: "resend", pass: RESEND_API_KEY },
+        })
+      : nodemailerMod.createTransport({
+          host: SMTP_HOST,
+          port: SMTP_PORT,
+          secure: SMTP_PORT === 465,
+          auth: { user: SMTP_USER, pass: SMTP_PASS },
+        });
 
     await transport.sendMail({
       from: SMTP_FROM,
