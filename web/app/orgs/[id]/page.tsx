@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,9 @@ function StatCard({
 export default function OrgDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname();
   const orgId = params.id as string;
+  const listPath = pathname.startsWith("/settings/organization") ? "/settings/organization" : "/orgs";
 
   const { fetchWithNamespace } = useNamespaceFetch();
   const [org, setOrg] = useState<Org | null>(null);
@@ -161,7 +163,7 @@ export default function OrgDetailPage() {
         icon={BuildingFilled}
         sectionColor="#f59e0b"
         actions={[
-          { label: "Organizations", href: "/orgs", icon: ArrowLeftFilled, iconColor: "#f59e0b" },
+          { label: "Organizations", href: listPath, icon: ArrowLeftFilled, iconColor: "#f59e0b" },
         ]}
       />
 
@@ -262,7 +264,7 @@ export default function OrgDetailPage() {
                   const err = await res.json();
                   throw new Error(err.error || "Failed to delete");
                 }
-                router.push("/orgs");
+                router.push(listPath);
               }}
             />
           </TabsContent>

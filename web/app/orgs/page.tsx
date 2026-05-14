@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { BuildingFilled, PeopleFilled, AddFilled, ArrowRight1Filled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -134,6 +134,8 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 
 export default function OrgsPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const basePath = pathname.startsWith("/settings/organization") ? "/settings/organization" : "/orgs";
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -174,7 +176,7 @@ export default function OrgsPage() {
   };
 
   const handleOrgClick = (org: Org) => {
-    router.push(`/orgs/${org.id}`);
+    router.push(`${basePath}/${org.id}`);
   };
 
   return (
