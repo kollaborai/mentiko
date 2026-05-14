@@ -12,6 +12,7 @@ import {
   AttachCircleFilled,
 } from "@aliimam/icons";
 import { unwrapApiData } from "@/lib/api-client";
+import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 import { cn } from "@/lib/utils";
 import { useEditorStore, isDirty } from "@/lib/editor-store";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -137,14 +138,18 @@ export function FloatingCodePill() {
   useEffect(() => {
     setMounted(true);
     const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
-    setIsMobile(mq.matches);
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    const applyViewportMode = (matches: boolean) => {
+      setIsMobile(matches);
+      setPanelBounds(matches ? MOBILE_BOUNDS : loadPanelBounds());
+      if (matches) setSidebarVisible(false);
+    };
+    applyViewportMode(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => applyViewportMode(e.matches);
     mq.addEventListener("change", onChange);
     try {
       const sw = localStorage.getItem(SIDEBAR_W_KEY);
       if (sw) setSidebarW(clamp(parseInt(sw, 10), MIN_SIDEBAR_W, MAX_SIDEBAR_W));
     } catch {}
-    setPanelBounds(mq.matches ? MOBILE_BOUNDS : loadPanelBounds());
     try { setIsPinned(localStorage.getItem(PINNED_KEY) === "true"); } catch {}
     // hydrate overlay open state from localStorage (store defaults to false for SSR)
     try {
@@ -153,14 +158,6 @@ export function FloatingCodePill() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  // mobile: full screen, hide sidebar
-  useEffect(() => {
-    if (isMobile) {
-      setPanelBounds(MOBILE_BOUNDS);
-      setSidebarVisible(false);
-    }
-  }, [isMobile]);
 
   // fetch project root as fallback
   useEffect(() => {
@@ -353,7 +350,8 @@ export function FloatingCodePill() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
-                className="fixed inset-0 z-[9988] bg-black/40 backdrop-blur-[2px]"
+                className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
+                style={{ zIndex: FLOATING_SURFACE_Z.codeBackdrop }}
                 onClick={closeOverlay}
               />
             )}
@@ -371,11 +369,12 @@ export function FloatingCodePill() {
                 mass: 0.8,
               }}
               className={cn(
-                "fixed z-[9989] flex flex-col overflow-hidden",
+                "fixed flex flex-col overflow-hidden",
                 "bg-[#0e0e0e]/75 dark:bg-[#060606]/75 backdrop-blur-xl",
                 "shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6)]",
               )}
               style={{
+                zIndex: FLOATING_SURFACE_Z.codePanel,
                 top: `${panelBounds.top}%`,
                 left: `${panelBounds.left}%`,
                 right: `${panelBounds.right}%`,

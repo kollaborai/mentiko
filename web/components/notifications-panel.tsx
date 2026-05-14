@@ -14,6 +14,7 @@ import {
 } from "@aliimam/icons";
 import { useNotifications } from "@/lib/notifications-store";
 import { cn } from "@/lib/utils";
+import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 
 /** coerce value to string for safe rendering */
 function safeStr(v: unknown): string {
@@ -93,8 +94,9 @@ export function NotificationsPanel() {
           sideOffset={12}
           onMouseEnter={handleEnter}
           onMouseLeave={handleLeave}
+          style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           className={cn(
-            "z-[10000] w-80 rounded-md overflow-hidden",
+            "w-80 rounded-md overflow-hidden",
             "bg-card",
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           )}
@@ -282,7 +284,8 @@ export function ToastContainer() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"
+      className="fixed bottom-4 right-4 flex flex-col gap-2 pointer-events-none"
+      style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
       aria-live="polite"
       aria-atomic="true"
     >

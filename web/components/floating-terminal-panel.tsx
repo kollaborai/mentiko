@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
 import { unwrapApiData } from "@/lib/api-client";
+import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 
 interface PtySession {
@@ -231,7 +232,7 @@ export function FloatingTerminalPanel() {
     } finally {
       setSpawning(false);
     }
-  }, [fetchSessions, workspacePath, workspaceId]);
+  }, [fetchSessions, fetchWsUrl, workspacePath, workspaceId]);
 
   const attachSession = async (name: string) => {
     await fetchWsUrl(); // fresh single-use token per connection
@@ -396,9 +397,9 @@ export function FloatingTerminalPanel() {
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: 20 }}
       transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
-      style={panelStyle}
+      style={{ ...panelStyle, zIndex: FLOATING_SURFACE_Z.terminalPanel }}
       className={cn(
-        "fixed z-50 flex flex-col rounded-xl",
+        "fixed flex flex-col rounded-xl",
         "bg-[#0e0e0e]/75 dark:bg-[#060606]/75 backdrop-blur-xl",
         "shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6)]",
         "text-white/80",

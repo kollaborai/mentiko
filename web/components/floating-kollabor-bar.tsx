@@ -31,12 +31,18 @@ import {
 } from "@/lib/mentiko-mcp-bar-client";
 import type { UIEffect } from "@/lib/mentiko-mcp-inbox";
 import { showToast } from "@/components/notifications-panel";
+import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { unwrapApiData } from "@/lib/api-client";
 import { isRecoverableKollaborSessionError } from "@/lib/kollabor-session-errors";
 import { normalizeTaskNavigationRoute } from "@/lib/task-routes";
 import { repairAgentTextSpacing } from "@/lib/agent-message-text";
+import {
+  OPEN_FLOATING_APP_PANEL_EVENT,
+  getFloatingPanelRouteTitle,
+  isFloatingPanelRoute,
+} from "@/lib/floating-app-panel-routing";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -172,7 +178,22 @@ export function FloatingKollaborBar() {
       switch (kind) {
         case "navigate": {
           const route = stringPayload(payload, "route");
-          if (route) routerRef.current.push(normalizeTaskNavigationRoute(route));
+          if (route) {
+            const normalizedRoute = normalizeTaskNavigationRoute(route);
+            if (
+              pillPrefs.navigationMode === "floating-nav-panels" &&
+              isFloatingPanelRoute(normalizedRoute)
+            ) {
+              window.dispatchEvent(new CustomEvent(OPEN_FLOATING_APP_PANEL_EVENT, {
+                detail: {
+                  href: normalizedRoute,
+                  title: getFloatingPanelRouteTitle(normalizedRoute),
+                },
+              }));
+            } else {
+              routerRef.current.push(normalizedRoute);
+            }
+          }
           break;
         }
         case "go_back":
@@ -270,7 +291,7 @@ export function FloatingKollaborBar() {
               border-radius: 8px;
               box-shadow: 0 0 0 4px rgba(245,158,11,0.2);
               pointer-events: none;
-              z-index: 9999;
+              z-index: ${FLOATING_SURFACE_Z.kollaborBackdrop};
               animation: mentiko-pulse 1.5s ease-in-out infinite;
             `;
             // add keyframe if not exists
@@ -296,7 +317,7 @@ export function FloatingKollaborBar() {
                 font-size: 11px;
                 font-weight: 600;
                 pointer-events: none;
-                z-index: 10000;
+                z-index: ${FLOATING_SURFACE_Z.kollaborPrompt};
                 white-space: nowrap;
               `;
               label.textContent = msg;
@@ -327,7 +348,7 @@ export function FloatingKollaborBar() {
           break;
       }
     },
-    [pushAskRequest, setExpanded, setWorkspaceId],
+    [pillPrefs.navigationMode, pushAskRequest, setExpanded, setWorkspaceId],
   );
 
   const effOffsetX = mounted ? offsetX : 0;
@@ -852,8 +873,9 @@ export function FloatingKollaborBar() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 8 }}
           transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed left-1/2 z-50 flex justify-between gap-2 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 text-xs pointer-events-auto"
+          className="fixed left-1/2 flex justify-between gap-2 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 text-xs pointer-events-auto"
           style={{
+            zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
             bottom: `${barBottom + 64}px`,
             transform: "translateX(-50%)",
           }}
@@ -887,8 +909,9 @@ export function FloatingKollaborBar() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             aria-hidden="true"
-            className="fixed inset-0 z-30 pointer-events-none"
+            className="fixed inset-0 pointer-events-none"
             style={{
+              zIndex: FLOATING_SURFACE_Z.kollaborBackdrop,
               backdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
               WebkitBackdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
               backgroundColor: "rgba(0,0,0,0.22)",
@@ -899,9 +922,11 @@ export function FloatingKollaborBar() {
         )}
       </AnimatePresence>
       <div
-        className="fixed z-40 w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
+        data-floating-kollabor-bar=""
+        className="fixed w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
         style={{
           ...fontVars,
+          zIndex: FLOATING_SURFACE_Z.kollaborBar,
           left: "50%",
           bottom: `${barBottom}px`,
           transform: `translateX(calc(-50% + ${effOffsetX}px)) scale(${effScale.toFixed(3)})`,
