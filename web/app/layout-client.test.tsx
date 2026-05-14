@@ -1,0 +1,175 @@
+import { render, waitFor } from "@testing-library/react";
+import * as React from "react";
+import { RootLayoutClient } from "./layout-client";
+
+let mockPathname = "/login";
+let mockIsFloatingPanelSurface = false;
+const mockHydrate = jest.fn();
+let mockThemeProviderMounts = 0;
+let mockThemeProviderUnmounts = 0;
+
+function MockThemeProvider({ children }: { children: React.ReactNode }) {
+  React.useEffect(() => {
+    mockThemeProviderMounts += 1;
+    return () => {
+      mockThemeProviderUnmounts += 1;
+    };
+  }, []);
+  return <div data-testid="theme-provider">{children}</div>;
+}
+
+jest.mock("next/navigation", () => ({
+  usePathname: () => mockPathname,
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+jest.mock("next-themes", () => ({
+  ThemeProvider: MockThemeProvider,
+}));
+
+jest.mock("@/components/must-change-password-gate", () => ({
+  MustChangePasswordGate: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+jest.mock("@/lib/namespace-context", () => ({
+  NamespaceProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+jest.mock("@/lib/workspace-context", () => ({
+  WorkspaceProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+jest.mock("@/lib/user-context", () => ({
+  UserProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+jest.mock("@/components/notifications-panel", () => ({
+  ToastContainer: () => null,
+}));
+
+jest.mock("@/hooks/use-notifications-listener", () => ({
+  useNotificationsListener: jest.fn(),
+}));
+
+jest.mock("@/components/offline-indicator", () => ({
+  OfflineIndicator: () => null,
+  OnlineStatusBanner: () => null,
+}));
+
+jest.mock("@/lib/sync-queue", () => ({
+  useSyncQueue: () => ({ process: jest.fn() }),
+}));
+
+jest.mock("@/hooks", () => ({
+  useOnlineStatus: () => ({ isOnline: true, wasOffline: false }),
+}));
+
+jest.mock("@/lib/notification-preferences", () => ({
+  useNotificationPreferences: () => ({ init: jest.fn() }),
+}));
+
+jest.mock("@/components/global-search-modal", () => ({
+  GlobalSearchModal: () => null,
+}));
+
+jest.mock("@/components/keyboard-shortcuts-modal", () => ({
+  KeyboardShortcutsModal: () => null,
+}));
+
+jest.mock("@/components/floating-terminal-panel", () => ({
+  FloatingTerminalPanel: () => null,
+}));
+
+jest.mock("@/components/floating-pill-nav", () => ({
+  FloatingPillNav: () => null,
+}));
+
+jest.mock("@/components/floating-app-panels", () => ({
+  FloatingAppPanels: () => null,
+}));
+
+jest.mock("@/components/editor/floating-code-pill", () => ({
+  FloatingCodePill: () => null,
+}));
+
+jest.mock("@/components/onboarding/floating-welcome-panel", () => ({
+  FloatingWelcomePanel: () => null,
+}));
+
+jest.mock("@/components/floating-kollabor-bar", () => ({
+  FloatingKollaborBar: () => null,
+}));
+
+jest.mock("@/lib/kollabor-bar-flag", () => ({
+  isKollaborBarEnabled: () => false,
+}));
+
+jest.mock("@/lib/floating-app-panel-routing", () => ({
+  getFloatingPanelSrc: (path: string) => path,
+  isFloatingPanelRoute: () => false,
+  isFloatingPanelSurface: () => mockIsFloatingPanelSurface,
+}));
+
+jest.mock("@/lib/pill-nav-preferences", () => ({
+  usePillNavPreferences: (selector: (state: { hydrate: () => void }) => unknown) =>
+    selector({ hydrate: mockHydrate }),
+}));
+
+jest.mock("@/lib/user-display-preferences", () => ({
+  applyStoredUserDisplayPreferences: jest.fn(),
+}));
+
+describe("RootLayoutClient", () => {
+  beforeEach(() => {
+    mockPathname = "/login";
+    mockIsFloatingPanelSurface = false;
+    mockHydrate.mockReset();
+    mockThemeProviderMounts = 0;
+    mockThemeProviderUnmounts = 0;
+    document.documentElement.removeAttribute("data-floating-panel-surface");
+    document.body.removeAttribute("data-floating-panel-surface");
+  });
+
+  it("keeps the theme provider mounted when leaving standalone auth routes", async () => {
+    const { rerender } = render(
+      <RootLayoutClient>
+        <div>page content</div>
+      </RootLayoutClient>,
+    );
+
+    await waitFor(() => expect(mockThemeProviderMounts).toBe(1));
+
+    mockPathname = "/dashboard";
+    rerender(
+      <RootLayoutClient>
+        <div>page content</div>
+      </RootLayoutClient>,
+    );
+
+    await waitFor(() => expect(mockThemeProviderMounts).toBe(1));
+    expect(mockThemeProviderUnmounts).toBe(0);
+  });
+
+  it("marks panel-surface documents so iframe backgrounds stay transparent", async () => {
+    mockPathname = "/runs";
+    mockIsFloatingPanelSurface = true;
+
+    const { unmount } = render(
+      <RootLayoutClient>
+        <div>panel content</div>
+      </RootLayoutClient>,
+    );
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-floating-panel-surface", "true");
+      expect(document.body).toHaveAttribute("data-floating-panel-surface", "true");
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      expect(document.documentElement).not.toHaveAttribute("data-floating-panel-surface");
+      expect(document.body).not.toHaveAttribute("data-floating-panel-surface");
+    });
+  });
+});

@@ -31,22 +31,26 @@ const STANDALONE_PATHS = ["/login", "/signup", "/welcome"];
 
 export function RootLayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-
-  // standalone pages: just theme provider + namespace provider, no pill nav
-  if (STANDALONE_PATHS.some((p) => pathname.startsWith(p))) {
-    return (
-      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-        <NamespaceProvider>
-          {children}
-        </NamespaceProvider>
-      </ThemeProvider>
-    );
-  }
+  const isStandalone = STANDALONE_PATHS.some((p) => pathname.startsWith(p));
 
   return (
-    <MustChangePasswordGate>
-      <AppShell>{children}</AppShell>
-    </MustChangePasswordGate>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      forcedTheme={isStandalone ? "dark" : undefined}
+      enableSystem
+      disableTransitionOnChange
+    >
+      <NamespaceProvider>
+        {isStandalone ? (
+          children
+        ) : (
+          <MustChangePasswordGate>
+            <AppShell>{children}</AppShell>
+          </MustChangePasswordGate>
+        )}
+      </NamespaceProvider>
+    </ThemeProvider>
   );
 }
 
@@ -225,79 +229,77 @@ function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <NamespaceProvider>
-        <NotificationsInit />
-        <PillNavPreferencesInit />
-        <WorkspaceProvider>
+    <>
+      <NotificationsInit />
+      <PillNavPreferencesInit />
+      <WorkspaceProvider>
         <UserProvider>
-        <Suspense fallback={null}>
-          <PanelSurfaceNavigationGuard />
-          <WhenNotPanelSurface>
-            <a
-              href="#main-content"
-              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:text-xs focus:bg-accent focus:text-foreground focus:rounded-md"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  document.getElementById("main-content")?.focus();
-                }
+          <Suspense fallback={null}>
+            <PanelSurfaceNavigationGuard />
+            <WhenNotPanelSurface>
+              <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-1.5 focus:text-xs focus:bg-accent focus:text-foreground focus:rounded-md"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    document.getElementById("main-content")?.focus();
+                  }
+                }}
+              >
+                Skip to main content
+              </a>
+            </WhenNotPanelSurface>
+          </Suspense>
+          <div className="relative flex h-screen flex-col">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-0"
+              style={{
+                WebkitMaskComposite: 'source-over',
+                WebkitMaskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
+                backgroundImage: 'radial-gradient(circle at 1px 1px, var(--primary) 1px, transparent 0)',
+                backgroundSize: '16px 16px',
+                maskComposite: 'add',
+                maskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
+                opacity: 0.25,
               }}
+            />
+            <Suspense fallback={null}>
+              <WhenNotPanelSurface>
+                <ToastContainer />
+                <GlobalSearchModal />
+                <KeyboardShortcutsModal />
+                <OfflineIndicator />
+                {wasOffline && isOnline && (
+                  <OnlineStatusBanner />
+                )}
+              </WhenNotPanelSurface>
+            </Suspense>
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0"
             >
-              Skip to main content
-            </a>
-          </WhenNotPanelSurface>
-        </Suspense>
-        <div className="relative flex h-screen flex-col">
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 z-0"
-            style={{
-              WebkitMaskComposite: 'source-over',
-              WebkitMaskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
-              backgroundImage: 'radial-gradient(circle at 1px 1px, var(--primary) 1px, transparent 0)',
-              backgroundSize: '16px 16px',
-              maskComposite: 'add',
-              maskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
-              opacity: 0.25,
-            }}
-          />
-          <Suspense fallback={null}>
-            <WhenNotPanelSurface>
-              <ToastContainer />
-              <GlobalSearchModal />
-              <KeyboardShortcutsModal />
-              <OfflineIndicator />
-              {wasOffline && isOnline && (
-                <OnlineStatusBanner />
-              )}
-            </WhenNotPanelSurface>
-          </Suspense>
-          <main
-            id="main-content"
-            tabIndex={-1}
-            className="relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0"
-          >
-            {children}
-          </main>
-          <Suspense fallback={null}>
-            <WhenNotPanelSurface>
-              <FloatingPillNav />
-              <FloatingAppPanels />
-              <FloatingCodePill />
-              <FloatingTerminalPanel />
-              <FloatingWelcomePanel />
-              {isKollaborBarEnabled() && (
-                <Suspense fallback={null}>
-                  <FloatingKollaborBar />
-                </Suspense>
-              )}
-            </WhenNotPanelSurface>
-          </Suspense>
-        </div>
+              {children}
+            </main>
+            <Suspense fallback={null}>
+              <WhenNotPanelSurface>
+                <FloatingPillNav />
+                <FloatingAppPanels />
+                <FloatingCodePill />
+                <FloatingTerminalPanel />
+                <FloatingWelcomePanel />
+                {isKollaborBarEnabled() && (
+                  <Suspense fallback={null}>
+                    <FloatingKollaborBar />
+                  </Suspense>
+                )}
+              </WhenNotPanelSurface>
+            </Suspense>
+          </div>
         </UserProvider>
-        </WorkspaceProvider>
-    </NamespaceProvider>
-    </ThemeProvider>
+      </WorkspaceProvider>
+    </>
   );
 }
