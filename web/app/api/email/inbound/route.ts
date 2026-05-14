@@ -119,14 +119,29 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // 2. parse body
   const body = await request.json();
 
-  // 3. extract namespaceId (header support for haraka)
+  const source = (body.source as string) || new URL(request.url).searchParams.get("source") || "custom";
+  const queryNamespace = new URL(request.url).searchParams.get("namespace");
+
+  // 3. extract namespaceId. hosted haraka delivery must prefer the tenant's
+  // pinned env namespace; stale relay headers should not redirect filesystem IO.
   const namespaceId =
-    request.headers.get("x-mentiko-namespace") ||
-    (body.namespaceId as string) ||
-    (body.namespace as string) ||
-    new URL(request.url).searchParams.get("namespace") ||
-    process.env.NAMESPACE_ID ||
-    "default";
+    source === "haraka"
+      ? (
+        process.env.NAMESPACE_ID ||
+        (body.namespaceId as string) ||
+        (body.namespace as string) ||
+        queryNamespace ||
+        request.headers.get("x-mentiko-namespace") ||
+        "default"
+      )
+      : (
+        request.headers.get("x-mentiko-namespace") ||
+        (body.namespaceId as string) ||
+        (body.namespace as string) ||
+        queryNamespace ||
+        process.env.NAMESPACE_ID ||
+        "default"
+      );
 
   // extract orgId from request headers
   const orgId = request.headers.get("x-org-id") || process.env.ORG_ID || "default";
@@ -152,7 +167,6 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new Forbidden("Too many auth failures");
   }
 
-  const source = (body.source as string) || "custom";
   const inboxAddress = (body.inboxAddress as string) || (body.to as string) || "";
   const inboxes = await loadInboxes(namespaceId, orgId);
   const inbox = inboxes.find(

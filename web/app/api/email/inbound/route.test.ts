@@ -986,6 +986,30 @@ describe("POST /api/email/inbound", () => {
   });
 
   describe("namespace resolution priority", () => {
+    it("uses env NAMESPACE_ID for haraka even when a stale namespace header is present", async () => {
+      process.env.NAMESPACE_ID = "qa-email-test";
+
+      const req = await buildRequest(
+        {
+          from: "sender@example.com",
+          inboxAddress: "test@example.com",
+          subject: "Test Subject",
+          source: "haraka",
+        },
+        {
+          authorization: getValidBearerToken(),
+          "x-mentiko-namespace": "stale-tenant-uuid",
+          "x-mentiko-inbox": "inbox-1",
+        }
+      );
+
+      await POST(req);
+
+      expect(checkDiskQuota).toHaveBeenCalledWith("qa-email-test", "default");
+      expect(loadInboxes).toHaveBeenCalledWith("qa-email-test", "default");
+      expect(deriveInboundSecret).toHaveBeenCalledWith("qa-email-test", 1);
+    });
+
     it("uses body.namespaceId first", async () => {
       const req = await buildRequest(
         {
