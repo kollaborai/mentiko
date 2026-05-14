@@ -57,7 +57,7 @@ export const POST = withErrorHandling(async (
   }
 
   const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-  const wasRunning = run.status === "running" || run.status === "pending";
+  const wasRunning = run.status === "running" || run.status === "pending" || run.status === "blocked";
 
   // kill agent PTY sessions (safe even if already dead)
   const sessions: string[] = (run.agents || [])
@@ -75,7 +75,7 @@ export const POST = withErrorHandling(async (
   // always update run + agent statuses
   let changed = false;
 
-  if (run.status === "running" || run.status === "pending") {
+  if (run.status === "running" || run.status === "pending" || run.status === "blocked") {
     run.status = "stopped";
     run.completed = run.completed || new Date().toISOString();
     changed = true;
@@ -83,7 +83,7 @@ export const POST = withErrorHandling(async (
 
   if (run.agents) {
     for (const agent of run.agents) {
-      if (agent.status === "running") {
+      if (agent.status === "running" || agent.status === "blocked") {
         agent.status = "stopped";
         changed = true;
       } else if (agent.status === "pending") {

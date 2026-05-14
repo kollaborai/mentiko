@@ -430,6 +430,33 @@ test("launchAgent uses resolved profile command and env", async () => {
   );
 });
 
+test("launchAgent normalizes Claude bypass profile flags for current CLI", async () => {
+  resetWorkspace();
+  const { path } = makeChain("claude-profile-launch", [
+    { id: "agent-a", name: "Agent A", triggers: ["manual-start"], emits: "done", prompt: "write", agent_profile: "claude-profile" },
+  ]);
+  makeProfile("claude-profile", {
+    cli: "claude",
+    pipe_flag: "-p",
+    permission_flag: "--dangerously-skip-permissions",
+    model: "haiku",
+  });
+  const runner = new ChainRunner(path, { workspace: TMP });
+  const { manager, calls } = createMockPtyManager();
+  runner.mgr = manager;
+
+  await withImmediateTimeout(async () => {
+    await runner.launchAgent(runner.chain.agents[0], 1);
+  });
+
+  assert(calls.spawn.length === 1, "spawn should be called");
+  assert(calls.spawn[0].cmd === "claude", `wrong cmd: ${calls.spawn[0].cmd}`);
+  assert(
+    calls.spawn[0].args.join(" ") === "-p --allow-dangerously-skip-permissions --permission-mode bypassPermissions --model haiku",
+    `wrong args: ${calls.spawn[0].args.join(" ")}`
+  );
+});
+
 test("launchAgent falls back to chain cli and args", async () => {
   resetWorkspace();
   const { path } = makeChain("fallback-launch", [

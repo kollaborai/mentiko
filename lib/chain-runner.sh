@@ -662,6 +662,48 @@ $prior_summaries
 EOF
 }
 
+detect_blocked_terminal_prompt() {
+    local capture="$1"
+
+    if [[ "$capture" == *"WARNING: Claude Code running in Bypass Permissions mode"* ]] &&
+       [[ "$capture" == *"Yes, I accept"* ]]; then
+        echo "Claude Code is waiting for bypass-permissions acceptance"
+        return 0
+    fi
+
+    if [[ "$capture" == *"By proceeding, you accept all responsibility"* ]] &&
+       [[ "$capture" == *"Bypass Permissions mode"* ]]; then
+        echo "Claude Code is waiting for bypass-permissions acceptance"
+        return 0
+    fi
+
+    return 1
+}
+
+mark_state_blocked() {
+    local state_file="$1"
+    local reason="$2"
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    awk -v reason="$reason" -v at="$(date -Iseconds)" '
+        BEGIN { wrote_status = 0 }
+        /^status:/ {
+            print "status: blocked"
+            wrote_status = 1
+            next
+        }
+        /^blocked_reason:/ { next }
+        /^blocked_at:/ { next }
+        { print }
+        END {
+            if (!wrote_status) print "status: blocked"
+            print "blocked_reason: " reason
+            print "blocked_at: " at
+        }
+    ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+}
+
 echo ""
 echo "  chain: $CHAIN_NAME"
 echo "  agents: $AGENT_COUNT"
@@ -1519,6 +1561,7 @@ SEOF
         local _hb_secret="${BETTER_AUTH_SECRET:-}"
         local _hb_agent_id="$agent_id"
         local _hb_state_file="$STATE_DIR/${state_id}.state"
+        local _hb_session_name="$session_name"
 
         # heartbeat loop: runs in background, exits when state file status != running
         (
@@ -1532,6 +1575,20 @@ SEOF
                 else
                     break
                 fi
+
+                local _capture
+                local _blocked_reason
+                _capture=$(transport_capture "$_hb_session_name" 120 2>/dev/null || true)
+                if _blocked_reason=$(detect_blocked_terminal_prompt "$_capture"); then
+                    mark_state_blocked "$_hb_state_file" "$_blocked_reason"
+                    curl -s -o /dev/null -X POST "$_hb_url" \
+                        -H "Content-Type: application/json" \
+                        ${_hb_secret:+-H "Authorization: Bearer $_hb_secret"} \
+                        -d "{\"status\":\"blocked\",\"message\":\"$_blocked_reason\"}" \
+                        --max-time 5 2>/dev/null || true
+                    break
+                fi
+
                 # POST heartbeat — break on any 4xx (run deleted, completed, auth error)
                 local _hb_status
                 _hb_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$_hb_url" \

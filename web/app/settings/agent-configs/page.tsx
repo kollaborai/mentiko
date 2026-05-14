@@ -782,7 +782,7 @@ export default function AgentProfilesPage() {
                       <Label className="text-xs text-foreground/50">Permission Flag</Label>
                       <Input
                         className="mt-1.5 h-9 text-xs font-mono"
-                        placeholder="--dangerously-skip-permissions"
+                        placeholder="--permission-mode bypassPermissions"
                         value={editPermissionFlag}
                         onChange={(e) => setEditPermissionFlag(e.target.value)}
                       />

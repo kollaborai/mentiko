@@ -5,7 +5,7 @@
  * Stores lastHeartbeat + optional status/message in run.json.
  *
  * Body (all optional):
- *   status?  "running"|"idle"|"waiting"
+ *   status?  "running"|"idle"|"waiting"|"blocked"
  *   message? short status message (max 200 chars)
  *   round?   current round number
  *
@@ -64,7 +64,7 @@ export const POST = withErrorHandling(async (
 
   const now = new Date().toISOString();
   const safeMessage = body.message ? String(body.message).slice(0, 200) : undefined;
-  const safeStatus = ["running", "idle", "waiting"].includes(body.status || "")
+  const safeStatus = ["running", "idle", "waiting", "blocked"].includes(body.status || "")
     ? body.status
     : undefined;
 
@@ -98,6 +98,12 @@ export const POST = withErrorHandling(async (
       if (safeMessage) run.agents[agentIdx].lastMessage = safeMessage;
       if (body.round != null) run.agents[agentIdx].round = body.round;
     }
+  }
+
+  if (safeStatus === "blocked") {
+    run.status = "blocked";
+    run.blockedAt = run.blockedAt || now;
+    if (safeMessage) run.blockedReason = safeMessage;
   }
 
   writeFileSync(runJsonPath, JSON.stringify(run, null, 2));

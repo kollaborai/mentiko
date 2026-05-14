@@ -45,7 +45,8 @@ export type AgentStatus =
   | "failed"
   | "paused"
   | "pending"
-  | "cancelled";
+  | "cancelled"
+  | "blocked";
 
 export type ChainStatus = "active" | "draft" | "archived";
 
@@ -125,7 +126,7 @@ export interface MergeResult {
   conflicts?: MergeConflict[];
 }
 
-export type RunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type RunStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "blocked";
 
 export type SessionStatus = "active" | "closed" | "running";
 
@@ -946,14 +947,14 @@ export interface StateFilters {
 export function isAgentStatus(value: unknown): value is AgentStatus {
   return (
     typeof value === "string" &&
-    ["idle", "running", "completed", "failed", "paused", "pending", "cancelled"].includes(value)
+    ["idle", "running", "completed", "failed", "paused", "pending", "cancelled", "blocked"].includes(value)
   );
 }
 
 export function isRunStatus(value: unknown): value is RunStatus {
   return (
     typeof value === "string" &&
-    ["pending", "running", "completed", "failed", "cancelled"].includes(value)
+    ["pending", "running", "completed", "failed", "cancelled", "blocked"].includes(value)
   );
 }
 
@@ -1025,4 +1026,3 @@ export function isRun(value: unknown): value is Run {
     "status" in value
   );
 }
-

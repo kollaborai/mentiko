@@ -28,6 +28,19 @@ find_workspace_profile() {
     echo "$profile_id"
 }
 
+# normalize_permission_flags: keep saved profiles compatible with current CLIs
+normalize_permission_flags() {
+    local cli="$1"
+    local perm_flag="$2"
+
+    if [[ "$cli" == "claude" && "$perm_flag" == "--dangerously-skip-permissions" ]]; then
+        echo "--allow-dangerously-skip-permissions --permission-mode bypassPermissions"
+        return
+    fi
+
+    echo "$perm_flag"
+}
+
 # build_profile_command: constructs the full CLI command from a profile file
 # reads: cli, model, pipe_flag, permission_flag, extra_args, env, pre_exec
 # returns: command string ready for pty send
@@ -53,6 +66,7 @@ build_profile_command() {
     local pipe_flag=$(jq -r '.pipe_flag // empty' "$profile_file")
     local perm_flag=$(jq -r '.permission_flag // empty' "$profile_file")
     local pre_exec=$(jq -r '.pre_exec // empty' "$profile_file")
+    perm_flag=$(normalize_permission_flags "$cli" "$perm_flag")
 
     # write env vars to a temp file so they don't appear in terminal echo/logs
     # use secrets-resolve.mjs to decrypt {secret:NAME} references

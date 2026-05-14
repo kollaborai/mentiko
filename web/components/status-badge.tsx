@@ -2,7 +2,7 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
-export type Status = "pending" | "running" | "complete" | "completed" | "error" | "failed" | "paused" | "cancelled" | "stopped" | "idle" | "delivered" | "warning" | "waiting_approval"
+export type Status = "pending" | "running" | "complete" | "completed" | "error" | "failed" | "paused" | "cancelled" | "stopped" | "idle" | "delivered" | "warning" | "waiting_approval" | "blocked"
 
 const statusVariants = cva(
   "inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 gap-1.5 transition-all",
@@ -22,6 +22,7 @@ const statusVariants = cva(
         delivered: "bg-green-500/10 text-green-600 border-green-500/30 dark:bg-green-500/20 dark:text-green-400",
         warning: "bg-amber-500/10 text-amber-600 border-amber-500/30 dark:bg-amber-500/20 dark:text-amber-400",
         waiting_approval: "bg-amber-500/10 text-amber-600 border-amber-500/30 dark:bg-amber-500/20 dark:text-amber-400",
+        blocked: "bg-amber-500/10 text-amber-600 border-amber-500/30 dark:bg-amber-500/20 dark:text-amber-400",
       },
       size: {
         sm: "px-1.5 py-0 text-[10px] gap-1",
@@ -73,6 +74,9 @@ const statusIcons: Record<Status, React.ReactNode> = {
   waiting_approval: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>,
+  blocked: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+  </svg>,
 }
 
 export interface StatusBadgeProps
@@ -97,6 +101,7 @@ const defaultLabels: Record<Status, string> = {
   delivered: "delivered",
   warning: "partial",
   waiting_approval: "approval needed",
+  blocked: "blocked",
 }
 
 export function StatusBadge({

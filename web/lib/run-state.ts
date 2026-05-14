@@ -87,7 +87,7 @@ export function mergeAgentStates<T extends { id: string; status: string; session
 
       // if agent has a terminal status in run.json (stopped/cancelled/complete/error),
       // don't let a stale state file override it back to "running"
-      const agentIsTerminal = ["complete", "stopped", "cancelled", "error"].includes(agent.status);
+      const agentIsTerminal = ["complete", "stopped", "cancelled", "error", "blocked"].includes(agent.status);
       const useStateStatus = live?.status && !agentIsTerminal && !(runIsTerminal && live.status === "running");
 
       return {

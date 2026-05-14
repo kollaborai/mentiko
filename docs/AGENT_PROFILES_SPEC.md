@@ -31,7 +31,7 @@ interface AgentProfile {
   cli: string;                   // binary, e.g. "claude", "codex", "glm"
   model?: string;                // model id, e.g. "claude-sonnet-4-6"
   pipe_flag?: string;            // flag for piped output, e.g. "-p"
-  permission_flag?: string;      // security override, e.g. "--dangerously-skip-permissions"
+  permission_flag?: string;      // security override, e.g. "--permission-mode bypassPermissions"
   extra_args?: string[];         // additional CLI flags (flags only, no positional args)
   env?: Record<string, string>;  // env vars exported before launch
   pre_exec?: string;             // shell commands run in pty session BEFORE CLI (same shell, not subshell)
@@ -80,7 +80,7 @@ source ~/.claude/my-setup.sh
 nvm use 18
 
 # Step 3 — invoke CLI (model before extra_args)
-claude -p --dangerously-skip-permissions --model claude-sonnet-4-6 --extra-flag
+claude -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions --model claude-sonnet-4-6 --extra-flag
 ```
 
 Bash construction (safe):
@@ -226,9 +226,9 @@ Sets `claude-sonnet` as default if no default exists.
 
 | ID | Name | cli | flags | model |
 |----|------|-----|-------|-------|
-| claude-sonnet | Claude / Sonnet | claude | -p --dangerously-skip-permissions | claude-sonnet-4-6 |
-| claude-opus   | Claude / Opus   | claude | -p --dangerously-skip-permissions | claude-opus-4-6 |
-| claude-haiku  | Claude / Haiku  | claude | -p --dangerously-skip-permissions | claude-haiku-4-5-20251001 |
+| claude-sonnet | Claude / Sonnet | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-sonnet-4-6 |
+| claude-opus   | Claude / Opus   | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-opus-4-6 |
+| claude-haiku  | Claude / Haiku  | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-haiku-4-5-20251001 |
 
 ### Codex
 | ID | Name | cli | flags |
@@ -404,7 +404,7 @@ Right panel (selected profile):
 - CLI Binary (text, monospace, placeholder: "claude")
 - Model (text, monospace, placeholder: "claude-sonnet-4-6")
 - Pipe Flag (text, monospace, placeholder: "-p")
-- Permission Flag (text, monospace, placeholder: "--dangerously-skip-permissions")
+- Permission Flag (text, monospace, placeholder: "--permission-mode bypassPermissions")
 - Extra Args (text, monospace, placeholder: "--flag1 --flag2", space-separated)
 
 **Environment Variables section**
