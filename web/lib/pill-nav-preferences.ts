@@ -3,17 +3,20 @@
 import { create } from "zustand";
 
 export type PillNavColorScheme = "rainbow" | "blue" | "green" | "pink" | "purple" | "amber" | "cyan";
+export type PillNavNavigationMode = "page" | "floating-nav-panels";
 
 export interface PillNavPreferences {
   colorScheme: PillNavColorScheme;
   scale: number; // 0.8 - 1.4
   showRecents: boolean;
+  navigationMode: PillNavNavigationMode;
 }
 
 const defaults: PillNavPreferences = {
   colorScheme: "rainbow",
   scale: 1.0,
   showRecents: true,
+  navigationMode: "page",
 };
 
 export const COLOR_SCHEME_GRADIENTS: Record<PillNavColorScheme, string> = {
@@ -68,14 +71,20 @@ function saveToStorage(prefs: PillNavPreferences) {
 
 interface PillNavPreferencesStore {
   prefs: PillNavPreferences;
+  hydrate: () => void;
   setColorScheme: (scheme: PillNavColorScheme) => void;
   setScale: (scale: number) => void;
   setShowRecents: (show: boolean) => void;
+  setNavigationMode: (mode: PillNavNavigationMode) => void;
   getShineGradient: () => string;
 }
 
 export const usePillNavPreferences = create<PillNavPreferencesStore>()((set, get) => ({
-  prefs: loadFromStorage(),
+  prefs: defaults,
+
+  hydrate: () => {
+    set({ prefs: loadFromStorage() });
+  },
 
   setColorScheme: (scheme) => {
     const newPrefs = { ...get().prefs, colorScheme: scheme };
@@ -92,6 +101,12 @@ export const usePillNavPreferences = create<PillNavPreferencesStore>()((set, get
 
   setShowRecents: (show) => {
     const newPrefs = { ...get().prefs, showRecents: show };
+    set({ prefs: newPrefs });
+    saveToStorage(newPrefs);
+  },
+
+  setNavigationMode: (mode) => {
+    const newPrefs = { ...get().prefs, navigationMode: mode };
     set({ prefs: newPrefs });
     saveToStorage(newPrefs);
   },

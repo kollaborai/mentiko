@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSecurityHeaders } from "@/lib/security";
 import { getStore, LIMITS, OPT_OUT_PATHS } from "@/lib/rate-limit";
+import {
+  applyFloatingPanelFrameHeaders,
+  isFloatingPanelFrameRequest,
+} from "@/lib/floating-app-panel-routing";
 // note: CSRF validation via double-submit cookie is deferred.
 // SameSite=Strict on session cookies already mitigates CSRF risk.
 // Full CSRF token validation would require auth-client.ts to send x-csrf-token header.
@@ -121,6 +125,10 @@ export async function proxy(request: NextRequest) {
     response.headers.set(key, value);
   }
 
+  if (isFloatingPanelFrameRequest(pathname, request.nextUrl.searchParams)) {
+    applyFloatingPanelFrameHeaders(response.headers);
+  }
+
   // web-proxy responses must be frameable -- the route handler sets its own
   // X-Frame-Options: SAMEORIGIN. remove the middleware's DENY so the iframe works.
   if (pathname.startsWith("/api/system/web-proxy")) {
@@ -169,6 +177,9 @@ export async function proxy(request: NextRequest) {
     pageResponse = NextResponse.next({ request });
     for (const [key, value] of Object.entries(securityHeaders)) {
       pageResponse.headers.set(key, value);
+    }
+    if (isFloatingPanelFrameRequest(pathname, request.nextUrl.searchParams)) {
+      applyFloatingPanelFrameHeaders(pageResponse.headers);
     }
     pageResponse.cookies.set("csrf-token", token, {
       httpOnly: true,

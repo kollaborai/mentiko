@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { FloatingPillNav } from '../floating-pill-nav'
+import { usePillNavPreferences } from '@/lib/pill-nav-preferences'
 
 // ─── mocks ──────────────────────────────────────────────────
 
@@ -147,6 +148,14 @@ afterAll(() => {
 beforeEach(() => {
   localStorageMap.clear()
   mockPathname = '/dashboard'
+  usePillNavPreferences.setState({
+    prefs: {
+      colorScheme: 'rainbow',
+      scale: 1,
+      showRecents: true,
+      navigationMode: 'page',
+    },
+  })
 })
 
 // ─── helpers ────────────────────────────────────────────────
@@ -159,7 +168,7 @@ function getGripHandle() {
 function getLinkByHref(href: string) {
   const link = document.querySelector(`a[href="${href}"]`)
   expect(link).toBeInTheDocument()
-  return link
+  return link as HTMLAnchorElement
 }
 
 function getLinksByHref(href: string) {
@@ -348,6 +357,55 @@ describe('FloatingPillNav', () => {
       render(<FloatingPillNav />)
       // marketplace children should be visible
       expect(getLinkByHref('/marketplace/templates')).toBeInTheDocument()
+    })
+  })
+
+  describe('floating app panel mode', () => {
+    it('opens floating nav routes in an app panel when panel mode is enabled', () => {
+      usePillNavPreferences.setState({
+        prefs: {
+          colorScheme: 'rainbow',
+          scale: 1,
+          showRecents: true,
+          navigationMode: 'floating-nav-panels',
+        },
+      })
+      mockPathname = '/dashboard'
+      const dispatchSpy = jest.spyOn(window, 'dispatchEvent')
+
+      render(<FloatingPillNav />)
+      fireEvent.click(getLinkByHref('/runs'))
+
+      const panelEvent = dispatchSpy.mock.calls
+        .map(([event]) => event)
+        .find((event): event is CustomEvent => (
+          event instanceof CustomEvent &&
+          event.type === 'open-floating-app-panel'
+        ))
+      expect(panelEvent?.detail).toMatchObject({
+        href: '/runs',
+        title: 'Workspace',
+      })
+
+      dispatchSpy.mockRestore()
+    })
+
+    it('expands the clicked route category while the page stays put in panel mode', () => {
+      usePillNavPreferences.setState({
+        prefs: {
+          colorScheme: 'rainbow',
+          scale: 1,
+          showRecents: true,
+          navigationMode: 'floating-nav-panels',
+        },
+      })
+      mockPathname = '/dashboard'
+
+      render(<FloatingPillNav />)
+      fireEvent.click(getLinkByHref('/chains'))
+
+      expect(getLinkByHref('/agents')).toBeInTheDocument()
+      expect(getLinkByHref('/artifacts')).toBeInTheDocument()
     })
   })
 

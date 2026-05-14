@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import SettingsLayout from "./layout";
 
 const push = jest.fn();
@@ -53,6 +53,7 @@ jest.mock("@aliimam/icons", () => {
 describe("SettingsLayout", () => {
   beforeEach(() => {
     push.mockReset();
+    window.history.pushState({}, "", "/settings");
   });
 
   it("does not include docs-only MCP in the settings sidebar navigation", () => {
@@ -65,5 +66,19 @@ describe("SettingsLayout", () => {
     const sidebar = screen.getByTestId("settings-sidebar-nav");
 
     expect(within(sidebar).queryByRole("button", { name: /mcp/i })).not.toBeInTheDocument();
+  });
+
+  it("preserves panel surface when settings sidebar uses client routing", () => {
+    window.history.pushState({}, "", "/settings?surface=panel");
+
+    render(
+      <SettingsLayout>
+        <div>settings content</div>
+      </SettingsLayout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /navigation bar/i }));
+
+    expect(push).toHaveBeenCalledWith("/settings/pill-nav?surface=panel");
   });
 });

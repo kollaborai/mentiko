@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Element3Filled, ColorSwatchFilled, Setting2Filled } from "@aliimam/icons";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/pill-nav-preferences";
 
 const SCALE_KEY = "mentiko-pill-scale";
+const SCALE_CHANGE_EVENT = "mentiko-pill-scale-change";
 const SCHEMES: PillNavColorScheme[] = ["rainbow", "blue", "green", "pink", "purple", "amber", "cyan"];
 
 function loadPillScale(): number {
@@ -26,25 +27,40 @@ function loadPillScale(): number {
 }
 
 function savePillScale(scale: number) {
-  try { localStorage.setItem(SCALE_KEY, JSON.stringify(scale)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(SCALE_KEY, JSON.stringify(scale));
+    window.dispatchEvent(new Event(SCALE_CHANGE_EVENT));
+  } catch { /* ignore */ }
+}
+
+function subscribePillScale(onChange: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(SCALE_CHANGE_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(SCALE_CHANGE_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+function usePillScale() {
+  return useSyncExternalStore(subscribePillScale, loadPillScale, () => 1);
 }
 
 export default function PillNavSettingsPage() {
-  const { prefs, setColorScheme, setShowRecents } = usePillNavPreferences();
-  const [scale, setScale] = useState(1);
+  const { prefs, setColorScheme, setShowRecents, setNavigationMode } = usePillNavPreferences();
+  const scale = usePillScale();
   const [status, setStatus] = useState<string | null>(null);
 
-  useEffect(() => { setScale(loadPillScale()); }, []);
-
-  const handleScaleChange = (value: number) => {
+  const handleScaleChange = useCallback((value: number) => {
     const clamped = Math.min(1.6, Math.max(0.6, Math.round(value * 20) / 20));
-    setScale(clamped);
     savePillScale(clamped);
-  };
+  }, []);
 
   const handleReset = () => {
     setColorScheme("rainbow");
     setShowRecents(true);
+    setNavigationMode("page");
     handleScaleChange(1);
     setStatus("reset");
     setTimeout(() => setStatus(null), 2000);
@@ -182,6 +198,21 @@ export default function PillNavSettingsPage() {
                   </p>
                 </div>
                 <Switch checked={prefs.showRecents} onCheckedChange={setShowRecents} />
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <p className="text-sm">Open Pages in Panels</p>
+                  <p className="text-xs text-muted-foreground">
+                    Launch floating navigation routes in a movable app panel instead of replacing the current page.
+                  </p>
+                </div>
+                <Switch
+                  checked={prefs.navigationMode === "floating-nav-panels"}
+                  onCheckedChange={(enabled) =>
+                    setNavigationMode(enabled ? "floating-nav-panels" : "page")
+                  }
+                />
               </div>
             </div>
           </div>

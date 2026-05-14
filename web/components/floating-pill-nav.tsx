@@ -30,6 +30,11 @@ import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card
 import { invalidateRunsCache } from "@/lib/runs-store";
 import { invalidateChainsCache } from "@/lib/chains-store";
 import { invalidateAgentsCache } from "@/lib/agents-store";
+import {
+  OPEN_FLOATING_APP_PANEL_EVENT,
+  isFloatingPanelRoute,
+} from "@/lib/floating-app-panel-routing";
+import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 
 
 // ─── categories ──────────────────────────────────────────────
@@ -181,7 +186,17 @@ const SETTINGS_MENU: SettingsMenuGroup[] = [
   },
 ];
 
-function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: string; vertical: boolean }) {
+function SettingsPillMenu({
+  active,
+  tint,
+  vertical,
+  onPanelRoute,
+}: {
+  active: boolean;
+  tint?: string;
+  vertical: boolean;
+  onPanelRoute?: (href: string, title: string) => boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const router = useRouter();
@@ -196,10 +211,11 @@ function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: 
     closeTimer.current = setTimeout(() => setOpen(false), 150);
   }, []);
 
-  const handleSelect = useCallback((href: string) => {
+  const handleSelect = useCallback((href: string, label: string) => {
     setOpen(false);
+    if (onPanelRoute?.(href, label)) return;
     router.push(href);
-  }, [router]);
+  }, [onPanelRoute, router]);
 
   const handleSignOut = useCallback(async () => {
     setSigningOut(true);
@@ -224,7 +240,11 @@ function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: 
           type="button"
           onMouseEnter={handleEnter}
           onMouseLeave={handleLeave}
-          onClick={() => { setOpen(false); router.push("/settings"); }}
+          onClick={() => {
+            setOpen(false);
+            if (onPanelRoute?.("/settings", "Settings")) return;
+            router.push("/settings");
+          }}
           className={cn(
             "group relative flex items-center justify-center rounded-full transition-colors w-8 h-8",
             active ? "bg-white/15" : "hover:bg-white/10",
@@ -251,8 +271,9 @@ function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: 
           sideOffset={12}
           onMouseEnter={handleEnter}
           onMouseLeave={handleLeave}
+          style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           className={cn(
-            "z-[10000] w-52 rounded-lg py-1.5",
+            "w-52 rounded-lg py-1.5",
             "bg-[#1a1a1a]/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
             "shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_32px_rgba(0,0,0,0.5)]",
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
@@ -268,7 +289,7 @@ function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: 
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => handleSelect(item.href)}
+                  onClick={() => handleSelect(item.href, item.label)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/60 hover:text-white hover:bg-white/8 transition-colors text-left"
                 >
                   <span className="text-white/30 shrink-0">{item.icon}</span>
@@ -295,7 +316,11 @@ function SettingsPillMenu({ active, tint, vertical }: { active: boolean; tint?: 
 
 // ─── workspace switcher pill ─────────────────────────────────
 
-function WorkspaceSwitcherPill() {
+function WorkspaceSwitcherPill({
+  onPanelRoute,
+}: {
+  onPanelRoute?: (href: string, title: string) => boolean;
+}) {
   const { workspaces, workspaceId, setWorkspaceId } = useWorkspace();
   const [open, setOpen] = useState(false);
   const router = useRouter();
@@ -321,7 +346,11 @@ function WorkspaceSwitcherPill() {
           type="button"
           onMouseEnter={handleEnter}
           onMouseLeave={handleLeave}
-          onClick={() => { setOpen(false); router.push("/workspaces"); }}
+          onClick={() => {
+            setOpen(false);
+            if (onPanelRoute?.("/workspaces", "Workspaces")) return;
+            router.push("/workspaces");
+          }}
           className="group relative flex items-center justify-center rounded-full transition-colors w-8 h-8 hover:bg-white/10"
           title={current?.name || "Workspaces"}
         >
@@ -352,8 +381,9 @@ function WorkspaceSwitcherPill() {
           sideOffset={12}
           onMouseEnter={handleEnter}
           onMouseLeave={handleLeave}
+          style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           className={cn(
-            "z-[10000] w-56 rounded-lg py-1.5",
+            "w-56 rounded-lg py-1.5",
             "bg-[#1a1a1a]/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
             "shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_32px_rgba(0,0,0,0.5)]",
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
@@ -392,7 +422,11 @@ function WorkspaceSwitcherPill() {
           <div className="h-px bg-white/8 mx-2 my-0.5" />
           <button
             type="button"
-            onClick={() => { setOpen(false); router.push("/workspaces"); }}
+            onClick={() => {
+              setOpen(false);
+              if (onPanelRoute?.("/workspaces", "Workspaces")) return;
+              router.push("/workspaces");
+            }}
             className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/40 hover:text-white hover:bg-white/8 transition-colors text-left"
           >
             <AddFilled className="h-3 w-3 shrink-0" />
@@ -420,6 +454,14 @@ function getActiveCategory(pathname: string): string | null {
   if (pathname.startsWith("/marketplace")) return "marketplace";
   if (pathname.startsWith("/settings")) return "settings";
   return null;
+}
+
+function getNavPath(href: string) {
+  try {
+    return new URL(href, "http://mentiko.local").pathname;
+  } catch {
+    return href.split(/[?#]/)[0] || href;
+  }
 }
 
 function getCanonicalChild(pathname: string): { href: string; categoryKey: string } | null {
@@ -631,6 +673,7 @@ export function FloatingPillNav() {
   const [recents, setRecents] = useState<string[]>([]);
   const [isLocked, setIsLocked] = useState(true);
   const [pillScale, setPillScale] = useState(1);
+  const [panelActivePath, setPanelActivePath] = useState<string | null>(null);
   const { prefs: pillPrefs } = usePillNavPreferences();
   const shineColors = COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
   const { workspaces } = useWorkspace();
@@ -676,6 +719,10 @@ export function FloatingPillNav() {
   useEffect(() => { setRecents(loadRecents()); }, []);
   useEffect(() => { if (!isMobile) setIsLocked(loadLocked()); }, [isMobile]);
   useEffect(() => { if (!isMobile) setPillScale(loadScale()); }, [isMobile]);
+  useEffect(() => { setPanelActivePath(null); }, [pathname]);
+  useEffect(() => {
+    if (pillPrefs.navigationMode !== "floating-nav-panels") setPanelActivePath(null);
+  }, [pillPrefs.navigationMode]);
 
   // mobile: force top center, locked, scaled down
   useEffect(() => {
@@ -814,7 +861,10 @@ export function FloatingPillNav() {
     position.edge === "bottom" ? "top" :
     position.edge === "left" ? "right" : "left"
   ) as "top" | "bottom" | "left" | "right";
-  const activeCategory = getActiveCategory(pathname);
+  const activePath = pillPrefs.navigationMode === "floating-nav-panels"
+    ? panelActivePath ?? pathname
+    : pathname;
+  const activeCategory = getActiveCategory(activePath);
 
   // lookup for rendering recents with their category color + icon
   const childLookup = useMemo(() => {
@@ -1012,6 +1062,31 @@ export function FloatingPillNav() {
     window.dispatchEvent(new CustomEvent("open-global-search"));
   }, []);
 
+  const openPanelRoute = useCallback((href: string, title: string) => {
+    if (pillPrefs.navigationMode !== "floating-nav-panels") return false;
+    if (!isFloatingPanelRoute(href)) return false;
+    const navPath = getNavPath(href);
+    setPanelActivePath(navPath);
+    const recent = getCanonicalChild(navPath);
+    if (recent) {
+      setRecents(prev => {
+        const next = [recent.href, ...prev.filter(h => h !== recent.href)].slice(0, MAX_RECENTS);
+        saveRecents(next);
+        return next;
+      });
+    }
+    window.dispatchEvent(new CustomEvent(OPEN_FLOATING_APP_PANEL_EVENT, {
+      detail: { href, title },
+    }));
+    return true;
+  }, [pillPrefs.navigationMode]);
+
+  const resolveRouteAction = useCallback((href: string, title: string) => {
+    if (pillPrefs.navigationMode !== "floating-nav-panels") return undefined;
+    if (!isFloatingPanelRoute(href)) return undefined;
+    return () => { openPanelRoute(href, title); };
+  }, [openPanelRoute, pillPrefs.navigationMode]);
+
   // resolve child actions to callbacks
   const resolveAction = useCallback((action?: string): (() => void) | undefined => {
     if (!action) return undefined;
@@ -1043,7 +1118,7 @@ export function FloatingPillNav() {
       left: sx,
       top: sy,
       transform: "translate(-50%, -50%)",
-      zIndex: 9999,
+      zIndex: FLOATING_SURFACE_Z.pillNav,
       transition: "none",
       borderRadius: "24px",
     };
@@ -1067,7 +1142,7 @@ export function FloatingPillNav() {
         transform: "none",
         transformOrigin: "top center",
         borderRadius: "0 0 20px 20px",
-        zIndex: 9999,
+        zIndex: FLOATING_SURFACE_Z.pillNav,
         transition: "all 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
       }
     : isDragging && dragPos
@@ -1078,7 +1153,7 @@ export function FloatingPillNav() {
         transform: `translate(-50%, -50%) scale(${(liquidScaleX * pillScale).toFixed(3)}, ${(liquidScaleY * pillScale).toFixed(3)})`,
         borderRadius: liquidStyle.borderRadius || "9999px",
         filter: liquidStyle.filter,
-        zIndex: 9999,
+        zIndex: FLOATING_SURFACE_Z.pillNav,
         transition: "border-radius 0.08s ease-out, filter 0.08s ease-out",
         willChange: "left, top, transform",
         transformOrigin: edgeProximity.edge === "top" ? "center top"
@@ -1096,7 +1171,7 @@ export function FloatingPillNav() {
           ...docked,
           transform: pillScale === 1 ? baseTransform : `${baseTransform} scale(${pillScale})`,
           transformOrigin: scaleOrigin,
-          zIndex: 9999,
+          zIndex: FLOATING_SURFACE_Z.pillNav,
           transition: isSnapping
             ? "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)"
             : "all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
@@ -1120,9 +1195,10 @@ export function FloatingPillNav() {
 
       {isDragging && edgeProximity.pull > 0.2 && (
         <div
-          className="fixed pointer-events-none z-[9998]"
+          className="fixed pointer-events-none"
           style={{
             ...getEdgeGlowStyle(edgeProximity.edge, edgeProximity.pull, dragPos),
+            zIndex: FLOATING_SURFACE_Z.pillNavGlow,
             transition: "opacity 0.15s ease",
           }}
         />
@@ -1155,6 +1231,7 @@ export function FloatingPillNav() {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        data-pill-nav=""
       >
         {/* ── shine border overlay ── */}
         <style>{`
@@ -1193,6 +1270,7 @@ export function FloatingPillNav() {
                   active={isActive}
                   tint={isActive ? cat.color : undefined}
                   vertical={vert}
+                  onPanelRoute={openPanelRoute}
                 />
               </div>
             );
@@ -1206,15 +1284,18 @@ export function FloatingPillNav() {
                   href="/workspaces"
                   label="Add Workspace"
                   icon={<AddFilled className="h-5 w-5" />}
-                  active={pathname.startsWith("/workspaces")}
+                  active={activePath.startsWith("/workspaces")}
                   tint="#10b981"
                   vertical={vert}
+                  onAction={resolveRouteAction("/workspaces", "Add Workspace")}
+                  actionKind="link"
                 />
               </div>
             );
           }
 
           const catHasHoverCard = hasRouteMeta(cat.href);
+          const catRouteAction = resolveRouteAction(cat.href, cat.label);
           const catPill = (
             <PillItem
               href={cat.href}
@@ -1224,6 +1305,8 @@ export function FloatingPillNav() {
               tint={isActive ? cat.color : undefined}
               vertical={vert}
               brandLabel={cat.key === "home" ? "mentiko" : undefined}
+              onAction={catRouteAction}
+              actionKind="link"
               hideTooltip={catHasHoverCard}
             />
           );
@@ -1237,10 +1320,11 @@ export function FloatingPillNav() {
               ) : catPill}
               <AnimatePresence mode="popLayout">
                 {isActive && cat.children.map((child, i) => {
-                  const childAction = resolveAction(child.action);
-                  const isChildActive = childAction
+                  const childAction = resolveAction(child.action) ?? resolveRouteAction(child.href, child.label);
+                  const isRouteAction = !child.action && !!childAction;
+                  const isChildActive = child.action
                     ? (child.action === "toggle-code-overlay" && isCodeOverlayOpen)
-                    : (pathname === child.href || pathname.startsWith(child.href + "/"));
+                    : (activePath === child.href || activePath.startsWith(child.href + "/"));
                   const hasHoverCard = hasRouteMeta(child.href);
                   const pill = (
                     <PillItem
@@ -1251,6 +1335,7 @@ export function FloatingPillNav() {
                       tint={cat.color}
                       vertical={vert}
                       onAction={childAction}
+                      actionKind={isRouteAction ? "link" : "button"}
                       hideTooltip={hasHoverCard}
                     />
                   );
@@ -1282,9 +1367,11 @@ export function FloatingPillNav() {
                       href="/workspaces"
                       label="Workspaces"
                       icon={<AddFilled className="h-4 w-4" />}
-                      active={pathname.startsWith("/workspaces")}
+                      active={activePath.startsWith("/workspaces")}
                       tint="#10b981"
                       vertical={vert}
+                      onAction={resolveRouteAction("/workspaces", "Workspaces")}
+                      actionKind="link"
                     />
                   </motion.div>
                 )}
@@ -1325,6 +1412,8 @@ export function FloatingPillNav() {
                     tint={recent.color}
                     dimmed
                     vertical={vert}
+                    onAction={resolveRouteAction(recent.href, recent.label)}
+                    actionKind="link"
                   />
                 </motion.div>
               ))}
@@ -1350,7 +1439,7 @@ export function FloatingPillNav() {
         </button>
         <SessionsIndicator />
         <NotificationsPanel />
-        <WorkspaceSwitcherPill />
+        <WorkspaceSwitcherPill onPanelRoute={openPanelRoute} />
         <div className="[&_button]:text-white/40 [&_button]:hover:text-white/80 [&_button]:text-xs">
           <NavNamespaceSelector />
         </div>
@@ -1401,8 +1490,9 @@ function SummonGlow({ target, progress }: { target: { x: number; y: number }; pr
   return (
     <>
       <div
-        className="fixed pointer-events-none z-[9998]"
+        className="fixed pointer-events-none"
         style={{
+          zIndex: FLOATING_SURFACE_Z.pillNavGlow,
           left: target.x,
           top: target.y,
           transform: "translate(-50%, -50%)",
@@ -1413,8 +1503,9 @@ function SummonGlow({ target, progress }: { target: { x: number; y: number }; pr
         }}
       />
       <div
-        className="fixed pointer-events-none z-[9998]"
+        className="fixed pointer-events-none"
         style={{
+          zIndex: FLOATING_SURFACE_Z.pillNavGlow,
           left: target.x,
           top: target.y,
           transform: "translate(-50%, -50%)",
@@ -1462,6 +1553,7 @@ function PillItem({
   vertical,
   brandLabel,
   onAction,
+  actionKind = "button",
   hideTooltip,
 }: {
   href: string;
@@ -1473,6 +1565,7 @@ function PillItem({
   vertical: boolean;
   brandLabel?: string;
   onAction?: () => void;
+  actionKind?: "button" | "link";
   hideTooltip?: boolean;
 }) {
   const classes = cn(
@@ -1497,7 +1590,7 @@ function PillItem({
     </span>
   );
 
-  if (onAction) {
+  if (onAction && actionKind === "button") {
     return (
       <button
         type="button"
@@ -1516,6 +1609,10 @@ function PillItem({
   return (
     <Link
       href={href}
+      onClick={onAction ? (e) => {
+        e.preventDefault();
+        onAction();
+      } : undefined}
       className={classes}
       style={tint ? { color: tint } : undefined}
       title={brandLabel || hideTooltip ? undefined : label}

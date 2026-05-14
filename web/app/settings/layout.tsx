@@ -14,6 +14,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
+import { getFloatingPanelSrc } from "@/lib/floating-app-panel-routing";
 
 interface SettingsLayoutProps {
   children: React.ReactNode;
@@ -29,6 +30,15 @@ interface NavItem {
 interface NavGroup {
   label: string;
   items: NavItem[];
+}
+
+function isPanelSurfaceNow() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.self !== window.top || new URLSearchParams(window.location.search).get("surface") === "panel";
+  } catch {
+    return true;
+  }
 }
 
 export default function SettingsLayout({ children }: SettingsLayoutProps) {
@@ -122,6 +132,9 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
     setMounted(true);
   }, []);
   const activeLabel = NAV_GROUPS.flatMap(g => g.items).find(i => i.id === activeId)?.label || "Settings";
+  const getSettingsHref = (href: string) => (
+    isPanelSurfaceNow() ? getFloatingPanelSrc(href) : href
+  );
 
   return (
     <div className="flex h-full">
@@ -208,7 +221,7 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => { router.push(item.href); setSidebarOpen(false); }}
+                      onClick={() => { router.push(getSettingsHref(item.href)); setSidebarOpen(false); }}
                       className={cn(
                         "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors text-left",
                         isActive
