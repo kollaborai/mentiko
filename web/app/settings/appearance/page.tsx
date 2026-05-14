@@ -9,42 +9,30 @@ import { useTheme } from "next-themes";
 import { MonitorFilled, SunFilled, MoonFilled, ColorSwatchFilled, UserFilled, NotificationFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { cn } from "@/lib/utils";
+import {
+  USER_ACCENT_OKLCH,
+  USER_FONT_SIZE_MAP,
+  USER_PREFERENCES_STORAGE_KEY,
+  applyUserDisplayPreferences,
+  type UserAccentColorPreference,
+  type UserFontSizePreference,
+} from "@/lib/user-display-preferences";
 
 type Theme = "dark" | "light" | "system";
-type AccentColor = "blue" | "purple" | "green" | "orange" | "pink";
 
 interface Preferences {
-  accentColor: AccentColor;
-  fontSize: "sm" | "md" | "lg";
+  accentColor: UserAccentColorPreference;
+  fontSize: UserFontSizePreference;
   autoSave: boolean;
   streamOutput: boolean;
 }
 
-const FONT_SIZE_MAP: Record<string, string> = {
-  sm: "13px",
-  md: "15px",
-  lg: "17px",
-};
-
-// oklch values for primary/ring CSS variables
-const ACCENT_OKLCH: Record<AccentColor, string> = {
-  blue:   "0.56 0.22 264.5",
-  purple: "0.59 0.25 300.4",
-  green:  "0.65 0.20 142.3",
-  orange: "0.68 0.19 42.9",
-  pink:   "0.63 0.24 0.6",
-};
-
 function applyFontSize(fontSize: string) {
-  document.documentElement.style.fontSize = FONT_SIZE_MAP[fontSize] || "15px";
+  applyUserDisplayPreferences({ fontSize: fontSize as UserFontSizePreference });
 }
 
-function applyAccentColor(accentColor: AccentColor) {
-  const oklch = ACCENT_OKLCH[accentColor];
-  if (oklch) {
-    document.documentElement.style.setProperty("--primary", `oklch(${oklch})`);
-    document.documentElement.style.setProperty("--ring", `oklch(${oklch})`);
-  }
+function applyAccentColor(accentColor: UserAccentColorPreference) {
+  applyUserDisplayPreferences({ accentColor });
 }
 
 export default function AppearancePage() {
@@ -57,7 +45,7 @@ export default function AppearancePage() {
     // hydrate from localStorage on first render (client-side only)
     if (typeof window === "undefined") return defaultPrefs;
     try {
-      const stored = localStorage.getItem("user-preferences");
+      const stored = localStorage.getItem(USER_PREFERENCES_STORAGE_KEY);
       if (stored) return { ...defaultPrefs, ...JSON.parse(stored) };
     } catch { /* ignore */ }
     return defaultPrefs;
@@ -69,7 +57,7 @@ export default function AppearancePage() {
   }, [prefs.fontSize]);
 
   const handleSave = () => {
-    localStorage.setItem("user-preferences", JSON.stringify(prefs));
+    localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(prefs));
     applyFontSize(prefs.fontSize);
     applyAccentColor(prefs.accentColor);
     setStatus("saved");
@@ -121,7 +109,7 @@ export default function AppearancePage() {
               <div>
                 <Label className="text-xs">{t("settings.accent")}</Label>
                 <div className="flex gap-2 mt-2">
-                  {(["blue", "purple", "green", "orange", "pink"] as AccentColor[]).map((color) => (
+                  {(Object.keys(USER_ACCENT_OKLCH) as UserAccentColorPreference[]).map((color) => (
                     <button
                       key={color}
                       onClick={() => setPrefs((prev) => ({ ...prev, accentColor: color }))}
@@ -145,7 +133,7 @@ export default function AppearancePage() {
             <div>
               <Label className="text-xs">{t("settings.fontSize")}</Label>
               <div className="flex gap-2 mt-2">
-                {(["sm", "md", "lg"] as const).map((size) => (
+                {(Object.keys(USER_FONT_SIZE_MAP) as UserFontSizePreference[]).map((size) => (
                   <button
                     key={size}
                     onClick={() => setPrefs((prev) => ({ ...prev, fontSize: size }))}

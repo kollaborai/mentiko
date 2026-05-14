@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { RootLayoutClient } from "./layout-client";
+import { getUserDisplayPreferencesInitScript } from "@/lib/user-display-preferences";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -75,6 +77,11 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`} suppressHydrationWarning>
       <body className="font-sans antialiased bg-background text-foreground">
+        <Script
+          id="user-display-preferences-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: getUserDisplayPreferencesInitScript() }}
+        />
         <RootLayoutClient>{children}</RootLayoutClient>
       </body>
     </html>
