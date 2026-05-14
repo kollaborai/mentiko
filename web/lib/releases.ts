@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.4.x (May 2026) ---
   {
+    version: "v0.4.2",
+    date: "May 14, 2026",
+    title: "Floating Page Panels",
+    description:
+      "Navigation can now open pages in movable app panels from the floating nav. Runs, tasks, settings, docs, and other workspace pages can stay side-by-side without replacing your current context. Panel mode includes a filled desktop layer, clean iframe chrome, shared z-index stacking for nav/code/terminal/chat, and Kollab MCP navigation support.",
+    category: "new",
+    docsHref: "/settings/pill-nav",
+  },
+  {
     version: "v0.4.1",
     date: "May 12, 2026",
     title: "Resend Email Provider & Self-Hosted Improvements",
