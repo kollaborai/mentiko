@@ -190,12 +190,9 @@ export async function proxy(request: NextRequest) {
     });
   }
 
-  // auth requires DATABASE_URL (sqlite) to be configured
-  if (!process.env.DATABASE_URL) {
-    return pageResponse;
-  }
-
-  // check for better-auth session cookie
+  // Fast page gate: require a Better Auth session cookie before rendering app
+  // routes. The client auth gate verifies the actual session and catches stale
+  // cookies before protected widgets mount.
   // better-auth prefixes with __Secure- when served over HTTPS
   const sessionToken =
     request.cookies.get("__Secure-better-auth.session_token")?.value ||

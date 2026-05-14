@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
+import { hardReplace } from "@/lib/browser-navigation";
 
 const MIN_LEN = 12;
 
 export default function WelcomeSetPasswordPage() {
-  const router = useRouter();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -44,12 +43,7 @@ export default function WelcomeSetPasswordPage() {
         setLoading(false);
         return;
       }
-      // Force a fresh session fetch so the gate sees mustChangePassword=false
-      // before we navigate. Without this, the cached cookie (TTL ~5min) still
-      // has the old value and the gate bounces the user back immediately.
-      await authClient.getSession({ disableCookieCache: true });
-      router.replace("/dashboard");
-      router.refresh();
+      hardReplace("/dashboard");
     } catch {
       setError("Something went wrong");
     } finally {
