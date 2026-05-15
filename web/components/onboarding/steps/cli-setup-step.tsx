@@ -12,16 +12,18 @@ import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { BotMessageSquare } from "@aliimam/icons";
 import { motion, AnimatePresence } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { CLI_TOOLS, getProviderColors } from "@/lib/provider-config";
+import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { GeminiAuth } from "@/components/onboarding/cli-auth/gemini-auth";
 import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
+import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
 
 interface ConfiguredTool {
   tool: string;
   authMethod: "login" | "api-key" | "gateway";
   model?: string;
+  secretName?: string;
 }
 
 interface DetectedTool {
@@ -166,21 +168,65 @@ export function CliSetupStep({
     return info?.version;
   };
 
+  const syncKollabProfileSecret = async (
+    secretName: string,
+    profileHint?: string,
+  ) => {
+    const profilesRes = await fetchWithNamespace("/api/agent-profiles");
+    if (!profilesRes.ok) return;
+
+    const raw = await profilesRes.json();
+    const data = raw.data ?? raw;
+    const profiles = (data.profiles ?? []) as {
+      id: string;
+      cli?: string;
+      env?: Record<string, string>;
+    }[];
+
+    const kollabProfiles = profiles.filter((p) => p.cli === "kollab");
+    if (kollabProfiles.length === 0) return;
+
+    const targetProfile =
+      (profileHint ? kollabProfiles.find((p) => p.id === profileHint) : undefined) ??
+      kollabProfiles[0];
+
+    const nextEnv = {
+      ...(targetProfile.env || {}),
+      [PROVIDER_CREDENTIALS.kollabor.envKey]: `{secret:${secretName}}`,
+    };
+
+    await fetchWithNamespace(`/api/agent-profiles/${encodeURIComponent(targetProfile.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ env: nextEnv }),
+    });
+  };
+
   const handleAuthSave = (
     toolId: string,
-    config: { authMethod: "login" | "api-key" | "gateway"; model?: string }
+    config: { authMethod: "login" | "api-key" | "gateway"; model?: string; secretName?: string }
   ) => {
     onConfigureTool({ tool: toolId, ...config });
 
     // fire-and-forget: install the provider's agent config bundle
     // so the user gets default profiles (e.g. Claude/Sonnet, Claude/Opus)
     const bundleProvider = TOOL_TO_BUNDLE[toolId];
-    if (bundleProvider) {
-      fetchWithNamespace("/api/agent-profiles/install-bundle", {
+    const installBundle = bundleProvider
+      ? fetchWithNamespace("/api/agent-profiles/install-bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: bundleProvider }),
-      }).catch(() => {
+      })
+      : Promise.resolve({ ok: true } as Response);
+
+    if (toolId === "kollabor" && config.secretName) {
+      void installBundle
+        .then(() => syncKollabProfileSecret(config.secretName!, config.model))
+        .catch(() => {
+          // setup should still continue even if this fails
+        });
+    } else {
+      installBundle.catch(() => {
         // silent -- they can install from /settings/agent-configs later
       });
     }
@@ -195,6 +241,7 @@ export function CliSetupStep({
   if (mode === "claude") {
     return (
       <motion.div
+        data-source="components/onboarding/steps/cli-setup-step.tsx"
         key="auth-claude-simple"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -216,6 +263,7 @@ export function CliSetupStep({
   if (mode === "openai") {
     return (
       <motion.div
+        data-source="components/onboarding/steps/cli-setup-step.tsx"
         key="auth-openai-simple"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -237,6 +285,7 @@ export function CliSetupStep({
   if (mode === "gemini") {
     return (
       <motion.div
+        data-source="components/onboarding/steps/cli-setup-step.tsx"
         key="auth-gemini-simple"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -268,6 +317,7 @@ export function CliSetupStep({
 
       return (
         <motion.div
+          data-source="components/onboarding/steps/cli-setup-step.tsx"
           key={`auth-custom-${activeCustomTool}`}
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -306,7 +356,7 @@ export function CliSetupStep({
               />
             )}
             {activeCustomTool === "kollabor" && (
-              <ClaudeAuth
+              <KollabAuth
                 key="kollabor"
                 {...authProps}
                 onSave={(config) => handleAuthSave("kollabor", config)}
@@ -320,6 +370,7 @@ export function CliSetupStep({
     // custom tool list (all 5 CLI tools)
     return (
       <motion.div
+        data-source="components/onboarding/steps/cli-setup-step.tsx"
         key="custom-tool-list"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
@@ -420,6 +471,7 @@ export function CliSetupStep({
 
   return (
     <motion.div
+      data-source="components/onboarding/steps/cli-setup-step.tsx"
       key="provider-picker"
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
