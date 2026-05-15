@@ -43,6 +43,8 @@ import dynamic from "next/dynamic";
 const NewChainPanel = dynamic(() => import("@/app/(workflows)/chains/new/page"), { ssr: false });
 const EditChainPanel = dynamic(() => import("@/app/(workflows)/chains/[id]/edit/edit-chain-component").then(m => ({ default: m.EditChainPage })), { ssr: false });
 import { EmptyState } from "@/components/empty-state";
+import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
+import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
 import {
   WorkflowSidebarPane,
@@ -1278,6 +1280,22 @@ function ChainsPageContent() {
                     })}
                   </div>
                 )}
+              </div>
+
+              {/* Debug Tools — collapsible, below primary content */}
+              <div className="mt-4">
+                <ChainDebugTools
+                  chainId={selected.id}
+                  agents={selected.agents.map((a: { id: string; name: string }) => ({ id: a.id, name: a.name }))}
+                />
+              </div>
+
+              {/* Version Control — collapsible, below debug tools */}
+              <div className="mt-4">
+                <ChainVersionPanel
+                  chainId={selected.id}
+                  chainName={selected.name}
+                />
               </div>
               </div>{/* end scrollable body */}
             </>

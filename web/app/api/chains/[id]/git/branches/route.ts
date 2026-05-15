@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { orgPath } from "@/lib/config";
-import { Unauthorized, BadRequest } from "@/lib/api-errors";
+import { Unauthorized, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -17,6 +17,38 @@ interface GitBranch {
   date: string;
   message: string;
   current: boolean;
+}
+
+/**
+ * Execute a git command safely using argv-style argument passing.
+ * Branch names and other user input are never interpolated into shell strings.
+ */
+function runGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+}
+
+/**
+ * Check if the working tree has uncommitted changes.
+ * Returns true if there are modified or staged changes.
+ */
+function isDirtyWorkingTree(cwd: string): boolean {
+  try {
+    // git diff --quiet exits non-zero if there are unstaged changes
+    runGit(cwd, ["diff", "--quiet"]);
+  } catch {
+    return true;
+  }
+  try {
+    // git diff --cached --quiet exits non-zero if there are staged changes
+    runGit(cwd, ["diff", "--cached", "--quiet"]);
+  } catch {
+    return true;
+  }
+  return false;
 }
 
 export const GET = withErrorHandling(async (
@@ -40,17 +72,14 @@ export const GET = withErrorHandling(async (
   }
 
   // Get current branch
-  const currentBranch = execSync("git branch --show-current", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  }).trim();
+  const currentBranch = runGit(chainDir, ["branch", "--show-current"]).trim();
 
-  // Get all branches
-  const branchOutput = execSync(
-    'git branch -v --format="%(refname:short)%01%(objectname:short)%01%(authorname)%01%(committerdate:iso8601)%01%(contents:subject)"',
-    { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
-  );
+  // Get all branches using format with unit separator for safe parsing
+  const branchOutput = runGit(chainDir, [
+    "branch",
+    "-v",
+    "--format=%(refname:short)\x01%(objectname:short)\x01%(authorname)\x01%(committerdate:iso8601)\x01%(contents:subject)",
+  ]);
 
   const branches: GitBranch[] = branchOutput
     .split("\n")
@@ -86,7 +115,7 @@ export const POST = withErrorHandling(async (
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();
-  const action = body.action; // create, switch, delete, merge
+  const action = body.action; // create, switch, delete, compare
   const branch = body.branch;
   const startPoint = body.startPoint || "HEAD";
 
@@ -105,38 +134,32 @@ export const POST = withErrorHandling(async (
 
   switch (action) {
     case "create": {
-      // Check if branch already exists
+      // Check if branch already exists — exit code 0 means it exists
       try {
-        execSync(`git show-ref --verify --quiet refs/heads/${branch}`, {
-          cwd: chainDir,
-          stdio: "pipe",
-        });
+        runGit(chainDir, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
         throw new BadRequest("Branch already exists");
-      } catch {
-        // Branch doesn't exist, proceed
+      } catch (err) {
+        // If it's our BadRequest, re-throw
+        if (err instanceof BadRequest) throw err;
+        // Non-zero exit means branch doesn't exist — proceed
       }
 
-      execSync(`git branch ${branch} ${startPoint}`, {
-        cwd: chainDir,
-        stdio: "pipe",
-      });
+      runGit(chainDir, ["branch", branch, startPoint]);
       result.created = true;
       break;
     }
 
     case "switch": {
-      // Stash uncommitted changes
-      try {
-        execSync('git diff --quiet', { cwd: chainDir, stdio: "pipe" });
-      } catch {
-        execSync('git stash push -m "auto-stash before switch"', {
-          cwd: chainDir,
-          stdio: "pipe",
-        });
-        result.stashed = true;
+      // Reject switch if working tree has uncommitted changes.
+      // Never auto-stash — that hides user work silently.
+      if (isDirtyWorkingTree(chainDir)) {
+        throw new Conflict(
+          "Commit or discard chain changes before switching branches."
+        );
       }
 
-      execSync(`git checkout ${branch}`, { cwd: chainDir, stdio: "pipe" });
+      // Use git switch instead of git checkout — safer, purpose-built for branches
+      runGit(chainDir, ["switch", branch]);
       result.switched = true;
       result.current = branch;
 
@@ -149,38 +172,22 @@ export const POST = withErrorHandling(async (
     }
 
     case "delete": {
-      const currentBranch = execSync("git branch --show-current", {
-        cwd: chainDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
+      const currentBranch = runGit(chainDir, ["branch", "--show-current"]).trim();
 
       if (branch === currentBranch) {
         throw new BadRequest("Cannot delete current branch");
       }
 
       const force = body.force || false;
-      const deleteFlag = force ? "-D" : "-d";
-      execSync(`git branch ${deleteFlag} ${branch}`, {
-        cwd: chainDir,
-        stdio: "pipe",
-      });
+      runGit(chainDir, ["branch", force ? "-D" : "-d", branch]);
       result.deleted = true;
       break;
     }
 
     case "compare": {
       const target = body.target || "main";
-      const ahead = execSync(`git rev-list --count ${target}..${branch}`, {
-        cwd: chainDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
-      const behind = execSync(`git rev-list --count ${branch}..${target}`, {
-        cwd: chainDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
+      const ahead = runGit(chainDir, ["rev-list", "--count", `${target}..${branch}`]).trim();
+      const behind = runGit(chainDir, ["rev-list", "--count", `${branch}..${target}`]).trim();
       result.comparison = {
         target,
         ahead: parseInt(ahead, 10),

@@ -173,17 +173,17 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
     );
   };
 
-  const renderVariables = (vars: Record<string, VariableValue>, title: string, icon: React.ReactNode) => {
+  const renderVariables = (vars: Record<string, VariableValue>, title: string, icon: React.ReactNode, sectionKey: keyof SectionState) => {
     const entries = Object.entries(vars);
     if (entries.length === 0) return null;
 
     return (
       <div className="mb-3">
         <button
-          onClick={() => toggleSection(title.toLowerCase() as keyof SectionState)}
+          onClick={() => toggleSection(sectionKey)}
           className="flex items-center gap-2 w-full text-left mb-2"
         >
-          {expanded[title.toLowerCase() as keyof SectionState] ? (
+          {expanded[sectionKey] ? (
             <ArrowDown2Filled className="h-3 w-3 text-foreground/40" />
           ) : (
             <ArrowRight2Filled className="h-3 w-3 text-foreground/40" />
@@ -194,7 +194,7 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
             {entries.length}
           </Badge>
         </button>
-        {expanded[title.toLowerCase() as keyof SectionState] && (
+        {expanded[sectionKey] && (
           <div className="ml-4 bg-muted/20 rounded p-2">
             {entries.map(([name, val]) => renderVariable(name, val))}
           </div>
@@ -280,9 +280,9 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
               />
             </div>
 
-            {renderVariables(state.variables.global, "global", <ActivityFilled className="h-3 w-3" />)}
-            {renderVariables(state.variables.chain, "chain", <DocumentTextFilled className="h-3 w-3" />)}
-            {renderVariables(state.variables.agent, "agent vars", <BotMessageSquare className="h-3 w-3" />)}
+            {renderVariables(state.variables.global, "global", <ActivityFilled className="h-3 w-3" />, "global")}
+            {renderVariables(state.variables.chain, "chain", <DocumentTextFilled className="h-3 w-3" />, "chain")}
+            {renderVariables(state.variables.agent, "agent vars", <BotMessageSquare className="h-3 w-3" />, "agentVars")}
 
             <div>
               <button

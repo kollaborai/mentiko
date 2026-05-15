@@ -29,6 +29,7 @@ import {
   TickCircleFilled as Check,
   DangerFilled as AlertTriangle,
 } from "@aliimam/icons";
+import type { BranchComparison } from "@/hooks/use-chain-version-control";
 import { ChainDiffView } from "./chain-diff-view";
 import type { DiffResult, ChainDiff } from "./chain-diff-view";
 
@@ -59,7 +60,7 @@ interface BranchManagerProps {
   onDeleteBranch?: (name: string) => Promise<void>;
   onMergeBranch?: (name: string) => Promise<{ status: string; conflicts?: MergeConflict[] }>;
   onAbortMerge?: () => Promise<void>;
-  onCompareBranches?: (branch1: string, branch2: string) => Promise<DiffResult | ChainDiff>;
+  onCompareBranches?: (branch1: string, branch2: string) => Promise<BranchComparison | null>;
 }
 
 export function ChainBranchManager({
@@ -80,7 +81,7 @@ export function ChainBranchManager({
   const [mergeResult, setMergeResult] = useState<{ status: string; conflicts?: MergeConflict[] } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState("");
-  const [compareDiff, setCompareDiff] = useState<DiffResult | ChainDiff | null>(null);
+  const [compareDiff, setCompareDiff] = useState<BranchComparison | null>(null);
   const [compareDialogOpen, setCompareDialogOpen] = useState(false);
 
   const handleCreateBranch = async () => {
@@ -365,15 +366,40 @@ export function ChainBranchManager({
 
       {/* Compare branches dialog */}
       <Dialog open={compareDialogOpen} onOpenChange={setCompareDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Compare Branches</DialogTitle>
           </DialogHeader>
-          <div className="overflow-y-auto">
+          <div>
             {compareDiff ? (
-              <ChainDiffView diff={compareDiff} />
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <Badge variant="outline">{currentBranch}</Badge>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  <Badge variant="outline">{compareDiff.target}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <Card className="p-3 text-center">
+                    <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                      {compareDiff.ahead}
+                    </div>
+                    <div className="text-xs text-muted-foreground">commits ahead</div>
+                  </Card>
+                  <Card className="p-3 text-center">
+                    <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                      {compareDiff.behind}
+                    </div>
+                    <div className="text-xs text-muted-foreground">commits behind</div>
+                  </Card>
+                </div>
+                {compareDiff.ahead === 0 && compareDiff.behind === 0 && (
+                  <p className="text-sm text-muted-foreground text-center">
+                    Both branches are at the same commit.
+                  </p>
+                )}
+              </div>
             ) : (
-              <div className="text-center py-8 text-muted-foreground">Loading diff...</div>
+              <div className="text-center py-8 text-muted-foreground">Loading comparison...</div>
             )}
           </div>
         </DialogContent>

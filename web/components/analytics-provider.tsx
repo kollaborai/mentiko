@@ -47,7 +47,7 @@ function loadPlausible(domain: string, apiUrl?: string): void {
   document.head.appendChild(script);
 }
 
-export function AnalyticsScripts() {
+function AnalyticsScripts() {
   const provider = process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER;
 
   useEffect(() => {
@@ -67,7 +67,7 @@ export function AnalyticsScripts() {
 }
 
 // tracks page views on route changes
-export function PageViewTracker() {
+function PageViewTracker() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -80,7 +80,7 @@ export function PageViewTracker() {
 }
 
 // combined provider component
-export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
+function AnalyticsProvider({ children }: { children: React.ReactNode }) {
   return (
     <>
       <AnalyticsScripts />

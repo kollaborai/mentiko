@@ -187,6 +187,17 @@ function AgentsPageContent() {
       });
   }, [agents, search, roleFilter, sortBy, categoryFilter]);
 
+  // split filtered agents into standalone and chain-extracted groups
+  const standaloneAgents = useMemo(
+    () => filtered.filter((a) => a.source === "standalone"),
+    [filtered]
+  );
+  const chainAgents = useMemo(
+    () => filtered.filter((a) => a.source === "chain"),
+    [filtered]
+  );
+  const hasBothGroups = standaloneAgents.length > 0 && chainAgents.length > 0;
+
   const selectedAgent = useMemo(
     () => agents.find((a) => a.id === selectedId) || null,
     [agents, selectedId]
@@ -319,7 +330,12 @@ function AgentsPageContent() {
               </WorkflowSidebarFilters>
 
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {filtered.map((agent) => (
+                {hasBothGroups && (
+                  <div className="px-1 pt-1 pb-0.5 text-[10px] uppercase tracking-wider text-foreground/30">
+                    Standalone ({standaloneAgents.length})
+                  </div>
+                )}
+                {(hasBothGroups ? standaloneAgents : filtered).map((agent) => (
                   <WorkflowSidebarItem
                     key={agent.id}
                     selected={selectedId === agent.id}
@@ -327,20 +343,15 @@ function AgentsPageContent() {
                     accentClassName={getAgentRoleColor(agent.role)}
                   >
                     <div className="pl-4">
-                      {/* row 1: title + meta */}
                       <div className="flex items-start justify-between gap-2">
                         <span className="line-clamp-1 text-sm font-semibold leading-5">{agent.name}</span>
                         <span className="shrink-0 text-[10px] text-foreground/30">{agent.chains.length} chains</span>
                       </div>
-
-                      {/* row 2: description (use role as fallback only if it looks like a description) */}
                       {(agent.description || agent.role) && (
                         <p className="line-clamp-1 text-[11px] text-foreground/40 mt-0.5">
                           {agent.description || agent.role}
                         </p>
                       )}
-
-                      {/* row 3: pills */}
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
                         <span className={`rounded-full px-2 py-0.5 uppercase tracking-[0.14em] ${getAgentRolePill(agent.role)}`}>{getAgentRoleLabel(agent.role)}</span>
                         {agent.tools && agent.tools.length > 0 && (
@@ -350,6 +361,39 @@ function AgentsPageContent() {
                     </div>
                   </WorkflowSidebarItem>
                 ))}
+                {hasBothGroups && chainAgents.length > 0 && (
+                  <>
+                    <div className="px-1 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-foreground/30">
+                      Chain-extracted ({chainAgents.length})
+                    </div>
+                    {chainAgents.map((agent) => (
+                      <WorkflowSidebarItem
+                        key={agent.id}
+                        selected={selectedId === agent.id}
+                        onClick={() => handleSelect(agent.id)}
+                        accentClassName={getAgentRoleColor(agent.role)}
+                      >
+                        <div className="pl-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="line-clamp-1 text-sm font-semibold leading-5">{agent.name}</span>
+                            <span className="shrink-0 text-[10px] text-foreground/30">{agent.chains.length} chains</span>
+                          </div>
+                          {(agent.description || agent.role) && (
+                            <p className="line-clamp-1 text-[11px] text-foreground/40 mt-0.5">
+                              {agent.description || agent.role}
+                            </p>
+                          )}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
+                            <span className={`rounded-full px-2 py-0.5 uppercase tracking-[0.14em] ${getAgentRolePill(agent.role)}`}>{getAgentRoleLabel(agent.role)}</span>
+                            {agent.tools && agent.tools.length > 0 && (
+                              <span className="rounded-full bg-foreground/5 px-2 py-0.5">{agent.tools.length} tools</span>
+                            )}
+                          </div>
+                        </div>
+                      </WorkflowSidebarItem>
+                    ))}
+                  </>
+                )}
               </div>
             </>
           )}

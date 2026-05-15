@@ -12,6 +12,13 @@ import type {
   Chain,
 } from "@/lib/types";
 
+/** Result of comparing two branches (ahead/behind counts). */
+export interface BranchComparison {
+  target: string;
+  ahead: number;
+  behind: number;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -41,7 +48,7 @@ export interface UseChainVersionControlReturn {
   createBranch: (name: string, startPoint?: string) => Promise<void>;
   switchBranch: (name: string) => Promise<void>;
   deleteBranch: (name: string, force?: boolean) => Promise<void>;
-  compareBranches: (branch1: string, branch2: string) => Promise<void>;
+  compareBranches: (branch1: string, branch2: string) => Promise<BranchComparison | null>;
   mergeBranch: (name: string, strategy?: string) => Promise<MergeResult | null>;
   abortMerge: () => Promise<void>;
 
@@ -288,8 +295,8 @@ export function useChainVersionControl(chainId: string): UseChainVersionControlR
     }
   }, [chainId, fetchWithNamespace, getBranches]);
 
-  // Compare branches
-  const compareBranches = useCallback(async (branch1: string, branch2: string) => {
+  // Compare branches — returns ahead/behind counts, not file diffs
+  const compareBranches = useCallback(async (branch1: string, branch2: string): Promise<BranchComparison | null> => {
     setLoading(true);
     clearError();
     try {
@@ -299,7 +306,9 @@ export function useChainVersionControl(chainId: string): UseChainVersionControlR
         body: JSON.stringify({ action: "compare", branch: branch1, target: branch2 }),
       });
       if (!res.ok) throw new Error("Failed to compare branches");
-      await res.json();
+      const raw = await res.json();
+      const data = unwrapApiData<{ comparison?: BranchComparison }>(raw);
+      return data.comparison ?? null;
     } catch (err: unknown) {
       setError(getErrorMessage(err));
       throw err;

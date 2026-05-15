@@ -1,6 +1,6 @@
 import { opsGet, opsPost } from "./ops-client.js";
 
-export interface FlattenedDecision {
+interface FlattenedDecision {
   id: string;
   topic: string;
   status: string;
