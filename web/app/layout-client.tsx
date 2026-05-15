@@ -28,6 +28,20 @@ import { applyStoredUserDisplayPreferences } from "@/lib/user-display-preference
 
 // pages that render standalone (no nav, no sidebar, no providers)
 const STANDALONE_PATHS = ["/login", "/signup", "/welcome"];
+const PANEL_MESSAGE_OPEN_WELCOME = "mentiko-open-welcome-panel";
+const PANEL_MESSAGE_OPEN_GLOBAL_SEARCH = "mentiko-open-global-search";
+
+type PanelShellMessageType =
+  | typeof PANEL_MESSAGE_OPEN_WELCOME
+  | typeof PANEL_MESSAGE_OPEN_GLOBAL_SEARCH;
+
+function postPanelShellMessage(type: PanelShellMessageType) {
+  try {
+    window.parent?.postMessage({ type }, window.location.origin);
+  } catch {
+    // ignored: panel routing should never break page navigation
+  }
+}
 
 export function RootLayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -103,6 +117,9 @@ function PanelSurfaceNavigationGuard() {
   useEffect(() => {
     if (!isPanelSurface) return;
 
+    document.documentElement.setAttribute("data-floating-panel-surface", "true");
+    document.body?.setAttribute("data-floating-panel-surface", "true");
+
     if (searchParams.get("surface") !== "panel" && isFloatingPanelRoute(window.location.pathname)) {
       window.history.replaceState(
         window.history.state,
@@ -144,6 +161,15 @@ function PanelSurfaceNavigationGuard() {
       window.location.assign(nextHref);
     };
 
+    const forwardWelcomePanel = () => postPanelShellMessage(PANEL_MESSAGE_OPEN_WELCOME);
+    const forwardGlobalSearch = () => postPanelShellMessage(PANEL_MESSAGE_OPEN_GLOBAL_SEARCH);
+    const forwardGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      postPanelShellMessage(PANEL_MESSAGE_OPEN_GLOBAL_SEARCH);
+    };
+
     const originalPushState = window.history.pushState;
     const originalReplaceState = window.history.replaceState;
 
@@ -155,8 +181,16 @@ function PanelSurfaceNavigationGuard() {
     };
 
     document.addEventListener("click", handleLinkClick, true);
+    window.addEventListener("open-welcome-panel", forwardWelcomePanel);
+    window.addEventListener("open-global-search", forwardGlobalSearch);
+    window.addEventListener("keydown", forwardGlobalSearchShortcut, true);
     return () => {
+      document.documentElement.removeAttribute("data-floating-panel-surface");
+      document.body?.removeAttribute("data-floating-panel-surface");
       document.removeEventListener("click", handleLinkClick, true);
+      window.removeEventListener("open-welcome-panel", forwardWelcomePanel);
+      window.removeEventListener("open-global-search", forwardGlobalSearch);
+      window.removeEventListener("keydown", forwardGlobalSearchShortcut, true);
       window.history.pushState = originalPushState;
       window.history.replaceState = originalReplaceState;
     };
@@ -179,6 +213,23 @@ function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initNotificationPrefs();
   }, [initNotificationPrefs]);
+
+  useEffect(() => {
+    const handlePanelMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const type = (event.data as { type?: unknown } | null)?.type;
+
+      if (type === PANEL_MESSAGE_OPEN_WELCOME) {
+        window.dispatchEvent(new CustomEvent("open-welcome-panel"));
+      }
+      if (type === PANEL_MESSAGE_OPEN_GLOBAL_SEARCH) {
+        window.dispatchEvent(new CustomEvent("open-global-search"));
+      }
+    };
+
+    window.addEventListener("message", handlePanelMessage);
+    return () => window.removeEventListener("message", handlePanelMessage);
+  }, []);
 
   // apply user preferences (font size + accent color) globally on mount
   useEffect(() => {
@@ -251,7 +302,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </a>
             </WhenNotPanelSurface>
           </Suspense>
-          <div className="relative flex h-screen flex-col">
+          <div className="relative flex h-screen flex-col" data-source="app/layout-client.tsx">
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 z-0"

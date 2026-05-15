@@ -172,4 +172,64 @@ describe("RootLayoutClient", () => {
       expect(document.body).not.toHaveAttribute("data-floating-panel-surface");
     });
   });
+
+  it("forwards setup wizard and cmd+k requests from panel documents to the parent shell", async () => {
+    mockPathname = "/dashboard";
+    mockIsFloatingPanelSurface = true;
+    const postMessage = jest.spyOn(window.parent, "postMessage").mockImplementation(() => {});
+
+    render(
+      <RootLayoutClient>
+        <div>panel content</div>
+      </RootLayoutClient>,
+    );
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute("data-floating-panel-surface", "true");
+    });
+
+    window.dispatchEvent(new CustomEvent("open-welcome-panel"));
+    window.dispatchEvent(new CustomEvent("open-global-search"));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+
+    expect(postMessage).toHaveBeenCalledWith({ type: "mentiko-open-welcome-panel" }, window.location.origin);
+    expect(postMessage).toHaveBeenCalledWith({ type: "mentiko-open-global-search" }, window.location.origin);
+    expect(postMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it("bridges panel messages back into parent shell events", async () => {
+    mockPathname = "/dashboard";
+    mockIsFloatingPanelSurface = false;
+    const openWelcome = jest.fn();
+    const openSearch = jest.fn();
+    window.addEventListener("open-welcome-panel", openWelcome);
+    window.addEventListener("open-global-search", openSearch);
+
+    render(
+      <RootLayoutClient>
+        <div>page content</div>
+      </RootLayoutClient>,
+    );
+
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin,
+      data: { type: "mentiko-open-welcome-panel" },
+    }));
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin,
+      data: { type: "mentiko-open-global-search" },
+    }));
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "https://example.com",
+      data: { type: "mentiko-open-global-search" },
+    }));
+
+    await waitFor(() => {
+      expect(openWelcome).toHaveBeenCalledTimes(1);
+      expect(openSearch).toHaveBeenCalledTimes(1);
+    });
+
+    window.removeEventListener("open-welcome-panel", openWelcome);
+    window.removeEventListener("open-global-search", openSearch);
+  });
 });

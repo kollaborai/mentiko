@@ -10,10 +10,14 @@ import { MonitorFilled, SunFilled, MoonFilled, ColorSwatchFilled, UserFilled, No
 import { PageBanner } from "@/components/ui/page-banner";
 import { cn } from "@/lib/utils";
 import {
+  FLOATING_PANEL_TRANSPARENCY_DEFAULT,
+  FLOATING_PANEL_TRANSPARENCY_MAX,
+  FLOATING_PANEL_TRANSPARENCY_MIN,
   USER_ACCENT_OKLCH,
   USER_FONT_SIZE_MAP,
   USER_PREFERENCES_STORAGE_KEY,
   applyUserDisplayPreferences,
+  clampFloatingPanelTransparency,
   type UserAccentColorPreference,
   type UserFontSizePreference,
 } from "@/lib/user-display-preferences";
@@ -23,6 +27,7 @@ type Theme = "dark" | "light" | "system";
 interface Preferences {
   accentColor: UserAccentColorPreference;
   fontSize: UserFontSizePreference;
+  floatingPanelTransparency: number;
   autoSave: boolean;
   streamOutput: boolean;
 }
@@ -35,18 +40,34 @@ function applyAccentColor(accentColor: UserAccentColorPreference) {
   applyUserDisplayPreferences({ accentColor });
 }
 
+function applyFloatingPanelTransparency(floatingPanelTransparency: number) {
+  applyUserDisplayPreferences({ floatingPanelTransparency });
+}
+
 export default function AppearancePage() {
   const { t } = useTranslations();
   const { theme: currentTheme, setTheme } = useTheme();
   const [status, setStatus] = useState<string | null>(null);
 
-  const defaultPrefs: Preferences = { accentColor: "blue", fontSize: "md", autoSave: true, streamOutput: true };
+  const defaultPrefs: Preferences = {
+    accentColor: "blue",
+    fontSize: "md",
+    floatingPanelTransparency: FLOATING_PANEL_TRANSPARENCY_DEFAULT,
+    autoSave: true,
+    streamOutput: true,
+  };
   const [prefs, setPrefs] = useState<Preferences>(() => {
     // hydrate from localStorage on first render (client-side only)
     if (typeof window === "undefined") return defaultPrefs;
     try {
       const stored = localStorage.getItem(USER_PREFERENCES_STORAGE_KEY);
-      if (stored) return { ...defaultPrefs, ...JSON.parse(stored) };
+      if (stored) {
+        const parsed = { ...defaultPrefs, ...JSON.parse(stored) };
+        return {
+          ...parsed,
+          floatingPanelTransparency: clampFloatingPanelTransparency(parsed.floatingPanelTransparency),
+        };
+      }
     } catch { /* ignore */ }
     return defaultPrefs;
   });
@@ -56,16 +77,21 @@ export default function AppearancePage() {
     applyFontSize(prefs.fontSize);
   }, [prefs.fontSize]);
 
+  useEffect(() => {
+    applyFloatingPanelTransparency(prefs.floatingPanelTransparency);
+  }, [prefs.floatingPanelTransparency]);
+
   const handleSave = () => {
     localStorage.setItem(USER_PREFERENCES_STORAGE_KEY, JSON.stringify(prefs));
     applyFontSize(prefs.fontSize);
     applyAccentColor(prefs.accentColor);
+    applyFloatingPanelTransparency(prefs.floatingPanelTransparency);
     setStatus("saved");
     setTimeout(() => setStatus(null), 2000);
   };
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div className="flex-1 overflow-auto" data-source="app/settings/appearance/page.tsx">
       <PageBanner
         title="Appearance"
         subtitle="Customize your visual experience. Choose a theme, accent color, and font size."
@@ -145,6 +171,39 @@ export default function AppearancePage() {
                     {size === "sm" ? "small" : size === "md" ? "medium" : "large"}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="floating-panel-transparency" className="text-xs">
+                    {t("settings.floatingPanelTransparency")}
+                  </Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("settings.floatingPanelTransparencyDesc")}
+                  </p>
+                </div>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {prefs.floatingPanelTransparency}%
+                </span>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="text-[10px] text-muted-foreground">dots</span>
+                <input
+                  id="floating-panel-transparency"
+                  type="range"
+                  min={FLOATING_PANEL_TRANSPARENCY_MIN}
+                  max={FLOATING_PANEL_TRANSPARENCY_MAX}
+                  step={1}
+                  value={prefs.floatingPanelTransparency}
+                  onChange={(e) => {
+                    const nextValue = clampFloatingPanelTransparency(e.target.value);
+                    setPrefs((prev) => ({ ...prev, floatingPanelTransparency: nextValue }));
+                  }}
+                  className="h-1 flex-1 accent-primary"
+                />
+                <span className="text-[10px] text-muted-foreground">solid</span>
               </div>
             </div>
 

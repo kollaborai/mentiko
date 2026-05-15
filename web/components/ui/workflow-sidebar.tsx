@@ -26,6 +26,8 @@ export function WorkflowSidebarPane({
 }: WorkflowSidebarPaneProps) {
   return (
     <div
+      data-testid="workflow-sidebar-pane"
+      data-workflow-sidebar-pane=""
       className={cn(
         "relative flex shrink-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted",
         className
@@ -55,7 +57,11 @@ export function WorkflowSidebarFilters({
   className,
 }: WorkflowSidebarFiltersProps) {
   return (
-    <div className={cn("shrink-0 space-y-2 bg-accent p-3", className)}>
+    <div
+      data-testid="workflow-sidebar-filters"
+      data-workflow-sidebar-filters=""
+      className={cn("shrink-0 space-y-2 bg-accent p-3", className)}
+    >
       {children}
     </div>
   );
@@ -81,6 +87,7 @@ export function WorkflowSidebarSearchInput({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
+        data-workflow-sidebar-search=""
         className={cn("h-8 rounded-lg bg-card pl-8 text-xs", className)}
       />
     </div>
@@ -103,7 +110,11 @@ export function WorkflowSidebarSegmentedControl<T extends string = string>({
   buttonClassName,
 }: WorkflowSidebarSegmentedControlProps<T>) {
   return (
-    <div className={cn("flex items-center gap-1 rounded-xl bg-card p-0.5", className)}>
+    <div
+      data-testid="workflow-sidebar-segmented-control"
+      data-workflow-sidebar-control=""
+      className={cn("flex items-center gap-1 rounded-xl bg-card p-0.5", className)}
+    >
       {options.map((option) => (
         <button
           key={option.value}
@@ -252,6 +263,8 @@ export function WorkflowSidebarItem({
 
   return (
     <div
+      data-testid="workflow-sidebar-item"
+      data-workflow-sidebar-item=""
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}

@@ -115,6 +115,18 @@
     --heading-4-line-height: 1.25;
     --heading-5-line-height: 1.3;
     --heading-6-line-height: 1.3;
+
+    --floating-panel-body-mix: 96%;
+    --floating-panel-pane-mix: 98%;
+    --floating-panel-filters-mix: 94%;
+    --floating-panel-item-mix: 97%;
+    --floating-panel-item-hover-mix: 100%;
+    --floating-panel-control-mix: 98%;
+    --floating-panel-border-mix: 100%;
+    --floating-panel-docs-sidebar-mix: 98%;
+    --floating-panel-docs-header-mix: 98%;
+    --floating-panel-docs-surface-mix: 97%;
+    --floating-panel-docs-hover-mix: 100%;
 }
 
 .dark {
@@ -154,6 +166,61 @@
 @layer base {
     body {
         @apply bg-background text-foreground;
+    }
+    html[data-floating-panel-surface],
+    html[data-floating-panel-surface] body,
+    body[data-floating-panel-surface] {
+        background: transparent !important;
+    }
+    html[data-floating-panel-surface] main#main-content {
+        background: color-mix(in oklch, var(--background) var(--floating-panel-body-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-workflow-sidebar-pane] {
+        background-color: color-mix(in oklch, var(--muted) var(--floating-panel-pane-mix), transparent) !important;
+        border-color: color-mix(in oklch, var(--border) var(--floating-panel-border-mix), transparent) !important;
+        backdrop-filter: blur(1px) !important;
+    }
+    html[data-floating-panel-surface] [data-workflow-sidebar-filters] {
+        background-color: color-mix(in oklch, var(--accent) var(--floating-panel-filters-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-workflow-sidebar-item] {
+        background-color: color-mix(in oklch, var(--card) var(--floating-panel-item-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-workflow-sidebar-item]:hover {
+        background-color: color-mix(in oklch, var(--accent) var(--floating-panel-item-hover-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-workflow-sidebar-control],
+    html[data-floating-panel-surface] [data-workflow-sidebar-search],
+    html[data-floating-panel-surface] [data-workflow-sidebar-pane] select {
+        background-color: color-mix(in oklch, var(--card) var(--floating-panel-control-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-sidebar] {
+        background-color: color-mix(in oklch, var(--muted) var(--floating-panel-docs-sidebar-mix), transparent) !important;
+        border-right: 1px solid color-mix(in oklch, var(--border) var(--floating-panel-border-mix), transparent);
+        backdrop-filter: blur(1px) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-sidebar-header] {
+        background-color: color-mix(in oklch, var(--muted) var(--floating-panel-docs-header-mix), transparent) !important;
+        backdrop-filter: blur(1px) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-content] .bg-card,
+    html[data-floating-panel-surface] [data-docs-content] .bg-background,
+    html[data-floating-panel-surface] [data-docs-card],
+    html[data-floating-panel-surface] [data-docs-search] {
+        background: color-mix(in oklch, var(--card) var(--floating-panel-docs-surface-mix), transparent) !important;
+        border-color: color-mix(in oklch, var(--border) var(--floating-panel-border-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-content] .bg-muted {
+        background: color-mix(in oklch, var(--muted) var(--floating-panel-docs-sidebar-mix), transparent) !important;
+        border-color: color-mix(in oklch, var(--border) var(--floating-panel-border-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-link][data-active="true"] {
+        background-color: color-mix(in oklch, var(--accent) var(--floating-panel-docs-surface-mix), transparent) !important;
+    }
+    html[data-floating-panel-surface] [data-docs-link]:hover,
+    html[data-floating-panel-surface] [data-docs-card]:hover {
+        background: color-mix(in oklch, var(--accent) var(--floating-panel-docs-hover-mix), transparent) !important;
+        border-color: color-mix(in oklch, var(--border) var(--floating-panel-border-mix), transparent) !important;
     }
     h1,
     h2,

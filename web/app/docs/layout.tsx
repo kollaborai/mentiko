@@ -145,6 +145,8 @@ function NavGroup({ group, pathname, filter }: { group: NavGroup; pathname: stri
               <Link
                 key={item.href}
                 href={item.href}
+                data-docs-link=""
+                data-active={active ? "true" : undefined}
                 className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-colors ${
                   active
                     ? "bg-accent text-foreground"
@@ -198,9 +200,20 @@ export default function DocsLayout({
   }, []);
 
   return (
-    <div className="flex h-full">
-      <aside className="w-56 shrink-0 bg-muted overflow-y-auto">
-        <div className="p-3 sticky top-0 bg-muted">
+    <div
+      className="flex h-full"
+      data-source="web/app/docs/layout.tsx"
+    >
+      <aside
+        data-testid="docs-sidebar"
+        data-docs-sidebar=""
+        className="w-56 shrink-0 bg-muted overflow-y-auto"
+      >
+        <div
+          data-testid="docs-sidebar-header"
+          data-docs-sidebar-header=""
+          className="p-3 sticky top-0 bg-muted"
+        >
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/40" />
             <input
@@ -209,6 +222,7 @@ export default function DocsLayout({
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
               placeholder="search... (cmd+k)"
+              data-docs-search=""
               className="w-full bg-card rounded-md pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-foreground/30 border-0 focus:outline-none focus:ring-1 focus:ring-foreground/20"
             />
           </div>
@@ -220,7 +234,7 @@ export default function DocsLayout({
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main data-testid="docs-content" data-docs-content="" className="flex-1 overflow-auto">
         {children}
       </main>
     </div>

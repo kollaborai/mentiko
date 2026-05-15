@@ -182,7 +182,7 @@ export default function DocsIndexPage() {
   }, []);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" data-source="app/docs/page.tsx">
       <PageBanner
         title="Documentation"
         subtitle="Everything you need to build and orchestrate AI agent chains. Search, browse categories, or jump into the quick start."
@@ -206,6 +206,7 @@ export default function DocsIndexPage() {
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="search docs... (cmd+k)"
+              data-docs-search=""
               className="w-full bg-background border border-border/40 rounded-xl pl-10 pr-4 py-2.5 text-sm text-foreground placeholder:text-foreground/30 focus:outline-none focus:border-border transition-colors"
             />
           </div>
@@ -221,6 +222,7 @@ export default function DocsIndexPage() {
                 <Link
                   key={card.href}
                   href={card.href}
+                  data-docs-card=""
                   className="relative overflow-hidden rounded-xl border border-border/40 p-4 transition-all hover:border-border hover:-translate-y-0.5 group"
                   style={{
                     background: `linear-gradient(135deg, ${card.color}22 0%, ${card.color}08 50%, transparent 100%)`,
@@ -260,6 +262,7 @@ export default function DocsIndexPage() {
                   <Link
                     key={`${cat.label}:${card.href}:${card.label}`}
                     href={card.href}
+                    data-docs-card=""
                     className="bg-background border border-border/40 rounded-xl p-3 hover:bg-accent/50 hover:border-border transition-colors group"
                   >
                     <div className="flex items-start gap-3">
@@ -300,6 +303,7 @@ export default function DocsIndexPage() {
                     <Link
                       key={`${category.label}:${card.href}:${card.label}`}
                       href={card.href}
+                      data-docs-card=""
                       className="bg-background border border-border/40 rounded-xl p-4 hover:border-border hover:-translate-y-0.5 transition-all group"
                     >
                       <div className="flex items-start gap-3">
@@ -328,7 +332,11 @@ export default function DocsIndexPage() {
           />
           <h2 className="text-sm font-medium">System Architecture</h2>
         </div>
-        <div className="relative bg-background border border-border/40 rounded-xl p-6 overflow-hidden">
+        <div
+          data-testid="docs-architecture-panel"
+          data-docs-card=""
+          className="relative bg-background border border-border/40 rounded-xl p-6 overflow-hidden"
+        >
           <div
             className="absolute inset-0 z-0 pointer-events-none"
             style={{
