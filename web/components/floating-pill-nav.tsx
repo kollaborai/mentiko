@@ -8,13 +8,8 @@ import {
   RouteSquareFilled, ShopFilled, Setting2Filled,
   TaskSquareFilled, MessageCircleFilled, JudgeFilled,
   BotMessageSquare, BoxFilled, MagicStarFilled,
-  CategoryFilled, Element3Filled, ComponentFilled,
+  CategoryFilled, Element3Filled, ComponentFilled, ActivityFilled, PeopleFilled, DocumentTextFilled, LockFilled,
   GripHorizontal,
-  UserFilled, ColorSwatchFilled, NotificationFilled,
-  LockFilled, SecurityFilled, ShieldTickFilled,
-  SmsFilled, ExportFilled, PeopleFilled,
-  DocumentTextFilled, CommandSquareFilled,
-  ChartFilled, ActivityFilled, TrendUpFilled,
   ClockFilled, DirectSendFilled, LinkFilled, SendFilled,
   AddFilled, CodeFilled, Webhook,
 } from "@aliimam/icons";
@@ -27,6 +22,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { useEditorStore } from "@/lib/editor-store";
 import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
 import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card";
+import { SETTINGS_QUICK_MENU_GROUPS } from "@/lib/settings-nav";
 import { invalidateRunsCache } from "@/lib/runs-store";
 import { invalidateChainsCache } from "@/lib/chains-store";
 import { invalidateAgentsCache } from "@/lib/agents-store";
@@ -129,63 +125,6 @@ const CATEGORIES: NavCategory[] = [
 
 // ─── settings menu ──────────────────────────────────────────
 
-interface SettingsMenuItem {
-  id: string;
-  label: string;
-  href: string;
-  icon: React.ReactNode;
-}
-
-interface SettingsMenuGroup {
-  label: string;
-  items: SettingsMenuItem[];
-}
-
-const SETTINGS_MENU: SettingsMenuGroup[] = [
-  {
-    label: "Profile",
-    items: [
-      { id: "account",       label: "Account",       href: "/settings/account",       icon: <UserFilled className="h-3.5 w-3.5" /> },
-      { id: "appearance",    label: "Appearance",    href: "/settings/appearance",    icon: <ColorSwatchFilled className="h-3.5 w-3.5" /> },
-      { id: "pill-nav",      label: "Navigation Bar", href: "/settings/pill-nav",    icon: <Element3Filled className="h-3.5 w-3.5" /> },
-      { id: "notifications", label: "Notifications", href: "/settings/notifications", icon: <NotificationFilled className="h-3.5 w-3.5" /> },
-    ],
-  },
-  {
-    label: "Access",
-    items: [
-      { id: "security", label: "Security", href: "/settings/security", icon: <LockFilled className="h-3.5 w-3.5" /> },
-      { id: "sessions", label: "Sessions", href: "/settings/sessions", icon: <SecurityFilled className="h-3.5 w-3.5" /> },
-      { id: "secrets",  label: "Secrets",  href: "/settings/secrets",  icon: <ShieldTickFilled className="h-3.5 w-3.5" /> },
-    ],
-  },
-  {
-    label: "Workspace",
-    items: [
-      { id: "agent-configs", label: "Agent Configs", href: "/settings/agent-configs", icon: <BotMessageSquare className="h-3.5 w-3.5" /> },
-      { id: "email",         label: "Email",         href: "/settings/email",         icon: <SmsFilled className="h-3.5 w-3.5" /> },
-    ],
-  },
-  {
-    label: "Organization",
-    items: [
-      { id: "data",         label: "Data",         href: "/settings/data",         icon: <ExportFilled className="h-3.5 w-3.5" /> },
-      { id: "organization", label: "Organization", href: "/settings/organization", icon: <PeopleFilled className="h-3.5 w-3.5" /> },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { id: "system",       label: "System",       href: "/settings/system",       icon: <Setting2Filled className="h-3.5 w-3.5" /> },
-      { id: "logs",         label: "Logs",         href: "/settings/logs",         icon: <DocumentTextFilled className="h-3.5 w-3.5" /> },
-      { id: "pty",          label: "PTY Sessions", href: "/settings/pty",          icon: <CommandSquareFilled className="h-3.5 w-3.5" /> },
-      { id: "metrics",      label: "Metrics",      href: "/settings/metrics",      icon: <ChartFilled className="h-3.5 w-3.5" /> },
-      { id: "agent-health", label: "Agent Health", href: "/settings/agent-health", icon: <ActivityFilled className="h-3.5 w-3.5" /> },
-      { id: "performance",  label: "Performance",  href: "/settings/performance",  icon: <TrendUpFilled className="h-3.5 w-3.5" /> },
-    ],
-  },
-];
-
 function SettingsPillMenu({
   active,
   tint,
@@ -279,23 +218,26 @@ function SettingsPillMenu({
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           )}
         >
-          {SETTINGS_MENU.map((group, gi) => (
+          {SETTINGS_QUICK_MENU_GROUPS.map((group, gi) => (
             <div key={group.label}>
               {gi > 0 && <div className="h-px bg-white/8 mx-2 my-1" />}
               <p className="text-[9px] font-semibold uppercase tracking-widest text-white/25 px-3 pt-1.5 pb-0.5">
                 {group.label}
               </p>
-              {group.items.map((item) => (
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => handleSelect(item.href, item.label)}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/60 hover:text-white hover:bg-white/8 transition-colors text-left"
                 >
-                  <span className="text-white/30 shrink-0">{item.icon}</span>
+                  <span className="text-white/30 shrink-0"><Icon className="h-3.5 w-3.5" /></span>
                   {item.label}
                 </button>
-              ))}
+                );
+              })}
             </div>
           ))}
           <div className="h-px bg-white/8 mx-2 my-1" />

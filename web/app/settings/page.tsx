@@ -3,66 +3,48 @@
 import Link from "next/link";
 import {
   UserFilled,
-  ColorSwatchFilled,
-  NotificationFilled,
-  ExportFilled,
   LockFilled,
-  SecurityFilled,
-  KeyFilled,
-  BotMessageSquare,
-  MagicStarFilled,
-  BoxFilled,
-  CommandSquareFilled,
   Setting2Filled,
-  SmsFilled,
-  ShieldTickFilled,
-  PeopleFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
+import { SETTINGS_SIDEBAR_GROUPS, type SettingsNavItem } from "@/lib/settings-nav";
 
-const SETTINGS_GROUPS = [
-  {
-    label: "Profile",
-    items: [
-      { id: "account", label: "Account", description: "Profile, email, account deletion", href: "/settings/account", icon: UserFilled, watermarkColor: "#5b9ef5" },
-      { id: "appearance", label: "Appearance", description: "Theme, accent color, font size, behavior", href: "/settings/appearance", icon: ColorSwatchFilled, watermarkColor: "#f59e0b" },
-      { id: "notifications", label: "Notifications", description: "Email and in-app notification preferences", href: "/settings/notifications", icon: NotificationFilled, watermarkColor: "#f59e0b" },
-    ],
-  },
-  {
-    label: "Security & Access",
-    items: [
-      { id: "security", label: "Security", description: "Password, 2FA, and account protection", href: "/settings/security", icon: LockFilled, watermarkColor: "#a0927b" },
-      { id: "sessions", label: "Sessions", description: "Active sessions and device management", href: "/settings/sessions", icon: SecurityFilled, watermarkColor: "#a0927b" },
-      { id: "ssh-keys", label: "SSH Keys", description: "Public keys for direct terminal access", href: "/settings/ssh-keys", icon: KeyFilled, watermarkColor: "#a0927b" },
-      { id: "secrets", label: "Secrets", description: "Encrypted env var secrets for agents", href: "/settings/secrets", icon: ShieldTickFilled, watermarkColor: "#a0927b" },
-    ],
-  },
-  {
-    label: "Developer",
-    items: [
-      { id: "agent-configs",  label: "Agent Configs",  description: "CLI execution profiles for agents",                     href: "/settings/agent-configs",  icon: BotMessageSquare,      watermarkColor: "#b07ee8" },
-      { id: "mentiko-agent", label: "Mentiko Agent",  description: "AI provider profiles for the Mentiko floating bar",    href: "/settings/mentiko-agent",  icon: MagicStarFilled,       watermarkColor: "#b07ee8" },
-      { id: "generation", label: "Generation", description: "Prompt templates for AI chain generation", href: "/settings/generation", icon: MagicStarFilled, watermarkColor: "#f59e0b" },
-      { id: "artifacts", label: "Artifacts", description: "Artifact output templates", href: "/settings/artifacts", icon: BoxFilled, watermarkColor: "#b07ee8" },
-    ],
-  },
-  {
-    label: "Workspace",
-    items: [
-      { id: "email", label: "Email", description: "Inbound email routing configuration", href: "/settings/email", icon: SmsFilled, watermarkColor: "#5b9ef5" },
-      { id: "data", label: "Data & Privacy", description: "Export, retention, and account data", href: "/settings/data", icon: ExportFilled, watermarkColor: "#5cb88a" },
-      { id: "organization", label: "Organization", description: "Team members, roles, and invites", href: "/settings/organization", icon: PeopleFilled, watermarkColor: "#b07ee8" },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { id: "system", label: "System", description: "System configuration and diagnostics", href: "/settings/system", icon: Setting2Filled, watermarkColor: "#f59e0b" },
-      { id: "pty", label: "PTY Sessions", description: "Active PTY session management", href: "/settings/pty", icon: CommandSquareFilled, watermarkColor: "#5b9ef5" },
-    ],
-  },
-];
+const SETTINGS_DESCRIPTIONS: Record<string, string> = {
+  dashboard: "Top-level settings overview",
+  account: "Profile, email, account deletion",
+  appearance: "Theme, accent color, font size, behavior",
+  "pill-nav": "Floating navigation bar behavior and appearance",
+  notifications: "Email and in-app notification preferences",
+  security: "Password, 2FA, and account protection",
+  sessions: "Active sessions and device management",
+  "ssh-keys": "Public keys for direct terminal access",
+  secrets: "Encrypted env var secrets for agents",
+  "agent-configs": "CLI execution profiles for agents",
+  email: "Inbound email routing configuration",
+  "mentiko-agent": "AI provider profiles for the Mentiko floating bar",
+  data: "Export, retention, and account data",
+  organization: "Team members, roles, and invites",
+  system: "System configuration and diagnostics",
+  logs: "Runtime logs and diagnostic output",
+  audit: "Workspace audit trail and access events",
+  pty: "Active PTY session management",
+  metrics: "System metrics and telemetry",
+  "agent-health": "Agent status and health checks",
+  performance: "Runtime performance diagnostics",
+};
+
+const SETTINGS_WATERMARK_COLORS: Record<string, string> = {
+  profile: "#5b9ef5",
+  access: "#a0927b",
+  workspace: "#5cb88a",
+  developer: "#b07ee8",
+  organization: "#b07ee8",
+  system: "#f59e0b",
+};
+
+function getDescription(section: SettingsNavItem) {
+  return SETTINGS_DESCRIPTIONS[section.id] ?? `${section.label} settings`;
+}
 
 export default function SettingsDashboard() {
   return (
@@ -79,7 +61,7 @@ export default function SettingsDashboard() {
       />
       <div className="px-4 pb-6 max-w-4xl mx-auto">
         <div className="space-y-6">
-          {SETTINGS_GROUPS.map((group) => (
+          {SETTINGS_SIDEBAR_GROUPS.map((group) => (
             <div key={group.label}>
               <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 px-1">
                 {group.label}
@@ -95,7 +77,7 @@ export default function SettingsDashboard() {
                     >
                       <div
                         className="absolute -right-6 -bottom-6 pointer-events-none"
-                        style={{ color: section.watermarkColor, opacity: 0.1 }}
+                        style={{ color: SETTINGS_WATERMARK_COLORS[group.label] ?? "#a0927b", opacity: 0.1 }}
                       >
                         <WatermarkIcon className="h-48 w-48" />
                       </div>
@@ -106,7 +88,7 @@ export default function SettingsDashboard() {
                         </div>
 
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          {section.description}
+                          {getDescription(section)}
                         </p>
                       </div>
                     </Link>

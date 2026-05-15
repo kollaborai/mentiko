@@ -2,19 +2,15 @@
 
 import { useState, useEffect } from "react";
 import {
-  CategoryFilled, UserFilled, ColorSwatchFilled, NotificationFilled,
-  LockFilled, SecurityFilled, ShieldTickFilled, BotMessageSquare,
-  SmsFilled, ExportFilled, PeopleFilled, Element3Filled,
-  Setting2Filled, DocumentTextFilled, CommandSquareFilled,
-  ChartFilled, ActivityFilled, TrendUpFilled, MessageQuestionFilled,
-  ArrowLeftFilled, KeyFilled, MenuFilled, CloseCircleFilled,
-  MagicStarFilled,
+  MessageQuestionFilled,
+  ArrowLeftFilled, MenuFilled, CloseCircleFilled,
 } from "@aliimam/icons";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import { getFloatingPanelSrc } from "@/lib/floating-app-panel-routing";
+import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/settings-nav";
 
 interface SettingsLayoutProps {
   children: React.ReactNode;
@@ -23,8 +19,8 @@ interface SettingsLayoutProps {
 interface NavItem {
   id: string;
   label: string;
-  icon: React.ElementType;
   href: string;
+  icon: React.ElementType;
 }
 
 interface NavGroup {
@@ -46,78 +42,18 @@ export default function SettingsLayout({ children }: SettingsLayoutProps) {
   const router = useRouter();
   const { data: session } = useSession();
 
-  const NAV_GROUPS: NavGroup[] = [
-    {
-      label: "profile",
-      items: [
-        { id: "dashboard",     label: "Overview",       icon: CategoryFilled,        href: "/settings" },
-        { id: "account",       label: "Account",        icon: UserFilled,            href: "/settings/account" },
-        { id: "appearance",    label: "Appearance",     icon: ColorSwatchFilled,     href: "/settings/appearance" },
-        { id: "pill-nav",      label: "Navigation Bar", icon: Element3Filled,        href: "/settings/pill-nav" },
-        { id: "notifications", label: "Notifications",  icon: NotificationFilled,    href: "/settings/notifications" },
-      ],
-    },
-    {
-      label: "access",
-      items: [
-        { id: "security",  label: "Security",  icon: LockFilled,       href: "/settings/security" },
-        { id: "sessions",  label: "Sessions",  icon: SecurityFilled,   href: "/settings/sessions" },
-        { id: "ssh-keys",  label: "SSH Keys",  icon: KeyFilled,        href: "/settings/ssh-keys" },
-        { id: "secrets",   label: "Secrets",   icon: ShieldTickFilled, href: "/settings/secrets" },
-      ],
-    },
-    {
-      label: "workspace",
-      items: [
-        { id: "agent-configs",  label: "Agent Configs",   icon: BotMessageSquare,      href: "/settings/agent-configs" },
-        { id: "mentiko-agent", label: "Mentiko Agent",  icon: MagicStarFilled,       href: "/settings/mentiko-agent" },
-        { id: "email",         label: "Email",          icon: SmsFilled,  href: "/settings/email" },
-      ],
-    },
-    {
-      label: "organization",
-      items: [
-        { id: "data",         label: "Data",         icon: ExportFilled,  href: "/settings/data" },
-        { id: "organization", label: "Organization", icon: PeopleFilled,  href: "/settings/organization" },
-      ],
-    },
-    {
-      label: "system",
-      items: [
-        { id: "system",       label: "System",       icon: Setting2Filled,       href: "/settings/system" },
-        { id: "logs",         label: "Logs",         icon: DocumentTextFilled,   href: "/settings/logs" },
-        { id: "audit",        label: "Audit Trail",  icon: ShieldTickFilled,    href: "/settings/audit" },
-        { id: "pty",          label: "PTY Sessions", icon: CommandSquareFilled,  href: "/settings/pty" },
-        { id: "metrics",      label: "Metrics",      icon: ChartFilled,          href: "/settings/metrics" },
-        { id: "agent-health", label: "Agent Health", icon: ActivityFilled,       href: "/settings/agent-health" },
-        { id: "performance",  label: "Performance",  icon: TrendUpFilled,        href: "/settings/performance" },
-      ],
-    },
-  ];
+  const NAV_GROUPS: NavGroup[] = SETTINGS_SIDEBAR_GROUPS;
+  const SETTINGS_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
   const getActiveId = () => {
-    if (pathname === "/settings") return "dashboard";
-    if (pathname === "/settings/account") return "account";
-    if (pathname === "/settings/appearance") return "appearance";
-    if (pathname === "/settings/pill-nav") return "pill-nav";
-    if (pathname === "/settings/notifications") return "notifications";
-    if (pathname === "/settings/secrets") return "secrets";
-    if (pathname === "/settings/security") return "security";
-    if (pathname === "/settings/sessions") return "sessions";
-    if (pathname === "/settings/ssh-keys") return "ssh-keys";
-    if (pathname === "/settings/agent-configs") return "agent-configs";
-    if (pathname === "/settings/mentiko-agent") return "mentiko-agent";
-    if (pathname === "/settings/email") return "email";
-    if (pathname === "/settings/data") return "data";
-    if (pathname === "/settings/system") return "system";
-    if (pathname === "/settings/logs") return "logs";
-    if (pathname === "/settings/audit") return "audit";
-    if (pathname === "/settings/pty") return "pty";
-    if (pathname === "/settings/metrics") return "metrics";
-    if (pathname === "/settings/agent-health") return "agent-health";
-    if (pathname === "/settings/performance") return "performance";
     if (pathname === "/orgs") return "organization";
-    if (pathname.startsWith("/settings/organization")) return "organization";
+    if (pathname === "/settings") return "dashboard";
+
+    const match = SETTINGS_ITEMS.find((item) => (
+      pathname === item.href || pathname.startsWith(`${item.href}/`)
+    ));
+    if (match) return match.id;
+
     return "dashboard";
   };
 
