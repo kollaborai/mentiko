@@ -29,4 +29,48 @@ describe("kollabor bar font settings", () => {
 
     expect(useKollaborBarStore.getState().fontScale).toBe(1.25);
   });
+
+  it("loads and persists side docking for the floating bar", async () => {
+    const { useKollaborBarStore } = await import("../kollabor-bar-store");
+
+    expect(useKollaborBarStore.getState().dock).toEqual({ edge: "bottom", offset: 50 });
+
+    useKollaborBarStore.getState().setDock({ edge: "left", offset: 4 });
+
+    expect(useKollaborBarStore.getState().dock).toEqual({ edge: "left", offset: 10 });
+    expect(JSON.parse(localStorage.getItem("mentiko-kollabor-dock") || "{}")).toEqual({
+      edge: "left",
+      offset: 10,
+    });
+  });
+
+  it("hydrates a saved side dock and ignores corrupted dock storage", async () => {
+    localStorage.setItem("mentiko-kollabor-dock", JSON.stringify({ edge: "right", offset: 91 }));
+
+    let mod = await import("../kollabor-bar-store");
+    expect(mod.useKollaborBarStore.getState().dock).toEqual({ edge: "right", offset: 90 });
+
+    jest.resetModules();
+    localStorage.setItem("mentiko-kollabor-dock", "{nope");
+
+    mod = await import("../kollabor-bar-store");
+    expect(mod.useKollaborBarStore.getState().dock).toEqual({ edge: "bottom", offset: 50 });
+  });
+
+  it("maps dragged screen points to side dock positions inside the edge reach", async () => {
+    const { getKollaborBarDockForPoint } = await import("../kollabor-bar-store");
+
+    expect(getKollaborBarDockForPoint(240, 500, 1440, 1000)).toEqual({
+      edge: "left",
+      offset: 50,
+    });
+    expect(getKollaborBarDockForPoint(1200, 250, 1440, 1000)).toEqual({
+      edge: "right",
+      offset: 25,
+    });
+    expect(getKollaborBarDockForPoint(720, 500, 1440, 1000)).toEqual({
+      edge: "bottom",
+      offset: 50,
+    });
+  });
 });

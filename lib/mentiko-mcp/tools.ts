@@ -44,6 +44,11 @@ const BAR_TOOL_NAMES = new Set([
   "list_dir",
   "tree",
   "find_files",
+  "read_runtime_file",
+  "list_runtime_dir",
+  "get_run_state",
+  "get_run_events",
+  "get_system_logs",
   "notify",
   "ask_confirm",
   "ask_input",
@@ -824,6 +829,65 @@ const ALL_TOOLS: Tool[] = [
         maxResults: { type: "number", description: "Max files to return (default 20)" }
       },
       required: ["path", "pattern"]
+    }
+  },
+  {
+    name: "read_runtime_file",
+    description: "Read a runtime diagnostic file from the current namespace/org only. Use this instead of read_file for events, runs, watchdog-hooks, or reports. Allowed roots: events/, runs/, watchdog-hooks/, reports/. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Runtime path such as events/file.event, runs/run-123/run.json, or an absolute path under the current namespace/org runtime roots." }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "list_runtime_dir",
+    description: "List a runtime diagnostic directory from the current namespace/org only. Use for events/, runs/, watchdog-hooks/, or reports/. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Runtime directory such as events, runs/run-123, watchdog-hooks, or reports." }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "get_run_state",
+    description: "Read run.json for a run id and return derived diagnostics including status, pending agent, last completed agent, failed agent, and error clues. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run id, for example run-1778724644028." }
+      },
+      required: ["runId"]
+    }
+  },
+  {
+    name: "get_run_events",
+    description: "List and read event files in the current namespace/org events directory that reference a run id. Use to diagnose trigger/emits mismatches and stalled runs. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run id, for example run-1778724644028." }
+      },
+      required: ["runId"]
+    }
+  },
+  {
+    name: "get_system_logs",
+    description: "Query the same structured system logs visible on /settings/logs for the current namespace/org. Supports level, source, text query, time range, and limit. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        level: { type: "string", enum: ["error", "warn", "info"] },
+        source: { type: "string" },
+        query: { type: "string", description: "Case-insensitive text search over source, message, and detail." },
+        since: { type: "string", description: "ISO timestamp lower bound." },
+        until: { type: "string", description: "ISO timestamp upper bound." },
+        limit: { type: "number", description: "Max recent entries to scan, capped server-side." }
+      }
     }
   },
 

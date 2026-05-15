@@ -45,6 +45,15 @@ export interface KollaborMessage {
   ask?: KollaborAskRequest & { result?: unknown };
 }
 
+export type KollaborBarDockEdge = "bottom" | "left" | "right";
+
+export interface KollaborBarDock {
+  edge: KollaborBarDockEdge;
+  // bottom: reserved for future horizontal percent anchors.
+  // left/right: vertical percent from the top of the viewport.
+  offset: number;
+}
+
 export interface KollaborDrafting {
   text: string;
   tools: DraftTool[];
@@ -62,6 +71,7 @@ interface KollaborBarState {
   // offset from bottom-center anchor, in px. positive y = moved UP toward top of screen.
   offsetX: number;
   offsetY: number;
+  dock: KollaborBarDock;
   // user-controlled size multiplier, default 1.0, clamped [0.6, 1.6]
   scale: number;
   // message/input text multiplier, default 1.0, clamped [0.8, 1.35]
@@ -82,6 +92,7 @@ interface KollaborBarState {
   pushMessage: (m: KollaborMessage) => void;
   clearMessages: () => void;
   setOffset: (x: number, y: number) => void;
+  setDock: (dock: KollaborBarDock) => void;
   setScale: (s: number) => void;
   setFontScale: (s: number) => void;
 
@@ -112,15 +123,61 @@ interface KollaborBarState {
 
 const LS_KEY = "mentiko-kollabor-transcript";
 const LS_OFFSET_KEY = "mentiko-kollabor-offset";
+const LS_DOCK_KEY = "mentiko-kollabor-dock";
 const LS_SCALE_KEY = "mentiko-kollabor-scale";
 const LS_FONT_SCALE_KEY = "mentiko-kollabor-font-scale";
 const LS_SESSION_KEY = "mentiko-kollabor-session-id";
 
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 1.6;
+export const KOLLABOR_BAR_DEFAULT_DOCK: KollaborBarDock = { edge: "bottom", offset: 50 };
+export const KOLLABOR_BAR_SIDE_DOCK_REACH_PX = 280;
+export const KOLLABOR_BAR_DOCK_OFFSET_MIN = 10;
+export const KOLLABOR_BAR_DOCK_OFFSET_MAX = 90;
 export const FONT_SCALE_DEFAULT = 1;
 export const FONT_SCALE_MIN = 0.8;
 export const FONT_SCALE_MAX = 1.35;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+export function normalizeKollaborBarDock(value: unknown): KollaborBarDock {
+  if (!value || typeof value !== "object") return KOLLABOR_BAR_DEFAULT_DOCK;
+  const raw = value as { edge?: unknown; offset?: unknown };
+  if (raw.edge !== "bottom" && raw.edge !== "left" && raw.edge !== "right") {
+    return KOLLABOR_BAR_DEFAULT_DOCK;
+  }
+  if (raw.edge === "bottom") return KOLLABOR_BAR_DEFAULT_DOCK;
+  const offset = typeof raw.offset === "number" && Number.isFinite(raw.offset)
+    ? raw.offset
+    : KOLLABOR_BAR_DEFAULT_DOCK.offset;
+  return {
+    edge: raw.edge,
+    offset: clampNumber(offset, KOLLABOR_BAR_DOCK_OFFSET_MIN, KOLLABOR_BAR_DOCK_OFFSET_MAX),
+  };
+}
+
+export function getKollaborBarDockForPoint(
+  x: number,
+  y: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): KollaborBarDock {
+  if (viewportWidth <= 0 || viewportHeight <= 0) return KOLLABOR_BAR_DEFAULT_DOCK;
+  const reach = Math.min(
+    KOLLABOR_BAR_SIDE_DOCK_REACH_PX,
+    Math.max(200, viewportWidth * 0.2),
+  );
+  const offset = clampNumber(
+    (y / viewportHeight) * 100,
+    KOLLABOR_BAR_DOCK_OFFSET_MIN,
+    KOLLABOR_BAR_DOCK_OFFSET_MAX,
+  );
+  if (x <= reach) return { edge: "left", offset };
+  if (x >= viewportWidth - reach) return { edge: "right", offset };
+  return KOLLABOR_BAR_DEFAULT_DOCK;
+}
 
 function loadScale(): number {
   if (typeof window === "undefined") return 1;
@@ -178,6 +235,26 @@ function loadOffset(): { x: number; y: number } {
     };
   } catch {
     return { x: 0, y: 0 };
+  }
+}
+
+function loadDock(): KollaborBarDock {
+  if (typeof window === "undefined") return KOLLABOR_BAR_DEFAULT_DOCK;
+  try {
+    const raw = localStorage.getItem(LS_DOCK_KEY);
+    if (!raw) return KOLLABOR_BAR_DEFAULT_DOCK;
+    return normalizeKollaborBarDock(JSON.parse(raw));
+  } catch {
+    return KOLLABOR_BAR_DEFAULT_DOCK;
+  }
+}
+
+function saveDock(dock: KollaborBarDock) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(LS_DOCK_KEY, JSON.stringify(normalizeKollaborBarDock(dock)));
+  } catch {
+    // ignore
   }
 }
 
@@ -275,6 +352,7 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
     messages: loadTranscript(),
     offsetX: initialOffset.x,
     offsetY: initialOffset.y,
+    dock: loadDock(),
     scale: loadScale(),
     fontScale: loadFontScale(),
 
@@ -301,6 +379,11 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
     setOffset: (x, y) => {
       saveOffset(x, y);
       set({ offsetX: x, offsetY: y });
+    },
+    setDock: (dock) => {
+      const normalized = normalizeKollaborBarDock(dock);
+      saveDock(normalized);
+      set({ dock: normalized });
     },
     setScale: (s) => {
       const clamped = Math.min(SCALE_MAX, Math.max(SCALE_MIN, s));

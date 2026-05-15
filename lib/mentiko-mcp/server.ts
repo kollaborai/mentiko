@@ -20,6 +20,7 @@ import * as decisionsHandler from "./handlers/decisions.js";
 import * as onboarding from "./handlers/onboarding.js";
 import * as schedules from "./handlers/schedules.js";
 import * as applications from "./handlers/applications.js";
+import * as runtime from "./handlers/runtime.js";
 
 // Simple fuzzy matching: score based on substring presence and position
 function fuzzyMatch(query: string, target: string): number {
@@ -534,6 +535,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     if (name === "find_files") {
       const result = await filesystem.findFiles(args.path || ".", args.pattern || "", args.maxResults);
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    // ---------- runtime diagnostics (tier A reads) ----------
+    if (name === "read_runtime_file") {
+      const result = await runtime.readRuntimeFile(args.path);
+      return textResult(result.content ?? JSON.stringify(result, null, 2));
+    }
+
+    if (name === "list_runtime_dir") {
+      const result = await runtime.listRuntimeDir(args.path);
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    if (name === "get_run_state") {
+      const result = await runtime.getRunState(args.runId);
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    if (name === "get_run_events") {
+      const result = await runtime.getRunEvents(args.runId);
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    if (name === "get_system_logs") {
+      const result = await runtime.getSystemLogs(args);
       return textResult(JSON.stringify(result, null, 2));
     }
 

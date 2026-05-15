@@ -191,7 +191,7 @@ export const PROVIDER_BUNDLES: ProviderBundle[] = [
         name: "Kollab CLI",
         cli: "kollab",
         pipe_flag: "-p",
-        permission_flag: "--permission trust",
+        permission_flag: "--permissions trust",
         description: "Kollab CLI",
       },
     ],

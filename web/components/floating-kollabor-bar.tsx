@@ -10,6 +10,9 @@ import {
   DraftTool,
   SCALE_MIN,
   SCALE_MAX,
+  KOLLABOR_BAR_DEFAULT_DOCK,
+  getKollaborBarDockForPoint,
+  type KollaborBarDock,
 } from "@/lib/kollabor-bar-store";
 import { useWorkspace } from "@/lib/workspace-context";
 import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
@@ -101,6 +104,80 @@ function arrayPayload(payload: Record<string, unknown>, key: string): unknown[] 
   return Array.isArray(value) ? value : undefined;
 }
 
+const FREE_BAR_VIEWPORT_MARGIN = 16;
+const FREE_BAR_MIN_CENTER_Y = 44;
+
+function isSideDock(
+  dock: KollaborBarDock,
+): dock is KollaborBarDock & { edge: "left" | "right" } {
+  return dock.edge === "left" || dock.edge === "right";
+}
+
+function clampFreeBarCenter(
+  x: number,
+  y: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  barWidth: number,
+  pillHeight: number,
+): { x: number; y: number } {
+  const halfWidth = barWidth / 2;
+  const halfPillHeight = pillHeight / 2;
+  return {
+    x: Math.min(
+      viewportWidth - FREE_BAR_VIEWPORT_MARGIN - halfWidth,
+      Math.max(FREE_BAR_VIEWPORT_MARGIN + halfWidth, x),
+    ),
+    y: Math.min(
+      viewportHeight - FREE_BAR_VIEWPORT_MARGIN - halfPillHeight,
+      Math.max(FREE_BAR_MIN_CENTER_Y, y),
+    ),
+  };
+}
+
+function clampFreeBarOffsetX(offsetX: number, scale: number): number {
+  if (typeof window === "undefined") return offsetX;
+  const barWidth = Math.min(373, window.innerWidth - 32) * scale;
+  const maxOffset = Math.max(
+    0,
+    window.innerWidth / 2 - FREE_BAR_VIEWPORT_MARGIN - barWidth / 2,
+  );
+  return Math.min(maxOffset, Math.max(-maxOffset, offsetX));
+}
+
+function clampFreeBarBottom(bottom: number): number {
+  if (typeof window === "undefined") return bottom;
+  const maxBottom = Math.max(
+    FREE_BAR_VIEWPORT_MARGIN,
+    window.innerHeight - FREE_BAR_MIN_CENTER_Y,
+  );
+  return Math.min(maxBottom, Math.max(FREE_BAR_VIEWPORT_MARGIN, bottom));
+}
+
+function sideDockRailStyle(edge: "left" | "right", y: number): React.CSSProperties {
+  const height = 132;
+  const top = Math.min(
+    window.innerHeight - height - 12,
+    Math.max(12, y - height / 2),
+  );
+  return {
+    position: "fixed",
+    pointerEvents: "none",
+    zIndex: FLOATING_SURFACE_Z.kollaborBar - 1,
+    top,
+    [edge]: 0,
+    width: 3,
+    height,
+    borderRadius: edge === "left" ? "0 999px 999px 0" : "999px 0 0 999px",
+    background: "rgba(245, 158, 11, 0.55)",
+    opacity: 0.85,
+  } as React.CSSProperties;
+}
+
+function sideDockBottomCss(offset: number, scale: number): string {
+  return `max(${FREE_BAR_VIEWPORT_MARGIN}px, calc(${100 - offset}vh - ${px(24 * scale)}))`;
+}
+
 export function FloatingKollaborBar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -138,7 +215,8 @@ export function FloatingKollaborBar() {
     resolveAsk,
   } = useKollaborBarStore();
 
-  const { offsetX, offsetY, setOffset, scale, setScale, fontScale } = useKollaborBarStore();
+  const { offsetX, offsetY, dock, setOffset, setDock, scale, setScale, fontScale } =
+    useKollaborBarStore();
   const { prefs: pillPrefs } = usePillNavPreferences();
   const shineColors =
     COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
@@ -151,10 +229,28 @@ export function FloatingKollaborBar() {
   const routerRef = useRef(router);
   const mcpClientRef = useRef<MCPBarClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const dragStartRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(
-    null,
-  );
+  const dragStartRef = useRef<{
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    pillHeight: number;
+  } | null>(null);
+  const dragPositionRef = useRef<{
+    left: number;
+    top: number;
+    pointerX: number;
+    pointerY: number;
+  } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [dragPosition, setDragPosition] = useState<{
+    left: number;
+    top: number;
+    pointerX: number;
+    pointerY: number;
+  } | null>(null);
   const [codexAuthPromptOpen, setCodexAuthPromptOpen] = useState(false);
   const [codexAuthChecked, setCodexAuthChecked] = useState(false);
   const [codexAuthDecision, setCodexAuthDecision] = useState<null | "accept" | "decline">(null);
@@ -351,44 +447,121 @@ export function FloatingKollaborBar() {
     [pillPrefs.navigationMode, pushAskRequest, setExpanded, setWorkspaceId],
   );
 
-  const effOffsetX = mounted ? offsetX : 0;
-  const effOffsetY = mounted ? offsetY : 0;
   const effScale = mounted ? scale : 1;
+  const effOffsetX = mounted ? clampFreeBarOffsetX(offsetX, effScale) : 0;
+  const effOffsetY = mounted ? offsetY : 0;
+  const effDock = mounted ? dock : KOLLABOR_BAR_DEFAULT_DOCK;
+  const gripRef = useRef<HTMLButtonElement | null>(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const pillRef = useRef<HTMLDivElement | null>(null);
 
   const onDragStart = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Window-level pointer listeners below keep drag working if capture
+        // is unavailable or the pointer leaves the small grip target.
+      }
+      const barRect = barRef.current?.getBoundingClientRect();
+      const pillRect = pillRef.current?.getBoundingClientRect();
+      const left = barRect?.left ?? e.clientX;
+      const top = barRect?.top ?? e.clientY;
       dragStartRef.current = {
         x: e.clientX,
         y: e.clientY,
-        ox: offsetX,
-        oy: offsetY,
+        left,
+        top,
+        width: barRect?.width ?? 373,
+        height: barRect?.height ?? 48,
+        pillHeight: pillRect?.height ?? 48,
       };
+      dragPositionRef.current = {
+        left,
+        top,
+        pointerX: e.clientX,
+        pointerY: e.clientY,
+      };
+      setDragPosition(dragPositionRef.current);
       setDragging(true);
     },
-    [offsetX, offsetY],
+    [],
   );
 
-  const onDragMove = useCallback(
-    (e: React.PointerEvent) => {
+  const updateDragPosition = useCallback(
+    (clientX: number, clientY: number) => {
       if (!dragStartRef.current) return;
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      // y gets inverted: dragging UP (dy negative) should move bar UP (offsetY positive in our anchor)
-      setOffset(dragStartRef.current.ox + dx, dragStartRef.current.oy - dy);
+      const dx = clientX - dragStartRef.current.x;
+      const dy = clientY - dragStartRef.current.y;
+      const next = {
+        left: dragStartRef.current.left + dx,
+        top: dragStartRef.current.top + dy,
+        pointerX: clientX,
+        pointerY: clientY,
+      };
+      dragPositionRef.current = next;
+      setDragPosition(next);
     },
-    [setOffset],
+    [],
   );
 
   const onDragEnd = useCallback(() => {
+    const endPosition = dragPositionRef.current;
+    const start = dragStartRef.current;
+    if (endPosition && start) {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const nextDock = getKollaborBarDockForPoint(
+        endPosition.pointerX,
+        endPosition.pointerY,
+        viewportWidth,
+        viewportHeight,
+      );
+      setDock(nextDock);
+      if (nextDock.edge === "bottom") {
+        const centerX = endPosition.left + start.width / 2;
+        const centerY = endPosition.top + start.height - start.pillHeight / 2;
+        const clamped = clampFreeBarCenter(
+          centerX,
+          centerY,
+          viewportWidth,
+          viewportHeight,
+          start.width,
+          start.pillHeight,
+        );
+        const bottom = Math.max(
+          FREE_BAR_VIEWPORT_MARGIN,
+          viewportHeight - (clamped.y + start.pillHeight / 2),
+        );
+        setOffset(clamped.x - viewportWidth / 2, bottom - FREE_BAR_VIEWPORT_MARGIN);
+      }
+    }
     dragStartRef.current = null;
+    dragPositionRef.current = null;
+    setDragPosition(null);
     setDragging(false);
-  }, []);
+  }, [setDock, setOffset]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handlePointerMove = (e: PointerEvent) => {
+      updateDragPosition(e.clientX, e.clientY);
+    };
+    const handlePointerEnd = () => {
+      onDragEnd();
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [dragging, onDragEnd, updateDragPosition]);
 
   // scroll-wheel anywhere over the pill to resize (hover + scroll = zoom)
-  const gripRef = useRef<HTMLButtonElement | null>(null);
-  const pillRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const pill = pillRef.current;
     if (!pill) return;
@@ -861,10 +1034,78 @@ export function FloatingKollaborBar() {
       ? "text-green-400"
       : "text-muted-foreground";
 
-  const barBottom = Math.max(16, 16 + effOffsetY);
-  const barLeftPct = 50; // center + offset handled via transform
+  const barBottom = mounted
+    ? clampFreeBarBottom(FREE_BAR_VIEWPORT_MARGIN + effOffsetY)
+    : FREE_BAR_VIEWPORT_MARGIN;
+  const dragDock = dragPosition
+    ? getKollaborBarDockForPoint(
+        dragPosition.pointerX,
+        dragPosition.pointerY,
+        window.innerWidth,
+        window.innerHeight,
+      )
+    : null;
+  const activeDockEdge = dragPosition
+    ? dragDock && isSideDock(dragDock) ? dragDock.edge : "bottom"
+    : effDock.edge;
+  const maskAnchor = dragPosition
+    ? { x: `${dragPosition.pointerX}px`, y: `${dragPosition.pointerY}px` }
+    : effDock.edge === "left"
+      ? { x: "0px", y: `${effDock.offset}%` }
+      : effDock.edge === "right"
+        ? { x: "100%", y: `${effDock.offset}%` }
+        : {
+            x: `calc(50% + ${effOffsetX}px)`,
+            y: `calc(100% - ${barBottom + 40}px)`,
+          };
+  const containerPositionStyle: React.CSSProperties = dragPosition
+    ? {
+        left: dragPosition.left,
+        top: dragPosition.top,
+        transform: `scale(${effScale.toFixed(3)})`,
+        transformOrigin: "top left",
+      }
+    : effDock.edge === "left"
+      ? {
+          left: 0,
+          bottom: sideDockBottomCss(effDock.offset, effScale),
+          transform: `scale(${effScale.toFixed(3)})`,
+          transformOrigin: "bottom left",
+        }
+      : effDock.edge === "right"
+        ? {
+            right: 0,
+            bottom: sideDockBottomCss(effDock.offset, effScale),
+            transform: `scale(${effScale.toFixed(3)})`,
+            transformOrigin: "bottom right",
+          }
+        : {
+            left: "50%",
+            bottom: `${barBottom}px`,
+            transform: `translateX(calc(-50% + ${effOffsetX}px)) scale(${effScale.toFixed(3)})`,
+            transformOrigin: "bottom center",
+          };
+  const codexPromptStyle: React.CSSProperties = isSideDock(effDock)
+    ? {
+        zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
+        top: `${effDock.offset}%`,
+        [effDock.edge]: "16px",
+        transform: "translateY(calc(-50% - 56px))",
+      } as React.CSSProperties
+    : {
+        zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
+        bottom: `${barBottom + 64}px`,
+        left: "50%",
+        transform: "translateX(-50%)",
+      };
   return (
     <>
+      {dragging && dragPosition && dragDock && isSideDock(dragDock) && (
+        <div
+          aria-hidden="true"
+          style={sideDockRailStyle(dragDock.edge, dragPosition.pointerY)}
+        />
+      )}
       {/* full-viewport backdrop, centered radial mask at the bar position */}
       {codexAuthPromptOpen && (
         <motion.div
@@ -873,12 +1114,8 @@ export function FloatingKollaborBar() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 8 }}
           transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="fixed left-1/2 flex justify-between gap-2 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 text-xs pointer-events-auto"
-          style={{
-            zIndex: FLOATING_SURFACE_Z.kollaborPrompt,
-            bottom: `${barBottom + 64}px`,
-            transform: "translateX(-50%)",
-          }}
+          className="fixed flex max-w-[calc(100vw-2rem)] justify-between gap-2 rounded-2xl border border-border/70 bg-background/95 px-3 py-2 text-xs pointer-events-auto"
+          style={codexPromptStyle}
         >
           <div className="text-foreground/80">found codex token in ~/.codex. use it for mentiko?</div>
           <div className="flex gap-2">
@@ -915,23 +1152,23 @@ export function FloatingKollaborBar() {
               backdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
               WebkitBackdropFilter: "blur(20px) saturate(115%) brightness(0.75)",
               backgroundColor: "rgba(0,0,0,0.22)",
-              maskImage: `radial-gradient(ellipse 540px 900px at calc(${barLeftPct}% + ${effOffsetX}px) calc(100% - ${barBottom + 40}px), rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
-              WebkitMaskImage: `radial-gradient(ellipse 540px 900px at calc(${barLeftPct}% + ${effOffsetX}px) calc(100% - ${barBottom + 40}px), rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
+              maskImage: `radial-gradient(ellipse 540px 900px at ${maskAnchor.x} ${maskAnchor.y}, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
+              WebkitMaskImage: `radial-gradient(ellipse 540px 900px at ${maskAnchor.x} ${maskAnchor.y}, rgba(0,0,0,1) 0%, rgba(0,0,0,0.95) 40%, rgba(0,0,0,0.6) 65%, transparent 90%)`,
             }}
           />
         )}
       </AnimatePresence>
       <div
+        ref={barRef}
         data-floating-kollabor-bar=""
         className="fixed w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
         style={{
           ...fontVars,
           zIndex: FLOATING_SURFACE_Z.kollaborBar,
-          left: "50%",
-          bottom: `${barBottom}px`,
-          transform: `translateX(calc(-50% + ${effOffsetX}px)) scale(${effScale.toFixed(3)})`,
-          transformOrigin: "bottom center",
-          transition: dragging ? "none" : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
+          ...containerPositionStyle,
+          transition: dragging
+            ? "none"
+            : "left 220ms cubic-bezier(0.22, 1, 0.36, 1), right 220ms cubic-bezier(0.22, 1, 0.36, 1), top 220ms cubic-bezier(0.22, 1, 0.36, 1), bottom 220ms cubic-bezier(0.22, 1, 0.36, 1), transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
           willChange: "transform",
         }}
       >
@@ -1097,6 +1334,8 @@ export function FloatingKollaborBar() {
         transition={{ type: "spring", stiffness: 320, damping: 34, mass: 0.9 }}
         className={cn(
           "group/pill pointer-events-auto relative flex items-center gap-1 rounded-2xl border border-border/80 bg-background/95 backdrop-blur px-3 py-2 shadow-lg",
+          activeDockEdge === "left" && "rounded-l-none rounded-r-2xl",
+          activeDockEdge === "right" && "rounded-r-none rounded-l-2xl",
           dragging && "select-none",
         )}
       >
@@ -1121,7 +1360,7 @@ export function FloatingKollaborBar() {
           ref={gripRef}
           type="button"
           onPointerDown={onDragStart}
-          onPointerMove={onDragMove}
+          onPointerMove={(e) => updateDragPosition(e.clientX, e.clientY)}
           onPointerUp={onDragEnd}
           onPointerCancel={onDragEnd}
           className="relative z-[2] shrink-0 h-8 w-3 flex items-center justify-center cursor-grab active:cursor-grabbing"

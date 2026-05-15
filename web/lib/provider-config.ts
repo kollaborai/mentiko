@@ -99,11 +99,11 @@ export const PROVIDER_CREDENTIALS: Record<string, {
     docsLabel: "Get API key",
   },
   kollabor: {
-    envKey: "KOLLABOR_API_KEY",
+    envKey: "KOLLAB_API_KEY",
     label: "Kollab API Key",
-    placeholder: "kol-...",
-    docsUrl: "https://kollabor.com/settings/keys",
-    docsLabel: "Get API key",
+    placeholder: "sk-...",
+    docsUrl: "https://github.com/kollaborai/kollab#readme",
+    docsLabel: "Kollab auth docs",
   },
 };
 
