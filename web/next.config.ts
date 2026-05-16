@@ -83,7 +83,18 @@ const nextConfig: NextConfig = {
 
   // experimental optimizations
   experimental: {
+    // Next 16.2.x enables Turbopack's dev filesystem cache by default. In this
+    // app the root shell references large optional surfaces (terminal, code,
+    // app panels, markdown), and the persistent cache can grow into tens of GB
+    // during long dev sessions. Keep dev caching in memory so .next/dev does not
+    // become the local disk and heap offender.
+    turbopackFileSystemCacheForDev: false,
+    turbopackSourceMaps: false,
+    turbopackInputSourceMaps: false,
     optimizePackageImports: [
+      "@aliimam/icons",
+      "@aliimam/logos",
+      "@aliimam/vectors",
       "@xyflow/react",
       "lucide-react",
       "radix-ui",
@@ -94,7 +105,7 @@ const nextConfig: NextConfig = {
   },
 
   // webpack config for bundle analysis
-  webpack: (config, { isServer }) => {
+  webpack: (config, { dev, isServer }) => {
     // ignore runtime data dirs — sqlite WAL writes and namespace files
     // must not trigger HMR rebuilds (causes infinite rebuild loop)
     config.watchOptions = {
@@ -113,6 +124,10 @@ const nextConfig: NextConfig = {
         ...config.resolve.fallback,
         fs: false,
       };
+    }
+
+    if (dev) {
+      config.devtool = false;
     }
 
     // bundle analyzer

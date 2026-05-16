@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { existsSync, readdirSync, statfsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { ping as redisPing } from "@/lib/redis";
-import { auditQueue } from "@/lib/audit-queue";
+import { ping as redisPing, redisConfigured } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 
@@ -249,6 +248,15 @@ async function checkRedis(): Promise<{ status: "pass" | "fail" | "warn"; message
 }
 
 async function checkAuditQueue(): Promise<{ status: "pass" | "fail" | "warn"; message: string; value?: { depth: number; active: number; failed: number } }> {
+  if (runtimeMode === "development") {
+    return { status: "pass", message: "audit queue check skipped in development" };
+  }
+
+  if (!redisConfigured) {
+    return { status: "warn", message: "audit queue not initialized (redis unavailable)" };
+  }
+
+  const { auditQueue } = await import("@/lib/audit-queue");
   if (!auditQueue) {
     return { status: "warn", message: "audit queue not initialized (redis unavailable)" };
   }

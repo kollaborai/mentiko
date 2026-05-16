@@ -372,6 +372,43 @@ function killTree(pid: number, signal: NodeJS.Signals) {
   try { process.kill(pid, signal); } catch {}
 }
 
+async function killPortHolders(port: number, reason: string) {
+  try {
+    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    if (!pids) return;
+    for (const pid of pids.split('\n').filter(Boolean).map(Number)) {
+      if (pid === process.pid) continue;
+      try { process.kill(pid, 'SIGTERM'); log(`${reason}: killed pid ${pid} on port ${port}`); } catch {}
+    }
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      await sleep(100);
+      try {
+        const still = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+        if (!still) return;
+      } catch { return; }
+    }
+    const stuck = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    for (const pid of stuck.split('\n').filter(Boolean).map(Number)) {
+      if (pid === process.pid) continue;
+      try { process.kill(pid, 'SIGKILL'); log(`${reason}: force-killed pid ${pid} on port ${port}`); } catch {}
+    }
+    await sleep(200);
+  } catch {}
+}
+
+function readinessPort(readiness: ReadinessConfig | undefined): number | null {
+  if (!readiness) return null;
+  if (readiness.type === 'port' && readiness.port) return readiness.port;
+  if (readiness.type === 'http' && readiness.url) {
+    try {
+      const url = new URL(readiness.url);
+      return Number(url.port) || (url.protocol === 'https:' ? 443 : 80);
+    } catch {}
+  }
+  return null;
+}
+
 async function killProc(m: ManagedProcess) {
   if (m.restartTimer) { clearTimeout(m.restartTimer); m.restartTimer = null; }
   if (!m.pid) return;
@@ -387,6 +424,8 @@ async function killProc(m: ManagedProcess) {
     await sleep(SIGTERM_WAIT);
     try { process.kill(m.pid, 0); killTree(m.pid, 'SIGKILL'); await sleep(SIGKILL_WAIT); } catch {}
   }
+  const port = readinessPort(m.config.readiness);
+  if (port) await killPortHolders(port, `${m.config.name} cleanup`);
 }
 
 function waitExit(m: ManagedProcess, timeout: number): Promise<boolean> {

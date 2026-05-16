@@ -13,9 +13,6 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import { nsPath, config } from "./config";
 import { resolveAppSecret } from "./dev-secret";
-import { execAuditLog } from "./audit-exec";
-import { sendEmail } from "./email";
-import { renderEmailVerification, renderPasswordReset, renderAccountDeletion, renderEmailChange, renderWelcome } from "./email-templates";
 import { isManagedTenantSignupLocked } from "./auth-deployment";
 import { isValidOrgInviteSignup, timingSafeTokenMatch } from "./auth-signup-gate";
 
@@ -146,6 +143,61 @@ let _auth: any = null;
 let _db: any = null;
 let _initialized = false;
 let _initPromise: Promise<void> | null = null;
+
+async function sendPasswordResetEmail(user: { email: string; name?: string }, url: string) {
+  const [{ sendEmail }, { renderPasswordReset }] = await Promise.all([
+    import("./email"),
+    import("./email-templates"),
+  ]);
+  const tpl = renderPasswordReset({ name: user.name, resetUrl: url });
+  await sendEmail({ to: user.email, ...tpl });
+}
+
+async function sendDeleteAccountEmail(user: { email: string; name?: string }, url: string) {
+  const [{ sendEmail }, { renderAccountDeletion }] = await Promise.all([
+    import("./email"),
+    import("./email-templates"),
+  ]);
+  const tpl = renderAccountDeletion({ name: user.name, confirmUrl: url });
+  await sendEmail({ to: user.email, ...tpl });
+}
+
+async function sendEmailChangeEmail(user: { email: string; name?: string }, newEmail: string, url: string) {
+  const [{ sendEmail }, { renderEmailChange }] = await Promise.all([
+    import("./email"),
+    import("./email-templates"),
+  ]);
+  const tpl = renderEmailChange({ name: user.name, oldEmail: user.email, verifyUrl: url });
+  await sendEmail({ to: newEmail, ...tpl });
+}
+
+async function sendVerificationEmail(user: { email: string; name?: string }, url: string) {
+  const [{ sendEmail }, { renderEmailVerification }] = await Promise.all([
+    import("./email"),
+    import("./email-templates"),
+  ]);
+  const tpl = renderEmailVerification({ name: user.name, verifyUrl: url });
+  await sendEmail({ to: user.email, ...tpl });
+}
+
+async function sendWelcomeEmail(user: { email: string; name?: string }, dashboardUrl: string) {
+  const [{ sendEmail }, { renderWelcome }] = await Promise.all([
+    import("./email"),
+    import("./email-templates"),
+  ]);
+  const tpl = renderWelcome({ name: user.name, dashboardUrl });
+  await sendEmail({ to: user.email, ...tpl });
+}
+
+async function writeAuthAuditLog(
+  eventType: string,
+  description: string,
+  metadata: Record<string, unknown>,
+  options?: Record<string, unknown>
+) {
+  const { execAuditLog } = await import("./audit-exec");
+  await execAuditLog(eventType, description, metadata, options);
+}
 
 /**
  * parse DATABASE_URL for sqlite.
@@ -353,16 +405,14 @@ export async function getAuth() {
           resetPasswordTokenExpiresIn: 3600, // 1 hour
           sendResetPassword: async ({ user, url }: { user: { email: string; name?: string }; url: string }) => {
             try {
-              const tpl = renderPasswordReset({ name: user.name, resetUrl: url });
-              await sendEmail({ to: user.email, ...tpl });
+              await sendPasswordResetEmail(user, url);
             } catch (err) {
               console.error("[auth] password reset email failed:", err);
             }
           },
           sendDeleteAccountVerification: async ({ user, url }: { user: { email: string; name?: string }; url: string }) => {
             try {
-              const tpl = renderAccountDeletion({ name: user.name, confirmUrl: url });
-              await sendEmail({ to: user.email, ...tpl });
+              await sendDeleteAccountEmail(user, url);
             } catch (err) {
               console.error("[auth] delete account email failed:", err);
             }
@@ -382,8 +432,7 @@ export async function getAuth() {
             enabled: true,
             sendChangeEmailVerification: async ({ user, newEmail, url }: { user: { email: string; name?: string }; newEmail: string; url: string }) => {
               try {
-                const tpl = renderEmailChange({ name: user.name, oldEmail: user.email, verifyUrl: url });
-                await sendEmail({ to: newEmail, ...tpl });
+                await sendEmailChangeEmail(user, newEmail, url);
               } catch (err) {
                 console.error("[auth] email change verification failed:", err);
               }
@@ -408,8 +457,7 @@ export async function getAuth() {
           expiresIn: 86400,
           sendVerificationEmail: async ({ user, url }: { user: { email: string; name?: string }; url: string }) => {
             try {
-              const tpl = renderEmailVerification({ name: user.name, verifyUrl: url });
-              await sendEmail({ to: user.email, ...tpl });
+              await sendVerificationEmail(user, url);
             } catch (err) {
               // don't fail signup if email isn't ready yet (fresh tenant)
               console.error("[auth] verification email failed (non-fatal):", err);
@@ -536,8 +584,7 @@ export async function getAuth() {
                         // send welcome email to new workspace owner (non-blocking)
                         if (user.email) {
                           const dashboardUrl = `${authBaseURL}/dashboard`;
-                          const tpl = renderWelcome({ name: user.name, dashboardUrl });
-                          sendEmail({ to: user.email, ...tpl }).catch((err) => {
+                          sendWelcomeEmail(user, dashboardUrl).catch((err) => {
                             console.error("[auth] welcome email failed:", err);
                           });
                         }
@@ -599,7 +646,7 @@ export async function getAuth() {
                   ).get(session.userId);
 
                   if (user?.id) {
-                    await execAuditLog(
+                    await writeAuthAuditLog(
                       "auth_login",
                       "user logged in",
                       { user_id: user.id },
@@ -651,7 +698,7 @@ export async function getAuth() {
                   ).get(session.userId);
 
                   if (user?.id) {
-                    await execAuditLog(
+                    await writeAuthAuditLog(
                       "auth_logout",
                       "user logged out",
                       { user_id: user.id },
