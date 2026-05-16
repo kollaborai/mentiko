@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-05-13)
+# api route auth coverage (as of 2026-05-16)
 
 ## summary
-- total routes: 316
-- authenticated: 300   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 317
+- authenticated: 301   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 16
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -199,6 +199,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/ops/meta/settings/route.ts
 - mentiko-mcp/ops/notifications/prefs/route.ts
 - mentiko-mcp/ops/notify/route.ts
+- mentiko-mcp/ops/runtime/route.ts
 - mentiko-mcp/ops/schedules/route.ts
 - mentiko-mcp/ops/schedules/run/route.ts
 - mentiko-mcp/ops/secrets/route.ts
