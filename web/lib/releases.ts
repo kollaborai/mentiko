@@ -8,9 +8,18 @@ export interface Release {
 }
 
 export const releases: Release[] = [
-  // --- v0.4.x (May 2026) ---
+  // --- v0.3.x (May 2026) ---
   {
-    version: "v0.4.2",
+    version: "v0.3.9",
+    date: "May 16, 2026",
+    title: "Local Dev Runtime Stabilization",
+    description:
+      "Root navigation now renders the dashboard directly instead of tripping the Next.js client router redirect path. Dev mode disables Turbopack's persistent filesystem cache and source maps to stop .next/dev from growing into a local disk offender during long sessions.",
+    category: "fix",
+    docsHref: "/dashboard",
+  },
+  {
+    version: "v0.3.8",
     date: "May 14, 2026",
     title: "Floating Page Panels",
     description:
@@ -19,7 +28,7 @@ export const releases: Release[] = [
     docsHref: "/settings/pill-nav",
   },
   {
-    version: "v0.4.1",
+    version: "v0.3.7",
     date: "May 12, 2026",
     title: "Resend Email Provider & Self-Hosted Improvements",
     description:
@@ -28,7 +37,7 @@ export const releases: Release[] = [
     docsHref: "/docs/email",
   },
   {
-    version: "v0.4.0",
+    version: "v0.3.6",
     date: "May 12, 2026",
     title: "Mentiko MCP — NPM Package & Docker Image",
     description:
