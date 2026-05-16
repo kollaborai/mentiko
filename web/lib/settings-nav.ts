@@ -1,4 +1,4 @@
-import type { ComponentType, SVGProps } from "react";
+import type { ComponentType } from "react";
 import {
   CategoryFilled, UserFilled, ColorSwatchFilled, Element3Filled, NotificationFilled,
   LockFilled, SecurityFilled, ShieldTickFilled, BotMessageSquare, SmsFilled,
@@ -7,7 +7,7 @@ import {
   MagicStarFilled,
 } from "@aliimam/icons";
 
-type SettingsIcon = ComponentType<SVGProps<SVGSVGElement>>;
+type SettingsIcon = ComponentType<{ className?: string }>;
 
 export interface SettingsNavItem {
   id: string;

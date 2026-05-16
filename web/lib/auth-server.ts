@@ -13,6 +13,7 @@ import { dirname, join } from "path";
 import { homedir } from "os";
 import { nsPath, config } from "./config";
 import { resolveAppSecret } from "./dev-secret";
+import type { AuditExecOptions, AuditLogMetadata } from "./audit-exec";
 import { isManagedTenantSignupLocked } from "./auth-deployment";
 import { isValidOrgInviteSignup, timingSafeTokenMatch } from "./auth-signup-gate";
 
@@ -192,8 +193,8 @@ async function sendWelcomeEmail(user: { email: string; name?: string }, dashboar
 async function writeAuthAuditLog(
   eventType: string,
   description: string,
-  metadata: Record<string, unknown>,
-  options?: Record<string, unknown>
+  metadata: AuditLogMetadata,
+  options?: AuditExecOptions
 ) {
   const { execAuditLog } = await import("./audit-exec");
   await execAuditLog(eventType, description, metadata, options);
