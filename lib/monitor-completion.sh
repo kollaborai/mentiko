@@ -2,6 +2,7 @@
 # monitor-completion.sh - helpers for safe monitor completion detection
 
 MONITOR_COMPLETION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MONITOR_COMPLETION_DIR/terminal-sanitize.sh"
 
 monitor_agent_id_for_session() {
     local session_name="$1"
@@ -48,6 +49,10 @@ monitor_completion_event_file() {
 
         event_name="$(grep -im1 "^event:" "$event_file" 2>/dev/null | sed 's/^[Ee]vent:[[:space:]]*//' | xargs)"
         source_name="$(grep -im1 "^source:" "$event_file" 2>/dev/null | sed 's/^[Ss]ource:[[:space:]]*//' | xargs)"
+        if [[ -z "$event_name" && -z "$source_name" ]] && jq -e . "$event_file" >/dev/null 2>&1; then
+            event_name="$(jq -r '.event // .event_name // empty' "$event_file" 2>/dev/null)"
+            source_name="$(jq -r '.source // .source_agent // .agent // empty' "$event_file" 2>/dev/null)"
+        fi
         event_name_lower="$(printf '%s' "$event_name" | tr '[:upper:]' '[:lower:]')"
 
         [[ "$event_name_lower" == "$expected_event_lower" ]] || continue

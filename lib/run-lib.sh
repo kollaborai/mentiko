@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/terminal-sanitize.sh"
 
 # PROJECT_ROOT for data paths (namespace runs, reports, etc.)
 PROJECT_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
@@ -268,9 +269,7 @@ write-debug-state() {
 
     # sanitize output: strip ANSI codes, truncate to 200 chars for JSON safety
     # ANSI pattern: CSI sequences, OSC, DCS, SOS, PM, APC, simple escapes
-    local sanitized=$(echo "$output" | sed -E 's/\x1b\[[0-?]*[ -\/]*[@-~]//g' | \
-                     sed -E 's/\x1b\][^\x07]*(\x07|\x1b\\)//g' | \
-                     sed -E 's/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]//g' | \
+    local sanitized=$(printf '%s' "$output" | strip-terminal-control | \
                      tr '\n' ' ' | tr -s ' ' | cut -c1-200)
     [[ -z "$sanitized" ]] && sanitized="(no output)"
     [[ ${#output} -gt 200 ]] && sanitized="${sanitized}..."
@@ -356,6 +355,151 @@ trigger-auto-run-scan() {
 }
 
 # -------------------------------------------------------------------
+# build-run-summary-json: aggregate agent summaries into a run verdict
+# -------------------------------------------------------------------
+# args: <run-id>
+# output: JSON summary for run.json, task metadata, and UI display
+build-run-summary-json() {
+    local run_id="$1"
+    local run_file="$RUNS_DIR/$run_id/run.json"
+    local artifacts_dir="$RUNS_DIR/$run_id/artifacts"
+
+    if [[ ! -f "$run_file" ]]; then
+        echo '{}'
+        return 1
+    fi
+
+    local summaries_file
+    summaries_file=$(mktemp)
+    echo '[]' > "$summaries_file"
+
+    if [[ -d "$artifacts_dir" ]]; then
+        local summary_files=()
+        while IFS= read -r summary_file; do
+            [[ -n "$summary_file" ]] && summary_files+=("$summary_file")
+        done < <(find "$artifacts_dir" -maxdepth 1 -type f -name '*-summary.json' ! -name 'run-summary.json' | sort 2>/dev/null)
+
+        if [[ "${#summary_files[@]}" -gt 0 ]]; then
+            local enriched_file
+            enriched_file=$(mktemp)
+            : > "$enriched_file"
+            for summary_file in "${summary_files[@]}"; do
+                local summary_agent_id
+                summary_agent_id=$(basename "$summary_file" -summary.json)
+                jq -c \
+                    --arg aid "$summary_agent_id" \
+                    --arg file "$summary_file" \
+                    '. + {agentId: (.agentId // .agent_id // $aid), _file: $file}' \
+                    "$summary_file" >> "$enriched_file" 2>/dev/null || true
+            done
+            jq -s 'map(select(type == "object"))' "$enriched_file" > "$summaries_file" 2>/dev/null || echo '[]' > "$summaries_file"
+            rm -f "$enriched_file"
+        fi
+    fi
+
+    jq -n \
+        --slurpfile run "$run_file" \
+        --slurpfile summaries "$summaries_file" '
+        def text_blob($s):
+            [
+                ($s.status // ""),
+                ($s.executiveSummary // ""),
+                (($s.workCompleted // [])[]?),
+                (($s.findings // [])[]?),
+                (($s.risks // [])[]?),
+                (($s.nextAgentHints // [])[]?)
+            ] | map(tostring) | join("\n");
+
+        def lower_blob($s): text_blob($s) | ascii_downcase;
+
+        def status_failed($s):
+            (($s.status // "") | ascii_downcase) as $st |
+            ["failed", "failure", "error", "blocked"] | index($st);
+
+        def explicit_fail($s):
+            lower_blob($s) | test("overall result:[[:space:]]*fail|result:[[:space:]]*fail");
+
+        def explicit_partial($s):
+            ((($s.status // "") | ascii_downcase) == "partial") or
+            (lower_blob($s) | test("overall result:[[:space:]]*partial[[:space:]-]*pass|result:[[:space:]]*partial[[:space:]-]*pass|partial[[:space:]-]*pass"));
+
+        def agent_rank($r; $agentId):
+            ([$r.agents[]?.id] | index($agentId)) // -1;
+
+        def uniq_order:
+            reduce .[] as $item ([]; if index($item) then . else . + [$item] end);
+
+        ($run[0] // {}) as $r |
+        ($summaries[0] // []) as $s |
+        ($s | sort_by(agent_rank($r; (.agentId // "")))) as $ordered |
+        ($ordered | reverse) as $latest_first |
+        (if any($s[]; status_failed(.) or explicit_fail(.)) then "fail"
+         elif any($s[]; explicit_partial(.)) then "partial_pass"
+         elif any($s[]; lower_blob(.) | test("overall result:[[:space:]]*pass|result:[[:space:]]*pass")) then "pass"
+         elif (($r.status // "") == "completed" or ($r.status // "") == "complete") then "complete"
+         else ($r.status // "unknown") end) as $outcome |
+        {
+            run_id: ($r.id // ""),
+            chain: ($r.chain // ""),
+            status: ($r.status // ""),
+            outcome: $outcome,
+            decision_required: ($outcome == "partial_pass" or $outcome == "fail"),
+            recommendation: (
+                if $outcome == "partial_pass" then "review_before_next_task"
+                elif $outcome == "fail" then "fix_or_rerun"
+                elif $outcome == "pass" or $outcome == "complete" then "move_forward"
+                else "inspect_run"
+                end
+            ),
+            summary: (
+                ($ordered | map(.executiveSummary // empty) | last) //
+                (if ($r.status // "") == "completed" then "Run completed." else "Run status: " + ($r.status // "unknown") end)
+            ),
+            agents: (($r.agents // []) | map({
+                id,
+                name,
+                status,
+                session,
+                started,
+                completed
+            })),
+            findings: ($latest_first | map(.findings // []) | add // [] | uniq_order | .[0:8]),
+            risks: ($latest_first | map(.risks // []) | add // [] | uniq_order | .[0:8]),
+            next_actions: ($latest_first | map(.nextAgentHints // []) | add // [] | uniq_order | .[0:6]),
+            artifacts_count: (($r.artifacts // []) | length),
+            generated_at: (now | todateiso8601)
+        }
+    ' 2>/dev/null || echo '{}'
+
+    rm -f "$summaries_file"
+}
+
+# write-run-summary-artifact: persist aggregated verdict on run.json.
+write-run-summary-artifact() {
+    local run_id="$1"
+    local run_file="$RUNS_DIR/$run_id/run.json"
+    local artifacts_dir="$RUNS_DIR/$run_id/artifacts"
+    local summary_artifact="$artifacts_dir/run-summary.json"
+
+    [[ ! -f "$run_file" ]] && return 1
+    mkdir -p "$artifacts_dir"
+
+    local summary_json
+    summary_json=$(build-run-summary-json "$run_id")
+    echo "$summary_json" > "$summary_artifact"
+
+    jq --argjson summary "$summary_json" \
+       --arg path "$summary_artifact" \
+       '.summary = $summary |
+        .artifacts = ((.artifacts // [])
+            | map(select(.type != "run-summary"))
+            + [{"type":"run-summary","path":$path,"timestamp":(now | todateiso8601)}])' \
+       "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+
+    echo "$summary_json"
+}
+
+# -------------------------------------------------------------------
 # update-task-from-run: propagate run status back to linked task
 # -------------------------------------------------------------------
 # args: <run-id> <status>
@@ -391,6 +535,13 @@ update-task-from-run() {
     # get agents with their status
     local agents_summary=$(jq -r '.agents[]? | "\(.id // "unknown")|\(.status // "unknown")"' "$run_file" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
 
+    local run_summary_json
+    run_summary_json=$(write-run-summary-artifact "$run_id" 2>/dev/null || build-run-summary-json "$run_id")
+    local run_outcome
+    run_outcome=$(echo "$run_summary_json" | jq -r '.outcome // "unknown"' 2>/dev/null || echo "unknown")
+    local decision_required
+    decision_required=$(echo "$run_summary_json" | jq -r '.decision_required // false' 2>/dev/null || echo "false")
+
     # get artifacts
     local artifacts_json=$(jq -c '.artifacts // []' "$run_file" 2>/dev/null || echo '[]')
     local artifacts_count=$(echo "$artifacts_json" | jq 'length')
@@ -400,33 +551,50 @@ update-task-from-run() {
     local task_resp
     task_resp=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" "${api_base}/api/tasks/${task_id}" 2>/dev/null || echo "")
     current_meta=$(echo "$task_resp" | jq -c '.data.issue.metadata // {}' 2>/dev/null || echo '{}')
+    local current_task_status
+    current_task_status=$(echo "$task_resp" | jq -r '.data.issue.status // empty' 2>/dev/null || echo "")
 
     # build updated metadata with artifacts
     local updated_meta
     updated_meta=$(echo "$current_meta" | jq --arg st "$status" --arg rid "$run_id" \
         --arg chain "$chain_name" --arg started "$started" --arg completed "$completed" \
-        --arg agents "$agents_summary" --argjson artifacts "$artifacts_json" '
+        --arg agents "$agents_summary" --arg outcome "$run_outcome" \
+        --argjson decisionRequired "$decision_required" \
+        --argjson artifacts "$artifacts_json" \
+        --argjson runSummary "$run_summary_json" '
         .last_run_status = $st |
         .last_run_id = $rid |
         .last_run_chain = $chain |
         .last_run_started = $started |
         .last_run_completed = $completed |
         .last_run_agents = $agents |
-        .last_run_artifacts = $artifacts
+        .last_run_artifacts = $artifacts |
+        .last_run_outcome = $outcome |
+        .last_run_decision_required = $decisionRequired |
+        .last_run_summary = $runSummary
     ' 2>/dev/null || echo "{\"last_run_status\":\"$status\",\"last_run_id\":\"$run_id\"}")
+
+    local task_patch_payload
+    if [[ "$status" == "completed" && "$decision_required" == "true" && "$current_task_status" != "open" ]]; then
+        task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta, status: "open"}')
+    else
+        task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta}')
+    fi
 
     curl -sf -X PATCH \
         -H "$auth_header" \
         -H "$ns_header" \
         -H "$org_header" \
         -H "Content-Type: application/json" \
-        -d "$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta}')" \
+        -d "$task_patch_payload" \
         "${api_base}/api/tasks/${task_id}" >/dev/null 2>&1 || true
 
     # write final summary comment on task completion
     if [[ "$status" == "completed" || "$status" == "failed" || "$status" == "stopped" ]]; then
         local summary_note="Chain run $run_id ${status}.
 Chain: $chain_name
+Outcome: $run_outcome
+Decision required: $decision_required
 Started: $started
 Completed: $completed
 Agents: $agents_summary
@@ -443,7 +611,7 @@ Artifacts: $artifacts_count files"
     fi
 
     # if run completed successfully, close the task
-    if [[ "$status" == "completed" ]]; then
+    if [[ "$status" == "completed" && "$decision_required" != "true" ]]; then
         echo "  closing task $task_id (chain completed)"
         curl -sf -X POST \
             -H "$auth_header" \
@@ -451,6 +619,12 @@ Artifacts: $artifacts_count files"
             -H "$org_header" \
             "${api_base}/api/tasks/${task_id}/close" >/dev/null 2>&1 || true
         trigger-auto-run-scan "$task_id" "$run_id" "$current_meta"
+    elif [[ "$status" == "completed" ]]; then
+        if [[ "$current_task_status" != "open" ]]; then
+            echo "  set task $task_id open (run requires review: $run_outcome)"
+        else
+            echo "  leaving task $task_id open (run requires review: $run_outcome)"
+        fi
     fi
 
     # emit event for traceability
@@ -467,5 +641,7 @@ export -f update-run-agent
 export -f get-run
 export -f list-runs
 export -f cleanup-old-runs
+export -f build-run-summary-json
+export -f write-run-summary-artifact
 export -f update-task-from-run
 export -f trigger-auto-run-scan

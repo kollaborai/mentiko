@@ -219,6 +219,56 @@ fi
 echo ""
 
 # -------------------------------------------------------------------
+# test: build-run-summary-json
+# -------------------------------------------------------------------
+
+echo "test: build-run-summary-json"
+
+ARTIFACTS_DIR="$RUNS_DIR/$RUN_ID/artifacts"
+mkdir -p "$ARTIFACTS_DIR"
+
+cat > "$ARTIFACTS_DIR/agent-1-summary.json" <<'EOF'
+{
+  "status": "complete",
+  "executiveSummary": "Mapped the pipeline and found one schema mismatch.",
+  "findings": [
+    "Schema/template mismatch on acceptance_criteria"
+  ],
+  "risks": [],
+  "nextAgentHints": [
+    "Run validation analyst next"
+  ]
+}
+EOF
+
+cat > "$ARTIFACTS_DIR/agent-2-summary.json" <<'EOF'
+{
+  "status": "complete",
+  "executiveSummary": "Validated generated tasks. Result: PARTIAL PASS.",
+  "findings": [
+    "CRITERION 4: PARTIAL PASS — acceptance criteria format is ambiguous"
+  ],
+  "risks": [
+    "No server-side validation means bad LLM output can pass silently"
+  ],
+  "nextAgentHints": [
+    "Fix schema/template mismatch before moving to next task"
+  ]
+}
+EOF
+
+RUN_SUMMARY_JSON=$(build-run-summary-json "$RUN_ID")
+RUN_OUTCOME=$(echo "$RUN_SUMMARY_JSON" | jq -r '.outcome')
+RUN_DECISION_REQUIRED=$(echo "$RUN_SUMMARY_JSON" | jq -r '.decision_required')
+RUN_NEXT_ACTION=$(echo "$RUN_SUMMARY_JSON" | jq -r '.next_actions[0]')
+
+assert_eq "partial_pass" "$RUN_OUTCOME" "partial pass is promoted to run outcome"
+assert_eq "true" "$RUN_DECISION_REQUIRED" "partial pass requires a decision"
+assert_eq "Fix schema/template mismatch before moving to next task" "$RUN_NEXT_ACTION" "next action is pulled from agent hints"
+
+echo ""
+
+# -------------------------------------------------------------------
 # test: list-runs
 # -------------------------------------------------------------------
 

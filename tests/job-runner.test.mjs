@@ -482,6 +482,76 @@ test("validates recommend job with correct output", () => {
   assert(job.result.recommendation === "do this", `unexpected result`);
 });
 
+test("validates task jobs and normalizes legacy task fields", () => {
+  const output = {
+    title: "Fix generated task validation",
+    description: "Make task generation outputs safe to create.",
+    type: "epic",
+    priority: 2,
+    acceptance_criteria: [
+      "Given a task job returns criteria as an array, when it completes, then the stored result uses a string",
+      "Given a task job returns design_notes, when it completes, then the stored result uses design",
+    ],
+    design_notes: "Normalize before the API creates tasks.",
+    labels: ["backend", "testing"],
+    subtasks: [
+      {
+        title: "Add validation",
+        description: "Validate generated task shape before marking the job complete.",
+        type: "task",
+        priority: 2,
+        acceptance_criteria: ["Invalid generated task output fails the job"],
+        labels: ["backend"],
+      },
+    ],
+  };
+  const mockPath = createMockCli(JSON.stringify(output));
+  makeDefaultProfile({ cli: mockPath, pipe_flag: "" });
+  makeJobFile("task-normalize", { prompt: "test" }, "task");
+
+  runJobFail("task-normalize");
+  const job = readJob("task-normalize");
+  assert(job.status === "complete", `expected complete, got ${job.status}: ${job.error}`);
+  assert(typeof job.result.acceptance_criteria === "string", "acceptance_criteria should normalize to string");
+  assert(job.result.acceptance_criteria.includes("stored result uses a string"), "missing normalized criteria text");
+  assert(job.result.design === "Normalize before the API creates tasks.", `wrong design: ${job.result.design}`);
+  assert(!Object.prototype.hasOwnProperty.call(job.result, "design_notes"), "design_notes should be removed");
+  assert(typeof job.result.subtasks[0].acceptance_criteria === "string", "subtask acceptance should normalize");
+});
+
+test("fails task jobs with invalid required fields", () => {
+  const mockPath = createMockCli(JSON.stringify({
+    title: "Missing priority",
+    type: "task",
+  }));
+  makeDefaultProfile({ cli: mockPath, pipe_flag: "" });
+  makeJobFile("task-invalid", { prompt: "test" }, "task");
+
+  runJobFail("task-invalid");
+  const job = readJob("task-invalid");
+  assert(job.status === "failed", `expected failed, got ${job.status}`);
+  assert(job.error.includes("priority"), `unexpected error: ${job.error}`);
+});
+
+test("fails task jobs when non-epic output includes subtasks", () => {
+  const mockPath = createMockCli(JSON.stringify({
+    title: "Feature with subtasks",
+    description: "Invalid shape.",
+    type: "feature",
+    priority: 2,
+    subtasks: [
+      { title: "Child", description: "Do it.", type: "task", priority: 2 },
+    ],
+  }));
+  makeDefaultProfile({ cli: mockPath, pipe_flag: "" });
+  makeJobFile("task-invalid-subtasks", { prompt: "test" }, "task");
+
+  runJobFail("task-invalid-subtasks");
+  const job = readJob("task-invalid-subtasks");
+  assert(job.status === "failed", `expected failed, got ${job.status}`);
+  assert(job.error.includes("subtasks"), `unexpected error: ${job.error}`);
+});
+
 test("validates decision_guided_questions requires 3+ questions", () => {
   const mockPath = createMockCli(JSON.stringify({ questions: ["q1", "q2"] }));
   makeDefaultProfile({ cli: mockPath, pipe_flag: "" });

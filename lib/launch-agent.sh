@@ -112,9 +112,16 @@ if [[ "$MONITOR" == "--monitor" ]]; then
     AGENT_CONTEXT="Spec: $(echo "$SPEC_FILE" | sed "s|^${PROJECT_ROOT}/||"). Agent: $AGENT_NAME."
     MONITOR_SESSION="monitor-${SESSION_NAME}"
     MONITOR_INTERVAL="${MENTIKO_MONITOR_INTERVAL:-60}"
+    MONITOR_SCRIPT="/tmp/monitor-${SESSION_NAME}.sh"
 
-    new_pty_session "$MONITOR_SESSION" -d
-    send-message "$MONITOR_SESSION" "source ${SCRIPT_DIR}/agent-functions.sh && source ${SCRIPT_DIR}/event-trigger.sh && monitor-with-ai $SESSION_NAME $MONITOR_INTERVAL '$AGENT_CONTEXT'"
+    {
+        echo "#!/bin/bash"
+        printf 'source %q 2>/dev/null\n' "${SCRIPT_DIR}/agent-functions.sh"
+        printf 'source %q 2>/dev/null\n' "${SCRIPT_DIR}/event-trigger.sh"
+        printf 'monitor-with-ai %q %q %q\n' "$SESSION_NAME" "$MONITOR_INTERVAL" "$AGENT_CONTEXT"
+    } > "$MONITOR_SCRIPT"
+    chmod +x "$MONITOR_SCRIPT"
+    new_pty_session "$MONITOR_SESSION" bash "$MONITOR_SCRIPT"
     echo "  monitor started: $MONITOR_SESSION"
 fi
 

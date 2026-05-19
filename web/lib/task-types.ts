@@ -106,6 +106,8 @@ export interface TaskChainBinding {
   };
   last_run_id?: string;
   last_run_status?: string;
+  last_run_outcome?: string;
+  last_run_decision_required?: boolean;
   last_run_error?: string;
   last_run_completed?: string;
   auto_run_retries?: number;

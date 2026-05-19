@@ -32,7 +32,7 @@ encode_cwd_slug() {
             echo "$cwd" | sed 's|^/|-|; s|[/.]|-|g'
             ;;
         kollab*)
-            echo "$cwd" | sed 's|^/|-|; s|[/.]|-|g'
+            echo "$cwd" | sed 's|^/||; s|/|_|g'
             ;;
         codex)
             echo ""

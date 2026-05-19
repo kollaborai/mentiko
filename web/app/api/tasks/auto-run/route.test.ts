@@ -204,6 +204,35 @@ describe("POST /api/tasks/auto-run", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("skips a task whose last run requires a decision", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Needs review",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_status: "completed",
+        last_run_outcome: "partial_pass",
+        last_run_decision_required: true,
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      action: "decision_required",
+      reason: "last run requires review",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("resumes a stopped assigned run instead of starting a duplicate run", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",

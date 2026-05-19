@@ -38,6 +38,7 @@ interface GeneratedTask {
   priority: number;
   acceptance_criteria?: string | string[];
   design?: string;
+  design_notes?: string | string[];
   notes?: string;
   labels?: string[];
   subtasks?: GeneratedSubtask[];
@@ -144,7 +145,7 @@ export async function POST(req: Request) {
         priority: generated.priority,
         labels: generated.labels,
         acceptance_criteria: normalizeTextOrArray(generated.acceptance_criteria),
-        design: generated.design,
+        design: normalizeTextOrArray(generated.design ?? generated.design_notes),
         notes: generated.notes,
         created_by: "mentiko-mcp",
         workspace_id: authorizedWorkspacePath || undefined,

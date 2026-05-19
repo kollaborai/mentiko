@@ -61,6 +61,11 @@ export function toTask(issue: TaskRecord): Task {
         | undefined,
       last_run_id: metadata.last_run_id ? String(metadata.last_run_id) : undefined,
       last_run_status: metadata.last_run_status ? String(metadata.last_run_status) : undefined,
+      last_run_outcome: metadata.last_run_outcome ? String(metadata.last_run_outcome) : undefined,
+      last_run_decision_required:
+        typeof metadata.last_run_decision_required === "boolean"
+          ? metadata.last_run_decision_required
+          : undefined,
       last_run_error: metadata.last_run_error ? String(metadata.last_run_error) : undefined,
       last_run_completed: metadata.last_run_completed ? String(metadata.last_run_completed) : undefined,
       auto_run_retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : undefined,

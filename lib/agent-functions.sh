@@ -116,9 +116,16 @@ new-agent-from-spec() {
     if [[ "$monitor" == "--monitor" ]]; then
         local agent_context="Spec: $(echo "$spec_file" | sed "s|^${project_root}/||"). Agent: $agent_name."
         local monitor_session="monitor-${session_name}"
-        new_pty_session "$monitor_session" -d
         local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        send-message "$monitor_session" "source ${lib_dir}/agent-functions.sh && source ${lib_dir}/event-trigger.sh && monitor-with-ai $session_name $MENTIKO_MONITOR_INTERVAL '$agent_context'"
+        local mon_script="/tmp/monitor-${session_name}.sh"
+        {
+            echo "#!/bin/bash"
+            printf 'source %q 2>/dev/null\n' "${lib_dir}/agent-functions.sh"
+            printf 'source %q 2>/dev/null\n' "${lib_dir}/event-trigger.sh"
+            printf 'monitor-with-ai %q %q %q\n' "$session_name" "$MENTIKO_MONITOR_INTERVAL" "$agent_context"
+        } > "$mon_script"
+        chmod +x "$mon_script"
+        new_pty_session "$monitor_session" bash "$mon_script"
         echo "  monitor started: $monitor_session"
     fi
 }
@@ -220,9 +227,7 @@ agent-complete-marker-seen() {
     local tail_lines="${2:-100}"
 
     transport_capture "$session_name" "$tail_lines" 2>/dev/null |
-        sed -E 's/\x1b\[[0-?]*[ -\/]*[@-~]//g' |
-        sed -E 's/\x1b\][^\x07]*(\x07|\x1b\\)//g' |
-        sed -E 's/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]//g' |
+        strip-terminal-control |
         grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
 }
 

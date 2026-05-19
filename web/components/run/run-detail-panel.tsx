@@ -63,10 +63,22 @@ interface RunAgent extends Omit<WorkflowAgent, "emits"> {
 }
 
 interface RunArtifact {
-  agentId: string;
+  agentId?: string;
   type: string;
   path: string;
   timestamp: string;
+}
+
+interface RunSummary {
+  outcome?: string;
+  decision_required?: boolean;
+  recommendation?: string;
+  summary?: string;
+  findings?: string[];
+  risks?: string[];
+  next_actions?: string[];
+  artifacts_count?: number;
+  generated_at?: string;
 }
 
 interface Run {
@@ -90,6 +102,7 @@ interface Run {
   rounds?: number;
   workspaceId?: string;
   managerSession?: string;
+  summary?: RunSummary;
   escalations?: Array<{
     id: string;
     round: number;
@@ -266,6 +279,39 @@ function GoalContent({ goal }: { goal: string }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function runOutcomeLabel(summary: RunSummary): string {
+  switch (summary.outcome) {
+    case "partial_pass": return "partial pass";
+    case "fail": return "failed";
+    case "pass": return "passed";
+    case "complete": return "complete";
+    default: return summary.outcome || "unknown";
+  }
+}
+
+function runOutcomeStatus(summary: RunSummary): Status {
+  if (summary.decision_required || summary.outcome === "partial_pass") return "warning";
+  if (summary.outcome === "fail") return "failed";
+  if (summary.outcome === "pass" || summary.outcome === "complete") return "complete";
+  return "idle";
+}
+
+function SummaryList({ label, items }: { label: string; items?: string[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[10px] text-foreground/40 uppercase mb-1.5">{label}</p>
+      <div className="space-y-1">
+        {items.slice(0, 4).map((item, index) => (
+          <p key={index} className="text-[11px] text-foreground/60 leading-relaxed">
+            {item}
+          </p>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1229,7 +1275,38 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
           {/* goal tab */}
           <TabsContent value="goal" className="flex-1 overflow-y-auto p-6 mt-0">
-            <div className="max-w-2xl space-y-6">
+            <div className="max-w-4xl space-y-6">
+              {run.summary && (
+                <div className="rounded-md border border-foreground/10 bg-card p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-foreground/40">run outcome</span>
+                      <StatusBadge
+                        status={runOutcomeStatus(run.summary)}
+                        label={runOutcomeLabel(run.summary)}
+                        size="sm"
+                      />
+                    </div>
+                    {run.summary.recommendation && (
+                      <span className="text-[10px] text-foreground/35 font-mono">
+                        {run.summary.recommendation.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                  {run.summary.summary && (
+                    <p className="text-sm text-foreground/70 leading-relaxed">
+                      {run.summary.summary}
+                    </p>
+                  )}
+                  {(run.summary.findings?.length || run.summary.risks?.length || run.summary.next_actions?.length) ? (
+                    <div className="mt-3 grid gap-3 md:grid-cols-3 border-t border-foreground/10 pt-3">
+                      <SummaryList label="findings" items={run.summary.findings} />
+                      <SummaryList label="risks" items={run.summary.risks} />
+                      <SummaryList label="next" items={run.summary.next_actions} />
+                    </div>
+                  ) : null}
+                </div>
+              )}
               <div className="grid grid-cols-[110px_1fr] gap-y-2.5 text-xs">
                 <span className="text-foreground/40">started</span>
                 <span>{new Date(run.started).toLocaleString()}</span>

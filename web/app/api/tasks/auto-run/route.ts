@@ -205,6 +205,7 @@ interface TriggerResult {
   runId?: string;
   jobId?: string;
   action?: string;
+  reason?: string;
   error?: string;
 }
 
@@ -452,6 +453,15 @@ async function triggerAutoRun(
 ): Promise<TriggerResult> {
   const chainId = metadata.chain_id as string | undefined;
   const orgId = await getOrgIdFromRequest(request);
+
+  if (metadata.last_run_decision_required === true) {
+    return {
+      triggered: false,
+      taskId,
+      action: "decision_required",
+      reason: "last run requires review",
+    };
+  }
 
   // resolve workspace if workspaceId provided but no workspacePath yet
   const workspaceId = metadata.workspace_id as string | undefined;

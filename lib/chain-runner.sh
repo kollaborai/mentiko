@@ -1548,6 +1548,34 @@ SEOF
             > "$snap_artifacts_dir/${agent_id}-git-before.txt" \
             || echo "" > "$snap_artifacts_dir/${agent_id}-git-before.txt"
         date -Iseconds > "$snap_artifacts_dir/${agent_id}-started-at.txt"
+
+        local profile_cli=""
+        local profile_file_path=""
+        if [[ "$use_legacy_cli" == "false" ]]; then
+            profile_file_path="$NAMESPACE_ROOT/agent-profiles/${profile_id}.json"
+            if [[ -f "$profile_file_path" ]]; then
+                profile_cli=$(jq -r '.cli // empty' "$profile_file_path" 2>/dev/null || echo "")
+            fi
+        else
+            profile_cli="$agent_cli"
+        fi
+        jq -n \
+            --arg agentId "$agent_id" \
+            --arg profileId "${profile_id:-}" \
+            --arg profileSource "${profile_source:-}" \
+            --arg profileFile "$profile_file_path" \
+            --arg cli "$profile_cli" \
+            --arg session "$session_name" \
+            --arg timestamp "$(date -Iseconds)" \
+            '{
+                agent_id: $agentId,
+                profile_id: $profileId,
+                profile_source: $profileSource,
+                profile_file: $profileFile,
+                cli: $cli,
+                session: $session,
+                timestamp: $timestamp
+            }' > "$snap_artifacts_dir/${agent_id}-profile.json" 2>/dev/null || true
     fi
 
     echo "  agent launched: $session_name"
@@ -1606,7 +1634,6 @@ SEOF
     if [[ "$agent_monitor" == "true" ]]; then
         local agent_context="Chain: $CHAIN_NAME. Agent: $agent_name ($agent_id). Emits: $agent_emits. Round: $round. Workspace: $WORKSPACE_TYPE."
         local monitor_session="monitor-${session_name}"
-        transport_new_session "$monitor_session"
 
         # build monitor script to avoid send-message pasting function bodies
         # NOTE: use double quotes for variable expansion in heredoc
@@ -1638,7 +1665,7 @@ monitor-chain-agent '${session_name}' '${agent_monitor_interval}' '${agent_conte
 MONEOF
         chmod +x "$mon_script"
 
-        transport_send_keys "$monitor_session" "bash '$mon_script'"
+        transport_new_session "$monitor_session" bash "$mon_script"
         echo "  monitor started: $monitor_session"
         _sys_log "info" "chain-runner" "monitor started: $monitor_session" "run: ${RUN_ID:-unknown}, agent: $agent_id"
     fi

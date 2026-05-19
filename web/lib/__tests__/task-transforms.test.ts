@@ -70,6 +70,8 @@ describe("toTask", () => {
         auto_run: true,
         last_run_id: "run-1",
         last_run_status: "complete",
+        last_run_outcome: "partial_pass",
+        last_run_decision_required: true,
       }),
     };
     const task = toTask(issue);
@@ -79,6 +81,8 @@ describe("toTask", () => {
     expect(task.chainBinding!.auto_run).toBe(true);
     expect(task.chainBinding!.last_run_id).toBe("run-1");
     expect(task.chainBinding!.last_run_status).toBe("complete");
+    expect(task.chainBinding!.last_run_outcome).toBe("partial_pass");
+    expect(task.chainBinding!.last_run_decision_required).toBe(true);
   });
 
   it("extracts chain binding from metadata object", () => {

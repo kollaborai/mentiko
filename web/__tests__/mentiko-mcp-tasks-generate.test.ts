@@ -215,6 +215,28 @@ describe("POST /api/mentiko-mcp/ops/tasks/generate", () => {
     });
   });
 
+  describe("legacy field normalization", () => {
+    it("uses design_notes as design when older job output returns that key", async () => {
+      mockGetJob.mockReturnValue({
+        id: JOB_ID,
+        status: "complete",
+        result: {
+          ...makeGeneratedTask(false),
+          design: undefined,
+          design_notes: "Follow the task-store pattern.",
+          acceptance_criteria: ["criteria one", "criteria two"],
+        },
+      });
+
+      const res = await POST(makeRequest({ description: "build something" }));
+      expect(res.status).toBe(200);
+
+      const parentInput = mockTaskCreate.mock.calls[0][1];
+      expect(parentInput.design).toBe("Follow the task-store pattern.");
+      expect(parentInput.acceptance_criteria).toBe("criteria one\ncriteria two");
+    });
+  });
+
   describe("auto-run opt-in", () => {
     it("sets auto_run metadata on parent and subtasks when autoRun is true", async () => {
       const res = await POST(makeRequest({

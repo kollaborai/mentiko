@@ -28,6 +28,52 @@ find_workspace_profile() {
     echo "$profile_id"
 }
 
+# resolve_agent_profile_id: shared runtime profile selection
+# priority: agent.agent_profile > chain.default_agent_profile > workspace > namespace
+resolve_agent_profile_id() {
+    local chain_file="$1"
+    local agent_id="$2"
+    local project_root="${3:-${CHAIN_PROJECT_ROOT:-}}"
+
+    [[ ! -f "$chain_file" || -z "$agent_id" ]] && echo "" && return
+
+    local profile_id
+    profile_id=$(jq -r --arg id "$agent_id" \
+        '.agents[]? | select(.id == $id) | .agent_profile // empty' \
+        "$chain_file" 2>/dev/null | head -1)
+
+    if [[ -z "$profile_id" ]]; then
+        profile_id=$(jq -r '.default_agent_profile // empty' "$chain_file" 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$profile_id" ]]; then
+        if [[ -n "$project_root" ]]; then
+            profile_id=$(CHAIN_PROJECT_ROOT="$project_root" find_workspace_profile)
+        else
+            profile_id=$(find_workspace_profile)
+        fi
+    fi
+
+    [[ -z "$profile_id" ]] && profile_id=$(find_default_profile)
+
+    echo "$profile_id"
+}
+
+# resolve_agent_profile_file: return the profile JSON path for a chain agent.
+resolve_agent_profile_file() {
+    local chain_file="$1"
+    local agent_id="$2"
+    local project_root="${3:-${CHAIN_PROJECT_ROOT:-}}"
+
+    local profile_id
+    profile_id=$(resolve_agent_profile_id "$chain_file" "$agent_id" "$project_root")
+    [[ -z "$profile_id" ]] && echo "" && return
+
+    local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}/agent-profiles}"
+    local profile_file="$profiles_dir/${profile_id}.json"
+    [[ -f "$profile_file" ]] && echo "$profile_file" || echo ""
+}
+
 # normalize_permission_flags: keep saved profiles compatible with current CLIs
 normalize_permission_flags() {
     local cli="$1"

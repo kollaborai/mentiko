@@ -81,6 +81,25 @@ describe("getAutoRunCandidates", () => {
     expect(getAutoRunCandidates("default")).toEqual([]);
   });
 
+  it("skips tasks waiting on a run decision", () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-001",
+        title: "Needs review",
+        status: "open",
+        issue_type: "task",
+        metadata: {
+          auto_run: true,
+          last_run_status: "completed",
+          last_run_outcome: "partial_pass",
+          last_run_decision_required: true,
+        },
+      },
+    ] as never);
+
+    expect(getAutoRunCandidates("default")).toEqual([]);
+  });
+
   it("skips a retryable task when live run state says it is already active", () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue(["run-active"] as never);

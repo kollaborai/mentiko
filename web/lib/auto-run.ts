@@ -204,6 +204,7 @@ export function getAutoRunCandidates(orgId: string, workspaceId?: string, namesp
 
     const metadata = task.metadata as Record<string, unknown> | undefined;
     if (!metadata?.auto_run) continue;
+    if (metadata.last_run_decision_required === true) continue;
 
     if (DONE_STATUSES.has(task.status)) continue;
 

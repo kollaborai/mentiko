@@ -27,7 +27,7 @@
     },
     "acceptance_criteria": {
       "type": "string",
-      "description": "Clear acceptance criteria for when this task is considered done"
+      "description": "Newline-delimited acceptance criteria for when this task is considered done"
     },
     "design": {
       "type": "string",
@@ -67,7 +67,8 @@
             "maximum": 4
           },
           "acceptance_criteria": {
-            "type": "string"
+            "type": "string",
+            "description": "Newline-delimited acceptance criteria for when this subtask is considered done"
           },
           "labels": {
             "type": "array",

@@ -37,6 +37,7 @@ function getTaskAccent(task: Task): string {
   ) {
     return "bg-red-500";
   }
+  if (task.chainBinding?.last_run_decision_required) return "bg-amber-400";
   if (task.completed) return "bg-emerald-500";
   switch (task.chainBinding?.last_run_status) {
     case "running":
@@ -62,6 +63,7 @@ export function TaskListItem({
   isChecked,
 }: TaskListItemProps) {
   const isRunning = task.chainBinding?.last_run_status === "running";
+  const needsRunReview = !!task.chainBinding?.last_run_decision_required;
   const hasRecentRun = isRunning || isRunRecent(task.chainBinding?.last_run_id);
   const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
   const autoRunPaused =
@@ -176,6 +178,17 @@ export function TaskListItem({
               >
                 <PlayFilled className="h-2.5 w-2.5" />
                 {task.chainBinding.last_run_id}
+              </a>
+            )}
+            {needsRunReview && task.chainBinding?.last_run_id && (
+              <a
+                href={`/runs?runId=${task.chainBinding.last_run_id}`}
+                className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-300 hover:bg-amber-500/15"
+                onClick={(event) => event.stopPropagation()}
+                title={`Run outcome: ${task.chainBinding.last_run_outcome || "review required"}`}
+              >
+                <PlayFilled className="h-2.5 w-2.5" />
+                review run
               </a>
             )}
           </div>

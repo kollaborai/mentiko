@@ -300,14 +300,8 @@ EXAMPLE — high quality task:
   "type": "feature",
   "priority": 1,
   "description": "Outbound webhooks have no signature. Receiving systems can't verify payload authenticity. Add HMAC-SHA256 signing using a per-webhook secret key so consumers can verify requests are genuine.",
-  "acceptance_criteria": [
-    "Each webhook endpoint has a unique signing secret, generated on creation",
-    "Outbound requests include X-Mentiko-Signature: sha256=<hmac> header",
-    "UI shows signing secret with copy button (hidden by default, reveal on click)",
-    "Rotating the secret invalidates the old one immediately",
-    "Docs show verification example in Node.js and Python"
-  ],
-  "design_notes": "Use crypto.createHmac('sha256', secret).update(rawBody).digest('hex'). Secret must be stored recoverable (not hashed) — consider encrypting at rest. See web/lib/inbound-webhook-storage.ts for existing token storage pattern. Add X-Mentiko-Signature header in the webhook dispatch function.",
+  "acceptance_criteria": "Each webhook endpoint has a unique signing secret, generated on creation\nOutbound requests include X-Mentiko-Signature: sha256=<hmac> header\nUI shows signing secret with copy button (hidden by default, reveal on click)\nRotating the secret invalidates the old one immediately\nDocs show verification example in Node.js and Python",
+  "design": "Use crypto.createHmac('sha256', secret).update(rawBody).digest('hex'). Secret must be stored recoverable (not hashed) — consider encrypting at rest. See web/lib/inbound-webhook-storage.ts for existing token storage pattern. Add X-Mentiko-Signature header in the webhook dispatch function.",
   "labels": ["backend", "security", "api"]
 }
 
@@ -315,11 +309,11 @@ REQUIREMENTS:
 1. Output ONLY a valid JSON object. No markdown, no explanation, no code blocks.
 2. Must include: title, type, priority
 3. Title must be outcome-focused and specific (not vague activity descriptions)
-4. acceptance_criteria must be verifiable conditions, not goals
+4. acceptance_criteria must be a newline-delimited string of verifiable conditions, not goals
 5. CRITICAL: If the output includes subtasks, the parent type MUST be "epic" — never "task" or "feature" with subtasks
 6. Each subtask needs: title, description, type, and optionally depends_on (0-based indices)
 7. Priority should reflect genuine urgency — most things are 2 (medium)
-8. design_notes should give a developer enough context to start without further clarification
+8. design should give a developer enough context to start without further clarification
 9. labels must be lowercase
 
 OUTPUT FORMAT:

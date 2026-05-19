@@ -22,6 +22,7 @@ source "$SCRIPT_DIR/event-trigger.sh"
 source "$SCRIPT_DIR/webhook-sender.sh"
 source "$SCRIPT_DIR/run-lib.sh"
 source "$SCRIPT_DIR/routing-lib.sh"
+source "$SCRIPT_DIR/agent-profile.sh"
 
 # log crashes (set -e exits)
 trap '_sys_log "error" "chain-runner-complete" "CRASHED at line $LINENO (exit $?)" "session: ${SESSION_NAME:-unknown}, run: ${RUN_ID:-unknown}"' ERR
@@ -263,13 +264,35 @@ if declare -f extract-tokens-from-output &>/dev/null && [[ -f "${REPORT_FILE:-}"
         "$CURRENT_AGENT_ID" "$CURRENT_AGENT_NAME" "$AGENT_MODEL" 2>/dev/null || true
 fi
 
-# resolve agent profile for log path (used by 2b and 5b)
-_agent_profile_id=""
-[[ -f "${CHAIN_FILE:-}" ]] && _agent_profile_id=$(jq -r --arg id "$CURRENT_AGENT_ID" \
-    '.agents[] | select(.id == $id) | .agent_profile // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
-[[ -z "$_agent_profile_id" && -f "${CHAIN_FILE:-}" ]] && _agent_profile_id=$(jq -r '.default_agent_profile // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
-_agent_profile_file=""
-[[ -n "$_agent_profile_id" && -n "${NAMESPACE_ROOT:-}" ]] && _agent_profile_file="$NAMESPACE_ROOT/agent-profiles/${_agent_profile_id}.json"
+# resolve agent profile for log path (used by 2b and 5b). Prefer the
+# launch-time metadata so a changed default profile cannot misroute logs.
+resolve_completion_agent_profile_file() {
+    local profile_meta=""
+    local profile_file=""
+    local profile_id=""
+
+    if [[ -n "${RUN_ID:-}" ]]; then
+        profile_meta="$RUNS_DIR_BASE/${RUN_ID}/artifacts/${CURRENT_AGENT_ID}-profile.json"
+    fi
+
+    if [[ -n "$profile_meta" && -f "$profile_meta" ]]; then
+        profile_file=$(jq -r '.profile_file // empty' "$profile_meta" 2>/dev/null || echo "")
+        if [[ -n "$profile_file" && -f "$profile_file" ]]; then
+            echo "$profile_file"
+            return
+        fi
+
+        profile_id=$(jq -r '.profile_id // empty' "$profile_meta" 2>/dev/null || echo "")
+        if [[ -n "$profile_id" && -n "${NAMESPACE_ROOT:-}" && -f "$NAMESPACE_ROOT/agent-profiles/${profile_id}.json" ]]; then
+            echo "$NAMESPACE_ROOT/agent-profiles/${profile_id}.json"
+            return
+        fi
+    fi
+
+    resolve_agent_profile_file "$CHAIN_FILE" "$CURRENT_AGENT_ID" "$CHAIN_PROJECT_ROOT"
+}
+
+_agent_profile_file="$(resolve_completion_agent_profile_file)"
 
 # -------------------------------------------------------------------
 # 2b. capture agent activity artifacts (git diff, conversations, output)
@@ -563,9 +586,7 @@ if [[ -n "$RUN_ID" ]]; then
     if [[ ! -s "$SUMMARY_JSON_ARTIFACT" ]]; then
         SUMMARY_TEXT="Agent ${CURRENT_AGENT_NAME} (${CURRENT_AGENT_ID}) completed. Event: ${TRIGGERED_EVENT_NAME:-none}."
         if [[ -f "$REPORT_FILE" ]]; then
-            REPORT_TAIL=$(sed -E 's/\x1b\[[0-?]*[ -\/]*[@-~]//g' "$REPORT_FILE" 2>/dev/null \
-                | sed -E 's/\x1b\][^\x07]*(\x07|\x1b\\)//g' \
-                | sed -E 's/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]//g' \
+            REPORT_TAIL=$(strip-terminal-control < "$REPORT_FILE" 2>/dev/null \
                 | grep -v '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$' \
                 | tail -80 \
                 | awk 'NF{line=$0} END{print line}' \
