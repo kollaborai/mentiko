@@ -234,7 +234,9 @@ cat > "$ARTIFACTS_DIR/agent-1-summary.json" <<'EOF'
   "findings": [
     "Schema/template mismatch on acceptance_criteria"
   ],
-  "risks": [],
+  "risks": [
+    "Investigator risk that downstream validator later clears"
+  ],
   "nextAgentHints": [
     "Run validation analyst next"
   ]
@@ -261,10 +263,35 @@ RUN_SUMMARY_JSON=$(build-run-summary-json "$RUN_ID")
 RUN_OUTCOME=$(echo "$RUN_SUMMARY_JSON" | jq -r '.outcome')
 RUN_DECISION_REQUIRED=$(echo "$RUN_SUMMARY_JSON" | jq -r '.decision_required')
 RUN_NEXT_ACTION=$(echo "$RUN_SUMMARY_JSON" | jq -r '.next_actions[0]')
+RUN_UPSTREAM_RISK=$(echo "$RUN_SUMMARY_JSON" | jq -r '.risks[1]')
 
 assert_eq "partial_pass" "$RUN_OUTCOME" "partial pass is promoted to run outcome"
 assert_eq "true" "$RUN_DECISION_REQUIRED" "partial pass requires a decision"
 assert_eq "Fix schema/template mismatch before moving to next task" "$RUN_NEXT_ACTION" "next action is pulled from agent hints"
+assert_eq "Investigator risk that downstream validator later clears" "$RUN_UPSTREAM_RISK" "partial summaries keep upstream risks for review"
+
+cat > "$ARTIFACTS_DIR/agent-2-summary.json" <<'EOF'
+{
+  "status": "complete",
+  "executiveSummary": "Validated generated tasks. Overall Result: PASS.",
+  "findings": [
+    "Schema and template are aligned"
+  ],
+  "risks": [],
+  "nextAgentHints": [
+    "Move to the next task"
+  ]
+}
+EOF
+
+RUN_SUMMARY_JSON=$(build-run-summary-json "$RUN_ID")
+RUN_OUTCOME=$(echo "$RUN_SUMMARY_JSON" | jq -r '.outcome')
+RUN_DECISION_REQUIRED=$(echo "$RUN_SUMMARY_JSON" | jq -r '.decision_required')
+RUN_RISK_COUNT=$(echo "$RUN_SUMMARY_JSON" | jq -r '.risks | length')
+
+assert_eq "pass" "$RUN_OUTCOME" "pass is promoted to run outcome"
+assert_eq "false" "$RUN_DECISION_REQUIRED" "pass does not require a decision"
+assert_eq "0" "$RUN_RISK_COUNT" "passing final summary clears stale upstream risks"
 
 echo ""
 

@@ -146,6 +146,59 @@ if ! jq empty "$CHAIN_FILE" 2>/dev/null; then
     exit 1
 fi
 
+resolve_chain_agent_refs() {
+    local source_file="$1"
+    local ref_count
+
+    ref_count=$(jq '[.agents[]? | select(has("$ref"))] | length' "$source_file" 2>/dev/null || echo "0")
+    if [[ "${ref_count:-0}" -eq 0 ]]; then
+        echo "$source_file"
+        return 0
+    fi
+
+    local resolved_file
+    local agents_file
+    local agent_count
+    resolved_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-resolved-chain-${RUN_ID:-cli}.XXXXXX")"
+    agents_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-resolved-agents-${RUN_ID:-cli}.XXXXXX")"
+    agent_count=$(jq '.agents | length' "$source_file")
+
+    echo "[" > "$agents_file"
+    for i in $(seq 0 $((agent_count - 1))); do
+        local ref
+        local agent_file
+        ref=$(jq -r ".agents[$i].\"\$ref\" // empty" "$source_file")
+        [[ "$i" -gt 0 ]] && echo "," >> "$agents_file"
+
+        if [[ -n "$ref" ]]; then
+            if [[ -f "$AGENTS_DIR/$ref/agent.json" ]]; then
+                agent_file="$AGENTS_DIR/$ref/agent.json"
+            elif [[ -f "$AGENTS_DIR/$ref.json" ]]; then
+                agent_file="$AGENTS_DIR/$ref.json"
+            else
+                echo "  error: agent ref not found: $ref" >&2
+                rm -f "$agents_file" "$resolved_file"
+                return 1
+            fi
+
+            jq -s '.[0] * .[1] | del(."$ref")' "$agent_file" <(jq ".agents[$i]" "$source_file") >> "$agents_file"
+        else
+            jq ".agents[$i]" "$source_file" >> "$agents_file"
+        fi
+    done
+    echo "]" >> "$agents_file"
+
+    jq --slurpfile agents "$agents_file" '.agents = $agents[0]' "$source_file" > "$resolved_file"
+    rm -f "$agents_file"
+    echo "$resolved_file"
+}
+
+CHAIN_FILE="$(resolve_chain_agent_refs "$CHAIN_FILE")"
+if [[ ! -f "$CHAIN_FILE" ]]; then
+    echo "  error: failed to resolve chain agent references"
+    exit 1
+fi
+
 # -------------------------------------------------------------------
 # read chain config
 # -------------------------------------------------------------------
@@ -392,35 +445,52 @@ ${TASK_COMMENTS}"
 }
 
 # -------------------------------------------------------------------
-# substitute_placeholders: replace {TASK_*}, {GOAL}, {CHAIN_NAME}
-# in input text with actual values
+# substitute_placeholders: replace {TASK_*}, {GOAL}, {CHAIN_NAME},
+# {WORKSPACE_PATH}, and artifact placeholders with actual values.
 # -------------------------------------------------------------------
 substitute_placeholders() {
     local text="$1"
+    local task_id="${TASK_ID:-}"
+    local task_title="${TASK_TITLE:-}"
+    local task_description="${TASK_DESCRIPTION:-}"
+    local task_type="${TASK_TYPE:-}"
+    local task_priority="${TASK_PRIORITY:-}"
+    local task_acceptance="${TASK_ACCEPTANCE_CRITERIA:-}"
+    local task_design="${TASK_DESIGN:-}"
+    local task_notes="${TASK_NOTES:-}"
+    local task_comments="${TASK_COMMENTS:-}"
+    local task_context="${TASK_CONTEXT:-}"
+    local workspace_path="${REMOTE_PROJECT_ROOT:-${CHAIN_PROJECT_ROOT:-${WORKSPACE_PATH:-}}}"
+    local artifacts_dir="${ARTIFACTS_DIR:-}"
+    local run_id="${RUN_ID:-}"
+    local chain_name="${CHAIN_NAME:-}"
 
     # for backward compat, {TASK} -> {TASK_DESCRIPTION}
-    text="${text//\{TASK\}/\$TASK_DESCRIPTION}"
+    text="${text//\{TASK\}/$task_description}"
 
     # replace all placeholders
-    text="${text//\{TASK_ID\}/\$TASK_ID}"
-    text="${text//\{TASK_TITLE\}/\$TASK_TITLE}"
-    text="${text//\{TASK_DESCRIPTION\}/\$TASK_DESCRIPTION}"
-    text="${text//\{TASK_TYPE\}/\$TASK_TYPE}"
-    text="${text//\{TASK_PRIORITY\}/\$TASK_PRIORITY}"
-    text="${text//\{TASK_ACCEPTANCE_CRITERIA\}/\$TASK_ACCEPTANCE_CRITERIA}"
-    text="${text//\{TASK_DESIGN\}/\$TASK_DESIGN}"
-    text="${text//\{TASK_NOTES\}/\$TASK_NOTES}"
-    text="${text//\{TASK_COMMENTS\}/\$TASK_COMMENTS}"
-    text="${text//\{TASK_CONTEXT\}/\$TASK_CONTEXT}"
+    text="${text//\{TASK_ID\}/$task_id}"
+    text="${text//\{TASK_TITLE\}/$task_title}"
+    text="${text//\{TASK_DESCRIPTION\}/$task_description}"
+    text="${text//\{TASK_TYPE\}/$task_type}"
+    text="${text//\{TASK_PRIORITY\}/$task_priority}"
+    text="${text//\{TASK_ACCEPTANCE_CRITERIA\}/$task_acceptance}"
+    text="${text//\{TASK_DESIGN\}/$task_design}"
+    text="${text//\{TASK_NOTES\}/$task_notes}"
+    text="${text//\{TASK_COMMENTS\}/$task_comments}"
+    text="${text//\{TASK_CONTEXT\}/$task_context}"
+    text="${text//\{WORKSPACE_PATH\}/$workspace_path}"
+    text="${text//\{PROJECT_ROOT\}/$workspace_path}"
+    text="${text//\{PROJECT_DIR\}/$workspace_path}"
+    text="${text//\{RUN_ID\}/$run_id}"
 
     # note: GOAL is not set in bash runner, but include for consistency
     local goal="${GOAL:-$(jq -r '.description // .name // ""' "$CHAIN_FILE")}"
-    text="${text//\{GOAL\}/\${goal}}"
+    text="${text//\{GOAL\}/$goal}"
 
-    text="${text//\{CHAIN_NAME\}/\${CHAIN_NAME}}"
-    text="${text//\{ARTIFACTS_DIR\}/\${ARTIFACTS_DIR}}"
+    text="${text//\{CHAIN_NAME\}/$chain_name}"
+    text="${text//\{ARTIFACTS_DIR\}/$artifacts_dir}"
 
-    # eval to expand variables
     echo "$text"
 }
 
@@ -1132,6 +1202,7 @@ launch_chain_agent() {
 
     local agent_workspace=$(jq -r --arg id "$agent_id" \
         '.agents[] | select(.id == $id) | .context.workspace // ""' "$CHAIN_FILE" 2>/dev/null || true)
+    agent_workspace=$(substitute_placeholders "$agent_workspace")
     local agent_emits=$(get_agent_config "$agent_id" "emits")
 
     # timeout config (agent level overrides default)
@@ -1712,7 +1783,7 @@ echo "  starting chain with: $FIRST_AGENT"
 if [[ -z "$RUN_ID" ]]; then
     # no goal when run directly from cli (use chain description)
     goal=$(jq -r '.description // .name // ""' "$CHAIN_FILE")
-    RUN_ID=$(create-run "$CHAIN_FILE" "$goal" "$WORKSPACE_PATH")
+    RUN_ID=$(create-run "$CHAIN_FILE" "$goal" "$WORKSPACE_PATH" "$TASK_ID")
     echo "  run-id: $RUN_ID"
     _sys_log "info" "chain-runner" "run created: $RUN_ID" "chain: $CHAIN_NAME, first_agent: $FIRST_AGENT, workspace: ${WORKSPACE_PATH:-local}"
 fi

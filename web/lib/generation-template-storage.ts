@@ -273,10 +273,10 @@ TASK DESIGN PRINCIPLES:
    Each criterion: "Given X, when Y, then Z"
    BAD: "The login works correctly"
    GOOD:
-   - "User clicks 'Login with GitHub', authorizes, lands on /dashboard within 3s"
-   - "OAuth token is stored server-side only, never exposed to the client"
-   - "Logout clears the session cookie and redirects to /login"
-   - "Invalid or expired tokens show a clear error with retry option"
+   - "Given a signed-out user, when they click 'Login with GitHub' and authorize, then they land on /dashboard within 3s"
+   - "Given OAuth completes, when the app stores the token, then it is stored server-side only and never exposed to the client"
+   - "Given a logged-in user, when they log out, then the session cookie is cleared and they are redirected to /login"
+   - "Given an invalid or expired token, when authentication fails, then the user sees a clear error with a retry option"
 
 5. SUBTASKS — for epics, sequence the work properly
    - Each subtask completable in 1-3 days
@@ -300,7 +300,7 @@ EXAMPLE — high quality task:
   "type": "feature",
   "priority": 1,
   "description": "Outbound webhooks have no signature. Receiving systems can't verify payload authenticity. Add HMAC-SHA256 signing using a per-webhook secret key so consumers can verify requests are genuine.",
-  "acceptance_criteria": "Each webhook endpoint has a unique signing secret, generated on creation\nOutbound requests include X-Mentiko-Signature: sha256=<hmac> header\nUI shows signing secret with copy button (hidden by default, reveal on click)\nRotating the secret invalidates the old one immediately\nDocs show verification example in Node.js and Python",
+  "acceptance_criteria": "Given each webhook endpoint exists, when it is created, then it has a unique signing secret\nGiven a consumer receives an outbound request, when it verifies X-Mentiko-Signature: sha256=<hmac>, then the payload authenticity can be confirmed\nGiven a user opens the webhook settings UI, when they reveal the signing secret, then it shows with a copy button and stays hidden by default\nGiven a webhook secret is rotated, when the rotation completes, then the old secret is invalidated immediately\nGiven a developer reads the docs, when they need to verify signatures, then Node.js and Python examples are available",
   "design": "Use crypto.createHmac('sha256', secret).update(rawBody).digest('hex'). Secret must be stored recoverable (not hashed) — consider encrypting at rest. See web/lib/inbound-webhook-storage.ts for existing token storage pattern. Add X-Mentiko-Signature header in the webhook dispatch function.",
   "labels": ["backend", "security", "api"]
 }

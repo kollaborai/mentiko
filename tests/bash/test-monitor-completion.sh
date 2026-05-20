@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 TEST_TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+trap 'rm -r "$TEST_TMP_DIR"' EXIT
 
 EVENTS_DIR="$TEST_TMP_DIR/events"
 CHAIN_FILE="$TEST_TMP_DIR/chain.json"
@@ -166,7 +166,31 @@ assert_not_contains "$agent_functions_source" \
   'send-message "$monitor_session"' \
   "spec monitor starts script directly instead of typing command into shell"
 
+chain_monitor_source="$(sed -n '220,620p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+assert_contains "$chain_monitor_source" \
+  'launch-chain-runner-complete()' \
+  "chain monitor uses a dedicated completion launcher"
+
+assert_contains "$chain_monitor_source" \
+  'transport_new_session "$completion_session" env' \
+  "chain completion handler starts in a separate pty session"
+
+chain_monitor_body="$(sed -n '430,620p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+assert_not_contains "$chain_monitor_body" \
+  'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
+  "chain monitor does not launch completion as a monitor-child nohup job"
+
 launch_agent_source="$(sed -n '110,135p' "$PROJECT_ROOT/lib/launch-agent.sh")"
 assert_not_contains "$launch_agent_source" \
   'send-message "$MONITOR_SESSION"' \
   "launch-agent monitor starts script directly instead of typing command into shell"
+
+chain_complete_cleanup_source="$(sed -n '410,425p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
+assert_contains "$chain_complete_cleanup_source" \
+  'transport_session_exists "$MONITOR_SESSION"' \
+  "chain completion removes exited monitor sessions"
+
+legacy_complete_cleanup_source="$(sed -n '130,142p' "$PROJECT_ROOT/lib/complete-agent.sh")"
+assert_contains "$legacy_complete_cleanup_source" \
+  'transport_session_exists "$MONITOR_SESSION"' \
+  "legacy completion removes exited monitor sessions"

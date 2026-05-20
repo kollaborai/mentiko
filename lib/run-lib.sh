@@ -38,13 +38,14 @@ _sys_log() {
 # -------------------------------------------------------------------
 # create-run: create a new run object
 # -------------------------------------------------------------------
-# args: <chain.json> <goal> [workspace_path]
+# args: <chain.json> <goal> [workspace_path] [task_id]
 # outputs: run-id
 # side-effect: writes runs/{run-id}/run.json
 create-run() {
     local chain_file="$1"
     local goal="$2"
     local workspace_path="${3:-}"
+    local task_id="${4:-}"
 
     if [[ ! -f "$chain_file" ]]; then
         echo "  error: chain file not found" >&2
@@ -70,12 +71,18 @@ create-run() {
         workspace_field="\"workspacePath\": $(printf '%s' "$workspace_path" | jq -Rs .),"
     fi
 
+    local task_field=""
+    if [[ -n "$task_id" ]]; then
+        task_field="\"taskId\": $(printf '%s' "$task_id" | jq -Rs .),"
+    fi
+
     cat > "$run_file" <<RUNEOF
 {
   "id": "$run_id",
   "chain": "$chain_name",
   ${parent_field}
   ${workspace_field}
+  ${task_field}
   "goal": $(echo "$goal" | jq -Rs .),
   "started": "$(date -Iseconds)",
   "status": "running",
@@ -423,6 +430,9 @@ build-run-summary-json() {
             ((($s.status // "") | ascii_downcase) == "partial") or
             (lower_blob($s) | test("overall result:[[:space:]]*partial[[:space:]-]*pass|result:[[:space:]]*partial[[:space:]-]*pass|partial[[:space:]-]*pass"));
 
+        def explicit_pass($s):
+            lower_blob($s) | test("overall result:[[:space:]]*pass|result:[[:space:]]*pass|pipeline passes|passes all");
+
         def agent_rank($r; $agentId):
             ([$r.agents[]?.id] | index($agentId)) // -1;
 
@@ -433,9 +443,10 @@ build-run-summary-json() {
         ($summaries[0] // []) as $s |
         ($s | sort_by(agent_rank($r; (.agentId // "")))) as $ordered |
         ($ordered | reverse) as $latest_first |
+        (($latest_first[0] // {})) as $final_summary |
         (if any($s[]; status_failed(.) or explicit_fail(.)) then "fail"
          elif any($s[]; explicit_partial(.)) then "partial_pass"
-         elif any($s[]; lower_blob(.) | test("overall result:[[:space:]]*pass|result:[[:space:]]*pass")) then "pass"
+         elif any($s[]; explicit_pass(.)) then "pass"
          elif (($r.status // "") == "completed" or ($r.status // "") == "complete") then "complete"
          else ($r.status // "unknown") end) as $outcome |
         {
@@ -463,9 +474,21 @@ build-run-summary-json() {
                 started,
                 completed
             })),
-            findings: ($latest_first | map(.findings // []) | add // [] | uniq_order | .[0:8]),
-            risks: ($latest_first | map(.risks // []) | add // [] | uniq_order | .[0:8]),
-            next_actions: ($latest_first | map(.nextAgentHints // []) | add // [] | uniq_order | .[0:6]),
+            findings: (
+                if $outcome == "pass" then (($final_summary.findings // []) | uniq_order | .[0:8])
+                else ($latest_first | map(.findings // []) | add // [] | uniq_order | .[0:8])
+                end
+            ),
+            risks: (
+                if $outcome == "pass" then (($final_summary.risks // []) | uniq_order | .[0:8])
+                else ($latest_first | map(.risks // []) | add // [] | uniq_order | .[0:8])
+                end
+            ),
+            next_actions: (
+                if $outcome == "pass" then (($final_summary.nextAgentHints // []) | uniq_order | .[0:6])
+                else ($latest_first | map(.nextAgentHints // []) | add // [] | uniq_order | .[0:6])
+                end
+            ),
             artifacts_count: (($r.artifacts // []) | length),
             generated_at: (now | todateiso8601)
         }

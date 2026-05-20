@@ -176,6 +176,25 @@ describe("POST /api/tasks/auto-run", () => {
     });
   });
 
+  it("prefers task.workspace_id over stale metadata workspace_path", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Implement auto-run",
+      description: "Make ready tasks analyze and run",
+      issue_type: "task",
+      priority: 1,
+      workspace_id: "/repo/live",
+      metadata: { auto_run: true, workspace_path: "/repo/stale" },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+
+    expect(res.status).toBe(200);
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.input.workspacePath).toBe("/repo/live");
+  });
+
   it("reconciles and skips a task that already has an active run", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",

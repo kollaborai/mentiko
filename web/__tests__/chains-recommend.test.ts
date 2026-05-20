@@ -73,7 +73,7 @@ jest.mock("@/lib/workspace-auth", () => ({
 }));
 
 jest.mock("@/lib/api-response", () => ({
-  withErrorHandling: (fn: Function) => fn,
+  withErrorHandling: <T extends (...args: never[]) => unknown>(fn: T) => fn,
   apiSuccess: (data: unknown) => ({ json: () => data, status: 200 }),
 }));
 
@@ -84,9 +84,11 @@ jest.mock("@/lib/api-errors", () => ({
   InternalServerError: class extends Error { constructor(m: string) { super(m); } },
 }));
 
+const mockTaskGet = jest.fn().mockReturnValue(null);
+const mockTaskUpdate = jest.fn();
 jest.mock("@/lib/task-store", () => ({
-  taskGet: jest.fn().mockReturnValue(null),
-  taskUpdate: jest.fn(),
+  taskGet: (...args: unknown[]) => mockTaskGet(...args),
+  taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));
 
 // ---- tests ----------------------------------------------------------------
@@ -101,6 +103,10 @@ function makeRequest(body: Record<string, unknown>) {
 describe("POST /api/chains/recommend", () => {
   beforeEach(() => {
     mockCreateJob.mockClear();
+    mockResolveWorkspace.mockClear();
+    mockTaskGet.mockReset();
+    mockTaskUpdate.mockReset();
+    mockTaskGet.mockReturnValue(null);
   });
 
   it("injects profile catalog into generation prompt", async () => {
@@ -116,6 +122,26 @@ describe("POST /api/chains/recommend", () => {
 
     expect(mockResolveWorkspace).toHaveBeenCalledWith(
       "default", "default", "/my/workspace", "user-1"
+    );
+  });
+
+  it("prefers task.workspace_id over stale metadata workspace_path", async () => {
+    mockTaskGet
+      .mockReturnValueOnce({
+        id: "TASK-1",
+        workspace_id: "/repo/live",
+        metadata: { workspace_path: "/repo/stale" },
+      })
+      .mockReturnValueOnce({
+        id: "TASK-1",
+        workspace_id: "/repo/live",
+        metadata: { workspace_path: "/repo/stale", generation_job_id: "job-123" },
+      });
+
+    await POST(makeRequest({ prompt: "build me a chain", taskId: "TASK-1" }));
+
+    expect(mockResolveWorkspace).toHaveBeenCalledWith(
+      "default", "default", "/repo/live", "user-1"
     );
   });
 

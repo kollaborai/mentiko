@@ -4,6 +4,21 @@
   "description": "Schema for generating tasks via AI",
   "type": "object",
   "required": ["title", "type", "priority"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "subtasks": { "type": "array", "minItems": 1 }
+        },
+        "required": ["subtasks"]
+      },
+      "then": {
+        "properties": {
+          "type": { "const": "epic" }
+        }
+      }
+    }
+  ],
   "properties": {
     "title": {
       "type": "string",
@@ -47,15 +62,17 @@
       "description": "Breakdown into subtasks (only for epics or complex features)",
       "items": {
         "type": "object",
-        "required": ["title", "type", "priority"],
+        "required": ["title", "description", "type", "priority"],
         "properties": {
           "title": {
             "type": "string",
-            "description": "Subtask title"
+            "description": "Subtask title",
+            "minLength": 1
           },
           "description": {
             "type": "string",
-            "description": "Subtask description"
+            "description": "Subtask description",
+            "minLength": 1
           },
           "type": {
             "type": "string",

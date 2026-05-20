@@ -428,10 +428,10 @@ function resolveTaskWorkspacePath(
   metadata: Record<string, unknown>
 ): string | undefined {
   let workspacePath =
-    typeof metadata.workspace_path === "string"
-      ? metadata.workspace_path
-      : typeof task.workspace_id === "string"
-        ? task.workspace_id
+    typeof task.workspace_id === "string"
+      ? task.workspace_id
+      : typeof metadata.workspace_path === "string"
+        ? metadata.workspace_path
         : undefined;
 
   const workspaceId = metadata.workspace_id as string | undefined;

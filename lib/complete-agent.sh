@@ -130,14 +130,14 @@ done
 # -------------------------------------------------------------------
 
 MONITOR_SESSION="monitor-${SESSION_NAME}"
-if transport_has_session "$MONITOR_SESSION" 2>/dev/null; then
+if transport_session_exists "$MONITOR_SESSION" 2>/dev/null; then
     transport_kill_session "$MONITOR_SESSION"
-    echo "  killed monitor: $MONITOR_SESSION"
+    echo "  removed monitor: $MONITOR_SESSION"
 fi
 
-if transport_has_session "$SESSION_NAME" 2>/dev/null; then
+if transport_session_exists "$SESSION_NAME" 2>/dev/null; then
     transport_kill_session "$SESSION_NAME"
-    echo "  killed agent: $SESSION_NAME"
+    echo "  removed agent: $SESSION_NAME"
 fi
 
 # kill subagent sessions

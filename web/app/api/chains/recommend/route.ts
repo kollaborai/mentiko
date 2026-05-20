@@ -43,7 +43,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
   }
   const requestedWorkspacePath = directWorkspacePath
-    || (typeof existingMetadata.workspace_path === "string"
+    || (typeof currentTask?.workspace_id === "string"
+      ? currentTask.workspace_id
+      : typeof existingMetadata.workspace_path === "string"
       ? existingMetadata.workspace_path
       : typeof existingMetadata.workspace_id === "string"
         ? existingMetadata.workspace_id

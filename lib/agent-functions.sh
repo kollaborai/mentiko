@@ -231,6 +231,43 @@ agent-complete-marker-seen() {
         grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
 }
 
+launch-chain-runner-complete() {
+    local session_name="$1"
+    local chain_file="$2"
+    local script_dir
+    local completion_session
+    local run_id
+
+    if [[ -z "$session_name" || -z "$chain_file" || ! -f "$chain_file" ]]; then
+        echo "  chain-runner-complete not launched: missing chain.json"
+        return 1
+    fi
+
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
+    completion_session="complete-${session_name}-$(date +%s)"
+
+    # Run completion in its own PTY session. The handler kills the monitor
+    # session as part of cleanup, so it cannot be a child of that monitor PTY.
+    if declare -f transport_new_session >/dev/null; then
+        if transport_new_session "$completion_session" env \
+            MENTIKO_RUN_ID="$run_id" \
+            RUN_ID="$run_id" \
+            NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+            ORG_ID="${ORG_ID:-default}" \
+            WORKSPACE_TYPE="${WORKSPACE_TYPE:-local}" \
+            bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"; then
+            echo "  chain-runner-complete session started: $completion_session"
+            return 0
+        fi
+        echo "  chain-runner-complete session failed: $completion_session"
+    fi
+
+    nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
+    disown $! 2>/dev/null || true
+    echo "  chain-runner-complete launched (pid: $!, disowned)"
+}
+
 # -------------------------------------------------------------------
 # monitor-with-ai: watch an agent session, nudge when stale,
 # trigger completion handler on AGENT_COMPLETE
@@ -425,11 +462,8 @@ monitor-chain-agent() {
             if [[ -n "$pane_pid" ]]; then
                 if ! ps -p "$pane_pid" >/dev/null 2>&1; then
                     echo "  process $pane_pid inside session '$session_name' is dead. forcing completion..."
-                    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
                     if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                        nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                        disown $!
-                        echo "  chain-runner-complete launched (pid: $!, disowned)"
+                        launch-chain-runner-complete "$session_name" "$chain_file"
                     fi
                     rm -f "$state_file" "$stale_count_file"
                     break
@@ -455,9 +489,7 @@ monitor-chain-agent() {
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
                 echo "  using chain-runner-complete (JSON mode)"
-                nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                disown $!
-                echo "  chain-runner-complete launched (pid: $!, disowned)"
+                launch-chain-runner-complete "$session_name" "$chain_file"
             fi
             rm -f "$state_file" "$stale_count_file"
             break
@@ -498,9 +530,7 @@ monitor-chain-agent() {
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
                 echo "  using chain-runner-complete (JSON mode)"
-                nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                disown $!
-                echo "  chain-runner-complete launched (pid: $!, disowned)"
+                launch-chain-runner-complete "$session_name" "$chain_file"
             else
                 echo "  no chain.json, falling back to complete-agent.sh"
                 local project_root
@@ -548,9 +578,7 @@ monitor-chain-agent() {
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
                 echo "  using chain-runner-complete (JSON mode)"
-                nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                disown $!
-                echo "  chain-runner-complete launched (pid: $!, disowned)"
+                launch-chain-runner-complete "$session_name" "$chain_file"
             else
                 echo "  no chain.json, falling back to complete-agent.sh"
                 local project_root
@@ -574,11 +602,8 @@ monitor-chain-agent() {
         # check if max stale count reached (stuck agent)
         if [[ $stale_count -ge $max_stale_count ]]; then
             echo "$(date '+%H:%M:%S') - max stale count ($max_stale_count) reached. forcing completion..."
-            local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                disown $!
-                echo "  chain-runner-complete launched (pid: $!, disowned)"
+                launch-chain-runner-complete "$session_name" "$chain_file"
             fi
             rm -f "$state_file" "$stale_count_file"
             break
@@ -624,6 +649,7 @@ export -f new-agent-session
 export -f new-agent-from-spec
 export -f peek-session
 export -f ensure-event-file
+export -f launch-chain-runner-complete
 export -f monitor-with-ai
 export -f monitor-chain-agent
 export -f mentiko-monitor
