@@ -6,8 +6,8 @@
 # (built separately by build-base.yml).
 #
 # trigger model: explicit releases only.
-#   - push a tag matching `v*` (e.g. `git tag v0.3.5 && git push --tags`)
-#     publishes `:<commit-sha>`, `:v0.3.5`, and `:latest`.
+#   - push a strict patch tag (e.g. `git tag v0.3.11 && git push --tags`)
+#     publishes `:<commit-sha>`, `:<tag>`, and `:latest`.
 #   - manual workflow_dispatch from the Actions UI publishes
 #     `:<commit-sha>` and `:latest` (no semver tag).
 #
@@ -43,7 +43,20 @@ env:
   IMAGE: ghcr.io/kollaborai/mentiko
 
 jobs:
+  validate-release-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: validate release version
+        run: node scripts/validate-platform-release-version.mjs
+
   platform-amd64:
+    needs: validate-release-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +84,7 @@ jobs:
           cache-to: type=gha,scope=platform-amd64,mode=max
 
   platform-arm64:
+    needs: validate-release-version
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4

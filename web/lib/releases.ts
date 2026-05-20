@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.10",
+    date: "May 20, 2026",
+    title: "Tenant Password Reset Delivery",
+    description:
+      "Tenant password reset emails now send from the tenant help address, and release metadata lines up with the public platform image tag so deploys target the expected image.",
+    category: "fix",
+    docsHref: "/settings/security",
+  },
+  {
     version: "v0.3.9",
     date: "May 16, 2026",
     title: "Local Dev Runtime Stabilization",
