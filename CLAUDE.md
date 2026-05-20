@@ -427,6 +427,14 @@ always screenshot AFTER every action. don't assume it worked.
 This repo contains the self-hosted Mentiko platform. Production guidance
 here must be generic and useful to independent operators.
 
+release version guard:
+
+- public releases are strict `vX.Y.Z` tags only
+- each release must increment the previous stable tag by +0.0.1
+- before tagging, update `web/package.json`, `web/package-lock.json`, and
+  `web/lib/releases.ts` to the same version
+- rich build labels like `v0.3.10-r...` are rejected
+
 platform image build pipeline:
 
 1. install web dependencies
@@ -509,7 +517,7 @@ CRITICAL RULES:
 
 - NEVER deploy without smoke tests passing
 - NEVER skip the QA step once QA env exists
-- always tag images with git SHA, not just :latest
+- always tag images with git SHA and strict vX.Y.Z, not just :latest
 - always keep previous image tag noted before deploying
 
 ## task store (sqlite)
@@ -1052,6 +1060,14 @@ always screenshot AFTER every action. don't assume it worked.
 This repo contains the self-hosted Mentiko platform. Production guidance
 here must be generic and useful to independent operators.
 
+release version guard:
+
+- public releases are strict `vX.Y.Z` tags only
+- each release must increment the previous stable tag by +0.0.1
+- before tagging, update `web/package.json`, `web/package-lock.json`, and
+  `web/lib/releases.ts` to the same version
+- rich build labels like `v0.3.10-r...` are rejected
+
 platform image build pipeline:
 
 1. install web dependencies
@@ -1134,7 +1150,7 @@ CRITICAL RULES:
 
 - NEVER deploy without smoke tests passing
 - NEVER skip the QA step once QA env exists
-- always tag images with git SHA, not just :latest
+- always tag images with git SHA and strict vX.Y.Z, not just :latest
 - always keep previous image tag noted before deploying
 
 ## task store (sqlite)
