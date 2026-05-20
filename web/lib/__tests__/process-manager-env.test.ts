@@ -14,4 +14,16 @@ describe("process manager environment", () => {
 
     expect(source).toContain("path.join(process.cwd(), '.env.local')");
   });
+
+  it("passes tenant transactional email variables to managed child processes", () => {
+    const source = readFileSync(join(process.cwd(), "lib/process-manager.ts"), "utf8");
+
+    expect(source).toContain("'SMTP_HOST'");
+    expect(source).toContain("'SMTP_PORT'");
+    expect(source).toContain("'SMTP_FROM'");
+    expect(source).toContain("'SMTP_USER'");
+    expect(source).toContain("'SMTP_PASS'");
+    expect(source).toContain("'RESEND_API_KEY'");
+    expect(source).toContain("'EMAIL_FROM'");
+  });
 });

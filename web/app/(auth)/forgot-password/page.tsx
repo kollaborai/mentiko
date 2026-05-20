@@ -26,10 +26,14 @@ function ForgotPasswordForm() {
     setError("");
 
     try {
-      await authClient.forgetPassword({
+      const result = await authClient.requestPasswordReset({
         email: email.trim(),
         redirectTo: "/reset-password",
       });
+      if (result?.error) {
+        setSent(true);
+        return;
+      }
       // always show success — don't reveal if email exists
       setSent(true);
     } catch {

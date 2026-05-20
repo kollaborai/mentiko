@@ -37,6 +37,9 @@ ARG BASE_TAG=latest
 # ===========================================================================
 
 FROM node:22-slim AS builder
+ARG BUILD_COMMIT=unknown
+ARG BUILD_VERSION=unknown
+ARG BUILD_REPO=kollaborai/mentiko
 
 COPY web/package.json web/package-lock.json /build/web/
 WORKDIR /build/web
@@ -66,7 +69,8 @@ RUN echo "=== assembling platform ===" && \
     mkdir -p /context/kollab/agent-bundles && \
     cp -r /build/kollab/agent-bundles/mentiko /context/kollab/agent-bundles/mentiko && \
     { cp processes.json /context/processes.json 2>/dev/null || true; } && \
-    printf '{"builtAt":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    printf '{"version":"%s","commit":"%s","builtAt":"%s","repo":"%s"}\n' \
+      "$BUILD_VERSION" "$BUILD_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BUILD_REPO" \
       > /context/version.json
 
 # compile ws-terminal.ts

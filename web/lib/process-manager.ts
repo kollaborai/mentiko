@@ -47,6 +47,9 @@ const ENV_WHITELIST = [
   'MENTIKO_CODE_ROOT', 'STORAGE_BUCKET',
   'CONTROL_PLANE_URL', 'ADMIN_EMAILS',
   'MARKETPLACE_AUTO_SYNC', 'MARKETPLACE_SYNC_INTERVAL',
+  // tenant transactional email -- next-server sends auth/reset mail.
+  'EMAIL_FROM', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_FROM',
+  'SMTP_USER', 'SMTP_PASS', 'RESEND_API_KEY',
   // tenant isolation — child processes need tier context
   'NAMESPACE_ID', 'ORG_ID',
   'MENTIKO_NAMESPACE_ROOT', 'MENTIKO_ORG_ROOT',

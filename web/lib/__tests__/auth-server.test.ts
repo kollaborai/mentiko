@@ -55,11 +55,25 @@ jest.mock("better-auth/db/migration", () => ({
   })),
 }));
 
+const mockSendEmail = jest.fn(() => Promise.resolve(true));
+jest.mock("../email", () => ({
+  sendEmail: mockSendEmail,
+}));
+
+jest.mock("../email-templates", () => ({
+  renderPasswordReset: jest.fn(({ resetUrl }: { resetUrl: string }) => ({
+    subject: "Reset your password",
+    text: `Reset: ${resetUrl}`,
+    html: `<p>Reset: ${resetUrl}</p>`,
+  })),
+}));
+
 describe("auth-server", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     jest.resetModules();
+    mockSendEmail.mockClear();
     process.env = { ...originalEnv };
   });
 
@@ -102,5 +116,26 @@ describe("auth-server", () => {
     const { onOrgCreated } = require("../auth-server");
     // should not throw even if dir doesn't exist
     expect(() => onOrgCreated("test-org-" + Date.now())).not.toThrow();
+  });
+
+  it("sends password reset emails from the tenant help address", async () => {
+    process.env.BETTER_AUTH_URL = "https://marco.mentiko.com";
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { betterAuth } = require("better-auth");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getAuth } = require("../auth-server");
+
+    await getAuth();
+
+    const options = (betterAuth as jest.Mock).mock.calls.at(-1)?.[0];
+    await options.emailAndPassword.sendResetPassword({
+      user: { email: "admin@mentiko.com", name: "Marco" },
+      url: "https://marco.mentiko.com/api/auth/reset-password/redacted?callbackURL=%2Freset-password",
+    });
+
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: "admin@mentiko.com",
+      from: "Mentiko Help <mentiko-help@marco.mentiko.com>",
+    }));
   });
 });

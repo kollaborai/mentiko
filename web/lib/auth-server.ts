@@ -145,13 +145,37 @@ let _db: any = null;
 let _initialized = false;
 let _initPromise: Promise<void> | null = null;
 
+function tenantHelpSenderFromAuthUrl(authUrl = process.env.BETTER_AUTH_URL): string | undefined {
+  if (!authUrl) return undefined;
+
+  try {
+    const host = new URL(authUrl).hostname.toLowerCase();
+    if (
+      !host ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      !host.includes(".") ||
+      host.includes("..") ||
+      !/^[a-z0-9.-]+$/.test(host)
+    ) {
+      return undefined;
+    }
+
+    return `Mentiko Help <mentiko-help@${host}>`;
+  } catch {
+    return undefined;
+  }
+}
+
 async function sendPasswordResetEmail(user: { email: string; name?: string }, url: string) {
   const [{ sendEmail }, { renderPasswordReset }] = await Promise.all([
     import("./email"),
     import("./email-templates"),
   ]);
   const tpl = renderPasswordReset({ name: user.name, resetUrl: url });
-  await sendEmail({ to: user.email, ...tpl });
+  const from = tenantHelpSenderFromAuthUrl();
+  await sendEmail({ to: user.email, ...tpl, ...(from ? { from } : {}) });
 }
 
 async function sendDeleteAccountEmail(user: { email: string; name?: string }, url: string) {

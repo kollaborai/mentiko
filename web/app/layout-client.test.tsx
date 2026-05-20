@@ -28,7 +28,9 @@ jest.mock("next-themes", () => ({
 }));
 
 jest.mock("@/components/must-change-password-gate", () => ({
-  MustChangePasswordGate: ({ children }: { children: React.ReactNode }) => children,
+  MustChangePasswordGate: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="session-gate">{children}</div>
+  ),
 }));
 
 jest.mock("@/lib/namespace-context", () => ({
@@ -148,6 +150,33 @@ describe("RootLayoutClient", () => {
 
     await waitFor(() => expect(mockThemeProviderMounts).toBe(1));
     expect(mockThemeProviderUnmounts).toBe(0);
+  });
+
+  it.each(["/login", "/signup", "/forgot-password", "/reset-password", "/welcome"])(
+    "renders %s outside the session gate",
+    (path) => {
+      mockPathname = path;
+
+      const { queryByTestId } = render(
+        <RootLayoutClient>
+          <div>public auth content</div>
+        </RootLayoutClient>,
+      );
+
+      expect(queryByTestId("session-gate")).not.toBeInTheDocument();
+    },
+  );
+
+  it("wraps protected pages in the session gate", () => {
+    mockPathname = "/dashboard";
+
+    const { getByTestId } = render(
+      <RootLayoutClient>
+        <div>dashboard content</div>
+      </RootLayoutClient>,
+    );
+
+    expect(getByTestId("session-gate")).toBeInTheDocument();
   });
 
   it("marks panel-surface documents so iframe backgrounds stay transparent", async () => {

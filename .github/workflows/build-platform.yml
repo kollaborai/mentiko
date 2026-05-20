@@ -63,6 +63,9 @@ jobs:
           provenance: false
           build-args: |
             BASE_TAG=${{ inputs.base_tag || 'latest' }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            BUILD_REPO=kollaborai/mentiko
           tags: ${{ env.IMAGE }}:${{ github.sha }}-amd64
           cache-from: type=gha,scope=platform-amd64
           cache-to: type=gha,scope=platform-amd64,mode=max
@@ -87,6 +90,9 @@ jobs:
           provenance: false
           build-args: |
             BASE_TAG=${{ inputs.base_tag || 'latest' }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            BUILD_REPO=kollaborai/mentiko
           tags: ${{ env.IMAGE }}:${{ github.sha }}-arm64
           cache-from: type=gha,scope=platform-arm64
           cache-to: type=gha,scope=platform-arm64,mode=max

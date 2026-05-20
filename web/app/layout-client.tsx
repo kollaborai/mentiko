@@ -27,7 +27,7 @@ import { usePillNavPreferences } from "@/lib/pill-nav-preferences";
 import { applyStoredUserDisplayPreferences } from "@/lib/user-display-preferences";
 
 // pages that render standalone (no nav, no sidebar, no providers)
-const STANDALONE_PATHS = ["/login", "/signup", "/welcome"];
+const STANDALONE_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/welcome"];
 const PANEL_MESSAGE_OPEN_WELCOME = "mentiko-open-welcome-panel";
 const PANEL_MESSAGE_OPEN_GLOBAL_SEARCH = "mentiko-open-global-search";
 
