@@ -16,7 +16,7 @@ import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 import { cn } from "@/lib/utils";
 import { useEditorStore, isDirty } from "@/lib/editor-store";
 import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { FileTree } from "./file-tree";
 import { SplitContainer } from "./split-container";
 import { SearchPanel } from "./search-panel";
@@ -113,7 +113,7 @@ export function FloatingCodePill() {
 
   const { workspacePath } = useWorkspace();
   const { prefs: pillPrefs } = usePillNavPreferences();
-  const shineColors = COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const shineColors = getPillNavShineGradient(pillPrefs);
   const [configRoot, setConfigRoot] = useState<string | null>(null);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [fileFilterOpen, setFileFilterOpen] = useState(false);

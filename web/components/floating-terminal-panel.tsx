@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { unwrapApiData } from "@/lib/api-client";
 import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
 import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
@@ -102,7 +102,7 @@ export function FloatingTerminalPanel() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedSession, setCopiedSession] = useState<string | null>(null);
   const { prefs: pillPrefs } = usePillNavPreferences();
-  const shineColors = COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const shineColors = getPillNavShineGradient(pillPrefs);
 
   const [isMobile, setIsMobile] = useState(false);
   const [sessionListOpen, setSessionListOpen] = useState(false);

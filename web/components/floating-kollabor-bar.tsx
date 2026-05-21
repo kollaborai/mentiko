@@ -15,7 +15,7 @@ import {
   type KollaborBarDock,
 } from "@/lib/kollabor-bar-store";
 import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { cn } from "@/lib/utils";
 import {
   getOrCreateSession,
@@ -218,8 +218,7 @@ export function FloatingKollaborBar() {
   const { offsetX, offsetY, dock, setOffset, setDock, scale, setScale, fontScale } =
     useKollaborBarStore();
   const { prefs: pillPrefs } = usePillNavPreferences();
-  const shineColors =
-    COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const shineColors = getPillNavShineGradient(pillPrefs);
   const fontVars = useMemo(() => agentFontVars(fontScale), [fontScale]);
 
   const inputRef = useRef<HTMLTextAreaElement | null>(null);

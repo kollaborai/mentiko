@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { CloseCircleFilled } from "@aliimam/icons";
 import { WelcomeWizard } from "./welcome-wizard";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { useWorkspace } from "@/lib/workspace-context";
 import { useUser } from "@/lib/user-context";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
@@ -17,7 +17,7 @@ import {
 export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string }) {
   const [open, setOpen] = useState(false);
   const { prefs: pillPrefs } = usePillNavPreferences();
-  const shineColors = COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const shineColors = getPillNavShineGradient(pillPrefs);
   const { workspaces, refetch, setWorkspaceId } = useWorkspace();
   const { user } = useUser();
   const { fetchWithNamespace } = useNamespaceFetch();

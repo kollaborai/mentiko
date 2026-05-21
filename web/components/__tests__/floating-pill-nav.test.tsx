@@ -151,6 +151,7 @@ beforeEach(() => {
   usePillNavPreferences.setState({
     prefs: {
       colorScheme: 'rainbow',
+      customGlowColors: ['#ff00ff', '#00ffff', '#ff3131', '#00ff00', '#ffea00'],
       scale: 1,
       showRecents: true,
       navigationMode: 'page',
@@ -365,6 +366,7 @@ describe('FloatingPillNav', () => {
       usePillNavPreferences.setState({
         prefs: {
           colorScheme: 'rainbow',
+          customGlowColors: ['#ff00ff', '#00ffff', '#ff3131', '#00ff00', '#ffea00'],
           scale: 1,
           showRecents: true,
           navigationMode: 'floating-nav-panels',
@@ -394,6 +396,7 @@ describe('FloatingPillNav', () => {
       usePillNavPreferences.setState({
         prefs: {
           colorScheme: 'rainbow',
+          customGlowColors: ['#ff00ff', '#00ffff', '#ff3131', '#00ff00', '#ffea00'],
           scale: 1,
           showRecents: true,
           navigationMode: 'floating-nav-panels',

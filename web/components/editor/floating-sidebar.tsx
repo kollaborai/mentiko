@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 
 // ─── types ──────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ function getEdgeGlowStyle(
 
 function ShineBorder() {
   const { prefs } = usePillNavPreferences();
-  const colors = COLOR_SCHEME_GRADIENTS[prefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const colors = getPillNavShineGradient(prefs);
   // build conic gradient from scheme colors with low opacity
   const stops = colors.split(", ").map((c, i, arr) => {
     const alpha = i === 0 || i === arr.length - 1 ? 0.2 : 0.15 - (i * 0.02);
@@ -172,21 +172,18 @@ export function FloatingFileSidebar({
   collapsedContent,
 }: FloatingFileSidebarProps) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<SidebarPosition>({ side: "left", offsetY: 5 });
+  const [position, setPosition] = useState<SidebarPosition>(() => loadPosition());
   const [isDragging, setIsDragging] = useState(false);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [edgeProximity, setEdgeProximityState] = useState<{ side: SnapSide; pull: number }>({ side: "left", pull: 0 });
   const [isSnapping, setIsSnapping] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => loadCollapsed());
+  const [panelHeight, setPanelHeight] = useState(200);
 
   const dragStart = useRef<{ x: number; y: number; panelLeft: number; panelTop: number } | null>(null);
   const hasMoved = useRef(false);
 
   const collapsed = externalCollapsed ?? isCollapsed;
-
-  // hydrate from localStorage
-  useEffect(() => { setPosition(loadPosition()); }, []);
-  useEffect(() => { setIsCollapsed(loadCollapsed()); }, []);
 
   // ─── drag handlers ────────────────────────────────────────
 
@@ -267,6 +264,16 @@ export function FloatingFileSidebar({
     return () => clearTimeout(safety);
   }, [isDragging]);
 
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const updatePanelHeight = () => setPanelHeight(panel.getBoundingClientRect().height);
+    updatePanelHeight();
+    const observer = new ResizeObserver(updatePanelHeight);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [collapsed]);
+
   // collapse/expand
   const handleCollapse = useCallback(() => {
     setIsCollapsed(true);
@@ -342,11 +349,11 @@ export function FloatingFileSidebar({
       `}</style>
 
       {/* edge glow while dragging */}
-      {isDragging && edgeProximity.pull > 0.2 && dragPos && panelRef.current && (
+      {isDragging && edgeProximity.pull > 0.2 && dragPos && (
         <div
           className="fixed pointer-events-none z-[9998]"
           style={{
-            ...getEdgeGlowStyle(edgeProximity.side, edgeProximity.pull, dragPos.y + (panelRef.current?.getBoundingClientRect().height ?? 200) / 2),
+            ...getEdgeGlowStyle(edgeProximity.side, edgeProximity.pull, dragPos.y + panelHeight / 2),
             transition: "opacity 0.15s ease",
           }}
         />

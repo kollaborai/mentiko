@@ -20,7 +20,7 @@ import { SessionsIndicator } from "@/components/sessions-indicator";
 import { NavNamespaceSelector } from "@/components/nav-namespace-selector";
 import { useWorkspace } from "@/lib/workspace-context";
 import { useEditorStore } from "@/lib/editor-store";
-import { usePillNavPreferences, COLOR_SCHEME_GRADIENTS } from "@/lib/pill-nav-preferences";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card";
 import { SETTINGS_QUICK_MENU_GROUPS } from "@/lib/settings-nav";
 import { invalidateRunsCache } from "@/lib/runs-store";
@@ -617,7 +617,7 @@ export function FloatingPillNav() {
   const [pillScale, setPillScale] = useState(1);
   const [panelActivePath, setPanelActivePath] = useState<string | null>(null);
   const { prefs: pillPrefs } = usePillNavPreferences();
-  const shineColors = COLOR_SCHEME_GRADIENTS[pillPrefs.colorScheme] || COLOR_SCHEME_GRADIENTS.rainbow;
+  const shineColors = getPillNavShineGradient(pillPrefs);
   const { workspaces } = useWorkspace();
   const hasWorkspaces = workspaces.length > 0;
   const dragStart = useRef<{ x: number; y: number; pillX: number; pillY: number } | null>(null);

@@ -10,13 +10,13 @@ import {
   usePillNavPreferences,
   COLOR_SCHEME_SWATCH,
   COLOR_SCHEME_LABELS,
-  COLOR_SCHEME_GRADIENTS,
-  type PillNavColorScheme,
+  getPillNavShineGradient,
+  type PillNavPresetColorScheme,
 } from "@/lib/pill-nav-preferences";
 
 const SCALE_KEY = "mentiko-pill-scale";
 const SCALE_CHANGE_EVENT = "mentiko-pill-scale-change";
-const SCHEMES: PillNavColorScheme[] = ["rainbow", "blue", "green", "pink", "purple", "amber", "cyan"];
+const SCHEMES: PillNavPresetColorScheme[] = ["rainbow", "blue", "green", "pink", "purple", "amber", "cyan"];
 
 function loadPillScale(): number {
   try {
@@ -48,9 +48,10 @@ function usePillScale() {
 }
 
 export default function PillNavSettingsPage() {
-  const { prefs, setColorScheme, setShowRecents, setNavigationMode } = usePillNavPreferences();
+  const { prefs, setColorScheme, setCustomGlowColors, setShowRecents, setNavigationMode } = usePillNavPreferences();
   const scale = usePillScale();
   const [status, setStatus] = useState<string | null>(null);
+  const shineGradient = getPillNavShineGradient(prefs);
 
   const handleScaleChange = useCallback((value: number) => {
     const clamped = Math.min(1.6, Math.max(0.6, Math.round(value * 20) / 20));
@@ -58,12 +59,19 @@ export default function PillNavSettingsPage() {
   }, []);
 
   const handleReset = () => {
+    setCustomGlowColors(["#ff00ff", "#00ffff", "#ff3131", "#00ff00", "#ffea00"]);
     setColorScheme("rainbow");
     setShowRecents(true);
     setNavigationMode("page");
     handleScaleChange(1);
     setStatus("reset");
     setTimeout(() => setStatus(null), 2000);
+  };
+
+  const handleCustomColorChange = (index: number, color: string) => {
+    const nextColors = [...prefs.customGlowColors];
+    nextColors[index] = color;
+    setCustomGlowColors(nextColors);
   };
 
   return (
@@ -115,6 +123,42 @@ export default function PillNavSettingsPage() {
               })}
             </div>
 
+            <div className="rounded-md bg-muted p-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-medium">Custom Builder</h3>
+                  <p className="text-[11px] text-muted-foreground">Pick up to five glow stops.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomGlowColors(prefs.customGlowColors)}
+                  className={cn(
+                    "h-7 px-2 rounded-md text-[11px] transition-colors",
+                    prefs.colorScheme === "custom" ? "bg-accent text-foreground" : "bg-background hover:bg-accent/60"
+                  )}
+                >
+                  use custom
+                </button>
+              </div>
+
+              <div className="grid grid-cols-5 gap-2">
+                {prefs.customGlowColors.map((color, index) => (
+                  <label key={`${index}-${color}`} className="min-w-0 space-y-1">
+                    <span className="block text-[10px] text-muted-foreground">stop {index + 1}</span>
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(e) => handleCustomColorChange(index, e.target.value)}
+                      className="h-8 w-full rounded-sm border-0 bg-transparent p-0 cursor-pointer"
+                    />
+                    <span className="block h-7 truncate rounded-sm bg-background px-1.5 py-1.5 text-[10px] font-mono uppercase text-muted-foreground">
+                      {color}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
             {/* live preview */}
             <div className="mt-4 relative h-10 rounded-xl overflow-hidden bg-muted">
               <style>{`
@@ -129,7 +173,7 @@ export default function PillNavSettingsPage() {
                 className="absolute inset-0 rounded-xl pointer-events-none"
                 style={{
                   padding: "2px",
-                  backgroundImage: `radial-gradient(transparent, transparent, ${COLOR_SCHEME_GRADIENTS[prefs.colorScheme]}, transparent, transparent)`,
+                  backgroundImage: `radial-gradient(transparent, transparent, ${shineGradient}, transparent, transparent)`,
                   backgroundSize: "300% 300%",
                   animation: "sb-shine-pulse 14s linear infinite",
                   WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
