@@ -7,9 +7,6 @@ function createRedisConfig() {
   const db = parseInt(process.env.MENTIKO_REDIS_DB || "0", 10);
 
   if (process.env.NODE_ENV === "production" && !password) {
-    console.warn(
-      "[redis] not configured: MENTIKO_REDIS_PASSWORD required in production"
-    );
     return null;
   }
 

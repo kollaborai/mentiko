@@ -1,4 +1,4 @@
-import { Queue, Worker, type ConnectionOptions } from "bullmq";
+import type { Queue, Worker, ConnectionOptions } from "bullmq";
 import { createRedisClient, redisConfigured } from "./redis";
 import { execAuditLog, type AuditLogMetadata, type AuditExecOptions } from "./audit-exec";
 
@@ -15,8 +15,14 @@ type AuditWorker = Worker<AuditLogJobData, void, string>;
 
 const auditState = globalThis as typeof globalThis & {
   __mentikoAuditQueue?: AuditQueue | null;
+  __mentikoAuditQueuePromise?: Promise<AuditQueue | null>;
   __mentikoAuditWorker?: AuditWorker | null;
+  __mentikoAuditWorkerPromise?: Promise<AuditWorker | null>;
 };
+
+const importExternal = new Function("specifier", "return import(specifier)") as (
+  specifier: string
+) => Promise<typeof import("bullmq")>;
 
 function createBullConnection(
   overrides?: Parameters<typeof createRedisClient>[0]
@@ -25,21 +31,29 @@ function createBullConnection(
   return connection ? (connection as unknown as ConnectionOptions) : null;
 }
 
-function createAuditQueue(): AuditQueue | null {
+async function createAuditQueue(): Promise<AuditQueue | null> {
   if (!redisConfigured) return null;
   const connection = createBullConnection();
-  return connection ? new Queue<AuditLogJobData, void, string>(QUEUE_NAME, { connection }) : null;
+  if (!connection) return null;
+  const { Queue } = await importExternal("bullmq");
+  return new Queue<AuditLogJobData, void, string>(QUEUE_NAME, { connection });
 }
 
-export const auditQueue = auditState.__mentikoAuditQueue ?? (
-  auditState.__mentikoAuditQueue = createAuditQueue()
-);
+export async function getAuditQueue(): Promise<AuditQueue | null> {
+  if (auditState.__mentikoAuditQueue !== undefined) {
+    return auditState.__mentikoAuditQueue;
+  }
+  auditState.__mentikoAuditQueuePromise ??= createAuditQueue();
+  auditState.__mentikoAuditQueue = await auditState.__mentikoAuditQueuePromise;
+  return auditState.__mentikoAuditQueue;
+}
 
-function createAuditWorker(): AuditWorker | null {
+async function createAuditWorker(): Promise<AuditWorker | null> {
   if (!redisConfigured) return null;
   const connection = createBullConnection({ maxRetriesPerRequest: null });
   if (!connection) return null;
 
+  const { Worker } = await importExternal("bullmq");
   const worker = new Worker<AuditLogJobData, void, string>(
     QUEUE_NAME,
     async (job) => {
@@ -65,13 +79,20 @@ function createAuditWorker(): AuditWorker | null {
   return worker;
 }
 
-auditState.__mentikoAuditWorker ??= createAuditWorker();
+async function ensureAuditWorker(): Promise<void> {
+  if (auditState.__mentikoAuditWorker !== undefined) return;
+  auditState.__mentikoAuditWorkerPromise ??= createAuditWorker();
+  auditState.__mentikoAuditWorker = await auditState.__mentikoAuditWorkerPromise;
+}
 
 export async function addAuditLog(data: AuditLogJobData): Promise<void> {
+  const auditQueue = await getAuditQueue();
   if (!auditQueue) {
     console.warn("[audit-queue] redis unavailable, skipping audit log:", data.eventType);
     return;
   }
+
+  await ensureAuditWorker();
 
   await auditQueue.add(data.eventType, data, {
     attempts: 3,

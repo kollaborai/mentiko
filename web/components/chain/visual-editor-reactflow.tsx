@@ -61,7 +61,7 @@ interface BranchTarget {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const NODE_WIDTH = 300;
-const NODE_HEIGHT = 148;
+const NODE_HEIGHT = 185;
 const H_GAP = 420;
 const V_GAP = 220;
 
@@ -645,8 +645,10 @@ export function VisualChainEditor({
     setPan({ x: px, y: py });
   }, [nodes]);
 
-  // wheel zoom (cursor-anchored)
+  // wheel zoom (cursor-anchored). Plain scroll should move the page/panel,
+  // not mutate the graph reference view by accident.
   const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -843,7 +845,7 @@ export function VisualChainEditor({
       {/* hint */}
       {!readOnly && (
         <div className="absolute bottom-4 right-4 z-10 hidden md:block text-[10px] text-foreground/40 bg-card px-2 py-1 rounded pointer-events-none">
-          drag to move · scroll to zoom · click to select · del to remove
+          drag to move · cmd/ctrl scroll to zoom · click to select · del to remove
         </div>
       )}
 

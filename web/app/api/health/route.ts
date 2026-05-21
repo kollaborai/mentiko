@@ -256,7 +256,8 @@ async function checkAuditQueue(): Promise<{ status: "pass" | "fail" | "warn"; me
     return { status: "warn", message: "audit queue not initialized (redis unavailable)" };
   }
 
-  const { auditQueue } = await import("@/lib/audit-queue");
+  const { getAuditQueue } = await import("@/lib/audit-queue");
+  const auditQueue = await getAuditQueue();
   if (!auditQueue) {
     return { status: "warn", message: "audit queue not initialized (redis unavailable)" };
   }
