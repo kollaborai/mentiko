@@ -10,6 +10,7 @@ import {
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
 import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/panel-mode-background";
 import {
   OPEN_FLOATING_APP_PANEL_EVENT,
   getFloatingPanelSrc,
@@ -43,13 +44,7 @@ const PANEL_VISIBLE_OPACITY = 1;
 const MONO_PANEL_SHINE_COLORS =
   "rgba(255,255,255,0.16), rgba(255,255,255,0.5), rgba(255,255,255,0.18)";
 const DESKTOP_PATTERN_STYLE: React.CSSProperties = {
-  backgroundColor: "#030304",
-  backgroundImage: [
-    "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0)",
-    "radial-gradient(circle at 18% 14%, rgba(255,255,255,0.06), transparent 34%)",
-    "radial-gradient(circle at 82% 88%, rgba(255,255,255,0.05), transparent 32%)",
-  ].join(", "),
-  backgroundSize: "18px 18px, 100% 100%, 100% 100%",
+  backgroundColor: "#010101",
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -336,10 +331,19 @@ export function FloatingAppPanels() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0"
+            className="fixed inset-0 overflow-hidden"
             data-floating-app-desktop=""
             style={{ ...DESKTOP_PATTERN_STYLE, zIndex: FLOATING_SURFACE_Z.appDesktop }}
-          />
+          >
+            {PANEL_MODE_BACKGROUND_LAYERS.map((layerStyle, index) => (
+              <div
+                key={index}
+                className="absolute inset-0"
+                data-floating-app-desktop-layer={index}
+                style={layerStyle}
+              />
+            ))}
+          </motion.div>
         )}
 
         {topUnpinnedPanel && (

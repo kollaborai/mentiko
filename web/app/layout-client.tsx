@@ -20,6 +20,7 @@ import { FloatingAppPanels } from "@/components/floating-app-panels";
 import { FloatingCodePill } from "@/components/editor/floating-code-pill";
 import { FloatingWelcomePanel } from "@/components/onboarding/floating-welcome-panel";
 import { FloatingKollaborBar } from "@/components/floating-kollabor-bar";
+import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/panel-mode-background";
 import { isKollaborBarEnabled } from "@/lib/kollabor-bar-flag";
 import { MustChangePasswordGate } from "@/components/must-change-password-gate";
 import { getFloatingPanelSrc, isFloatingPanelRoute, isFloatingPanelSurface } from "@/lib/floating-app-panel-routing";
@@ -30,6 +31,8 @@ import { applyStoredUserDisplayPreferences } from "@/lib/user-display-preference
 const STANDALONE_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/welcome"];
 const PANEL_MESSAGE_OPEN_WELCOME = "mentiko-open-welcome-panel";
 const PANEL_MESSAGE_OPEN_GLOBAL_SEARCH = "mentiko-open-global-search";
+const APP_BACKGROUND_MASK =
+  "radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)";
 
 type PanelShellMessageType =
   | typeof PANEL_MESSAGE_OPEN_WELCOME
@@ -205,6 +208,48 @@ function WhenNotPanelSurface({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function DefaultAppBackground() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-0"
+      data-app-background=""
+      style={{
+        WebkitMaskComposite: "source-over",
+        WebkitMaskImage: APP_BACKGROUND_MASK,
+        backgroundImage: "radial-gradient(circle at 1px 1px, var(--primary) 1px, transparent 0)",
+        backgroundSize: "16px 16px",
+        maskComposite: "add",
+        maskImage: APP_BACKGROUND_MASK,
+        opacity: 0.25,
+      }}
+    />
+  );
+}
+
+function AppBackground() {
+  const isPanelSurface = useFloatingPanelSurface();
+
+  if (!isPanelSurface) return <DefaultAppBackground />;
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+      data-panel-mode-background=""
+    >
+      {PANEL_MODE_BACKGROUND_LAYERS.map((layerStyle, index) => (
+        <div
+          key={index}
+          className="absolute inset-0"
+          data-panel-mode-background-layer={index}
+          style={layerStyle}
+        />
+      ))}
+    </div>
+  );
+}
+
 function AppShell({ children }: { children: React.ReactNode }) {
   const { init: initNotificationPrefs } = useNotificationPreferences();
   const { isOnline, wasOffline } = useOnlineStatus();
@@ -303,19 +348,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
             </WhenNotPanelSurface>
           </Suspense>
           <div className="relative flex h-screen flex-col" data-source="app/layout-client.tsx">
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 z-0"
-              style={{
-                WebkitMaskComposite: 'source-over',
-                WebkitMaskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
-                backgroundImage: 'radial-gradient(circle at 1px 1px, var(--primary) 1px, transparent 0)',
-                backgroundSize: '16px 16px',
-                maskComposite: 'add',
-                maskImage: 'radial-gradient(ellipse 40% 40% at 0% 100%, black 30%, transparent 70%), radial-gradient(ellipse 40% 40% at 100% 100%, black 30%, transparent 70%)',
-                opacity: 0.25,
-              }}
-            />
+            <Suspense fallback={<DefaultAppBackground />}>
+              <AppBackground />
+            </Suspense>
             <Suspense fallback={null}>
               <WhenNotPanelSurface>
                 <ToastContainer />

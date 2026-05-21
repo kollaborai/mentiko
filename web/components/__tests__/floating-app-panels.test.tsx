@@ -66,6 +66,27 @@ describe("FloatingAppPanels", () => {
       backgroundImage:
         "radial-gradient(transparent, transparent, rgba(255,255,255,0.16), rgba(255,255,255,0.5), rgba(255,255,255,0.18), transparent, transparent)",
     });
+    expect(document.querySelector("[data-floating-app-desktop]")).toHaveStyle({
+      backgroundColor: "#010101",
+    });
+    expect(document.querySelector('[data-floating-app-desktop-layer="0"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #111113 0.5px, transparent 0)",
+      backgroundSize: "8px 8px",
+      opacity: "0.3",
+    });
+    expect(document.querySelector('[data-floating-app-desktop-layer="1"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #18181b 1px, transparent 0)",
+      backgroundSize: "24px 24px",
+      opacity: "0.2",
+    });
+    expect(document.querySelector('[data-floating-app-desktop-layer="2"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #242428 2px, transparent 0)",
+      backgroundSize: "56px 56px",
+      opacity: "0.15",
+    });
     expect(screen.getByTestId("icon-route-square")).toHaveClass("text-white/55");
     expect(screen.getByText("Runs")).toBeInTheDocument();
     expect(document.querySelector("[data-floating-app-desktop]")).toBeInTheDocument();

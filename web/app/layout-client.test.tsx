@@ -183,7 +183,7 @@ describe("RootLayoutClient", () => {
     mockPathname = "/runs";
     mockIsFloatingPanelSurface = true;
 
-    const { unmount } = render(
+    const { container, unmount } = render(
       <RootLayoutClient>
         <div>panel content</div>
       </RootLayoutClient>,
@@ -192,6 +192,26 @@ describe("RootLayoutClient", () => {
     await waitFor(() => {
       expect(document.documentElement).toHaveAttribute("data-floating-panel-surface", "true");
       expect(document.body).toHaveAttribute("data-floating-panel-surface", "true");
+    });
+    expect(container.querySelector("[data-panel-mode-background]")).toBeInTheDocument();
+    expect(container.querySelector("[data-app-background]")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-panel-mode-background-layer="0"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #111113 0.5px, transparent 0)",
+      backgroundSize: "8px 8px",
+      opacity: "0.3",
+    });
+    expect(container.querySelector('[data-panel-mode-background-layer="1"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #18181b 1px, transparent 0)",
+      backgroundSize: "24px 24px",
+      opacity: "0.2",
+    });
+    expect(container.querySelector('[data-panel-mode-background-layer="2"]')).toHaveStyle({
+      backgroundImage:
+        "radial-gradient(circle at 1px 1px, #242428 2px, transparent 0)",
+      backgroundSize: "56px 56px",
+      opacity: "0.15",
     });
 
     unmount();
