@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  WorkflowSidebarFilters,
+  WorkflowSidebarItem,
+  WorkflowSidebarPane,
+  WorkflowSidebarSearchInput,
+} from "@/components/ui/workflow-sidebar";
 import { ChainAgent, ChainBranch, VersionHistory, ParallelBranch } from "@/components/chain";
 import { VisualChainEditor as VisualChainEditorOld } from "@/components/chain/visual-editor";
 import { VisualChainEditor as VisualChainEditorNew } from "@/components/chain/visual-editor-reactflow";
@@ -23,9 +29,9 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { getApiErrorMessage } from "@/lib/api-client";
 import { downloadChain, ChainExportFormat } from "@/lib/chain-export";
 import { validateChain, validateAgent } from "@/lib/validators";
-import { TodoItem } from "@/components/ui/todo-item";
 import { ChainTriggersPanel } from "@/components/chain/chain-triggers-panel";
 import { AgentEventMapping } from "@/components/chain/agent-event-mapping";
+import { cn } from "@/lib/utils";
 import type { ChainEventTrigger } from "@/components/chain/chain-triggers-panel";
 import { RotateFilled, ArchiveFilled, DocumentDownloadFilled, AddFilled, TrashFilled, Edit2Filled, PlayFilled, BotMessageSquare, Link2Filled, HierarchyFilled, InfoCircleFilled, ArrowDown2Filled, ArrowRight2Filled } from "@aliimam/icons";
 import { ArrowLeftFilled } from "@aliimam/icons";
@@ -62,6 +68,36 @@ interface Connection {
   type: "trigger" | "branch" | "error" | "timeout";
 }
 
+function getChainAgentAccent(agent: ChainAgent): string {
+  const role = `${agent.role || ""} ${agent.name || ""}`.toLowerCase();
+  if (role.includes("review") || role.includes("valid") || role.includes("qa") || role.includes("test")) return "bg-emerald-400";
+  if (role.includes("research") || role.includes("invest") || role.includes("analy")) return "bg-purple-400";
+  if (role.includes("write") || role.includes("doc") || role.includes("content")) return "bg-pink-400";
+  if (role.includes("deploy") || role.includes("ops") || role.includes("infra")) return "bg-amber-400";
+  if (role.includes("code") || role.includes("engineer") || role.includes("build")) return "bg-sky-400";
+  return "bg-foreground/20";
+}
+
+function getChainAgentRoleLabel(agent: ChainAgent): string {
+  const role = (agent.role || agent.name || "agent").toLowerCase();
+  if (role.includes("review") || role.includes("valid") || role.includes("qa") || role.includes("test")) return "review";
+  if (role.includes("research") || role.includes("invest") || role.includes("analy")) return "research";
+  if (role.includes("write") || role.includes("doc") || role.includes("content")) return "writing";
+  if (role.includes("deploy") || role.includes("ops") || role.includes("infra")) return "ops";
+  if (role.includes("code") || role.includes("engineer") || role.includes("build")) return "code";
+  return "agent";
+}
+
+function getChainAgentRolePill(agent: ChainAgent): string {
+  const role = getChainAgentRoleLabel(agent);
+  if (role === "review") return "bg-emerald-500/15 text-emerald-400";
+  if (role === "research") return "bg-purple-500/15 text-purple-400";
+  if (role === "writing") return "bg-pink-500/15 text-pink-400";
+  if (role === "ops") return "bg-amber-500/15 text-amber-400";
+  if (role === "code") return "bg-sky-500/15 text-sky-400";
+  return "bg-foreground/5 text-foreground/50";
+}
+
 export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; onBack?: () => void }) {
   const params = useParams();
   const router = useRouter();
@@ -87,6 +123,8 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [agentErrors, setAgentErrors] = useState<string[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [agentSearch, setAgentSearch] = useState("");
+  const [agentMobileView, setAgentMobileView] = useState<"list" | "detail">("list");
   const [addAgentOpen, setAddAgentOpen] = useState(false);
   const [retrySectionOpen, setRetrySectionOpen] = useState(false);
 
@@ -275,6 +313,25 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
     setShowExportMenu(false);
   };
 
+  const filteredAgents = useMemo(() => {
+    if (!chain) return [];
+    const query = agentSearch.trim().toLowerCase();
+    if (!query) return chain.agents;
+    return chain.agents.filter((agent) => (
+      agent.name.toLowerCase().includes(query) ||
+      agent.id.toLowerCase().includes(query) ||
+      (agent.role || "").toLowerCase().includes(query) ||
+      (agent.prompt || "").toLowerCase().includes(query) ||
+      (agent.triggers || []).some((trigger) => trigger.toLowerCase().includes(query)) ||
+      (agent.emits || "").toLowerCase().includes(query)
+    ));
+  }, [agentSearch, chain]);
+
+  const selectedChainAgent = useMemo(() => {
+    if (!chain) return null;
+    return chain.agents.find((agent) => agent.id === selectedAgent) || chain.agents[0] || null;
+  }, [chain, selectedAgent]);
+
   // webhook handlers
   const addWebhook = async () => {
     if (!newWebhook.url || !newWebhook.events || newWebhook.events.length === 0) return;
@@ -353,6 +410,8 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
 
   const handleAgentAdded = (agent: ChainAgent) => {
     setChain((prev) => prev ? { ...prev, agents: [...prev.agents, agent] } : null);
+    setSelectedAgent(agent.id);
+    setAgentMobileView("detail");
     setEditingAgent(agent);
     setRetrySectionOpen(false);
     setAgentDialogOpen(true);
@@ -363,6 +422,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
       ...prev,
       agents: prev.agents.map((a) => a.id === updatedAgent.id ? updatedAgent : a),
     } : null);
+    setSelectedAgent(updatedAgent.id);
     setAgentDialogOpen(false);
     setEditingAgent(null);
   };
@@ -799,93 +859,253 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
         </TabsContent>
 
         {/* agents tab */}
-        <TabsContent value="agents" className="flex-1 overflow-auto p-4 m-0">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">Agents ({chain.agents.length})</h3>
-              <Button size="sm" onClick={openAddAgent}>
-                <AddFilled className="mr-1 h-3 w-3" />
-                Add Agent
-              </Button>
-            </div>
-            <div className="space-y-1">
-              {chain.agents.map((agent) => (
-                <TodoItem
-                  key={agent.id}
-                  title={agent.name}
-                  description={agent.role}
-                  status="pending"
-                  onClick={() => {
-                    setEditingAgent(agent);
-                    setRetrySectionOpen(false);
-                    setAgentDialogOpen(true);
-                  }}
-                  actions={
-                    <div className="flex items-center gap-1">
+        <TabsContent value="agents" className="flex-1 overflow-hidden p-4 m-0">
+          <div className="flex h-full overflow-hidden">
+            <WorkflowSidebarPane
+              className={cn(agentMobileView === "detail" ? "hidden md:flex" : "flex")}
+              style={{ width: 360 }}
+            >
+              <WorkflowSidebarFilters>
+                <div className="flex items-center gap-1.5">
+                  <WorkflowSidebarSearchInput
+                    value={agentSearch}
+                    onChange={setAgentSearch}
+                    placeholder="Search chain agents..."
+                  />
+                  <Button size="sm" variant="default" className="h-8 shrink-0" onClick={openAddAgent} title="Add agent">
+                    <AddFilled className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-foreground/40">
+                  <span>{filteredAgents.length} of {chain.agents.length} agents</span>
+                  <span>{getConnections().length} connections</span>
+                </div>
+              </WorkflowSidebarFilters>
+
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {filteredAgents.length === 0 ? (
+                  <div className="px-3 py-10 text-center text-xs text-foreground/35">
+                    No agents match this search.
+                  </div>
+                ) : (
+                  filteredAgents.map((agent, index) => (
+                    <WorkflowSidebarItem
+                      key={agent.id}
+                      selected={(selectedChainAgent?.id || chain.agents[0]?.id) === agent.id}
+                      onClick={() => {
+                        setSelectedAgent(agent.id);
+                        setAgentMobileView("detail");
+                      }}
+                      accentClassName={getChainAgentAccent(agent)}
+                    >
+                      <div className="pl-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="line-clamp-1 text-sm font-semibold leading-5">{agent.name}</span>
+                          <span className="shrink-0 text-[10px] text-foreground/30">#{index + 1}</span>
+                        </div>
+                        <p className="line-clamp-1 text-[11px] text-foreground/40 mt-0.5">
+                          {agent.role || agent.description || agent.id}
+                        </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
+                          <span className={`rounded-full px-2 py-0.5 uppercase tracking-[0.14em] ${getChainAgentRolePill(agent)}`}>
+                            {getChainAgentRoleLabel(agent)}
+                          </span>
+                          <span className="rounded-full bg-foreground/5 px-2 py-0.5">
+                            {(agent.triggers || []).length} in
+                          </span>
+                          <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-green-400">
+                            {agent.emits || "no output"}
+                          </span>
+                          {debugMode && breakpoints.some((bp) => bp.agentId === agent.id && bp.enabled) && (
+                            <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-red-400">
+                              breakpoint
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </WorkflowSidebarItem>
+                  ))
+                )}
+              </div>
+            </WorkflowSidebarPane>
+
+            <div
+              className={cn(
+                agentMobileView === "list" ? "hidden md:flex" : "flex",
+                "min-w-0 flex-1 flex-col overflow-hidden"
+              )}
+            >
+              {agentMobileView === "detail" && (
+                <button
+                  type="button"
+                  onClick={() => setAgentMobileView("list")}
+                  className="md:hidden px-4 pb-2 text-left text-xs text-foreground/50 hover:text-foreground"
+                >
+                  back to list
+                </button>
+              )}
+
+              {!selectedChainAgent ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 text-foreground/30">
+                  <BotMessageSquare className="h-8 w-8" />
+                  <span className="text-xs">Select an agent</span>
+                </div>
+              ) : (
+                <div className="h-full overflow-y-auto px-4 pb-4">
+                  <div className="mb-3 flex items-start justify-between gap-3 rounded-md bg-accent px-4 py-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-lg font-bold tracking-tighter">{selectedChainAgent.name}</h3>
+                      <p className="mt-0.5 line-clamp-2 text-xs text-foreground/50">
+                        {selectedChainAgent.role || selectedChainAgent.description || selectedChainAgent.id}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
                       {debugMode && (
                         <Button
                           size="sm"
                           variant="ghost"
-                          className={`h-7 w-7 p-0 ${breakpoints.some((bp) => bp.agentId === agent.id && bp.enabled) ? "text-red-400" : "text-foreground/30"}`}
-                          onClick={() => toggleBreakpoint(agent.id)}
-                          title={breakpoints.some((bp) => bp.agentId === agent.id && bp.enabled) ? "Remove breakpoint" : "Set breakpoint"}
+                          className={`h-7 px-2 text-[10px] ${breakpoints.some((bp) => bp.agentId === selectedChainAgent.id && bp.enabled) ? "text-red-400" : "text-foreground/50"}`}
+                          onClick={() => toggleBreakpoint(selectedChainAgent.id)}
+                          title={breakpoints.some((bp) => bp.agentId === selectedChainAgent.id && bp.enabled) ? "Remove breakpoint" : "Set breakpoint"}
                         >
-                          <Bug className="h-3 w-3" />
+                          <Bug className="mr-1 h-3 w-3" />
+                          Breakpoint
                         </Button>
                       )}
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 w-7 p-0"
+                        className="h-7 px-2 text-[10px]"
                         onClick={() => {
-                          setEditingAgent(agent);
+                          setEditingAgent(selectedChainAgent);
+                          setRetrySectionOpen(false);
                           setAgentDialogOpen(true);
                         }}
                       >
-                        <Edit2Filled className="h-3 w-3" />
+                        <Edit2Filled className="mr-1 h-3 w-3" />
+                        Edit
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 w-7 p-0 text-red-400"
+                        className="h-7 w-7 p-0 text-red-400 hover:text-red-400"
                         onClick={() => {
-                          if (confirm(`Delete ${agent.name}?`)) deleteAgent(agent.id);
+                          if (confirm(`Delete ${selectedChainAgent.name}?`)) deleteAgent(selectedChainAgent.id);
                         }}
                       >
                         <TrashFilled className="h-3 w-3" />
                       </Button>
                     </div>
-                  }
-                >
-                  {agent.prompt && (
-                    <div className="mt-1.5 text-xs text-foreground/60 line-clamp-3">
-                      {agent.prompt}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-foreground/60">
-                    <span>
-                      <span className="text-foreground/40">Triggers:</span>{" "}
-                      {(agent.triggers ?? []).join(", ") || "none"}
-                    </span>
-                    <span>
-                      <span className="text-foreground/40">Emits:</span>{" "}
-                      <span className="text-green-400">{agent.emits}</span>
-                    </span>
-                    {agent.timeout && (
-                      <span>
-                        <span className="text-foreground/40">Timeout:</span>{" "}
-                        {agent.timeout}s
-                      </span>
-                    )}
-                    {agent.retry && (
-                      <span className="text-orange-400">
-                        Retry: {agent.retry.maxRetries ?? 3}x, {agent.retry.backoffMs ?? 1000}ms, {agent.retry.retryOn ?? "both"}
-                      </span>
-                    )}
-                    <span className="font-mono text-foreground/30">{agent.id}</span>
                   </div>
-                </TodoItem>
-              ))}
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="md:col-span-2 rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <InfoCircleFilled className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">prompt</h4>
+                      </div>
+                      {selectedChainAgent.prompt ? (
+                        <pre className="max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground/70">
+                          {selectedChainAgent.prompt}
+                        </pre>
+                      ) : (
+                        <span className="text-[10px] italic text-foreground/25">none</span>
+                      )}
+                    </div>
+
+                    <div className="rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <Zap className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">triggers</h4>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {(selectedChainAgent.triggers || []).length > 0 ? (
+                          selectedChainAgent.triggers.map((trigger) => (
+                            <code key={trigger} className="rounded bg-accent px-1.5 py-0.5 text-[10px] text-foreground/70">
+                              {trigger}
+                            </code>
+                          ))
+                        ) : (
+                          <span className="text-[10px] italic text-foreground/25">none</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <ArrowRight2Filled className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">emits</h4>
+                      </div>
+                      {selectedChainAgent.emits ? (
+                        <code className="rounded bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400">
+                          {selectedChainAgent.emits}
+                        </code>
+                      ) : (
+                        <span className="text-[10px] italic text-foreground/25">none</span>
+                      )}
+                    </div>
+
+                    <div className="rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <RotateFilled className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">runtime</h4>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <p className="text-[10px] text-foreground/40">timeout</p>
+                          <p className="font-mono text-foreground/70">{selectedChainAgent.timeout ? `${selectedChainAgent.timeout}s` : "default"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-foreground/40">retry</p>
+                          <p className="font-mono text-foreground/70">
+                            {selectedChainAgent.retry ? `${selectedChainAgent.retry.max_retries ?? selectedChainAgent.retry.maxRetries ?? 0}x` : "none"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-foreground/40">model</p>
+                          <p className="truncate font-mono text-violet-400/80">{selectedChainAgent.model || "default"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-foreground/40">profile</p>
+                          <p className="truncate font-mono text-foreground/70">{selectedChainAgent.agent_profile || chain.default_agent_profile || "default"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <Link2Filled className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">routing</h4>
+                      </div>
+                      <div className="space-y-1 text-[11px] text-foreground/60">
+                        {getConnections().filter((conn) => conn.from === selectedChainAgent.id || conn.to === selectedChainAgent.id).length > 0 ? (
+                          getConnections()
+                            .filter((conn) => conn.from === selectedChainAgent.id || conn.to === selectedChainAgent.id)
+                            .map((conn, index) => (
+                              <div key={`${conn.from}-${conn.to}-${conn.event}-${index}`} className="flex items-center gap-1.5">
+                                <span className="truncate">{chain.agents.find((a) => a.id === conn.from)?.name || conn.from}</span>
+                                <span className="text-foreground/30">to</span>
+                                <code className="rounded bg-accent px-1 py-0.5 text-[10px]">{conn.event}</code>
+                                <span className="text-foreground/30">to</span>
+                                <span className="truncate">{chain.agents.find((a) => a.id === conn.to)?.name || conn.to}</span>
+                              </div>
+                            ))
+                        ) : (
+                          <span className="text-[10px] italic text-foreground/25">none</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="md:col-span-2 rounded-md bg-muted/50 p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <BotMessageSquare className="h-3.5 w-3.5 text-foreground/40" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-wide text-foreground/70">id</h4>
+                      </div>
+                      <code className="break-all text-[11px] text-foreground/55">{selectedChainAgent.id}</code>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </TabsContent>

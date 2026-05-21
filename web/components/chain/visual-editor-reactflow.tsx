@@ -60,10 +60,10 @@ interface BranchTarget {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const NODE_WIDTH = 220;
-const NODE_HEIGHT = 130;
-const H_GAP = 280;
-const V_GAP = 180;
+const NODE_WIDTH = 300;
+const NODE_HEIGHT = 148;
+const H_GAP = 420;
+const V_GAP = 220;
 
 const EDGE_COLORS = {
   branch:  "#22c55e",
@@ -77,19 +77,22 @@ const EDGE_COLORS = {
 // ─── Layout ───────────────────────────────────────────────────────────────────
 
 function computeLayout(agents: ChainAgent[]): NodeLayout[] {
-  const emitMap = new Map<string, ChainAgent[]>();
+  const triggerMap = new Map<string, ChainAgent[]>();
   agents.forEach((a) => {
     (a.triggers || []).forEach((t) => {
       if (t === "manual-start") return;
-      if (!emitMap.has(t)) emitMap.set(t, []);
-      emitMap.get(t)!.push(a);
+      if (!triggerMap.has(t)) triggerMap.set(t, []);
+      triggerMap.get(t)!.push(a);
     });
   });
 
   const levels: ChainAgent[][] = [];
   const placed = new Set<string>();
 
-  const entryAgents = agents.filter((a) => (a.triggers || []).includes("manual-start"));
+  const entryAgents = agents.filter((a) => {
+    const triggers = a.triggers || [];
+    return triggers.includes("manual-start") || triggers.includes("chain-started");
+  });
   const bfsQueue: { agent: ChainAgent; level: number }[] = entryAgents.map((a) => ({ agent: a, level: 0 }));
 
   while (bfsQueue.length > 0) {
@@ -98,7 +101,7 @@ function computeLayout(agents: ChainAgent[]): NodeLayout[] {
     placed.add(agent.id);
     if (!levels[level]) levels[level] = [];
     levels[level].push(agent);
-    const next = emitMap.get(agent.emits) || [];
+    const next = triggerMap.get(agent.emits) || [];
     next.forEach((n) => {
       if (!placed.has(n.id)) bfsQueue.push({ agent: n, level: level + 1 });
     });
@@ -114,13 +117,13 @@ function computeLayout(agents: ChainAgent[]): NodeLayout[] {
 
   const nodes: NodeLayout[] = [];
   levels.forEach((levelAgents, levelIdx) => {
-    const levelWidth = (levelAgents.length - 1) * H_GAP;
-    const startX = -levelWidth / 2;
+    const levelHeight = (levelAgents.length - 1) * V_GAP;
+    const startY = -levelHeight / 2;
     levelAgents.forEach((a, idx) => {
       nodes.push({
         id: a.id,
-        x: startX + idx * H_GAP,
-        y: levelIdx * V_GAP,
+        x: levelIdx * H_GAP,
+        y: startY + idx * V_GAP,
         agent: a,
       });
     });
@@ -201,8 +204,8 @@ function computeEdges(agents: ChainAgent[], branches?: ChainBranch): EdgeLayout[
 // ─── SVG edge renderer ────────────────────────────────────────────────────────
 
 function bezierPath(x1: number, y1: number, x2: number, y2: number): string {
-  const mid = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`;
+  const mid = (x1 + x2) / 2;
+  return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
 }
 
 interface EdgeSvgProps {
@@ -248,15 +251,14 @@ function EdgeLayer({ edges, nodeMap, selectedEdge, onEdgeClick, readOnly }: Edge
         const isDashed = isError || isTimeout;
         const isAnimated = !isDashed && (edge.edgeType === "branch" || edge.edgeType === "trigger" || edge.edgeType === "fanout" || edge.edgeType === "fanin");
 
-        // bottom-center of source → top-center of target
-        const x1 = from.x + NODE_WIDTH / 2;
-        const y1 = from.y + NODE_HEIGHT;
-        const x2 = to.x + NODE_WIDTH / 2;
-        const y2 = to.y;
+        // right-center of source to left-center of target
+        const x1 = from.x + NODE_WIDTH;
+        const y1 = from.y + NODE_HEIGHT / 2;
+        const x2 = to.x;
+        const y2 = to.y + NODE_HEIGHT / 2;
 
-        const mid = (y1 + y2) / 2;
         const labelX = (x1 + x2) / 2;
-        const labelY = mid - 6;
+        const labelY = (y1 + y2) / 2 - 12;
 
         const d = bezierPath(x1, y1, x2, y2);
 
@@ -352,6 +354,7 @@ function AgentNode({
   const hasEmailTrigger = (agent.triggers || []).some((t) => t.startsWith("email:"));
   const maxRetries = agent.retry?.max_retries ?? 0;
   const hasRetry = maxRetries > 0;
+  const primaryTrigger = agent.triggers?.[0];
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -369,8 +372,8 @@ function AgentNode({
               userSelect: "none",
             }}
             className={[
-              "px-4 py-3 rounded-md transition-all duration-150",
-              "bg-card",
+              "px-4 py-3 rounded-md transition-colors duration-150",
+              "bg-card border border-border/50",
               selected ? "ring-2 ring-purple-500" : "hover:bg-muted",
               hasBreakpoint ? "ring-1 ring-red-500/30" : "",
             ].join(" ")}
@@ -410,10 +413,10 @@ function AgentNode({
             )}
 
             {/* header */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-purple-400" />
-                <span className="text-sm font-medium truncate max-w-[130px] text-foreground">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Bot className="h-4 w-4 text-purple-400 shrink-0" />
+                <span className="truncate text-sm font-semibold text-foreground">
                   {agent.name}
                 </span>
               </div>
@@ -429,27 +432,27 @@ function AgentNode({
 
             {/* role */}
             {agent.role && (
-              <div className="text-[11px] text-muted-foreground line-clamp-2 mb-2">
+              <div className="h-9 text-[11px] leading-4 text-muted-foreground line-clamp-2 mb-2">
                 {agent.role}
               </div>
             )}
 
             {/* events */}
             <div className="space-y-1">
-              <div className="flex items-center gap-2 text-[10px]">
-                <span className="text-muted-foreground/50">in:</span>
-                {agent.triggers?.[0] ? (
-                  <span className="text-blue-400 font-mono flex items-center gap-1">
-                    {agent.triggers[0].startsWith("email:") && <Mail className="h-2.5 w-2.5" />}
-                    {agent.triggers[0]}
+              <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-2 text-[10px]">
+                <span className="text-muted-foreground/50">in</span>
+                {primaryTrigger ? (
+                  <span className="truncate text-blue-400 font-mono flex items-center gap-1">
+                    {primaryTrigger.startsWith("email:") && <Mail className="h-2.5 w-2.5 shrink-0" />}
+                    {primaryTrigger}
                   </span>
                 ) : (
                   <span className="text-muted-foreground/30">—</span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-[10px]">
-                <span className="text-muted-foreground/50">out:</span>
-                <span className={agent.emits ? "text-green-400 font-mono" : "text-muted-foreground/30"}>
+              <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-2 text-[10px]">
+                <span className="text-muted-foreground/50">out</span>
+                <span className={agent.emits ? "truncate text-green-400 font-mono" : "text-muted-foreground/30"}>
                   {agent.emits || "—"}
                 </span>
               </div>
@@ -572,10 +575,10 @@ export function VisualChainEditor({
       const graphW = maxX - minX;
       const graphH = maxY - minY;
 
-      const padding = 40;
+      const padding = 72;
       const scaleX = (cw - padding * 2) / Math.max(graphW, 1);
       const scaleY = (ch - padding * 2) / Math.max(graphH, 1);
-      const clampedScale = Math.max(0.3, Math.min(2, Math.min(scaleX, scaleY)));
+      const clampedScale = Math.max(0.45, Math.min(1, Math.min(scaleX, scaleY)));
 
       const scaledW = graphW * clampedScale;
       const scaledH = graphH * clampedScale;
@@ -629,10 +632,10 @@ export function VisualChainEditor({
     const graphW = maxX - minX;
     const graphH = maxY - minY;
 
-    const padding = 40;
+    const padding = 72;
     const scaleX = (cw - padding * 2) / Math.max(graphW, 1);
     const scaleY = (ch - padding * 2) / Math.max(graphH, 1);
-    const clampedScale = Math.max(0.3, Math.min(2, Math.min(scaleX, scaleY)));
+    const clampedScale = Math.max(0.45, Math.min(1, Math.min(scaleX, scaleY)));
     const scaledW = graphW * clampedScale;
     const scaledH = graphH * clampedScale;
     const px = (cw - scaledW) / 2 - minX * clampedScale;
@@ -839,7 +842,7 @@ export function VisualChainEditor({
 
       {/* hint */}
       {!readOnly && (
-        <div className="absolute bottom-4 right-4 z-10 text-[10px] text-foreground/40 bg-card px-2 py-1 rounded pointer-events-none">
+        <div className="absolute bottom-4 right-4 z-10 hidden md:block text-[10px] text-foreground/40 bg-card px-2 py-1 rounded pointer-events-none">
           drag to move · scroll to zoom · click to select · del to remove
         </div>
       )}
