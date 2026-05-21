@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mentiko Security Review</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body class="app-body">
+    <div class="app-shell">
+      <aside class="left-rail">
+        <a class="brand" href="#overview" aria-label="KDEX overview"><span class="brand-mark">K</span><span><strong>KDEX</strong><small>security review hub</small></span></a>
+        <nav class="side-nav" aria-label="Primary">
+          <a href="#overview">overview</a>
+          <a href="#architecture">architecture</a>
+          <a href="#features">features</a>
+          <a href="#workflows">workflows</a>
+          <a href="#review">review queue</a>
+          <a href="#commands">commands</a>
+        </nav>
+        <div id="health-metrics" class="metric-stack"></div>
+      </aside>
+      <main class="workbench">
+        <section id="overview" class="overview-panel">
+          <div><p class="eyebrow">control-plane and tenant boundary review</p><h1>Mentiko Security Review</h1><p class="lead">A focused KDEX report for the places where intended dev-platform power turns into missing authorization, shell safety, secret scoping, or deploy trust boundaries.</p></div>
+          <div class="quick-actions"><button data-scroll="#review">triage fixes</button><button data-scroll="#features" class="secondary">browse findings</button></div>
+        </section>
+        <section class="product-strip" aria-label="Product read">
+          <article><span class="label">does</span><p>Ranks security boundaries across terminal, webhooks, secrets, deploy, and dependencies.</p></article>
+          <article><span class="label">for</span><p>Marco, maintainers, and agents fixing high-risk runtime paths without losing dev-platform capability.</p></article>
+          <article><span class="label">needs</span><p>Patch command sinks, lock PTY/session scope, stop plaintext secret responses, then bump prod deps.</p></article>
+        </section>
+        <section id="architecture" class="section"><div class="section-head compact-head"><p class="eyebrow">how it works</p><h2>architecture</h2></div><div id="architecture-map" class="architecture-map"></div></section>
+        <section id="features" class="section"><div class="section-head compact-head"><p class="eyebrow">human-readable docs</p><h2>features</h2></div><div id="feature-list" class="feature-list"></div></section>
+        <section id="workflows" class="section two-up"><div><div class="section-head compact-head"><p class="eyebrow">project journeys</p><h2>workflows</h2></div><div id="workflow-list" class="workflow-list"></div></div><aside class="inline-panel"><div class="panel-title">mapped pages</div><div id="page-model"></div></aside></section>
+        <section id="review" class="section"><div class="section-head inline-head"><div class="compact-head"><p class="eyebrow">hash-aware maintenance</p><h2>review queue</h2></div><div class="filter-row"><button data-filter="all" class="active">all</button><button data-filter="stale">stale</button><button data-filter="current">current</button><button data-filter="queued">queued</button></div></div><div id="review-table" class="review-table"></div></section>
+        <section id="commands" class="section"><div class="section-head compact-head"><p class="eyebrow">agent and cli surface</p><h2>commands</h2></div><div id="command-grid" class="command-grid"></div></section>
+      </main>
+      <aside id="detail-panel" class="right-panel" aria-live="polite" aria-label="Details"></aside>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

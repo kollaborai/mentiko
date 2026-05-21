@@ -1,0 +1,746 @@
+{
+  "version": 1,
+  "meta": {
+    "title": "Mentiko Security Review",
+    "structure": "knowledge-hub",
+    "interactionLevel": 3,
+    "generatedAt": "2026-05-20T22:18:00.000Z",
+    "kdexVersion": "0.1.0",
+    "summary": "Security triage hub for control-plane to tenant, tenant to control-plane, webhooks, terminal, scheduling, secrets, env, and dependency risk."
+  },
+  "pages": [
+    {
+      "id": "page-security-report",
+      "title": "control-plane and tenant security report",
+      "group": "security",
+      "summary": "Explains why each finding matters, what is intentional for a dev platform, and what happens if it is not fixed.",
+      "status": "current",
+      "href": "../articles/security-control-plane-tenant-report-2026-05-20.md",
+      "source": ".kdex/articles/security-control-plane-tenant-report-2026-05-20.md",
+      "linkedFiles": [
+        "web/app/api/git/route.ts",
+        "web/app/api/fs/search/route.ts",
+        "web/app/api/terminal/spawn/route.ts",
+        "../mentiko-control-plane/lib/infra/platform-deploy.ts"
+      ],
+      "hashState": "current",
+      "sourceHashes": {},
+      "links": []
+    }
+  ],
+  "features": [
+    {
+      "id": "finding-command-injection",
+      "title": "tenant shell command injection",
+      "audience": "platform maintainers",
+      "summary": "Auth-only routes build shell strings from workspace paths, conversation ids, file paths, or task ids. A dev platform may run commands intentionally, but the command must be chosen by the product, not by shell metacharacters hidden in request data.",
+      "linkedFiles": [
+        "web/app/api/git/route.ts",
+        "web/app/api/fs/search/route.ts",
+        "web/app/api/conversations/[id]/steer/route.ts",
+        "web/app/api/chains/run/route.ts",
+        "lib/chain-runner.mjs"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "rce",
+        "auth-only"
+      ],
+      "impact": "Any authenticated tenant user who can reach these routes may execute unintended shell commands in the tenant runtime.",
+      "intentionalBoundary": "Running approved dev commands is intended; shell injection through route parameters is not."
+    },
+    {
+      "id": "finding-terminal-session-acl",
+      "title": "terminal sessions lack owner and workspace scope",
+      "audience": "tenant runtime owners",
+      "summary": "Terminal list, capture, input, and websocket attach paths prove a user exists but do not prove that user owns the session or workspace. A shared dev platform cannot treat every authenticated user as the same operator.",
+      "linkedFiles": [
+        "web/app/api/terminal/status/route.ts",
+        "web/app/api/terminal/capture/route.ts",
+        "web/app/api/agents/[session]/message/route.ts",
+        "web/server/ws-terminal.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "cross-user",
+        "terminal"
+      ],
+      "impact": "One tenant user can inspect, capture, or steer another user session, including output that may contain tokens, code, prompts, credentials, and customer data.",
+      "intentionalBoundary": "Collaborative terminals are intentional only with explicit sharing and audit state."
+    },
+    {
+      "id": "finding-terminal-secret-env",
+      "title": "terminal spawn accepts arbitrary cwd and injects secrets",
+      "audience": "tenant security maintainers",
+      "summary": "The terminal spawn route accepts a caller-supplied cwd and injects profile, workspace, and org secrets into the PTY environment. Workspace membership exists elsewhere but is not enforced here.",
+      "linkedFiles": [
+        "web/app/api/terminal/spawn/route.ts",
+        "web/lib/workspace-storage.ts",
+        "web/lib/secrets-store.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "secret-exposure",
+        "workspace-boundary"
+      ],
+      "impact": "A user can start a shell outside the intended workspace and receive decrypted secrets in process env, making accidental or malicious exfiltration easy.",
+      "intentionalBoundary": "Secrets in runtime env can be intentional for an agent job; they should be scoped, auditable, and bound to an authorized workspace."
+    },
+    {
+      "id": "finding-profile-resolved-env",
+      "title": "profile resolved-env returns plaintext vault secrets",
+      "audience": "secrets store owners",
+      "summary": "The resolved-env endpoint resolves profile env vars and returns plaintext values to the browser after only checkAuth. That crosses the line from server-side secret use into user-visible secret disclosure.",
+      "linkedFiles": [
+        "web/app/api/agent-profiles/[id]/resolved-env/route.ts",
+        "web/lib/secrets-store.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "plaintext-secret",
+        "api"
+      ],
+      "impact": "Any authenticated org user with a profile id can pull decrypted env values instead of only using them inside controlled execution.",
+      "intentionalBoundary": "Previewing which secret keys are wired is okay; returning decrypted values is not."
+    },
+    {
+      "id": "finding-platform-image-tag",
+      "title": "platform imageTag reaches tenant-host shell",
+      "audience": "control-plane deploy owners",
+      "summary": "Control-plane records platform build metadata and later passes image refs into tenant-host shell commands. Without a strict image allowlist and safe argument passing, release metadata becomes a deploy-time command or image substitution boundary.",
+      "linkedFiles": [
+        "../mentiko-control-plane/app/api/admin/platform-status/route.ts",
+        "../mentiko-control-plane/lib/infra/platform-deploy.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "supply-chain",
+        "deploy"
+      ],
+      "impact": "If build metadata or the release ingestion path is compromised, tenant hosts can pull an attacker image or execute injected shell content.",
+      "intentionalBoundary": "Automated tenant deploys are intended; accepting unguarded image refs is not."
+    },
+    {
+      "id": "finding-secretless-webhooks",
+      "title": "secretless webhook receivers can trigger chains",
+      "audience": "workflow automation owners",
+      "summary": "External webhook subscriptions allow missing secrets. That can be okay for passive ingestion, but risky when the webhook can create events that launch agent chains.",
+      "linkedFiles": [
+        "web/app/api/webhooks/route.ts",
+        "web/app/api/webhooks/[id]/receive/route.ts",
+        "lib/chain-event-watcher.sh"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "medium",
+        "webhook",
+        "execution-trigger"
+      ],
+      "impact": "Anyone with the receiver URL can trigger work, spend tokens, run actions, or create noisy automations if that subscription launches chains.",
+      "intentionalBoundary": "Public inbound webhooks are intentional only when their trigger capability is explicit and signed or tokened."
+    },
+    {
+      "id": "finding-deploy-key-provision",
+      "title": "deploy key can create canary tenants",
+      "audience": "control-plane admin owners",
+      "summary": "The test-provision route accepts DEPLOY_API_KEY and can create or resume tenant provisioning. A deploy key should deploy, not mint billable infrastructure unless that is a separate canary-only contract.",
+      "linkedFiles": [
+        "../mentiko-control-plane/app/api/admin/test-provision/route.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "medium",
+        "infra-cost",
+        "admin-boundary"
+      ],
+      "impact": "A leaked CI or mk deploy key can allocate compute, DNS, and storage without an admin browser session or Stripe-backed flow.",
+      "intentionalBoundary": "Automated canary provisioning is fine with a distinct key and hard scope."
+    },
+    {
+      "id": "finding-bootstrap-secret-artifacts",
+      "title": "bootstrap and deploy flows expose operational secrets",
+      "audience": "tenant provisioning owners",
+      "summary": "Callback secrets and GHCR tokens appear in bootstrap files, cron-style command surfaces, or SSH argv. Host-local exposure is not the same as internet exposure, but it widens blast radius after any tenant-host foothold.",
+      "linkedFiles": [
+        "../mentiko-control-plane/lib/infra/cloud-init.ts",
+        "../mentiko-control-plane/lib/infra/platform-deploy.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "medium",
+        "secret-hygiene",
+        "host-local"
+      ],
+      "impact": "A low-privileged host read or process listing can reveal callback or registry credentials that should have stayed root-only or stdin-only.",
+      "intentionalBoundary": "Bootstrap needs secrets briefly; it should not leave them in world-readable files or process arguments."
+    },
+    {
+      "id": "finding-secrets-api-rbac",
+      "title": "plain secrets API is auth-only for write and delete",
+      "audience": "tenant RBAC owners",
+      "summary": "The plain /api/secrets route lists metadata and allows create, update, and delete after checkAuth. Newer secret routes already use stronger manage_org or secrets scopes, so this older route is behind the product boundary.",
+      "linkedFiles": [
+        "web/app/api/secrets/route.ts",
+        "web/lib/secrets-store.ts"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "medium",
+        "rbac",
+        "secrets"
+      ],
+      "impact": "A lower-role member can corrupt or remove secrets that future jobs and terminals depend on, even if plaintext values are not returned.",
+      "intentionalBoundary": "Secret management is intentional for owners/admins, not every authenticated member."
+    },
+    {
+      "id": "finding-dependency-audit",
+      "title": "prod dependency advisories are currently open",
+      "audience": "release owners",
+      "summary": "Both tenant web and control-plane have production npm audit findings. These are not all equal, but Next.js, better-auth, ws, nodemailer, jspdf, mermaid, and transitive parser/server packages touch public or privileged surfaces.",
+      "linkedFiles": [
+        "web/package.json",
+        "web/package-lock.json",
+        "../mentiko-control-plane/package.json",
+        "../mentiko-control-plane/package-lock.json"
+      ],
+      "hashState": "stale",
+      "status": "open",
+      "flags": [
+        "high",
+        "dependencies",
+        "release-blocker"
+      ],
+      "impact": "Known public advisories stay reachable in app-router, auth, websocket, PDF, email, and rendered-content paths until versions are bumped and tested.",
+      "intentionalBoundary": "Using fast-moving web frameworks is intentional; shipping known vulnerable prod versions is not."
+    },
+    {
+      "id": "pass-callback-auth",
+      "title": "provisioning callback auth is mostly sound",
+      "audience": "control-plane maintainers",
+      "summary": "The callback path uses bearer plus HMAC by default, timestamp skew, timing-safe signature checks, body validation, and replay cache. The remaining action is to verify HMAC is not disabled in production.",
+      "linkedFiles": [
+        "../mentiko-control-plane/app/api/provisioning/callback/route.ts",
+        "../mentiko-control-plane/lib/provisioning-callback.ts"
+      ],
+      "hashState": "current",
+      "status": "verified-static",
+      "flags": [
+        "pass",
+        "control-plane"
+      ],
+      "impact": "This is not a current reportable issue based on static trace.",
+      "intentionalBoundary": "Keep HMAC required in production."
+    },
+    {
+      "id": "pass-scheduling-raw-exec",
+      "title": "schedule raw_exec is not the same bug",
+      "audience": "scheduler owners",
+      "summary": "The schedule raw_exec path requires manage_org and uses spawn with shell:false. It is powerful by design, but the checked path did not show shell injection as written.",
+      "linkedFiles": [
+        "web/app/api/schedules/route.ts",
+        "web/lib/schedule-targets.ts",
+        "web/lib/schedule-dispatcher.ts"
+      ],
+      "hashState": "current",
+      "status": "verified-static",
+      "flags": [
+        "pass",
+        "scheduler"
+      ],
+      "impact": "Keep it RBAC-gated and audited; do not weaken this pattern when fixing terminal and chain paths.",
+      "intentionalBoundary": "This is the model the other execution paths should move toward."
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-terminal",
+      "title": "terminal APIs",
+      "path": "/api/terminal/*",
+      "status": "needs-fix"
+    },
+    {
+      "id": "route-webhook-receive",
+      "title": "webhook receivers",
+      "path": "/api/webhooks/[id]/receive",
+      "status": "needs-fix"
+    },
+    {
+      "id": "route-platform-deploy",
+      "title": "platform deploy admin flow",
+      "path": "/api/admin/platform-status -> platform-deploy",
+      "status": "needs-fix"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "workflow-tenant-rce",
+      "title": "tenant authenticated user to unintended shell execution",
+      "kind": "attack-path",
+      "status": "needs-fix",
+      "linkedFiles": [
+        "web/app/api/git/route.ts",
+        "web/app/api/fs/search/route.ts",
+        "web/app/api/conversations/[id]/steer/route.ts",
+        "lib/chain-runner.mjs"
+      ],
+      "hashState": "stale"
+    },
+    {
+      "id": "workflow-terminal-secret-leak",
+      "title": "tenant user to cross-session terminal output and secrets",
+      "kind": "attack-path",
+      "status": "needs-fix",
+      "linkedFiles": [
+        "web/app/api/terminal/spawn/route.ts",
+        "web/app/api/terminal/capture/route.ts",
+        "web/server/ws-terminal.ts"
+      ],
+      "hashState": "stale"
+    },
+    {
+      "id": "workflow-control-plane-supply-chain",
+      "title": "platform release metadata to tenant-host deploy boundary",
+      "kind": "attack-path",
+      "status": "needs-fix",
+      "linkedFiles": [
+        "../mentiko-control-plane/app/api/admin/platform-status/route.ts",
+        "../mentiko-control-plane/lib/infra/platform-deploy.ts"
+      ],
+      "hashState": "stale"
+    }
+  ],
+  "commands": [
+    {
+      "id": "command-security-report",
+      "title": "read security report",
+      "kind": "report",
+      "summary": "Open .kdex/articles/security-control-plane-tenant-report-2026-05-20.md",
+      "status": "current",
+      "linkedFiles": [
+        ".kdex/articles/security-control-plane-tenant-report-2026-05-20.md"
+      ],
+      "hashState": "current"
+    },
+    {
+      "id": "command-audit-web",
+      "title": "audit tenant web deps",
+      "kind": "verification",
+      "summary": "cd web && npm audit --omit=dev --json",
+      "status": "needs-fix",
+      "linkedFiles": [
+        "web/package.json",
+        "web/package-lock.json"
+      ],
+      "hashState": "stale"
+    },
+    {
+      "id": "command-auth-coverage",
+      "title": "route auth coverage",
+      "kind": "verification",
+      "summary": "node scripts/check-auth-coverage.mjs reports markers, not complete authorization quality.",
+      "status": "current",
+      "linkedFiles": [
+        "scripts/check-auth-coverage.mjs"
+      ],
+      "hashState": "current"
+    }
+  ],
+  "sources": [
+    {
+      "id": "source-git-route",
+      "path": "web/app/api/git/route.ts",
+      "kind": "route",
+      "hash": "sha256:fb7412425eade918",
+      "lastSeenHash": "sha256:fb7412425eade918",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-command-injection"
+      ]
+    },
+    {
+      "id": "source-fs-search",
+      "path": "web/app/api/fs/search/route.ts",
+      "kind": "route",
+      "hash": "sha256:c3917a6bdb2e9852",
+      "lastSeenHash": "sha256:c3917a6bdb2e9852",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-command-injection"
+      ]
+    },
+    {
+      "id": "source-conversation-steer",
+      "path": "web/app/api/conversations/[id]/steer/route.ts",
+      "kind": "route",
+      "hash": "sha256:673d26e3e9d25aba",
+      "lastSeenHash": "sha256:673d26e3e9d25aba",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-command-injection"
+      ]
+    },
+    {
+      "id": "source-chains-run",
+      "path": "web/app/api/chains/run/route.ts",
+      "kind": "route",
+      "hash": "sha256:0076e4428dc67881",
+      "lastSeenHash": "sha256:0076e4428dc67881",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-command-injection"
+      ]
+    },
+    {
+      "id": "source-chain-runner",
+      "path": "lib/chain-runner.mjs",
+      "kind": "runner",
+      "hash": "sha256:6fb61718a81985da",
+      "lastSeenHash": "sha256:6fb61718a81985da",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-command-injection"
+      ]
+    },
+    {
+      "id": "source-terminal-status",
+      "path": "web/app/api/terminal/status/route.ts",
+      "kind": "route",
+      "hash": "sha256:602553c7c883b817",
+      "lastSeenHash": "sha256:602553c7c883b817",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-session-acl"
+      ]
+    },
+    {
+      "id": "source-terminal-capture",
+      "path": "web/app/api/terminal/capture/route.ts",
+      "kind": "route",
+      "hash": "sha256:3fc1e1f1770537f4",
+      "lastSeenHash": "sha256:3fc1e1f1770537f4",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-session-acl"
+      ]
+    },
+    {
+      "id": "source-terminal-spawn",
+      "path": "web/app/api/terminal/spawn/route.ts",
+      "kind": "route",
+      "hash": "sha256:6948923e72d42d10",
+      "lastSeenHash": "sha256:6948923e72d42d10",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-secret-env"
+      ]
+    },
+    {
+      "id": "source-agent-session-message",
+      "path": "web/app/api/agents/[session]/message/route.ts",
+      "kind": "route",
+      "hash": "sha256:736c14c07f553c6c",
+      "lastSeenHash": "sha256:736c14c07f553c6c",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-session-acl"
+      ]
+    },
+    {
+      "id": "source-ws-terminal",
+      "path": "web/server/ws-terminal.ts",
+      "kind": "server",
+      "hash": "sha256:f924cc9a1068456d",
+      "lastSeenHash": "sha256:f924cc9a1068456d",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-session-acl"
+      ]
+    },
+    {
+      "id": "source-resolved-env",
+      "path": "web/app/api/agent-profiles/[id]/resolved-env/route.ts",
+      "kind": "route",
+      "hash": "sha256:efbdbd9da945ee36",
+      "lastSeenHash": "sha256:efbdbd9da945ee36",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-profile-resolved-env"
+      ]
+    },
+    {
+      "id": "source-secrets-store",
+      "path": "web/lib/secrets-store.ts",
+      "kind": "library",
+      "hash": "sha256:faa72fdeecdeee58",
+      "lastSeenHash": "sha256:faa72fdeecdeee58",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-terminal-secret-env",
+        "finding-profile-resolved-env",
+        "finding-secrets-api-rbac"
+      ]
+    },
+    {
+      "id": "source-webhooks-route",
+      "path": "web/app/api/webhooks/route.ts",
+      "kind": "route",
+      "hash": "sha256:aa76fec3b30eb481",
+      "lastSeenHash": "sha256:aa76fec3b30eb481",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-secretless-webhooks"
+      ]
+    },
+    {
+      "id": "source-webhook-receive",
+      "path": "web/app/api/webhooks/[id]/receive/route.ts",
+      "kind": "route",
+      "hash": "sha256:8daa7654100a6ca5",
+      "lastSeenHash": "sha256:8daa7654100a6ca5",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-secretless-webhooks"
+      ]
+    },
+    {
+      "id": "source-chain-event-watcher",
+      "path": "lib/chain-event-watcher.sh",
+      "kind": "runner",
+      "hash": "sha256:65982cd52928e35c",
+      "lastSeenHash": "sha256:65982cd52928e35c",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-secretless-webhooks"
+      ]
+    },
+    {
+      "id": "source-secrets-route",
+      "path": "web/app/api/secrets/route.ts",
+      "kind": "route",
+      "hash": "sha256:85a5cf81e94ed135",
+      "lastSeenHash": "sha256:85a5cf81e94ed135",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-secrets-api-rbac"
+      ]
+    },
+    {
+      "id": "source-web-package",
+      "path": "web/package.json",
+      "kind": "dependency-manifest",
+      "hash": "sha256:54b51f4877f9431f",
+      "lastSeenHash": "sha256:54b51f4877f9431f",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-dependency-audit"
+      ]
+    },
+    {
+      "id": "source-web-lock",
+      "path": "web/package-lock.json",
+      "kind": "dependency-lock",
+      "hash": "sha256:8b5c6e43178e738a",
+      "lastSeenHash": "sha256:8b5c6e43178e738a",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-dependency-audit"
+      ]
+    },
+    {
+      "id": "source-cp-platform-status",
+      "path": "../mentiko-control-plane/app/api/admin/platform-status/route.ts",
+      "kind": "route",
+      "hash": "sha256:6c419022dab48545",
+      "lastSeenHash": "sha256:6c419022dab48545",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-platform-image-tag"
+      ]
+    },
+    {
+      "id": "source-cp-platform-deploy",
+      "path": "../mentiko-control-plane/lib/infra/platform-deploy.ts",
+      "kind": "deploy-library",
+      "hash": "sha256:f605979bba2f302f",
+      "lastSeenHash": "sha256:f605979bba2f302f",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-platform-image-tag",
+        "finding-bootstrap-secret-artifacts"
+      ]
+    },
+    {
+      "id": "source-cp-test-provision",
+      "path": "../mentiko-control-plane/app/api/admin/test-provision/route.ts",
+      "kind": "route",
+      "hash": "sha256:c611708da2636b42",
+      "lastSeenHash": "sha256:c611708da2636b42",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-deploy-key-provision"
+      ]
+    },
+    {
+      "id": "source-cp-cloud-init",
+      "path": "../mentiko-control-plane/lib/infra/cloud-init.ts",
+      "kind": "provisioning-library",
+      "hash": "sha256:a32ba0eb14d96160",
+      "lastSeenHash": "sha256:a32ba0eb14d96160",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-bootstrap-secret-artifacts"
+      ]
+    },
+    {
+      "id": "source-cp-callback-route",
+      "path": "../mentiko-control-plane/app/api/provisioning/callback/route.ts",
+      "kind": "route",
+      "hash": "sha256:bf455bc011fbb13f",
+      "lastSeenHash": "sha256:bf455bc011fbb13f",
+      "hashState": "current",
+      "documentedBy": [
+        "pass-callback-auth"
+      ]
+    },
+    {
+      "id": "source-cp-callback-lib",
+      "path": "../mentiko-control-plane/lib/provisioning-callback.ts",
+      "kind": "security-library",
+      "hash": "sha256:d69572c7633726e4",
+      "lastSeenHash": "sha256:d69572c7633726e4",
+      "hashState": "current",
+      "documentedBy": [
+        "pass-callback-auth"
+      ]
+    },
+    {
+      "id": "source-cp-package",
+      "path": "../mentiko-control-plane/package.json",
+      "kind": "dependency-manifest",
+      "hash": "sha256:879a6ded719fb283",
+      "lastSeenHash": "sha256:879a6ded719fb283",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-dependency-audit"
+      ]
+    },
+    {
+      "id": "source-cp-lock",
+      "path": "../mentiko-control-plane/package-lock.json",
+      "kind": "dependency-lock",
+      "hash": "sha256:6d000da63b977c81",
+      "lastSeenHash": "sha256:6d000da63b977c81",
+      "hashState": "current",
+      "documentedBy": [
+        "finding-dependency-audit"
+      ]
+    }
+  ],
+  "objects": [],
+  "relationships": [
+    {
+      "from": "finding-command-injection",
+      "to": "finding-terminal-secret-env",
+      "kind": "same-runtime-blast-radius"
+    },
+    {
+      "from": "finding-platform-image-tag",
+      "to": "finding-bootstrap-secret-artifacts",
+      "kind": "deploy-boundary"
+    },
+    {
+      "from": "finding-secretless-webhooks",
+      "to": "workflow-tenant-rce",
+      "kind": "trigger-surface"
+    }
+  ],
+  "rules": [
+    {
+      "id": "rule-dev-platform-boundaries",
+      "title": "dev power is intentional only behind explicit boundaries",
+      "body": "Powerful actions are acceptable when role, workspace, session owner, audit trail, and secret scope are explicit. Bare checkAuth plus shell/env access is not enough."
+    }
+  ],
+  "comments": [],
+  "decisions": [
+    {
+      "id": "decision-finding-secretless-webhooks",
+      "objectId": "finding-secretless-webhooks",
+      "status": "refresh",
+      "decision": "refresh",
+      "reason": "verify the webhook fix requires HMAC or receiver token for chain-triggering subscriptions.",
+      "updatedAt": "2026-05-20T22:10:25.746Z"
+    }
+  ],
+  "actions": [
+    {
+      "id": "action-fix-command-injection",
+      "kind": "security-fix",
+      "objectId": "finding-command-injection",
+      "title": "replace shell strings with arg arrays",
+      "status": "queued",
+      "command": "kdex context \"fix tenant shell injection paths\" --limit 8",
+      "reason": "highest likelihood path to tenant runtime compromise",
+      "createdAt": "2026-05-20T22:18:00.000Z",
+      "updatedAt": "2026-05-20T22:18:00.000Z"
+    },
+    {
+      "id": "action-fix-terminal-acl",
+      "kind": "security-fix",
+      "objectId": "finding-terminal-session-acl",
+      "title": "bind PTY sessions to owner workspace and org",
+      "status": "queued",
+      "command": "kdex context \"fix terminal session owner and workspace authorization\" --limit 8",
+      "reason": "prevents cross-user terminal capture and steering",
+      "createdAt": "2026-05-20T22:18:00.000Z",
+      "updatedAt": "2026-05-20T22:18:00.000Z"
+    },
+    {
+      "id": "action-remove-plaintext-env",
+      "kind": "security-fix",
+      "objectId": "finding-profile-resolved-env",
+      "title": "remove plaintext resolved-env response",
+      "status": "queued",
+      "command": "kdex context \"remove plaintext profile resolved env endpoint\" --limit 8",
+      "reason": "secret values should resolve server-side only",
+      "createdAt": "2026-05-20T22:18:00.000Z",
+      "updatedAt": "2026-05-20T22:18:00.000Z"
+    },
+    {
+      "id": "action-dependency-bumps",
+      "kind": "security-fix",
+      "objectId": "finding-dependency-audit",
+      "title": "plan and test production dependency bumps",
+      "status": "queued",
+      "command": "kdex context \"plan mentiko and control-plane security dependency bumps\" --limit 8",
+      "reason": "npm audit has production high and critical advisories",
+      "createdAt": "2026-05-20T22:18:00.000Z",
+      "updatedAt": "2026-05-20T22:18:00.000Z"
+    },
+    {
+      "id": "action-refresh-finding-secretless-webhooks",
+      "kind": "refresh",
+      "objectId": "finding-secretless-webhooks",
+      "title": "refresh secretless webhook receivers can trigger chains",
+      "status": "queued",
+      "command": "kdex context \"refresh docs for secretless webhook receivers can trigger chains using web/app/api/webhooks/route.ts, web/app/api/webhooks/[id]/receive/route.ts, lib/chain-event-watcher.sh\" --limit 8 | claude -p \"Update the KDEX docs section 'secretless webhook receivers can trigger chains'. Use these source files as evidence: web/app/api/webhooks/route.ts, web/app/api/webhooks/[id]/receive/route.ts, lib/chain-event-watcher.sh. Keep it human-readable, preserve source links, and rehash after human review.\"",
+      "reason": "verify the webhook fix requires HMAC or receiver token for chain-triggering subscriptions.",
+      "createdAt": "2026-05-20T22:10:25.746Z",
+      "updatedAt": "2026-05-20T22:10:25.746Z"
+    }
+  ]
+}
