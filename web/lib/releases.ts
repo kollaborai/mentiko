@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.14",
+    date: "May 22, 2026",
+    title: "Hosted AI Gateway Runtime Env Fix",
+    description:
+      "Hosted tenant runtimes now pass AI gateway configuration into the managed Next.js process while keeping the raw upstream gateway token out of non-platform child processes.",
+    category: "fix",
+    docsHref: "/account",
+  },
+  {
     version: "v0.3.12",
     date: "May 22, 2026",
     title: "Hosted AI Gateway Proxy Fix",
