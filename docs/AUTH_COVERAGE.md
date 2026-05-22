@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-05-16)
+# api route auth coverage (as of 2026-05-22)
 
 ## summary
-- total routes: 317
-- authenticated: 301   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 318
+- authenticated: 302   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 16
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -30,6 +30,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 
 - activity/route.ts
 - account/finish-password-setup/route.ts
+- ai-gateway/local/v1/chat/completions/route.ts
 - agent-health/route.ts
 - agent-profiles/[id]/resolved-env/route.ts
 - agent-profiles/[id]/route.ts
