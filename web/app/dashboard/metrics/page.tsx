@@ -10,6 +10,7 @@ import {
   ClockFilled as Clock,
   ChartFilled as BarChart3,
   FlashFilled as Zap,
+  TickCircleFilled as CheckCircle,
 } from "@aliimam/icons";
 import { GoalCard } from "@/components/ui/goal-card";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -237,6 +238,7 @@ export default function MetricsPage() {
               id="stat-success-rate"
               title="Success Rate"
               description={`${metrics.runs.success_rate.toFixed(1)}%`}
+              icon={<CheckCircle className="h-4 w-4 text-foreground/60" />}
               status={metrics.runs.success_rate >= 80 ? "completed" : metrics.runs.success_rate >= 50 ? "in_progress" : "blocked"}
               progress={metrics.runs.success_rate}
               meta="Target: 80%"

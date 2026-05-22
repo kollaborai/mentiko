@@ -6,6 +6,7 @@
 _AF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_AF_SCRIPT_DIR/session-transport.sh"
 source "$_AF_SCRIPT_DIR/monitor-completion.sh" 2>/dev/null || true
+source "$_AF_SCRIPT_DIR/ai-gateway-agent-env.sh" 2>/dev/null || true
 
 if ! transport_init; then
     echo "  mentiko: pty-manager daemon could not start"
@@ -246,6 +247,28 @@ launch-chain-runner-complete() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
     completion_session="complete-${session_name}-$(date +%s)"
+    local completion_env_file=""
+    local completion_script_q=""
+    local session_name_q=""
+    local chain_file_q=""
+    local completion_cmd=""
+
+    printf -v completion_script_q "%q" "$script_dir/chain-runner-complete.sh"
+    printf -v session_name_q "%q" "$session_name"
+    printf -v chain_file_q "%q" "$chain_file"
+    completion_cmd="exec $completion_script_q $session_name_q $chain_file_q"
+
+    if [[ "${MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED:-}" == "true" ]] && \
+       [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_BASE_URL:-}" ]] && \
+       [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_TOKEN:-}" ]]; then
+        completion_env_file=$(mktemp /tmp/complete-gw-env-XXXXXX)
+        chmod 600 "$completion_env_file"
+        ai_gateway_append_local_proxy_control_exports "$completion_env_file"
+
+        local completion_env_file_q=""
+        printf -v completion_env_file_q "%q" "$completion_env_file"
+        completion_cmd="trap 'rm -f $completion_env_file_q' EXIT; source $completion_env_file_q; rm -f $completion_env_file_q; trap - EXIT; exec $completion_script_q $session_name_q $chain_file_q"
+    fi
 
     # Run completion in its own PTY session. The handler kills the monitor
     # session as part of cleanup, so it cannot be a child of that monitor PTY.
@@ -256,10 +279,11 @@ launch-chain-runner-complete() {
             NAMESPACE_ID="${NAMESPACE_ID:-default}" \
             ORG_ID="${ORG_ID:-default}" \
             WORKSPACE_TYPE="${WORKSPACE_TYPE:-local}" \
-            bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"; then
+            bash -lc "$completion_cmd"; then
             echo "  chain-runner-complete session started: $completion_session"
             return 0
         fi
+        [[ -n "$completion_env_file" ]] && rm -f "$completion_env_file"
         echo "  chain-runner-complete session failed: $completion_session"
     fi
 

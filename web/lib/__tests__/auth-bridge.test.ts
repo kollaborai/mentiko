@@ -24,6 +24,15 @@ import {
 
 const mockGetAuth = getAuth as jest.Mock;
 
+function setNodeEnv(value: string | undefined) {
+  const env = process.env as Record<string, string | undefined>;
+  if (value === undefined) {
+    delete env.NODE_ENV;
+  } else {
+    env.NODE_ENV = value;
+  }
+}
+
 /** minimal Request-like object for testing (jsdom doesn't have Request) */
 function makeRequest(headers: Record<string, string> = {}) {
   const h = new Headers();
@@ -41,11 +50,11 @@ describe("auth-bridge", () => {
     delete process.env.DATABASE_URL;
     delete process.env.BETTER_AUTH_SECRET;
     delete process.env.NAMESPACE_ID;
-    process.env.NODE_ENV = originalNodeEnv;
+    setNodeEnv(originalNodeEnv);
   });
 
   afterAll(() => {
-    process.env.NODE_ENV = originalNodeEnv;
+    setNodeEnv(originalNodeEnv);
   });
 
   describe("getServerSession", () => {
@@ -86,7 +95,7 @@ describe("auth-bridge", () => {
     });
 
     it("returns true in local development without DATABASE_URL", async () => {
-      process.env.NODE_ENV = "development";
+      setNodeEnv("development");
       delete process.env.DATABASE_URL;
       mockGetAuth.mockReturnValue({
         api: { getSession: jest.fn().mockResolvedValue(null) },
@@ -242,7 +251,7 @@ describe("auth-bridge", () => {
     });
 
     it("returns dev fallback user in local development without DATABASE_URL", async () => {
-      process.env.NODE_ENV = "development";
+      setNodeEnv("development");
       delete process.env.DATABASE_URL;
       mockGetAuth.mockReturnValue({
         api: { getSession: jest.fn().mockResolvedValue(null) },

@@ -49,5 +49,27 @@ describe('sanitize-output', () => {
     it('should handle empty string', () => {
       expect(sanitizeOutput('')).toBe('');
     });
+
+    it('should redact tenant AI gateway tokens and env vars', () => {
+      const token = 'mtk_ai_abcdefghijklmnopqrstuvwxyz1234567890';
+      const input = `MENTIKO_AI_GATEWAY_TOKEN=${token}\nAuthorization: Bearer ${token}`;
+      const output = sanitizeOutput(input);
+
+      expect(output).toContain('[REDACTED]');
+      expect(output).not.toContain(token);
+    });
+
+    it('should redact local gateway proxy and job callback secrets', () => {
+      const input = [
+        'MENTIKO_AI_GATEWAY_LOCAL_TOKEN=local-secret-value',
+        'JOB_CALLBACK_SECRET=job-callback-secret',
+        'OPENAI_API_KEY=local-openai-proxy-token',
+      ].join('\n');
+      const output = sanitizeOutput(input);
+
+      expect(output).not.toContain('local-secret-value');
+      expect(output).not.toContain('job-callback-secret');
+      expect(output).not.toContain('local-openai-proxy-token');
+    });
   });
 });

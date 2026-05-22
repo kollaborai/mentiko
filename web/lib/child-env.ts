@@ -30,6 +30,7 @@ const ALLOWED_KEYS = [
   "MENTIKO_ROOT",
   "NAMESPACE_ID",
   "ORG_ID",
+  "TENANT_ID",
 
   // job runner (callback auth is scoped to job runner alone)
   "JOB_CALLBACK_URL",
@@ -42,10 +43,8 @@ const ALLOWED_KEYS = [
   // process should read this.
   "BETTER_AUTH_SECRET",
 
-  // claude CLI auth fallback (when profile doesn't set env inline)
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
+  // CLI auth may still use its own config dir. Provider credentials must come
+  // from an explicit agent profile, never inherited from the server process.
   "CLAUDE_CONFIG_DIR",
 ];
 

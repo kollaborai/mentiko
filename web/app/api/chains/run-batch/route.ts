@@ -8,6 +8,7 @@ import { checkAuth } from "@/lib/api-auth";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { buildChildEnv } from "@/lib/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 
 export const dynamic = "force-dynamic";
 
@@ -259,6 +260,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
     NAMESPACE_ID: namespaceId,
     ORG_ID: orgId,
+    ...buildLocalAiGatewayProxyEnv(new URL(request.url).origin),
   });
 
   if (mode === "parallel") {

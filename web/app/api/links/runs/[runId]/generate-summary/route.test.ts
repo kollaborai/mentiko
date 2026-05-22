@@ -5,6 +5,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { NextRequest } from "next/server";
 
 import { POST } from "@/app/api/links/runs/[runId]/generate-summary/route";
 
@@ -74,7 +75,7 @@ function makeRequest(runId: string, cli?: string) {
   if (cli) url.searchParams.set("cli", cli);
   const request = new Request(url, { method: "POST" });
   Object.defineProperty(request, "nextUrl", { value: url });
-  return request;
+  return request as unknown as NextRequest;
 }
 
 function createRelayFile(dir: string, file: string) {

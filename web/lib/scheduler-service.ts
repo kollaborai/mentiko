@@ -16,6 +16,7 @@ import { writeLog } from "./system-logger";
 import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "./schedule-dispatcher";
 import { canAdmitJobToGroup, normalizeScheduleTarget } from "./schedule-targets";
 import { mintSessionToken } from "./session-token";
+import { buildLocalAiGatewayProxyEnv } from "./ai-gateway-local-proxy-env";
 import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "./scheduled-application-storage";
 import {
   collectFileTriggerEvents,
@@ -424,6 +425,7 @@ function fireChain(
       MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
       NAMESPACE_ID: nsId,
       ORG_ID: orgId,
+      ...buildLocalAiGatewayProxyEnv(),
     };
     delete env.CLAUDECODE;
 

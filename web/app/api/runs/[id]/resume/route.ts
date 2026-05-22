@@ -18,6 +18,7 @@ import { requirePermission } from "@/lib/rbac-auth";
 import { pty } from "@/lib/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { buildChildEnv } from "@/lib/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets-store";
 import { getProfile } from "@/lib/agent-profile-storage";
 import { checkRunAccess } from "@/lib/run-acl";
@@ -168,6 +169,7 @@ export const POST = withErrorHandling(async (
           ...getSecretsEnvVars(nsId, orgId),
           ...profileEnv,
           BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-resume"),
+          ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
           MENTIKO_GLOBAL_ROOT: config.globalRoot,
           MENTIKO_CODE_ROOT: config.codeRoot,
           MENTIKO_PROJECT_ROOT: orgPath(nsId, orgId),

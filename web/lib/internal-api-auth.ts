@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { Unauthorized } from "./api-errors";
 import { resolveAppSecret } from "./dev-secret";
 import { timingSafeEqual } from "./security";
@@ -5,6 +6,10 @@ import { timingSafeEqual } from "./security";
 interface InternalAuthOptions {
   allowDevLocalhost?: boolean;
 }
+
+const DERIVED_INTERNAL_AUTH_CONTEXTS = new Set([
+  "ai-gateway-local-proxy",
+]);
 
 function isLoopbackAddress(value: string): boolean {
   const host = value.trim().split(",")[0].trim().replace(/^\[/, "").replace(/\]$/, "");
@@ -38,7 +43,13 @@ export function isDevLocalInternalRequest(request: Request): boolean {
 }
 
 export function resolveInternalAuthSecret(context: string): string {
-  return resolveAppSecret(context);
+  const root = resolveAppSecret(context);
+  if (!DERIVED_INTERNAL_AUTH_CONTEXTS.has(context)) {
+    return root;
+  }
+  return createHmac("sha256", root)
+    .update(`mentiko-internal-api:${context}`, "utf8")
+    .digest("hex");
 }
 
 export function hasInternalAuth(

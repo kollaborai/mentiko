@@ -2,8 +2,11 @@ import { spawn, type StdioOptions } from "node:child_process";
 import { join } from "node:path";
 import config, { nsPath, orgPath } from "@/lib/config";
 import { buildChildEnv } from "@/lib/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
 import type { Job } from "@/lib/job-store";
+
+export { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -67,6 +70,7 @@ export function launchJobRunner({
       JOB_CALLBACK_URL: resolvedCallbackUrl,
       JOB_CALLBACK_SECRET: resolveInternalAuthSecret("jobs-complete"),
       JOB_WORKSPACE_CWD: resolveJobWorkspaceCwd(job.input),
+      ...buildLocalAiGatewayProxyEnv(origin),
     }),
   });
   child.unref();

@@ -13,6 +13,7 @@ import { validateSchedule } from "@/lib/validators";
 import { checkScheduleConflicts } from "@/lib/schedule-utils";
 import { canExecute, incrementActiveRuns, decrementActiveRuns } from "@/lib/circuit-breaker";
 import { buildChildEnv } from "@/lib/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import {
   requiresElevatedScheduleTargetPermission,
   scheduleMatchesWorkspace,
@@ -359,6 +360,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
     NAMESPACE_ID: nsId,
     ORG_ID: orgId,
+    ...buildLocalAiGatewayProxyEnv(new URL(req.url).origin),
   });
   delete schedEnv.CLAUDECODE;
 

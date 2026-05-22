@@ -9,7 +9,7 @@ const ANSI_RE = /(?:\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07]*(?:\x07|\x1b\\)|P[^\x1b]
 
 // sensitive env var names
 const SENSITIVE_VARS =
-  "ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|AUTH_TOKEN|API_KEY|SECRET_KEY|ACCESS_TOKEN|BEARER_TOKEN|SESSION_TOKEN|BETTER_AUTH_SECRET";
+  "ANTHROPIC_AUTH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|MENTIKO_AI_GATEWAY_TOKEN|MENTIKO_AI_GATEWAY_LOCAL_TOKEN|JOB_CALLBACK_SECRET|AUTH_TOKEN|API_KEY|SECRET_KEY|ACCESS_TOKEN|BEARER_TOKEN|SESSION_TOKEN|BETTER_AUTH_SECRET";
 
 // credential patterns to redact (applied per-line)
 const LINE_PATTERNS: [RegExp, string][] = [
@@ -20,6 +20,8 @@ const LINE_PATTERNS: [RegExp, string][] = [
   [new RegExp(`(${SENSITIVE_VARS})=([^\\s;'"][^\\s;]*)`, "gi"), "$1=[REDACTED]"],
   // Bearer tokens in headers
   [/(Bearer\s+)[A-Za-z0-9._\-]{20,}/gi, "$1[REDACTED]"],
+  // tenant AI gateway tokens spend tenant quota and must not appear in logs
+  [/\bmtk_ai_[A-Za-z0-9_-]{16,}\b/g, "[REDACTED]"],
   // standalone long hex tokens (32+ hex chars, optionally with dot+base64 suffix)
   // catches token fragments on continuation lines like: 72ebb4f9ca444565d8a.4SCYl3qMgLk6ONDf
   [/\b[A-Fa-f0-9]{32,}(?:\.[A-Za-z0-9+/=_\-]+)?\b/g, "[REDACTED]"],

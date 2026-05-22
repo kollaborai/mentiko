@@ -20,6 +20,7 @@ import { BadRequest, Conflict, Forbidden, RateLimitExceeded } from "@/lib/api-er
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { createNotification } from "@/lib/notification-server";
 import { buildChildEnv } from "@/lib/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
@@ -288,6 +289,7 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
         // agent profile env vars override secrets (explicit takes precedence)
         ...profileEnv,
         BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-run"),
+        ...buildLocalAiGatewayProxyEnv(new URL(request.url).origin),
         MENTIKO_GLOBAL_ROOT: config.globalRoot,
         MENTIKO_CODE_ROOT: config.codeRoot,
         MENTIKO_PROJECT_ROOT: orgPath(namespaceId, orgId),

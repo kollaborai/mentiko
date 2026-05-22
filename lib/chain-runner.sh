@@ -51,6 +51,7 @@ source "$SCRIPT_DIR/audit-log.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/retry-utils.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/approval-gate.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/plugin-runner.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/ai-gateway-agent-env.sh"
 
 # Global run-id for this execution (from env var or new run)
 RUN_ID="${MENTIKO_RUN_ID:-${AGENT_CHAIN_RUN_ID:-${RUN_ID:-}}}"
@@ -1160,6 +1161,16 @@ launch_chain_agent() {
         gateway_env_vars=$(get_gateway_env "$agent_gateway" 2>/dev/null || true)
     fi
 
+    local local_proxy_env_vars
+    local_proxy_env_vars=$(ai_gateway_local_proxy_env_lines "${profile_file:-}" "$gateway_env_vars" "$WORKSPACE_TYPE")
+    if [[ -n "$local_proxy_env_vars" ]]; then
+        if [[ -n "$gateway_env_vars" ]]; then
+            gateway_env_vars="${gateway_env_vars}"$'\n'"${local_proxy_env_vars}"
+        else
+            gateway_env_vars="$local_proxy_env_vars"
+        fi
+    fi
+
     # resolve cli_args for legacy path only
     local agent_cli_args=""
     if [[ "$use_legacy_cli" == "true" ]]; then
@@ -1464,14 +1475,12 @@ $rs_produces
     # gateway env (legacy) also written to a temp file if present
     # always unset CLAUDECODE so claude doesn't refuse to run inside another session
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
-        local start_cmd="cd $REMOTE_PROJECT_ROOT && unset CLAUDECODE"
+        local start_cmd="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
         if [[ -n "$gateway_env_vars" ]]; then
             local gw_env_file
             gw_env_file=$(mktemp /tmp/agent-gw-env-XXXXXX)
             chmod 600 "$gw_env_file"
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && echo "export $line" >> "$gw_env_file"
-            done <<< "$gateway_env_vars"
+            ai_gateway_append_export_lines "$gw_env_file" "$gateway_env_vars"
             start_cmd="$start_cmd && source $gw_env_file; rm -f $gw_env_file; $cli_cmd"
         else
             start_cmd="$start_cmd && $cli_cmd"
@@ -1492,9 +1501,7 @@ $rs_produces
             local gw_env_file
             gw_env_file=$(mktemp /tmp/agent-gw-env-XXXXXX)
             chmod 600 "$gw_env_file"
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && echo "export $line" >> "$gw_env_file"
-            done <<< "$gateway_env_vars"
+            ai_gateway_append_export_lines "$gw_env_file" "$gateway_env_vars"
             remote_gw="/tmp/agent-gw-env-${session_name}"
             scp -q -i "${SSH_KEY:-~/.ssh/id_rsa}" -P "$SSH_PORT" \
                 "$gw_env_file" "${SSH_USER}@${SSH_HOST}:${remote_gw}"
@@ -1509,7 +1516,7 @@ $rs_produces
         sleep 3
 
         # step 4: start agent on remote
-        local remote_start="cd $REMOTE_PROJECT_ROOT && unset CLAUDECODE"
+        local remote_start="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
         if [[ -n "$remote_gw" ]]; then
             remote_start="$remote_start && source $remote_gw; rm -f $remote_gw"
         fi
@@ -1531,9 +1538,7 @@ $rs_produces
             local gw_env_file
             gw_env_file=$(mktemp /tmp/agent-gw-env-XXXXXX)
             chmod 600 "$gw_env_file"
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && echo "export $line" >> "$gw_env_file"
-            done <<< "$gateway_env_vars"
+            ai_gateway_append_export_lines "$gw_env_file" "$gateway_env_vars"
             remote_gw="/tmp/agent-gw-env-${session_name}"
             docker cp "$gw_env_file" "$DOCKER_CONTAINER:${remote_gw}"
             rm -f "$gw_env_file"
@@ -1546,7 +1551,7 @@ $rs_produces
         sleep 2
 
         # step 4: start agent in container
-        local remote_start="cd $REMOTE_PROJECT_ROOT && unset CLAUDECODE"
+        local remote_start="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
         if [[ -n "$remote_gw" ]]; then
             remote_start="$remote_start && source $remote_gw; rm -f $remote_gw"
         fi
@@ -1708,9 +1713,12 @@ SEOF
 
         # build monitor script to avoid send-message pasting function bodies
         # NOTE: use double quotes for variable expansion in heredoc
-        local mon_script="/tmp/monitor-${session_name}.sh"
+        local mon_script
+        mon_script=$(mktemp "/tmp/monitor-${session_name}.XXXXXX")
+        chmod 600 "$mon_script"
         cat > "$mon_script" <<MONEOF
 #!/bin/bash
+trap 'rm -f "\$0"' EXIT
 source "${SCRIPT_DIR}/agent-functions.sh" 2>/dev/null
 source "${SCRIPT_DIR}/event-trigger.sh" 2>/dev/null
 export CHAIN_FILE="${CHAIN_FILE}"
@@ -1720,6 +1728,9 @@ export MENTIKO_RUN_ID="${RUN_ID}"
 export RUN_ID="${RUN_ID}"
 export MENTIKO_AGENT_ID="${agent_id}"
 MONEOF
+        if [[ "$WORKSPACE_TYPE" == "local" ]]; then
+            ai_gateway_append_local_proxy_control_exports "$mon_script"
+        fi
 
         if [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
             cat >> "$mon_script" <<MONEOF
@@ -1732,9 +1743,10 @@ MONEOF
         fi
 
         cat >> "$mon_script" <<MONEOF
+rm -f "\$0"
 monitor-chain-agent '${session_name}' '${agent_monitor_interval}' '${agent_context}' "${CHAIN_FILE}" '${agent_max_stale}'
 MONEOF
-        chmod +x "$mon_script"
+        chmod 700 "$mon_script"
 
         transport_new_session "$monitor_session" bash "$mon_script"
         echo "  monitor started: $monitor_session"

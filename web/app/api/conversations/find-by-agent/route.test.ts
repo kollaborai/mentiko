@@ -5,6 +5,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { NextRequest } from "next/server";
 import { GET } from "@/app/api/conversations/find-by-agent/route";
 
 const mockResolveLogDir = jest.fn();
@@ -19,7 +20,7 @@ jest.mock("@/lib/api-auth", () => ({
 
 function makeRequest(urlPath: string, search: Record<string, string>) {
   const params = new URLSearchParams(search);
-  return new Request(`http://localhost${urlPath}?${params.toString()}`);
+  return new Request(`http://localhost${urlPath}?${params.toString()}`) as unknown as NextRequest;
 }
 
 describe("GET /api/conversations/find-by-agent", () => {
