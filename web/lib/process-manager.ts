@@ -13,6 +13,7 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
+import { buildManagedProcessEnv } from './process-manager-env';
 import { getKollabMentikoMcpServerEnv } from './kollabor-mcp-server-env';
 
 interface ManagedProcess {
@@ -33,48 +34,6 @@ interface McpSettings {
   mcpServers?: Record<string, unknown>;
 }
 
-const ENV_WHITELIST = [
-  'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM',
-  'SHELL', 'HOSTNAME', 'TZ', 'NODE_ENV', 'PORT',
-  'NODE_PATH', 'NPM_CONFIG_PREFIX',
-  // terminal bridge: operator-configurable port + proxy mode + origin allowlist
-  'WS_PORT', 'WS_TERMINAL_PORT', 'WS_TERMINAL_HOST',
-  'MENTIKO_TERMINAL_PROXY', 'WS_TERMINAL_PROXY_PATH',
-  'WS_ALLOWED_ORIGINS',
-  // platform auth + runtime config -- must be passed to next.js
-  'BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'AUTH_SECRET',
-  'DATABASE_URL', 'MENTIKO_ROOT', 'MENTIKO_GLOBAL_ROOT',
-  'MENTIKO_CODE_ROOT', 'STORAGE_BUCKET',
-  'CONTROL_PLANE_URL', 'ADMIN_EMAILS',
-  'MARKETPLACE_AUTO_SYNC', 'MARKETPLACE_SYNC_INTERVAL',
-  // tenant transactional email -- next-server sends auth/reset mail.
-  'EMAIL_FROM', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_FROM',
-  'SMTP_USER', 'SMTP_PASS', 'RESEND_API_KEY',
-  // tenant isolation — child processes need tier context
-  'NAMESPACE_ID', 'ORG_ID',
-  'MENTIKO_NAMESPACE_ROOT', 'MENTIKO_ORG_ROOT',
-  'MENTIKO_TIER', 'ENV_SCHEMA_VERSION',
-  // mentiko-mcp subprocess reads these to reach the platform inbox
-  'MENTIKO_INBOX_KEY', 'MENTIKO_WEB_URL',
-  'MENTIKO_NAMESPACE_ID', 'MENTIKO_ORG_ID',
-  'MENTIKO_DEFAULT_NAMESPACE_ID', 'MENTIKO_DEFAULT_ORG_ID',
-  // optional override for the platform's server-side engine proxy
-  'KOLLABOR_ENGINE_URL',
-  // optional override for local/bundled PTY manager binary selection
-  'PTY_MGR_BIN', 'MENTIKO_PTY_MGR_BIN',
-  // internal service auth — used by engine->web refresh-token calls
-  'INTERNAL_SERVICE_SECRET',
-  // SaaS signup gate — auth-deployment.ts + auth-server.ts read these
-  // to lock public signup and accept the control-plane bootstrap token.
-  'MENTIKO_DISABLE_PUBLIC_SIGNUP', 'MENTIKO_PROVISIONING_TOKEN',
-  'MENTIKO_OWNER_EMAIL',
-  // version-skew protection: next.js encrypts server-action closures with this
-  // key at build time. the runtime container needs the SAME key to decrypt
-  // actions invoked by clients. without it, every deploy invalidates in-flight
-  // actions with "Failed to find Server Action". must match value passed to
-  // `npm run build` in cp's tag-watcher.sh.
-  'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY',
-];
 const IPC_MAX_MSG = 512 * 1024;
 const IPC_MAX_CONNS = 10;
 const isDev = process.env.NODE_ENV !== 'production';
@@ -166,26 +125,6 @@ function topoSort(procs: ProcessConfig[]): string[] {
   return result;
 }
 
-// -- env building --
-
-function buildEnv(procEnv?: Record<string, string>): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const k of ENV_WHITELIST) if (process.env[k]) env[k] = process.env[k]!;
-  if (procEnv) {
-    for (const [k, v] of Object.entries(procEnv)) {
-      // Container/operator env wins over processes.json defaults. Without
-      // this, hardcoded "PORT": "3000" in the config would shadow an
-      // operator's `docker run -e PORT=13000`.
-      if (process.env[k]) {
-        env[k] = process.env[k]!;
-      } else {
-        env[k] = expandEnv(v);
-      }
-    }
-  }
-  return env;
-}
-
 // -- readiness probes --
 
 function checkSocket(sockPath: string): Promise<boolean> {
@@ -241,7 +180,7 @@ async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise
 // -- process lifecycle --
 
 function spawnChild(config: ProcessConfig): ManagedProcess {
-  const env = buildEnv(config.env);
+  const env = buildManagedProcessEnv(config);
   const child: ChildProcess = spawn(config.cmd, config.args || [], {
     env: env as unknown as NodeJS.ProcessEnv,
     cwd: config.cwd || process.cwd(),
