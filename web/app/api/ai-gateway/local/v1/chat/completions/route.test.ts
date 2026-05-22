@@ -14,10 +14,14 @@ import { requireInternalAuth } from "@/lib/internal-api-auth";
 import { invokeTenantAiGatewayChatCompletions } from "@/lib/ai-gateway-client";
 import { POST } from "./route";
 
+const LOCAL_PROXY_PATH = "/api/ai-gateway/local/v1/chat/completions";
+const LOCAL_PROXY_URL = `http://127.0.0.1:3000${LOCAL_PROXY_PATH}`;
+const HOSTED_PUBLIC_PROXY_URL = `https://tenant.example.com${LOCAL_PROXY_PATH}`;
+
 function makeRequest(
   body: string,
   headers: Record<string, string> = {},
-  url = "http://127.0.0.1:3000/api/ai-gateway/local/v1/chat/completions",
+  url = LOCAL_PROXY_URL,
 ): Request {
   return new Request(url, {
     method: "POST",
@@ -44,7 +48,7 @@ function makeStreamRequest(
     },
   });
 
-  return new Request("http://127.0.0.1:3000/api/ai-gateway/local/v1/chat/completions", {
+  return new Request(LOCAL_PROXY_URL, {
     method: "POST",
     body,
     duplex: "half",
@@ -108,7 +112,7 @@ describe("/api/ai-gateway/local/v1/chat/completions", () => {
     const response = await POST(makeRequest(
       JSON.stringify({ model: "glm-5.1" }),
       {},
-      "https://tenant.example.com/api/ai-gateway/local/v1/chat/completions",
+      HOSTED_PUBLIC_PROXY_URL,
     ));
     const body = await response.json();
 
@@ -124,7 +128,7 @@ describe("/api/ai-gateway/local/v1/chat/completions", () => {
         messages: [{ role: "user", content: "hi" }],
       }),
       { host: "127.0.0.1:3000" },
-      "https://marco.mentiko.com/api/ai-gateway/local/v1/chat/completions",
+      HOSTED_PUBLIC_PROXY_URL,
     ));
     const body = await response.json();
 
