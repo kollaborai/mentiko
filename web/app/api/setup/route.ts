@@ -15,6 +15,7 @@ import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import config from "@/lib/config";
 import { Unauthorized, NotFound, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +41,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // call the chains/run endpoint internally
-  const runUrl = new URL("/api/chains/run", request.url);
-  const runRes = await fetch(runUrl.toString(), {
+  const runRes = await fetch(internalApiUrl("/api/chains/run", request.url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

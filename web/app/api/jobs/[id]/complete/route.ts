@@ -8,6 +8,7 @@ import type { GuidedFlow, TradeoffQuestion, TailoredOption, Recommendation, Exec
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/internal-api-auth";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ async function triggerAutoRunContinuation(
 ) {
   const secret = process.env.BETTER_AUTH_SECRET || "";
   try {
-    await fetch(`${request.nextUrl.origin}/api/tasks/auto-run`, {
+    await fetch(internalApiUrl("/api/tasks/auto-run", request.url), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

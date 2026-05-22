@@ -10,6 +10,7 @@ import { createNotification } from "@/lib/notification-server";
 import { apiError } from "@/lib/api-response";
 import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { taskDetailHref } from "@/lib/task-routes";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 import type { TaskChainBinding } from "@/lib/task-types";
 
 export const dynamic = "force-dynamic";
@@ -114,7 +115,7 @@ export const POST = requirePermission("manage_tasks")(async (
     const taskContextStr = taskContext.join("\n");
 
     // 4. load the chain definition
-    const chainUrl = new URL(`/api/chains/${encodeURIComponent(binding.chain_id)}`, request.url);
+    const chainUrl = internalApiUrl(`/api/chains/${encodeURIComponent(binding.chain_id)}`, request.url);
     const chainRes = await fetch(chainUrl, {
       headers: { cookie: request.headers.get("cookie") || "" },
     });
@@ -137,7 +138,7 @@ export const POST = requirePermission("manage_tasks")(async (
     taskUpdate(orgId, safeId, { status: "in_progress", metadata: updatedMeta }, namespaceId);
 
     // 6. delegate to existing chain run API with pre-generated runId
-    const runUrl = new URL("/api/chains/run", request.url);
+    const runUrl = internalApiUrl("/api/chains/run", request.url);
     const runRes = await fetch(runUrl, {
       method: "POST",
       headers: {

@@ -13,6 +13,7 @@ import { normalizeScheduleTarget } from "@/lib/schedule-targets";
 import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "@/lib/schedule-dispatcher";
 import { mintSessionToken } from "@/lib/session-token";
 import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "@/lib/scheduled-application-storage";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ async function executeChainRun(
   workspaceId?: string,
   taskId?: string,
 ): Promise<{ ok: boolean; data: Record<string, unknown>; status: number }> {
-  const runUrl = `${req.nextUrl.origin}/api/chains/run`;
+  const runUrl = internalApiUrl("/api/chains/run", req.url);
 
   const runRes = await fetch(runUrl, {
     method: "POST",
@@ -132,7 +133,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   // record execution start via history API
   let executionId: string | undefined;
   try {
-    const historyRes = await fetch(`${req.nextUrl.origin}/api/schedules/history`, {
+    const historyRes = await fetch(internalApiUrl("/api/schedules/history", req.url), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -237,7 +238,7 @@ function createManualRunAdapters(req: NextRequest, namespaceId: string, orgId: s
           org: orgId,
           scopes: ["tasks:generate"],
         });
-        const res = await fetch(`${req.nextUrl.origin}/api/mentiko-mcp/ops/tasks/generate`, {
+        const res = await fetch(internalApiUrl("/api/mentiko-mcp/ops/tasks/generate", req.url), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -262,7 +263,7 @@ function createManualRunAdapters(req: NextRequest, namespaceId: string, orgId: s
       try {
         const secret = process.env.BETTER_AUTH_SECRET;
         if (!secret) return { success: false, error: "BETTER_AUTH_SECRET is required to run scheduled tasks" };
-        const res = await fetch(`${req.nextUrl.origin}/api/tasks/${encodeURIComponent(taskId)}/run-chain`, {
+        const res = await fetch(internalApiUrl(`/api/tasks/${encodeURIComponent(taskId)}/run-chain`, req.url), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -312,7 +313,7 @@ async function updateExecutionHistory(
   status: string,
   error?: string,
 ) {
-  await fetch(`${req.nextUrl.origin}/api/schedules/history`, {
+  await fetch(internalApiUrl("/api/schedules/history", req.url), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",

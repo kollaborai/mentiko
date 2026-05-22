@@ -24,6 +24,7 @@ import {
 } from "@/lib/docker-provisioner";
 import { BadRequest, Unauthorized, ServiceUnavailable } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -93,7 +94,7 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: Con
   // optionally auto-create the workspace record
   if (body.createWorkspace) {
     const { headers } = request;
-    const wsRes = await fetch(`${request.nextUrl.origin}/api/workspaces`, {
+    const wsRes = await fetch(internalApiUrl("/api/workspaces", request.url), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

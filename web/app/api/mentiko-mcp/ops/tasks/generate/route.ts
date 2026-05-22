@@ -7,6 +7,7 @@ import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
 import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -201,8 +202,7 @@ export async function POST(req: Request) {
   const result = createTree();
 
   if (autoRun === true && process.env.BETTER_AUTH_SECRET) {
-    const origin = new URL(req.url).origin;
-    void fetch(`${origin}/api/tasks/auto-run`, {
+    void fetch(internalApiUrl("/api/tasks/auto-run", req.url), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

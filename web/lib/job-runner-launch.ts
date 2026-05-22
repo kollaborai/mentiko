@@ -4,6 +4,7 @@ import config, { nsPath, orgPath } from "@/lib/config";
 import { buildChildEnv } from "@/lib/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
+import { resolveInternalWebOrigin } from "@/lib/internal-web-origin";
 import type { Job } from "@/lib/job-store";
 
 export { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
@@ -53,7 +54,8 @@ export function launchJobRunner({
   stdio,
 }: LaunchJobRunnerOptions): void {
   const runnerPath = join(config.codeRoot, "lib", "job-runner.mjs");
-  const resolvedCallbackUrl = callbackUrl ?? (origin ? `${origin}/api/jobs/[id]/complete` : undefined);
+  const internalOrigin = origin ? resolveInternalWebOrigin(origin) : undefined;
+  const resolvedCallbackUrl = callbackUrl ?? (internalOrigin ? `${internalOrigin}/api/jobs/[id]/complete` : undefined);
   const roots = resolveJobRunnerRoots(namespaceId, orgId);
 
   const child = spawn(process.execPath, [runnerPath, job.id], {
@@ -70,7 +72,7 @@ export function launchJobRunner({
       JOB_CALLBACK_URL: resolvedCallbackUrl,
       JOB_CALLBACK_SECRET: resolveInternalAuthSecret("jobs-complete"),
       JOB_WORKSPACE_CWD: resolveJobWorkspaceCwd(job.input),
-      ...buildLocalAiGatewayProxyEnv(origin),
+      ...buildLocalAiGatewayProxyEnv(internalOrigin),
     }),
   });
   child.unref();

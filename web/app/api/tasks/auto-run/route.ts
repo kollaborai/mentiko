@@ -30,6 +30,7 @@ import config, { nsPath } from "@/lib/config";
 import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -251,8 +252,7 @@ async function resumeExistingRun(
   request: NextRequest,
   metadata: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const origin = new URL(request.url).origin;
-  const resumeRes = await fetch(`${origin}/api/runs/${encodeURIComponent(runId)}/resume`, {
+  const resumeRes = await fetch(internalApiUrl(`/api/runs/${encodeURIComponent(runId)}/resume`, request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId),
   });
@@ -682,9 +682,7 @@ async function autoAcceptGeneratedChain(
   const chain = sanitizeGeneratedChain(generated);
   const chainName = String(chain.name || "Generated Chain");
   const chainId = slugifyChainName(chainName);
-  const origin = new URL(request.url).origin;
-
-  const saveRes = await fetch(`${origin}/api/chains/save`, {
+  const saveRes = await fetch(internalApiUrl("/api/chains/save", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
       "Content-Type": "application/json",
@@ -731,9 +729,7 @@ async function startGenerationJob(
   request: NextRequest,
   workspacePath?: string
 ): Promise<TriggerResult> {
-  const origin = new URL(request.url).origin;
-
-  const jobRes = await fetch(`${origin}/api/jobs`, {
+  const jobRes = await fetch(internalApiUrl("/api/jobs", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
       "Content-Type": "application/json",
@@ -778,7 +774,6 @@ async function startChainRun(
   workspacePath?: string,
   taskMetadata?: Record<string, unknown>
 ): Promise<TriggerResult> {
-  const origin = new URL(request.url).origin;
   const metadata = taskMetadata || {};
 
   const resumableRunId = readResumableRunId(taskId, chainId, namespaceId, metadata);
@@ -787,7 +782,7 @@ async function startChainRun(
   }
 
   const chainRes = await fetch(
-    `${origin}/api/chains/${encodeURIComponent(chainId)}`,
+    internalApiUrl(`/api/chains/${encodeURIComponent(chainId)}`, request.url),
     {
       headers: forwardedHeaders(request, namespaceId, orgId),
     }
@@ -815,7 +810,7 @@ async function startChainRun(
     return { triggered: false, taskId, error: "Chain data missing" };
   }
 
-  const runRes = await fetch(`${origin}/api/chains/run`, {
+  const runRes = await fetch(internalApiUrl("/api/chains/run", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
       "Content-Type": "application/json",
@@ -882,7 +877,6 @@ async function startAnalysisJob(
     metadata?: string | Record<string, unknown>;
   }
 ): Promise<TriggerResult> {
-  const origin = new URL(request.url).origin;
   if (!task) return { triggered: false, taskId, error: "Task not found" };
 
   const namespaceConfig = await getNamespaceConfig(request);
@@ -911,7 +905,7 @@ async function startAnalysisJob(
       : "",
   });
 
-  const jobRes = await fetch(`${origin}/api/jobs`, {
+  const jobRes = await fetch(internalApiUrl("/api/jobs", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
       "Content-Type": "application/json",

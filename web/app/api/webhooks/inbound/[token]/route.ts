@@ -3,6 +3,7 @@ import { findWebhookByToken, recordUsage } from "@/lib/inbound-webhook-storage";
 import { writeLog } from "@/lib/system-logger";
 import { Unauthorized, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +35,7 @@ export const POST = withErrorHandling(async (
 
   // trigger chain or schedule
   if (hook.chainId) {
-    const origin = new URL(request.url).origin;
-    const runRes = await fetch(`${origin}/api/chains/run`, {
+    const runRes = await fetch(internalApiUrl("/api/chains/run", request.url), {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-namespace-id": namespaceId },
       body: JSON.stringify({
@@ -54,8 +54,7 @@ export const POST = withErrorHandling(async (
   }
 
   if (hook.scheduleId) {
-    const origin = new URL(request.url).origin;
-    const trigRes = await fetch(`${origin}/api/schedules/${hook.scheduleId}/trigger`, {
+    const trigRes = await fetch(internalApiUrl(`/api/schedules/${hook.scheduleId}/trigger`, request.url), {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-namespace-id": namespaceId },
       body: JSON.stringify({ triggeredBy: "inbound-webhook", payload }),

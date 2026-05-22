@@ -498,11 +498,12 @@ function TasksPageContent() {
     });
     const data = await res.json();
     if (res.ok) {
+      const runId = data.runId || data.data?.runId;
       updateTaskBinding(selected.id, (binding) =>
         binding
           ? {
               ...binding,
-              last_run_id: data.runId,
+              last_run_id: runId,
               last_run_status: "running",
               last_run_error: undefined,
               auto_run_retries: 0,
