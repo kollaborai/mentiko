@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.15",
+    date: "May 22, 2026",
+    title: "Hosted Internal API Loopback Fix",
+    description:
+      "Hosted tenants now route server-to-server task, schedule, webhook, setup, and job callback API calls through the local runtime instead of the public tenant URL, fixing task chain runs that failed with masked fetch errors.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.14",
     date: "May 22, 2026",
     title: "Hosted AI Gateway Runtime Env Fix",
