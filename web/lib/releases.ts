@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.12",
+    date: "May 22, 2026",
+    title: "Hosted AI Gateway Proxy Fix",
+    description:
+      "Hosted providerless agents now reach the tenant-local AI gateway proxy even when the Next.js runtime reconstructs internal loopback requests with the public tenant URL.",
+    category: "fix",
+    docsHref: "/account",
+  },
+  {
     version: "v0.3.11",
     date: "May 22, 2026",
     title: "Tenant AI Gateway Wiring",

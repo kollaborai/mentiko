@@ -117,6 +117,22 @@ describe("/api/ai-gateway/local/v1/chat/completions", () => {
     expect(invokeTenantAiGatewayChatCompletions).not.toHaveBeenCalled();
   });
 
+  it("accepts hosted loopback calls when Next reconstructs the request URL as public", async () => {
+    const response = await POST(makeRequest(
+      JSON.stringify({
+        model: "glm-5.1",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+      { host: "127.0.0.1:3000" },
+      "https://marco.mentiko.com/api/ai-gateway/local/v1/chat/completions",
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.id).toBe("chatcmpl-local");
+    expect(invokeTenantAiGatewayChatCompletions).toHaveBeenCalled();
+  });
+
   it("forwards OpenAI-compatible chat requests through the signed gateway helper", async () => {
     const response = await POST(makeRequest(JSON.stringify({
       model: "glm-5.1",

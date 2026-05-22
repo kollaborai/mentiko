@@ -15,7 +15,8 @@ function isLoopbackHost(value: string): boolean {
 function requestTargetsLoopback(request: Request): boolean {
   const url = new URL(request.url);
   const hostHeader = request.headers.get("host");
-  return isLoopbackHost(url.hostname) && (!hostHeader || isLoopbackHost(hostHeader));
+  if (hostHeader) return isLoopbackHost(hostHeader);
+  return isLoopbackHost(url.hostname);
 }
 
 function requestBodyGuard(request: Request): Response | null {
