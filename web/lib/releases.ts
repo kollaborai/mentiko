@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.11",
+    date: "May 22, 2026",
+    title: "Tenant AI Gateway Wiring",
+    description:
+      "Hosted tenants can now use the Mentiko AI gateway when a profile has no provider key. The platform injects scoped gateway credentials, routes local OpenAI-compatible calls through the tenant proxy, and keeps self-hosted/provider-key setups separate.",
+    category: "new",
+    docsHref: "/account",
+  },
+  {
     version: "v0.3.10",
     date: "May 20, 2026",
     title: "Tenant Password Reset Delivery",
