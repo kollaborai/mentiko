@@ -3,8 +3,15 @@ import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAuth } from "@/lib/api-auth";
+import { registerMentikoProfile } from "@/lib/mentiko-engine-profile";
 
 export const dynamic = "force-dynamic";
+
+// one-shot lazy retry guard: when the engine takes longer than the boot
+// poll window to come up, the first GET to this route (fired by the
+// floating bar) triggers a single re-registration attempt. only flipped
+// to true on success so a failed attempt can be retried by a later GET.
+let lazyRetryAttempted = false;
 
 const CONFIG_PATH = join(homedir(), ".kollab", "config.json");
 const TOKEN_PATH = join(homedir(), ".kollab", "engine.token");
@@ -163,7 +170,27 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const active = await readActiveProfile();
+    let active = await readActiveProfile();
+
+    if (
+      !lazyRetryAttempted &&
+      process.env.MENTIKO_AI_GATEWAY_ENABLED === "true" &&
+      active !== "mentiko"
+    ) {
+      try {
+        const ok = await registerMentikoProfile();
+        if (ok) {
+          lazyRetryAttempted = true;
+          active = await readActiveProfile();
+        } else {
+          console.warn("[mentiko-profile] lazy retry failed: registration returned false");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[mentiko-profile] lazy retry failed: ${msg}`);
+      }
+    }
+
     return NextResponse.json({ active });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

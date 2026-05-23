@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.17",
+    date: "May 23, 2026",
+    title: "Floating Mentiko Agent Hardening",
+    description:
+      "Tenant boot-time gateway profile registration now waits 90s for kollabor-engine to come up and falls back to a one-shot lazy retry on first profile read. Floating agent no longer shows 'engine offline' while a session is actively connected.",
+    category: "fix",
+    docsHref: "/settings/mentiko-agent",
+  },
+  {
     version: "v0.3.16",
     date: "May 22, 2026",
     title: "Hosted AI Gateway Smoke Proof",

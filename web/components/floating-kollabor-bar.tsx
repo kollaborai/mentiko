@@ -51,6 +51,15 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// suppress user-facing "engine offline" when the session store says we're
+// still connected. a single failed ping (transient 401, network blip) used
+// to flip the indicator to "offline" while chat kept working — the bar lied.
+// engineReady/engineError still update for diagnostics; this only gates the
+// user-visible error string.
+export function shouldShowEngineOffline(stateConnected: boolean): boolean {
+  return !stateConnected;
+}
+
 const SHOULD_OFFER_CODEX_INLINE_AUTH = false;
 const HIDDEN_TOOL_CHIP_NAMES = new Set(["ask_confirm", "ask_input", "ask_choice"]);
 const TASK_DIGEST_ID_RE = /\b(?:EPIC|TASK|CHOR)-\d{3}\b/g;
@@ -767,9 +776,13 @@ export function FloatingKollaborBar() {
         if (cancelled) return;
         setEngineReady(reachable);
         if (!reachable) {
+          // capture connected BEFORE flipping it — otherwise the gate is a no-op
+          const wasConnected = useKollaborBarStore.getState().connected;
           setConnecting(false);
           setConnected(false);
-          setError("engine offline — start kollabor-engine");
+          if (shouldShowEngineOffline(wasConnected)) {
+            setError("engine offline — start kollabor-engine");
+          }
           setEngineError("engine offline");
           return;
         }
@@ -840,8 +853,14 @@ export function FloatingKollaborBar() {
             setEngineError(null);
           }
           if (!state.connected && !state.connecting) void boot();
-        } else if (!useKollaborBarStore.getState().error) {
-          setError("engine offline");
+        } else {
+          // gate: a single failed ping while session is live is a transient
+          // blip, not a real outage. only surface the error if we've actually
+          // lost the session AND nothing else has claimed the error slot.
+          const s = useKollaborBarStore.getState();
+          if (shouldShowEngineOffline(s.connected) && !s.error) {
+            setError("engine offline");
+          }
         }
       } catch {
         if (!cancelled) setEngineReady(false);

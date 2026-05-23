@@ -6,6 +6,8 @@ import { createHmac } from "node:crypto";
 
 import {
   buildMentikoProfileConfig,
+  ENGINE_POLL_INTERVAL_MS,
+  ENGINE_WAIT_MS,
   getInternalGatewayBearer,
   registerMentikoProfile,
 } from "@/lib/mentiko-engine-profile";
@@ -15,6 +17,13 @@ describe("mentiko-engine-profile", () => {
     MENTIKO_AI_GATEWAY_ENABLED: "true",
     BETTER_AUTH_SECRET: "test-better-auth-secret",
   };
+
+  describe("engine wait constants", () => {
+    it("waits 90 seconds with a 1 second poll interval", () => {
+      expect(ENGINE_WAIT_MS).toBe(90_000);
+      expect(ENGINE_POLL_INTERVAL_MS).toBe(1_000);
+    });
+  });
 
   describe("buildMentikoProfileConfig", () => {
     it("returns null when gateway is not enabled", () => {

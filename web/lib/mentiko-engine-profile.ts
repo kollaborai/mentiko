@@ -13,8 +13,8 @@ import { createHmac } from "node:crypto";
 const INTERNAL_AUTH_CONTEXT = "ai-gateway-local-proxy";
 const INTERNAL_AUTH_INFO = `mentiko-internal-api:${INTERNAL_AUTH_CONTEXT}`;
 const ENGINE_BASE_URL = "http://127.0.0.1:7433";
-const ENGINE_WAIT_MS = 15_000;
-const ENGINE_POLL_INTERVAL_MS = 1_000;
+export const ENGINE_WAIT_MS = 90_000;
+export const ENGINE_POLL_INTERVAL_MS = 1_000;
 const LOCAL_PROXY_BASE_URL = "http://127.0.0.1:3000/api/ai-gateway/local/v1";
 const PROFILE_NAME = "mentiko";
 const PROFILE_MODEL = "glm-5.1";
@@ -219,7 +219,9 @@ export async function registerMentikoProfile(): Promise<boolean> {
 
     const up = await waitForEngine(fetchImpl);
     if (!up) {
-      console.warn("[mentiko-profile] error: engine did not come up within 15s");
+      console.warn(
+        `[mentiko-profile] error: engine did not come up within ${ENGINE_WAIT_MS / 1000}s`,
+      );
       return false;
     }
 

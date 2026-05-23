@@ -114,7 +114,7 @@ async function flushAll() {
   }
 }
 
-import { FloatingKollaborBar } from "../floating-kollabor-bar";
+import { FloatingKollaborBar, shouldShowEngineOffline } from "../floating-kollabor-bar";
 
 describe("FloatingKollaborBar — gateway mode", () => {
   let originalFetch: typeof fetch;
@@ -154,6 +154,13 @@ describe("FloatingKollaborBar — gateway mode", () => {
     expect(calls.some((u) => u.includes("/api/system/codex-token"))).toBe(false);
     // active profile is hardcoded to "mentiko" in gateway mode — never fetched
     expect(calls.some((u) => u.includes("/api/kollabor/profiles/active"))).toBe(false);
+  });
+
+  it("shouldShowEngineOffline: suppresses error when session is connected", () => {
+    // the indicator must not lie. if zustand says we're connected, a flaky
+    // ping (transient 401, network blip) must NOT surface "engine offline".
+    expect(shouldShowEngineOffline(true)).toBe(false);
+    expect(shouldShowEngineOffline(false)).toBe(true);
   });
 
   it("still mounts cleanly when gatewayEnabled=false (legacy path)", async () => {
