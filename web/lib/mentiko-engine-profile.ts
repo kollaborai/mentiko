@@ -1,0 +1,247 @@
+/**
+ * mentiko-engine-profile: register the built-in "mentiko" llm profile with
+ * the local kollabor-engine at boot. used when MENTIKO_AI_GATEWAY_ENABLED=true
+ * so the floating chat widget can route through the local ai-gateway proxy
+ * straight to the standalone gateway.
+ *
+ * no top-level fs/network — everything happens lazily inside the exported
+ * async functions so this module is safe to import from anywhere.
+ */
+
+import { createHmac } from "node:crypto";
+
+const INTERNAL_AUTH_CONTEXT = "ai-gateway-local-proxy";
+const INTERNAL_AUTH_INFO = `mentiko-internal-api:${INTERNAL_AUTH_CONTEXT}`;
+const ENGINE_BASE_URL = "http://127.0.0.1:7433";
+const ENGINE_WAIT_MS = 15_000;
+const ENGINE_POLL_INTERVAL_MS = 1_000;
+const LOCAL_PROXY_BASE_URL = "http://127.0.0.1:3000/api/ai-gateway/local/v1";
+const PROFILE_NAME = "mentiko";
+const PROFILE_MODEL = "glm-5.1";
+const PROFILE_PROVIDER = "openai";
+const PROFILE_DESCRIPTION = "Mentiko AI gateway (included AI)";
+
+export interface MentikoProfileConfig {
+  name: string;
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key: string;
+  description: string;
+}
+
+type Env = NodeJS.ProcessEnv | Record<string, string | undefined>;
+
+function rootSecret(env: Env): string | null {
+  const value = env.BETTER_AUTH_SECRET || env.SECRET_KEY;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * derive the hex bearer used to authenticate to the local ai-gateway proxy.
+ * mirrors resolveInternalAuthSecret("ai-gateway-local-proxy") from
+ * web/lib/internal-api-auth.ts without touching its dev-secret fs path.
+ */
+export function getInternalGatewayBearer(env: Env = process.env): string {
+  const secret = rootSecret(env);
+  if (!secret) {
+    throw new Error("BETTER_AUTH_SECRET is required to derive internal gateway bearer");
+  }
+  return createHmac("sha256", secret).update(INTERNAL_AUTH_INFO, "utf8").digest("hex");
+}
+
+export function buildMentikoProfileConfig(env: Env = process.env): MentikoProfileConfig | null {
+  if (env.MENTIKO_AI_GATEWAY_ENABLED !== "true") return null;
+  if (!rootSecret(env)) return null;
+
+  return {
+    name: PROFILE_NAME,
+    provider: PROFILE_PROVIDER,
+    model: PROFILE_MODEL,
+    base_url: LOCAL_PROXY_BASE_URL,
+    api_key: getInternalGatewayBearer(env),
+    description: PROFILE_DESCRIPTION,
+  };
+}
+
+interface FetchLike {
+  (input: string, init?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  }): Promise<{
+    ok: boolean;
+    status: number;
+    text(): Promise<string>;
+  }>;
+}
+
+async function waitForEngine(fetchImpl: FetchLike): Promise<boolean> {
+  const deadline = Date.now() + ENGINE_WAIT_MS;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetchImpl(`${ENGINE_BASE_URL}/health`);
+      // engine /health may be unauthenticated (200) or require auth (401).
+      // either case means the process is up and accepting connections.
+      if (res.status < 500) return true;
+    } catch (err) {
+      lastErr = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ENGINE_POLL_INTERVAL_MS));
+  }
+  if (lastErr) {
+    // surface last poll error for diagnostics
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    console.warn(`[mentiko-profile] engine never came up: ${msg}`);
+  }
+  return false;
+}
+
+async function readEngineToken(): Promise<string | null> {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const path = join(homedir(), ".kollab", "engine.token");
+    const raw = await readFile(path, "utf8");
+    const token = raw.trim();
+    return token || null;
+  } catch {
+    return null;
+  }
+}
+
+function looksLikeExists(status: number, bodyText: string): boolean {
+  if (status === 409) return true;
+  if (status === 400) {
+    const lower = bodyText.toLowerCase();
+    if (lower.includes("exist") || lower.includes("duplicate")) return true;
+  }
+  return false;
+}
+
+async function postOrPutProfile(
+  fetchImpl: FetchLike,
+  token: string,
+  config: MentikoProfileConfig,
+): Promise<{ ok: boolean; status: number; body: string }> {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  const body = JSON.stringify(config);
+
+  const postRes = await fetchImpl(`${ENGINE_BASE_URL}/profiles`, {
+    method: "POST",
+    headers,
+    body,
+  });
+  const postBody = await postRes.text();
+  if (postRes.ok) {
+    return { ok: true, status: postRes.status, body: postBody };
+  }
+
+  if (!looksLikeExists(postRes.status, postBody)) {
+    return { ok: false, status: postRes.status, body: postBody };
+  }
+
+  const putRes = await fetchImpl(
+    `${ENGINE_BASE_URL}/profiles/${encodeURIComponent(PROFILE_NAME)}`,
+    { method: "PUT", headers, body },
+  );
+  const putBody = await putRes.text();
+  return { ok: putRes.ok, status: putRes.status, body: putBody };
+}
+
+type KollabConfig = {
+  kollabor?: {
+    llm?: {
+      active_profile?: string;
+      default_profile?: { name: string; level: string };
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+async function writeActiveProfile(): Promise<void> {
+  const { readFile, writeFile, mkdir } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { homedir } = await import("node:os");
+
+  const configPath = join(homedir(), ".kollab", "config.json");
+  let config: KollabConfig = {};
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      config = parsed as KollabConfig;
+    }
+  } catch (err) {
+    if (
+      !err ||
+      typeof err !== "object" ||
+      !("code" in err) ||
+      (err as { code?: string }).code !== "ENOENT"
+    ) {
+      throw err;
+    }
+  }
+
+  if (!config.kollabor || typeof config.kollabor !== "object") {
+    config.kollabor = {};
+  }
+  if (!config.kollabor.llm || typeof config.kollabor.llm !== "object") {
+    config.kollabor.llm = {};
+  }
+  config.kollabor.llm.active_profile = PROFILE_NAME;
+  config.kollabor.llm.default_profile = { name: PROFILE_NAME, level: "global" };
+
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+}
+
+export async function registerMentikoProfile(): Promise<boolean> {
+  const env = process.env;
+  if (env.MENTIKO_AI_GATEWAY_ENABLED !== "true") return false;
+
+  const profile = buildMentikoProfileConfig(env);
+  if (!profile) {
+    console.warn("[mentiko-profile] error: gateway enabled but profile config missing (BETTER_AUTH_SECRET unset?)");
+    return false;
+  }
+
+  try {
+    const fetchImpl = fetch as unknown as FetchLike;
+
+    const up = await waitForEngine(fetchImpl);
+    if (!up) {
+      console.warn("[mentiko-profile] error: engine did not come up within 15s");
+      return false;
+    }
+
+    const token = await readEngineToken();
+    if (!token) {
+      console.warn("[mentiko-profile] error: engine token unavailable");
+      return false;
+    }
+
+    const result = await postOrPutProfile(fetchImpl, token, profile);
+    if (!result.ok) {
+      const trimmed = result.body.slice(0, 200).replace(/\s+/g, " ");
+      console.warn(`[mentiko-profile] error: profile save failed (${result.status}) ${trimmed}`);
+      return false;
+    }
+
+    await writeActiveProfile();
+    console.log("[mentiko-profile] registered");
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[mentiko-profile] error: ${msg.split("\n")[0]}`);
+    return false;
+  }
+}

@@ -84,6 +84,14 @@ function logAuditEvent(eventType: string, description: string, metadata: Record<
   return execAuditLog(eventType, description, metadata, { ip }).then(() => undefined);
 }
 
+function applyRuntimeAgentProfileOverride(chain: Chain, agentProfileId?: string): Chain {
+  if (!agentProfileId) return chain;
+  return {
+    ...chain,
+    default_agent_profile: agentProfileId,
+  };
+}
+
 export const POST = withErrorHandling(async (request: NextRequest, _context: { params: Promise<Record<string, string>> }) => {
   const blockResult = await enforceGuestWrites(request);
   if (blockResult?.blocked) return blockResult.response;
@@ -131,11 +139,22 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
     throw new BadRequest("chain with name is required", { field: "chain" });
   }
 
+  let runtimeProfile: ReturnType<typeof getProfile> = null;
+  if (agentProfileId && typeof agentProfileId === "string") {
+    runtimeProfile = getProfile(namespaceId, orgId, agentProfileId);
+    if (!runtimeProfile) {
+      throw new BadRequest("Agent profile not found", {
+        field: "agentProfileId",
+        value: agentProfileId,
+      });
+    }
+  }
+
   // validate chain name
   const validChainName = validateChainId(chain.name);
 
   // Resolve $ref agents to inline definitions first
-  const runChain = { ...chain };
+  let runChain = { ...chain };
   if (runChain.agents?.length) {
     runChain.agents = resolveChainAgents(runChain.agents, namespaceId, orgId);
   }
@@ -161,6 +180,7 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
   if (authorizedWorkspacePath) {
     runChain.config = { ...(runChain.config || {}), project_root: authorizedWorkspacePath };
   }
+  runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
 
   // Create run object (accept optional pre-generated runId for external coordination)
   const runId = body.runId && typeof body.runId === "string"
@@ -259,11 +279,8 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
 
   // resolve agent profile env vars if profile specified
   let profileEnv: Record<string, string> = {};
-  if (agentProfileId && typeof agentProfileId === "string") {
-    const profile = getProfile(namespaceId, orgId, agentProfileId);
-    if (profile && profile.env) {
-      profileEnv = resolveProfileEnvVars(namespaceId, orgId, profile.env);
-    }
+  if (runtimeProfile?.env) {
+    profileEnv = resolveProfileEnvVars(namespaceId, orgId, runtimeProfile.env);
   }
 
   // resolve workspace env vars if workspaceId provided

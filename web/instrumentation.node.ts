@@ -128,6 +128,17 @@ async function initDatabase() {
   }
 }
 
+async function registerMentikoEngineProfile() {
+  if (process.env.MENTIKO_AI_GATEWAY_ENABLED !== "true") return;
+  try {
+    const { registerMentikoProfile } = await import("@/lib/mentiko-engine-profile");
+    await registerMentikoProfile();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[mentiko-profile] error: ${msg.split("\n")[0]}`);
+  }
+}
+
 export async function register() {
   await initDatabase();
   try {
@@ -137,4 +148,5 @@ export async function register() {
     console.warn("[audit] guest enforcement audit logger init failed:", msg);
   }
   await startMarketplaceSync();
+  await registerMentikoEngineProfile();
 }

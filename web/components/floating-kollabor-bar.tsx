@@ -255,11 +255,50 @@ export function FloatingKollaborBar() {
   const [codexAuthDecision, setCodexAuthDecision] = useState<null | "accept" | "decline">(null);
   const [codexToken, setCodexToken] = useState<string | null>(null);
   const [codexTokenLoading, setCodexTokenLoading] = useState(true);
+  // lane B3: when the tenant has MENTIKO_AI_GATEWAY_ENABLED=true, the engine
+  // already has a working "mentiko" profile (wired by lane B2). skip the
+  // codex token prompt + credentials entirely in that mode.
+  const [gatewayState, setGatewayState] = useState<
+    | { gatewayEnabled: boolean; mentikoProfileActive: boolean }
+    | null
+  >(null);
+  const gatewayLoaded = gatewayState !== null;
+  const gatewayMode = gatewayState?.gatewayEnabled === true;
+  const codexFlowActive = gatewayLoaded && !gatewayMode && SHOULD_OFFER_CODEX_INLINE_AUTH;
   const CODEX_FALLBACK_MODEL = "gpt-4o";
   // delay reading persisted offset/scale until after mount so SSR output matches first client render
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // lane B3: ask the server if MENTIKO_AI_GATEWAY_ENABLED is set. boot() waits
+  // on this so we don't flash the codex prompt before knowing the mode.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/system/ai-gateway", { cache: "no-store" });
+        if (!res.ok) throw new Error(`ai-gateway probe failed: ${res.status}`);
+        const data = unwrapApiData<{
+          gatewayEnabled?: boolean;
+          mentikoProfileActive?: boolean;
+        }>(await res.json());
+        if (cancelled) return;
+        setGatewayState({
+          gatewayEnabled: data.gatewayEnabled === true,
+          mentikoProfileActive: data.mentikoProfileActive === true,
+        });
+      } catch {
+        // fall back to "gateway disabled" so the existing codex/disabled path runs
+        if (!cancelled) {
+          setGatewayState({ gatewayEnabled: false, mentikoProfileActive: false });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Keep routerRef current so handleEffect stays stable across navigations
@@ -614,7 +653,11 @@ export function FloatingKollaborBar() {
   }
 
   useEffect(() => {
-    if (!SHOULD_OFFER_CODEX_INLINE_AUTH) {
+    // wait until the ai-gateway probe resolves so we don't flash the prompt
+    if (!gatewayLoaded) return;
+
+    // gateway mode (or feature flag off): skip the codex token probe entirely
+    if (!codexFlowActive) {
       setCodexToken(null);
       setCodexTokenLoading(false);
       setCodexAuthChecked(true);
@@ -659,7 +702,7 @@ export function FloatingKollaborBar() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [gatewayLoaded, codexFlowActive]);
 
   const handleCodexAuthDecision = useCallback((decision: "accept" | "decline") => {
     setCodexAuthDecision(decision);
@@ -698,6 +741,13 @@ export function FloatingKollaborBar() {
       setError(null);
       setEngineError(null);
       try {
+        // lane B3: hold until the ai-gateway probe resolves so we don't
+        // either flash the codex prompt or briefly run as "no profile".
+        if (!gatewayLoaded) {
+          setConnecting(true);
+          setConnected(false);
+          return;
+        }
         const setup = await ensureMentikoAgentInstalled();
         const reachable = await enginePing();
         if (!codexAuthChecked || codexTokenLoading) {
@@ -706,7 +756,7 @@ export function FloatingKollaborBar() {
           return;
         }
 
-        if (SHOULD_OFFER_CODEX_INLINE_AUTH && codexToken && codexAuthDecision === null) {
+        if (codexFlowActive && codexToken && codexAuthDecision === null) {
           setCodexAuthPromptOpen(true);
           setError("found ~/.codex codex token, choose if this agent should use it");
           setExpanded(true);
@@ -723,10 +773,14 @@ export function FloatingKollaborBar() {
           setEngineError("engine offline");
           return;
         }
-        const activeProfile = await fetch("/api/kollabor/profiles/active", { cache: "no-store" })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((j) => (typeof j?.active === "string" && j.active ? j.active : "mentiko"))
-          .catch(() => "mentiko");
+        // lane B3: in gateway mode the engine boot script already set
+        // active_profile="mentiko"; skip the network read.
+        const activeProfile = gatewayMode
+          ? "mentiko"
+          : await fetch("/api/kollabor/profiles/active", { cache: "no-store" })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((j) => (typeof j?.active === "string" && j.active ? j.active : "mentiko"))
+              .catch(() => "mentiko");
 
         const sessionRequest: Parameters<typeof getOrCreateSession>[0] = {
           profile: activeProfile,
@@ -739,7 +793,9 @@ export function FloatingKollaborBar() {
           },
         };
 
-        if (SHOULD_OFFER_CODEX_INLINE_AUTH && codexToken && codexAuthDecision === "accept") {
+        // lane B3: gateway mode = engine already authenticated via the
+        // mentiko profile, do NOT pass credentials.
+        if (codexFlowActive && codexToken && codexAuthDecision === "accept") {
           sessionRequest.credentials = {
             provider: "openai",
             model: CODEX_FALLBACK_MODEL,
@@ -804,8 +860,11 @@ export function FloatingKollaborBar() {
     codexAuthChecked,
     codexAuthDecision,
     codexAuthPromptOpen,
+    codexFlowActive,
     codexToken,
     codexTokenLoading,
+    gatewayLoaded,
+    gatewayMode,
     handleEffect,
     setConnected,
     setConnecting,

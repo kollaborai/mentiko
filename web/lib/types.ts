@@ -421,6 +421,7 @@ export interface Chain {
   name: string;
   description: string;
   version: string;
+  default_agent_profile?: string;
   config: ChainConfig;
   agents: ChainAgent[];
   branches?: ChainBranch;

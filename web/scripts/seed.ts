@@ -17,7 +17,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import path from "path";
 
-// ── config ────────────────────────────────────────────────────────
+// -- config ---------------------------------------------------------
 
 const ROOT = process.env.MENTIKO_ROOT
   ? process.env.MENTIKO_ROOT
@@ -50,10 +50,10 @@ function writeJson(p: string, data: unknown, overwrite = false) {
   }
   ensureDir(path.dirname(p));
   writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
-  console.log(`  ✔ wrote: ${path.relative(ROOT, p)}`);
+  console.log(`  wrote: ${path.relative(ROOT, p)}`);
 }
 
-// ── seed data ─────────────────────────────────────────────────────
+// -- seed data ------------------------------------------------------
 
 const DEMO_WORKSPACE = {
   id: "local",
@@ -107,7 +107,53 @@ const AGENTS = [
   },
 ];
 
+const AGENT_PROFILES = [
+  {
+    id: "mentiko-ai-gateway-smoke",
+    name: "AI Gateway Smoke",
+    description: "Runs a built-in OpenAI-compatible smoke check through the tenant AI gateway.",
+    isDefault: false,
+    cli: "bash",
+    extra_args: ["-lc", 'node "$MENTIKO_CODE_ROOT/bin/ai-gateway-smoke-agent.mjs"'],
+    env: {
+      MENTIKO_AI_GATEWAY_SMOKE_MODEL: "glm-5.1",
+    },
+    log_path: "",
+    log_format: "jsonl",
+  },
+];
+
 const CHAINS = [
+  {
+    name: "ai-gateway-smoke",
+    data: {
+      name: "AI Gateway Smoke",
+      version: "1.0",
+      description:
+        "Verifies the tenant-local AI gateway proxy can reach the included AI data plane.",
+      default_agent_profile: "mentiko-ai-gateway-smoke",
+      config: {
+        monitor: true,
+        monitor_interval: 5,
+        max_rounds: 1,
+        project_root: "auto",
+        session_prefix: "gw-smoke",
+        on_complete: "stop",
+      },
+      agents: [
+        {
+          id: "gateway-smoke",
+          name: "Gateway Smoke",
+          role: "testing",
+          triggers: ["manual-start"],
+          emits: "gateway-smoke-complete",
+          agent_profile: "mentiko-ai-gateway-smoke",
+          prompt:
+            "Run the built-in AI gateway smoke check and report the result. Output AGENT_COMPLETE when done.",
+        },
+      ],
+    },
+  },
   {
     name: "hello-world",
     data: {
@@ -212,7 +258,7 @@ const CHAINS = [
 ];
 
 
-// ── run seed ──────────────────────────────────────────────────────
+// -- run seed -------------------------------------------------------
 
 function main() {
   console.log(`seeding namespace: ${NAMESPACE_ID}`);
@@ -222,7 +268,7 @@ function main() {
   // ensure namespace dirs
   const dirs = [
     "agents", "chains", "state", "events", "runs", "workspace",
-    "reports", "debug", "jobs", "watchdog-hooks", "profiles", "metrics",
+    "reports", "debug", "jobs", "watchdog-hooks", "agent-profiles", "profiles", "metrics",
     "emails", "org", "notifications",
   ];
   for (const d of dirs) {
@@ -233,7 +279,7 @@ function main() {
   const wsPath = nsPath("workspaces.json");
   if (!existsSync(wsPath)) {
     writeFileSync(wsPath, JSON.stringify([DEMO_WORKSPACE], null, 2), "utf-8");
-    console.log(`  ✔ wrote: namespaces/${NAMESPACE_ID}/workspaces.json`);
+    console.log(`  wrote: namespaces/${NAMESPACE_ID}/workspaces.json`);
   } else {
     console.log(`  skip (exists): namespaces/${NAMESPACE_ID}/workspaces.json`);
   }
@@ -241,6 +287,16 @@ function main() {
   // agents (org-level)
   for (const agent of AGENTS) {
     writeJson(orgPath(NAMESPACE_ID, ORG_ID, "agents", agent.id, "agent.json"), agent);
+  }
+
+  // agent profiles (org-level)
+  const now = new Date().toISOString();
+  for (const profile of AGENT_PROFILES) {
+    writeJson(orgPath(NAMESPACE_ID, ORG_ID, "agent-profiles", `${profile.id}.json`), {
+      ...profile,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   // chains (org-level)
@@ -255,7 +311,7 @@ function main() {
     JSON.stringify({ seededAt: new Date().toISOString(), version: "1.0" }, null, 2),
     "utf-8"
   );
-  console.log(`  ✔ wrote: namespaces/${NAMESPACE_ID}/.seeded`);
+  console.log(`  wrote: namespaces/${NAMESPACE_ID}/.seeded`);
 
   console.log("");
   console.log("seed complete.");

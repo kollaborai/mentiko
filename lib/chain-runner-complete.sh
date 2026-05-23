@@ -283,8 +283,9 @@ resolve_completion_agent_profile_file() {
         fi
 
         profile_id=$(jq -r '.profile_id // empty' "$profile_meta" 2>/dev/null || echo "")
-        if [[ -n "$profile_id" && -n "${NAMESPACE_ROOT:-}" && -f "$NAMESPACE_ROOT/agent-profiles/${profile_id}.json" ]]; then
-            echo "$NAMESPACE_ROOT/agent-profiles/${profile_id}.json"
+        local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-${MENTIKO_NAMESPACE_ROOT:-$HOME/.mentiko/namespaces/${NAMESPACE_ID:-default}}}/agent-profiles}"
+        if [[ -n "$profile_id" && -f "$profiles_dir/${profile_id}.json" ]]; then
+            echo "$profiles_dir/${profile_id}.json"
             return
         fi
     fi

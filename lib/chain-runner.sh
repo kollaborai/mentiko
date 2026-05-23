@@ -876,6 +876,28 @@ get_gateway_env() {
 }
 
 # -------------------------------------------------------------------
+# agent run context helpers
+# -------------------------------------------------------------------
+agent_run_context_export_command() {
+    local agent_id="${1:-}"
+    local agent_emits="${2:-}"
+
+    printf "export MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q" \
+        "${RUN_ID:-}" \
+        "${RUN_ID:-}" \
+        "${NAMESPACE_ID:-default}" \
+        "${ORG_ID:-default}" \
+        "$agent_id" \
+        "$agent_emits" \
+        "${MENTIKO_CODE_ROOT:-}" \
+        "${MENTIKO_PROJECT_ROOT:-}" \
+        "${MENTIKO_ORG_ROOT:-}" \
+        "${MENTIKO_NAMESPACE_ROOT:-}" \
+        "${EVENTS_DIR:-}" \
+        "${ARTIFACTS_DIR:-}"
+}
+
+# -------------------------------------------------------------------
 # agent-profile resolution (shared lib)
 # -------------------------------------------------------------------
 source "$(dirname "${BASH_SOURCE[0]}")/agent-profile.sh"
@@ -1099,7 +1121,7 @@ launch_chain_agent() {
         profile_source="legacy"
     else
         # new path: use agent profile
-        local profile_file="$NAMESPACE_ROOT/agent-profiles/${profile_id}.json"
+        local profile_file="$AGENT_PROFILES_DIR/${profile_id}.json"
         if [[ -f "$profile_file" ]]; then
             # --interactive: skips pipe_flag (-p) from the profile.
             # pipe_flag is for job-runner.mjs (single-turn stdin pipe).
@@ -1267,6 +1289,8 @@ launch_chain_agent() {
     else
         cli_cmd="$profile_cmd"
     fi
+    local run_context_exports
+    run_context_exports=$(agent_run_context_export_command "$agent_id" "$agent_emits")
 
     echo ""
     echo "  launching: $agent_name"
@@ -1476,6 +1500,7 @@ $rs_produces
     # always unset CLAUDECODE so claude doesn't refuse to run inside another session
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
         local start_cmd="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
+        start_cmd="$start_cmd && $run_context_exports"
         if [[ -n "$gateway_env_vars" ]]; then
             local gw_env_file
             gw_env_file=$(mktemp /tmp/agent-gw-env-XXXXXX)
@@ -1517,6 +1542,7 @@ $rs_produces
 
         # step 4: start agent on remote
         local remote_start="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
+        remote_start="$remote_start && $run_context_exports"
         if [[ -n "$remote_gw" ]]; then
             remote_start="$remote_start && source $remote_gw; rm -f $remote_gw"
         fi
@@ -1552,6 +1578,7 @@ $rs_produces
 
         # step 4: start agent in container
         local remote_start="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
+        remote_start="$remote_start && $run_context_exports"
         if [[ -n "$remote_gw" ]]; then
             remote_start="$remote_start && source $remote_gw; rm -f $remote_gw"
         fi
@@ -1628,7 +1655,7 @@ SEOF
         local profile_cli=""
         local profile_file_path=""
         if [[ "$use_legacy_cli" == "false" ]]; then
-            profile_file_path="$NAMESPACE_ROOT/agent-profiles/${profile_id}.json"
+            profile_file_path="$AGENT_PROFILES_DIR/${profile_id}.json"
             if [[ -f "$profile_file_path" ]]; then
                 profile_cli=$(jq -r '.cli // empty' "$profile_file_path" 2>/dev/null || echo "")
             fi

@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.16",
+    date: "May 22, 2026",
+    title: "Hosted AI Gateway Smoke Proof",
+    description:
+      "Hosted tenant chain runs now stamp request-selected profiles onto the run-local chain, pass run context into PTY agents, and include a first-class AI gateway smoke chain for included-AI verification.",
+    category: "fix",
+    docsHref: "/chains",
+  },
+  {
     version: "v0.3.15",
     date: "May 22, 2026",
     title: "Hosted Internal API Loopback Fix",
