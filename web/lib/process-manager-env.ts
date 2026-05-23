@@ -38,8 +38,8 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
   // version-skew protection: next.js encrypts server-action closures with this
   // key at build time. the runtime container needs the SAME key to decrypt
   // actions invoked by clients. without it, every deploy invalidates in-flight
-  // actions with "Failed to find Server Action". must match value passed to
-  // `npm run build` in cp's tag-watcher.sh.
+  // actions with "Failed to find Server Action". on managed deploys the key
+  // is injected from cp's .env into the tenant container via cloud-init.ts.
   "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY",
 ] as const;
 
