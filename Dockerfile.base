@@ -72,6 +72,11 @@ RUN echo "=== system packages ===" && \
     man-db \
     openssh-client \
     rsync \
+    # file(1) — required by the platform image smoke gate's native
+    # arch audit (scripts/smoke-platform-image.cjs reads ELF/Mach-O
+    # headers via file). previously hotfix-installed in
+    # mentiko/Dockerfile and Dockerfile.tenant.
+    file \
     # modern unix replacements
     ripgrep \
     fd-find \
