@@ -195,16 +195,30 @@ COPY --from=builder --chown=mentiko:mentiko /context/ /opt/mentiko/
 #                                         list and only worked by matching-
 #                                         arch coincidence (each arch built
 #                                         its own bundle natively).
-RUN --mount=from=builder,source=/context/runtime-natives,target=/tmp/runtime-natives \
+#
+# CRITICAL: we cannot `npm ci` directly in /opt/mentiko because that would
+# wipe the standalone bundle's node_modules (next, react, all transitives).
+# instead we install to a sibling scratch dir and copy ONLY the four target
+# packages into /opt/mentiko/node_modules, overwriting whatever the bundle
+# shipped with native-arch-correct, lockfile-pinned versions.
+RUN --mount=from=builder,source=/context/runtime-natives,target=/runtime-natives-src \
     echo "=== runtime native deps (lockfile-pinned, prebuilds) ===" && \
-    mkdir -p /opt/mentiko/node_modules && \
-    cp /tmp/runtime-natives/package.json /opt/mentiko/package.json && \
-    cp /tmp/runtime-natives/package-lock.json /opt/mentiko/package-lock.json && \
-    cd /opt/mentiko && \
+    mkdir -p /tmp/runtime-natives && \
+    cp /runtime-natives-src/package.json /tmp/runtime-natives/package.json && \
+    cp /runtime-natives-src/package-lock.json /tmp/runtime-natives/package-lock.json && \
+    cd /tmp/runtime-natives && \
     npm ci --omit=dev --no-audit --no-fund && \
     echo "installed versions:" && \
     node -p "Object.entries(require('./package.json').dependencies).map(([n,v])=>n+': '+v).join('\n')" && \
-    chown -R mentiko:mentiko node_modules package.json package-lock.json 2>/dev/null || true
+    mkdir -p /opt/mentiko/node_modules/@xterm && \
+    for pkg in ws better-sqlite3 better-sqlite3-multiple-ciphers; do \
+      rm -rf "/opt/mentiko/node_modules/$pkg" && \
+      cp -a "/tmp/runtime-natives/node_modules/$pkg" "/opt/mentiko/node_modules/$pkg"; \
+    done && \
+    rm -rf /opt/mentiko/node_modules/@xterm/headless && \
+    cp -a /tmp/runtime-natives/node_modules/@xterm/headless /opt/mentiko/node_modules/@xterm/headless && \
+    rm -rf /tmp/runtime-natives && \
+    chown -R mentiko:mentiko /opt/mentiko/node_modules 2>/dev/null || true
 
 # make scripts executable
 RUN chmod +x /opt/mentiko/bin/* 2>/dev/null || true
