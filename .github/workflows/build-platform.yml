@@ -114,8 +114,38 @@ jobs:
           cache-from: type=gha,scope=platform-arm64
           cache-to: type=gha,scope=platform-arm64,mode=max
 
-  manifest:
+  smoke-test:
+    # runs after the per-arch images are pushed but BEFORE the manifest
+    # job promotes them to :latest. blocks bad images from ever landing
+    # on what self-hosters pull. matrixed on native runners per arch
+    # because there is no setup-qemu in this workflow — arm64 docker
+    # cannot run on ubuntu-latest without it.
     needs: [platform-amd64, platform-arm64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: smoke ${{ matrix.arch }}
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts/smoke-platform-image.mjs:/tmp/smoke.mjs:ro" \
+            ${{ env.IMAGE }}:${{ github.sha }}-${{ matrix.arch }} \
+            node /tmp/smoke.mjs
+
+  manifest:
+    needs: [platform-amd64, platform-arm64, smoke-test]
     runs-on: ubuntu-latest
     steps:
       - uses: docker/login-action@v3
