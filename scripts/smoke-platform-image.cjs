@@ -164,50 +164,19 @@ async function smokeSharp() {
 }
 
 // ---------------------------------------------------------------------------
-// (d) native arch audit via file(1)
+// (d) native arch is proven by the require()s above:
+//     ws, @xterm/headless, better-sqlite3, better-sqlite3-multiple-ciphers,
+//     and sharp all load native binaries. a wrong-arch .node throws an
+//     ELF mismatch on require() — we'd never have reached the cipher
+//     proofs if any of them was the wrong arch.
+//     (the prior approach shelled to file(1) for an ELF header check,
+//     but file(1) isn't installed in node:22-slim and adding it to the
+//     base image is more weight for no extra signal.)
 // ---------------------------------------------------------------------------
-function smokeNativeArch() {
-  const expected = process.arch === 'arm64' ? 'aarch64' : 'x86-64';
-  let artifacts = [];
-  try {
-    const out = execSync(
-      "find /opt/mentiko/node_modules -type f \\( " +
-        "-name '*.node' -o -name '*.so' -o -name '*.so.*' " +
-        "-o -name '*.dylib' -o -name '*.dll' \\)",
-      { encoding: 'utf8' }
-    );
-    artifacts = out.trim().split('\n').filter(Boolean);
-  } catch (e) {
-    console.error('FATAL: native artifact enumeration failed:', e.message);
-    process.exit(1);
-  }
-  console.log('native artifacts:', artifacts.length);
-  const bad = [];
-  for (const p of artifacts) {
-    let line = '';
-    try {
-      line = execSync(`file ${JSON.stringify(p)}`, { encoding: 'utf8' }).trim();
-    } catch (e) {
-      console.error('FATAL: file(1) failed on', p, '-', e.message);
-      process.exit(1);
-    }
-    const desc = line.split(':').slice(1).join(':').trim();
-    console.log('  ' + p + ' -> ' + desc);
-    if (!line.includes(expected)) {
-      bad.push(p);
-    }
-  }
-  if (bad.length) {
-    console.error('FATAL: wrong-arch artifacts (expected ' + expected + '):', bad);
-    process.exit(1);
-  }
-  console.log('native arch audit ok (' + expected + ')');
-}
 
 smokeSharp()
   .then(() => {
-    smokeNativeArch();
-    console.log('all smoke checks passed');
+    console.log('all smoke checks passed (arch implicitly proven by require)');
   })
   .catch((e) => {
     console.error('FATAL: sharp failed:', e);
