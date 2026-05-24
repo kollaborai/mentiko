@@ -78,8 +78,8 @@ export function TaskDetailHeader({
       </button>
 
       {/* title row */}
-      <DetailHeader className="items-start gap-3">
-        <div className="relative flex-1 min-w-0">
+      <DetailHeader className="items-start gap-3 flex-wrap xl:flex-nowrap">
+        <div className="relative flex-1 min-w-0 w-full xl:w-auto">
           <h2 className="text-base font-bold tracking-tighter leading-tight">
             {task.title}
           </h2>
@@ -129,11 +129,11 @@ export function TaskDetailHeader({
         </div>
 
         {/* actions */}
-        <div className="relative flex items-center gap-1 shrink-0">
+        <div className="relative flex w-full flex-wrap items-center gap-1 pt-1 shrink-0 xl:w-auto xl:justify-end xl:pt-0">
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 text-xs"
+            className="h-7 text-xs max-[420px]:w-full"
             onClick={onEdit}
           >
             <Pencil className="h-3 w-3 mr-1" />
@@ -142,7 +142,7 @@ export function TaskDetailHeader({
           {!task.metadata?.decision_id && (
             <Link
               href={`/decisions?new=1`}
-              className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-xs font-medium text-foreground/60 hover:text-foreground hover:bg-accent transition-colors"
+              className="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-md text-xs font-medium text-foreground/60 hover:text-foreground hover:bg-accent transition-colors max-[420px]:w-full"
               title="Send to decision flow"
             >
               <DecisionIcon className="h-3 w-3" />
@@ -153,7 +153,7 @@ export function TaskDetailHeader({
             <Button
               size="sm"
               variant="default"
-              className="h-7 text-xs"
+              className="h-7 text-xs max-[420px]:w-full"
               onClick={onRunChain}
               disabled={isRunning}
             >
@@ -165,7 +165,7 @@ export function TaskDetailHeader({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-xs"
+              className="h-7 text-xs max-[420px]:w-full"
               onClick={onReopen}
             >
               <RotateCcw className="h-3 w-3 mr-1" />
@@ -175,7 +175,7 @@ export function TaskDetailHeader({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-xs"
+              className="h-7 text-xs max-[420px]:w-full"
               onClick={onClose}
             >
               <X className="h-3 w-3 mr-1" />
