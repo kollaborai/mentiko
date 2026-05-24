@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.4
 # Dockerfile - mentiko platform (self-hosted)
 #
 # builds the mentiko platform image. inherits the tools layer from
@@ -163,6 +163,20 @@ RUN echo "=== building runtime-natives lockfile from web lockfile ===" && \
       /build/web/package-lock.json \
       /context/runtime-natives
 
+# phase 5: split /context into two output roots so the runtime stage can
+# COPY them as separate layers. node_modules is the big one (~63MB) and
+# only changes when web/package-lock.json bumps — putting it in its own
+# layer means most releases only push the small app-code layer.
+#
+# (we'd use COPY --exclude=node_modules instead, but that requires
+# dockerfile syntax 1.19+. splitting in the builder works on any
+# buildkit and makes the layer boundary explicit.)
+RUN echo "=== splitting context for layered runtime copy ===" && \
+    mkdir -p /context-node-modules /context-app && \
+    mv /context/node_modules /context-node-modules/node_modules && \
+    cp -a /context/. /context-app/ && \
+    rm -rf /context
+
 # ===========================================================================
 # RUNTIME STAGE — inherit tools from mentiko-base, drop in the app
 # ===========================================================================
@@ -189,8 +203,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends file && \
 # the second COPY brings everything except node_modules. it includes
 # .next/ + bin/ + lib/ + server/ + kollab/ + runtime-natives + root
 # files (server.js, package.json, version.json, processes.json).
-COPY --from=builder --chown=mentiko:mentiko /context/node_modules /opt/mentiko/node_modules
-COPY --from=builder --chown=mentiko:mentiko --exclude=node_modules /context/ /opt/mentiko/
+COPY --from=builder --chown=mentiko:mentiko /context-node-modules/node_modules /opt/mentiko/node_modules
+COPY --from=builder --chown=mentiko:mentiko /context-app/ /opt/mentiko/
 
 # runtime native deps installed AFTER the COPY because next.js standalone
 # bundles some of these in its own node_modules and would overwrite a base
@@ -213,7 +227,7 @@ COPY --from=builder --chown=mentiko:mentiko --exclude=node_modules /context/ /op
 # instead we install to a sibling scratch dir and copy ONLY the four target
 # packages into /opt/mentiko/node_modules, overwriting whatever the bundle
 # shipped with native-arch-correct, lockfile-pinned versions.
-RUN --mount=from=builder,source=/context/runtime-natives,target=/runtime-natives-src \
+RUN --mount=from=builder,source=/context-app/runtime-natives,target=/runtime-natives-src \
     echo "=== runtime native deps (lockfile-pinned, prebuilds) ===" && \
     mkdir -p /tmp/runtime-natives && \
     cp /runtime-natives-src/package.json /tmp/runtime-natives/package.json && \
