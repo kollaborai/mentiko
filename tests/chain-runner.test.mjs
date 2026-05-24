@@ -457,6 +457,56 @@ test("launchAgent normalizes Claude bypass profile flags for current CLI", async
   );
 });
 
+test("launchAgent skips stale chain default and uses namespace default profile", async () => {
+  resetWorkspace();
+  const { path } = makeChain("stale-chain-default", [
+    { id: "agent-a", name: "Agent A", triggers: ["manual-start"], emits: "done", prompt: "run it" },
+  ]);
+  const chain = readJson(path);
+  chain.default_agent_profile = "claude-opus-4-7";
+  writeFileSync(path, JSON.stringify(chain, null, 2));
+  makeProfile("kollabor", {
+    cli: "kollab",
+    model: "glm-4.7",
+    isDefault: true,
+  });
+  const runner = new ChainRunner(path, { workspace: TMP });
+  const { manager, calls } = createMockPtyManager();
+  runner.mgr = manager;
+
+  await withImmediateTimeout(async () => {
+    await runner.launchAgent(runner.chain.agents[0], 1);
+  });
+
+  assert(calls.spawn.length === 1, "spawn should be called");
+  assert(calls.spawn[0].cmd === "kollab", `wrong cmd: ${calls.spawn[0].cmd}`);
+  assert(
+    calls.spawn[0].args.join(" ") === "--print --model glm-4.7",
+    `wrong args: ${calls.spawn[0].args.join(" ")}`
+  );
+});
+
+test("launchAgent refuses bare claude fallback when no profile resolves", async () => {
+  resetWorkspace();
+  const { path } = makeChain("no-profile", [
+    { id: "agent-a", name: "Agent A", triggers: ["manual-start"], emits: "done", prompt: "run it" },
+  ]);
+  const runner = new ChainRunner(path, { workspace: TMP });
+  const { manager } = createMockPtyManager();
+  runner.mgr = manager;
+
+  let thrown = false;
+  try {
+    await withImmediateTimeout(async () => {
+      await runner.launchAgent(runner.chain.agents[0], 1);
+    });
+  } catch (err) {
+    thrown = true;
+    assert(err.message.includes("no agent profile resolved"), `wrong error: ${err.message}`);
+  }
+  assert(thrown, "expected missing profile error");
+});
+
 test("launchAgent falls back to chain cli and args", async () => {
   resetWorkspace();
   const { path } = makeChain("fallback-launch", [
@@ -483,6 +533,7 @@ test("launchAgent falls back to chain cli and args", async () => {
 
 test("run follows chained events and marks run completed", async () => {
   resetWorkspace();
+  makeProfile("default-profile", { isDefault: true });
   const { path } = makeChain("run-success", [
     { id: "agent-a", name: "A", triggers: ["manual-start"], emits: "a-done", prompt: "one" },
     { id: "agent-b", name: "B", triggers: ["a-done"], emits: "b-done", prompt: "two" },
@@ -509,6 +560,7 @@ test("run follows chained events and marks run completed", async () => {
 
 test("run marks run failed and rethrows when first agent throws", async () => {
   resetWorkspace();
+  makeProfile("default-profile", { isDefault: true });
   const { path } = makeChain("run-throw", [
     { id: "agent-a", name: "A", triggers: ["manual-start"], emits: "a-done", prompt: "one" },
     { id: "agent-b", name: "B", triggers: ["a-done"], emits: "b-done", prompt: "two" },

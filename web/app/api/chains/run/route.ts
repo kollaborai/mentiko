@@ -9,9 +9,9 @@ import { requirePermission } from "@/lib/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getSessionUser } from "@/lib/auth-bridge";
 import { resolveChainAgents } from "@/lib/agent-loader";
-import { getProfile } from "@/lib/agent-profile-storage";
+import { getProfile, listProfiles } from "@/lib/agent-profile-storage";
 import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets-store";
-import { getWorkspace } from "@/lib/workspace-storage";
+import { getWorkspace, listWorkspaces } from "@/lib/workspace-storage";
 import { fireWebhooks } from "@/lib/webhook-utils";
 import type { Chain } from "@/lib/types";
 import { readSystemSettings } from "@/lib/system-settings";
@@ -24,6 +24,7 @@ import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
+import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
 
 export const dynamic = "force-dynamic";
 
@@ -120,9 +121,13 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
   const workspaceRecord = typeof workspaceId === "string"
     ? getWorkspace(namespaceId, orgId, workspaceId)
     : null;
+  const resolvedWorkspaceRecord = workspaceRecord
+    ?? (authorizedWorkspacePath
+      ? listWorkspaces(namespaceId, orgId).find((workspace) => workspace.path === authorizedWorkspacePath) ?? null
+      : null);
   const persistedWorkspaceId =
-    workspaceRecord && workspaceRecord.path === authorizedWorkspacePath
-      ? workspaceRecord.id
+    resolvedWorkspaceRecord && resolvedWorkspaceRecord.path === authorizedWorkspacePath
+      ? resolvedWorkspaceRecord.id
       : undefined;
 
   // map friendly executor names to CLI binaries
@@ -139,13 +144,17 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
     throw new BadRequest("chain with name is required", { field: "chain" });
   }
 
-  let runtimeProfile: ReturnType<typeof getProfile> = null;
-  if (agentProfileId && typeof agentProfileId === "string") {
-    runtimeProfile = getProfile(namespaceId, orgId, agentProfileId);
-    if (!runtimeProfile) {
+  const requestedAgentProfileId =
+    agentProfileId && typeof agentProfileId === "string"
+      ? agentProfileId
+      : undefined;
+  const profiles = listProfiles(namespaceId, orgId);
+  if (requestedAgentProfileId) {
+    const requestedProfile = profiles.find((profile) => profile.id === requestedAgentProfileId);
+    if (!requestedProfile) {
       throw new BadRequest("Agent profile not found", {
         field: "agentProfileId",
-        value: agentProfileId,
+        value: requestedAgentProfileId,
       });
     }
   }
@@ -180,6 +189,15 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
   if (authorizedWorkspacePath) {
     runChain.config = { ...(runChain.config || {}), project_root: authorizedWorkspacePath };
   }
+  const effectiveAgentProfileId = resolveRunAgentProfileId({
+    requestedProfileId: requestedAgentProfileId,
+    chainDefaultProfileId: runChain.default_agent_profile,
+    workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile,
+    profiles,
+  });
+  const runtimeProfile = effectiveAgentProfileId
+    ? getProfile(namespaceId, orgId, effectiveAgentProfileId)
+    : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
 
   // Create run object (accept optional pre-generated runId for external coordination)
@@ -240,6 +258,7 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
       session: "",
     })) || [],
     ...(authorizedWorkspacePath ? { workspacePath: authorizedWorkspacePath } : {}),
+    ...(runtimeProfile?.id ? { agentProfileId: runtimeProfile.id } : {}),
     // persist workspaceId so run-acl.ts can enforce workspace ACLs (RBAC-2)
     ...(persistedWorkspaceId ? { workspaceId: persistedWorkspaceId } : {}),
     ...(taskId && typeof taskId === "string" ? { taskId } : {}),
@@ -285,9 +304,9 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: { p
 
   // resolve workspace env vars if workspaceId provided
   let workspaceEnv: Record<string, string> = {};
-  if (workspaceRecord && workspaceRecord.path === authorizedWorkspacePath) {
-    if (workspaceRecord.env) {
-      workspaceEnv = workspaceRecord.env;
+  if (resolvedWorkspaceRecord && resolvedWorkspaceRecord.path === authorizedWorkspacePath) {
+    if (resolvedWorkspaceRecord.env) {
+      workspaceEnv = resolvedWorkspaceRecord.env;
     }
   }
 

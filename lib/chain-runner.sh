@@ -909,33 +909,35 @@ resolve_agent_profile() {
     local agent_id="$1"
     local chain_default="${2:-}"
 
-    # 1. agent-level override (agent_profile field)
+    local requested_profile_id
+    requested_profile_id=$(get_agent_config "$agent_id" "agent_profile" "")
+    [[ -z "$requested_profile_id" ]] && requested_profile_id="$chain_default"
+
     local profile_id
-    profile_id=$(get_agent_config "$agent_id" "agent_profile" "")
+    profile_id=$(resolve_agent_profile_id "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT")
 
-    # 2. chain default
-    [[ -z "$profile_id" ]] && profile_id="$chain_default"
-
-    # 3. workspace default
-    [[ -z "$profile_id" ]] && profile_id=$(find_workspace_profile)
-
-    # 4. namespace default
-    [[ -z "$profile_id" ]] && profile_id=$(find_default_profile)
-
-    # 5. legacy fallback with deprecation warning
-    if [[ -z "$profile_id" ]]; then
-        local legacy_cli
-        legacy_cli=$(jq -r '.config.cli // empty' "$CHAIN_FILE" 2>/dev/null)
-        if [[ -n "$legacy_cli" ]]; then
-            echo "[DEPRECATION] chain uses inline cli config; migrate to agent profiles" >&2
-            echo "__inline__"
-            return
+    if [[ -n "$profile_id" ]]; then
+        if [[ -n "$requested_profile_id" && "$requested_profile_id" != "$profile_id" ]]; then
+            echo "  warning: profile '$requested_profile_id' not found, using '$profile_id'" >&2
         fi
-        echo "ERROR: no agent profile resolved for agent '$agent_id'. Set up a default profile." >&2
+        echo "$profile_id"
+        return
+    fi
+
+    if [[ -n "$requested_profile_id" ]]; then
+        echo "ERROR: requested agent profile '$requested_profile_id' was not found and no valid fallback profile exists." >&2
         exit 1
     fi
 
-    echo "$profile_id"
+    local legacy_cli
+    legacy_cli=$(jq -r '.config.cli // empty' "$CHAIN_FILE" 2>/dev/null)
+    if [[ -n "$legacy_cli" ]]; then
+        echo "[DEPRECATION] chain uses inline cli config; migrate to agent profiles" >&2
+        echo "__inline__"
+        return
+    fi
+    echo "ERROR: no agent profile resolved for agent '$agent_id'. Set up a default profile." >&2
+    exit 1
 }
 
 # -------------------------------------------------------------------
@@ -1143,9 +1145,8 @@ launch_chain_agent() {
                 fi
             fi
         else
-            echo "  warning: profile '$profile_id' not found, falling back to legacy" >&2
-            use_legacy_cli=true
-            profile_source="legacy (fallback)"
+            echo "  error: resolved profile '$profile_id' not found at $profile_file" >&2
+            return 1
         fi
     fi
 

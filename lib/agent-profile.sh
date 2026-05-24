@@ -15,6 +15,26 @@ find_default_profile() {
     echo "$default_id"
 }
 
+agent_profile_path() {
+    local profile_id="$1"
+    local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}/agent-profiles}"
+
+    [[ -z "$profile_id" ]] && echo "" && return
+    if [[ ! "$profile_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+        echo ""
+        return
+    fi
+
+    echo "$profiles_dir/${profile_id}.json"
+}
+
+agent_profile_exists() {
+    local profile_id="$1"
+    local profile_file
+    profile_file="$(agent_profile_path "$profile_id")"
+    [[ -n "$profile_file" && -f "$profile_file" ]]
+}
+
 # find_workspace_profile: look up workspace default agent profile
 # matches CHAIN_PROJECT_ROOT against workspaces.json paths
 find_workspace_profile() {
@@ -42,21 +62,28 @@ resolve_agent_profile_id() {
         '.agents[]? | select(.id == $id) | .agent_profile // empty' \
         "$chain_file" 2>/dev/null | head -1)
 
-    if [[ -z "$profile_id" ]]; then
-        profile_id=$(jq -r '.default_agent_profile // empty' "$chain_file" 2>/dev/null || echo "")
+    local chain_profile_id
+    chain_profile_id=$(jq -r '.default_agent_profile // empty' "$chain_file" 2>/dev/null || echo "")
+
+    local workspace_profile_id
+    if [[ -n "$project_root" ]]; then
+        workspace_profile_id=$(CHAIN_PROJECT_ROOT="$project_root" find_workspace_profile)
+    else
+        workspace_profile_id=$(find_workspace_profile)
     fi
 
-    if [[ -z "$profile_id" ]]; then
-        if [[ -n "$project_root" ]]; then
-            profile_id=$(CHAIN_PROJECT_ROOT="$project_root" find_workspace_profile)
-        else
-            profile_id=$(find_workspace_profile)
+    local default_profile_id
+    default_profile_id=$(find_default_profile)
+
+    local candidate
+    for candidate in "$profile_id" "$chain_profile_id" "$workspace_profile_id" "$default_profile_id"; do
+        if agent_profile_exists "$candidate"; then
+            echo "$candidate"
+            return
         fi
-    fi
+    done
 
-    [[ -z "$profile_id" ]] && profile_id=$(find_default_profile)
-
-    echo "$profile_id"
+    echo ""
 }
 
 # resolve_agent_profile_file: return the profile JSON path for a chain agent.
@@ -69,8 +96,8 @@ resolve_agent_profile_file() {
     profile_id=$(resolve_agent_profile_id "$chain_file" "$agent_id" "$project_root")
     [[ -z "$profile_id" ]] && echo "" && return
 
-    local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}/agent-profiles}"
-    local profile_file="$profiles_dir/${profile_id}.json"
+    local profile_file
+    profile_file="$(agent_profile_path "$profile_id")"
     [[ -f "$profile_file" ]] && echo "$profile_file" || echo ""
 }
 

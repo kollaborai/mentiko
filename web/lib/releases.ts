@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.25",
+    date: "May 24, 2026",
+    title: "Fix Chain Agent Profile Fallback",
+    description:
+      "Fixes chain runs silently falling back to bare claude when a saved chain referenced a deleted or renamed agent profile. The run API now resolves a valid effective profile before writing the run-local chain, quick-run surfaces can send an explicit profile selection such as Kollab, and the bash runner skips stale agent/chain profile ids instead of launching a legacy CLI fallback. Missing requested profiles now fail loudly unless a valid workspace or namespace default exists.",
+    category: "fix",
+  },
+  {
     version: "v0.3.24",
     date: "May 24, 2026",
     title: "Fix Tenant Boot Deadlock and Port Cleanup",

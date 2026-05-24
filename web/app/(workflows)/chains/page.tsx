@@ -12,6 +12,7 @@ import { AgentProfileBadge } from "@/components/agent/agent-status-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { useAgentProfiles } from "@/lib/use-agent-profiles";
+import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
 import Link from "next/link";
 import {
   PlayFilled, DocumentDownloadFilled, DocumentUploadFilled, GlobalFilled, Edit2Filled,
@@ -183,6 +184,7 @@ function ChainsPageContent() {
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [runGoal, setRunGoal] = useState("");
   const [runWorkspacePath, setRunWorkspacePath] = useState(workspacePath || "__default__");
+  const [runAgentProfileId, setRunAgentProfileId] = useState("");
   const [runLoading, setRunLoading] = useState(false);
   const [runError, setRunError] = useState("");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
@@ -349,8 +351,12 @@ function ChainsPageContent() {
     setRunGoal("");
     setRunError("");
     setRunWorkspacePath(workspacePath || "");
+    setRunAgentProfileId(resolveRunAgentProfileId({
+      chainDefaultProfileId: selected.default_agent_profile,
+      profiles,
+    }) || "");
     setRunDialogOpen(true);
-  }, [selected, workspacePath]);
+  }, [selected, workspacePath, profiles]);
 
   // keyboard shortcut: Cmd+R / Ctrl+R to run selected chain
   useEffect(() => {
@@ -383,6 +389,7 @@ function ChainsPageContent() {
           chainId: selected.id,
           userPrompt: runGoal.trim() || undefined,
           workspacePath: (runWorkspacePath && runWorkspacePath !== "__default__") ? runWorkspacePath : undefined,
+          ...(runAgentProfileId ? { agentProfileId: runAgentProfileId } : {}),
         }),
       });
       const raw = await res.json();
@@ -1561,6 +1568,23 @@ function ChainsPageContent() {
                   {workspaces.map((ws) => (
                     <SelectItem key={ws.id} value={ws.path}>
                       {ws.name} <span className="text-foreground/40 ml-1 font-mono text-[10px]">{ws.path}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {profiles.length > 0 && (
+            <div className="space-y-1">
+              <label htmlFor="run-profile" className="text-xs text-foreground/50">Profile</label>
+              <Select value={runAgentProfileId} onValueChange={setRunAgentProfileId}>
+                <SelectTrigger id="run-profile" className="h-8 text-xs bg-muted">
+                  <SelectValue placeholder="profile" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name} <span className="text-foreground/40 ml-1 font-mono text-[10px]">{profile.cli}{profile.model ? ` / ${profile.model}` : ""}</span>
                     </SelectItem>
                   ))}
                 </SelectContent>

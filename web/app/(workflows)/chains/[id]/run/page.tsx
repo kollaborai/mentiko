@@ -17,6 +17,9 @@ import { useEventStream } from "@/hooks/use-event-stream";
 import { useRunNotifications } from "@/hooks/use-notifications-listener";
 import { useWorkspace } from "@/lib/workspace-context";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useAgentProfiles } from "@/lib/use-agent-profiles";
+import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
+import type { AgentProfile } from "@/lib/types";
 import {
   ArrowLeftFilled,
   CommandSquareFilled,
@@ -75,6 +78,7 @@ interface Chain {
   description: string;
   version: string;
   agents: ChainAgent[];
+  default_agent_profile?: string;
   webhooks?: Array<{
     event_type: string;
     url: string;
@@ -148,6 +152,9 @@ function GoalInput({
   workspaceId,
   onWorkspaceChange,
   workspaces,
+  agentProfileId,
+  onAgentProfileChange,
+  profiles,
 }: {
   goal: string;
   setGoal: (g: string) => void;
@@ -157,6 +164,9 @@ function GoalInput({
   workspaceId: string;
   onWorkspaceChange: (id: string) => void;
   workspaces: Array<{ id: string; name: string; path: string }>;
+  agentProfileId: string;
+  onAgentProfileChange: (id: string) => void;
+  profiles: AgentProfile[];
 }) {
   return (
     <div className="h-full flex flex-col p-6 overflow-y-auto">
@@ -198,6 +208,30 @@ function GoalInput({
                 <SelectItem key={ws.id} value={ws.id} className="text-xs">
                   <span>{ws.name}</span>
                   <span className="ml-2 text-muted-foreground font-mono">{ws.path}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {profiles.length > 0 && (
+        <div className="mb-4">
+          <label htmlFor="agent-profile-select" className="text-sm text-foreground/60 mb-2 block">
+            <Square className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
+            run with profile
+          </label>
+          <Select value={agentProfileId} onValueChange={onAgentProfileChange}>
+            <SelectTrigger id="agent-profile-select" className="h-9 text-xs bg-card">
+              <SelectValue placeholder="select profile..." />
+            </SelectTrigger>
+            <SelectContent>
+              {profiles.map((profile) => (
+                <SelectItem key={profile.id} value={profile.id} className="text-xs">
+                  <span>{profile.name}</span>
+                  <span className="ml-2 text-muted-foreground font-mono">
+                    {profile.cli}{profile.model ? ` / ${profile.model}` : ""}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -497,17 +531,27 @@ export default function RunPage() {
   const params = useParams();
   const chainId = params.id as string;
   const { workspaceId: ctxWorkspaceId, workspaces } = useWorkspace();
+  const { profiles } = useAgentProfiles();
 
   const [chain, setChain] = useState<Chain | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [goal, setGoal] = useState("");
   const [runWorkspaceId, setRunWorkspaceId] = useState(ctxWorkspaceId);
+  const [runAgentProfileId, setRunAgentProfileId] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [activeTab, setActiveTab] = useState<TabValue>("goal");
   const [webhookEnabled, setWebhookEnabled] = useState(true);
 
   // sync with context workspace when it changes (e.g. user switches in nav)
   useEffect(() => { setRunWorkspaceId(ctxWorkspaceId); }, [ctxWorkspaceId]);
+
+  useEffect(() => {
+    if (!chain) return;
+    setRunAgentProfileId(resolveRunAgentProfileId({
+      chainDefaultProfileId: chain.default_agent_profile,
+      profiles,
+    }) || "");
+  }, [chain, profiles]);
 
   const { connected, events, sessionStatus, chainComplete } = useEventStream(run?.id || null);
   useRunNotifications(run?.id || null);
@@ -578,6 +622,7 @@ export default function RunPage() {
           chainId,
           userPrompt: goal,
           webhook: webhookEnabled,
+          ...(runAgentProfileId ? { agentProfileId: runAgentProfileId } : {}),
           ...(selectedWs ? { workspacePath: selectedWs.path, workspaceId: selectedWs.id } : {}),
         }),
       });
@@ -738,6 +783,9 @@ export default function RunPage() {
               workspaceId={runWorkspaceId}
               onWorkspaceChange={setRunWorkspaceId}
               workspaces={workspaces}
+              agentProfileId={runAgentProfileId}
+              onAgentProfileChange={setRunAgentProfileId}
+              profiles={profiles}
             />
           </div>
         ) : (
@@ -803,6 +851,9 @@ export default function RunPage() {
                     workspaceId={runWorkspaceId}
                     onWorkspaceChange={() => {}}
                     workspaces={workspaces}
+                    agentProfileId={runAgentProfileId}
+                    onAgentProfileChange={() => {}}
+                    profiles={profiles}
                   />
                 </div>
               </TabsContent>

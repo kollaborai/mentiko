@@ -7,7 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 TEST_TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+cleanup() {
+  if [[ -n "${TEST_TMP_DIR:-}" && "$TEST_TMP_DIR" == /tmp/* && -d "$TEST_TMP_DIR" ]]; then
+    find "$TEST_TMP_DIR" -mindepth 1 -delete 2>/dev/null || true
+    rmdir "$TEST_TMP_DIR" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 export MENTIKO_GLOBAL_ROOT="$TEST_TMP_DIR"
 export NAMESPACE_ID="default"
@@ -105,6 +111,25 @@ JSON
 resolved_chain_default="$(resolve_agent_profile_id "$chain_with_default" "agent-one")"
 assert_eq "codex-default" "$resolved_chain_default" "uses chain default profile before namespace default"
 
+chain_with_missing_default="$TEST_TMP_DIR/chain-missing-default.json"
+cat > "$chain_with_missing_default" <<'JSON'
+{
+  "name": "missing-default-profile-chain",
+  "default_agent_profile": "claude-opus-4-7",
+  "agents": [
+    {
+      "id": "agent-one",
+      "name": "Agent One",
+      "triggers": ["manual-start"],
+      "emits": "done"
+    }
+  ]
+}
+JSON
+
+resolved_missing_chain_default="$(resolve_agent_profile_id "$chain_with_missing_default" "agent-one")"
+assert_eq "kollabor" "$resolved_missing_chain_default" "skips stale chain default and uses valid namespace default"
+
 chain_with_agent_profile="$TEST_TMP_DIR/chain-agent-profile.json"
 cat > "$chain_with_agent_profile" <<'JSON'
 {
@@ -125,8 +150,31 @@ JSON
 resolved_agent_profile="$(resolve_agent_profile_id "$chain_with_agent_profile" "agent-one")"
 assert_eq "gemini-pro" "$resolved_agent_profile" "uses agent profile before chain default"
 
+chain_with_missing_agent_profile="$TEST_TMP_DIR/chain-missing-agent-profile.json"
+cat > "$chain_with_missing_agent_profile" <<'JSON'
+{
+  "name": "missing-agent-profile-chain",
+  "default_agent_profile": "codex-default",
+  "agents": [
+    {
+      "id": "agent-one",
+      "name": "Agent One",
+      "agent_profile": "deleted-profile",
+      "triggers": ["manual-start"],
+      "emits": "done"
+    }
+  ]
+}
+JSON
+
+resolved_missing_agent_profile="$(resolve_agent_profile_id "$chain_with_missing_agent_profile" "agent-one")"
+assert_eq "codex-default" "$resolved_missing_agent_profile" "skips stale agent profile and uses valid chain default"
+
 resolved_file="$(resolve_agent_profile_file "$chain_without_profile" "agent-one")"
 assert_eq "$AGENT_PROFILES_DIR/kollabor.json" "$resolved_file" "returns profile file for resolved default"
+
+resolved_missing_file="$(resolve_agent_profile_file "$chain_with_missing_default" "agent-one")"
+assert_eq "$AGENT_PROFILES_DIR/kollabor.json" "$resolved_missing_file" "returns fallback profile file when chain default is stale"
 
 kollab_log_dir="$(resolve_log_dir "$AGENT_PROFILES_DIR/kollabor.json" "/Users/malmazan/.mentiko/namespaces/default/workspace/mentiko")"
 assert_eq "$HOME/.kollab/projects/Users_malmazan_.mentiko_namespaces_default_workspace_mentiko" \

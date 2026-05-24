@@ -101,6 +101,7 @@ interface Run {
   mode?: string;
   rounds?: number;
   workspaceId?: string;
+  agentProfileId?: string;
   managerSession?: string;
   summary?: RunSummary;
   escalations?: Array<{
@@ -878,6 +879,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
         chainId,
         userPrompt: run.goal || "",
         ...(run.workspacePath && { workspacePath: run.workspacePath }),
+        ...(run.agentProfileId && { agentProfileId: run.agentProfileId }),
         ...(run.taskId && { taskId: run.taskId }),
         ...(run.debug && { debug: true }),
       }),

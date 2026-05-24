@@ -66,6 +66,15 @@ describe("chain-runner AI gateway source contract", () => {
     expect(ptyManager).toContain('createRequire(join(__dirname, "..", "web", "package.json"))');
   });
 
+  it("keeps the JavaScript chain-runner from using stale profiles as bare Claude", () => {
+    expect(jsChainRunner).toContain("function resolveAgentProfile(agent, chain, workspacePath = null)");
+    expect(jsChainRunner).toContain("findWorkspaceProfile(workspacePath)");
+    expect(jsChainRunner).toContain("findDefaultProfile()");
+    expect(jsChainRunner).toContain("requested agent profile");
+    expect(jsChainRunner).toContain("no agent profile resolved for agent");
+    expect(jsChainRunner).not.toContain('let cmd = "claude";');
+  });
+
   it("passes run context into shell pty agent commands", () => {
     expect(chainRunner).toContain("agent_run_context_export_command()");
     expect(chainRunner).toContain('run_context_exports=$(agent_run_context_export_command "$agent_id" "$agent_emits")');
@@ -147,6 +156,16 @@ describe("chain run profile override contract", () => {
 
   it("rejects missing request-selected agent profiles instead of falling back silently", () => {
     expect(source).toContain('throw new BadRequest("Agent profile not found"');
-    expect(source).toContain("runtimeProfile = getProfile(namespaceId, orgId, agentProfileId)");
+    expect(source).toContain("const requestedAgentProfileId =");
+    expect(source).toContain("profiles.find((profile) => profile.id === requestedAgentProfileId)");
+    expect(source).toContain("value: requestedAgentProfileId");
+  });
+
+  it("resolves stale chain defaults before stamping the run-local chain", () => {
+    expect(source).toContain('import { resolveRunAgentProfileId } from "@/lib/run-agent-profile"');
+    expect(source).toContain("const effectiveAgentProfileId = resolveRunAgentProfileId");
+    expect(source).toContain("chainDefaultProfileId: runChain.default_agent_profile");
+    expect(source).toContain("workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile");
+    expect(source).toContain("runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id)");
   });
 });
