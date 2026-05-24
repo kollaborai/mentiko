@@ -64,6 +64,15 @@ export interface ProcessConfig {
   restart: RestartConfig;
   critical: boolean;
   order: number;
+  // set true for processes that fork a long-lived daemon and let
+  // the parent exit (e.g. pty-mgr). when true, process-manager
+  // tracks the forked pid via pgrep after the parent exits with
+  // code 0 and treats the daemon as "ready". OMIT or false for
+  // foreground processes like next.js — otherwise process-manager
+  // mistakes a normal next-server pid for a forked daemon, leaves
+  // it untracked, and tries to spawn another next.js on the next
+  // event tick → EADDRINUSE on :3000.
+  daemonize?: boolean;
 }
 
 // --- top-level processes.json ---

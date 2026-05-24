@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.23",
+    date: "May 24, 2026",
+    title: "Process-Manager Daemon-Fork Detection Gated on Opt-In",
+    description:
+      "Fixes a pre-existing process-manager bug that surfaced once v0.3.22 bumped the platform readiness window past 30s. process-manager's daemon-fork detection (pgrep -f for the cmd) ran on EVERY managed process, including foreground ones like 'node server.js'. when next.js's parent stayed alive (no real fork), pgrep matched the next-server itself and process-manager logged 'platform daemon pid N' — then on the next event tick spawned ANOTHER next.js, which hit EADDRINUSE :3000 because the original was still bound. crash-loop, no tenant could come up. fix: add a daemonize: boolean flag to ProcessConfig, set it true on pty-mgr (the only process that actually daemonizes), gate findDaemonPid invocations on it everywhere. foreground processes are now treated as foreground.",
+    category: "fix",
+  },
+  {
     version: "v0.3.22",
     date: "May 24, 2026",
     title: "Process-Manager Platform Readiness Window 30s → 90s",

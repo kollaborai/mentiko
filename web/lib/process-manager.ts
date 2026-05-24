@@ -217,17 +217,19 @@ function handleExit(m: ManagedProcess, code: number | null, signal: string | nul
   // daemon fork pattern: parent exits 0 after readiness probe passed.
   // the real daemon (forked child) is still running. don't restart.
   // find the forked daemon's PID so we can kill it on shutdown.
-  if (code === 0 && m.status === 'ready') {
+  // gated on config.daemonize so we don't mistake a normal foreground
+  // process's exit for a fork pattern (which would leave us tracking
+  // some other random matching pid and spawn a duplicate on the next
+  // restart tick — see EADDRINUSE :3000 incident on v0.3.21/22).
+  if (m.config.daemonize && code === 0 && m.status === 'ready') {
     const daemonPid = findDaemonPid(m.config);
     if (daemonPid) { m.pid = daemonPid; log(`${name} parent exited, daemon pid ${daemonPid}`); }
     else { log(`${name} parent exited (${desc}), daemon forked -- keeping ready`); }
     return;
   }
 
-  // daemon fork pattern: parent exits 0 while readiness is still being checked.
-  // the daemon child may be starting up. let waitReady() in startOne() handle it
-  // rather than racing with a restart.
-  if (code === 0 && m.status === 'starting') {
+  // same fork pattern but parent exits before readiness probe completes.
+  if (m.config.daemonize && code === 0 && m.status === 'starting') {
     log(`${name} parent exited (${desc}), waiting for daemon readiness...`);
     return;
   }
@@ -277,8 +279,9 @@ async function startOne(config: ProcessConfig): Promise<ManagedProcess> {
       : r.type === 'port' && r.port ? ` (port ${r.port})`
       : r.type === 'http' && r.url ? ` (${r.url})` : '';
     log(`${config.name} ready${detail}`);
-    // if parent process exited (daemon fork), find the real daemon PID
-    if (!m.child && !m.pid) {
+    // if parent process exited (daemon fork), find the real daemon PID.
+    // gated on config.daemonize — see handleExit for why.
+    if (config.daemonize && !m.child && !m.pid) {
       const daemonPid = findDaemonPid(config);
       if (daemonPid) { m.pid = daemonPid; log(`${config.name} daemon pid ${daemonPid}`); }
     }
