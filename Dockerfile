@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1.7
 # Dockerfile - mentiko platform (self-hosted)
 #
 # builds the mentiko platform image. inherits the tools layer from
@@ -180,8 +180,17 @@ WORKDIR /opt/mentiko
 RUN apt-get update && apt-get install -y --no-install-recommends file && \
     rm -rf /var/lib/apt/lists/*
 
-# copy assembled app from the builder stage
-COPY --from=builder --chown=mentiko:mentiko /context/ /opt/mentiko/
+# phase 5: split the bundle copy so the biggest layer (the standalone
+# node_modules, ~63MB) sits in its own image layer. that layer only
+# changes when web/package-lock.json bumps — so on a typical release
+# where only app code (lib/, bin/, etc.) changed, this layer reuses
+# the registry cache and only the small app-code layer gets pushed.
+#
+# the second COPY brings everything except node_modules. it includes
+# .next/ + bin/ + lib/ + server/ + kollab/ + runtime-natives + root
+# files (server.js, package.json, version.json, processes.json).
+COPY --from=builder --chown=mentiko:mentiko /context/node_modules /opt/mentiko/node_modules
+COPY --from=builder --chown=mentiko:mentiko --exclude=node_modules /context/ /opt/mentiko/
 
 # runtime native deps installed AFTER the COPY because next.js standalone
 # bundles some of these in its own node_modules and would overwrite a base

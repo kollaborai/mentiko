@@ -39,6 +39,14 @@
 #   2. change "Package visibility" from Private to Public
 #   3. link the package to this repo so it appears in the repo packages list
 #   subsequent pushes preserve public visibility automatically.
+#
+#   ALSO, after the first run that pushes to mentiko-cache:
+#   1. visit https://github.com/orgs/kollaborai/packages/container/mentiko-cache/settings
+#   2. set "Package retention" to "Delete after 14 days" (or similar) —
+#      registry-backed buildx caches accumulate ~1-2 GB per arch otherwise.
+#      the cache rebuilds automatically when missing, so dropping it is safe.
+#   3. (optional) keep package visibility Private. it leaks no secrets but
+#      there's no reason for the public to pull a buildkit cache image.
 
 name: build mentiko platform
 
@@ -158,8 +166,12 @@ jobs:
             BUILD_REPO=kollaborai/mentiko
             SKIP_NEXT_BUILD=1
           tags: ${{ steps.refs.outputs.image }}
-          cache-from: type=gha,scope=platform-amd64
-          cache-to: type=gha,scope=platform-amd64,mode=max
+          # phase 5: registry-backed cache. survives across CI runs and
+          # has no 10GB cap (vs gha cache which evicts aggressively).
+          # the cache image (mentiko-cache:platform-amd64) is a separate
+          # ghcr package — see ONE-TIME SETUP header for first-run config.
+          cache-from: type=registry,ref=${{ env.IMAGE }}-cache:platform-amd64
+          cache-to: type=registry,ref=${{ env.IMAGE }}-cache:platform-amd64,mode=max
 
   platform-arm64:
     needs: [validate-release-version, build-js]
@@ -202,8 +214,8 @@ jobs:
             BUILD_REPO=kollaborai/mentiko
             SKIP_NEXT_BUILD=1
           tags: ${{ steps.refs.outputs.image }}
-          cache-from: type=gha,scope=platform-arm64
-          cache-to: type=gha,scope=platform-arm64,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}-cache:platform-arm64
+          cache-to: type=registry,ref=${{ env.IMAGE }}-cache:platform-arm64,mode=max
 
   smoke-test:
     # runs after the per-arch images are pushed but BEFORE the manifest
