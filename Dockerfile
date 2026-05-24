@@ -42,6 +42,13 @@ ARG TARGETARCH
 ARG BUILD_COMMIT=unknown
 ARG BUILD_VERSION=unknown
 ARG BUILD_REPO=kollaborai/mentiko
+# phase 4: when SKIP_NEXT_BUILD=1 the build context already contains
+# web/.next/standalone and web/.next/static from a single upstream
+# build-js CI job that ran on BUILDPLATFORM (amd64). the next build
+# RUN below becomes a no-op and the assemble step reads those paths
+# directly. on a normal build (SKIP_NEXT_BUILD=0, default) next build
+# runs in-image as before.
+ARG SKIP_NEXT_BUILD=0
 
 COPY web/package.json web/package-lock.json /build/web/
 WORKDIR /build/web
@@ -53,9 +60,14 @@ COPY . /build/
 WORKDIR /build/web
 
 RUN --mount=type=cache,target=/build/web/.next/cache,id=next-${TARGETARCH} \
-    echo "=== next.js build (webpack) ===" && \
-    ./node_modules/.bin/next build --webpack && \
-    test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1)
+    if [ "$SKIP_NEXT_BUILD" = "1" ]; then \
+      echo "=== next.js build skipped (SKIP_NEXT_BUILD=1; using prebuilt artifact) ===" && \
+      test -f .next/standalone/server.js || (echo "FATAL: SKIP_NEXT_BUILD=1 but .next/standalone/server.js missing — artifact not staged" && exit 1); \
+    else \
+      echo "=== next.js build (webpack) ===" && \
+      ./node_modules/.bin/next build --webpack && \
+      test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1); \
+    fi
 
 # assemble platform context
 RUN echo "=== assembling platform ===" && \
@@ -198,16 +210,31 @@ RUN --mount=from=builder,source=/context/runtime-natives,target=/runtime-natives
     cp /runtime-natives-src/package.json /tmp/runtime-natives/package.json && \
     cp /runtime-natives-src/package-lock.json /tmp/runtime-natives/package-lock.json && \
     cd /tmp/runtime-natives && \
-    npm ci --omit=dev --no-audit --no-fund && \
+    npm ci --omit=dev --no-audit --no-fund --include=optional && \
     echo "installed versions:" && \
     node -p "Object.entries(require('./package.json').dependencies).map(([n,v])=>n+': '+v).join('\n')" && \
-    mkdir -p /opt/mentiko/node_modules/@xterm && \
-    for pkg in ws better-sqlite3 better-sqlite3-multiple-ciphers; do \
+    # phase 4: delete sharp's per-arch packages from the bundle before
+    # overlay. when amd64 builds the bundle (phase 4 BUILDPLATFORM model),
+    # arm64 runtime inherits an amd64-built @img/sharp-linux-x64. that
+    # would fail file(1) audit AND crash on first image-optimization.
+    # the npm ci above installed the correct-arch sharp variants into
+    # /tmp/runtime-natives/node_modules/@img on THIS runner — copy those
+    # in fresh. on the amd64 runtime stage this is a no-op overwrite.
+    rm -rf /opt/mentiko/node_modules/@img && \
+    mkdir -p /opt/mentiko/node_modules/@xterm /opt/mentiko/node_modules/@img && \
+    for pkg in ws better-sqlite3 better-sqlite3-multiple-ciphers sharp; do \
       rm -rf "/opt/mentiko/node_modules/$pkg" && \
       cp -a "/tmp/runtime-natives/node_modules/$pkg" "/opt/mentiko/node_modules/$pkg"; \
     done && \
     rm -rf /opt/mentiko/node_modules/@xterm/headless && \
     cp -a /tmp/runtime-natives/node_modules/@xterm/headless /opt/mentiko/node_modules/@xterm/headless && \
+    # copy every @img/* sub-package npm ci materialised (sharp-linux-{arch},
+    # sharp-libvips-linux-{arch}, sharp-linuxmusl-{arch}, etc — exact set
+    # depends on the runner's arch).
+    for pkg in /tmp/runtime-natives/node_modules/@img/*; do \
+      name=$(basename "$pkg") && \
+      cp -a "$pkg" "/opt/mentiko/node_modules/@img/$name"; \
+    done && \
     rm -rf /tmp/runtime-natives && \
     chown -R mentiko:mentiko /opt/mentiko/node_modules 2>/dev/null || true
 

@@ -32,6 +32,12 @@ const TARGETS = [
   '@xterm/headless',
   'better-sqlite3',
   'better-sqlite3-multiple-ciphers',
+  // sharp is in the standalone bundle (next.js image optimization). when
+  // phase 4 shares the JS build across arches, the bundled sharp is the
+  // wrong arch on arm64 runtime. installing it here pulls the correct
+  // per-arch @img/sharp-* via optionalDependencies on the runner that
+  // performs the npm ci.
+  'sharp',
 ];
 
 const [, , LOCK_PATH, OUT_DIR] = process.argv;

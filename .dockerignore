@@ -4,8 +4,13 @@ node_modules/
 lib/mentiko-mcp/node_modules/
 lib/mentiko-mcp/dist/
 
-# build output (builder runs next build)
-web/.next/
+# build output (builder runs next build inside the image)
+# scope the .next ignore to /cache so phase 4's artifact-share path can
+# stage a pre-built /standalone and /static into web/.next/ on the host
+# before docker build runs. when SKIP_NEXT_BUILD=1 the Dockerfile's
+# COPY . /build/ picks them up; on a normal local build web/.next/ is
+# empty and the in-image `next build` writes there as before.
+web/.next/cache/
 web/out/
 
 # git

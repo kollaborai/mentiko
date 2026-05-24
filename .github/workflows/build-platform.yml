@@ -5,6 +5,16 @@
 # image inherits its tools layer FROM ghcr.io/kollaborai/mentiko-base
 # (built separately by build-base.yml).
 #
+# pipeline shape:
+#   validate -> build-js (amd64 only, once) -> platform-{amd,arm}64
+#     (download artifact, skip in-image webpack, assemble) ->
+#     smoke-test matrix -> manifest
+#
+# build-js builds the next.js standalone bundle ONCE on amd64 and the
+# two per-arch jobs share it. saves ~4 min of duplicate webpack work
+# on the arm64 build path. native deps are still installed per-arch in
+# the runtime stage of the Dockerfile so the bundle stays JS-only.
+#
 # trigger model: explicit releases only.
 #   every run, per-arch jobs push to a run-scoped staging tag:
 #     :staging-<run_id>-amd64
@@ -64,8 +74,46 @@ jobs:
       - name: validate release version
         run: node scripts/validate-platform-release-version.mjs
 
-  platform-amd64:
+  # phase 4: run next.js webpack build ONCE on amd64 and share the
+  # standalone output with both per-arch jobs as a workflow artifact.
+  # the bundle is pure javascript (next-bundled native deps get
+  # reinstalled per-arch in the runtime stage). saves the ~4 min of
+  # webpack work on the arm64 job which otherwise duplicates this.
+  build-js:
     needs: validate-release-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+      - name: next build (webpack)
+        working-directory: web
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          ./node_modules/.bin/next build --webpack
+          test -f .next/standalone/server.js || { echo "FATAL: standalone build missing server.js"; exit 1; }
+      - name: upload .next standalone + static
+        uses: actions/upload-artifact@v4
+        with:
+          name: mentiko-next-build-${{ github.run_id }}
+          path: |
+            web/.next/standalone
+            web/.next/static
+          retention-days: 1
+          if-no-files-found: error
+          # disable compression — the bundle is mostly already-compressed
+          # js chunks and re-compressing burns CI time for no gain.
+          compression-level: 0
+
+  platform-amd64:
+    needs: [validate-release-version, build-js]
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.refs.outputs.image }}
@@ -77,6 +125,15 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: download next.js build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mentiko-next-build-${{ github.run_id }}
+          path: web/.next
+      - name: confirm artifact landed where Dockerfile expects
+        run: |
+          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing server.js"; exit 1; }
+          test -d web/.next/static || { echo "FATAL: artifact missing static/"; exit 1; }
       - name: compute staging image ref
         id: refs
         # every pre-smoke per-arch push goes to a run-scoped staging tag
@@ -99,12 +156,13 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
             BUILD_REPO=kollaborai/mentiko
+            SKIP_NEXT_BUILD=1
           tags: ${{ steps.refs.outputs.image }}
           cache-from: type=gha,scope=platform-amd64
           cache-to: type=gha,scope=platform-amd64,mode=max
 
   platform-arm64:
-    needs: validate-release-version
+    needs: [validate-release-version, build-js]
     runs-on: ubuntu-24.04-arm
     outputs:
       image: ${{ steps.refs.outputs.image }}
@@ -116,6 +174,15 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: download next.js build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mentiko-next-build-${{ github.run_id }}
+          path: web/.next
+      - name: confirm artifact landed where Dockerfile expects
+        run: |
+          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing server.js"; exit 1; }
+          test -d web/.next/static || { echo "FATAL: artifact missing static/"; exit 1; }
       - name: compute staging image ref
         id: refs
         run: |
@@ -133,6 +200,7 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
             BUILD_REPO=kollaborai/mentiko
+            SKIP_NEXT_BUILD=1
           tags: ${{ steps.refs.outputs.image }}
           cache-from: type=gha,scope=platform-arm64
           cache-to: type=gha,scope=platform-arm64,mode=max
