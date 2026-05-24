@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Dockerfile - mentiko platform (self-hosted)
 #
 # builds the mentiko platform image. inherits the tools layer from
@@ -37,6 +38,7 @@ ARG BASE_TAG=latest
 # ===========================================================================
 
 FROM node:22-slim AS builder
+ARG TARGETARCH
 ARG BUILD_COMMIT=unknown
 ARG BUILD_VERSION=unknown
 ARG BUILD_REPO=kollaborai/mentiko
@@ -50,7 +52,8 @@ RUN echo "=== npm ci ===" && \
 COPY . /build/
 WORKDIR /build/web
 
-RUN echo "=== next.js build (webpack) ===" && \
+RUN --mount=type=cache,target=/build/web/.next/cache,id=next-${TARGETARCH} \
+    echo "=== next.js build (webpack) ===" && \
     ./node_modules/.bin/next build --webpack && \
     test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1)
 
