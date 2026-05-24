@@ -8,8 +8,11 @@
 # trigger model: explicit releases only.
 #   - push a strict patch tag (e.g. `git tag v0.3.11 && git push --tags`)
 #     publishes `:<commit-sha>`, `:<tag>`, and `:latest`.
-#   - manual workflow_dispatch from the Actions UI publishes
-#     `:<commit-sha>` and `:latest` (no semver tag).
+#   - manual workflow_dispatch from the Actions UI builds the per-arch
+#     `:<commit-sha>-{arch}` images but does NOT touch the multi-arch
+#     `:<commit-sha>`, `:latest`, or `:vX.Y.Z` manifests. that gives us a
+#     dry-run path for validating CI changes without mutating what
+#     self-hosters pull.
 #
 # rationale: the platform image is heavy (1500+ npm packages, next.js build,
 # native compile). building on every push to main would be wasteful. tags
@@ -130,12 +133,14 @@ jobs:
             echo "has_semver=false" >> "$GITHUB_OUTPUT"
           fi
       - name: create + push manifest :${{ github.sha }}
+        if: github.ref_type == 'tag'
         run: |
           docker buildx imagetools create \
             --tag ${{ env.IMAGE }}:${{ github.sha }} \
             ${{ env.IMAGE }}:${{ github.sha }}-amd64 \
             ${{ env.IMAGE }}:${{ github.sha }}-arm64
       - name: create + push manifest :latest
+        if: github.ref_type == 'tag'
         run: |
           docker buildx imagetools create \
             --tag ${{ env.IMAGE }}:latest \
@@ -153,17 +158,25 @@ jobs:
           {
             echo "## mentiko platform built"
             echo ""
-            echo "**SHA tag:**  \`${{ env.IMAGE }}:${{ github.sha }}\`"
-            echo "**latest:**   \`${{ env.IMAGE }}:latest\`"
-            if [ "${{ steps.tag.outputs.has_semver }}" = "true" ]; then
-              echo "**semver:**   \`${{ env.IMAGE }}:${{ steps.tag.outputs.semver }}\`"
+            if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo "**SHA tag:**  \`${{ env.IMAGE }}:${{ github.sha }}\`"
+              echo "**latest:**   \`${{ env.IMAGE }}:latest\`"
+              if [ "${{ steps.tag.outputs.has_semver }}" = "true" ]; then
+                echo "**semver:**   \`${{ env.IMAGE }}:${{ steps.tag.outputs.semver }}\`"
+              fi
+              echo ""
+              echo "to pull this release:"
+              echo ""
+              echo "    docker pull ${{ env.IMAGE }}:latest"
+            else
+              echo "**per-arch:**  \`${{ env.IMAGE }}:${{ github.sha }}-amd64\`"
+              echo "              \`${{ env.IMAGE }}:${{ github.sha }}-arm64\`"
+              echo ""
+              echo "this was a workflow_dispatch run. multi-arch \`:latest\`,"
+              echo "\`:<sha>\`, and \`:vX.Y.Z\` manifests were NOT updated."
             fi
             echo ""
             echo "**built FROM:** \`ghcr.io/kollaborai/mentiko-base:${{ inputs.base_tag || 'latest' }}\`"
-            echo ""
-            echo "to pull this image:"
-            echo ""
-            echo "    docker pull ${{ env.IMAGE }}:latest"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: dispatch control-plane tenant build
