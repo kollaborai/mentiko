@@ -128,24 +128,24 @@ const WRONG = 'wrong-key-xyz789';
   }
 }
 
-// proof 4: correct key + same sequence reads back the value
+// proof 4: correct key + same sequence reads back the value.
+// (we previously checked `cipher_version` here, but it's not a stable
+// pragma name across multiple-ciphers builds and the live app never
+// queries it. proofs 1-3 already establish that the file is encrypted
+// and only opens with the matching key — proof 4 just confirms the
+// round-trip reads back.)
 {
   const db = new Ciphers(dbPath);
   db.pragma("cipher='sqlcipher'");
   db.pragma('legacy=4');
   db.exec(`PRAGMA key = '${KEY}'`);
   const got = db.prepare('SELECT x FROM t').get();
-  const ver = db.pragma('cipher_version', { simple: true });
   db.close();
   if (!got || got.x !== 'secret-value') {
     console.error('FATAL: correct key failed to read; got:', got);
     process.exit(1);
   }
-  if (!ver) {
-    console.error('FATAL: cipher_version empty — pragmas were no-ops');
-    process.exit(1);
-  }
-  console.log('sqlcipher verified, version:', ver);
+  console.log('sqlcipher verified (encryption + round-trip)');
 }
 
 try { fs.rmSync(dbPath, { force: true }); } catch {}
