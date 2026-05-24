@@ -164,10 +164,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: smoke ${{ matrix.arch }}
         run: |
+          # mount the script INTO /opt/mentiko so node resolves require()
+          # against the bundle's node_modules. mounting at /tmp would put
+          # the script outside the resolution path and every require fails
+          # with "Cannot find module 'ws'" etc.
           docker run --rm \
-            -v "$PWD/scripts/smoke-platform-image.cjs:/tmp/smoke.cjs:ro" \
+            -v "$PWD/scripts/smoke-platform-image.cjs:/opt/mentiko/smoke.cjs:ro" \
             ${{ matrix.image }} \
-            node /tmp/smoke.cjs
+            node /opt/mentiko/smoke.cjs
 
   manifest:
     needs: [platform-amd64, platform-arm64, smoke-test]
