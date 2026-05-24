@@ -134,6 +134,41 @@ RUN if [ -f /build/lib/mentiko-mcp/package.json ]; then \
       rm -rf /context/lib/mentiko-mcp/handlers; \
     fi
 
+# generate a thin runtime-natives manifest pinned to web/package-lock.json.
+# the runtime stage will `npm ci` against this to install the native deps it
+# needs (ws, @xterm/headless, better-sqlite3, better-sqlite3-multiple-ciphers)
+# at the exact versions the rest of the app was built against. using
+# `npm install pkg@version` instead would let registry-time resolution drift.
+RUN echo "=== generating runtime-natives manifest from lockfile ===" && \
+    mkdir -p /context/runtime-natives && \
+    node -e " \
+      const lock = require('/build/web/package-lock.json'); \
+      const pick = (name) => { \
+        const entry = lock.packages['node_modules/' + name]; \
+        if (!entry || !entry.version) { \
+          console.error('FATAL: missing ' + name + ' in lockfile'); \
+          process.exit(1); \
+        } \
+        return entry.version; \
+      }; \
+      const fs = require('fs'); \
+      const pkg = { \
+        name: 'mentiko-runtime-natives', \
+        version: '0.0.0', \
+        private: true, \
+        dependencies: { \
+          'ws': pick('ws'), \
+          '@xterm/headless': pick('@xterm/headless'), \
+          'better-sqlite3': pick('better-sqlite3'), \
+          'better-sqlite3-multiple-ciphers': pick('better-sqlite3-multiple-ciphers') \
+        } \
+      }; \
+      fs.writeFileSync('/context/runtime-natives/package.json', JSON.stringify(pkg, null, 2)); \
+    " && \
+    cd /context/runtime-natives && \
+    npm install --package-lock-only --no-audit --no-fund && \
+    echo "runtime-natives manifest:" && cat package.json
+
 # ===========================================================================
 # RUNTIME STAGE — inherit tools from mentiko-base, drop in the app
 # ===========================================================================
@@ -145,15 +180,31 @@ WORKDIR /opt/mentiko
 # copy assembled app from the builder stage
 COPY --from=builder --chown=mentiko:mentiko /context/ /opt/mentiko/
 
-# runtime deps installed AFTER the COPY (next.js standalone bundles some of
-# these in its own node_modules and would overwrite a base install)
-# ws + @xterm/headless: required by ws-terminal and pty-mgr
-# better-sqlite3: required by better-auth
-RUN echo "=== runtime deps ===" && \
+# runtime native deps installed AFTER the COPY because next.js standalone
+# bundles some of these in its own node_modules and would overwrite a base
+# install. installs done via `npm ci` against a thin runtime-natives manifest
+# the builder stage derived from web/package-lock.json — pins exact versions,
+# uses upstream prebuilds (no source compile = ~3-4 min savings per arch).
+#
+#   ws + @xterm/headless                : required by ws-terminal / pty-mgr
+#   better-sqlite3                      : required by better-auth
+#   better-sqlite3-multiple-ciphers     : required by web/lib/auth-server.ts
+#                                         and web/lib/sqlcipher-migrate.ts
+#                                         for sqlcipher auth.db encryption.
+#                                         WAS MISSING from the prior install
+#                                         list and only worked by matching-
+#                                         arch coincidence (each arch built
+#                                         its own bundle natively).
+RUN --mount=from=builder,source=/context/runtime-natives,target=/tmp/runtime-natives \
+    echo "=== runtime native deps (lockfile-pinned, prebuilds) ===" && \
+    mkdir -p /opt/mentiko/node_modules && \
+    cp /tmp/runtime-natives/package.json /opt/mentiko/package.json && \
+    cp /tmp/runtime-natives/package-lock.json /opt/mentiko/package-lock.json && \
     cd /opt/mentiko && \
-    [ -f package.json ] || echo '{}' > package.json && \
-    npm install --no-save ws @xterm/headless better-sqlite3 --build-from-source && \
-    chown -R mentiko:mentiko node_modules 2>/dev/null || true
+    npm ci --omit=dev --no-audit --no-fund && \
+    echo "installed versions:" && \
+    node -p "Object.entries(require('./package.json').dependencies).map(([n,v])=>n+': '+v).join('\n')" && \
+    chown -R mentiko:mentiko node_modules package.json package-lock.json 2>/dev/null || true
 
 # make scripts executable
 RUN chmod +x /opt/mentiko/bin/* 2>/dev/null || true
