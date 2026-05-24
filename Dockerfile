@@ -134,40 +134,22 @@ RUN if [ -f /build/lib/mentiko-mcp/package.json ]; then \
       rm -rf /context/lib/mentiko-mcp/handlers; \
     fi
 
-# generate a thin runtime-natives manifest pinned to web/package-lock.json.
-# the runtime stage will `npm ci` against this to install the native deps it
-# needs (ws, @xterm/headless, better-sqlite3, better-sqlite3-multiple-ciphers)
-# at the exact versions the rest of the app was built against. using
-# `npm install pkg@version` instead would let registry-time resolution drift.
-RUN echo "=== generating runtime-natives manifest from lockfile ===" && \
-    mkdir -p /context/runtime-natives && \
-    node -e " \
-      const lock = require('/build/web/package-lock.json'); \
-      const pick = (name) => { \
-        const entry = lock.packages['node_modules/' + name]; \
-        if (!entry || !entry.version) { \
-          console.error('FATAL: missing ' + name + ' in lockfile'); \
-          process.exit(1); \
-        } \
-        return entry.version; \
-      }; \
-      const fs = require('fs'); \
-      const pkg = { \
-        name: 'mentiko-runtime-natives', \
-        version: '0.0.0', \
-        private: true, \
-        dependencies: { \
-          'ws': pick('ws'), \
-          '@xterm/headless': pick('@xterm/headless'), \
-          'better-sqlite3': pick('better-sqlite3'), \
-          'better-sqlite3-multiple-ciphers': pick('better-sqlite3-multiple-ciphers') \
-        } \
-      }; \
-      fs.writeFileSync('/context/runtime-natives/package.json', JSON.stringify(pkg, null, 2)); \
-    " && \
-    cd /context/runtime-natives && \
-    npm install --package-lock-only --no-audit --no-fund && \
-    echo "runtime-natives manifest:" && cat package.json
+# build a self-contained runtime-natives lockfile by walking the dependency
+# closure of the four target packages in web/package-lock.json and copying
+# each entry verbatim — version, resolved url, integrity hash, deps.
+#
+# the previous approach generated a thin package.json and ran
+# `npm install --package-lock-only`, which re-resolved the transitive
+# subtree against the public npm registry at build time. that let two
+# builds of the same commit install different transitive bytes.
+#
+# this script (scripts/build-runtime-natives-lock.mjs) copies entries
+# directly from web/package-lock.json so npm ci can only fetch the exact
+# tarballs the source lockfile committed to. bit-for-bit reproducible.
+RUN echo "=== building runtime-natives lockfile from web lockfile ===" && \
+    node /build/scripts/build-runtime-natives-lock.mjs \
+      /build/web/package-lock.json \
+      /context/runtime-natives
 
 # ===========================================================================
 # RUNTIME STAGE — inherit tools from mentiko-base, drop in the app

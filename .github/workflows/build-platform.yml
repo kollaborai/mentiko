@@ -6,12 +6,18 @@
 # (built separately by build-base.yml).
 #
 # trigger model: explicit releases only.
-#   - push a strict patch tag (e.g. `git tag v0.3.11 && git push --tags`)
-#     publishes `:<commit-sha>`, `:<tag>`, and `:latest`.
-#   - manual workflow_dispatch from the Actions UI builds the per-arch
-#     `:<commit-sha>-{arch}` images but does NOT touch the multi-arch
-#     `:<commit-sha>`, `:latest`, or `:vX.Y.Z` manifests. that gives us a
-#     dry-run path for validating CI changes without mutating what
+#   every run, per-arch jobs push to a run-scoped staging tag:
+#     :staging-<run_id>-amd64
+#     :staging-<run_id>-arm64
+#   these are pre-smoke artifacts. nothing pinned to them in production.
+#
+#   - push a strict patch tag (e.g. `git tag v0.3.11 && git push --tags`):
+#     after smoke passes, manifest job promotes the two staging refs into
+#     multi-arch :<commit-sha>, :<tag>, and :latest.
+#   - manual workflow_dispatch from the Actions UI: smoke runs against the
+#     staging refs and the run reports green/red, but NO release-looking
+#     manifest (:<sha>, :latest, :vX.Y.Z) is created or moved. that gives
+#     us a real dry-run path for validating CI without mutating what
 #     self-hosters pull.
 #
 # rationale: the platform image is heavy (1500+ npm packages, next.js build,
@@ -61,6 +67,8 @@ jobs:
   platform-amd64:
     needs: validate-release-version
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.refs.outputs.image }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -69,7 +77,16 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: build + push amd64
+      - name: compute staging image ref
+        id: refs
+        # every pre-smoke per-arch push goes to a run-scoped staging tag
+        # rather than a release-looking :${sha}-${arch}. that way a bad
+        # build doesn't leave a pullable artifact at a "looks-released"
+        # path. promotion to :${sha}/:latest/:${semver} happens in the
+        # manifest job after smoke passes (and only on tag pushes).
+        run: |
+          echo "image=${{ env.IMAGE }}:staging-${{ github.run_id }}-amd64" >> "$GITHUB_OUTPUT"
+      - name: build + push amd64 (staging)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -82,13 +99,15 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
             BUILD_REPO=kollaborai/mentiko
-          tags: ${{ env.IMAGE }}:${{ github.sha }}-amd64
+          tags: ${{ steps.refs.outputs.image }}
           cache-from: type=gha,scope=platform-amd64
           cache-to: type=gha,scope=platform-amd64,mode=max
 
   platform-arm64:
     needs: validate-release-version
     runs-on: ubuntu-24.04-arm
+    outputs:
+      image: ${{ steps.refs.outputs.image }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -97,7 +116,11 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: build + push arm64
+      - name: compute staging image ref
+        id: refs
+        run: |
+          echo "image=${{ env.IMAGE }}:staging-${{ github.run_id }}-arm64" >> "$GITHUB_OUTPUT"
+      - name: build + push arm64 (staging)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -110,7 +133,7 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
             BUILD_REPO=kollaborai/mentiko
-          tags: ${{ env.IMAGE }}:${{ github.sha }}-arm64
+          tags: ${{ steps.refs.outputs.image }}
           cache-from: type=gha,scope=platform-arm64
           cache-to: type=gha,scope=platform-arm64,mode=max
 
@@ -127,8 +150,10 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-latest
+            image: ${{ needs.platform-amd64.outputs.image }}
           - arch: arm64
             runner: ubuntu-24.04-arm
+            image: ${{ needs.platform-arm64.outputs.image }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +166,7 @@ jobs:
         run: |
           docker run --rm \
             -v "$PWD/scripts/smoke-platform-image.mjs:/tmp/smoke.mjs:ro" \
-            ${{ env.IMAGE }}:${{ github.sha }}-${{ matrix.arch }} \
+            ${{ matrix.image }} \
             node /tmp/smoke.mjs
 
   manifest:
@@ -162,33 +187,39 @@ jobs:
           else
             echo "has_semver=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: create + push manifest :${{ github.sha }}
+      - name: create + push manifest :${{ github.sha }} (tag builds only)
+        # promote the staging refs to a release-looking :${sha} multi-arch
+        # alias only after smoke passed. on workflow_dispatch the staging
+        # refs remain reachable by their run-scoped name only.
         if: github.ref_type == 'tag'
         run: |
           docker buildx imagetools create \
             --tag ${{ env.IMAGE }}:${{ github.sha }} \
-            ${{ env.IMAGE }}:${{ github.sha }}-amd64 \
-            ${{ env.IMAGE }}:${{ github.sha }}-arm64
-      - name: create + push manifest :latest
+            ${{ needs.platform-amd64.outputs.image }} \
+            ${{ needs.platform-arm64.outputs.image }}
+      - name: create + push manifest :latest (tag builds only)
         if: github.ref_type == 'tag'
         run: |
           docker buildx imagetools create \
             --tag ${{ env.IMAGE }}:latest \
-            ${{ env.IMAGE }}:${{ github.sha }}-amd64 \
-            ${{ env.IMAGE }}:${{ github.sha }}-arm64
-      - name: create + push manifest :${{ steps.tag.outputs.semver }}
+            ${{ needs.platform-amd64.outputs.image }} \
+            ${{ needs.platform-arm64.outputs.image }}
+      - name: create + push manifest :${{ steps.tag.outputs.semver }} (tag builds only)
         if: steps.tag.outputs.has_semver == 'true'
         run: |
           docker buildx imagetools create \
             --tag ${{ env.IMAGE }}:${{ steps.tag.outputs.semver }} \
-            ${{ env.IMAGE }}:${{ github.sha }}-amd64 \
-            ${{ env.IMAGE }}:${{ github.sha }}-arm64
+            ${{ needs.platform-amd64.outputs.image }} \
+            ${{ needs.platform-arm64.outputs.image }}
       - name: write summary
         run: |
           {
             echo "## mentiko platform built"
             echo ""
+            echo "**staging amd64:** \`${{ needs.platform-amd64.outputs.image }}\`"
+            echo "**staging arm64:** \`${{ needs.platform-arm64.outputs.image }}\`"
             if [ "${{ github.ref_type }}" = "tag" ]; then
+              echo ""
               echo "**SHA tag:**  \`${{ env.IMAGE }}:${{ github.sha }}\`"
               echo "**latest:**   \`${{ env.IMAGE }}:latest\`"
               if [ "${{ steps.tag.outputs.has_semver }}" = "true" ]; then
@@ -199,11 +230,9 @@ jobs:
               echo ""
               echo "    docker pull ${{ env.IMAGE }}:latest"
             else
-              echo "**per-arch:**  \`${{ env.IMAGE }}:${{ github.sha }}-amd64\`"
-              echo "              \`${{ env.IMAGE }}:${{ github.sha }}-arm64\`"
               echo ""
-              echo "this was a workflow_dispatch run. multi-arch \`:latest\`,"
-              echo "\`:<sha>\`, and \`:vX.Y.Z\` manifests were NOT updated."
+              echo "this was a workflow_dispatch run. only the staging refs above"
+              echo "were pushed; \`:latest\`, \`:<sha>\`, and \`:vX.Y.Z\` were NOT updated."
             fi
             echo ""
             echo "**built FROM:** \`ghcr.io/kollaborai/mentiko-base:${{ inputs.base_tag || 'latest' }}\`"
