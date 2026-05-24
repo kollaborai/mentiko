@@ -61,7 +61,7 @@
       "readiness": {
         "type": "http",
         "url": "http://127.0.0.1:3000/api/health",
-        "timeout": 30000,
+        "timeout": 90000,
         "interval": 500
       },
       "restart": {

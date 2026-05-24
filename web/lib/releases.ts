@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.22",
+    date: "May 24, 2026",
+    title: "Process-Manager Platform Readiness Window 30s → 90s",
+    description:
+      "processes.json's platform readiness probe gave up after 30s of polling /api/health, which was killing perfectly healthy tenants during a normal boot sequence — next.js prints 'Ready in 0ms' fast but the first /api/health request triggers route compilation + auth migrations + marketplace startup that can take 60s+ on a 2GB VPS. process-manager would kill platform mid-startup, scheduleRestart, hit the same timeout, and eventually exhaust maxRestarts. tenants on slow disks would never come up cleanly. bump platform readiness timeout to 90s. pairs with the cp deploy health window (60s) and the public smoke stays-up guard (60s) — three nested windows of escalating tolerance.",
+    category: "fix",
+  },
+  {
     version: "v0.3.21",
     date: "May 23, 2026",
     title: "Stays-Up Smoke Guard",
