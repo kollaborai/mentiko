@@ -10,12 +10,20 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.19",
+    date: "May 23, 2026",
+    title: "Platform Build Speed",
+    description:
+      "CI build pipeline overhauled — webpack cache mount, smoke gate that proves sqlcipher encryption and per-arch native binaries before tagging :latest, lockfile-derived runtime native install (drops --build-from-source), one-shot next.js build shared across both arches via workflow artifact, registry-backed buildx cache, and node_modules layer split for incremental release pushes. Platform build wall-clock dropped from ~13 min to ~10 min. No user-visible behavior change.",
+    category: "improvement",
+  },
+  {
     version: "v0.3.18",
     date: "May 23, 2026",
-    title: "Profile Registration Idempotency + Platform Build Speed",
+    title: "Mentiko Profile Registration Idempotency",
     description:
-      "Boot-time profile registration no longer clobbers user-customized values: a user-changed active_profile in ~/.kollab/config.json is preserved across container restarts, and an existing 'mentiko' engine profile with a customized base_url survives subsequent registrations untouched. CI build pipeline also overhauled — webpack cache mount, smoke gate that proves sqlcipher encryption and per-arch native binaries before tagging :latest, lockfile-derived runtime native install (drops --build-from-source), one-shot next.js build shared across both arches via workflow artifact, registry-backed buildx cache, and node_modules layer split for incremental release pushes. Platform build wall-clock dropped from ~13 min to ~10 min.",
-    category: "improvement",
+      "Boot-time profile registration no longer clobbers user-customized values. A user-changed active_profile in ~/.kollab/config.json is preserved across container restarts, and an existing 'mentiko' engine profile with a customized base_url survives subsequent registrations untouched.",
+    category: "fix",
     docsHref: "/settings/mentiko-agent",
   },
   {
