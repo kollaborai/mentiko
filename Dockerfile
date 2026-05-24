@@ -159,6 +159,15 @@ FROM ghcr.io/kollaborai/mentiko-base:${BASE_TAG}
 
 WORKDIR /opt/mentiko
 
+# the smoke gate's native artifact audit (scripts/smoke-platform-image.cjs)
+# shells to file(1) to read ELF/Mach-O headers on every .node/.so/.dylib
+# under /opt/mentiko/node_modules. mentiko-base inherits from node:22-slim
+# which does NOT include /usr/bin/file. install it here (hotfix; mentiko-base
+# doesn't set USER, so this runs as root). when mentiko-base is next rebuilt,
+# move this into Dockerfile.base's apt block and drop the install from here.
+RUN apt-get update && apt-get install -y --no-install-recommends file && \
+    rm -rf /var/lib/apt/lists/*
+
 # copy assembled app from the builder stage
 COPY --from=builder --chown=mentiko:mentiko /context/ /opt/mentiko/
 
