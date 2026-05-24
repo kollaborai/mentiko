@@ -1,4 +1,8 @@
-// smoke-platform-image.mjs - in-container smoke test for the platform image.
+// smoke-platform-image.cjs - in-container smoke test for the platform image.
+// CommonJS (.cjs) intentional: uses require() throughout. .mjs forces ES
+// module mode and breaks the script — caught by the smoke gate itself in
+// dispatch run 26348498897 (its own first invocation failed closed, which
+// is exactly the fail-closed behavior the gate exists to provide).
 //
 // invoked by build-platform.yml's smoke-test job AFTER platform-{amd,arm}64
 // build the per-arch images and BEFORE the manifest job promotes them to

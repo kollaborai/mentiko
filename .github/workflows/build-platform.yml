@@ -165,9 +165,9 @@ jobs:
       - name: smoke ${{ matrix.arch }}
         run: |
           docker run --rm \
-            -v "$PWD/scripts/smoke-platform-image.mjs:/tmp/smoke.mjs:ro" \
+            -v "$PWD/scripts/smoke-platform-image.cjs:/tmp/smoke.cjs:ro" \
             ${{ matrix.image }} \
-            node /tmp/smoke.mjs
+            node /tmp/smoke.cjs
 
   manifest:
     needs: [platform-amd64, platform-arm64, smoke-test]
