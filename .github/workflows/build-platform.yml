@@ -116,6 +116,14 @@ jobs:
             web/.next/static
           retention-days: 1
           if-no-files-found: error
+          # CRITICAL: include-hidden-files defaults to false in v4. our
+          # standalone bundle has web/.next/standalone/.next/* (a hidden
+          # subdir holding BUILD_ID + server/ + manifests). without this
+          # flag, the upload silently drops everything under .next/ and
+          # the platform image boots with "Could not find a production
+          # build in the './.next' directory" — caught the hard way by
+          # the v0.3.19 release attempt.
+          include-hidden-files: true
           # disable compression — the bundle is mostly already-compressed
           # js chunks and re-compressing burns CI time for no gain.
           compression-level: 0
@@ -139,9 +147,16 @@ jobs:
           name: mentiko-next-build-${{ github.run_id }}
           path: web/.next
       - name: confirm artifact landed where Dockerfile expects
+        # check BOTH the top-level standalone wrapper AND the hidden
+        # .next/standalone/.next/ subdir (BUILD_ID + server/) that
+        # next.js needs at runtime. the v0.3.19 release shipped without
+        # this check and the .next/ subdir was missing because of
+        # upload-artifact@v4's default exclusion of hidden files.
         run: |
-          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing server.js"; exit 1; }
+          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing standalone/server.js"; exit 1; }
           test -d web/.next/static || { echo "FATAL: artifact missing static/"; exit 1; }
+          test -f web/.next/standalone/.next/BUILD_ID || { echo "FATAL: artifact missing standalone/.next/BUILD_ID"; exit 1; }
+          test -d web/.next/standalone/.next/server || { echo "FATAL: artifact missing standalone/.next/server/"; exit 1; }
       - name: compute staging image ref
         id: refs
         # every pre-smoke per-arch push goes to a run-scoped staging tag
@@ -192,9 +207,16 @@ jobs:
           name: mentiko-next-build-${{ github.run_id }}
           path: web/.next
       - name: confirm artifact landed where Dockerfile expects
+        # check BOTH the top-level standalone wrapper AND the hidden
+        # .next/standalone/.next/ subdir (BUILD_ID + server/) that
+        # next.js needs at runtime. the v0.3.19 release shipped without
+        # this check and the .next/ subdir was missing because of
+        # upload-artifact@v4's default exclusion of hidden files.
         run: |
-          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing server.js"; exit 1; }
+          test -f web/.next/standalone/server.js || { echo "FATAL: artifact missing standalone/server.js"; exit 1; }
           test -d web/.next/static || { echo "FATAL: artifact missing static/"; exit 1; }
+          test -f web/.next/standalone/.next/BUILD_ID || { echo "FATAL: artifact missing standalone/.next/BUILD_ID"; exit 1; }
+          test -d web/.next/standalone/.next/server || { echo "FATAL: artifact missing standalone/.next/server/"; exit 1; }
       - name: compute staging image ref
         id: refs
         run: |

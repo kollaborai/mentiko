@@ -10,9 +10,17 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.20",
+    date: "May 23, 2026",
+    title: "Platform Build Speed — Hotfix for v0.3.19",
+    description:
+      "v0.3.19 shipped with a broken next.js standalone bundle: actions/upload-artifact@v4 defaults to include-hidden-files=false, which silently dropped /opt/mentiko/.next/standalone/.next/ (BUILD_ID, server/, manifests) from the shared build artifact. tenants on v0.3.19 booted with 'Could not find a production build in the ./.next directory' and never came up. v0.3.20 sets include-hidden-files: true on the upload step and adds artifact integrity checks (BUILD_ID + server/) to the platform-{amd,arm}64 jobs so a future regression of this class fails at build time, not in prod.",
+    category: "fix",
+  },
+  {
     version: "v0.3.19",
     date: "May 23, 2026",
-    title: "Platform Build Speed",
+    title: "Platform Build Speed (BROKEN — superseded by v0.3.20)",
     description:
       "CI build pipeline overhauled — webpack cache mount, smoke gate that proves sqlcipher encryption and per-arch native binaries before tagging :latest, lockfile-derived runtime native install (drops --build-from-source), one-shot next.js build shared across both arches via workflow artifact, registry-backed buildx cache, and node_modules layer split for incremental release pushes. Platform build wall-clock dropped from ~13 min to ~10 min. No user-visible behavior change.",
     category: "improvement",
