@@ -172,6 +172,7 @@ function DecisionsPageContent() {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const searchParams = useSearchParams();
+  const selectedId = searchParams.get("id");
   const [showIntake, setShowIntake] = useState(() => searchParams.get("new") === "1");
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_W);
   const [collapsedGroups, setCollapsedGroups] = useState<Partial<Record<DecisionStatus, boolean>>>({
@@ -206,7 +207,13 @@ function DecisionsPageContent() {
           const items = (data.decisions || []) as Decision[];
           setDecisions(items);
 
-          if (items.length && !selectedRef.current) {
+          const selectedFromUrl = selectedId
+            ? items.find((decision) => decision.id === selectedId)
+            : null;
+          if (selectedFromUrl) {
+            setSelected(selectedFromUrl);
+            selectedRef.current = selectedFromUrl;
+          } else if (items.length && !selectedRef.current) {
             setSelected(items[0]);
           }
           if (selectedRef.current) {
@@ -220,7 +227,7 @@ function DecisionsPageContent() {
         setLoading(false);
       }
     },
-    [fetchWithNamespace, workspacePath]
+    [fetchWithNamespace, workspacePath, selectedId]
   );
 
   // reset selection when workspace changes

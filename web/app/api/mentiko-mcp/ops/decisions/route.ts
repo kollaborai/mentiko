@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { getDecision } from "@/lib/decision-storage";
-import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { createDecision, getDecision, updateDecision } from "@/lib/decision-storage";
+import { withErrorHandling } from "@/lib/api-response";
 import { BadRequest, NotFound } from "@/lib/api-errors";
-import type { GuidedFlow } from "@/lib/decision-types";
+import type { DecisionMode, GuidedFlow } from "@/lib/decision-types";
 
 export const dynamic = "force-dynamic";
+
+function makeGuidedFlow(): GuidedFlow {
+  return {
+    currentRound: 1,
+    startedAt: new Date().toISOString(),
+    round1: { status: "pending", questions: [], answers: [] },
+    round2: { status: "pending", tailoredOptions: [] },
+    round3: { status: "pending" },
+  };
+}
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
   const ctx = await requireOpsAuth(request);
@@ -63,5 +73,43 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     plan: guidedFlow.round3?.plan || null,
   };
 
-  return apiSuccess({ decision: flattened });
+  return NextResponse.json({ decision: flattened });
+});
+
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  const ctx = await requireOpsAuth(request);
+  if (ctx instanceof NextResponse) return ctx;
+  const perm = requireOpsPermission(ctx, "manage_tasks", "decisions:write");
+  if (perm) return perm;
+
+  const body = await request.json() as {
+    topic?: string;
+    mode?: DecisionMode;
+  };
+  const topic = body.topic?.trim();
+  const mode: DecisionMode = body.mode === "classic" ? "classic" : "guided";
+
+  if (!topic) {
+    throw new BadRequest("topic is required");
+  }
+
+  const created = createDecision(
+    ctx.namespaceId,
+    ctx.orgId,
+    { prompt: topic, source: "mentiko-mcp" },
+    undefined,
+  );
+
+  const decision = await updateDecision(
+    ctx.namespaceId,
+    ctx.orgId,
+    created.id,
+    {
+      mode,
+      ...(mode === "guided" ? { guidedFlow: makeGuidedFlow() } : {}),
+    },
+    undefined,
+  );
+
+  return NextResponse.json({ decision }, { status: 201 });
 });

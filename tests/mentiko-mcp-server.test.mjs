@@ -271,6 +271,19 @@ test("headless fallback denies tier-B and tier-C when the bar cannot answer", ()
   );
 });
 
+test("start_new_decision persists through the decisions handler", () => {
+  const block = src.match(/if \(name === "start_new_decision"\) \{[\s\S]*?\n    \}/);
+  assert(block, "missing start_new_decision handler");
+  assert(
+    block[0].includes("decisionsHandler.startNewDecision"),
+    "start_new_decision must create a decision through the ops handler",
+  );
+  assert(
+    !block[0].includes("/decisions/new"),
+    "start_new_decision must not navigate to missing /decisions/new route",
+  );
+});
+
 // ── Run ──
 
 await runTests();

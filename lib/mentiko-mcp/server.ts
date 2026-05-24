@@ -415,10 +415,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       const { allowed } = await checkPermission(name, args);
       if (!allowed) return textResult("Permission denied by user.");
       const mode = args.mode || "guided";
+      const decision = await decisionsHandler.startNewDecision(args.topic, mode);
       await dispatchEffect("navigate", {
-        route: `/decisions/new?mode=${mode}${args.topic ? `&topic=${encodeURIComponent(args.topic)}` : ""}`,
+        route: `/decisions?id=${encodeURIComponent(decision.id)}`,
       });
-      return textResult(`Starting new decision: ${args.topic || "(no topic)"}`);
+      return textResult(
+        JSON.stringify({
+          decisionId: decision.id,
+          topic: decision.prompt || decision.title || args.topic,
+          mode: decision.mode || mode,
+        }, null, 2),
+      );
     }
 
     if (name === "list_decisions") {

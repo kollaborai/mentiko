@@ -1,6 +1,6 @@
 {
   "name": "mentiko",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "private": true,
   "scripts": {
     "dev": "npx tsx scripts/doctor.ts --preflight && npx tsx lib/process-manager.ts",

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { orgPath } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
+const SAFE_CHAIN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /**
  * POST /api/mentiko-mcp/ops/context/runs
  * Start a chain run. Delegates to the existing /api/chains/run route
- * using internal fetch with the ops inbox key instead of a user cookie.
+ * using the trusted internal service bearer auth accepted by auth-bridge.
  */
 export async function POST(req: Request) {
   const ctx = await requireOpsAuth(req);
@@ -14,7 +18,7 @@ export async function POST(req: Request) {
   const perm = requireOpsPermission(ctx, "manage_chains", "runs:start");
   if (perm) return perm;
 
-  const { namespaceId } = ctx;
+  const { namespaceId, orgId } = ctx;
   const { chainId, task, workspaceId } = (await req.json()) as {
     chainId?: string;
     task?: string;
@@ -22,28 +26,32 @@ export async function POST(req: Request) {
   };
 
   if (!chainId) return new NextResponse("chainId required", { status: 400 });
+  if (!SAFE_CHAIN_ID_RE.test(chainId)) {
+    return new NextResponse("invalid chainId", { status: 400 });
+  }
 
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
-  const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
+  const chainPath = join(orgPath(namespaceId, orgId, "chains", chainId), "chain.json");
+  if (!existsSync(chainPath)) {
+    return new NextResponse(`Chain not found: ${chainId}`, { status: 404 });
+  }
 
-  // Call the existing public run route. We pass the inbox key as a header
-  // so the route can bypass cookie auth on loopback. The route currently
-  // uses checkAuth which requires a session — we need to call it via the
-  // internal route path instead.
-  //
-  // Simplest safe path: POST to /api/chains/run with a synthetic internal
-  // header. The chains/run route uses checkAuth; for now we accept that
-  // start_run only works when the user is logged in (session cookie present).
-  // A future improvement: add inbox-key bypass to /api/chains/run.
-  const res = await fetch(`${webUrl}/api/chains/run`, {
+  const chain = JSON.parse(readFileSync(chainPath, "utf-8"));
+
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    return new NextResponse("BETTER_AUTH_SECRET required for MCP start_run", { status: 500 });
+  }
+
+  const res = await fetch(`${new URL(req.url).origin}/api/chains/run`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Mentiko-Namespace-Id": namespaceId,
-      // forward the inbox key so future versions of chains/run can bypass auth
-      "X-Mentiko-Inbox-Key": inboxKey,
+      Authorization: `Bearer ${secret}`,
+      "x-namespace-id": namespaceId,
+      "x-org-id": orgId,
     },
     body: JSON.stringify({
+      chain,
       chainId,
       userPrompt: task || "",
       workspaceId,

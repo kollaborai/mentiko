@@ -10,59 +10,67 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.26",
+    date: "May 24, 2026",
+    title: "MCP Run and Decision Reliability",
+    description:
+      "MCP tools for starting chain runs and guided decisions now create the expected workspace records and open the right pages. Agent-driven smoke flows can start runs, create decisions, and continue from the returned ids without falling through to placeholder navigation.",
+    category: "fix",
+  },
+  {
     version: "v0.3.25",
     date: "May 24, 2026",
-    title: "Fix Chain Agent Profile Fallback",
+    title: "Agent Profile Selection Reliability",
     description:
-      "Fixes chain runs silently falling back to bare claude when a saved chain referenced a deleted or renamed agent profile. The run API now resolves a valid effective profile before writing the run-local chain, quick-run surfaces can send an explicit profile selection such as Kollab, and the bash runner skips stale agent/chain profile ids instead of launching a legacy CLI fallback. Missing requested profiles now fail loudly unless a valid workspace or namespace default exists.",
+      "Chain runs now resolve the selected agent profile before launch and keep that choice through quick run, rerun, and saved-chain execution. Stale profile references are skipped in favor of a valid workspace or namespace default, so the selected agent behavior stays consistent.",
     category: "fix",
   },
   {
     version: "v0.3.24",
     date: "May 24, 2026",
-    title: "Fix Tenant Boot Deadlock and Port Cleanup",
+    title: "Startup Reliability Improvements",
     description:
-      "Fixes the tenant boot loop exposed on marco after v0.3.23. Next.js no longer blocks /api/health readiness while waiting for kollabor-engine profile registration; process-manager starts kollabor-engine before platform when available; readiness timeouts for critical processes now abort startup instead of continuing to dependents; and port cleanup now uses fuser with an lsof fallback because mentiko-base ships fuser but not lsof. Also guards against duplicate start attempts when a process is already ready.",
+      "Improves startup sequencing for the platform, engine, and managed background processes. Health checks now become ready at the right point in the boot sequence, startup failures stop dependent work earlier, and duplicate process launches are guarded more carefully.",
     category: "fix",
   },
   {
     version: "v0.3.23",
     date: "May 24, 2026",
-    title: "Process-Manager Daemon-Fork Detection Gated on Opt-In",
+    title: "Process Supervision Reliability",
     description:
-      "Fixes a pre-existing process-manager bug that surfaced once v0.3.22 bumped the platform readiness window past 30s. process-manager's daemon-fork detection (pgrep -f for the cmd) ran on EVERY managed process, including foreground ones like 'node server.js'. when next.js's parent stayed alive (no real fork), pgrep matched the next-server itself and process-manager logged 'platform daemon pid N' — then on the next event tick spawned ANOTHER next.js, which hit EADDRINUSE :3000 because the original was still bound. crash-loop, no tenant could come up. fix: add a daemonize: boolean flag to ProcessConfig, set it true on pty-mgr (the only process that actually daemonizes), gate findDaemonPid invocations on it everywhere. foreground processes are now treated as foreground.",
+      "Process supervision now distinguishes foreground services from daemons explicitly. This keeps managed services from being tracked as the wrong process and makes restart behavior more predictable across platform, terminal, engine, and worker processes.",
     category: "fix",
   },
   {
     version: "v0.3.22",
     date: "May 24, 2026",
-    title: "Process-Manager Platform Readiness Window 30s → 90s",
+    title: "Startup Health Window Improvements",
     description:
-      "processes.json's platform readiness probe gave up after 30s of polling /api/health, which was killing perfectly healthy tenants during a normal boot sequence — next.js prints 'Ready in 0ms' fast but the first /api/health request triggers route compilation + auth migrations + marketplace startup that can take 60s+ on a 2GB VPS. process-manager would kill platform mid-startup, scheduleRestart, hit the same timeout, and eventually exhaust maxRestarts. tenants on slow disks would never come up cleanly. bump platform readiness timeout to 90s. pairs with the cp deploy health window (60s) and the public smoke stays-up guard (60s) — three nested windows of escalating tolerance.",
+      "Startup health checks now allow more time for first-load initialization before declaring the platform unavailable. This reduces false negatives during normal cold starts while keeping the health gate strict once the app is ready.",
     category: "fix",
   },
   {
     version: "v0.3.21",
     date: "May 23, 2026",
-    title: "Stays-Up Smoke Guard",
+    title: "Release Smoke Guard",
     description:
-      "Adds a second smoke stage to the platform build pipeline that boots the candidate image with the default platform entrypoint and probes /api/health 4 times across a 60-second window. Fails the release if uptime regresses (process-manager restarted next.js mid-window), if any probe returns a 'bad' or 'fail' health status, if the container exits early, or if the image never becomes ready within 60s. Catches the v0.3.19-class failure where the image filesystem looked fine but the running process crash-looped — the prior in-container smoke would have passed.",
+      "The release pipeline now includes a longer runtime smoke check before publishing images. Candidate builds must boot, stay healthy, and keep responding across multiple probes before they can be promoted.",
     category: "improvement",
   },
   {
     version: "v0.3.20",
     date: "May 23, 2026",
-    title: "Platform Build Speed — Hotfix for v0.3.19",
+    title: "Build Artifact Integrity Checks",
     description:
-      "v0.3.19 shipped with a broken next.js standalone bundle: actions/upload-artifact@v4 defaults to include-hidden-files=false, which silently dropped /opt/mentiko/.next/standalone/.next/ (BUILD_ID, server/, manifests) from the shared build artifact. tenants on v0.3.19 booted with 'Could not find a production build in the ./.next directory' and never came up. v0.3.20 sets include-hidden-files: true on the upload step and adds artifact integrity checks (BUILD_ID + server/) to the platform-{amd,arm}64 jobs so a future regression of this class fails at build time, not in prod.",
+      "Build artifacts now include stronger integrity checks before release. The pipeline verifies required standalone output before architecture-specific packaging continues.",
     category: "fix",
   },
   {
     version: "v0.3.19",
     date: "May 23, 2026",
-    title: "Platform Build Speed (BROKEN — superseded by v0.3.20)",
+    title: "Platform Build Speed",
     description:
-      "CI build pipeline overhauled — webpack cache mount, smoke gate that proves sqlcipher encryption and per-arch native binaries before tagging :latest, lockfile-derived runtime native install (drops --build-from-source), one-shot next.js build shared across both arches via workflow artifact, registry-backed buildx cache, and node_modules layer split for incremental release pushes. Platform build wall-clock dropped from ~13 min to ~10 min. No user-visible behavior change.",
+      "The platform release pipeline is faster and more consistent across architectures, with shared build output, stricter smoke checks, lockfile-aligned native dependencies, and improved layer reuse for incremental releases.",
     category: "improvement",
   },
   {
@@ -79,7 +87,7 @@ export const releases: Release[] = [
     date: "May 23, 2026",
     title: "Floating Mentiko Agent Hardening",
     description:
-      "Tenant boot-time gateway profile registration now waits 90s for kollabor-engine to come up and falls back to a one-shot lazy retry on first profile read. Floating agent no longer shows 'engine offline' while a session is actively connected.",
+      "Hosted workspace gateway profile registration is more patient during startup and retries profile discovery on first read. Floating agent status now stays aligned with active connected sessions.",
     category: "fix",
     docsHref: "/settings/mentiko-agent",
   },
@@ -88,7 +96,7 @@ export const releases: Release[] = [
     date: "May 22, 2026",
     title: "Hosted AI Gateway Smoke Proof",
     description:
-      "Hosted tenant chain runs now stamp request-selected profiles onto the run-local chain, pass run context into PTY agents, and include a first-class AI gateway smoke chain for included-AI verification.",
+      "Hosted chain runs now keep the request-selected profile on the run-local chain, pass run context into PTY agents, and include a first-class AI gateway smoke chain for included-AI verification.",
     category: "fix",
     docsHref: "/chains",
   },
@@ -97,7 +105,7 @@ export const releases: Release[] = [
     date: "May 22, 2026",
     title: "Hosted Internal API Loopback Fix",
     description:
-      "Hosted tenants now route server-to-server task, schedule, webhook, setup, and job callback API calls through the local runtime instead of the public tenant URL, fixing task chain runs that failed with masked fetch errors.",
+      "Hosted workspaces now route server-to-server task, schedule, webhook, setup, and job callback API calls through the local runtime, improving reliability for task-triggered chain runs.",
     category: "fix",
     docsHref: "/tasks",
   },
@@ -106,7 +114,7 @@ export const releases: Release[] = [
     date: "May 22, 2026",
     title: "Hosted AI Gateway Runtime Env Fix",
     description:
-      "Hosted tenant runtimes now pass AI gateway configuration into the managed Next.js process while keeping the raw upstream gateway token out of non-platform child processes.",
+      "Hosted runtimes now pass AI gateway configuration into the managed app process while keeping raw upstream gateway tokens out of child agent processes.",
     category: "fix",
     docsHref: "/account",
   },
@@ -115,25 +123,25 @@ export const releases: Release[] = [
     date: "May 22, 2026",
     title: "Hosted AI Gateway Proxy Fix",
     description:
-      "Hosted providerless agents now reach the tenant-local AI gateway proxy even when the Next.js runtime reconstructs internal loopback requests with the public tenant URL.",
+      "Hosted providerless agents now reach the local AI gateway proxy consistently, including internal loopback requests reconstructed by the app runtime.",
     category: "fix",
     docsHref: "/account",
   },
   {
     version: "v0.3.11",
     date: "May 22, 2026",
-    title: "Tenant AI Gateway Wiring",
+    title: "Hosted AI Gateway Wiring",
     description:
-      "Hosted tenants can now use the Mentiko AI gateway when a profile has no provider key. The platform injects scoped gateway credentials, routes local OpenAI-compatible calls through the tenant proxy, and keeps self-hosted/provider-key setups separate.",
+      "Hosted workspaces can now use the Mentiko AI gateway when a profile has no provider key. The platform injects scoped gateway credentials, routes local OpenAI-compatible calls through the workspace proxy, and keeps self-hosted/provider-key setups separate.",
     category: "new",
     docsHref: "/account",
   },
   {
     version: "v0.3.10",
     date: "May 20, 2026",
-    title: "Tenant Password Reset Delivery",
+    title: "Hosted Password Reset Delivery",
     description:
-      "Tenant password reset emails now send from the tenant help address, and release metadata lines up with the public platform image tag so deploys target the expected image.",
+      "Hosted password reset emails now send from the workspace help address, and release metadata lines up with the public platform image tag so updates target the expected image.",
     category: "fix",
     docsHref: "/settings/security",
   },
@@ -366,7 +374,7 @@ export const releases: Release[] = [
     date: "March 3, 2026",
     title: "Authentication & Multi-Tenant",
     description:
-      "Better-auth integration with multi-tenant provisioning. Docker deployment with Compose and Caddy reverse proxy. Rebrand to Mentiko. Admin RBAC with is_admin flag. Invite system. Swappable infrastructure providers per tenant.",
+      "Better-auth integration with workspace provisioning. Docker deployment with Compose and Caddy reverse proxy. Rebrand to Mentiko. Admin RBAC with is_admin flag. Invite system. Swappable infrastructure providers.",
     category: "new",
     docsHref: "/docs/security",
   },

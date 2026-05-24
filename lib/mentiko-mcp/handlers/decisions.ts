@@ -26,10 +26,28 @@ interface FlattenedDecision {
   plan?: any;
 }
 
+interface StartedDecision {
+  id: string;
+  prompt?: string;
+  title?: string;
+  status?: string;
+  mode?: string;
+}
+
 export async function getDecision(id: string): Promise<FlattenedDecision> {
   return await opsGet<{ decision: FlattenedDecision }>(
     "/api/mentiko-mcp/ops/decisions",
     { id }
+  ).then((r) => r.decision);
+}
+
+export async function startNewDecision(
+  topic: string,
+  mode: "guided" | "classic" = "guided"
+): Promise<StartedDecision> {
+  return await opsPost<{ decision: StartedDecision }>(
+    "/api/mentiko-mcp/ops/decisions",
+    { topic, mode }
   ).then((r) => r.decision);
 }
 

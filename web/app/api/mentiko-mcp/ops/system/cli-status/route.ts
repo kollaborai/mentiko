@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { withErrorHandling } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
@@ -20,5 +20,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   });
 
   const data = await response.json();
-  return apiSuccess(data);
+  if (!response.ok) {
+    return NextResponse.json(data, { status: response.status });
+  }
+
+  return NextResponse.json(data?.data ?? data);
 });
