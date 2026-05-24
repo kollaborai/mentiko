@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.21",
+    date: "May 23, 2026",
+    title: "Stays-Up Smoke Guard",
+    description:
+      "Adds a second smoke stage to the platform build pipeline that boots the candidate image with the default platform entrypoint and probes /api/health 4 times across a 60-second window. Fails the release if uptime regresses (process-manager restarted next.js mid-window), if any probe returns a 'bad' or 'fail' health status, if the container exits early, or if the image never becomes ready within 60s. Catches the v0.3.19-class failure where the image filesystem looked fine but the running process crash-looped — the prior in-container smoke would have passed.",
+    category: "improvement",
+  },
+  {
     version: "v0.3.20",
     date: "May 23, 2026",
     title: "Platform Build Speed — Hotfix for v0.3.19",
