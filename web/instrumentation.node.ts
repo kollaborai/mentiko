@@ -148,5 +148,8 @@ export async function register() {
     console.warn("[audit] guest enforcement audit logger init failed:", msg);
   }
   await startMarketplaceSync();
-  await registerMentikoEngineProfile();
+  // Do not block Next.js readiness on kollabor-engine. process-manager
+  // starts engine separately, and startup health must be able to answer
+  // while profile registration retries/fails independently.
+  void registerMentikoEngineProfile();
 }

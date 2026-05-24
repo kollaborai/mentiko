@@ -51,48 +51,6 @@
       "order": 2
     },
     {
-      "name": "platform",
-      "cmd": "node",
-      "args": ["server.js"],
-      "env": {
-        "PORT": "3000"
-      },
-      "cwd": "/opt/mentiko",
-      "dependsOn": ["ws-terminal"],
-      "readiness": {
-        "type": "http",
-        "url": "http://127.0.0.1:3000/api/health",
-        "timeout": 90000,
-        "interval": 500
-      },
-      "restart": {
-        "enabled": true,
-        "maxRestarts": 5,
-        "baseDelay": 2000,
-        "maxDelay": 30000,
-        "resetAfter": 120000
-      },
-      "critical": true,
-      "order": 3
-    },
-    {
-      "name": "worker",
-      "cmd": "node",
-      "args": ["server/background-worker.js"],
-      "env": {},
-      "cwd": "/opt/mentiko",
-      "dependsOn": ["platform"],
-      "restart": {
-        "enabled": true,
-        "maxRestarts": 10,
-        "baseDelay": 2000,
-        "maxDelay": 60000,
-        "resetAfter": 120000
-      },
-      "critical": false,
-      "order": 4
-    },
-    {
       "name": "kollabor-engine",
       "cmd": "/opt/pipx/venvs/kollab/bin/python",
       "args": ["-m", "kollabor_engine", "serve", "--port", "7433"],
@@ -113,6 +71,48 @@
         "maxRestarts": 10,
         "baseDelay": 2000,
         "maxDelay": 30000,
+        "resetAfter": 120000
+      },
+      "critical": false,
+      "order": 3
+    },
+    {
+      "name": "platform",
+      "cmd": "node",
+      "args": ["server.js"],
+      "env": {
+        "PORT": "3000"
+      },
+      "cwd": "/opt/mentiko",
+      "dependsOn": ["ws-terminal", "kollabor-engine"],
+      "readiness": {
+        "type": "http",
+        "url": "http://127.0.0.1:3000/api/health",
+        "timeout": 90000,
+        "interval": 500
+      },
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 5,
+        "baseDelay": 2000,
+        "maxDelay": 30000,
+        "resetAfter": 120000
+      },
+      "critical": true,
+      "order": 4
+    },
+    {
+      "name": "worker",
+      "cmd": "node",
+      "args": ["server/background-worker.js"],
+      "env": {},
+      "cwd": "/opt/mentiko",
+      "dependsOn": ["platform"],
+      "restart": {
+        "enabled": true,
+        "maxRestarts": 10,
+        "baseDelay": 2000,
+        "maxDelay": 60000,
         "resetAfter": 120000
       },
       "critical": false,

@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.24",
+    date: "May 24, 2026",
+    title: "Fix Tenant Boot Deadlock and Port Cleanup",
+    description:
+      "Fixes the tenant boot loop exposed on marco after v0.3.23. Next.js no longer blocks /api/health readiness while waiting for kollabor-engine profile registration; process-manager starts kollabor-engine before platform when available; readiness timeouts for critical processes now abort startup instead of continuing to dependents; and port cleanup now uses fuser with an lsof fallback because mentiko-base ships fuser but not lsof. Also guards against duplicate start attempts when a process is already ready.",
+    category: "fix",
+  },
+  {
     version: "v0.3.23",
     date: "May 24, 2026",
     title: "Process-Manager Daemon-Fork Detection Gated on Opt-In",

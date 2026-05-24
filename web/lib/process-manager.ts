@@ -265,8 +265,20 @@ function scheduleRestart(m: ManagedProcess) {
   }, delay);
 }
 
-async function startOne(config: ProcessConfig): Promise<ManagedProcess> {
+interface StartOptions {
+  abortCriticalReadinessTimeout?: boolean;
+}
+
+async function startOne(config: ProcessConfig, options: StartOptions = {}): Promise<ManagedProcess> {
   const prev = managed.get(config.name);
+  if (prev?.restartTimer) {
+    clearTimeout(prev.restartTimer);
+    prev.restartTimer = null;
+  }
+  if (prev?.status === 'ready' && (prev.child || prev.pid)) {
+    log(`${config.name} already ready, skipping duplicate start`);
+    return prev;
+  }
   const m = spawnChild(config);
   m.restarts = prev?.restarts ?? 0;
   m.stoppedByUser = prev?.stoppedByUser ?? false;
@@ -289,7 +301,14 @@ async function startOne(config: ProcessConfig): Promise<ManagedProcess> {
     logErr(`${config.name} readiness timeout, killing`);
     await killProc(m);
     m.status = 'crashed';
-    scheduleRestart(m);
+    if (options.abortCriticalReadinessTimeout && config.critical) {
+      m.status = 'failed';
+      logErr(`critical process ${config.name} failed readiness during startup`);
+      exitCode = 1;
+      await shutdown();
+    } else {
+      scheduleRestart(m);
+    }
   }
   return m;
 }
@@ -317,24 +336,38 @@ function killTree(pid: number, signal: NodeJS.Signals) {
   try { process.kill(pid, signal); } catch {}
 }
 
+function portHolderPids(port: number): number[] {
+  try {
+    const cmd =
+      `if command -v fuser >/dev/null 2>&1; then ` +
+      `fuser -n tcp ${port} 2>/dev/null; ` +
+      `elif command -v lsof >/dev/null 2>&1; then ` +
+      `lsof -ti :${port} 2>/dev/null; fi`;
+    const out = execSync(cmd, { encoding: 'utf-8' }).trim();
+    if (!out) return [];
+    return out
+      .split(/\s+/)
+      .map((p) => Number(p))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
+
 async function killPortHolders(port: number, reason: string) {
   try {
-    const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-    if (!pids) return;
-    for (const pid of pids.split('\n').filter(Boolean).map(Number)) {
+    const pids = portHolderPids(port);
+    if (!pids.length) return;
+    for (const pid of pids) {
       if (pid === process.pid) continue;
       try { process.kill(pid, 'SIGTERM'); log(`${reason}: killed pid ${pid} on port ${port}`); } catch {}
     }
     const deadline = Date.now() + 2000;
     while (Date.now() < deadline) {
       await sleep(100);
-      try {
-        const still = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-        if (!still) return;
-      } catch { return; }
+      if (!portHolderPids(port).length) return;
     }
-    const stuck = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
-    for (const pid of stuck.split('\n').filter(Boolean).map(Number)) {
+    for (const pid of portHolderPids(port)) {
       if (pid === process.pid) continue;
       try { process.kill(pid, 'SIGKILL'); log(`${reason}: force-killed pid ${pid} on port ${port}`); } catch {}
     }
@@ -819,7 +852,7 @@ async function main() {
     if (shuttingDown) break;
     const pc = config.processes.find((p: ProcessConfig) => p.name === name)!;
     log(`starting ${name}...`);
-    await startOne(pc);
+    await startOne(pc, { abortCriticalReadinessTimeout: true });
     if (shuttingDown) break;
     const m = managed.get(name);
     if (m?.status === 'failed' && m.config.critical) {
