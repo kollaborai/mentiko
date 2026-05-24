@@ -126,7 +126,7 @@ async function postOrPutProfile(
   fetchImpl: FetchLike,
   token: string,
   config: MentikoProfileConfig,
-): Promise<{ ok: boolean; status: number; body: string }> {
+): Promise<{ ok: boolean; status: number; body: string; customized?: boolean }> {
   const headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
@@ -145,6 +145,35 @@ async function postOrPutProfile(
 
   if (!looksLikeExists(postRes.status, postBody)) {
     return { ok: false, status: postRes.status, body: postBody };
+  }
+
+  // profile already exists. before PUT-ing our defaults, check if the user
+  // customized base_url (e.g. pointed at a different upstream like featherless).
+  // if customized, leave it — don't clobber on every boot.
+  const getRes = await fetchImpl(
+    `${ENGINE_BASE_URL}/profiles/${encodeURIComponent(PROFILE_NAME)}`,
+    { method: "GET", headers },
+  );
+  if (getRes.ok) {
+    const getBody = await getRes.text();
+    let existingBaseUrl: string | null = null;
+    try {
+      const parsed = JSON.parse(getBody) as unknown;
+      if (parsed && typeof parsed === "object" && "base_url" in parsed) {
+        const value = (parsed as { base_url?: unknown }).base_url;
+        if (typeof value === "string") existingBaseUrl = value;
+      }
+    } catch {
+      // unparseable response — fall through to PUT
+    }
+    if (existingBaseUrl && existingBaseUrl !== config.base_url) {
+      return {
+        ok: true,
+        status: getRes.status,
+        body: getBody,
+        customized: true,
+      };
+    }
   }
 
   const putRes = await fetchImpl(
@@ -197,8 +226,29 @@ async function writeActiveProfile(): Promise<void> {
   if (!config.kollabor.llm || typeof config.kollabor.llm !== "object") {
     config.kollabor.llm = {};
   }
-  config.kollabor.llm.active_profile = PROFILE_NAME;
-  config.kollabor.llm.default_profile = { name: PROFILE_NAME, level: "global" };
+
+  // idempotent: only seed if missing or still on mentiko. don't clobber a
+  // user who picked a different active profile.
+  const llm = config.kollabor.llm;
+  const existingActive = typeof llm.active_profile === "string" ? llm.active_profile : null;
+  const existingDefaultName =
+    llm.default_profile && typeof llm.default_profile === "object"
+      ? llm.default_profile.name
+      : null;
+  let dirty = false;
+  if (!existingActive || existingActive === PROFILE_NAME) {
+    if (existingActive !== PROFILE_NAME) {
+      llm.active_profile = PROFILE_NAME;
+      dirty = true;
+    }
+  }
+  if (!existingDefaultName || existingDefaultName === PROFILE_NAME) {
+    if (existingDefaultName !== PROFILE_NAME) {
+      llm.default_profile = { name: PROFILE_NAME, level: "global" };
+      dirty = true;
+    }
+  }
+  if (!dirty) return;
 
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
@@ -239,7 +289,11 @@ export async function registerMentikoProfile(): Promise<boolean> {
     }
 
     await writeActiveProfile();
-    console.log("[mentiko-profile] registered");
+    if (result.customized) {
+      console.log("[mentiko-profile] registered (existing base_url customization preserved)");
+    } else {
+      console.log("[mentiko-profile] registered");
+    }
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.18",
+    date: "May 23, 2026",
+    title: "Mentiko Profile Registration Idempotency",
+    description:
+      "Boot-time profile registration no longer clobbers user-customized values. A user-changed active_profile in ~/.kollab/config.json is preserved across container restarts, and an existing 'mentiko' engine profile with a customized base_url survives subsequent registrations untouched.",
+    category: "fix",
+    docsHref: "/settings/mentiko-agent",
+  },
+  {
     version: "v0.3.17",
     date: "May 23, 2026",
     title: "Floating Mentiko Agent Hardening",
