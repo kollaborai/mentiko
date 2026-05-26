@@ -376,6 +376,9 @@ cleanup_orphaned_sessions() {
         # skip monitor sessions - they're companion processes to agent sessions
         # and are not tracked in run.json but are essential for chain progression
         [[ "$session" == monitor-* ]] && continue
+        # skip completion handlers - they briefly run outside run.json while
+        # finalizing artifacts, events, and run status.
+        [[ "$session" == complete-* ]] && continue
         # skip user terminal sessions - standalone sessions not tied to runs
         [[ "$session" == term-* ]] && continue
         # skip onboarding auth sessions (gh auth, cli tool auth)

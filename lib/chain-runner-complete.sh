@@ -424,7 +424,7 @@ if transport_session_exists "$SESSION_NAME" 2>/dev/null; then
 fi
 
 # update state
-STATE_ID=$(echo "$SESSION_PREFIX" | tr '-' '_')
+STATE_ID="$(run-scoped-state-id "$SESSION_PREFIX" "${RUN_ID:-}")"
 
 # check if webhooks enabled for status
 WEBHOOKS_ENABLED=$(jq -r '.config.webhooks.enabled // false' "$CHAIN_FILE" 2>/dev/null)
@@ -1512,7 +1512,7 @@ else
         '.agents[] | select(.id == $id) | .retry.circuit_breaker.timeout // 300' "$CHAIN_FILE" 2>/dev/null || echo "300")
 
     # retry counter state file
-    retry_state_file="$STATE_DIR/retry_${CURRENT_AGENT_ID}.count"
+    retry_state_file="$STATE_DIR/retry_${STATE_ID}.count"
     current_attempt=0
     [[ -f "$retry_state_file" ]] && current_attempt=$(cat "$retry_state_file" 2>/dev/null || echo "0")
 
@@ -1562,7 +1562,7 @@ else
                     "$RUNS_DIR_BASE/$RUN_ID/run.json" 2>/dev/null || echo "")
                 # try run.json first, then state file
                 if [[ -z "$agent_start_sha" ]]; then
-                    state_id=$(echo "$CURRENT_AGENT_ID" | tr '-' '_')
+                    state_id="$(run-scoped-state-id "$SESSION_PREFIX" "${RUN_ID:-}")"
                     agent_start_sha=$(grep "^start_sha:" "$STATE_DIR/${state_id}.state" 2>/dev/null | sed 's/^start_sha:[[:space:]]*//' || echo "")
                 fi
 

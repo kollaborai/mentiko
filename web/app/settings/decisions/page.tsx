@@ -219,7 +219,7 @@ export default function DecisionSettingsPage() {
                     </Select>
 
                     <Link
-                      href={`/chains/${encodeURIComponent(chain.id)}/edit`}
+                      href={`/chains?chain=${encodeURIComponent(chain.id)}&edit=1`}
                       className="inline-flex h-8 items-center justify-center rounded-md border border-border/50 px-3 text-xs hover:bg-accent"
                     >
                       edit

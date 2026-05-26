@@ -1637,7 +1637,8 @@ $rs_produces
 
     # update state (always local)
     mkdir -p "$STATE_DIR"
-    local state_id=$(echo "$s_prefix" | tr '-' '_')
+    local state_id
+    state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
     cat > "$STATE_DIR/${state_id}.state" <<SEOF
 status: running
 session: $session_name

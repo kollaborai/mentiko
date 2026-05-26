@@ -5,6 +5,9 @@ describe("chain profile UI source contract", () => {
     const source = readFileSync("app/(workflows)/chains/page.tsx", "utf8");
 
     expect(source).toContain("const workspaceDefaultProfileId =");
+    expect(source).toContain("deepLinkChainRef");
+    expect(source).toContain('params.delete("chain")');
+    expect(source).toContain('params.delete("edit")');
     expect(source).toContain("workspaceDefaultProfileId,");
     expect(source).toContain("workspaceDefaultProfileId={workspaceDefaultProfileId}");
     expect(source).toContain("getChainProfileLabel(chain)");
@@ -23,5 +26,12 @@ describe("chain profile UI source contract", () => {
 
     expect(source).toContain("workspaceId,");
     expect(source).toContain("workspacePath,");
+  });
+
+  it("decision settings edits open inside the chains workflow shell", () => {
+    const source = readFileSync("app/settings/decisions/page.tsx", "utf8");
+
+    expect(source).toContain('href={`/chains?chain=${encodeURIComponent(chain.id)}&edit=1`}');
+    expect(source).not.toContain('href={`/chains/${encodeURIComponent(chain.id)}/edit`}');
   });
 });

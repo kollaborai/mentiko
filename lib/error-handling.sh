@@ -146,7 +146,23 @@ handle-agent-error() {
     local default_timeout_agent=$(jq -r '.routing.timeout_agent // ""' "$chain_file" 2>/dev/null || echo "")
 
     # determine state id
-    local state_id=$(echo "$agent_id" | tr '-' '_')
+    local s_prefix
+    s_prefix=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .session_prefix // ""' "$chain_file" 2>/dev/null || echo "")
+    if [[ -z "$s_prefix" ]]; then
+        local chain_session_prefix
+        chain_session_prefix=$(jq -r '.config.session_prefix // ""' "$chain_file" 2>/dev/null || echo "")
+        if [[ -n "$chain_session_prefix" ]]; then
+            s_prefix="${chain_session_prefix}-${agent_id}"
+        else
+            s_prefix="$agent_id"
+        fi
+    fi
+    local state_id
+    if declare -f run-scoped-state-id >/dev/null 2>&1; then
+        state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
+    else
+        state_id=$(echo "$s_prefix" | tr '-' '_')
+    fi
     local retry_count=$(get-agent-retry-count "$state_id")
 
     echo ""

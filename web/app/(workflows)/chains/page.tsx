@@ -151,6 +151,16 @@ function ChainsPageContent() {
   const [editing, setEditing] = useState(false);
   const [creatingNew, setCreatingNew] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
+  const deepLinkChainRef = useRef<{ id: string; edit: boolean } | null>(null);
+  if (deepLinkChainRef.current === null) {
+    const initialParams = typeof window === "undefined"
+      ? searchParams
+      : new URLSearchParams(window.location.search);
+    deepLinkChainRef.current = {
+      id: initialParams.get("chain") || initialParams.get("id") || "",
+      edit: initialParams.get("edit") === "1",
+    };
+  }
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
@@ -249,9 +259,29 @@ function ChainsPageContent() {
     [sidebarWidth]
   );
 
+  useEffect(() => {
+    const chainId = searchParams.get("chain") || searchParams.get("id") || "";
+    if (!chainId) return;
+
+    const edit = searchParams.get("edit") === "1";
+    deepLinkChainRef.current = { id: chainId, edit };
+
+    const target = chains.find((chain) => chain.id === chainId);
+    if (!target) return;
+
+    setSelected(target);
+    setCreatingNew(false);
+    setEditing(edit);
+    setMobileView("detail");
+    deepLinkChainRef.current = { id: "", edit: false };
+  }, [searchParams, chains]);
+
   // sync filter state to URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    params.delete("chain");
+    params.delete("id");
+    params.delete("edit");
     const sync = (key: string, value: string, def: string) => {
       if (value === def) params.delete(key);
       else params.set(key, value);
@@ -592,9 +622,22 @@ function ChainsPageContent() {
       const res = await fetchWithNamespace("/api/chains/list");
       const raw = await res.json();
       const data = unwrapApiData<{ chains?: Chain[] }>(raw);
-      setChains(data.chains || []);
-      if (data.chains?.length && !selected) {
-        setSelected(data.chains[0]);
+      const nextChains = data.chains || [];
+      setChains(nextChains);
+      const deepLink = deepLinkChainRef.current || { id: "", edit: false };
+      if (deepLink.id) {
+        const target = nextChains.find((chain) => chain.id === deepLink.id);
+        if (target) {
+          setSelected(target);
+          setCreatingNew(false);
+          setEditing(deepLink.edit);
+          setMobileView("detail");
+        } else if (nextChains.length && !selected) {
+          setSelected(nextChains[0]);
+        }
+        deepLinkChainRef.current = { id: "", edit: false };
+      } else if (nextChains.length && !selected) {
+        setSelected(nextChains[0]);
       }
     } catch {
       setChains([]);
