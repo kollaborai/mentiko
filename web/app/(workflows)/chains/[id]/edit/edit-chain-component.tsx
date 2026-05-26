@@ -102,8 +102,9 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
   const params = useParams();
   const router = useRouter();
   const { fetchWithNamespace } = useNamespaceFetch();
-  const { workspaceId, workspacePath } = useWorkspace();
+  const { workspaceId, workspacePath, workspaces } = useWorkspace();
   const chainId = chainIdProp || decodeURIComponent(params.id as string);
+  const workspaceDefaultProfileId = workspaces.find((workspace) => workspace.id === workspaceId)?.default_agent_profile;
 
   const [chain, setChain] = useState<Chain | null>(null);
   const [originalChain, setOriginalChain] = useState<Chain | null>(null);
@@ -552,6 +553,8 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
           chain,
           chainId: chain.id,
           debug: true,
+          workspaceId,
+          workspacePath,
         }),
       });
       if (!res.ok) throw new Error("Failed to start debug run");
@@ -1067,7 +1070,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
                         </div>
                         <div>
                           <p className="text-[10px] text-foreground/40">profile</p>
-                          <p className="truncate font-mono text-foreground/70">{selectedChainAgent.agent_profile || chain.default_agent_profile || "default"}</p>
+                          <p className="truncate font-mono text-foreground/70">{selectedChainAgent.agent_profile || chain.default_agent_profile || workspaceDefaultProfileId || "namespace default"}</p>
                         </div>
                       </div>
                     </div>

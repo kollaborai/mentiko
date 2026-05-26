@@ -266,6 +266,22 @@ function ChainsPageContent() {
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const { fetchWithNamespace } = useNamespaceFetch();
   const { profiles } = useAgentProfiles();
+  const currentWorkspace = workspaces.find((workspace) => workspace.path === workspacePath);
+  const workspaceDefaultProfileId = currentWorkspace?.default_agent_profile;
+  const effectiveRunWorkspacePath =
+    runWorkspacePath && runWorkspacePath !== "__default__"
+      ? runWorkspacePath
+      : workspacePath || undefined;
+  const selectedRunWorkspace = workspaces.find((workspace) => workspace.path === effectiveRunWorkspacePath);
+  const selectedRunWorkspaceDefaultProfileId = selectedRunWorkspace?.default_agent_profile;
+  const getChainProfileLabel = useCallback((chain: Chain) => {
+    const profileId = resolveRunAgentProfileId({
+      chainDefaultProfileId: chain.default_agent_profile,
+      workspaceDefaultProfileId,
+      profiles,
+    });
+    return profiles.find((profile) => profile.id === profileId)?.name || chain.cli;
+  }, [profiles, workspaceDefaultProfileId]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -350,13 +366,23 @@ function ChainsPageContent() {
     if (!selected) return;
     setRunGoal("");
     setRunError("");
-    setRunWorkspacePath(workspacePath || "");
+    setRunWorkspacePath(workspacePath || "__default__");
     setRunAgentProfileId(resolveRunAgentProfileId({
       chainDefaultProfileId: selected.default_agent_profile,
+      workspaceDefaultProfileId,
       profiles,
     }) || "");
     setRunDialogOpen(true);
-  }, [selected, workspacePath, profiles]);
+  }, [selected, workspacePath, workspaceDefaultProfileId, profiles]);
+
+  useEffect(() => {
+    if (!runDialogOpen || !selected) return;
+    setRunAgentProfileId(resolveRunAgentProfileId({
+      chainDefaultProfileId: selected.default_agent_profile,
+      workspaceDefaultProfileId: selectedRunWorkspaceDefaultProfileId,
+      profiles,
+    }) || "");
+  }, [runDialogOpen, selected, selectedRunWorkspaceDefaultProfileId, profiles]);
 
   // keyboard shortcut: Cmd+R / Ctrl+R to run selected chain
   useEffect(() => {
@@ -388,7 +414,7 @@ function ChainsPageContent() {
           chain: chainData.chain,
           chainId: selected.id,
           userPrompt: runGoal.trim() || undefined,
-          workspacePath: (runWorkspacePath && runWorkspacePath !== "__default__") ? runWorkspacePath : undefined,
+          workspacePath: effectiveRunWorkspacePath,
           ...(runAgentProfileId ? { agentProfileId: runAgentProfileId } : {}),
         }),
       });
@@ -587,6 +613,7 @@ function ChainsPageContent() {
       name: chain.name,
       description: chain.description,
       version: chain.version,
+      default_agent_profile: chain.default_agent_profile,
       config: {
         cli: chain.config?.cli || chain.cli,
         monitor: chain.config?.monitor ?? chain.monitor,
@@ -917,7 +944,7 @@ function ChainsPageContent() {
                               </span>
                             )}
                             <span className="rounded-full bg-foreground/5 px-2 py-0.5">
-                              {chain.cli}
+                              {getChainProfileLabel(chain)}
                             </span>
                             {chain.runCount ? (
                               <span className="rounded-full bg-foreground/5 px-2 py-0.5">
@@ -1069,6 +1096,7 @@ function ChainsPageContent() {
                     </div>
                     <AgentProfileBadge
                       chainDefaultProfileId={selected.default_agent_profile}
+                      workspaceDefaultProfileId={workspaceDefaultProfileId}
                       profiles={profiles}
                     />
                   </div>

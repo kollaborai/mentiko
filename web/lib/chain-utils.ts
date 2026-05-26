@@ -27,6 +27,7 @@ export interface ChainData {
   cli: string;
   monitor: boolean;
   agents: ChainAgent[];
+  default_agent_profile?: string;
   maxRounds?: number;
   onComplete?: string;
   createdAt?: string;
@@ -90,6 +91,7 @@ export function loadChain(
       agentCount: json.agents?.length || 0,
       cli: json.config?.cli || cliBin,
       monitor: json.config?.monitor ?? true,
+      default_agent_profile: typeof json.default_agent_profile === "string" ? json.default_agent_profile : undefined,
       maxRounds: json.config?.max_rounds,
       onComplete: json.config?.on_complete,
       createdAt: stat.birthtime.toISOString(),

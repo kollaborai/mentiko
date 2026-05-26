@@ -4,7 +4,7 @@ import {
   LockFilled, SecurityFilled, ShieldTickFilled, BotMessageSquare, SmsFilled,
   ExportFilled, PeopleFilled, Setting2Filled, DocumentTextFilled, CommandSquareFilled,
   ChartFilled, ActivityFilled, TrendUpFilled, KeyFilled,
-  MagicStarFilled,
+  MagicStarFilled, JudgeFilled,
 } from "@aliimam/icons";
 
 type SettingsIcon = ComponentType<{ className?: string }>;
@@ -48,6 +48,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     items: [
       { id: "agent-configs", label: "Agent Configs", href: "/settings/agent-configs", icon: BotMessageSquare, inSidebar: true, inQuickMenu: true },
       { id: "mentiko-agent", label: "Mentiko Agent", href: "/settings/mentiko-agent", icon: MagicStarFilled, inSidebar: true, inQuickMenu: true },
+      { id: "decisions", label: "Decisions", href: "/settings/decisions", icon: JudgeFilled, inSidebar: true, inQuickMenu: true },
       { id: "email", label: "Email", href: "/settings/email", icon: SmsFilled, inSidebar: true, inQuickMenu: true },
     ],
   },

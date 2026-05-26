@@ -53,6 +53,7 @@ interface ChainAgent {
   id: string;
   name: string;
   role: string;
+  agent_profile?: string;
   gateway?: string;
   prompt: string;
   triggers: string[];
@@ -104,6 +105,8 @@ interface Run {
     output?: string;
     error?: string;
   }>;
+  workspaceId?: string;
+  agentProfileId?: string;
 }
 
 type TabValue = "goal" | "agents" | "terminal" | "events" | "metrics";
@@ -163,7 +166,7 @@ function GoalInput({
   chain: Chain | null;
   workspaceId: string;
   onWorkspaceChange: (id: string) => void;
-  workspaces: Array<{ id: string; name: string; path: string }>;
+  workspaces: Array<{ id: string; name: string; path: string; default_agent_profile?: string }>;
   agentProfileId: string;
   onAgentProfileChange: (id: string) => void;
   profiles: AgentProfile[];
@@ -281,10 +284,14 @@ function AgentList({
   agents,
   sessionStates,
   run,
+  chainDefaultProfileId,
+  workspaceDefaultProfileId,
 }: {
   agents: ChainAgent[];
   sessionStates: Record<string, SessionState>;
   run: Run | null;
+  chainDefaultProfileId?: string;
+  workspaceDefaultProfileId?: string;
 }) {
   const agentsWithStatus = useMemo(() => {
     return agents.map((agent) => {
@@ -326,6 +333,10 @@ function AgentList({
             agent={agent as AgentStatusDetail}
             compact
             showRuntime
+            agentProfileId={agent.agent_profile}
+            runtimeProfileId={run?.agentProfileId}
+            chainDefaultProfileId={chainDefaultProfileId}
+            workspaceDefaultProfileId={workspaceDefaultProfileId}
             defaultExpanded={agent.status === "running" || agent.status === "error"}
           />
         ))}
@@ -541,6 +552,8 @@ export default function RunPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [activeTab, setActiveTab] = useState<TabValue>("goal");
   const [webhookEnabled, setWebhookEnabled] = useState(true);
+  const selectedWorkspaceDefaultProfileId =
+    workspaces.find((workspace) => workspace.id === runWorkspaceId)?.default_agent_profile;
 
   // sync with context workspace when it changes (e.g. user switches in nav)
   useEffect(() => { setRunWorkspaceId(ctxWorkspaceId); }, [ctxWorkspaceId]);
@@ -549,9 +562,10 @@ export default function RunPage() {
     if (!chain) return;
     setRunAgentProfileId(resolveRunAgentProfileId({
       chainDefaultProfileId: chain.default_agent_profile,
+      workspaceDefaultProfileId: selectedWorkspaceDefaultProfileId,
       profiles,
     }) || "");
-  }, [chain, profiles]);
+  }, [chain, selectedWorkspaceDefaultProfileId, profiles]);
 
   const { connected, events, sessionStatus, chainComplete } = useEventStream(run?.id || null);
   useRunNotifications(run?.id || null);
@@ -644,7 +658,8 @@ export default function RunPage() {
             status: "pending",
             session: "",
           })) || [],
-          ...(selectedWs ? { workspacePath: selectedWs.path } : {}),
+          ...(selectedWs ? { workspacePath: selectedWs.path, workspaceId: selectedWs.id } : {}),
+          ...(runAgentProfileId ? { agentProfileId: runAgentProfileId } : {}),
         });
         setActiveTab("agents");
       } else {
@@ -860,7 +875,13 @@ export default function RunPage() {
 
               <TabsContent value="agents" className="h-full m-0 p-0">
                 {chain ? (
-                  <AgentList agents={run?.agents?.length ? run.agents as unknown as ChainAgent[] : chain.agents} sessionStates={sessionStatus} run={run} />
+                  <AgentList
+                    agents={run?.agents?.length ? run.agents as unknown as ChainAgent[] : chain.agents}
+                    sessionStates={sessionStatus}
+                    run={run}
+                    chainDefaultProfileId={chain.default_agent_profile}
+                    workspaceDefaultProfileId={selectedWorkspaceDefaultProfileId}
+                  />
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <Loader2 className="h-5 w-5 animate-spin text-foreground/30" />

@@ -22,6 +22,7 @@ const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   "agent-configs": "CLI execution profiles for agents",
   email: "Inbound email routing configuration",
   "mentiko-agent": "AI provider profiles for the Mentiko floating bar",
+  decisions: "Core decision chain profiles and restore controls",
   data: "Export, retention, and account data",
   organization: "Team members, roles, and invites",
   system: "System configuration and diagnostics",

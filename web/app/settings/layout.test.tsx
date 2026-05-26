@@ -35,6 +35,7 @@ jest.mock("@aliimam/icons", () => {
     Element3Filled: Icon,
     ExportFilled: Icon,
     KeyFilled: Icon,
+    JudgeFilled: Icon,
     LockFilled: Icon,
     MagicStarFilled: Icon,
     MenuFilled: Icon,
@@ -66,6 +67,18 @@ describe("SettingsLayout", () => {
     const sidebar = screen.getByTestId("settings-sidebar-nav");
 
     expect(within(sidebar).queryByRole("button", { name: /mcp/i })).not.toBeInTheDocument();
+  });
+
+  it("includes decision settings in the sidebar navigation", () => {
+    render(
+      <SettingsLayout>
+        <div>settings content</div>
+      </SettingsLayout>,
+    );
+
+    const sidebar = screen.getByTestId("settings-sidebar-nav");
+
+    expect(within(sidebar).getByRole("button", { name: /decisions/i })).toBeInTheDocument();
   });
 
   it("preserves panel surface when settings sidebar uses client routing", () => {

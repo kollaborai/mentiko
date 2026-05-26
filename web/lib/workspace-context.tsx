@@ -8,6 +8,7 @@ export interface WorkspaceInfo {
   name: string;
   path: string;
   icon?: string;
+  default_agent_profile?: string;
 }
 
 interface WorkspaceContextValue {

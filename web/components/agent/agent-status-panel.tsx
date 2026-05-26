@@ -48,37 +48,49 @@ const MUTED_BADGE = "bg-muted text-muted-foreground";
 
 interface AgentProfileBadgeProps {
   agentProfileId?: string;
+  runtimeProfileId?: string;
   chainDefaultProfileId?: string;
+  workspaceDefaultProfileId?: string;
   profiles: AgentProfile[];
   className?: string;
 }
 
 export function AgentProfileBadge({
   agentProfileId,
+  runtimeProfileId,
   chainDefaultProfileId,
+  workspaceDefaultProfileId,
   profiles,
   className = "",
 }: AgentProfileBadgeProps) {
-  const configuredId = agentProfileId || chainDefaultProfileId;
+  const configuredId = agentProfileId || runtimeProfileId || chainDefaultProfileId || workspaceDefaultProfileId;
   const hasExplicitId = !!configuredId;
 
-  // resolve profile based on priority: agent > chain default > namespace default
+  // resolve profile based on priority: agent > run > chain > workspace > namespace
   const resolvedProfile = useMemo(() => {
     if (agentProfileId) {
       return profiles.find((p) => p.id === agentProfileId);
     }
+    if (runtimeProfileId) {
+      return profiles.find((p) => p.id === runtimeProfileId);
+    }
     if (chainDefaultProfileId) {
       return profiles.find((p) => p.id === chainDefaultProfileId);
     }
+    if (workspaceDefaultProfileId) {
+      return profiles.find((p) => p.id === workspaceDefaultProfileId);
+    }
     return profiles.find((p) => p.isDefault);
-  }, [agentProfileId, chainDefaultProfileId, profiles]);
+  }, [agentProfileId, runtimeProfileId, chainDefaultProfileId, workspaceDefaultProfileId, profiles]);
 
   // determine source label
   const sourceLabel = useMemo(() => {
     if (agentProfileId) return "agent override";
+    if (runtimeProfileId) return "run profile";
     if (chainDefaultProfileId) return "chain default";
+    if (workspaceDefaultProfileId) return "workspace default";
     return "namespace default";
-  }, [agentProfileId, chainDefaultProfileId]);
+  }, [agentProfileId, runtimeProfileId, chainDefaultProfileId, workspaceDefaultProfileId]);
 
   // configured profile id doesn't match any existing profile
   if (hasExplicitId && !resolvedProfile) {
@@ -144,7 +156,9 @@ interface AgentStatusPanelProps {
   href?: string;
   // agent profile context
   agentProfileId?: string;
+  runtimeProfileId?: string;
   chainDefaultProfileId?: string;
+  workspaceDefaultProfileId?: string;
   // artifacts
   produces?: ArtifactProducesMini[];
 }
@@ -168,7 +182,9 @@ export function AgentStatusPanel({
   showRuntime = false,
   href,
   agentProfileId,
+  runtimeProfileId,
   chainDefaultProfileId,
+  workspaceDefaultProfileId,
   produces,
 }: AgentStatusPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded || !expandable);
@@ -235,7 +251,9 @@ export function AgentStatusPanel({
             {compact && (
               <AgentProfileBadge
                 agentProfileId={agentProfileId}
+                runtimeProfileId={runtimeProfileId}
                 chainDefaultProfileId={chainDefaultProfileId}
+                workspaceDefaultProfileId={workspaceDefaultProfileId}
                 profiles={profiles}
                 className="ml-auto"
               />
@@ -246,7 +264,9 @@ export function AgentStatusPanel({
               <p className="text-xs text-foreground/50 truncate">{agent.role}</p>
               <AgentProfileBadge
                 agentProfileId={agentProfileId}
+                runtimeProfileId={runtimeProfileId}
                 chainDefaultProfileId={chainDefaultProfileId}
+                workspaceDefaultProfileId={workspaceDefaultProfileId}
                 profiles={profiles}
                 className="ml-auto"
               />

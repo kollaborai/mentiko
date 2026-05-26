@@ -169,6 +169,11 @@ describe("chain run profile override contract", () => {
     expect(source).toContain("workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile");
     expect(source).toContain("runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id)");
   });
+
+  it("resume reads the stamped run-local chain profile from the top-level field", () => {
+    const resumeSource = readFileSync(new URL("../../web/app/api/runs/[id]/resume/route.ts", import.meta.url), "utf8");
+    expect(resumeSource).toContain("chainJson.default_agent_profile || chainJson.config?.default_agent_profile");
+  });
 });
 
 describe("chain run decision metadata contract", () => {

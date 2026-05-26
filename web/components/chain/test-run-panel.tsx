@@ -45,7 +45,7 @@ interface TestRunPanelProps {
 
 type RunStatus = "idle" | "starting" | "running" | "completed" | "failed" | "cancelled";
 
-export function TestRunPanel({ chain, onClose, agentProfileId, chainDefaultProfileId, workspaceId, workspacePath }: TestRunPanelProps) {
+export function TestRunPanel({ chain, onClose, agentProfileId, workspaceId, workspacePath }: TestRunPanelProps) {
   const router = useRouter();
   const { fetchWithNamespace } = useNamespaceFetch();
 
@@ -164,10 +164,8 @@ export function TestRunPanel({ chain, onClose, agentProfileId, chainDefaultProfi
           chain,
           chainId: chain.id,
           userPrompt: userPrompt.trim() || undefined,
-          // agent profile: agent-specific takes precedence over chain default
-          ...(agentProfileId || chainDefaultProfileId
-            ? { agentProfileId: agentProfileId || chainDefaultProfileId }
-            : {}),
+          // explicit agent profile overrides the server's chain/workspace/default resolution
+          ...(agentProfileId ? { agentProfileId } : {}),
           ...(workspaceId ? { workspaceId } : {}),
           ...(workspacePath ? { workspacePath } : {}),
         }),

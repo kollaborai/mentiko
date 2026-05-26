@@ -87,6 +87,59 @@ describe("AgentProfileBadge", () => {
     expect(screen.getByText("Claude / Sonnet")).toBeInTheDocument();
   });
 
+  it("uses workspace default before namespace default", () => {
+    const profiles = [
+      makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: true }),
+      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: false }),
+    ];
+
+    render(<AgentProfileBadge workspaceDefaultProfileId="kollabor" profiles={profiles} />);
+
+    expect(screen.getByText("Kollab CLI")).toBeInTheDocument();
+    expect(screen.getByText("workspace default")).toBeInTheDocument();
+    expect(screen.queryByText("Claude / Sonnet")).not.toBeInTheDocument();
+  });
+
+  it("chain default takes priority over workspace default", () => {
+    const profiles = [
+      makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
+      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: true }),
+    ];
+
+    render(
+      <AgentProfileBadge
+        chainDefaultProfileId="claude-sonnet"
+        workspaceDefaultProfileId="kollabor"
+        profiles={profiles}
+      />
+    );
+
+    expect(screen.getByText("Claude / Sonnet")).toBeInTheDocument();
+    expect(screen.getByText("chain default")).toBeInTheDocument();
+    expect(screen.queryByText("workspace default")).not.toBeInTheDocument();
+  });
+
+  it("runtime profile takes priority over saved chain and workspace defaults", () => {
+    const profiles = [
+      makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
+      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: true }),
+      makeProfile({ id: "codex-default", name: "Codex / Default", cli: "codex", isDefault: false }),
+    ];
+
+    render(
+      <AgentProfileBadge
+        runtimeProfileId="codex-default"
+        chainDefaultProfileId="claude-sonnet"
+        workspaceDefaultProfileId="kollabor"
+        profiles={profiles}
+      />
+    );
+
+    expect(screen.getByText("Codex / Default")).toBeInTheDocument();
+    expect(screen.getByText("run profile")).toBeInTheDocument();
+    expect(screen.queryByText("Claude / Sonnet")).not.toBeInTheDocument();
+  });
+
   it("shows profile not found for invalid agent-level override", () => {
     const profiles = [makeProfile({ id: "claude-sonnet", isDefault: true })];
     render(<AgentProfileBadge agentProfileId="bogus-id" profiles={profiles} />);

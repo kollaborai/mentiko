@@ -138,7 +138,7 @@ export const POST = withErrorHandling(async (
   let profileEnv: Record<string, string> = {};
   try {
     const chainJson = JSON.parse(readFileSync(chainPath, "utf-8"));
-    const profileId = chainJson.config?.default_agent_profile;
+    const profileId = chainJson.default_agent_profile || chainJson.config?.default_agent_profile;
     if (profileId) {
       const profile = getProfile(nsId, orgId, profileId);
       if (profile?.env) {
