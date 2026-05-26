@@ -305,6 +305,7 @@ export interface AgentProfile {
   name: string;
   description?: string;
   isDefault: boolean;
+  isAdvisorDefault?: boolean;
   cli: string;
   model?: string;
   relay_model?: string;

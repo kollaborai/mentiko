@@ -49,6 +49,8 @@ export const GET = withErrorHandling(async (
     type: job.type,
     taskId: job.taskId,
     decisionId: job.decisionId,
+    runId: job.runId,
+    chainId: job.chainId,
     result: job.result,
     error: job.error,
     createdAt: job.createdAt,

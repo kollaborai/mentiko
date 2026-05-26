@@ -15,6 +15,16 @@ find_default_profile() {
     echo "$default_id"
 }
 
+find_advisor_profile() {
+    local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}/agent-profiles}"
+    [[ ! -d "$profiles_dir" ]] && echo "" && return
+
+    local advisor_id
+    advisor_id=$(jq -r 'select(.isAdvisorDefault == true) | .id' \
+        "$profiles_dir"/*.json 2>/dev/null | head -1)
+    echo "$advisor_id"
+}
+
 agent_profile_path() {
     local profile_id="$1"
     local profiles_dir="${AGENT_PROFILES_DIR:-${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}/agent-profiles}"

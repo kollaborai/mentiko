@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
 import { execAuditLog, shellEscape } from "@/lib/audit-exec";
@@ -259,6 +259,9 @@ export async function startChainRun({
   const decisionRunMetadata = runMetadata?.decisionId && runMetadata?.decisionPhase
     ? runMetadata
     : undefined;
+  const generationRunMetadata = runMetadata?.generationJobId && runMetadata?.generationKind
+    ? runMetadata
+    : undefined;
   const runObject: Record<string, unknown> = {
     id: runId,
     chain: validChainName,
@@ -285,6 +288,28 @@ export async function startChainRun({
   const chainPath = join(runDir, "chain.json");
   const validatedChainPath = validateChainPath(chainPath, runsDir);
   writeFileSync(validatedChainPath, JSON.stringify(runChain, null, 2));
+
+  if (generationRunMetadata || decisionRunMetadata) {
+    const internalRunDir = join(runDir, ".internal");
+    mkdirSync(internalRunDir, { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(internalRunDir, 0o700);
+    } catch {}
+    if (generationRunMetadata) {
+      writeFileSync(
+        join(internalRunDir, "generation-import-token"),
+        `${resolveInternalAuthSecret("jobs-complete")}\n`,
+        { mode: 0o600 }
+      );
+    }
+    if (decisionRunMetadata) {
+      writeFileSync(
+        join(internalRunDir, "decision-import-token"),
+        `${resolveInternalAuthSecret("decision-import")}\n`,
+        { mode: 0o600 }
+      );
+    }
+  }
 
   fireWebhooks(namespaceId, orgId, runObject.chainId as string, "started", { runId }).catch(() => {});
 
@@ -336,6 +361,9 @@ export async function startChainRun({
         MENTIKO_DECISION_PHASE: typeof decisionRunMetadata?.decisionPhase === "string" ? decisionRunMetadata.decisionPhase : undefined,
         MENTIKO_DECISION_SELECTED_OPTION_ID: typeof decisionRunMetadata?.selectedOptionId === "string" ? decisionRunMetadata.selectedOptionId : undefined,
         MENTIKO_DECISION_WORKSPACE_PATH: typeof decisionRunMetadata?.workspacePath === "string" ? decisionRunMetadata.workspacePath : undefined,
+        MENTIKO_JOB_IMPORT_TOKEN: resolveInternalAuthSecret("jobs-complete"),
+        MENTIKO_GENERATION_JOB_ID: typeof generationRunMetadata?.generationJobId === "string" ? generationRunMetadata.generationJobId : undefined,
+        MENTIKO_GENERATION_KIND: typeof generationRunMetadata?.generationKind === "string" ? generationRunMetadata.generationKind : undefined,
         ...buildLocalAiGatewayProxyEnv(new URL(request.url).origin),
         MENTIKO_GLOBAL_ROOT: config.globalRoot,
         MENTIKO_CODE_ROOT: config.codeRoot,

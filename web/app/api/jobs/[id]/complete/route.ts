@@ -73,6 +73,8 @@ export const POST = withErrorHandling(async (
     status?: "complete" | "failed";
     result?: Record<string, unknown>;
     error?: string;
+    runId?: string;
+    chainId?: string;
   };
   let { result } = body as { result?: Record<string, unknown> };
 
@@ -88,6 +90,8 @@ export const POST = withErrorHandling(async (
     status: jobStatus,
     result: result || job.result,
     error: error || job.error,
+    runId: typeof body.runId === "string" ? body.runId : job.runId,
+    chainId: typeof body.chainId === "string" ? body.chainId : job.chainId,
     completedAt: jobStatus === "complete" || jobStatus === "failed" ? new Date().toISOString() : job.completedAt,
   }, namespaceId);
 

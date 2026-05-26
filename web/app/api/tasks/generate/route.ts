@@ -9,8 +9,8 @@ import { resolveTemplate } from "@/lib/template-resolver";
 import { getSessionUser } from "@/lib/auth-bridge";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +49,15 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // create job with resolved prompt (job-runner will use it directly)
   const job = createJob("task" as const, { prompt: generationPrompt, workspacePath: authorizedWorkspacePath }, undefined, undefined, userId, namespaceId);
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
+  const run = await startGenerationChainRun({
+    request,
+    namespaceId,
+    orgId,
+    kind: "task",
+    job,
+    prompt: generationPrompt,
+    workspacePath: authorizedWorkspacePath,
+  });
 
-  return apiSuccess({ jobId: job.id, status: job.status });
+  return apiSuccess({ jobId: job.id, runId: run.runId, status: job.status });
 });

@@ -3,6 +3,7 @@
 
 MONITOR_COMPLETION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$MONITOR_COMPLETION_DIR/terminal-sanitize.sh"
+source "$MONITOR_COMPLETION_DIR/agent-profile.sh" 2>/dev/null || true
 
 monitor_agent_id_for_session() {
     local session_name="$1"
@@ -98,13 +99,25 @@ monitor_stale_advisor_message() {
     local check_interval="${4:-60}"
     local profile_name="${MENTIKO_MONITOR_PROFILE:-mentiko}"
     local profile_file="$MONITOR_COMPLETION_DIR/monitor-profiles/${profile_name}.md"
-    local advisor_cli="${MENTIKO_MONITOR_CLI:-claude}"
+    local advisor_cli="${MENTIKO_MONITOR_CLI:-}"
+    local advisor_profile_id="${MENTIKO_MONITOR_PROFILE_ID:-}"
+    local advisor_command=""
     local full_pane total_lines pane_top pane_bottom profile_content prompt response
 
     [[ -n "$session_name" ]] || return 1
     [[ -f "$profile_file" ]] || return 1
-    command -v "$advisor_cli" >/dev/null 2>&1 || return 1
     declare -f transport_capture >/dev/null 2>&1 || return 1
+
+    if [[ -n "$advisor_profile_id" ]] && declare -f build_profile_command >/dev/null 2>&1; then
+        local advisor_profile_file
+        advisor_profile_file="$(agent_profile_path "$advisor_profile_id")"
+        [[ -f "$advisor_profile_file" ]] || return 1
+        advisor_command="$(build_profile_command "$advisor_profile_file")"
+    elif [[ -n "$advisor_cli" ]]; then
+        command -v "$advisor_cli" >/dev/null 2>&1 || return 1
+    else
+        return 1
+    fi
 
     full_pane="$(transport_capture "$session_name" 2>/dev/null || true)"
     [[ -n "$full_pane" ]] || return 1
@@ -139,7 +152,11 @@ ${profile_content}
 
 Now output exactly ONE message as Mentiko would send it. Nothing else."
 
-    response="$("$advisor_cli" -p "$prompt" 2>/dev/null | head -10 || true)"
+    if [[ -n "$advisor_command" ]]; then
+        response="$(printf '%s' "$prompt" | bash -lc "$advisor_command" 2>/dev/null | head -10 || true)"
+    else
+        response="$("$advisor_cli" -p "$prompt" 2>/dev/null | head -10 || true)"
+    fi
     [[ -n "$response" ]] || return 1
 
     monitor_sanitize_nudge "$response" "$stale_count"

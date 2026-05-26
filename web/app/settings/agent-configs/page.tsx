@@ -259,6 +259,7 @@ export default function AgentProfilesPage() {
   const [selected, setSelected] = useState<AgentProfile | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [advisorSaving, setAdvisorSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -284,6 +285,7 @@ export default function AgentProfilesPage() {
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editIsDefault, setEditIsDefault] = useState(false);
+  const [editIsAdvisorDefault, setEditIsAdvisorDefault] = useState(false);
   const [editCli, setEditCli] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editPipeFlag, setEditPipeFlag] = useState("");
@@ -371,6 +373,7 @@ export default function AgentProfilesPage() {
     setEditName(p.name);
     setEditDescription(p.description || "");
     setEditIsDefault(p.isDefault);
+    setEditIsAdvisorDefault(!!p.isAdvisorDefault);
     setEditCli(p.cli);
     setEditModel(p.model || "");
     setEditPipeFlag(p.pipe_flag || "");
@@ -398,6 +401,7 @@ export default function AgentProfilesPage() {
     setEditName("");
     setEditDescription("");
     setEditIsDefault(false);
+    setEditIsAdvisorDefault(false);
     setEditCli("");
     setEditModel("");
     setEditPipeFlag("");
@@ -431,6 +435,7 @@ export default function AgentProfilesPage() {
         name: editName.trim(),
         description: editDescription.trim() || undefined,
         isDefault: editIsDefault,
+        isAdvisorDefault: editIsAdvisorDefault,
         cli: editCli.trim(),
         model: editModel.trim() || undefined,
         pipe_flag: editPipeFlag.trim() || undefined,
@@ -484,6 +489,36 @@ export default function AgentProfilesPage() {
     }
   };
 
+  const handleSetAdvisorDefault = async () => {
+    setError("");
+
+    if (isNew || !selected) {
+      setEditIsAdvisorDefault(true);
+      return;
+    }
+
+    setAdvisorSaving(true);
+    try {
+      const res = await fetchWithNamespace(`/api/agent-profiles/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isAdvisorDefault: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(getApiErrorMessage(data, "failed to set advisor default"));
+        return;
+      }
+      setEditIsAdvisorDefault(true);
+      setSelected((prev) => prev ? { ...prev, isAdvisorDefault: true } : prev);
+      await refetch();
+    } catch {
+      setError("failed to set advisor default");
+    } finally {
+      setAdvisorSaving(false);
+    }
+  };
+
   const handleCopy = async () => {
     if (!selected) return;
     const copyName = `${selected.name} (copy)`;
@@ -494,6 +529,7 @@ export default function AgentProfilesPage() {
         name: copyName,
         description: selected.description,
         isDefault: false,
+        isAdvisorDefault: false,
         cli: selected.cli,
         model: selected.model,
         pipe_flag: selected.pipe_flag,
@@ -655,6 +691,11 @@ export default function AgentProfilesPage() {
                                       default
                                     </span>
                                   )}
+                                  {p.isAdvisorDefault && (
+                                    <span className="text-[9px] text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide shrink-0">
+                                      advisor
+                                    </span>
+                                  )}
                                 </div>
                                 {p.model && (
                                   <p className="text-[10px] text-foreground/35 font-mono truncate mt-0.5">{p.model}</p>
@@ -740,6 +781,26 @@ export default function AgentProfilesPage() {
                     <Label htmlFor="isDefault" className="text-xs text-foreground/70 cursor-pointer">
                       {editIsDefault ? "This is the default profile" : "Set as default profile"}
                     </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={editIsAdvisorDefault ? "secondary" : "outline"}
+                      className="h-7 text-xs"
+                      onClick={handleSetAdvisorDefault}
+                      disabled={advisorSaving || editIsAdvisorDefault}
+                    >
+                      <MagicStarFilled className="h-3.5 w-3.5 mr-1" />
+                      {advisorSaving
+                        ? "Setting..."
+                        : editIsAdvisorDefault
+                          ? "Default advisor"
+                          : "Set as default advisor"}
+                    </Button>
+                    {isNew && editIsAdvisorDefault && (
+                      <span className="text-[10px] text-foreground/40">applies on save</span>
+                    )}
                   </div>
                 </div>
               </div>

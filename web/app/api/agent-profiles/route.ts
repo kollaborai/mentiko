@@ -28,6 +28,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     name,
     description,
     isDefault,
+    isAdvisorDefault,
     cli,
     model,
     relay_model,
@@ -44,6 +45,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     name: string;
     description?: string;
     isDefault?: boolean;
+    isAdvisorDefault?: boolean;
     cli: string;
     model?: string;
     relay_model?: string;
@@ -70,6 +72,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     name,
     description,
     isDefault: isDefault || false,
+    isAdvisorDefault: isAdvisorDefault || false,
     cli,
     model,
     relay_model,

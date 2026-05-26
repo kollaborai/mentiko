@@ -20,6 +20,8 @@ export interface JobStatusResponse {
   type: string;
   taskId?: string;
   decisionId?: string;
+  runId?: string;
+  chainId?: string;
 }
 
 /**

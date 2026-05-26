@@ -5,6 +5,7 @@
 #   mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
 #   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
 #   mentiko decision import <artifact.json> --decision <id> --phase <phase>
+#   mentiko generation import <artifact.json> --job <id> --kind <kind>
 #   mentiko launch <spec-file> [--monitor]
 #   mentiko validate <chain.json> [--strict]
 #   mentiko graph <chain.json>
@@ -93,6 +94,10 @@ case "$CMD" in
 
     decision)
         node "$LIB_DIR/mentiko-cli-decision.mjs" "$@"
+        ;;
+
+    generation)
+        node "$LIB_DIR/mentiko-cli-generation.mjs" "$@"
         ;;
 
     list_schedules|create_schedule|update_schedule|delete_schedule|run_schedule_now|list_applications|register_application|update_application|delete_application)

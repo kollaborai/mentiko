@@ -61,6 +61,7 @@ export const PATCH = withErrorHandling(
       name,
       description,
       isDefault,
+      isAdvisorDefault,
       cli,
       model,
       relay_model,
@@ -76,6 +77,7 @@ export const PATCH = withErrorHandling(
       name?: string;
       description?: string;
       isDefault?: boolean;
+      isAdvisorDefault?: boolean;
       cli?: string;
       model?: string;
       relay_model?: string;
@@ -93,6 +95,7 @@ export const PATCH = withErrorHandling(
       name,
       description,
       isDefault,
+      isAdvisorDefault,
       cli,
       model,
       relay_model,

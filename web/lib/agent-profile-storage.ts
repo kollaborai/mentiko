@@ -11,6 +11,7 @@ export interface AgentProfile {
   name: string;
   description?: string;
   isDefault: boolean;
+  isAdvisorDefault?: boolean;
   cli: string;
   model?: string;
   relay_model?: string;
@@ -123,6 +124,16 @@ export function createProfile(
     }
   }
 
+  // advisor default is separate from agent default, but still unique.
+  if (newProfile.isAdvisorDefault) {
+    const allProfiles = listProfiles(namespaceId, orgId);
+    for (const p of allProfiles) {
+      if (p.isAdvisorDefault) {
+        updateProfile(namespaceId, orgId, p.id, { isAdvisorDefault: false });
+      }
+    }
+  }
+
   // validate profile before saving
   const validationError = validateProfile(newProfile);
   if (validationError) {
@@ -150,12 +161,16 @@ export function updateProfile(
     throw new Error(`Profile '${id}' not found`);
   }
 
+  const definedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([, value]) => value !== undefined)
+  ) as Partial<Omit<AgentProfile, "id" | "createdAt">>;
+
   // replace env entirely when provided (UI sends the full set of env vars)
   // null values within the object still mean "delete this key" for backwards compat
   let mergedEnv = existing.env || {};
-  if (updates.env !== undefined) {
+  if (definedUpdates.env !== undefined) {
     mergedEnv = {};
-    for (const [key, value] of Object.entries(updates.env)) {
+    for (const [key, value] of Object.entries(definedUpdates.env)) {
       if (value !== null) {
         mergedEnv[key] = value;
       }
@@ -164,19 +179,32 @@ export function updateProfile(
 
   const updated: AgentProfile = {
     ...existing,
-    ...updates,
+    ...definedUpdates,
     env: mergedEnv,
     updatedAt: new Date().toISOString(),
   };
 
   // if setting isDefault=true, clear others
-  if (updates.isDefault === true && !existing.isDefault) {
+  if (definedUpdates.isDefault === true && !existing.isDefault) {
     const allProfiles = listProfiles(namespaceId, orgId);
     for (const p of allProfiles) {
       if (p.id !== id && p.isDefault) {
         const pFile = getProfileFile(namespaceId, orgId, p.id);
         const pData = JSON.parse(readFileSync(pFile, "utf-8")) as AgentProfile;
         pData.isDefault = false;
+        writeFileSync(pFile, JSON.stringify(pData, null, 2));
+      }
+    }
+  }
+
+  // if setting isAdvisorDefault=true, clear others
+  if (definedUpdates.isAdvisorDefault === true && !existing.isAdvisorDefault) {
+    const allProfiles = listProfiles(namespaceId, orgId);
+    for (const p of allProfiles) {
+      if (p.id !== id && p.isAdvisorDefault) {
+        const pFile = getProfileFile(namespaceId, orgId, p.id);
+        const pData = JSON.parse(readFileSync(pFile, "utf-8")) as AgentProfile;
+        pData.isAdvisorDefault = false;
         writeFileSync(pFile, JSON.stringify(pData, null, 2));
       }
     }
@@ -232,6 +260,11 @@ export function deleteProfile(namespaceId: string, orgId: string, id: string): {
 export function findDefaultProfile(namespaceId: string, orgId: string): AgentProfile | null {
   const profiles = listProfiles(namespaceId, orgId);
   return profiles.find((p) => p.isDefault) || null;
+}
+
+export function findAdvisorDefaultProfile(namespaceId: string, orgId: string): AgentProfile | null {
+  const profiles = listProfiles(namespaceId, orgId);
+  return profiles.find((p) => p.isAdvisorDefault) || null;
 }
 
 // ============================================================

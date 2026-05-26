@@ -119,8 +119,12 @@ new-agent-from-spec() {
         local monitor_session="monitor-${session_name}"
         local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         local mon_script="/tmp/monitor-${session_name}.sh"
+        local monitor_advisor_profile
+        monitor_advisor_profile="$(find_advisor_profile 2>/dev/null || true)"
         {
             echo "#!/bin/bash"
+            printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"
+            printf 'export MENTIKO_MONITOR_PROFILE_ID=%q\n' "$monitor_advisor_profile"
             printf 'source %q 2>/dev/null\n' "${lib_dir}/agent-functions.sh"
             printf 'source %q 2>/dev/null\n' "${lib_dir}/event-trigger.sh"
             printf 'monitor-with-ai %q %q %q\n' "$session_name" "$MENTIKO_MONITOR_INTERVAL" "$agent_context"

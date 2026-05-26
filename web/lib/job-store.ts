@@ -20,6 +20,8 @@ export interface Job {
   status: JobStatus;
   taskId?: string;
   decisionId?: string;  // for decision research/retrospective jobs
+  runId?: string;
+  chainId?: string;
   createdBy?: string;   // user id of creator
   input: Record<string, unknown>;
   result?: Record<string, unknown>;

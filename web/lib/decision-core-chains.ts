@@ -1,6 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { orgPath } from "@/lib/config";
+import {
+  ensureCoreChains,
+  mergeDefaultAgentProfile,
+  restoreCoreChain,
+  updateCoreChainProfile,
+  type CoreChainRecord,
+} from "@/lib/core-chain-installer";
 
 export const DECISION_CORE_CHAIN_IDS = [
   "decision-research",
@@ -11,13 +15,7 @@ export const DECISION_CORE_CHAIN_IDS = [
 
 export type DecisionCoreChainId = typeof DECISION_CORE_CHAIN_IDS[number];
 
-const DECISION_CORE_CHAIN_VERSION = "1.0.2";
-
-interface DecisionCoreChainInstallResult {
-  id: DecisionCoreChainId;
-  path: string;
-  created: boolean;
-}
+const DECISION_CORE_CHAIN_VERSION = "1.0.3";
 
 interface CoreChainDefinition {
   id: DecisionCoreChainId;
@@ -37,6 +35,7 @@ function importInstructions(phase: string): string {
     `  mentiko decision import "$ARTIFACTS_DIR/decision-result.json" --decision "$MENTIKO_DECISION_ID" --phase ${phase} --run "$MENTIKO_RUN_ID"`,
     "",
     "Do not use MCP tools for the import. Use the Mentiko CLI command above.",
+    "If the import command fails, stop and report the exact import error. Do not write directly to decision storage, task storage, job storage, or project files.",
     "After the import succeeds, output AGENT_COMPLETE.",
   ].join("\n");
 }
@@ -143,26 +142,14 @@ function buildChain(definition: CoreChainDefinition) {
   };
 }
 
-function readExistingCoreChain(path: string): Record<string, unknown> | null {
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function getDecisionPhase(chain: Record<string, unknown>): unknown {
+function getDecisionPhase(chain: CoreChainRecord): unknown {
   const metadata = chain.metadata;
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>).decisionPhase
     : undefined;
 }
 
-function isCoreDecisionChain(chain: Record<string, unknown> | null): boolean {
+function isCoreDecisionChain(chain: CoreChainRecord | null): boolean {
   const metadata = chain?.metadata;
   return !!metadata &&
     typeof metadata === "object" &&
@@ -170,33 +157,20 @@ function isCoreDecisionChain(chain: Record<string, unknown> | null): boolean {
     (metadata as Record<string, unknown>).coreDecisionChain === true;
 }
 
-function hasLegacyClaudePin(chain: Record<string, unknown> | null): boolean {
+function hasLegacyClaudePin(chain: CoreChainRecord | null): boolean {
   return chain?.version === "1.0.1" && chain.default_agent_profile === "claude-sonnet";
 }
 
 function mergeExistingCoreChain(
-  existing: Record<string, unknown> | null,
+  existing: CoreChainRecord | null,
   desired: ReturnType<typeof buildChain>
 ): ReturnType<typeof buildChain> {
-  if (!existing || hasLegacyClaudePin(existing) || typeof existing.default_agent_profile !== "string") {
-    return desired;
-  }
-  return {
-    ...desired,
-    default_agent_profile: existing.default_agent_profile,
-  } as ReturnType<typeof buildChain>;
+  return mergeDefaultAgentProfile(existing, desired, {
+    dropExistingProfile: !existing || hasLegacyClaudePin(existing),
+  });
 }
 
-function getDecisionCoreChainPath(namespaceId: string, orgId: string, id: DecisionCoreChainId): string {
-  return join(orgPath(namespaceId, orgId, "chains", id), "chain.json");
-}
-
-function writeDecisionCoreChain(path: string, chain: Record<string, unknown>): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(chain, null, 2)}\n`, "utf8");
-}
-
-function shouldWriteChain(existing: Record<string, unknown> | null, desired: ReturnType<typeof buildChain>): boolean {
+function shouldWriteChain(existing: CoreChainRecord | null, desired: ReturnType<typeof buildChain>): boolean {
   if (!existing) return true;
   if (!isCoreDecisionChain(existing)) return false;
   if (hasLegacyClaudePin(existing)) return true;
@@ -219,41 +193,31 @@ export function updateDecisionCoreChainProfile(
   profileId?: string | null
 ) {
   ensureDecisionCoreChains(namespaceId, orgId);
-  const chainPath = getDecisionCoreChainPath(namespaceId, orgId, id);
-  const existing = readExistingCoreChain(chainPath);
-  if (!isCoreDecisionChain(existing)) {
-    throw new Error(`Core decision chain not found: ${id}`);
-  }
-  const next = { ...existing };
-  if (profileId) {
-    next.default_agent_profile = profileId;
-  } else {
-    delete next.default_agent_profile;
-  }
-  writeDecisionCoreChain(chainPath, next);
-  return { id, path: chainPath, chain: next };
+  return updateCoreChainProfile({
+    namespaceId,
+    orgId,
+    id,
+    profileId,
+    isManagedChain: isCoreDecisionChain,
+  });
 }
 
 export function restoreDecisionCoreChain(namespaceId: string, orgId: string, id: DecisionCoreChainId) {
-  const chainPath = getDecisionCoreChainPath(namespaceId, orgId, id);
-  const chain = getDecisionCoreChain(id);
-  writeDecisionCoreChain(chainPath, chain);
-  return { id, path: chainPath, chain };
+  return restoreCoreChain({
+    namespaceId,
+    orgId,
+    id,
+    buildChain: getDecisionCoreChain,
+  });
 }
 
-export function ensureDecisionCoreChains(namespaceId: string, orgId: string): DecisionCoreChainInstallResult[] {
-  return DECISION_CORE_CHAIN_IDS.map((id) => {
-    const chainPath = getDecisionCoreChainPath(namespaceId, orgId, id);
-    const chain = getDecisionCoreChain(id);
-    const existing = readExistingCoreChain(chainPath);
-    const shouldWrite = shouldWriteChain(existing, chain);
-    if (shouldWrite) {
-      writeDecisionCoreChain(chainPath, mergeExistingCoreChain(existing, chain));
-    }
-    return {
-      id,
-      path: chainPath,
-      created: shouldWrite,
-    };
+export function ensureDecisionCoreChains(namespaceId: string, orgId: string) {
+  return ensureCoreChains({
+    namespaceId,
+    orgId,
+    ids: DECISION_CORE_CHAIN_IDS,
+    buildChain: getDecisionCoreChain,
+    shouldWriteChain,
+    mergeExistingChain: mergeExistingCoreChain,
   });
 }

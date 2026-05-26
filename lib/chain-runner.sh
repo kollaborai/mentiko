@@ -884,7 +884,7 @@ agent_run_context_export_command() {
     local mentiko_bin_dir="${MENTIKO_CODE_ROOT:-}/bin"
     local agent_path="$mentiko_bin_dir:${PATH:-}"
 
-    printf "export PATH=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q" \
+    printf "export PATH=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q" \
         "$agent_path" \
         "${RUN_ID:-}" \
         "${RUN_ID:-}" \
@@ -902,7 +902,10 @@ agent_run_context_export_command() {
         "${MENTIKO_DECISION_ID:-}" \
         "${MENTIKO_DECISION_PHASE:-}" \
         "${MENTIKO_DECISION_SELECTED_OPTION_ID:-}" \
-        "${MENTIKO_DECISION_WORKSPACE_PATH:-}"
+        "${MENTIKO_DECISION_WORKSPACE_PATH:-}" \
+        "${MENTIKO_JOB_IMPORT_TOKEN:-}" \
+        "${MENTIKO_GENERATION_JOB_ID:-}" \
+        "${MENTIKO_GENERATION_KIND:-}"
 }
 
 # -------------------------------------------------------------------
@@ -1760,6 +1763,8 @@ SEOF
     if [[ "$agent_monitor" == "true" ]]; then
         local agent_context="Chain: $CHAIN_NAME. Agent: $agent_name ($agent_id). Emits: $agent_emits. Round: $round. Workspace: $WORKSPACE_TYPE."
         local monitor_session="monitor-${session_name}"
+        local monitor_advisor_profile
+        monitor_advisor_profile="$(find_advisor_profile 2>/dev/null || true)"
 
         # build monitor script to avoid send-message pasting function bodies
         # NOTE: use double quotes for variable expansion in heredoc
@@ -1777,6 +1782,8 @@ export WORKSPACE_TYPE="${WORKSPACE_TYPE}"
 export MENTIKO_RUN_ID="${RUN_ID}"
 export RUN_ID="${RUN_ID}"
 export MENTIKO_AGENT_ID="${agent_id}"
+export AGENT_PROFILES_DIR="${AGENT_PROFILES_DIR}"
+export MENTIKO_MONITOR_PROFILE_ID="${monitor_advisor_profile}"
 MONEOF
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
             ai_gateway_append_local_proxy_control_exports "$mon_script"
