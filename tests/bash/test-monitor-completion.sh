@@ -165,9 +165,6 @@ else
   echo "PASS: monitor ignores plain prompt text with working directory"
 fi
 
-formatted_nudge="$(monitor_format_nudge_for_agent "keep going")"
-assert_eq "mentiko advisor: keep going" "$formatted_nudge" "monitor nudges include advisor provenance"
-
 fake_advisor_bin="$TEST_TMP_DIR/fake-advisor-bin"
 fake_advisor_marker="$TEST_TMP_DIR/fake-advisor-called"
 mkdir -p "$fake_advisor_bin"

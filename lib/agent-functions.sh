@@ -433,9 +433,6 @@ monitor-with-ai() {
             if declare -f monitor_sanitize_nudge >/dev/null; then
                 response="$(monitor_sanitize_nudge "$response" "$stale_count")"
             fi
-            if declare -f monitor_format_nudge_for_agent >/dev/null; then
-                response="$(monitor_format_nudge_for_agent "$response")"
-            fi
             echo "  -> $response"
 
             # send text first, wait for terminal to receive it, then press Enter
@@ -675,9 +672,6 @@ monitor-chain-agent() {
         fi
         if declare -f monitor_sanitize_nudge >/dev/null; then
             nudge_msg="$(monitor_sanitize_nudge "$nudge_msg" "$stale_count")"
-        fi
-        if declare -f monitor_format_nudge_for_agent >/dev/null; then
-            nudge_msg="$(monitor_format_nudge_for_agent "$nudge_msg")"
         fi
 
         transport_send_raw "$session_name" "$nudge_msg"

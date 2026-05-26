@@ -102,18 +102,6 @@ monitor_capture_looks_busy() {
         'Waiting\.\.\.|[|│][[:space:]]*\*[[:space:]]*Working[[:space:]]+[0-9]+[[:space:]]+msg'
 }
 
-monitor_format_nudge_for_agent() {
-    local nudge="$1"
-    local source_label="${MENTIKO_MONITOR_SOURCE_LABEL:-mentiko advisor}"
-
-    if [[ -z "$source_label" ]]; then
-        printf '%s\n' "$nudge"
-        return 0
-    fi
-
-    printf '%s: %s\n' "$source_label" "$nudge"
-}
-
 monitor_stale_advisor_message() {
     local stale_count="${1:-1}"
     local session_name="${2:-}"
