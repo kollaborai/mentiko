@@ -144,25 +144,25 @@ repeated_bare_nudge="$(monitor_sanitize_nudge $'ok\nok' 1)"
 assert_not_eq $'ok\nok' "$repeated_bare_nudge" "advisor repeated bare acknowledgements are replaced"
 assert_contains "$repeated_bare_nudge" "current assigned task" "repeated bare acknowledgement fallback keeps agent in scope"
 
-if monitor_capture_looks_busy $'cwd ~/dev/platform/mentiko\n⌘ glm glm-4.7 │ * Working 1 msg | 46.0K tok | $0.00'; then
-  echo "PASS: monitor treats working model status as active"
-else
-  echo "FAIL: monitor should treat working model status as active"
+if monitor_should_ask_advisor 1 3; then
+  echo "FAIL: advisor should not run on first stale check"
   exit 1
+else
+  echo "PASS: advisor waits past first stale check"
 fi
 
-if monitor_capture_looks_busy $'⠴   Waiting... 1.8s\n❯'; then
-  echo "PASS: monitor treats waiting model status as active"
-else
-  echo "FAIL: monitor should treat waiting model status as active"
+if monitor_should_ask_advisor 2 3; then
+  echo "FAIL: advisor should not run on second stale check"
   exit 1
+else
+  echo "PASS: advisor waits past second stale check"
 fi
 
-if monitor_capture_looks_busy $'Working directory: /Users/malmazan/dev/platform/mentiko\n❯'; then
-  echo "FAIL: monitor should not treat prompt text as active model work"
-  exit 1
+if monitor_should_ask_advisor 3 3; then
+  echo "PASS: advisor runs on third stale check"
 else
-  echo "PASS: monitor ignores plain prompt text with working directory"
+  echo "FAIL: advisor should run on third stale check"
+  exit 1
 fi
 
 fake_advisor_bin="$TEST_TMP_DIR/fake-advisor-bin"

@@ -92,14 +92,11 @@ monitor_sanitize_nudge() {
     printf '%s\n' "$trimmed"
 }
 
-monitor_capture_looks_busy() {
-    local capture="$1"
-    local cleaned
+monitor_should_ask_advisor() {
+    local stale_count="${1:-0}"
+    local threshold="${2:-${MENTIKO_ADVISOR_STALE_COUNT:-3}}"
 
-    cleaned="$(printf '%s\n' "$capture" | strip-terminal-control)"
-
-    printf '%s\n' "$cleaned" | grep -Eq \
-        'Waiting\.\.\.|[|│][[:space:]]*\*[[:space:]]*Working[[:space:]]+[0-9]+[[:space:]]+msg'
+    [[ "$stale_count" -ge "$threshold" ]]
 }
 
 monitor_stale_advisor_message() {
