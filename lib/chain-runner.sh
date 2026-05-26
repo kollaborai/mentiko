@@ -881,8 +881,11 @@ get_gateway_env() {
 agent_run_context_export_command() {
     local agent_id="${1:-}"
     local agent_emits="${2:-}"
+    local mentiko_bin_dir="${MENTIKO_CODE_ROOT:-}/bin"
+    local agent_path="$mentiko_bin_dir:${PATH:-}"
 
-    printf "export MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q" \
+    printf "export PATH=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q" \
+        "$agent_path" \
         "${RUN_ID:-}" \
         "${RUN_ID:-}" \
         "${NAMESPACE_ID:-default}" \
@@ -894,7 +897,12 @@ agent_run_context_export_command() {
         "${MENTIKO_ORG_ROOT:-}" \
         "${MENTIKO_NAMESPACE_ROOT:-}" \
         "${EVENTS_DIR:-}" \
-        "${ARTIFACTS_DIR:-}"
+        "${ARTIFACTS_DIR:-}" \
+        "${MENTIKO_DECISION_IMPORT_TOKEN:-}" \
+        "${MENTIKO_DECISION_ID:-}" \
+        "${MENTIKO_DECISION_PHASE:-}" \
+        "${MENTIKO_DECISION_SELECTED_OPTION_ID:-}" \
+        "${MENTIKO_DECISION_WORKSPACE_PATH:-}"
 }
 
 # -------------------------------------------------------------------
@@ -1500,18 +1508,31 @@ $rs_produces
     # gateway env (legacy) also written to a temp file if present
     # always unset CLAUDECODE so claude doesn't refuse to run inside another session
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
-        local start_cmd="cd $REMOTE_PROJECT_ROOT && $(ai_gateway_agent_unset_command)"
-        start_cmd="$start_cmd && $run_context_exports"
+        local start_script
+        start_script=$(mktemp "/tmp/agent-start-${session_name}.XXXXXX")
+        chmod 700 "$start_script"
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'set -e\n'
+            printf 'trap '\''rm -f "$0"'\'' EXIT\n'
+            printf 'cd %q\n' "$REMOTE_PROJECT_ROOT"
+            printf '%s\n' "$(ai_gateway_agent_unset_command)"
+            printf '%s\n' "$run_context_exports"
+        } > "$start_script"
         if [[ -n "$gateway_env_vars" ]]; then
             local gw_env_file
             gw_env_file=$(mktemp /tmp/agent-gw-env-XXXXXX)
             chmod 600 "$gw_env_file"
             ai_gateway_append_export_lines "$gw_env_file" "$gateway_env_vars"
-            start_cmd="$start_cmd && source $gw_env_file; rm -f $gw_env_file; $cli_cmd"
+            {
+                printf 'source %q\n' "$gw_env_file"
+                printf 'rm -f %q\n' "$gw_env_file"
+                printf '%s\n' "$cli_cmd"
+            } >> "$start_script"
         else
-            start_cmd="$start_cmd && $cli_cmd"
+            printf '%s\n' "$cli_cmd" >> "$start_script"
         fi
-        send-message "$session_name" "$start_cmd" && sleep 3
+        send-message "$session_name" "bash $(printf '%q' "$start_script")" && sleep 3
 
     elif [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
         # step 1: source profile env locally (API keys, base URL, etc)

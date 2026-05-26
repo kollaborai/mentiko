@@ -60,9 +60,8 @@ export const POST = withErrorHandling(async (
     guidedFlow.round1.answers.length >= guidedFlow.round1.questions.length;
 
   if (allAnswered) {
-    // mark as in_progress (not complete) - synthesis step comes next
-    guidedFlow.round1.status = "in_progress";
-    // build a legacy-compat preference snapshot (synthesis route produces the real profile)
+    guidedFlow.round1.status = "complete";
+    // build a legacy-compat preference snapshot for the options chain
     const profile: Record<string, string> = {};
     for (const a of guidedFlow.round1.answers) {
       const q = guidedFlow.round1.questions.find((qq) => qq.id === a.questionId);

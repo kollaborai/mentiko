@@ -691,7 +691,7 @@ export async function cancelTurn(
 
 /**
  * Respond to a permission_request event. The engine wire format uses separate
- * `decision` ("approve" | "deny") + `scope` ("once" | "always_edits" | ...).
+ * `decision` ("approve" | "deny") + `scope` ("once" | "session" | ...).
  * This helper maps the convenience shape.
  */
 export async function respondToPermission(
@@ -707,7 +707,7 @@ export async function respondToPermission(
     scope = "once";
   } else if (decision === "approve_always") {
     wireDecision = "approve";
-    scope = "always_edits";
+    scope = "session";
   } else {
     wireDecision = "deny";
     scope = "once";

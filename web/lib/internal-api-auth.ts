@@ -9,6 +9,7 @@ interface InternalAuthOptions {
 
 const DERIVED_INTERNAL_AUTH_CONTEXTS = new Set([
   "ai-gateway-local-proxy",
+  "decision-import",
 ]);
 
 function isLoopbackAddress(value: string): boolean {

@@ -5,16 +5,13 @@ import { getDecision, updateDecision } from "@/lib/decision-storage";
 import { getWorkspacePath } from "@/lib/workspace-params";
 import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob, getJob } from "@/lib/job-store";
+import { getJob } from "@/lib/job-store";
 import { getSessionUser } from "@/lib/auth-bridge";
-import { join } from "node:path";
-import { openSync, closeSync } from "node:fs";
-import config from "@/lib/config";
 import type { Decision } from "@/lib/decision-types";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startDecisionChainRun } from "@/lib/decision-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -109,21 +106,21 @@ export const POST = withErrorHandling(async (
     });
   }
 
-  const jobType = body.steering ? "decision_steering" : "decision_research";
-  const job = createJob(jobType, { prompt: researchPrompt, workspacePath: authorizedWorkspacePath }, undefined, id, userId, namespaceId);
-
-  await updateDecision(namespaceId, orgId, id, { status: "researching", activeJobId: job.id }, workspacePath);
-
-  const logPath = join(config.jobsDir, `${job.id}.log`);
-  const logFd = openSync(logPath, "a");
-  launchJobRunner({
-    job,
+  const run = await startDecisionChainRun({
+    request,
     namespaceId,
     orgId,
-    origin: request.nextUrl.origin,
-    stdio: ["ignore", logFd, logFd],
+    decision,
+    phase: "research",
+    prompt: researchPrompt,
+    workspacePath: authorizedWorkspacePath,
   });
-  closeSync(logFd);
 
-  return apiSuccess({ jobId: job.id, status: job.status });
+  const updated = await updateDecision(namespaceId, orgId, id, {
+    status: "researching",
+    activeJobId: undefined,
+    researchRunId: run.runId,
+  }, workspacePath);
+
+  return apiSuccess({ runId: run.runId, status: "running", decision: updated });
 });

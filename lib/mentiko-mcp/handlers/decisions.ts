@@ -72,10 +72,15 @@ export async function selectDecisionOption(
   );
 }
 
-export async function approveDecision(decisionId: string): Promise<any> {
+export async function approveDecision(
+  decisionId: string,
+  selectedOptionId?: string,
+  workspacePath?: string,
+  notes?: string
+): Promise<any> {
   return await opsPost(
     "/api/mentiko-mcp/ops/decisions/approve",
-    { decisionId }
+    { decisionId, selectedOptionId, workspacePath, notes }
   );
 }
 

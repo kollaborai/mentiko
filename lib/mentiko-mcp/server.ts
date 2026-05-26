@@ -462,9 +462,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     if (name === "approve_decision") {
       const { allowed } = await checkPermission(name, args);
       if (!allowed) return textResult("Permission denied by user.");
-      const result = await decisionsHandler.approveDecision(args.decisionId);
+      const result = await decisionsHandler.approveDecision(
+        args.decisionId,
+        args.selectedOptionId || args.optionId,
+        args.workspacePath,
+        args.notes
+      );
       await dispatchEffect("navigate", { route: "/tasks" });
-      return textResult(`Decision approved. Navigated to tasks.`);
+      return textResult(JSON.stringify(result, null, 2));
     }
 
     if (name === "poll_decision_ready") {

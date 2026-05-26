@@ -24,6 +24,7 @@ import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
+import { buildRunsListQuery } from "./runs-query";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarItem,
@@ -196,16 +197,11 @@ function RunsPageContent() {
   }, [runs]);
 
   const taskFilter = searchParams.get("task");
-  const runIdFilter = searchParams.get("runId");
 
   const fetchRuns = useCallback(async (isPolling = false) => {
     if (!isPolling) setLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.append("limit", "100");
-      if (workspacePath) params.append("workspace", workspacePath);
-      if (taskFilter) params.append("task", taskFilter);
-      if (runIdFilter) params.append("runId", runIdFilter);
+      const params = buildRunsListQuery({ workspacePath, taskFilter });
       const res = await fetchWithNamespace(`/api/runs?${params}`);
       const raw = await res.json();
       const data = unwrapApiData<{ runs?: Run[] }>(raw);
@@ -225,7 +221,7 @@ function RunsPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [workspacePath, taskFilter, runIdFilter, fetchWithNamespace]);
+  }, [workspacePath, taskFilter, fetchWithNamespace]);
 
   const fetchPinned = useCallback(async () => {
     try {
@@ -272,20 +268,44 @@ function RunsPageContent() {
     return () => clearInterval(interval);
   }, [fetchRuns, fetchPinned, workspaceReady]);
 
-  // auto-select run from URL query param (only on initial load)
-  const initialRunIdHandled = useRef(false);
+  // auto-select run from URL query param without filtering the sidebar list
+  const handledRunIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (initialRunIdHandled.current) return;
     const runIdParam = searchParams.get("runId");
-    if (runIdParam && runs.length > 0) {
-      const target = runs.find((r) => r.id === runIdParam);
-      if (target) {
-        setSelected(target);
-        setMobileView("detail");
-      }
-      initialRunIdHandled.current = true;
+    if (!runIdParam || handledRunIdRef.current === runIdParam) return;
+
+    const target = runs.find((r) => r.id === runIdParam);
+    if (target) {
+      setSelected(target);
+      selectedRef.current = target;
+      setMobileView("detail");
+      handledRunIdRef.current = runIdParam;
+      return;
     }
-  }, [searchParams, runs]);
+
+    if (loading) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithNamespace(`/api/runs/${encodeURIComponent(runIdParam)}`);
+        if (!res.ok) return;
+        const raw = await res.json();
+        const data = unwrapApiData<{ run?: Run }>(raw);
+        if (!cancelled && data.run) {
+          setSelected(data.run);
+          selectedRef.current = data.run;
+          setMobileView("detail");
+        }
+      } finally {
+        if (!cancelled) handledRunIdRef.current = runIdParam;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, runs, loading, fetchWithNamespace]);
 
   const filteredAndSortedRuns = runs
     .filter((run) => {

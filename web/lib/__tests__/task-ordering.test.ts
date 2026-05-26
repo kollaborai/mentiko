@@ -1,4 +1,4 @@
-import { sortTasksByDependencyOrder } from "../task-ordering";
+import { sortTaskTreeNodes, sortTasksByDependencyOrder } from "../task-ordering";
 
 describe("sortTasksByDependencyOrder", () => {
   const task = (id: string, priority = 1) => ({
@@ -61,6 +61,39 @@ describe("sortTasksByDependencyOrder", () => {
     expect(sortTasksByDependencyOrder(tasks, []).map((item) => item.id)).toEqual([
       "TASK-001",
       "TASK-002",
+      "TASK-010",
+    ]);
+  });
+
+  it("keeps decision-created tasks in plan order before priority", () => {
+    const tasks = [
+      { ...task("TASK-008", 1), metadata: { decision_id: "decision-1", decision_plan_order: 1 } },
+      { ...task("TASK-007", 2), metadata: { decision_id: "decision-1", decision_plan_order: 0 } },
+    ];
+
+    expect(sortTasksByDependencyOrder(tasks, []).map((item) => item.id)).toEqual([
+      "TASK-007",
+      "TASK-008",
+    ]);
+  });
+
+  it("sorts task-tree children by dependency and decision order", () => {
+    const nodes = [
+      { ...task("TASK-010", 0), label: "Test end to end", metadata: { decision_id: "decision-1" } },
+      { ...task("TASK-008", 1), label: "Implement polling", metadata: { decision_id: "decision-1" } },
+      { ...task("TASK-007", 2), label: "Add filtering", metadata: { decision_id: "decision-1" } },
+      { ...task("TASK-009", 0), label: "Update resolve", metadata: { decision_id: "decision-1" } },
+    ];
+    const deps = [
+      { from: "TASK-007", to: "TASK-009" },
+      { from: "TASK-008", to: "TASK-009" },
+      { from: "TASK-009", to: "TASK-010" },
+    ];
+
+    expect(sortTaskTreeNodes(nodes, deps).map((item) => item.id)).toEqual([
+      "TASK-007",
+      "TASK-008",
+      "TASK-009",
       "TASK-010",
     ]);
   });

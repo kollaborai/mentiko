@@ -5,6 +5,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
 import { mapPriority } from "@/lib/task-transforms";
+import { sortTaskTreeNodes } from "@/lib/task-ordering";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
@@ -23,6 +24,8 @@ interface ApiNode {
   status: string;
   priority: number;
   layer: number;
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface ApiDep {
@@ -172,20 +175,15 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
 
       visited.add(id);
 
-      const childIds = childrenMap.get(id) || [];
-      // sort children: epics first, then by priority, then alphabetical
-      const sortedChildIds = [...childIds].sort((a, b) => {
-        const na = nodeMap.get(a);
-        const nb = nodeMap.get(b);
-        if (!na || !nb) return 0;
-        // epics first
-        if (na.type === "epic" && nb.type !== "epic") return -1;
-        if (na.type !== "epic" && nb.type === "epic") return 1;
-        // then by priority
-        if (na.priority !== nb.priority) return na.priority - nb.priority;
-        // then alphabetical
-        return na.label.localeCompare(nb.label);
-      });
+      const childNodes = (childrenMap.get(id) || [])
+        .map((childId) => nodeMap.get(childId))
+        .filter((child): child is ApiNode => Boolean(child));
+      const epicChildren = childNodes.filter((child) => child.type === "epic");
+      const taskChildren = childNodes.filter((child) => child.type !== "epic");
+      const sortedChildIds = [
+        ...sortTaskTreeNodes(epicChildren, deps),
+        ...sortTaskTreeNodes(taskChildren, deps),
+      ].map((child) => child.id);
 
       const children: HierarchyNode[] = [];
       for (const childId of sortedChildIds) {
@@ -203,12 +201,11 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
 
     // find root nodes (no parent)
     const roots = nodes.filter((n) => !hasParent.has(n.id));
-    // sort roots by priority
-    roots.sort((a, b) => a.priority - b.priority);
+    const sortedRoots = sortTaskTreeNodes(roots, deps);
 
     const visited = new Set<string>();
     const treeNodes: HierarchyNode[] = [];
-    for (const root of roots) {
+    for (const root of sortedRoots) {
       const node = buildNode(root.id, visited);
       if (node) treeNodes.push(node);
     }
@@ -226,7 +223,7 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
     }
 
     return treeNodes;
-  }, [nodes, links, nodeMap, depInfo]);
+  }, [nodes, links, deps, nodeMap, depInfo]);
 
   // stats
   const stats = useMemo(() => {

@@ -51,6 +51,14 @@ function wsUrl(path: string, workspacePath?: string): string {
   return `${path}${sep}workspace=${encodeURIComponent(workspacePath)}`;
 }
 
+function runHref(runId: string): string {
+  return `/runs?runId=${encodeURIComponent(runId)}`;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function DecisionDetail({
   decisionId,
   workspacePath,
@@ -100,6 +108,23 @@ export function DecisionDetail({
     }
   }, [decisionId, workspacePath, fetchWithNamespace, setDecision]);
 
+  const pollDecisionUntil = useCallback(async (
+    predicate: (candidate: Decision) => boolean,
+    maxAttempts = 120,
+  ): Promise<Decision | null> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      await wait(2000);
+      const res = await fetchWithNamespace(wsUrl(`/api/decisions/${decisionId}`, workspacePath));
+      if (!res.ok) continue;
+      const raw = await res.json();
+      const data = unwrapApiData<{ decision?: Decision }>(raw);
+      if (!data.decision) continue;
+      setDecision(data.decision);
+      if (predicate(data.decision)) return data.decision;
+    }
+    return null;
+  }, [decisionId, workspacePath, fetchWithNamespace, setDecision]);
+
   useEffect(() => {
     setLoading(true);
     setSelectedOptionId(null);
@@ -139,6 +164,26 @@ export function DecisionDetail({
 
   const resumeResearchRef = useRef(false);
   useEffect(() => {
+    if (decision?.status === "researching" && decision.researchRunId && !resumeResearchRef.current) {
+      resumeResearchRef.current = true;
+      (async () => {
+        setResearching(true);
+        const runId = decision.researchRunId;
+        try {
+          const updated = await pollDecisionUntil((candidate) =>
+            candidate.researchRunId === runId && candidate.status !== "researching"
+          );
+          if (updated?.status === "briefed") setViewMode("briefing");
+        } catch {
+          // ignore
+        } finally {
+          setResearching(false);
+          fetchDecision();
+        }
+      })();
+      return;
+    }
+
     if (decision?.activeJobId && !resumeResearchRef.current) {
       resumeResearchRef.current = true;
       (async () => {
@@ -146,7 +191,7 @@ export function DecisionDetail({
         const jobId = decision.activeJobId;
         try {
           for (let i = 0; i < 120; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await wait(2000);
             const poll = await fetchWithNamespace(`/api/jobs/${jobId}`);
             const pollRaw = await poll.json();
             const job = unwrapApiData<{ status: string }>(pollRaw);
@@ -174,7 +219,7 @@ export function DecisionDetail({
         }
       })();
     }
-  }, [decision?.activeJobId, decisionId, fetchWithNamespace, fetchDecision, setDecision]);
+  }, [decision?.activeJobId, decision?.researchRunId, decision?.status, pollDecisionUntil, decisionId, workspacePath, fetchWithNamespace, fetchDecision, setDecision]);
 
   const resumeRetroRef = useRef(false);
   useEffect(() => {
@@ -185,7 +230,7 @@ export function DecisionDetail({
         const jobId = decision.retroJobId;
         try {
           for (let i = 0; i < 120; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await wait(2000);
             const poll = await fetchWithNamespace(`/api/jobs/${jobId}`);
             const pollRaw = await poll.json();
             const job = unwrapApiData<{ status: string }>(pollRaw);
@@ -210,7 +255,7 @@ export function DecisionDetail({
         }
       })();
     }
-  }, [decision?.retroJobId, decisionId, fetchWithNamespace, fetchDecision, setDecision]);
+  }, [decision?.retroJobId, decisionId, workspacePath, fetchWithNamespace, fetchDecision, setDecision]);
 
   // reset resume refs on decision switch
   useEffect(() => {
@@ -230,10 +275,22 @@ export function DecisionDetail({
         });
         if (!res.ok) return;
         const resRaw = await res.json();
-        const { jobId } = unwrapApiData<{ jobId: string }>(resRaw);
+        const data = unwrapApiData<{ jobId?: string; runId?: string; decision?: Decision }>(resRaw);
+        if (data.decision) setDecision(data.decision);
+
+        if (data.runId) {
+          const updated = await pollDecisionUntil((candidate) =>
+            candidate.researchRunId === data.runId && candidate.status !== "researching"
+          );
+          if (updated?.status === "briefed") setViewMode("briefing");
+          return;
+        }
+
+        const jobId = data.jobId;
+        if (!jobId) return;
 
         for (let i = 0; i < 120; i++) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await wait(2000);
           const poll = await fetchWithNamespace(`/api/jobs/${jobId}`);
           const pollRaw = await poll.json();
           const job = unwrapApiData<{ status: string }>(pollRaw);
@@ -261,7 +318,7 @@ export function DecisionDetail({
         fetchDecision();
       }
     },
-    [decisionId, fetchWithNamespace, fetchDecision, setDecision]
+    [decisionId, workspacePath, fetchWithNamespace, fetchDecision, pollDecisionUntil, setDecision]
   );
 
   const autoResearchFiredRef = useRef(false);
@@ -300,28 +357,37 @@ export function DecisionDetail({
         );
         if (planRes.ok) {
           const planRaw = await planRes.json();
-          const { jobId } = unwrapApiData<{ jobId: string }>(planRaw);
-          // poll until plan generation completes
-          for (let i = 0; i < 120; i++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            const poll = await fetchWithNamespace(`/api/jobs/${jobId}`);
-            const pollRaw = await poll.json();
-            const job = unwrapApiData<{ status: string }>(pollRaw);
-            if (job.status === "complete") {
-              const apply = await fetchWithNamespace(
-                wsUrl(`/api/decisions/${decisionId}/guided/plan`, workspacePath),
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ jobId }),
-                }
-              );
-              const applyRaw = await apply.json();
-              const result = unwrapApiData<{ decision?: Decision }>(applyRaw);
-              if (result.decision) setDecision(result.decision);
-              break;
+          const planData = unwrapApiData<{ jobId?: string; runId?: string; decision?: Decision }>(planRaw);
+          if (planData.decision) setDecision(planData.decision);
+
+          if (planData.runId) {
+            await pollDecisionUntil((candidate) =>
+              candidate.guidedFlow?.round3?.generationRunId === planData.runId &&
+              !!candidate.guidedFlow?.round3?.plan
+            );
+          } else if (planData.jobId) {
+            // legacy job fallback
+            for (let i = 0; i < 120; i++) {
+              await wait(2000);
+              const poll = await fetchWithNamespace(`/api/jobs/${planData.jobId}`);
+              const pollRaw = await poll.json();
+              const job = unwrapApiData<{ status: string }>(pollRaw);
+              if (job.status === "complete") {
+                const apply = await fetchWithNamespace(
+                  wsUrl(`/api/decisions/${decisionId}/guided/plan`, workspacePath),
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ jobId: planData.jobId }),
+                  }
+                );
+                const applyRaw = await apply.json();
+                const result = unwrapApiData<{ decision?: Decision }>(applyRaw);
+                if (result.decision) setDecision(result.decision);
+                break;
+              }
+              if (job.status === "failed") break;
             }
-            if (job.status === "failed") break;
           }
         }
       }
@@ -342,7 +408,7 @@ export function DecisionDetail({
     } finally {
       setResolving(false);
     }
-  }, [decisionId, decision, selectedOptionId, notes, resolving, fetchWithNamespace, onUpdate, setDecision]);
+  }, [decisionId, workspacePath, decision, selectedOptionId, notes, resolving, fetchWithNamespace, onUpdate, pollDecisionUntil, setDecision]);
 
   const handleSkip = useCallback(async () => {
     try {
@@ -383,7 +449,7 @@ export function DecisionDetail({
       const { jobId } = unwrapApiData<{ jobId: string }>(resRaw);
 
       for (let i = 0; i < 120; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await wait(2000);
         const poll = await fetchWithNamespace(`/api/jobs/${jobId}`);
         const pollRaw = await poll.json();
         const job = unwrapApiData<{ status: string }>(pollRaw);
@@ -406,7 +472,7 @@ export function DecisionDetail({
       setRetroLoading(false);
       fetchDecision();
     }
-  }, [decisionId, fetchWithNamespace, fetchDecision, setDecision]);
+  }, [decisionId, workspacePath, fetchWithNamespace, fetchDecision, setDecision]);
 
   // keyboard navigation for dashboard mode
   useEffect(() => {
@@ -509,6 +575,13 @@ export function DecisionDetail({
   const implementationHref = decision.resolution?.taskId
     ? `/tasks?task=${encodeURIComponent(decision.resolution.taskId)}`
     : null;
+  const linkedRuns = [
+    { label: "research", runId: decision.researchRunId },
+    { label: "questions", runId: decision.guidedFlow?.round1.generationRunId },
+    { label: "options", runId: decision.guidedFlow?.round2.generationRunId },
+    { label: "plan", runId: decision.guidedFlow?.round3.generationRunId },
+    { label: "retro", runId: decision.retroRunId },
+  ].filter((item): item is { label: string; runId: string } => Boolean(item.runId));
 
   return (
     <div className="flex h-full flex-col">
@@ -663,6 +736,22 @@ export function DecisionDetail({
                   </span>
                 )}
               </span>
+            </div>
+          )}
+          {linkedRuns.length > 0 && (
+            <div className="flex items-center gap-1.5 col-span-2 min-w-0">
+              <span className="text-foreground/30">runs</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {linkedRuns.map((run) => (
+                  <a
+                    key={`${run.label}-${run.runId}`}
+                    href={runHref(run.runId)}
+                    className="text-[10px] font-semibold text-sky-300 hover:text-sky-200"
+                  >
+                    {run.label}
+                  </a>
+                ))}
+              </div>
             </div>
           )}
           <div className="flex items-center gap-4 col-span-2 pt-1 mt-1">

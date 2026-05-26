@@ -98,6 +98,7 @@ export interface Round1State {
   answers: TradeoffAnswer[];
   preferenceProfile?: PreferenceProfile;
   generationJobId?: string;
+  generationRunId?: string;
   synthesisJobId?: string;
 }
 
@@ -126,6 +127,7 @@ export interface Round2State {
   selectedOptionId?: string;
   customizations?: string[];
   generationJobId?: string;
+  generationRunId?: string;
 }
 
 export interface PlanTask {
@@ -153,6 +155,7 @@ export interface Round3State {
   status: "pending" | "generating" | "ready" | "complete";
   plan?: ExecutionPlan;
   generationJobId?: string;
+  generationRunId?: string;
 }
 
 export interface GuidedFlow {
@@ -195,7 +198,9 @@ export interface Decision {
   resolution?: Resolution;
   retrospective?: Retrospective;
   activeJobId?: string;
+  researchRunId?: string;
   retroJobId?: string;
+  retroRunId?: string;
   guidedFlow?: GuidedFlow;
   mode?: DecisionMode;
   /** workspace path that scopes this decision (undefined = legacy namespace-level) */

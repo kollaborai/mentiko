@@ -38,7 +38,7 @@ jest.mock("@/lib/decision-storage", () => ({
 import { GET, POST } from "./route";
 import { createDecision, getDecision, updateDecision } from "@/lib/decision-storage";
 
-function makeRequest(body: Record<string, unknown>): Request {
+function makeRequest(body: Record<string, unknown>): Parameters<typeof POST>[0] {
   return {
     url: "http://localhost:3000/api/mentiko-mcp/ops/decisions",
     headers: new Headers({
@@ -46,7 +46,7 @@ function makeRequest(body: Record<string, unknown>): Request {
       authorization: "Bearer test-token",
     }),
     json: async () => body,
-  } as Request;
+  } as unknown as Parameters<typeof POST>[0];
 }
 
 describe("POST /api/mentiko-mcp/ops/decisions", () => {

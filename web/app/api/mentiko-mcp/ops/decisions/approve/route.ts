@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { getDecision } from "@/lib/decision-storage";
+import { resolveDecisionToTasks } from "@/lib/decision-resolution";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { BadRequest } from "@/lib/api-errors";
+import { BadRequest, NotFound } from "@/lib/api-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -13,32 +15,46 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const body = await request.json() as {
     decisionId: string;
+    optionId?: string;
+    selectedOptionId?: string;
+    notes?: string;
+    workspacePath?: string;
   };
 
   if (!body.decisionId) {
     throw new BadRequest("decisionId required");
   }
 
-  // proxy to the main decisions route PATCH handler with inbox-key bypass
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
-  const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
-
-  const res = await fetch(`${webUrl}/api/decisions/${body.decisionId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Mentiko-Inbox-Key": inboxKey,
-    },
-    body: JSON.stringify({
-      status: "approved",
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Failed to approve decision: ${res.status} ${errText}`);
+  const decision = getDecision(
+    ctx.namespaceId,
+    ctx.orgId,
+    body.decisionId,
+    body.workspacePath,
+  );
+  if (!decision) {
+    throw new NotFound("Decision", body.decisionId);
   }
 
-  const data = await res.json();
-  return apiSuccess(data);
+  const selectedOptionId =
+    body.selectedOptionId ||
+    body.optionId ||
+    decision.guidedFlow?.round2.selectedOptionId ||
+    decision.recommendation?.choiceId;
+
+  if (!selectedOptionId) {
+    throw new BadRequest("selectedOptionId required");
+  }
+
+  const result = await resolveDecisionToTasks({
+    namespaceId: ctx.namespaceId,
+    orgId: ctx.orgId,
+    decisionId: body.decisionId,
+    selectedOptionId,
+    notes: body.notes,
+    workspaceId: body.workspacePath,
+    workspacePath: body.workspacePath,
+    selectedBy: "mentiko-mcp",
+  });
+
+  return apiSuccess(result);
 });

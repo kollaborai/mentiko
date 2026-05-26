@@ -29,19 +29,59 @@ function wsUrl(path: string, workspacePath?: string): string {
   return `${path}${sep}workspace=${encodeURIComponent(workspacePath)}`;
 }
 
+function runHref(runId: string): string {
+  return `/runs?runId=${encodeURIComponent(runId)}`;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function pollJob(
   fetchFn: ReturnType<typeof useNamespaceFetch>["fetchWithNamespace"],
   jobId: string,
   maxAttempts = 120
 ): Promise<{ status: string; result?: unknown }> {
   for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await wait(2000);
     const res = await fetchFn(`/api/jobs/${jobId}`);
     const raw = await res.json();
     const job = unwrapApiData<{ status: string; result?: unknown }>(raw);
     if (job.status === "complete" || job.status === "failed") return job;
   }
   return { status: "timeout" };
+}
+
+async function pollDecisionUntil(
+  fetchFn: ReturnType<typeof useNamespaceFetch>["fetchWithNamespace"],
+  decisionId: string,
+  workspacePath: string | undefined,
+  predicate: (decision: Decision) => boolean,
+  maxAttempts = 120,
+): Promise<Decision | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    await wait(2000);
+    const res = await fetchFn(wsUrl(`/api/decisions/${decisionId}`, workspacePath));
+    if (!res.ok) continue;
+    const raw = await res.json();
+    const data = unwrapApiData<{ decision?: Decision }>(raw);
+    if (!data.decision) continue;
+    if (predicate(data.decision)) return data.decision;
+  }
+  return null;
+}
+
+function runMatchesPhase(decision: Decision, phase: "questions" | "options" | "plan", runId: string): boolean {
+  if (phase === "questions") {
+    return decision.guidedFlow?.round1.generationRunId === runId &&
+      decision.guidedFlow.round1.questions.length > 0;
+  }
+  if (phase === "options") {
+    return decision.guidedFlow?.round2.generationRunId === runId &&
+      decision.guidedFlow.round2.status === "ready";
+  }
+  return decision.guidedFlow?.round3.generationRunId === runId &&
+    !!decision.guidedFlow.round3.plan;
 }
 
 export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, selectedOptionId, onSelectedOptionChange }: GuidedFlowShellProps) {
@@ -53,6 +93,10 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
 
   const flow = decision.guidedFlow;
   const currentRound = flow?.currentRound ?? 0;
+  const activeGenerationRunId =
+    flow?.round3.generationRunId ||
+    flow?.round2.generationRunId ||
+    flow?.round1.generationRunId;
 
   // resume polling on mount if a generation job is in progress
   useEffect(() => {
@@ -85,6 +129,40 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
           setError("Failed to resume synthesis");
         } finally {
           setSynthesizing(false);
+        }
+      })();
+      return;
+    }
+
+    const activeRun = flow.round3.generationRunId && flow.round3.status === "generating"
+      ? { id: flow.round3.generationRunId, phase: "plan" as const }
+      : flow.round2.generationRunId && flow.round2.status === "generating"
+        ? { id: flow.round2.generationRunId, phase: "options" as const }
+        : flow.round1.generationRunId && flow.round1.questions.length === 0
+          ? { id: flow.round1.generationRunId, phase: "questions" as const }
+          : null;
+
+    if (activeRun) {
+      resumeRef.current = true;
+      setGenerating(true);
+
+      (async () => {
+        try {
+          const updated = await pollDecisionUntil(
+            fetchWithNamespace,
+            decision.id,
+            workspacePath,
+            (candidate) => runMatchesPhase(candidate, activeRun.phase, activeRun.id),
+          );
+          if (updated) {
+            onUpdate(updated);
+          } else {
+            setError(`Generation timed out: ${activeRun.phase}`);
+          }
+        } catch {
+          setError("Failed to resume generation");
+        } finally {
+          setGenerating(false);
         }
       })();
       return;
@@ -128,7 +206,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
         setGenerating(false);
       }
     })();
-  }, [flow, decision.id, fetchWithNamespace, onUpdate]);
+  }, [flow, decision.id, workspacePath, fetchWithNamespace, onUpdate]);
 
   const startRound1 = useCallback(async () => {
     setGenerating(true);
@@ -140,7 +218,25 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
       );
       const raw = await res.json();
       if (!res.ok) { setError(getApiErrorMessage(raw, "Failed to start guided flow")); return; }
-      const data = unwrapApiData<{ jobId: string }>(raw);
+      const data = unwrapApiData<{ jobId?: string; runId?: string; decision?: Decision }>(raw);
+      if (data.decision) onUpdate(data.decision);
+
+      if (data.runId) {
+        const updated = await pollDecisionUntil(
+          fetchWithNamespace,
+          decision.id,
+          workspacePath,
+          (candidate) => runMatchesPhase(candidate, "questions", data.runId!),
+        );
+        if (updated) onUpdate(updated);
+        else setError("Question generation failed or timed out");
+        return;
+      }
+
+      if (!data.jobId) {
+        setError("Question generation did not start");
+        return;
+      }
 
       const job = await pollJob(fetchWithNamespace, data.jobId);
       if (job.status === "complete") {
@@ -163,7 +259,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
     } finally {
       setGenerating(false);
     }
-  }, [decision.id, fetchWithNamespace, onUpdate]);
+  }, [decision.id, workspacePath, fetchWithNamespace, onUpdate]);
 
   // auto-start round 1 when research is done but guided flow hasn't started
   const autoStartRef = useRef<string | null>(null);
@@ -201,45 +297,18 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
       const data = unwrapApiData<{ decision?: Decision }>(raw);
       if (data.decision) onUpdate(data.decision);
     },
-    [decision.id, fetchWithNamespace, onUpdate]
+    [decision.id, workspacePath, fetchWithNamespace, onUpdate]
   );
 
-  const startSynthesis = useCallback(async () => {
-    setSynthesizing(true);
-    setError(null);
-    try {
-      const res = await fetchWithNamespace(
-        wsUrl(`/api/decisions/${decision.id}/guided/synthesize`, workspacePath),
-        { method: "POST" }
-      );
-      const raw = await res.json();
-      if (!res.ok) { setError(getApiErrorMessage(raw, "Failed to synthesize preferences")); return; }
-      const data = unwrapApiData<{ jobId: string }>(raw);
-
-      const job = await pollJob(fetchWithNamespace, data.jobId);
-      if (job.status === "complete") {
-        const apply = await fetchWithNamespace(
-          wsUrl(`/api/decisions/${decision.id}/guided/synthesize`, workspacePath),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ jobId: data.jobId }),
-          }
-        );
-        const resultRaw = await apply.json();
-        const resultData = unwrapApiData<{ decision?: Decision }>(resultRaw);
-        if (resultData.decision) onUpdate(resultData.decision);
-      } else {
-        setError("Preference synthesis failed or timed out");
-      }
-    } catch {
-      setError("Failed to synthesize preferences");
-    } finally {
-      setSynthesizing(false);
-    }
-  }, [decision.id, fetchWithNamespace, onUpdate]);
+  // Round1Cards and the auto-start effect can fire in the same render tick.
+  const autoRound2Ref = useRef(false);
+  useEffect(() => {
+    autoRound2Ref.current = false;
+  }, [decision.id]);
 
   const startRound2 = useCallback(async () => {
+    if (autoRound2Ref.current) return;
+    autoRound2Ref.current = true;
     setGenerating(true);
     setError(null);
     try {
@@ -248,8 +317,34 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
         { method: "POST" }
       );
       const raw = await res.json();
-      if (!res.ok) { setError(getApiErrorMessage(raw, "Failed to generate options")); return; }
-      const data = unwrapApiData<{ jobId: string }>(raw);
+      if (!res.ok) {
+        autoRound2Ref.current = false;
+        setError(getApiErrorMessage(raw, "Failed to generate options"));
+        return;
+      }
+      const data = unwrapApiData<{ jobId?: string; runId?: string; decision?: Decision }>(raw);
+      if (data.decision) onUpdate(data.decision);
+
+      if (data.runId) {
+        const updated = await pollDecisionUntil(
+          fetchWithNamespace,
+          decision.id,
+          workspacePath,
+          (candidate) => runMatchesPhase(candidate, "options", data.runId!),
+        );
+        if (updated) onUpdate(updated);
+        else {
+          autoRound2Ref.current = false;
+          setError("Option generation failed or timed out");
+        }
+        return;
+      }
+
+      if (!data.jobId) {
+        autoRound2Ref.current = false;
+        setError("Option generation did not start");
+        return;
+      }
 
       const job = await pollJob(fetchWithNamespace, data.jobId);
       if (job.status === "complete") {
@@ -265,21 +360,18 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
         const resultData = unwrapApiData<{ decision?: Decision }>(resultRaw);
         if (resultData.decision) onUpdate(resultData.decision);
       } else {
+        autoRound2Ref.current = false;
         setError("Option generation failed or timed out");
       }
     } catch {
+      autoRound2Ref.current = false;
       setError("Failed to generate options");
     } finally {
       setGenerating(false);
     }
-  }, [decision.id, fetchWithNamespace, onUpdate]);
+  }, [decision.id, workspacePath, fetchWithNamespace, onUpdate]);
 
-  // auto-start round 2 after synthesis completes
-  const autoRound2Ref = useRef(false);
-  useEffect(() => {
-    autoRound2Ref.current = false;
-  }, [decision.id]);
-
+  // auto-start round 2 after answers complete
   useEffect(() => {
     if (
       !autoRound2Ref.current &&
@@ -290,7 +382,6 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
       flow.round2.status === "pending" &&
       currentRound >= 1
     ) {
-      autoRound2Ref.current = true;
       startRound2();
     }
   }, [flow, currentRound, generating, synthesizing, startRound2]);
@@ -317,7 +408,25 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
       );
       const raw = await res.json();
       if (!res.ok) { setError(getApiErrorMessage(raw, "Failed to generate plan")); return; }
-      const data = unwrapApiData<{ jobId: string }>(raw);
+      const data = unwrapApiData<{ jobId?: string; runId?: string; decision?: Decision }>(raw);
+      if (data.decision) onUpdate(data.decision);
+
+      if (data.runId) {
+        const updated = await pollDecisionUntil(
+          fetchWithNamespace,
+          decision.id,
+          workspacePath,
+          (candidate) => runMatchesPhase(candidate, "plan", data.runId!),
+        );
+        if (updated) onUpdate(updated);
+        else setError("Plan generation failed or timed out");
+        return;
+      }
+
+      if (!data.jobId) {
+        setError("Plan generation did not start");
+        return;
+      }
 
       const job = await pollJob(fetchWithNamespace, data.jobId);
       if (job.status === "complete") {
@@ -340,7 +449,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
     } finally {
       setGenerating(false);
     }
-  }, [decision.id, selectedOptionId, fetchWithNamespace, onUpdate]);
+  }, [decision.id, selectedOptionId, workspacePath, fetchWithNamespace, onUpdate]);
 
   const [approving, setApproving] = useState(false);
 
@@ -371,7 +480,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
     } finally {
       setApproving(false);
     }
-  }, [decision.id, flow, selectedOptionId, fetchWithNamespace, onUpdate, onExit]);
+  }, [decision.id, flow, selectedOptionId, workspacePath, fetchWithNamespace, onUpdate, onExit]);
 
   const handleSelectRound = useCallback((round: 1 | 2 | 3) => {
     if (!flow) return;
@@ -433,6 +542,14 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
                currentRound === 1 ? "Generating tailored options..." :
                "Generating execution plan..."}
             </span>
+            {activeGenerationRunId && (
+              <a
+                href={runHref(activeGenerationRunId)}
+                className="text-xs font-semibold text-sky-300 hover:text-sky-200"
+              >
+                View run
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -465,7 +582,6 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
               onClick={() => {
                 setError(null);
                 if (currentRound === 0) startRound1();
-                else if (currentRound === 1 && flow?.round1.status !== "complete") startSynthesis();
                 else if (currentRound === 1) startRound2();
                 else startRound3();
               }}
@@ -605,7 +721,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
             questions={flow.round1.questions}
             answers={flow.round1.answers}
             onAnswer={handleAnswer}
-            onComplete={startSynthesis}
+            onComplete={startRound2}
           />
         )}
 

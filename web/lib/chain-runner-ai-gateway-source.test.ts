@@ -78,7 +78,8 @@ describe("chain-runner AI gateway source contract", () => {
   it("passes run context into shell pty agent commands", () => {
     expect(chainRunner).toContain("agent_run_context_export_command()");
     expect(chainRunner).toContain('run_context_exports=$(agent_run_context_export_command "$agent_id" "$agent_emits")');
-    expect(chainRunner).toContain('start_cmd="$start_cmd && $run_context_exports');
+    expect(chainRunner).toContain('start_script=$(mktemp "/tmp/agent-start-${session_name}.XXXXXX")');
+    expect(chainRunner).toContain('printf \'%s\\n\' "$run_context_exports"');
     expect(chainRunner).toContain('remote_start="$remote_start && $run_context_exports');
     expect(chainRunner).toContain("MENTIKO_RUN_ID=%q");
     expect(chainRunner).toContain("RUN_ID=%q");
@@ -115,7 +116,7 @@ describe("chain-runner AI gateway source contract", () => {
 
 describe("chain launch surfaces pass local proxy env to runners", () => {
   const files = [
-    "../../web/app/api/chains/run/route.ts",
+    "../../web/lib/chain-run-service.ts",
     "../../web/app/api/runs/[id]/resume/route.ts",
     "../../web/app/api/schedules/route.ts",
     "../../web/app/api/chains/run-batch/route.ts",
@@ -131,7 +132,7 @@ describe("chain launch surfaces pass local proxy env to runners", () => {
 
   it("passes request origins when route handlers have them", () => {
     const routeFiles = [
-      "../../web/app/api/chains/run/route.ts",
+      "../../web/lib/chain-run-service.ts",
       "../../web/app/api/runs/[id]/resume/route.ts",
       "../../web/app/api/schedules/route.ts",
       "../../web/app/api/chains/run-batch/route.ts",
@@ -146,7 +147,7 @@ describe("chain launch surfaces pass local proxy env to runners", () => {
 });
 
 describe("chain run profile override contract", () => {
-  const source = readFileSync(new URL("../../web/app/api/chains/run/route.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../../web/lib/chain-run-service.ts", import.meta.url), "utf8");
 
   it("stamps request-selected agent profile onto the run-local chain", () => {
     expect(source).toContain("applyRuntimeAgentProfileOverride");
@@ -167,5 +168,18 @@ describe("chain run profile override contract", () => {
     expect(source).toContain("chainDefaultProfileId: runChain.default_agent_profile");
     expect(source).toContain("workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile");
     expect(source).toContain("runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id)");
+  });
+});
+
+describe("chain run decision metadata contract", () => {
+  const source = readFileSync(new URL("../../web/lib/chain-run-service.ts", import.meta.url), "utf8");
+
+  it("persists decision metadata and exports it to chain agents", () => {
+    expect(source).toContain("metadata: runMetadata");
+    expect(source).toContain("MENTIKO_DECISION_IMPORT_TOKEN");
+    expect(source).toContain("MENTIKO_DECISION_ID");
+    expect(source).toContain("MENTIKO_DECISION_PHASE");
+    expect(source).toContain("MENTIKO_DECISION_SELECTED_OPTION_ID");
+    expect(source).toContain("MENTIKO_DECISION_WORKSPACE_PATH");
   });
 });

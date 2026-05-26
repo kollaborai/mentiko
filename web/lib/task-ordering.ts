@@ -20,6 +20,9 @@ interface SortableTask {
   created_at?: string | null;
   createdAt?: string | null;
   title?: string | null;
+  label?: string | null;
+  type?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 function numericPriority(task: SortableTask): number {
@@ -50,12 +53,40 @@ function compareIds(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
+function stringMeta(task: SortableTask, key: string): string | null {
+  const value = task.metadata?.[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberMeta(task: SortableTask, key: string): number | null {
+  const value = task.metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function compareDecisionSequence(a: SortableTask, b: SortableTask): number {
+  const decisionA = stringMeta(a, "decision_id");
+  const decisionB = stringMeta(b, "decision_id");
+  if (!decisionA || decisionA !== decisionB) return 0;
+
+  const orderA = numberMeta(a, "decision_plan_order");
+  const orderB = numberMeta(b, "decision_plan_order");
+  if (orderA !== null && orderB !== null && orderA !== orderB) {
+    return orderA - orderB;
+  }
+
+  return (
+    createdTime(a) - createdTime(b) ||
+    compareIds(a.id, b.id)
+  );
+}
+
 function compareTasks(a: SortableTask, b: SortableTask): number {
   return (
+    compareDecisionSequence(a, b) ||
     numericPriority(a) - numericPriority(b) ||
     createdTime(a) - createdTime(b) ||
     compareIds(a.id, b.id) ||
-    (a.title || "").localeCompare(b.title || "")
+    (a.title || a.label || "").localeCompare(b.title || b.label || "")
   );
 }
 
@@ -148,4 +179,17 @@ export function sortTasksByDependencyOrder<T extends SortableTask>(
 
   const unresolved = ordered.filter((task) => !seen.has(task.id));
   return [...result, ...unresolved];
+}
+
+export function sortTaskTreeNodes<T extends SortableTask>(
+  nodes: readonly T[],
+  deps: readonly { from: string; to: string }[]
+): T[] {
+  const dependencyRows = deps.map((dep) => ({
+    task_id: dep.to,
+    depends_on_id: dep.from,
+    type: "blocks",
+  }));
+
+  return sortTasksByDependencyOrder(nodes, dependencyRows);
 }

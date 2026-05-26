@@ -5,14 +5,14 @@ import { getDecision, updateDecision } from "@/lib/decision-storage";
 import { getWorkspacePath } from "@/lib/workspace-params";
 import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob, getJob } from "@/lib/job-store";
+import { getJob } from "@/lib/job-store";
 import { getSessionUser } from "@/lib/auth-bridge";
 import type { GuidedFlow, ExecutionPlan } from "@/lib/decision-types";
 import { buildDecisionContext, buildPreferenceText } from "@/lib/decision-context";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startDecisionChainRun } from "@/lib/decision-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -86,14 +86,22 @@ export const POST = withErrorHandling(async (
     USER_PREFERENCES: preferenceText,
   });
 
-  const job = createJob("decision_guided_plan", { prompt, workspacePath: authorizedWorkspacePath }, undefined, id, userId, namespaceId);
+  const run = await startDecisionChainRun({
+    request,
+    namespaceId,
+    orgId,
+    decision,
+    phase: "plan",
+    prompt,
+    workspacePath: authorizedWorkspacePath,
+    selectedOptionId: selectedId,
+  });
 
   guidedFlow.round2.selectedOptionId = selectedId;
   guidedFlow.round3.status = "generating";
-  guidedFlow.round3.generationJobId = job.id;
-  await updateDecision(namespaceId, orgId, id, { guidedFlow }, workspacePath);
+  guidedFlow.round3.generationJobId = undefined;
+  guidedFlow.round3.generationRunId = run.runId;
+  const updated = await updateDecision(namespaceId, orgId, id, { guidedFlow }, workspacePath);
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
-
-  return apiSuccess({ jobId: job.id, status: job.status });
+  return apiSuccess({ runId: run.runId, status: "running", decision: updated });
 });

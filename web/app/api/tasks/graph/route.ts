@@ -13,6 +13,8 @@ interface BdGraphAllIssue {
   status: string;
   issue_type: string;
   priority: number;
+  parent_id?: string | null;
+  created_at?: string;
   metadata?: string | Record<string, unknown>;
 }
 
@@ -115,6 +117,9 @@ function buildConnectedComponents(
         status: root.status,
         issue_type: root.issue_type,
         priority: root.priority,
+        parent_id: root.parent_id,
+        created_at: (root as { created_at?: string }).created_at,
+        metadata: (root as { metadata?: Record<string, unknown> }).metadata,
       },
       Issues: componentIssues.map((i) => ({
         id: i.id,
@@ -122,6 +127,8 @@ function buildConnectedComponents(
         status: i.status,
         issue_type: i.issue_type,
         priority: i.priority,
+        parent_id: i.parent_id,
+        created_at: (i as { created_at?: string }).created_at,
         metadata: (i as { metadata?: Record<string, unknown> }).metadata,
       })),
     });
@@ -163,11 +170,17 @@ export const GET = requirePermission("view_tasks")(
 
     // collect all unique issues
     const issueMap = new Map<string, BdGraphAllIssue>();
-    for (const entry of entries) {
-      issueMap.set(entry.Root.id, entry.Root);
-      for (const issue of entry.Issues) {
-        issueMap.set(issue.id, issue);
-      }
+    for (const issue of issues) {
+      issueMap.set(issue.id, {
+        id: issue.id,
+        title: issue.title,
+        status: issue.status,
+        issue_type: issue.issue_type,
+        priority: issue.priority,
+        parent_id: issue.parent_id,
+        created_at: issue.created_at,
+        metadata: issue.metadata,
+      });
     }
 
     // build links from parent_id relationships + legacy ID hierarchy (parent.child)
@@ -241,6 +254,8 @@ export const GET = requirePermission("view_tasks")(
         status: issue.status,
         priority: issue.priority,
         layer: layerMap[issue.id] ?? 0,
+        createdAt: issue.created_at,
+        metadata,
         chainBinding,
       };
     });

@@ -4,8 +4,11 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import { getDecision, updateDecision, deleteDecision } from "@/lib/decision-storage";
 import { getWorkspacePath } from "@/lib/workspace-params";
 import { getJob } from "@/lib/job-store";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +34,19 @@ export const GET = withErrorHandling(async (
   if (decision.status === "researching") {
     let isStale = false;
 
-    if (!decision.activeJobId) {
-      // no job id at all - stuck
+    if (decision.researchRunId) {
+      const runPath = join(resolveLinkRunsDir(nsId, orgId), decision.researchRunId, "run.json");
+      if (!existsSync(runPath)) {
+        isStale = true;
+      } else {
+        try {
+          const run = JSON.parse(readFileSync(runPath, "utf8"));
+          isStale = run.status === "failed" || run.status === "cancelled" || run.status === "stopped";
+        } catch {
+          isStale = true;
+        }
+      }
+    } else if (!decision.activeJobId) {
       isStale = true;
     } else {
       const job = getJob(decision.activeJobId, nsId);

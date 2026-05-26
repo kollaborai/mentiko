@@ -30,11 +30,11 @@ jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
 
 import { GET } from "./route";
 
-function makeRequest(): Request {
+function makeRequest(): Parameters<typeof GET>[0] {
   return {
     url: "http://localhost:3000/api/mentiko-mcp/ops/system/cli-status",
     headers: new Headers({ authorization: "Bearer test-token" }),
-  } as Request;
+  } as unknown as Parameters<typeof GET>[0];
 }
 
 describe("GET /api/mentiko-mcp/ops/system/cli-status", () => {

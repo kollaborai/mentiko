@@ -4,11 +4,11 @@ import { taskGet, taskUpdate } from "@/lib/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getDecision, updateDecision } from "@/lib/decision-storage";
 import { postProcessChain } from "@/lib/chain-postprocessor";
-import type { GuidedFlow, TradeoffQuestion, TailoredOption, Recommendation, ExecutionPlan } from "@/lib/decision-types";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/internal-api-auth";
 import { internalApiUrl } from "@/lib/internal-web-origin";
+import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decision-run-results";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +36,16 @@ async function triggerAutoRunContinuation(
   } catch (err) {
     console.warn("[auto-run] failed to continue after job completion:", err);
   }
+}
+
+function decisionPhaseForJobType(type: string): DecisionRunPhase | null {
+  if (type === "decision_research" || type === "decision_steering") return "research";
+  if (type === "decision_retrospective") return "retrospective";
+  if (type === "decision_guided_questions") return "questions";
+  if (type === "preference_synthesis") return "synthesis";
+  if (type === "decision_guided_options") return "options";
+  if (type === "decision_guided_plan") return "plan";
+  return null;
 }
 
 /**
@@ -154,10 +164,7 @@ export const POST = withErrorHandling(async (
     }
   }
 
-  // update decision job references if linked (research/retrospective jobs)
-  // note: we only clear the jobId pointer so ui knows job is no longer running.
-  // the phase2 endpoints (research/retrospective with jobId body) handle status
-  // updates and result application.
+  // update decision job references if linked.
   if (updatedJob?.decisionId) {
     try {
       const jobWorkspacePath =
@@ -173,113 +180,49 @@ export const POST = withErrorHandling(async (
         getDecision(namespaceId, orgId, updatedJob.decisionId);
       const decisionWs = decision?.workspacePath ?? jobWorkspacePath;
       if (decision) {
-        const isResearch = updatedJob.type === "decision_research" || updatedJob.type === "decision_steering";
-        const isRetro = updatedJob.type === "decision_retrospective";
-        const isGuidedQuestions = updatedJob.type === "decision_guided_questions";
-        const isGuidedOptions = updatedJob.type === "decision_guided_options";
-        const isGuidedPlan = updatedJob.type === "decision_guided_plan";
+        const phase = decisionPhaseForJobType(updatedJob.type);
         const isComplete = updatedJob.status === "complete";
 
-        if (isResearch && isComplete && updatedJob.result) {
-          // auto-apply research results directly so UI doesn't need a second round-trip
-          const parsed = updatedJob.result as Record<string, unknown>;
-          await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
-            title: (parsed.title as string) || decision.prompt,
-            priority: parsed.priority as string,
-            category: parsed.category as string,
-            context: parsed.context as typeof decision.context,
-            options: (parsed.options as typeof decision.options) || [],
-            recommendation: parsed.recommendation as typeof decision.recommendation,
-            status: "pending",
-            activeJobId: undefined,
-          }, decisionWs);
-        } else if (isResearch) {
+        if (phase && isComplete && updatedJob.result) {
+          await applyDecisionRunResult({
+            namespaceId,
+            orgId,
+            decisionId: updatedJob.decisionId,
+            phase,
+            result: updatedJob.result,
+            workspacePath: decisionWs,
+            selectedOptionId: typeof updatedJob.input?.selectedOptionId === "string"
+              ? updatedJob.input.selectedOptionId
+              : undefined,
+          });
+        } else if (phase === "research") {
           // job failed or no result - just clear the pointer
           await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
             activeJobId: undefined,
           }, decisionWs);
-        } else if (isRetro && isComplete && updatedJob.result) {
-          // auto-apply retrospective results - normalize shape to match retrospective/route.ts
-          const retroParsed = updatedJob.result as Record<string, unknown>;
-          await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
-            retrospective: {
-              summary: (retroParsed.summary as string) || "",
-              outcome: (retroParsed.outcome as string) || "",
-              lessonsLearned: (retroParsed.lessonsLearned as string[]) || [],
-              completedAt: new Date().toISOString(),
-            },
-            status: "done",
-            retroJobId: undefined,
-          }, decisionWs);
-        } else if (isRetro) {
+        } else if (phase === "retrospective") {
           // failed - leave retroJobId so user can retry
-        } else if (isGuidedQuestions && isComplete && updatedJob.result) {
-          // auto-apply guided questions to round1
-          const parsed = updatedJob.result as { questions?: TradeoffQuestion[] };
-          const guidedFlow: GuidedFlow = decision.guidedFlow || {
-            currentRound: 1,
-            round1: { status: "in_progress", questions: [], answers: [] },
-            round2: { status: "pending", tailoredOptions: [] },
-            round3: { status: "pending" },
-          };
-          guidedFlow.currentRound = 1;
-          guidedFlow.round1.status = "in_progress";
-          guidedFlow.round1.questions = parsed.questions || [];
-          guidedFlow.round1.generationJobId = undefined;
-          guidedFlow.startedAt = guidedFlow.startedAt || new Date().toISOString();
-          await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
-            guidedFlow,
-            mode: "guided",
-          }, decisionWs);
-        } else if (isGuidedQuestions) {
+        } else if (phase === "questions") {
           // failed - clear generationJobId
           if (decision.guidedFlow) {
             decision.guidedFlow.round1.generationJobId = undefined;
             await updateDecision(namespaceId, orgId, updatedJob.decisionId, { guidedFlow: decision.guidedFlow }, decisionWs);
           }
-        } else if (isGuidedOptions && isComplete && updatedJob.result) {
-          // auto-apply tailored options to round2
-          const parsed = updatedJob.result as { options?: TailoredOption[]; recommendation?: Recommendation };
-          const guidedFlow = decision.guidedFlow as GuidedFlow;
-          if (guidedFlow) {
-            guidedFlow.currentRound = 2;
-            guidedFlow.round2.status = "ready";
-            guidedFlow.round2.tailoredOptions = parsed.options || [];
-            guidedFlow.round2.generationJobId = undefined;
-            await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
-              guidedFlow,
-              options: (parsed.options || []).map((o) => ({
-                id: o.id,
-                letter: o.letter,
-                name: o.name,
-                description: o.description,
-                pros: o.pros,
-                cons: o.cons,
-                effort: o.effort,
-                risk: o.risk,
-              })),
-              recommendation: parsed.recommendation,
-            }, decisionWs);
+        } else if (phase === "synthesis") {
+          // failed - clear synthesisJobId
+          if (decision.guidedFlow) {
+            decision.guidedFlow.round1.synthesisJobId = undefined;
+            decision.guidedFlow.round1.status = "in_progress";
+            await updateDecision(namespaceId, orgId, updatedJob.decisionId, { guidedFlow: decision.guidedFlow }, decisionWs);
           }
-        } else if (isGuidedOptions) {
+        } else if (phase === "options") {
           // failed - clear generationJobId
           if (decision.guidedFlow) {
             decision.guidedFlow.round2.generationJobId = undefined;
             decision.guidedFlow.round2.status = "pending";
             await updateDecision(namespaceId, orgId, updatedJob.decisionId, { guidedFlow: decision.guidedFlow }, decisionWs);
           }
-        } else if (isGuidedPlan && isComplete && updatedJob.result) {
-          // auto-apply execution plan to round3
-          const parsed = updatedJob.result as unknown as ExecutionPlan;
-          const guidedFlow = decision.guidedFlow as GuidedFlow;
-          if (guidedFlow) {
-            guidedFlow.currentRound = 3;
-            guidedFlow.round3.status = "ready";
-            guidedFlow.round3.plan = parsed;
-            guidedFlow.round3.generationJobId = undefined;
-            await updateDecision(namespaceId, orgId, updatedJob.decisionId, { guidedFlow }, decisionWs);
-          }
-        } else if (isGuidedPlan) {
+        } else if (phase === "plan") {
           // failed - clear generationJobId
           if (decision.guidedFlow) {
             decision.guidedFlow.round3.generationJobId = undefined;

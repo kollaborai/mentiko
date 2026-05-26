@@ -413,7 +413,11 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        decisionId: { type: "string" }
+        decisionId: { type: "string" },
+        selectedOptionId: { type: "string", description: "Option id to approve. Defaults to the selected/recommended option when omitted." },
+        optionId: { type: "string", description: "Alias for selectedOptionId." },
+        workspacePath: { type: "string", description: "Workspace path for workspace-scoped decisions." },
+        notes: { type: "string", description: "Optional approval notes." }
       },
       required: ["decisionId"]
     }

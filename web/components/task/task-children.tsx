@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
 import type { Task } from "@/lib/task-types";
+import { sortTasksByDependencyOrder } from "@/lib/task-ordering";
 
 interface TaskChildrenProps {
   items: Task[];
@@ -30,10 +31,11 @@ function isReadyInSequence(
 export function TaskChildren({ items, onSelectChild, depInfo }: TaskChildrenProps) {
   if (items.length === 0) return null;
 
-  const itemsById = new Map(items.map((item) => [item.id, item]));
+  const orderedItems = sortTasksByDependencyOrder(items, depInfo || []);
+  const itemsById = new Map(orderedItems.map((item) => [item.id, item]));
   const activeIndex = Math.max(
     0,
-    items.findIndex((item) => isReadyInSequence(item, itemsById, depInfo))
+    orderedItems.findIndex((item) => isReadyInSequence(item, itemsById, depInfo))
   );
 
   return (
@@ -43,7 +45,7 @@ export function TaskChildren({ items, onSelectChild, depInfo }: TaskChildrenProp
       </span>
       <div className="relative mt-3 space-y-1">
         <div className="absolute left-2.5 top-3 bottom-3 w-px bg-foreground/10" />
-        {items.map((child, index) => {
+        {orderedItems.map((child, index) => {
           const isActive = index === activeIndex && !child.completed;
           const deps = depInfo?.get(child.id);
           const blockedByCount = deps?.blockedBy.length ?? child.dependencyCount;

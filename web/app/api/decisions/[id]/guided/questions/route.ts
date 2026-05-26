@@ -5,14 +5,14 @@ import { getDecision, updateDecision } from "@/lib/decision-storage";
 import { getWorkspacePath } from "@/lib/workspace-params";
 import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob, getJob } from "@/lib/job-store";
+import { getJob } from "@/lib/job-store";
 import { getSessionUser } from "@/lib/auth-bridge";
 import type { GuidedFlow, TradeoffQuestion } from "@/lib/decision-types";
 import { buildDecisionContext } from "@/lib/decision-context";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startDecisionChainRun } from "@/lib/decision-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -76,7 +76,15 @@ export const POST = withErrorHandling(async (
     DECISION_CONTEXT: [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n"),
   });
 
-  const job = createJob("decision_guided_questions", { prompt, workspacePath: authorizedWorkspacePath }, undefined, id, userId, namespaceId);
+  const run = await startDecisionChainRun({
+    request,
+    namespaceId,
+    orgId,
+    decision,
+    phase: "questions",
+    prompt,
+    workspacePath: authorizedWorkspacePath,
+  });
 
   const guidedFlow: GuidedFlow = decision.guidedFlow || {
     currentRound: 0,
@@ -84,12 +92,13 @@ export const POST = withErrorHandling(async (
     round2: { status: "pending", tailoredOptions: [] },
     round3: { status: "pending" },
   };
-  guidedFlow.round1.generationJobId = job.id;
+  guidedFlow.currentRound = 1;
+  guidedFlow.round1.status = "in_progress";
+  guidedFlow.round1.generationJobId = undefined;
+  guidedFlow.round1.generationRunId = run.runId;
   guidedFlow.startedAt = new Date().toISOString();
 
-  await updateDecision(namespaceId, orgId, id, { guidedFlow, mode: "guided" }, workspacePath);
+  const updated = await updateDecision(namespaceId, orgId, id, { guidedFlow, mode: "guided" }, workspacePath);
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
-
-  return apiSuccess({ jobId: job.id, status: job.status });
+  return apiSuccess({ runId: run.runId, status: "running", decision: updated });
 });

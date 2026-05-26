@@ -72,6 +72,58 @@ function getDecisionFile(nsId: string, orgId: string, id: string, workspacePath?
   return path.join(getDecisionsDir(nsId, orgId, workspacePath), `${id}.json`);
 }
 
+interface DecisionLocation {
+  decision: Decision;
+  filePath: string;
+  workspacePath?: string;
+}
+
+function readDecisionFile(filePath: string): Decision | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf-8")) as Decision;
+  } catch {
+    return null;
+  }
+}
+
+function findDecisionLocation(
+  nsId: string,
+  orgId: string,
+  id: string,
+  workspacePath?: string,
+): DecisionLocation | null {
+  const candidates: string[] = [];
+  const addCandidate = (filePath: string) => {
+    if (!candidates.includes(filePath)) candidates.push(filePath);
+  };
+
+  addCandidate(getDecisionFile(nsId, orgId, id, workspacePath));
+
+  if (!workspacePath) {
+    const projectsDir = orgPath(nsId, orgId, "projects");
+    if (existsSync(projectsDir)) {
+      for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        addCandidate(path.join(projectsDir, entry.name, "decisions", `${id}.json`));
+      }
+    }
+  }
+
+  for (const filePath of candidates) {
+    const decision = readDecisionFile(filePath);
+    if (decision) {
+      return {
+        decision,
+        filePath,
+        workspacePath: decision.workspacePath ?? workspacePath,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function listDecisions(nsId: string, orgId: string, workspacePath?: string): Decision[] {
   const dir = getDecisionsDir(nsId, orgId, workspacePath);
   if (!existsSync(dir)) return [];
@@ -94,13 +146,7 @@ export function listDecisions(nsId: string, orgId: string, workspacePath?: strin
 }
 
 export function getDecision(nsId: string, orgId: string, id: string, workspacePath?: string): Decision | null {
-  const file = getDecisionFile(nsId, orgId, id, workspacePath);
-  if (!existsSync(file)) return null;
-  try {
-    return JSON.parse(readFileSync(file, "utf-8")) as Decision;
-  } catch {
-    return null;
-  }
+  return findDecisionLocation(nsId, orgId, id, workspacePath)?.decision ?? null;
 }
 
 export function createDecision(
@@ -139,10 +185,11 @@ export async function updateDecision(
   updates: Partial<Decision>,
   workspacePath?: string
 ): Promise<Decision> {
-  const filePath = getDecisionFile(nsId, orgId, id, workspacePath);
+  const location = findDecisionLocation(nsId, orgId, id, workspacePath);
+  const filePath = location?.filePath ?? getDecisionFile(nsId, orgId, id, workspacePath);
   const lockPath = `${filePath}.lock`;
 
-  if (!existsSync(filePath)) {
+  if (!location) {
     throw new Error(`Decision ${id} not found`);
   }
 
@@ -179,6 +226,6 @@ export async function updateDecision(
 }
 
 export function deleteDecision(nsId: string, orgId: string, id: string, workspacePath?: string): void {
-  const file = getDecisionFile(nsId, orgId, id, workspacePath);
-  if (existsSync(file)) unlinkSync(file);
+  const location = findDecisionLocation(nsId, orgId, id, workspacePath);
+  if (location && existsSync(location.filePath)) unlinkSync(location.filePath);
 }
