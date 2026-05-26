@@ -327,7 +327,9 @@ monitor-with-ai() {
     echo "  monitoring '$session_name' every ${check_interval}s..."
 
     # initial state
-    local current_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
+    local initial_capture
+    initial_capture="$(transport_capture "$session_name" 20)"
+    local current_state=$(printf '%s' "$initial_capture" | md5sum | cut -d' ' -f1)
     echo "$current_state" > "$state_file"
 
     while true; do
@@ -385,11 +387,20 @@ monitor-with-ai() {
             break
         fi
 
-        local new_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
+        local recent_capture
+        recent_capture="$(transport_capture "$session_name" 20)"
+        local new_state=$(printf '%s' "$recent_capture" | md5sum | cut -d' ' -f1)
         local old_state=""
         [[ -f "$state_file" ]] && old_state=$(cat "$state_file")
 
         if [[ "$new_state" == "$old_state" ]]; then
+            if declare -f monitor_capture_looks_busy >/dev/null && monitor_capture_looks_busy "$recent_capture"; then
+                echo "$(date '+%H:%M:%S') - active (busy indicator)"
+                echo "0" > "$stale_count_file"
+                echo "$new_state" > "$state_file"
+                continue
+            fi
+
             local stale_count=$(cat "$stale_count_file")
             stale_count=$((stale_count + 1))
             echo "$stale_count" > "$stale_count_file"
@@ -421,6 +432,9 @@ monitor-with-ai() {
             fi
             if declare -f monitor_sanitize_nudge >/dev/null; then
                 response="$(monitor_sanitize_nudge "$response" "$stale_count")"
+            fi
+            if declare -f monitor_format_nudge_for_agent >/dev/null; then
+                response="$(monitor_format_nudge_for_agent "$response")"
             fi
             echo "  -> $response"
 
@@ -471,7 +485,9 @@ monitor-chain-agent() {
 
     echo "  monitoring '$session_name' every ${check_interval}s (chain mode, workspace: $workspace_type)..."
 
-    local current_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
+    local initial_capture
+    initial_capture="$(transport_capture "$session_name" 20)"
+    local current_state=$(printf '%s' "$initial_capture" | md5sum | cut -d' ' -f1)
     echo "$current_state" > "$state_file"
 
     while true; do
@@ -574,7 +590,9 @@ monitor-chain-agent() {
             break
         fi
 
-        local new_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
+        local recent_capture
+        recent_capture="$(transport_capture "$session_name" 20)"
+        local new_state=$(printf '%s' "$recent_capture" | md5sum | cut -d' ' -f1)
         local old_state=""
         [[ -f "$state_file" ]] && old_state=$(cat "$state_file")
 
@@ -588,6 +606,13 @@ monitor-chain-agent() {
             if declare -f profiler-snapshot >/dev/null; then
                 profiler-snapshot "$session_name" "monitor-check" 2>/dev/null || true
             fi
+            continue
+        fi
+
+        if declare -f monitor_capture_looks_busy >/dev/null && monitor_capture_looks_busy "$recent_capture"; then
+            echo "$(date '+%H:%M:%S') - active (busy indicator)"
+            echo "0" > "$stale_count_file"
+            echo "$new_state" > "$state_file"
             continue
         fi
 
@@ -650,6 +675,9 @@ monitor-chain-agent() {
         fi
         if declare -f monitor_sanitize_nudge >/dev/null; then
             nudge_msg="$(monitor_sanitize_nudge "$nudge_msg" "$stale_count")"
+        fi
+        if declare -f monitor_format_nudge_for_agent >/dev/null; then
+            nudge_msg="$(monitor_format_nudge_for_agent "$nudge_msg")"
         fi
 
         transport_send_raw "$session_name" "$nudge_msg"

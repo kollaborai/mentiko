@@ -50,7 +50,8 @@ describe("generation core chains", () => {
       expect(chain.agents).toHaveLength(1);
       expect(chain.agents[0].prompt).toContain("mentiko generation import");
       expect(chain.agents[0].prompt).toContain("$ARTIFACTS_DIR/generation-result.json");
-      expect(chain.agents[0].prompt).toContain("Do not inspect repository files");
+      expect(chain.agents[0].prompt).toContain("Inspect relevant repository files");
+      expect(chain.agents[0].prompt).not.toContain("Do not inspect repository files");
     }
   });
 

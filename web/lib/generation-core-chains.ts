@@ -35,7 +35,7 @@ export type GenerationChainKind =
   | "run_summary"
   | "template_test";
 
-const GENERATION_CORE_CHAIN_VERSION = "1.0.2";
+const GENERATION_CORE_CHAIN_VERSION = "1.0.3";
 
 interface CoreGenerationChainDefinition {
   id: GenerationCoreChainId;
@@ -55,7 +55,7 @@ function importInstructions(kind: GenerationChainKind): string {
     "Then import it into Mentiko with:",
     `  mentiko generation import "$ARTIFACTS_DIR/generation-result.json" --job "$MENTIKO_GENERATION_JOB_ID" --kind ${kind} --run "$MENTIKO_RUN_ID"`,
     "",
-    "Do not inspect repository files unless the user explicitly asks for code investigation. For ordinary generation requests, use the provided prompt and schema directly.",
+    "Inspect relevant repository files, docs, or existing task patterns when that context will make the generated task more accurate. Keep inspection targeted to the request, then stop researching and produce the JSON payload.",
     "",
     "Do not use MCP tools for the import. Use the Mentiko CLI command above.",
     "If the import command fails, stop and report the exact import error. Do not write directly to task storage, job storage, or project files.",

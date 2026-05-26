@@ -683,22 +683,28 @@ export default function AgentProfilesPage() {
                               }`}
                             >
                               <CliIcon cli={p.cli} />
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium truncate flex items-center gap-1.5">
-                                  {p.name}
-                                  {p.isDefault && (
-                                    <span className="text-[9px] text-primary bg-primary/15 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide shrink-0">
-                                      default
-                                    </span>
-                                  )}
-                                  {p.isAdvisorDefault && (
-                                    <span className="text-[9px] text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide shrink-0">
-                                      advisor
-                                    </span>
-                                  )}
+                              <div className="flex-1 min-w-0 space-y-1">
+                                <div className="font-medium min-w-0">
+                                  <span className="block truncate">{p.name}</span>
                                 </div>
-                                {p.model && (
-                                  <p className="text-[10px] text-foreground/35 font-mono truncate mt-0.5">{p.model}</p>
+                                {(p.isDefault || p.isAdvisorDefault || p.model) && (
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                                    {p.isDefault && (
+                                      <span className="text-[9px] text-primary bg-primary/15 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide shrink-0">
+                                        default
+                                      </span>
+                                    )}
+                                    {p.isAdvisorDefault && (
+                                      <span className="text-[9px] text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wide shrink-0">
+                                        advisor
+                                      </span>
+                                    )}
+                                    {p.model && (
+                                      <span className="text-[10px] text-foreground/35 font-mono truncate min-w-0 max-w-full">
+                                        {p.model}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                               <button

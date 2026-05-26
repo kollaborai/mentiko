@@ -92,6 +92,28 @@ monitor_sanitize_nudge() {
     printf '%s\n' "$trimmed"
 }
 
+monitor_capture_looks_busy() {
+    local capture="$1"
+    local cleaned
+
+    cleaned="$(printf '%s\n' "$capture" | strip-terminal-control)"
+
+    printf '%s\n' "$cleaned" | grep -Eq \
+        'Waiting\.\.\.|[|│][[:space:]]*\*[[:space:]]*Working[[:space:]]+[0-9]+[[:space:]]+msg'
+}
+
+monitor_format_nudge_for_agent() {
+    local nudge="$1"
+    local source_label="${MENTIKO_MONITOR_SOURCE_LABEL:-mentiko advisor}"
+
+    if [[ -z "$source_label" ]]; then
+        printf '%s\n' "$nudge"
+        return 0
+    fi
+
+    printf '%s: %s\n' "$source_label" "$nudge"
+}
+
 monitor_stale_advisor_message() {
     local stale_count="${1:-1}"
     local session_name="${2:-}"
