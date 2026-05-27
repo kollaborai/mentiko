@@ -352,6 +352,23 @@ assert_not_contains "$chain_monitor_body" \
   'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
   "chain monitor does not launch completion as a monitor-child nohup job"
 
+chain_completion_gate_source="$(sed -n '520,675p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+assert_contains "$chain_completion_gate_source" \
+  "completion event observed" \
+  "chain monitor observes event files without treating them as completion"
+
+assert_contains "$chain_completion_gate_source" \
+  "waiting for AGENT_COMPLETE" \
+  "chain monitor waits for terminal completion marker after event files"
+
+assert_not_contains "$chain_completion_gate_source" \
+  "completion event detected" \
+  "chain monitor no longer completes on event files alone"
+
+assert_not_contains "$chain_completion_gate_source" \
+  "max stale count (\$max_stale_count) reached. forcing completion" \
+  "chain monitor no longer force-completes live stale agents without AGENT_COMPLETE"
+
 launch_agent_source="$(sed -n '110,135p' "$PROJECT_ROOT/lib/launch-agent.sh")"
 assert_not_contains "$launch_agent_source" \
   'send-message "$MONITOR_SESSION"' \

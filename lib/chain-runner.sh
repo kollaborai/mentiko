@@ -758,6 +758,36 @@ detect_blocked_terminal_prompt() {
     return 1
 }
 
+instruction_submission_marker() {
+    local instructions="$1"
+
+    printf '%s\n' "$instructions" | awk 'NF { line=$0 } END { print line }'
+}
+
+ensure-instructions-submitted() {
+    local session_name="$1"
+    local instructions="$2"
+    local capture="$3"
+    local marker=""
+    local clean_capture=""
+
+    marker="$(instruction_submission_marker "$instructions")"
+    [[ -n "$marker" ]] || return 0
+
+    if declare -f strip-terminal-control >/dev/null 2>&1; then
+        clean_capture="$(printf '%s\n' "$capture" | strip-terminal-control 2>/dev/null || true)"
+    else
+        clean_capture="$capture"
+    fi
+
+    if [[ "$clean_capture" == *"$marker"* ]]; then
+        echo "  instructions still visible after send; pressing enter again"
+        sleep 2
+        transport_send_raw "$session_name" $'\r' || true
+        sleep 2
+    fi
+}
+
 mark_state_blocked() {
     local state_file="$1"
     local reason="$2"
@@ -1720,7 +1750,11 @@ SEOF
     echo "$instructions" > "$tmp_instructions"
 
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
-        send-message "$session_name" "$instructions" && sleep 1
+        local instruction_send_capture=""
+        instruction_send_capture="$(send-message "$session_name" "$instructions")"
+        printf '%s\n' "$instruction_send_capture"
+        ensure-instructions-submitted "$session_name" "$instructions" "$instruction_send_capture"
+        sleep 1
     elif [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
         local remote_tmp="/tmp/agent-instructions-${session_name}.txt"
         scp -q -i "${SSH_KEY:-~/.ssh/id_rsa}" -P "$SSH_PORT" \

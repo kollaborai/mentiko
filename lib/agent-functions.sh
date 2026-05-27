@@ -492,6 +492,7 @@ monitor-chain-agent() {
 
     local current_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
     echo "$current_state" > "$state_file"
+    local observed_completion_event_file=""
 
     while true; do
         sleep "$check_interval"
@@ -518,10 +519,9 @@ monitor-chain-agent() {
             fi
         fi
 
-        # Prefer the event file over PTY nudges. Agents can emit their
-        # completion event before AGENT_COMPLETE is visible in the current
-        # capture window; treating that event as authoritative keeps the
-        # monitor from sending a broad "continue" nudge to a finished agent.
+        # Event files mean the agent has produced handoff data. They are not
+        # the kill signal. The agent still owns its final terminal response and
+        # must print AGENT_COMPLETE before the chain completion handler runs.
         local completion_event_file=""
         if declare -f monitor_completion_event_file >/dev/null; then
             completion_event_file="$(monitor_completion_event_file "$session_name" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}" 2>/dev/null || true)"
@@ -531,15 +531,9 @@ monitor-chain-agent() {
                 completion_event_file="$(monitor_completion_event_file "$session_name" "$chain_file" "$run_events_dir" "${MENTIKO_AGENT_ID:-}" 2>/dev/null || true)"
             fi
         fi
-        if [[ -n "$completion_event_file" ]]; then
-            echo "$(date '+%H:%M:%S') - completion event detected: $(basename "$completion_event_file")"
-            local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-            if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                echo "  using chain-runner-complete (JSON mode)"
-                launch-chain-runner-complete "$session_name" "$chain_file"
-            fi
-            rm -f "$state_file" "$stale_count_file"
-            break
+        if [[ -n "$completion_event_file" && "$completion_event_file" != "$observed_completion_event_file" ]]; then
+            observed_completion_event_file="$completion_event_file"
+            echo "$(date '+%H:%M:%S') - completion event observed: $(basename "$completion_event_file"); waiting for AGENT_COMPLETE"
         fi
 
         # -----------------------------------------------------------
@@ -648,12 +642,7 @@ monitor-chain-agent() {
 
         # check if max stale count reached (stuck agent)
         if [[ $stale_count -ge $max_stale_count ]]; then
-            echo "$(date '+%H:%M:%S') - max stale count ($max_stale_count) reached. forcing completion..."
-            if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                launch-chain-runner-complete "$session_name" "$chain_file"
-            fi
-            rm -f "$state_file" "$stale_count_file"
-            break
+            echo "$(date '+%H:%M:%S') - max stale count ($max_stale_count) reached. waiting for AGENT_COMPLETE..."
         fi
 
         if declare -f monitor_should_ask_advisor >/dev/null && ! monitor_should_ask_advisor "$stale_count" "$advisor_stale_threshold"; then
@@ -666,7 +655,9 @@ monitor-chain-agent() {
 
         # nudge the agent via pty send keys
         local nudge_msg=""
-        if declare -f monitor_stale_nudge_message >/dev/null; then
+        if [[ -n "$completion_event_file" ]]; then
+            nudge_msg="Your completion event exists. Finish the final terminal response and make the final non-empty line exactly AGENT_COMPLETE. Do not redo the task."
+        elif declare -f monitor_stale_nudge_message >/dev/null; then
             nudge_msg="$(monitor_stale_nudge_message "$stale_count" "$session_name" "$agent_context" "$check_interval")"
         elif [[ $stale_count -le 4 ]]; then
             nudge_msg="continue only the current assigned task, or write your event file and output AGENT_COMPLETE on its own line."

@@ -114,6 +114,15 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner.indexOf(guard)).toBeLessThan(chainRunner.indexOf(sendInstructions));
   });
 
+  it("resubmits instructions when a TUI keeps the pasted prompt in the input box", () => {
+    expect(chainRunner).toContain("instruction_submission_marker()");
+    expect(chainRunner).toContain("ensure-instructions-submitted()");
+    expect(chainRunner).toContain('marker="$(instruction_submission_marker "$instructions")"');
+    expect(chainRunner).toContain('instructions still visible after send; pressing enter again');
+    expect(chainRunner).toContain('transport_send_raw "$session_name" $\'\\r\'');
+    expect(chainRunner).toContain('ensure-instructions-submitted "$session_name" "$instructions" "$instruction_send_capture"');
+  });
+
   it("keeps conversation birth-time lookup numeric on GNU stat", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-stat-"));
     try {

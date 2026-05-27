@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.31",
+    date: "May 27, 2026",
+    title: "Chain Completion Guard",
+    description:
+      "Chain monitors now wait for the agent's AGENT_COMPLETE marker before closing a run, even after the agent writes its event file. Task generation launch also re-submits the prompt when a terminal UI keeps the pasted instructions in the input box.",
+    category: "fix",
+  },
+  {
     version: "v0.3.30",
     date: "May 27, 2026",
     title: "Run Completion Status Repair",
