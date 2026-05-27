@@ -10,6 +10,7 @@ export interface ChainSummary {
   agentCount: number;
   description?: string;
   status?: string;
+  metadata?: Record<string, unknown>;
   agents?: Array<{ emits?: string; triggers?: string[] }>;
 }
 
@@ -68,15 +69,17 @@ export function useSharedChains(pollIntervalMs = 30000) {
         isOwner.current = false;
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isOwner.current) return;
     if (Date.now() - lastFetchedAt > 3000) {
       doFetch(fetchWithNamespace);
     } else {
-      setChains([...cachedChains]);
-      setLoading(false);
+      queueMicrotask(() => {
+        setChains([...cachedChains]);
+        setLoading(false);
+      });
     }
     if (globalInterval) clearInterval(globalInterval);
     globalInterval = setInterval(() => doFetch(fetchWithNamespace), pollIntervalMs);

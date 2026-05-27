@@ -33,6 +33,7 @@ export interface ChainData {
   createdAt?: string;
   lastRun?: string;
   runCount?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export function loadChain(
@@ -95,6 +96,9 @@ export function loadChain(
       maxRounds: json.config?.max_rounds,
       onComplete: json.config?.on_complete,
       createdAt: stat.birthtime.toISOString(),
+      metadata: json.metadata && typeof json.metadata === "object" && !Array.isArray(json.metadata)
+        ? json.metadata
+        : undefined,
       agents,
     };
   } catch {

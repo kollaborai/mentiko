@@ -25,6 +25,8 @@ import { unwrapApiData } from "@/lib/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
 import { buildRunsListQuery } from "./runs-query";
+import { useSharedChains } from "@/lib/chains-store";
+import { isSystemChainRecord, isSystemChainRun } from "@/lib/system-chain";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarItem,
@@ -32,6 +34,7 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarVisibilityToggleGroup,
 } from "@/components/ui/workflow-sidebar";
 import { TimeAgo } from "@/components/shared/time-ago";
 
@@ -49,6 +52,7 @@ interface Run {
   sessions: string[];
   taskId?: string;
   totalCostDisplay?: string;
+  metadata?: Record<string, unknown>;
 }
 
 type FilterStatus = "all" | "running" | "complete" | "error";
@@ -61,6 +65,8 @@ const STATUS_FILTER_OPTIONS: Array<{ value: FilterStatus; label: string }> = [
   { value: "error", label: "Error" },
 ];
 
+const USER_RUNS_VISIBILITY_KEY = "runs-show-user-runs";
+const SYSTEM_RUNS_VISIBILITY_KEY = "runs-show-system-runs";
 
 function formatDuration(start?: string, end?: string) {
   if (!start) return "";
@@ -101,6 +107,7 @@ export default function RunsPage() {
 function RunsPageContent() {
   const { workspacePath, workspaceReady } = useWorkspace();
   const { fetchWithNamespace } = useNamespaceFetch();
+  const { chains: chainSummaries } = useSharedChains();
   const searchParams = useSearchParams();
 
   const [runs, setRuns] = useState<Run[]>([]);
@@ -109,6 +116,14 @@ function RunsPageContent() {
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
+  const [showUserRuns, setShowUserRuns] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem(USER_RUNS_VISIBILITY_KEY) !== "0";
+  });
+  const [showSystemRuns, setShowSystemRuns] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(SYSTEM_RUNS_VISIBILITY_KEY) === "1";
+  });
   const [filterStatus, setFilterStatus] = useState<FilterStatus>(
     (searchParams.get("status") as FilterStatus) || "all"
   );
@@ -190,11 +205,34 @@ function RunsPageContent() {
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   // unique chains for filter dropdown
+  const systemChainIds = useMemo(() => {
+    return new Set(chainSummaries.filter(isSystemChainRecord).map((chain) => chain.id));
+  }, [chainSummaries]);
+
+  const isSystemRun = useCallback((run: Run) => {
+    return isSystemChainRun(run, systemChainIds);
+  }, [systemChainIds]);
+
   const uniqueChains = useMemo(() => {
-    return Array.from(new Set(runs.map((r) => r.chain)))
+    return Array.from(new Set(runs
+      .filter((run) => {
+        const systemRun = isSystemRun(run);
+        return systemRun ? showSystemRuns : showUserRuns;
+      })
+      .map((r) => r.chain)))
       .filter(Boolean)
       .sort();
-  }, [runs]);
+  }, [runs, showSystemRuns, showUserRuns, isSystemRun]);
+
+  useEffect(() => {
+    if (chainFilter === "all") return;
+    const selectedChainRun = runs.find((run) => run.chain === chainFilter);
+    if (!selectedChainRun) return;
+    const systemRun = isSystemRun(selectedChainRun);
+    if ((systemRun && !showSystemRuns) || (!systemRun && !showUserRuns)) {
+      setChainFilter("all");
+    }
+  }, [chainFilter, isSystemRun, runs, showSystemRuns, showUserRuns]);
 
   const taskFilter = searchParams.get("task");
 
@@ -276,6 +314,13 @@ function RunsPageContent() {
 
     const target = runs.find((r) => r.id === runIdParam);
     if (target) {
+      if (isSystemRun(target)) {
+        setShowSystemRuns(true);
+        localStorage.setItem(SYSTEM_RUNS_VISIBILITY_KEY, "1");
+      } else {
+        setShowUserRuns(true);
+        localStorage.setItem(USER_RUNS_VISIBILITY_KEY, "1");
+      }
       setSelected(target);
       selectedRef.current = target;
       setMobileView("detail");
@@ -293,6 +338,13 @@ function RunsPageContent() {
         const raw = await res.json();
         const data = unwrapApiData<{ run?: Run }>(raw);
         if (!cancelled && data.run) {
+          if (isSystemRun(data.run)) {
+            setShowSystemRuns(true);
+            localStorage.setItem(SYSTEM_RUNS_VISIBILITY_KEY, "1");
+          } else {
+            setShowUserRuns(true);
+            localStorage.setItem(USER_RUNS_VISIBILITY_KEY, "1");
+          }
           setSelected(data.run);
           selectedRef.current = data.run;
           setMobileView("detail");
@@ -305,41 +357,115 @@ function RunsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, runs, loading, fetchWithNamespace]);
+  }, [searchParams, runs, loading, fetchWithNamespace, isSystemRun]);
 
-  const filteredAndSortedRuns = runs
-    .filter((run) => {
-      const matchesSearch =
-        searchQuery === "" ||
-        run.chain.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        run.goal.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        run.id.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesFilter = filterStatus === "all" || run.status === filterStatus;
-      const matchesChain = chainFilter === "all" || run.chain === chainFilter;
-      return matchesSearch && matchesFilter && matchesChain;
-    })
-    .sort((a, b) => {
-      // pinned always first
-      const aPinned = pinnedIds.has(a.id) ? 0 : 1;
-      const bPinned = pinnedIds.has(b.id) ? 0 : 1;
-      if (aPinned !== bPinned) return aPinned - bPinned;
+  const runMatchesFilters = useCallback((run: Run) => {
+    const matchesSearch =
+      searchQuery === "" ||
+      run.chain.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      run.goal.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      run.id.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = filterStatus === "all" || run.status === filterStatus;
+    const matchesChain = chainFilter === "all" || run.chain === chainFilter;
+    return matchesSearch && matchesFilter && matchesChain;
+  }, [chainFilter, filterStatus, searchQuery]);
 
-      switch (sortBy) {
-        case "started":
-          return new Date(b.started).getTime() - new Date(a.started).getTime();
-        case "chain":
-          return a.chain.localeCompare(b.chain);
-        case "duration": {
-          const aDur = new Date(a.completed || Date.now()).getTime() - new Date(a.started).getTime();
-          const bDur = new Date(b.completed || Date.now()).getTime() - new Date(b.started).getTime();
-          return bDur - aDur;
+  const systemRunCount = runs.filter(isSystemRun).length;
+  const userRunCount = runs.length - systemRunCount;
+  const hiddenSystemMatchCount = showSystemRuns
+    ? 0
+    : runs.filter((run) => isSystemRun(run) && runMatchesFilters(run)).length;
+  const hiddenUserMatchCount = showUserRuns
+    ? 0
+    : runs.filter((run) => !isSystemRun(run) && runMatchesFilters(run)).length;
+  const hiddenRunMatchCount = hiddenSystemMatchCount + hiddenUserMatchCount;
+  const filteredAndSortedRuns = useMemo(() => {
+    return runs
+      .filter((run) => {
+        const systemRun = isSystemRun(run);
+        if (systemRun && !showSystemRuns) return false;
+        if (!systemRun && !showUserRuns) return false;
+        return runMatchesFilters(run);
+      })
+      .sort((a, b) => {
+        // pinned always first
+        const aPinned = pinnedIds.has(a.id) ? 0 : 1;
+        const bPinned = pinnedIds.has(b.id) ? 0 : 1;
+        if (aPinned !== bPinned) return aPinned - bPinned;
+
+        switch (sortBy) {
+          case "started":
+            return new Date(b.started).getTime() - new Date(a.started).getTime();
+          case "chain":
+            return a.chain.localeCompare(b.chain);
+          case "duration": {
+            const aDur = new Date(a.completed || Date.now()).getTime() - new Date(a.started).getTime();
+            const bDur = new Date(b.completed || Date.now()).getTime() - new Date(b.started).getTime();
+            return bDur - aDur;
+          }
+          default:
+            return 0;
         }
-        default:
-          return 0;
-      }
-    });
+      });
+  }, [isSystemRun, pinnedIds, runMatchesFilters, runs, showSystemRuns, showUserRuns, sortBy]);
 
   const firstUnpinnedIndex = filteredAndSortedRuns.findIndex((r) => !pinnedIds.has(r.id));
+
+  useEffect(() => {
+    const runIdParam = searchParams.get("runId");
+    if (runIdParam) return;
+    if (!selected) {
+      const first = filteredAndSortedRuns[0];
+      if (first) {
+        setSelected(first);
+        selectedRef.current = first;
+      }
+      return;
+    }
+    const selectedSystemRun = isSystemRun(selected);
+    if ((selectedSystemRun && !showSystemRuns) || (!selectedSystemRun && !showUserRuns)) {
+      const first = filteredAndSortedRuns[0] || null;
+      setSelected(first);
+      selectedRef.current = first;
+    }
+  }, [filteredAndSortedRuns, isSystemRun, searchParams, selected, showSystemRuns, showUserRuns]);
+
+  const toggleRunVisibility = (kind: "user" | "system") => {
+    if (kind === "user") {
+      setShowUserRuns((current) => {
+        const next = !current;
+        localStorage.setItem(USER_RUNS_VISIBILITY_KEY, next ? "1" : "0");
+        if (!next && selected && !isSystemRun(selected)) {
+          const firstVisibleRun = runs.find((run) => {
+            const systemRun = isSystemRun(run);
+            const visible = systemRun ? showSystemRuns : next;
+            return visible && runMatchesFilters(run);
+          }) || null;
+          setSelected(firstVisibleRun);
+          selectedRef.current = firstVisibleRun;
+          if (firstVisibleRun) setMobileView("detail");
+        }
+        return next;
+      });
+      return;
+    }
+
+    setShowSystemRuns((current) => {
+      const next = !current;
+      localStorage.setItem(SYSTEM_RUNS_VISIBILITY_KEY, next ? "1" : "0");
+      if (!next && selected && isSystemRun(selected)) {
+        const firstVisibleRun = runs.find((run) => {
+          const systemRun = isSystemRun(run);
+          const visible = systemRun ? next : showUserRuns;
+          return visible && runMatchesFilters(run);
+        }) || null;
+        setSelected(firstVisibleRun);
+        selectedRef.current = firstVisibleRun;
+        if (firstVisibleRun) setMobileView("detail");
+      }
+      return next;
+    });
+  };
 
   const handleSelectRun = (run: Run) => {
     if (selectMode) {
@@ -441,6 +567,13 @@ function RunsPageContent() {
               <option value="duration">Sort: Duration</option>
               <option value="chain">Sort: Chain</option>
             </select>
+            <WorkflowSidebarVisibilityToggleGroup
+              options={[
+                { value: "user", label: "User", active: showUserRuns, count: userRunCount },
+                { value: "system", label: "System", active: showSystemRuns, count: systemRunCount },
+              ]}
+              onToggle={toggleRunVisibility}
+            />
             <div className="flex items-center gap-1.5">
               <Button
                 size="xs"
@@ -470,7 +603,13 @@ function RunsPageContent() {
                 <WaveSpinner size="sm" color="primary" animation="ripple" />
               </div>
             ) : filteredAndSortedRuns.length === 0 ? (
-              searchQuery || filterStatus !== "all" ? (
+              hiddenRunMatchCount > 0 ? (
+                <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+                  <div className="text-xs text-foreground/40">
+                    Matching runs are hidden
+                  </div>
+                </div>
+              ) : searchQuery || filterStatus !== "all" || chainFilter !== "all" ? (
                 <div className="text-center py-12 text-xs text-foreground/40">
                   No runs match filters
                 </div>
@@ -535,6 +674,11 @@ function RunsPageContent() {
                             </p>
 
                             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
+                              {isSystemRun(run) && (
+                                <span className="rounded-full bg-blue-400/10 px-2 py-0.5 text-blue-300/80">
+                                  system
+                                </span>
+                              )}
                               <span className={`rounded-full px-2 py-0.5 uppercase tracking-[0.14em] ${statusPill(run.status)}`}>
                                 {statusLabel(run.status)}
                               </span>

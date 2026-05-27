@@ -34,4 +34,26 @@ describe("chain utils", () => {
 
     expect(chain?.default_agent_profile).toBe("profile-a");
   });
+
+  it("preserves chain metadata for catalog filtering", () => {
+    const chainPath = join(root, "chain.json");
+    writeFileSync(chainPath, JSON.stringify({
+      id: "system-chain",
+      name: "System Chain",
+      description: "managed by the app",
+      version: "1.0.0",
+      metadata: {
+        coreGenerationChain: true,
+        generationKind: "task",
+      },
+      agents: [],
+    }, null, 2));
+
+    const chain = loadChain(chainPath, "system-chain", "mentiko");
+
+    expect(chain?.metadata).toEqual({
+      coreGenerationChain: true,
+      generationKind: "task",
+    });
+  });
 });

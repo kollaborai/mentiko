@@ -47,6 +47,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
+import { isSystemChainRecord } from "@/lib/system-chain";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,
@@ -54,6 +55,7 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSegmentedControl,
   WorkflowSidebarItem,
+  WorkflowSidebarVisibilityToggleGroup,
 } from "@/components/ui/workflow-sidebar";
 
 interface Agent {
@@ -104,6 +106,7 @@ interface Chain {
   lastRun?: string;
   runCount?: number;
   createdAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 function getFlowPreviewKey(chain: Chain) {
@@ -115,6 +118,9 @@ function getFlowPreviewKey(chain: Chain) {
 
 type FilterStatus = "all" | "active" | "draft" | "archived";
 type SortBy = "name" | "created" | "lastRun" | "agents" | "runCount";
+
+const USER_CHAINS_VISIBILITY_KEY = "chains-show-user-chains";
+const SYSTEM_CHAINS_VISIBILITY_KEY = "chains-show-system-chains";
 
 const STATUS_FILTERS = [
   { value: "all" as FilterStatus, label: "All" },
@@ -199,6 +205,14 @@ function ChainsPageContent() {
   const [runError, setRunError] = useState("");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const debouncedSearch = useDebounce(searchQuery, 250);
+  const [showUserChains, setShowUserChains] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem(USER_CHAINS_VISIBILITY_KEY) !== "0";
+  });
+  const [showSystemChains, setShowSystemChains] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(SYSTEM_CHAINS_VISIBILITY_KEY) === "1";
+  });
   const [filterStatus, setFilterStatus] = useState<FilterStatus>(
     (searchParams.get("status") as FilterStatus) || "all"
   );
@@ -269,6 +283,13 @@ function ChainsPageContent() {
     const target = chains.find((chain) => chain.id === chainId);
     if (!target) return;
 
+    if (isSystemChainRecord(target)) {
+      setShowSystemChains(true);
+      localStorage.setItem(SYSTEM_CHAINS_VISIBILITY_KEY, "1");
+    } else {
+      setShowUserChains(true);
+      localStorage.setItem(USER_CHAINS_VISIBILITY_KEY, "1");
+    }
     setSelected(target);
     setCreatingNew(false);
     setEditing(edit);
@@ -569,20 +590,35 @@ function ChainsPageContent() {
     setMobileView("list");
   };
 
+  const systemChainCount = chains.filter(isSystemChainRecord).length;
+  const userChainCount = chains.length - systemChainCount;
+  const chainMatchesFilters = (chain: Chain) => {
+    const query = debouncedSearch.toLowerCase();
+    const matchesSearch =
+      query === "" ||
+      chain.name.toLowerCase().includes(query) ||
+      chain.id.toLowerCase().includes(query) ||
+      chain.description.toLowerCase().includes(query) ||
+      chain.agents?.some(a =>
+        a.name.toLowerCase().includes(query) ||
+        a.role.toLowerCase().includes(query)
+      );
+    const matchesFilter = filterStatus === "all" || chain.status === filterStatus;
+    return matchesSearch && matchesFilter;
+  };
+  const hiddenSystemMatchCount = showSystemChains
+    ? 0
+    : chains.filter((chain) => isSystemChainRecord(chain) && chainMatchesFilters(chain)).length;
+  const hiddenUserMatchCount = showUserChains
+    ? 0
+    : chains.filter((chain) => !isSystemChainRecord(chain) && chainMatchesFilters(chain)).length;
+  const hiddenMatchCount = hiddenSystemMatchCount + hiddenUserMatchCount;
   const filteredAndSortedChains = chains
     .filter((chain) => {
-      const query = debouncedSearch.toLowerCase();
-      const matchesSearch =
-        query === "" ||
-        chain.name.toLowerCase().includes(query) ||
-        chain.id.toLowerCase().includes(query) ||
-        chain.description.toLowerCase().includes(query) ||
-        chain.agents?.some(a =>
-          a.name.toLowerCase().includes(query) ||
-          a.role.toLowerCase().includes(query)
-        );
-      const matchesFilter = filterStatus === "all" || chain.status === filterStatus;
-      return matchesSearch && matchesFilter;
+      const systemChain = isSystemChainRecord(chain);
+      if (systemChain && !showSystemChains) return false;
+      if (!systemChain && !showUserChains) return false;
+      return chainMatchesFilters(chain);
     })
     .sort((a, b) => {
       switch (sortBy) {
@@ -624,27 +660,38 @@ function ChainsPageContent() {
       const data = unwrapApiData<{ chains?: Chain[] }>(raw);
       const nextChains = data.chains || [];
       setChains(nextChains);
+      const firstVisibleChain = nextChains.find((chain) => {
+        const systemChain = isSystemChainRecord(chain);
+        return systemChain ? showSystemChains : showUserChains;
+      });
       const deepLink = deepLinkChainRef.current || { id: "", edit: false };
       if (deepLink.id) {
         const target = nextChains.find((chain) => chain.id === deepLink.id);
         if (target) {
+          if (isSystemChainRecord(target)) {
+            setShowSystemChains(true);
+            localStorage.setItem(SYSTEM_CHAINS_VISIBILITY_KEY, "1");
+          } else {
+            setShowUserChains(true);
+            localStorage.setItem(USER_CHAINS_VISIBILITY_KEY, "1");
+          }
           setSelected(target);
           setCreatingNew(false);
           setEditing(deepLink.edit);
           setMobileView("detail");
-        } else if (nextChains.length && !selected) {
-          setSelected(nextChains[0]);
+        } else if (firstVisibleChain && !selected) {
+          setSelected(firstVisibleChain);
         }
         deepLinkChainRef.current = { id: "", edit: false };
-      } else if (nextChains.length && !selected) {
-        setSelected(nextChains[0]);
+      } else if (firstVisibleChain && !selected) {
+        setSelected(firstVisibleChain);
       }
     } catch {
       setChains([]);
     } finally {
       setLoading(false);
     }
-  }, [fetchWithNamespace, selected]);
+  }, [fetchWithNamespace, selected, showSystemChains, showUserChains]);
 
   useEffect(() => {
     fetchChains();
@@ -820,6 +867,41 @@ function ChainsPageContent() {
     }
   };
 
+  const selectFirstVisibleChain = (showUser: boolean, showSystem: boolean) => {
+    const firstVisible = chains.find((chain) => {
+      const systemChain = isSystemChainRecord(chain);
+      const visible = systemChain ? showSystem : showUser;
+      return visible && chainMatchesFilters(chain);
+    }) || null;
+    setSelected(firstVisible);
+    setEditing(false);
+    setCreatingNew(false);
+    if (firstVisible) setMobileView("detail");
+  };
+
+  const toggleChainVisibility = (kind: "user" | "system") => {
+    if (kind === "user") {
+      setShowUserChains((current) => {
+        const next = !current;
+        localStorage.setItem(USER_CHAINS_VISIBILITY_KEY, next ? "1" : "0");
+        if (!next && selected && !isSystemChainRecord(selected)) {
+          selectFirstVisibleChain(next, showSystemChains);
+        }
+        return next;
+      });
+      return;
+    }
+
+    setShowSystemChains((current) => {
+      const next = !current;
+      localStorage.setItem(SYSTEM_CHAINS_VISIBILITY_KEY, next ? "1" : "0");
+      if (!next && selected && isSystemChainRecord(selected)) {
+        selectFirstVisibleChain(showUserChains, next);
+      }
+      return next;
+    });
+  };
+
   return (
     <>
     <div className="h-full flex flex-col">
@@ -892,6 +974,13 @@ function ChainsPageContent() {
                 <button onClick={() => setSearchQuery("")} className="text-[10px] text-muted-foreground/60 hover:text-foreground shrink-0">clear</button>
               )}
             </div>
+            <WorkflowSidebarVisibilityToggleGroup
+              options={[
+                { value: "user", label: "User", active: showUserChains, count: userChainCount },
+                { value: "system", label: "System", active: showSystemChains, count: systemChainCount },
+              ]}
+              onToggle={toggleChainVisibility}
+            />
             <div className="flex items-center gap-1.5">
               <Button
                 size="xs"
@@ -921,7 +1010,13 @@ function ChainsPageContent() {
             {loading ? (
               <ChainListSkeleton count={5} />
             ) : filteredAndSortedChains.length === 0 ? (
-              searchQuery || filterStatus !== "all" ? (
+              hiddenMatchCount > 0 ? (
+                <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+                  <div className="text-xs text-muted-foreground/80">
+                    Matching chains are hidden
+                  </div>
+                </div>
+              ) : searchQuery || filterStatus !== "all" ? (
                 <div className="text-center py-12 text-xs text-muted-foreground/80">
                   No chains match filters
                 </div>
@@ -974,6 +1069,11 @@ function ChainsPageContent() {
 
                           {/* row 3: pills */}
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
+                            {isSystemChainRecord(chain) && (
+                              <span className="rounded-full bg-blue-400/10 px-2 py-0.5 text-blue-300/80">
+                                system
+                              </span>
+                            )}
                             {lastStatus && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5">
                                 <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${

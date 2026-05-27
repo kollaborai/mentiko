@@ -77,6 +77,7 @@ export {
   WorkflowSidebarSearchInput,
   WorkflowSidebarSectionHeader,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarVisibilityToggleGroup,
 } from "./workflow-sidebar";
 export { StatusIndicator } from "./status-indicator";
 export { UI_LIBRARY_GROUPS, UI_LIBRARY_RULES } from "./registry";

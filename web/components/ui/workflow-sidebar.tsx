@@ -135,6 +135,59 @@ export function WorkflowSidebarSegmentedControl<T extends string = string>({
   );
 }
 
+export interface WorkflowSidebarVisibilityOption<T extends string = string> {
+  value: T;
+  label: string;
+  active: boolean;
+  count?: number;
+}
+
+interface WorkflowSidebarVisibilityToggleGroupProps<T extends string = string> {
+  options: Array<WorkflowSidebarVisibilityOption<T>>;
+  onToggle: (value: T) => void;
+  className?: string;
+}
+
+export function WorkflowSidebarVisibilityToggleGroup<T extends string = string>({
+  options,
+  onToggle,
+  className,
+}: WorkflowSidebarVisibilityToggleGroupProps<T>) {
+  return (
+    <div
+      data-testid="workflow-sidebar-visibility-toggle"
+      data-workflow-sidebar-control=""
+      className={cn("grid grid-cols-2 gap-1 rounded-xl bg-card p-0.5", className)}
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={option.active}
+          data-testid={`visibility-toggle-${option.value}`}
+          onClick={() => onToggle(option.value)}
+          className={cn(
+            "flex items-center justify-center gap-1.5 rounded-lg px-2 py-1 text-[10px] transition-colors",
+            option.active
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <span className="truncate">{option.label}</span>
+          {typeof option.count === "number" ? (
+            <span className={cn(
+              "rounded-full px-1.5 py-0.5 text-[9px]",
+              option.active ? "bg-background/15" : "bg-foreground/5 text-foreground/35"
+            )}>
+              {option.count}
+            </span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface WorkflowSidebarSectionHeaderProps {
   title: string;
   count?: number;

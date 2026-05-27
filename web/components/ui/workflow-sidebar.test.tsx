@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -6,6 +6,7 @@ import {
   WorkflowSidebarItem,
   WorkflowSidebarPane,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarVisibilityToggleGroup,
 } from "./workflow-sidebar";
 
 describe("workflow sidebar panel surfaces", () => {
@@ -29,6 +30,34 @@ describe("workflow sidebar panel surfaces", () => {
       "data-workflow-sidebar-control",
     );
     expect(screen.getByTestId("workflow-sidebar-item")).toHaveAttribute("data-workflow-sidebar-item");
+  });
+
+  it("renders independent visibility toggles with pressed state and counts", () => {
+    const onToggle = jest.fn();
+
+    render(
+      <WorkflowSidebarVisibilityToggleGroup
+        options={[
+          { value: "user", label: "User", active: true, count: 4 },
+          { value: "system", label: "System", active: false, count: 7 },
+        ]}
+        onToggle={onToggle}
+      />,
+    );
+
+    const group = screen.getByTestId("workflow-sidebar-visibility-toggle");
+    const userButton = screen.getByTestId("visibility-toggle-user");
+    const systemButton = screen.getByTestId("visibility-toggle-system");
+
+    expect(group).toHaveAttribute("data-workflow-sidebar-control");
+    expect(userButton).toHaveAttribute("aria-pressed", "true");
+    expect(systemButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+
+    fireEvent.click(systemButton);
+
+    expect(onToggle).toHaveBeenCalledWith("system");
   });
 
   it("tunes workflow sidebar chrome only inside floating panel documents", () => {
