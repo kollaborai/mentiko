@@ -266,7 +266,7 @@ process.env.ORG_ID = ORG_ID;
 writeMockCurl();
 resetWorkspace();
 
-const { ChainRunner } = await import(`file://${SCRIPT}`);
+const { ChainRunner, isGenerationAuditRun, taskAuditMetadataForRun } = await import(`file://${SCRIPT}`);
 
 // CLI behavior and error tests
 
@@ -356,6 +356,44 @@ test("falls back to goal when task context cannot resolve", () => {
   assert(
     mapped.startsWith("fallback goal|||fallback goal|"),
     `wrong fallback path: ${mapped}`
+  );
+});
+
+test("classifies generation chain task links as audit runs, not execution runs", () => {
+  const recommendationRun = {
+    id: "run-recommend",
+    chain: "Chain Recommendation",
+    chainId: "chain-recommendation",
+    metadata: { generationKind: "chain_recommendation" },
+  };
+  const generationRun = {
+    id: "run-generate",
+    chain: "Chain Generation",
+    chainId: "chain-generation",
+    metadata: { generationKind: "chain_generation" },
+  };
+
+  assert(isGenerationAuditRun(recommendationRun), "recommendation should be audit");
+  assert(isGenerationAuditRun(generationRun), "generation should be audit");
+  assert(!isGenerationAuditRun({ metadata: {} }), "plain run should not be audit");
+
+  assert(
+    JSON.stringify(taskAuditMetadataForRun(recommendationRun, "run-recommend", "completed")) ===
+      JSON.stringify({
+        analysis_status: "complete",
+        recommendation_run_id: "run-recommend",
+        recommendation_chain_id: "chain-recommendation",
+      }),
+    "wrong recommendation audit metadata"
+  );
+  assert(
+    JSON.stringify(taskAuditMetadataForRun(generationRun, "run-generate", "stopped")) ===
+      JSON.stringify({
+        generation_status: "failed",
+        generated_chain_run_id: "run-generate",
+        generated_chain_source_chain_id: "chain-generation",
+      }),
+    "wrong generation audit metadata"
   );
 });
 
@@ -463,7 +501,7 @@ test("launchAgent skips stale chain default and uses namespace default profile",
     { id: "agent-a", name: "Agent A", triggers: ["manual-start"], emits: "done", prompt: "run it" },
   ]);
   const chain = readJson(path);
-  chain.default_agent_profile = "claude-opus-4-7";
+  chain.default_agent_profile = "missing-chain-default-profile";
   writeFileSync(path, JSON.stringify(chain, null, 2));
   makeProfile("kollab", {
     cli: "kollab",

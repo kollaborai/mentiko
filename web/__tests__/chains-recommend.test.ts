@@ -53,8 +53,13 @@ jest.mock("@/lib/job-store", () => ({
   deleteJob: (...args: unknown[]) => mockDeleteJob(...args),
 }));
 
-jest.mock("@/lib/job-runner-launch", () => ({
-  launchJobRunner: jest.fn(),
+const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
+  runId: "run-123",
+  chainId: "chain-generation",
+  status: "started",
+});
+jest.mock("@/lib/generation-chain-dispatch", () => ({
+  startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
 const mockAgentCatalog = "AGENT_CATALOG_DATA";
@@ -102,8 +107,7 @@ function makeRequest(body: Record<string, unknown>) {
 
 describe("POST /api/chains/recommend", () => {
   beforeEach(() => {
-    mockCreateJob.mockClear();
-    mockResolveWorkspace.mockClear();
+    jest.clearAllMocks();
     mockTaskGet.mockReset();
     mockTaskUpdate.mockReset();
     mockTaskGet.mockReturnValue(null);
@@ -160,5 +164,25 @@ describe("POST /api/chains/recommend", () => {
       "user-1",
       "default",
     );
+    expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
+      namespaceId: "default",
+      orgId: "default",
+      kind: "chain_generation",
+      job: expect.objectContaining({ id: "job-123" }),
+      prompt: expect.stringContaining("build me a chain"),
+      workspacePath: "/ws/path",
+    }));
+  });
+
+  it("preserves response shape compatibility", async () => {
+    const response = await POST(makeRequest({ prompt: "build me a chain" }));
+
+    expect(response.status).toBe(200);
+    expect(response.json()).toEqual({
+      jobId: "job-123",
+      runId: "run-123",
+      chainId: "chain-generation",
+      status: "running",
+    });
   });
 });

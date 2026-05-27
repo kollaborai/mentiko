@@ -1,5 +1,5 @@
 import type { Queue, Worker, ConnectionOptions } from "bullmq";
-import { createRedisClient, redisConfigured } from "./redis";
+import { createRedisClient, ping as redisPing, redisConfigured } from "./redis";
 import { execAuditLog, type AuditLogMetadata, type AuditExecOptions } from "./audit-exec";
 
 export interface AuditLogJobData {
@@ -18,6 +18,7 @@ const auditState = globalThis as typeof globalThis & {
   __mentikoAuditQueuePromise?: Promise<AuditQueue | null>;
   __mentikoAuditWorker?: AuditWorker | null;
   __mentikoAuditWorkerPromise?: Promise<AuditWorker | null>;
+  __mentikoAuditQueueSkipWarned?: boolean;
 };
 
 const importExternal = new Function("specifier", "return import(specifier)") as (
@@ -86,18 +87,37 @@ async function ensureAuditWorker(): Promise<void> {
 }
 
 export async function addAuditLog(data: AuditLogJobData): Promise<void> {
-  const auditQueue = await getAuditQueue();
-  if (!auditQueue) {
-    console.warn("[audit-queue] redis unavailable, skipping audit log:", data.eventType);
+  if (!redisConfigured || !(await redisPing())) {
+    if (!auditState.__mentikoAuditQueueSkipWarned) {
+      console.warn("[audit-queue] redis unavailable, skipping audit log:", data.eventType);
+      auditState.__mentikoAuditQueueSkipWarned = true;
+    }
     return;
   }
 
-  await ensureAuditWorker();
+  const auditQueue = await getAuditQueue();
+  if (!auditQueue) {
+    if (!auditState.__mentikoAuditQueueSkipWarned) {
+      console.warn("[audit-queue] redis unavailable, skipping audit log:", data.eventType);
+      auditState.__mentikoAuditQueueSkipWarned = true;
+    }
+    return;
+  }
 
-  await auditQueue.add(data.eventType, data, {
-    attempts: 3,
-    backoff: { type: "exponential", delay: 1000 },
-    removeOnComplete: { count: 1000 },
-    removeOnFail: { count: 5000 },
-  });
+  try {
+    await ensureAuditWorker();
+
+    await auditQueue.add(data.eventType, data, {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 1000 },
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 5000 },
+    });
+  } catch (err) {
+    if (!auditState.__mentikoAuditQueueSkipWarned) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[audit-queue] redis unavailable, skipping audit log:", message);
+      auditState.__mentikoAuditQueueSkipWarned = true;
+    }
+  }
 }

@@ -62,6 +62,64 @@ function taskGenerationMetadataFromJobInput(input: Record<string, unknown>): Rec
   return metadata as Record<string, unknown>;
 }
 
+function metadataRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function chainAssignmentAuditMetadata(
+  jobType: string,
+  status: string,
+  runId?: string,
+  chainId?: string
+): Record<string, unknown> | null {
+  if (jobType === "recommend") {
+    return {
+      analysis_status: status,
+      ...(runId ? { recommendation_run_id: runId } : {}),
+      ...(chainId ? { recommendation_chain_id: chainId } : {}),
+    };
+  }
+
+  if (jobType === "generate") {
+    return {
+      generation_status: status,
+      ...(runId ? { generated_chain_run_id: runId } : {}),
+      ...(chainId ? { generated_chain_source_chain_id: chainId } : {}),
+    };
+  }
+
+  return null;
+}
+
+function removeAuditRunFromExecutionMetadata(
+  metadata: Record<string, unknown>,
+  auditRunId?: string
+): Record<string, unknown> {
+  if (!auditRunId || metadata.last_run_id !== auditRunId) return metadata;
+
+  const cleaned = { ...metadata };
+  delete cleaned.last_run_id;
+  delete cleaned.last_run_status;
+  delete cleaned.last_run_outcome;
+  delete cleaned.last_run_decision_required;
+  delete cleaned.last_run_error;
+  delete cleaned.last_run_completed;
+  return cleaned;
+}
+
 /**
  * POST /api/jobs/[id]/complete
  *
@@ -198,21 +256,21 @@ export const POST = withErrorHandling(async (
       const task = taskGet(orgId, updatedJob.taskId, namespaceId);
 
       if (task) {
-        const existing = task.metadata || {};
+        const existing = metadataRecord(task.metadata);
 
-        // Only chain recommendation/generation jobs own these task-binding keys.
-        const statusKey =
-          updatedJob.type === "recommend"
-            ? "analysis_status"
-            : updatedJob.type === "generate"
-              ? "generation_status"
-              : null;
+        const auditMetadata = chainAssignmentAuditMetadata(
+          updatedJob.type,
+          updatedJob.status,
+          updatedJob.runId,
+          updatedJob.chainId
+        );
 
-        if (statusKey) {
+        if (auditMetadata) {
+          const cleanedExisting = removeAuditRunFromExecutionMetadata(existing, updatedJob.runId);
           taskUpdate(orgId, updatedJob.taskId, {
             metadata: {
-              ...existing,
-              [statusKey]: updatedJob.status,
+              ...cleanedExisting,
+              ...auditMetadata,
             },
           }, namespaceId);
         }

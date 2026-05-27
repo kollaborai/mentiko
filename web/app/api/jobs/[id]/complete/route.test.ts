@@ -191,4 +191,138 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "default");
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
+
+  test("recommend completion stores recommendation run provenance without clobbering execution run", async () => {
+    let currentJob = {
+      id: "job-recommend",
+      type: "recommend",
+      status: "running",
+      taskId: "CHOR-001",
+      input: {},
+      runId: "run-recommend",
+      chainId: "chain-recommendation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "CHOR-001",
+      metadata: {
+        chain_id: "assigned-chain",
+        chain_name: "Assigned Chain",
+        last_run_id: "run-execution",
+        last_run_status: "complete",
+      },
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { recommendation: { action: "use_existing" } },
+      runId: "run-recommend",
+      chainId: "chain-recommendation",
+    }), { params: Promise.resolve({ id: "job-recommend" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "CHOR-001", {
+      metadata: expect.objectContaining({
+        chain_id: "assigned-chain",
+        last_run_id: "run-execution",
+        analysis_status: "complete",
+        recommendation_run_id: "run-recommend",
+        recommendation_chain_id: "chain-recommendation",
+      }),
+    }, "default");
+  });
+
+  test("generate completion stores generated-chain run provenance without clobbering execution run", async () => {
+    let currentJob = {
+      id: "job-generate",
+      type: "generate",
+      status: "running",
+      taskId: "CHOR-001",
+      input: {},
+      runId: "run-generate",
+      chainId: "chain-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "CHOR-001",
+      metadata: {
+        chain_id: "assigned-chain",
+        last_run_id: "run-execution",
+        last_run_status: "complete",
+      },
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { output: "{}" },
+      runId: "run-generate",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-generate" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "CHOR-001", {
+      metadata: expect.objectContaining({
+        chain_id: "assigned-chain",
+        last_run_id: "run-execution",
+        generation_status: "complete",
+        generated_chain_run_id: "run-generate",
+        generated_chain_source_chain_id: "chain-generation",
+      }),
+    }, "default");
+  });
+
+  test("recommend completion clears a legacy audit run from last_run_id", async () => {
+    let currentJob = {
+      id: "job-recommend",
+      type: "recommend",
+      status: "running",
+      taskId: "CHOR-001",
+      input: {},
+      runId: "run-recommend",
+      chainId: "chain-recommendation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "CHOR-001",
+      metadata: {
+        chain_id: "assigned-chain",
+        last_run_id: "run-recommend",
+        last_run_status: "running",
+      },
+    });
+
+    const { POST } = await import("./route");
+
+    await POST(makeRequest({
+      status: "complete",
+      result: { recommendation: { action: "use_existing" } },
+      runId: "run-recommend",
+      chainId: "chain-recommendation",
+    }), { params: Promise.resolve({ id: "job-recommend" }) });
+
+    const metadata = mockTaskUpdate.mock.calls.at(-1)?.[2]?.metadata;
+    expect(metadata).toEqual(expect.objectContaining({
+      recommendation_run_id: "run-recommend",
+      recommendation_chain_id: "chain-recommendation",
+      analysis_status: "complete",
+    }));
+    expect(metadata).not.toHaveProperty("last_run_id");
+    expect(metadata).not.toHaveProperty("last_run_status");
+  });
 });

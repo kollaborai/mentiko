@@ -47,32 +47,81 @@ function parseMetadata(
   return raw;
 }
 
+function stringValue(value: unknown): string | undefined {
+  return value ? String(value) : undefined;
+}
+
+function lastRunChainName(metadata: Record<string, unknown>): string {
+  const direct = stringValue(metadata.last_run_chain);
+  if (direct) return direct;
+
+  const summary = metadata.last_run_summary;
+  if (summary && typeof summary === "object" && !Array.isArray(summary)) {
+    return stringValue((summary as Record<string, unknown>).chain) || "";
+  }
+
+  return "";
+}
+
+function misclassifiedAuditRun(metadata: Record<string, unknown>) {
+  const lastRunId = stringValue(metadata.last_run_id);
+  const chainName = lastRunChainName(metadata).toLowerCase();
+  if (!lastRunId) return { recommendationRunId: undefined, generationRunId: undefined };
+
+  if (chainName.includes("chain recommendation") || chainName.includes("chain-recommendation")) {
+    return { recommendationRunId: lastRunId, generationRunId: undefined };
+  }
+
+  if (chainName.includes("chain generation") || chainName.includes("chain-generation")) {
+    return { recommendationRunId: undefined, generationRunId: lastRunId };
+  }
+
+  return { recommendationRunId: undefined, generationRunId: undefined };
+}
+
 // raw issue -> normalized Task
 export function toTask(issue: TaskRecord): Task {
   const metadata = parseMetadata(issue.metadata);
   let chainBinding: TaskChainBinding | undefined;
-  if (metadata?.chain_id || metadata?.analysis_job_id || metadata?.generation_job_id || metadata?.auto_run !== undefined) {
+  if (
+    metadata?.chain_id ||
+    metadata?.analysis_job_id ||
+    metadata?.generation_job_id ||
+    metadata?.recommendation_run_id ||
+    metadata?.generated_chain_run_id ||
+    metadata?.auto_run !== undefined
+  ) {
+    const auditRun = misclassifiedAuditRun(metadata);
+    const executionRunId = auditRun.recommendationRunId || auditRun.generationRunId
+      ? undefined
+      : stringValue(metadata.last_run_id);
     chainBinding = {
       chain_id: String(metadata.chain_id || ""),
-      chain_name: metadata.chain_name ? String(metadata.chain_name) : undefined,
+      chain_name: stringValue(metadata.chain_name),
       auto_run: (metadata.auto_run as boolean) ?? false,
       run_config: metadata.run_config as
         | TaskChainBinding["run_config"]
         | undefined,
-      last_run_id: metadata.last_run_id ? String(metadata.last_run_id) : undefined,
-      last_run_status: metadata.last_run_status ? String(metadata.last_run_status) : undefined,
-      last_run_outcome: metadata.last_run_outcome ? String(metadata.last_run_outcome) : undefined,
+      last_run_id: executionRunId,
+      last_run_status: executionRunId ? stringValue(metadata.last_run_status) : undefined,
+      last_run_outcome: executionRunId ? stringValue(metadata.last_run_outcome) : undefined,
       last_run_decision_required:
-        typeof metadata.last_run_decision_required === "boolean"
+        executionRunId && typeof metadata.last_run_decision_required === "boolean"
           ? metadata.last_run_decision_required
           : undefined,
-      last_run_error: metadata.last_run_error ? String(metadata.last_run_error) : undefined,
-      last_run_completed: metadata.last_run_completed ? String(metadata.last_run_completed) : undefined,
+      last_run_error: executionRunId ? stringValue(metadata.last_run_error) : undefined,
+      last_run_completed: executionRunId ? stringValue(metadata.last_run_completed) : undefined,
       auto_run_retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : undefined,
       analysis_job_id: (metadata.analysis_job_id as string) || undefined,
       analysis_status: (metadata.analysis_status as TaskChainBinding["analysis_status"]) || undefined,
+      recommendation_run_id: stringValue(metadata.recommendation_run_id) || auditRun.recommendationRunId,
+      recommendation_chain_id: stringValue(metadata.recommendation_chain_id) || (auditRun.recommendationRunId ? "chain-recommendation" : undefined),
       generation_job_id: (metadata.generation_job_id as string) || undefined,
       generation_status: (metadata.generation_status as TaskChainBinding["generation_status"]) || undefined,
+      generated_chain_run_id: stringValue(metadata.generated_chain_run_id) || auditRun.generationRunId,
+      generated_chain_source_chain_id: metadata.generated_chain_source_chain_id
+        ? String(metadata.generated_chain_source_chain_id)
+        : auditRun.generationRunId ? "chain-generation" : undefined,
     };
   }
 

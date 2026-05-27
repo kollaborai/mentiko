@@ -565,6 +565,56 @@ update-task-from-run() {
     local auth_header="Authorization: Bearer ${BETTER_AUTH_SECRET:-}"
     local ns_header="x-namespace-id: ${NAMESPACE_ID:-default}"
     local org_header="x-org-id: ${ORG_ID:-default}"
+    local generation_kind
+    generation_kind=$(jq -r '.metadata.generationKind // empty' "$run_file" 2>/dev/null || echo "")
+    local chain_id
+    chain_id=$(jq -r '.chainId // empty' "$run_file" 2>/dev/null || echo "")
+
+    if [[ -n "$generation_kind" ]]; then
+        local audit_status="$status"
+        case "$audit_status" in
+            completed|complete) audit_status="complete" ;;
+            failed|stopped|cancelled|error) audit_status="failed" ;;
+            *) audit_status="running" ;;
+        esac
+
+        local task_resp
+        local current_meta
+        task_resp=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" "${api_base}/api/tasks/${task_id}" 2>/dev/null || echo "")
+        current_meta=$(echo "$task_resp" | jq -c '.data.issue.metadata // {}' 2>/dev/null || echo '{}')
+
+        local audit_meta=""
+        case "$generation_kind" in
+            chain_recommendation)
+                audit_meta=$(echo "$current_meta" | jq --arg st "$audit_status" --arg rid "$run_id" --arg cid "$chain_id" '
+                    .analysis_status = $st |
+                    .recommendation_run_id = $rid |
+                    if $cid != "" then .recommendation_chain_id = $cid else . end
+                ' 2>/dev/null || echo "$current_meta")
+                ;;
+            chain_generation)
+                audit_meta=$(echo "$current_meta" | jq --arg st "$audit_status" --arg rid "$run_id" --arg cid "$chain_id" '
+                    .generation_status = $st |
+                    .generated_chain_run_id = $rid |
+                    if $cid != "" then .generated_chain_source_chain_id = $cid else . end
+                ' 2>/dev/null || echo "$current_meta")
+                ;;
+        esac
+
+        if [[ -n "$audit_meta" ]]; then
+            curl -sf -X PATCH \
+                -H "$auth_header" \
+                -H "$ns_header" \
+                -H "$org_header" \
+                -H "Content-Type: application/json" \
+                -d "$(jq -nc --argjson meta "$audit_meta" '{metadata: $meta}')" \
+                "${api_base}/api/tasks/${task_id}" >/dev/null 2>&1 || true
+            echo "  recorded task audit run $run_id ($generation_kind, $audit_status)"
+        else
+            echo "  skipped task execution metadata for audit run $run_id ($generation_kind)"
+        fi
+        return 0
+    fi
 
     echo "  updating task $task_id: last_run_status=$status"
 

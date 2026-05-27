@@ -10,7 +10,7 @@ import { getSessionUser } from "@/lib/auth-bridge";
 import type { Decision } from "@/lib/decision-types";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
+import { startDecisionChainRun } from "@/lib/decision-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 
 export const dynamic = "force-dynamic";
@@ -86,7 +86,15 @@ export const POST = withErrorHandling(async (
 
   await updateDecision(namespaceId, orgId, id, { retroJobId: job.id }, workspacePath);
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
+  const run = await startDecisionChainRun({
+    request,
+    namespaceId,
+    orgId,
+    decision,
+    phase: "retrospective",
+    prompt: retroPrompt,
+    workspacePath: authorizedWorkspacePath,
+  });
 
-  return apiSuccess({ jobId: job.id, status: job.status });
+  return apiSuccess({ jobId: job.id, runId: run.runId, status: job.status });
 });

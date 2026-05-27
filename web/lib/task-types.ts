@@ -114,8 +114,12 @@ export interface TaskChainBinding {
   // job refs (lightweight - full results in agents/jobs/{jobId}.json)
   analysis_job_id?: string;
   analysis_status?: JobStatusType;
+  recommendation_run_id?: string;
+  recommendation_chain_id?: string;
   generation_job_id?: string;
   generation_status?: JobStatusType;
+  generated_chain_run_id?: string;
+  generated_chain_source_chain_id?: string;
 }
 
 // normalized task for UI consumption

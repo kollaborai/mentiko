@@ -20,6 +20,7 @@ import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
 import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
+import { shouldRecordTaskExecutionMetadata } from "@/lib/run-provenance";
 
 const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
@@ -44,6 +45,12 @@ interface StartChainRunBody {
   executor?: string;
   agentProfileId?: string;
   runId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface TaskExecutionRunCandidate {
+  taskId?: string;
+  chainId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -117,6 +124,15 @@ function applyRuntimeAgentProfileOverride(chain: Chain, agentProfileId?: string)
 function normalizeRunMetadata(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+export function shouldRecordTaskExecutionRun({
+  taskId,
+  metadata,
+}: TaskExecutionRunCandidate): boolean {
+  if (!taskId || typeof taskId !== "string") return false;
+
+  return shouldRecordTaskExecutionMetadata(metadata);
 }
 
 export async function startChainRun({
@@ -412,10 +428,11 @@ export async function startChainRun({
     namespace_id: namespaceId,
   }, ip).catch(() => {});
 
-  if (taskId && typeof taskId === "string") {
+  const executionTaskId = typeof taskId === "string" ? taskId : undefined;
+  if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
     try {
-      taskUpdate(orgId, taskId, { status: "in_progress" }, namespaceId);
-      taskMergeMeta(orgId, taskId, { last_run_id: runId, last_run_status: "running" }, namespaceId);
+      taskUpdate(orgId, executionTaskId, { status: "in_progress" }, namespaceId);
+      taskMergeMeta(orgId, executionTaskId, { last_run_id: runId, last_run_status: "running" }, namespaceId);
     } catch {
       // non-critical: don't fail the run if task update fails
     }

@@ -5,6 +5,8 @@ const decisionRoutes = [
   "../../app/api/decisions/[id]/guided/questions/route.ts",
   "../../app/api/decisions/[id]/guided/options/route.ts",
   "../../app/api/decisions/[id]/guided/plan/route.ts",
+  "../../app/api/decisions/[id]/guided/synthesize/route.ts",
+  "../../app/api/decisions/[id]/retrospective/route.ts",
 ];
 
 describe("decision chain launch source contract", () => {
@@ -13,7 +15,6 @@ describe("decision chain launch source contract", () => {
       const source = readFileSync(new URL(route, import.meta.url), "utf8");
       expect(source).toContain("startDecisionChainRun");
       expect(source).not.toContain("launchJobRunner");
-      expect(source).not.toContain("createJob(");
     }
   });
 

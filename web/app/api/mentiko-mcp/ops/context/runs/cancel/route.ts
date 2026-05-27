@@ -7,6 +7,7 @@ import { writeLog } from "@/lib/system-logger";
 import { pty } from "@/lib/pty-client";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
 import { checkRunAccessForUser, normalizeRunId } from "@/lib/run-acl";
+import { isGenerationAuditRun } from "@/lib/run-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
   writeFileSync(metaPath, JSON.stringify(run, null, 2));
   writeLog(ctx.namespaceId, ctx.orgId, "warn", "mcp-ops", `run ${safeRunId} cancelled`, `chain: ${run.chain || "unknown"}`);
 
-  if (run.taskId && run.id) {
+  if (run.taskId && run.id && !isGenerationAuditRun(run)) {
     try {
       taskMergeMeta(ctx.orgId, run.taskId, { last_run_status: "cancelled", last_run_id: run.id }, ctx.namespaceId);
     } catch {

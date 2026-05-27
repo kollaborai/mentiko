@@ -63,6 +63,25 @@ interface ChainAssignWorkflowProps {
   workspacePath?: string;
 }
 
+function JobRunLink({
+  label,
+  runId,
+}: {
+  label: string;
+  runId?: unknown;
+}) {
+  if (typeof runId !== "string") return null;
+
+  return (
+    <a
+      href={`/runs?runId=${encodeURIComponent(runId)}`}
+      className="text-[10px] font-mono text-foreground/35 hover:text-cyan-400 transition-colors"
+    >
+      {label}: {runId}
+    </a>
+  );
+}
+
 export function ChainAssignWorkflow({
   task,
   onAssignChain,
@@ -140,7 +159,12 @@ export function ChainAssignWorkflow({
         }
       }
       // update local state (backend already updated via callback)
-      const metadata = { ...task.chainBinding, analysis_status: "complete" as const };
+      const metadata = {
+        ...task.chainBinding,
+        analysis_status: "complete" as const,
+        ...(typeof analysisJob.runId === "string" ? { recommendation_run_id: analysisJob.runId } : {}),
+        ...(typeof analysisJob.chainId === "string" ? { recommendation_chain_id: analysisJob.chainId } : {}),
+      };
       onMetadataUpdate?.(metadata);
       // only go to recommendation if no generation job is active
       // (generation takes priority - don't regress from "generating" to "recommendation")
@@ -191,7 +215,12 @@ export function ChainAssignWorkflow({
         }
       }
       // update local state (backend already updated via callback)
-      const metadata = { ...task.chainBinding, generation_status: "complete" as const };
+      const metadata = {
+        ...task.chainBinding,
+        generation_status: "complete" as const,
+        ...(typeof generationJob.runId === "string" ? { generated_chain_run_id: generationJob.runId } : {}),
+        ...(typeof generationJob.chainId === "string" ? { generated_chain_source_chain_id: generationJob.chainId } : {}),
+      };
       onMetadataUpdate?.(metadata);
       setStep("generated");
       setErrorMessage(null);
@@ -399,6 +428,8 @@ export function ChainAssignWorkflow({
         ...task.chainBinding,
         analysis_job_id: jobData.jobId,
         analysis_status: "running" as const,
+        ...(typeof jobData.runId === "string" ? { recommendation_run_id: jobData.runId } : {}),
+        ...(typeof jobData.chainId === "string" ? { recommendation_chain_id: jobData.chainId } : {}),
       };
       onMetadataUpdate?.(metadata);
 
@@ -459,12 +490,21 @@ export function ChainAssignWorkflow({
       }
 
       const jobData = await jobRes.json();
+      const metadata = {
+        ...task.chainBinding,
+        analysis_job_id: jobData.jobId,
+        analysis_status: "running" as const,
+        ...(typeof jobData.runId === "string" ? { recommendation_run_id: jobData.runId } : {}),
+        ...(typeof jobData.chainId === "string" ? { recommendation_chain_id: jobData.chainId } : {}),
+      };
+      onMetadataUpdate?.(metadata);
       setActiveAnalysisJobId(jobData.jobId);
       setAnalysisJob(jobData);
     } catch (e: unknown) {
       setErrorMessage(e instanceof Error ? e.message : "Failed to start analysis");
       setStep("error");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
   }, [task, setAnalysisJob, fetchWithNamespace, wsParam]);
 
   const generateChain = useCallback(async (prompt: string) => {
@@ -499,6 +539,8 @@ export function ChainAssignWorkflow({
         ...task.chainBinding,
         generation_job_id: jobData.jobId,
         generation_status: "running" as const,
+        ...(typeof jobData.runId === "string" ? { generated_chain_run_id: jobData.runId } : {}),
+        ...(typeof jobData.chainId === "string" ? { generated_chain_source_chain_id: jobData.chainId } : {}),
       };
       onMetadataUpdate?.(metadata);
 
@@ -779,6 +821,7 @@ export function ChainAssignWorkflow({
             ))}
           </div>
         )}
+        <JobRunLink label="recommendation run" runId={analysisJob?.runId} />
         {isPending && isStale && (
           <div className="text-[10px] text-amber-400/70">
             Job hasn&apos;t started — runner may be offline
@@ -1010,6 +1053,7 @@ export function ChainAssignWorkflow({
             Job hasn&apos;t started — runner may be offline
           </div>
         )}
+        <JobRunLink label="generation run" runId={generationJob?.runId} />
         <div className="flex items-center gap-2">
           <button
             className="text-[10px] text-foreground/30 hover:text-foreground/50"

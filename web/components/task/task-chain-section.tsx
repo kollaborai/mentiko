@@ -21,6 +21,45 @@ interface TaskChainSectionProps {
   workspacePath?: string;
 }
 
+function ProvenanceRunLink({
+  label,
+  runId,
+}: {
+  label: string;
+  runId?: string;
+}) {
+  if (!runId) return null;
+
+  return (
+    <a
+      href={`/runs?runId=${encodeURIComponent(runId)}`}
+      className="inline-flex items-center gap-1 text-[10px] text-foreground/35 hover:text-cyan-400 transition-colors"
+    >
+      <span>{label}</span>
+      <span className="font-mono">{runId}</span>
+      <ExternalLink className="h-2.5 w-2.5" />
+    </a>
+  );
+}
+
+function TaskChainProvenanceLinks({ task }: { task: Task }) {
+  const binding = task.chainBinding;
+  if (!binding?.recommendation_run_id && !binding?.generated_chain_run_id) return null;
+
+  return (
+    <div className="flex flex-col gap-1 py-1">
+      <ProvenanceRunLink
+        label="recommendation run"
+        runId={binding.recommendation_run_id}
+      />
+      <ProvenanceRunLink
+        label="generation run"
+        runId={binding.generated_chain_run_id}
+      />
+    </div>
+  );
+}
+
 export function TaskChainSection({
   task,
   onAssignChain,
@@ -120,6 +159,7 @@ export function TaskChainSection({
           />
         ) : (
           <div className="space-y-2">
+            <TaskChainProvenanceLinks task={task} />
             <button
               onClick={() => setShowWorkflow(true)}
               disabled={!!generationJobId}
@@ -230,9 +270,14 @@ export function TaskChainSection({
           </a>
         </div>
 
+        <TaskChainProvenanceLinks task={task} />
+
         {/* run status */}
         {binding.last_run_id && (
           <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-foreground/35">
+              last execution run
+            </span>
             <span
               className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono ${
                 binding.last_run_status === "running"

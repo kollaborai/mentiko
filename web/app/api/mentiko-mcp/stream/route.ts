@@ -4,6 +4,24 @@ import { verifySessionToken } from "@/lib/session-token";
 
 export const dynamic = "force-dynamic";
 
+function isClientAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!error || typeof error !== "object") return false;
+
+  const err = error as { code?: unknown; name?: unknown; message?: unknown };
+  const code = typeof err.code === "string" ? err.code : "";
+  const name = typeof err.name === "string" ? err.name : "";
+  const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
+
+  return (
+    code === "ECONNRESET" ||
+    name === "AbortError" ||
+    message === "aborted" ||
+    message.includes("socket hang up") ||
+    message.includes("connection reset")
+  );
+}
+
 /**
  * GET /api/mentiko-mcp/stream?sessionToken=<jwt>
  *
@@ -43,44 +61,72 @@ export async function GET(req: Request) {
   const writer = responseStream.writable.getWriter();
   const encoder = new TextEncoder();
 
-  void writer.write(encoder.encode(": connected\n\n"));
-
   let closed = false;
-  const tick = async () => {
+  const intervals: {
+    poll?: ReturnType<typeof setInterval>;
+    keepalive?: ReturnType<typeof setInterval>;
+  } = {};
+
+  const cleanup = () => {
+    if (intervals.poll) clearInterval(intervals.poll);
+    if (intervals.keepalive) clearInterval(intervals.keepalive);
+  };
+
+  const closeWriter = () => {
+    writer.close().catch((error) => {
+      if (!isClientAbortError(error, req.signal)) {
+        console.error("[mentiko-mcp stream] failed to close stream", error);
+      }
+    });
+  };
+
+  const closeStream = () => {
+    if (closed) return;
+    closed = true;
+    cleanup();
+    closeWriter();
+  };
+
+  const handleStreamError = (error: unknown) => {
+    if (!isClientAbortError(error, req.signal)) {
+      console.error("[mentiko-mcp stream] stream error", error);
+    }
+    closeStream();
+  };
+
+  const writeSse = async (chunk: string) => {
     if (closed) return;
     try {
-      const effects = popEffects(sessionId);
-      for (const e of effects) {
-        await writer.write(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-        markEffectDelivered(sessionId, e.id);
-      }
-    } catch {
-      closed = true;
-      try {
-        await writer.close();
-      } catch {}
+      await writer.write(encoder.encode(chunk));
+    } catch (error) {
+      handleStreamError(error);
     }
   };
 
-  const pollInterval = setInterval(() => {
-    void tick();
+  void writeSse(": connected\n\n");
+
+  const tick = async () => {
+    if (closed) return;
+    const effects = popEffects(sessionId);
+    for (const e of effects) {
+      await writeSse(`data: ${JSON.stringify(e)}\n\n`);
+      if (closed) return;
+      markEffectDelivered(sessionId, e.id);
+    }
+  };
+
+  intervals.poll = setInterval(() => {
+    void tick().catch(handleStreamError);
   }, 500);
 
-  const keepalive = setInterval(() => {
+  intervals.keepalive = setInterval(() => {
     if (closed) return;
-    void writer.write(encoder.encode(": keep-alive\n\n")).catch(() => {
-      closed = true;
-    });
+    void writeSse(": keep-alive\n\n");
   }, 20000);
 
   req.signal.addEventListener("abort", () => {
-    closed = true;
-    clearInterval(pollInterval);
-    clearInterval(keepalive);
-    try {
-      void writer.close();
-    } catch {}
-  });
+    closeStream();
+  }, { once: true });
 
   return new NextResponse(responseStream.readable, {
     headers: {

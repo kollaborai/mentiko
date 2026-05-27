@@ -11,10 +11,10 @@ import { resolveLinkRunPaths, resolvePeerOutputDir, validateLinkRunId } from "@/
 import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
 import { createJob } from "@/lib/job-store";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { getSessionUser } from "@/lib/auth-bridge";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 import { resolveLogDir } from "@/lib/session-log-resolver";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -306,11 +306,14 @@ export const POST = withErrorHandling(async (
     namespaceId
   );
 
-  launchJobRunner({
+  await startGenerationChainRun({
+    request,
+    kind: "run_summary",
     job,
     namespaceId,
     orgId,
-    origin: request.nextUrl.origin,
+    prompt: summaryPrompt,
+    workspacePath: authorizedWorkspacePath,
   });
 
   return apiSuccess({ jobId: job.id, status: "generating" });

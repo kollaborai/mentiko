@@ -26,7 +26,7 @@ describe("decision core chains", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("installs the four visible decision core chains idempotently", async () => {
+  test("installs the decision core chains idempotently", async () => {
     const { ensureDecisionCoreChains, DECISION_CORE_CHAIN_IDS } = await import("../decision-core-chains");
 
     const first = ensureDecisionCoreChains("default", "default");

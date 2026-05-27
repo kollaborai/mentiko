@@ -21,6 +21,7 @@ const mockCreateJob = jest.fn();
 const mockGetSessionUser = jest.fn();
 const mockResolveAuthorizedWorkspacePath = jest.fn();
 const mockResolveLogDir = jest.fn();
+const mockStartGenerationChainRun = jest.fn();
 
 jest.mock("@/lib/namespace-config", () => ({
   getNamespaceIdFromRequest: (...args: unknown[]) => mockGetNamespaceId(...args),
@@ -53,8 +54,8 @@ jest.mock("@/lib/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
 }));
 
-jest.mock("@/lib/job-runner-launch", () => ({
-  launchJobRunner: jest.fn(),
+jest.mock("@/lib/generation-chain-dispatch", () => ({
+  startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
 jest.mock("@/lib/auth-bridge", () => ({
@@ -120,6 +121,11 @@ describe("POST /api/links/[runId]/generate-summary", () => {
       runWorkspacePath || workspaceRoot
     );
     mockResolveLogDir.mockImplementation((provider: string, cwd: string) => join(cwd, `${provider}-logs`));
+    mockStartGenerationChainRun.mockResolvedValue({
+      runId: "run-summary-chain",
+      chainId: "run-summary-generation",
+      status: "started",
+    });
   });
 
   afterEach(() => {
@@ -203,6 +209,15 @@ describe("POST /api/links/[runId]/generate-summary", () => {
       "user-123",
       namespaceId
     );
+    expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.anything(),
+      namespaceId,
+      orgId,
+      kind: "run_summary",
+      job: expect.objectContaining({ id: `job-${runId}` }),
+      workspacePath: workspaceRoot,
+      prompt: expect.stringContaining("1 relay sessions found during run window"),
+    }));
   });
 
   it("ignores codex relay matches when cli is pinned to claude-code", async () => {
@@ -276,5 +291,14 @@ describe("POST /api/links/[runId]/generate-summary", () => {
       "user-123",
       namespaceId
     );
+    expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.anything(),
+      namespaceId,
+      orgId,
+      kind: "run_summary",
+      job: expect.objectContaining({ id: `job-${runId}` }),
+      workspacePath: workspaceRoot,
+      prompt: expect.stringContaining("(no moderator data)"),
+    }));
   });
 });

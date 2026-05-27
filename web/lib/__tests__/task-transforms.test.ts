@@ -85,6 +85,67 @@ describe("toTask", () => {
     expect(task.chainBinding!.last_run_decision_required).toBe(true);
   });
 
+  it("exposes recommendation and generated-chain audit run ids separately", () => {
+    const issue: TaskRecord = {
+      ...baseTaskRecord,
+      metadata: JSON.stringify({
+        chain_id: "code-review",
+        auto_run: false,
+        last_run_id: "run-execution",
+        recommendation_run_id: "run-recommend",
+        recommendation_chain_id: "chain-recommendation",
+        generated_chain_run_id: "run-generate",
+        generated_chain_source_chain_id: "chain-generation",
+      }),
+    };
+    const task = toTask(issue);
+    expect(task.chainBinding).toBeDefined();
+    expect(task.chainBinding!.last_run_id).toBe("run-execution");
+    expect(task.chainBinding!.recommendation_run_id).toBe("run-recommend");
+    expect(task.chainBinding!.recommendation_chain_id).toBe("chain-recommendation");
+    expect(task.chainBinding!.generated_chain_run_id).toBe("run-generate");
+    expect(task.chainBinding!.generated_chain_source_chain_id).toBe("chain-generation");
+  });
+
+  it("normalizes legacy recommendation audit run pollution away from execution run fields", () => {
+    const issue: TaskRecord = {
+      ...baseTaskRecord,
+      metadata: {
+        chain_id: "validate-task-generation-pipeline",
+        chain_name: "Validate Task Generation Pipeline",
+        last_run_id: "run-recommend",
+        last_run_status: "completed",
+        last_run_chain: "Chain Recommendation",
+      },
+    };
+    const task = toTask(issue);
+    expect(task.chainBinding).toBeDefined();
+    expect(task.chainBinding!.last_run_id).toBeUndefined();
+    expect(task.chainBinding!.last_run_status).toBeUndefined();
+    expect(task.chainBinding!.recommendation_run_id).toBe("run-recommend");
+    expect(task.chainBinding!.recommendation_chain_id).toBe("chain-recommendation");
+  });
+
+  it("normalizes legacy generation audit run pollution away from execution run fields", () => {
+    const issue: TaskRecord = {
+      ...baseTaskRecord,
+      metadata: {
+        chain_id: "generated-chain",
+        last_run_id: "run-generate",
+        last_run_status: "completed",
+        last_run_summary: {
+          chain: "Chain Generation",
+        },
+      },
+    };
+    const task = toTask(issue);
+    expect(task.chainBinding).toBeDefined();
+    expect(task.chainBinding!.last_run_id).toBeUndefined();
+    expect(task.chainBinding!.last_run_status).toBeUndefined();
+    expect(task.chainBinding!.generated_chain_run_id).toBe("run-generate");
+    expect(task.chainBinding!.generated_chain_source_chain_id).toBe("chain-generation");
+  });
+
   it("extracts chain binding from metadata object", () => {
     const issue: TaskRecord = {
       ...baseTaskRecord,

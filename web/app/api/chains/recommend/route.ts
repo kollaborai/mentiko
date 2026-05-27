@@ -11,10 +11,34 @@ import { buildAgentCatalog } from "@/lib/agent-catalog";
 import { buildProfileCatalog } from "@/lib/profile-catalog";
 import { BadRequest, NotFound, Unauthorized, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 
 export const dynamic = "force-dynamic";
+
+function generatedChainAuditRunMetadata(runId: string, chainId?: string): Record<string, string> {
+  return {
+    generated_chain_run_id: runId,
+    ...(chainId ? { generated_chain_source_chain_id: chainId } : {}),
+  };
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
@@ -147,7 +171,32 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // ================================================================
 
   // step 3: only spawn job runner after both job creation and task update succeed
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
+  const run = await startGenerationChainRun({
+    request,
+    namespaceId,
+    orgId,
+    kind: "chain_generation",
+    job,
+    prompt: generationPrompt,
+    workspacePath,
+    taskId,
+  });
 
-  return apiSuccess({ jobId: job.id, status: job.status });
+  if (taskId) {
+    try {
+      const task = taskGet(orgId, taskId, namespaceId);
+      if (task) {
+        taskUpdate(orgId, taskId, {
+          metadata: {
+            ...metadataRecord(task.metadata),
+            ...generatedChainAuditRunMetadata(run.runId, run.chainId),
+          },
+        }, namespaceId);
+      }
+    } catch (e) {
+      console.error("Failed to update generation audit run metadata:", e);
+    }
+  }
+
+  return apiSuccess({ jobId: job.id, runId: run.runId, chainId: run.chainId, status: job.status });
 });

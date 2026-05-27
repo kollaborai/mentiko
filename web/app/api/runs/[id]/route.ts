@@ -9,6 +9,7 @@ import { checkRunAccess } from "@/lib/run-acl";
 import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { isGenerationAuditRun } from "@/lib/run-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -137,7 +138,7 @@ export const PATCH = withErrorHandling(async (
     `run ${runId} cancelled (deleted)`, `chain: ${run.chain || "unknown"}`);
 
   // propagate cancelled status to linked task
-  if (run.taskId) {
+  if (run.taskId && !isGenerationAuditRun(run)) {
     try {
       taskMergeMeta(orgId, run.taskId, { last_run_status: "cancelled", last_run_id: run.id }, namespaceId);
     } catch {
@@ -185,7 +186,7 @@ export const DELETE = withErrorHandling(async (
   if (existsSync(runJsonPath)) {
     try {
       const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-      if (run.taskId) {
+      if (run.taskId && !isGenerationAuditRun(run)) {
         taskMergeMeta(orgId, run.taskId, { last_run_status: "deleted", last_run_id: run.id }, namespaceId);
       }
     } catch {

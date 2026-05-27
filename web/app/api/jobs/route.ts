@@ -12,10 +12,42 @@ import { getChainSchema } from "@/lib/schema-loader";
 import { taskGet, taskUpdate } from "@/lib/task-store";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner, resolveJobWorkspaceCwd } from "@/lib/job-runner-launch";
+import { resolveJobWorkspaceCwd } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
+
+function auditRunMetadataForJob(type: string, runId: string, chainId?: string): Record<string, string> {
+  if (type === "recommend") {
+    return {
+      recommendation_run_id: runId,
+      ...(chainId ? { recommendation_chain_id: chainId } : {}),
+    };
+  }
+
+  return {
+    generated_chain_run_id: runId,
+    ...(chainId ? { generated_chain_source_chain_id: chainId } : {}),
+  };
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 export const runtime = "nodejs";
 
@@ -175,9 +207,34 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
+  const run = await startGenerationChainRun({
+    request,
+    namespaceId,
+    orgId,
+    kind: type === "recommend" ? "chain_recommendation" : "chain_generation",
+    job,
+    prompt: String(input.prompt || ""),
+    workspacePath: authorizedWorkspacePath,
+    taskId,
+  });
 
-  return apiSuccess({ jobId: job.id, status: job.status });
+  if (taskId) {
+    try {
+      const task = taskGet(orgId, taskId, namespaceId);
+      if (task) {
+        taskUpdate(orgId, taskId, {
+          metadata: {
+            ...metadataRecord(task.metadata),
+            ...auditRunMetadataForJob(type, run.runId, run.chainId),
+          },
+        }, namespaceId);
+      }
+    } catch (e) {
+      console.error("Failed to update task audit run metadata:", e);
+    }
+  }
+
+  return apiSuccess({ jobId: job.id, runId: run.runId, chainId: run.chainId, status: job.status });
 });
 
 export const GET = withErrorHandling(async (request: NextRequest) => {

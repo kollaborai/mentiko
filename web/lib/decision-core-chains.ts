@@ -9,13 +9,15 @@ import {
 export const DECISION_CORE_CHAIN_IDS = [
   "decision-research",
   "decision-guided-questions",
+  "decision-preference-synthesis",
   "decision-guided-options",
   "decision-guided-plan",
+  "decision-retrospective",
 ] as const;
 
 export type DecisionCoreChainId = typeof DECISION_CORE_CHAIN_IDS[number];
 
-const DECISION_CORE_CHAIN_VERSION = "1.0.3";
+const DECISION_CORE_CHAIN_VERSION = "1.0.4";
 
 interface CoreChainDefinition {
   id: DecisionCoreChainId;
@@ -86,6 +88,21 @@ const CORE_CHAIN_DEFINITIONS: Record<DecisionCoreChainId, CoreChainDefinition> =
       importInstructions("options"),
     ].join("\n"),
   },
+  "decision-preference-synthesis": {
+    id: "decision-preference-synthesis",
+    name: "Decision Preference Synthesis",
+    description: "Synthesizes guided round-one answers into a structured preference profile.",
+    agentId: "decision-preference-synthesizer",
+    agentName: "Decision Preference Synthesizer",
+    prompt: [
+      "You are the Mentiko core guided decision preference synthesis agent.",
+      "",
+      "Complete this guided preference synthesis request:",
+      "{TASK}",
+      "",
+      importInstructions("synthesis"),
+    ].join("\n"),
+  },
   "decision-guided-plan": {
     id: "decision-guided-plan",
     name: "Decision Guided Plan",
@@ -99,6 +116,21 @@ const CORE_CHAIN_DEFINITIONS: Record<DecisionCoreChainId, CoreChainDefinition> =
       "{TASK}",
       "",
       importInstructions("plan"),
+    ].join("\n"),
+  },
+  "decision-retrospective": {
+    id: "decision-retrospective",
+    name: "Decision Retrospective",
+    description: "Captures retrospective summary, outcome, and lessons for a completed decision.",
+    agentId: "decision-retrospective-analyst",
+    agentName: "Decision Retrospective Analyst",
+    prompt: [
+      "You are the Mentiko core decision retrospective agent.",
+      "",
+      "Complete this decision retrospective request:",
+      "{TASK}",
+      "",
+      importInstructions("retrospective"),
     ].join("\n"),
   },
 };

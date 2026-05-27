@@ -6,7 +6,7 @@ import { createJob } from "@/lib/job-store";
 import { getSessionUser } from "@/lib/auth-bridge";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { launchJobRunner } from "@/lib/job-runner-launch";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +52,15 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const job = createJob("template_test", { prompt: generationPrompt, workspacePath: authorizedWorkspacePath }, undefined, undefined, userId, namespaceId);
 
-  launchJobRunner({ job, namespaceId, orgId, origin: request.nextUrl.origin });
+  await startGenerationChainRun({
+    request,
+    namespaceId,
+    orgId,
+    kind: "template_test",
+    job,
+    prompt: generationPrompt,
+    workspacePath: authorizedWorkspacePath,
+  });
 
   return apiSuccess({ jobId: job.id });
 });

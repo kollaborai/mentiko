@@ -6,13 +6,15 @@ import { startChainRun } from "@/lib/chain-run-service";
 import type { Decision } from "@/lib/decision-types";
 import type { Chain } from "@/lib/types";
 
-export type DecisionChainPhase = "research" | "questions" | "options" | "plan";
+export type DecisionChainPhase = "research" | "questions" | "synthesis" | "options" | "plan" | "retrospective";
 
 const PHASE_TO_CHAIN_ID: Record<DecisionChainPhase, DecisionCoreChainId> = {
   research: "decision-research",
   questions: "decision-guided-questions",
+  synthesis: "decision-preference-synthesis",
   options: "decision-guided-options",
   plan: "decision-guided-plan",
+  retrospective: "decision-retrospective",
 };
 
 interface StartDecisionChainRunInput {

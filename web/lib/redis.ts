@@ -1,12 +1,25 @@
 import Redis, { type RedisOptions } from "ioredis";
 
 function createRedisConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const explicitDevRedis = Boolean(
+    process.env.MENTIKO_REDIS_ENABLED ||
+    process.env.MENTIKO_REDIS_HOST ||
+    process.env.MENTIKO_REDIS_PORT ||
+    process.env.MENTIKO_REDIS_PASSWORD ||
+    process.env.MENTIKO_REDIS_DB
+  );
+
+  if (!isProduction && !explicitDevRedis) {
+    return null;
+  }
+
   const host = process.env.MENTIKO_REDIS_HOST || "localhost";
   const port = parseInt(process.env.MENTIKO_REDIS_PORT || "6379", 10);
   const password = process.env.MENTIKO_REDIS_PASSWORD || undefined;
   const db = parseInt(process.env.MENTIKO_REDIS_DB || "0", 10);
 
-  if (process.env.NODE_ENV === "production" && !password) {
+  if (isProduction && !password) {
     return null;
   }
 
@@ -15,8 +28,10 @@ function createRedisConfig() {
     port,
     password,
     db,
+    lazyConnect: true,
     maxRetriesPerRequest: 3,
     retryStrategy: (times: number) => {
+      if (!isProduction) return null;
       const delay = Math.min(Math.exp(times) * 50, 2000);
       return delay;
     },
@@ -28,7 +43,11 @@ export const redisConfigured = Boolean(config);
 
 export function createRedisClient(overrides: RedisOptions = {}) {
   if (!config) return null;
-  return new Redis({ ...config, ...overrides });
+  const client = new Redis({ ...config, ...overrides });
+  client.on("error", () => {
+    // Redis is optional in local dev. Callers surface availability explicitly.
+  });
+  return client;
 }
 
 const redis = createRedisClient();
@@ -47,5 +66,9 @@ export async function ping(): Promise<boolean> {
 
 export async function close(): Promise<void> {
   if (!redis) return;
-  await redis.quit();
+  try {
+    await redis.quit();
+  } catch {
+    redis.disconnect();
+  }
 }
