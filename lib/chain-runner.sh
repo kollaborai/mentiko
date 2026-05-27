@@ -214,7 +214,6 @@ resolve_executor() {
         claude)   echo "claude" ;;
         codex)    echo "codex" ;;
         aider)    echo "aider" ;;
-        kollabor) echo "kollab" ;;
         kollab|codex|aider) echo "$name" ;;
         "")       echo "" ;;
         *)        echo "$name" ;;  # pass-through for unknown values
@@ -1193,7 +1192,7 @@ launch_chain_agent() {
         if [[ -n "$agent_cli_override" ]]; then
             agent_cli="$agent_cli_override"
         fi
-        # executor field overrides cli (friendly name: claude, codex, aider, kollabor)
+        # executor field overrides cli (friendly name: claude, codex, aider, kollab)
         local agent_executor_override=$(get_agent_config "$agent_id" "executor" "")
         if [[ -n "$agent_executor_override" ]]; then
             agent_cli=$(resolve_executor "$agent_executor_override")

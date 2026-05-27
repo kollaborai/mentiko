@@ -363,7 +363,8 @@ function TasksPageContent() {
       }
     });
 
-  const groups = groupByEpic(filtered, epics).map((group) =>
+  const shouldShowMatchingEpics = filterType === "epic" || searchQuery.trim().length > 0;
+  const groups = groupByEpic(filtered, epics, { includeEpics: shouldShowMatchingEpics }).map((group) =>
     group.epic
       ? { ...group, tasks: sortTasksByDependencyOrder(group.tasks, depInfo) }
       : group

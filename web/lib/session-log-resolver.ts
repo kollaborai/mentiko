@@ -16,7 +16,6 @@ export function encodeCwdSlug(cli: string, cwd: string): string {
     case "claude":
     case "claude-code":
     case "kollab":
-    case "kollabor":
       // claude code replaces both / and . with - to form the project slug
       return cwd.replace(/[\/.]/g, "-");
     case "codex":
@@ -47,8 +46,7 @@ export function resolveLogDir(
       "claude-code": "claude-code",
       codex: "codex",
       opencode: "opencode",
-      kollab: "kollabor",
-      kollabor: "kollabor",
+      kollab: "kollab",
       gemini: "gemini",
     };
     const providerId = providerMap[provider] || (provider as AgentProfileProvider);

@@ -95,6 +95,11 @@ monitor_sanitize_nudge() {
     trimmed="$(printf '%s' "$nudge" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//")"
     lower="$(printf '%s' "$trimmed" | tr '[:upper:]' '[:lower:]' | tr '\r\n\t' '   ' | sed 's/[[:space:]]\+/ /g;s/^[[:space:]]*//;s/[[:space:]]*$//')"
 
+    if printf '%s\n' "$lower" | grep -Eq '(llm provider not available|profile missing required|use /profile|api_key|api_token|configuration error|no provider could be auto-detected)'; then
+        monitor_stale_nudge_fallback "$stale_count"
+        return 0
+    fi
+
     if [[ -z "$lower" ]] || printf '%s\n' "$lower" | grep -Eq '^(proceed|continue|go|k|ok|yes|y)([[:space:]]+(proceed|continue|go|k|ok|yes|y))*[.!]*$'; then
         monitor_stale_nudge_fallback "$stale_count"
         return 0

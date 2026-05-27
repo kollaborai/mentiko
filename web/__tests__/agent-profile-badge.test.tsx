@@ -90,10 +90,10 @@ describe("AgentProfileBadge", () => {
   it("uses workspace default before namespace default", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: true }),
-      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: false }),
+      makeProfile({ id: "kollab", name: "Kollab / Mentiko", cli: "kollab", isDefault: false }),
     ];
 
-    render(<AgentProfileBadge workspaceDefaultProfileId="kollabor" profiles={profiles} />);
+    render(<AgentProfileBadge workspaceDefaultProfileId="kollab" profiles={profiles} />);
 
     expect(screen.getByText("Kollab / Mentiko")).toBeInTheDocument();
     expect(screen.getByText("workspace default")).toBeInTheDocument();
@@ -103,13 +103,13 @@ describe("AgentProfileBadge", () => {
   it("chain default takes priority over workspace default", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
-      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
+      makeProfile({ id: "kollab", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
     ];
 
     render(
       <AgentProfileBadge
         chainDefaultProfileId="claude-sonnet"
-        workspaceDefaultProfileId="kollabor"
+        workspaceDefaultProfileId="kollab"
         profiles={profiles}
       />
     );
@@ -122,7 +122,7 @@ describe("AgentProfileBadge", () => {
   it("runtime profile takes priority over saved chain and workspace defaults", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
-      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
+      makeProfile({ id: "kollab", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
       makeProfile({ id: "codex-default", name: "Codex / Default", cli: "codex", isDefault: false }),
     ];
 
@@ -130,7 +130,7 @@ describe("AgentProfileBadge", () => {
       <AgentProfileBadge
         runtimeProfileId="codex-default"
         chainDefaultProfileId="claude-sonnet"
-        workspaceDefaultProfileId="kollabor"
+        workspaceDefaultProfileId="kollab"
         profiles={profiles}
       />
     );

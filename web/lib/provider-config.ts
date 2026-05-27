@@ -50,7 +50,7 @@ export const CLI_TOOLS = [
     defaultModel: "gemini-2.5-flash",
   },
   {
-    id: "kollabor",
+    id: "kollab",
     name: "Kollab",
     cli: "kollab",
     description: "Kollab - collaborative AI",
@@ -98,7 +98,7 @@ export const PROVIDER_CREDENTIALS: Record<string, {
     docsUrl: "https://platform.openai.com/api-keys",
     docsLabel: "Get API key",
   },
-  kollabor: {
+  kollab: {
     envKey: "KOLLAB_API_KEY",
     label: "Kollab API Key",
     placeholder: "sk-...",
@@ -115,7 +115,7 @@ export function getProviderColors(cli: string): { color: string; bg: string } {
     case "gemini":   return { color: "text-blue-300",    bg: "bg-blue-500/20" };
     case "codex":    return { color: "text-emerald-300", bg: "bg-emerald-500/20" };
     case "opencode": return { color: "text-indigo-300",  bg: "bg-indigo-500/20" };
-    case "kollabor": return { color: "text-purple-300",  bg: "bg-purple-500/20" };
+    case "kollab":   return { color: "text-purple-300",  bg: "bg-purple-500/20" };
     default:         return { color: "text-foreground/60", bg: "bg-muted" };
   }
 }

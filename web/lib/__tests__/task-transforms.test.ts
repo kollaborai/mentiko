@@ -108,6 +108,19 @@ describe("toTask", () => {
     expect(task.chainBinding).toBeUndefined();
   });
 
+  it("does not treat task generation provenance as chain binding metadata", () => {
+    const issue: TaskRecord = {
+      ...baseTaskRecord,
+      metadata: {
+        task_generation_job_id: "job-task",
+        task_generation_run_id: "run-task",
+        task_generation_chain_id: "task-generation",
+      },
+    };
+    const task = toTask(issue);
+    expect(task.chainBinding).toBeUndefined();
+  });
+
   it("handles missing optional fields", () => {
     const task = toTask(baseTaskRecord);
     expect(task.assignee).toBe("");
@@ -345,6 +358,37 @@ describe("groupByEpic", () => {
     // epic itself should not appear in any group's tasks
     const allGroupedTasks = groups.flatMap((g) => g.tasks);
     expect(allGroupedTasks.find((t) => t.type === "epic")).toBeUndefined();
+  });
+
+  it("keeps matching epics as selectable headers when requested", () => {
+    const tasks = [
+      { id: "epic-1", type: "epic" as const },
+    ].map(
+      (t) =>
+        ({
+          ...t,
+          title: t.id,
+          description: "",
+          completed: false,
+          status: "open" as const,
+          priority: "medium" as const,
+          rawPriority: 2,
+          owner: "",
+          assignee: "",
+          createdBy: "",
+          createdAt: "",
+          updatedAt: "",
+          labels: [],
+          dependencyCount: 0,
+          dependentCount: 0,
+          commentCount: 0,
+        })
+    );
+
+    const groups = groupByEpic(tasks, epics, { includeEpics: true });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].epic?.id).toBe("epic-1");
+    expect(groups[0].tasks).toHaveLength(0);
   });
 });
 

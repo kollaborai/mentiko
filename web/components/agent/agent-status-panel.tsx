@@ -31,7 +31,7 @@ const CLI_COLORS: Record<string, string> = {
   "claude": "bg-amber-500/10 text-amber-400",
   "codex": "bg-emerald-500/10 text-emerald-400",
   "opencode": "bg-indigo-500/10 text-indigo-400",
-  "kollabor": "bg-purple-500/10 text-purple-400",
+  "kollab": "bg-purple-500/10 text-purple-400",
   "gemini": "bg-blue-500/10 text-blue-400",
 };
 

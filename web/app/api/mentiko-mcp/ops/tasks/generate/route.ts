@@ -1,56 +1,18 @@
 import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
 import { createJob, getJob } from "@/lib/job-store";
-import { _getDb, taskCreate, taskAddDep } from "@/lib/task-store";
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation-template-storage";
 import { resolveTemplate } from "@/lib/template-resolver";
-import { launchJobRunner } from "@/lib/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
 import { internalApiUrl } from "@/lib/internal-web-origin";
+import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/generated-task-import";
+import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 
-// AI models sometimes return acceptance_criteria as a string array instead of a string.
-// Join to a single string so it doesn't get spread as extra params into the SQLite .run() call.
-function normalizeTextOrArray(val: string | string[] | undefined | null): string | undefined {
-  if (!val) return undefined;
-  if (Array.isArray(val)) return val.join("\n");
-  return val;
-}
-
 const JOB_POLL_INTERVAL_MS = 1000;
 const JOB_TIMEOUT_MS = 120_000;
-
-interface GeneratedSubtask {
-  title: string;
-  description?: string;
-  type: string;
-  priority: number;
-  acceptance_criteria?: string | string[];
-  labels?: string[];
-  depends_on?: number[];
-}
-
-interface GeneratedTask {
-  title: string;
-  description?: string;
-  type: string;
-  priority: number;
-  acceptance_criteria?: string | string[];
-  design?: string;
-  design_notes?: string | string[];
-  notes?: string;
-  labels?: string[];
-  subtasks?: GeneratedSubtask[];
-}
-
-interface CreatedTaskSummary {
-  id: string;
-  title: string;
-  type: string;
-  priority: number;
-}
 
 /**
  * POST /api/mentiko-mcp/ops/tasks/generate
@@ -95,10 +57,37 @@ export async function POST(req: Request) {
     WORKSPACE_CONTEXT: workspaceContext,
   });
 
-  // create a job (same mechanism as /api/tasks/generate)
-  const job = createJob("task", { prompt: generationPrompt, workspacePath: authorizedWorkspacePath }, undefined, undefined, ctx.userId, namespaceId);
+  const taskGenerationMetadata = {
+    created_by_session: ctx.sessionId,
+  };
 
-  launchJobRunner({ job, namespaceId, orgId });
+  // create a job (same mechanism as /api/tasks/generate)
+  const job = createJob(
+    "task",
+    {
+      prompt: generationPrompt,
+      workspacePath: authorizedWorkspacePath,
+      taskGenerationMetadata,
+      ...(autoRun === true ? { autoRun: true } : {}),
+    },
+    undefined,
+    undefined,
+    ctx.userId,
+    namespaceId,
+  );
+
+  await startGenerationChainRun({
+    request: req,
+    namespaceId,
+    orgId,
+    kind: "task",
+    job,
+    prompt: generationPrompt,
+    workspacePath: authorizedWorkspacePath,
+    metadata: {
+      createdBySession: ctx.sessionId,
+    },
+  });
 
   // poll the job until complete or timed out (server-side — agent waits on this response)
   const deadline = Date.now() + JOB_TIMEOUT_MS;
@@ -127,79 +116,16 @@ export async function POST(req: Request) {
     );
   }
 
-  const traceMetadata = {
-    created_by_session: ctx.sessionId,
-    ...(autoRun === true ? { auto_run: true } : {}),
-  };
-
-  // Atomically create the full task tree using the task store.
-  const createTree = _getDb(namespaceId).transaction(() => {
-    const parentIssueType = (generated.subtasks?.length ? "epic" : generated.type) as
-      | "epic" | "feature" | "task" | "bug" | "chore";
-
-    const parent = taskCreate(
-      orgId,
-      {
-        title: generated.title,
-        description: generated.description ?? "",
-        issue_type: parentIssueType,
-        priority: generated.priority,
-        labels: generated.labels,
-        acceptance_criteria: normalizeTextOrArray(generated.acceptance_criteria),
-        design: normalizeTextOrArray(generated.design ?? generated.design_notes),
-        notes: generated.notes,
-        created_by: "mentiko-mcp",
-        workspace_id: authorizedWorkspacePath || undefined,
-        metadata: traceMetadata,
-      },
-      namespaceId,
-    );
-
-    const created: CreatedTaskSummary[] = [
-      { id: parent.id, title: parent.title, type: parent.issue_type, priority: parent.priority },
-    ];
-
-    const subtaskIds: string[] = [];
-
-    if (generated.subtasks?.length) {
-      for (const st of generated.subtasks) {
-        const child = taskCreate(
-          orgId,
-          {
-            title: st.title,
-            description: st.description ?? "",
-            issue_type: (st.type as "feature" | "task" | "bug" | "chore") ?? "task",
-            priority: st.priority,
-            labels: st.labels,
-            acceptance_criteria: normalizeTextOrArray(st.acceptance_criteria),
-            parent_id: parent.id,
-            created_by: "mentiko-mcp",
-            workspace_id: authorizedWorkspacePath || undefined,
-            metadata: traceMetadata,
-          },
-          namespaceId,
-        );
-        subtaskIds.push(child.id);
-        created.push({ id: child.id, title: child.title, type: child.issue_type, priority: child.priority });
-      }
-
-      for (let i = 0; i < generated.subtasks.length; i++) {
-        const deps = generated.subtasks[i].depends_on;
-        if (!deps?.length) continue;
-        const fromId = subtaskIds[i];
-        if (!fromId) continue;
-        for (const depIdx of deps) {
-          const toId = subtaskIds[depIdx];
-          if (!toId) continue;
-          taskAddDep(orgId, fromId, toId, namespaceId, authorizedWorkspacePath || undefined);
-        }
-      }
-    }
-
-    return { parentId: parent.id, tasks: created };
+  const result = importGeneratedTaskTree({
+    namespaceId,
+    orgId,
+    generated,
+    workspacePath: authorizedWorkspacePath || undefined,
+    createdBy: "mentiko-mcp",
+    generationJobId: job.id,
+    metadata: taskGenerationMetadata,
+    autoRun: autoRun === true,
   });
-
-  const result = createTree();
 
   if (autoRun === true && process.env.BETTER_AUTH_SECRET) {
     void fetch(internalApiUrl("/api/tasks/auto-run", req.url), {

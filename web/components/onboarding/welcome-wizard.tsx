@@ -106,7 +106,7 @@ export function WelcomeWizard({
       claude: "claude-code",
       codex: "codex",
       gemini: "gemini",
-      kollabor: "kollabor",
+      kollab: "kollab",
     };
     async function preloadDetection() {
       try {

@@ -83,6 +83,8 @@ export function TaskGenerateDialog({
         body: JSON.stringify({
           prompt: prompt.trim(),
           ...(workspacePath ? { workspacePath } : {}),
+          ...(parent ? { parentId: parent } : {}),
+          ...(autoRun ? { autoRun: true } : {}),
         }),
       });
 
@@ -99,8 +101,24 @@ export function TaskGenerateDialog({
       for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const pollRes = await fetchWithNamespace(`/api/jobs/${jobId}`);
-        const job = await pollRes.json();
+        const job = await pollRes.json() as {
+          status?: string;
+          taskId?: string;
+          result?: (GeneratedTask & { createdTaskIds?: string[] });
+          error?: string;
+        };
         if (job.status === "complete" && job.result) {
+          if (job.taskId || job.result.createdTaskIds?.length) {
+            onRefresh?.();
+            setStep("describe");
+            setPrompt("");
+            setGenerated(null);
+            setParent("");
+            setAutoRun(false);
+            setCreateProgress(null);
+            onClose();
+            return;
+          }
           setGenerated(job.result as GeneratedTask);
           setStep("preview");
           return;

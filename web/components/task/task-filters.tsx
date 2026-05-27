@@ -43,6 +43,7 @@ const statusOptions: { value: TaskFilterStatus; label: string }[] = [
 
 const typeOptions: { value: TaskFilterType; label: string }[] = [
   { value: "all", label: "All" },
+  { value: "epic", label: "Epic" },
   { value: "feature", label: "Feat" },
   { value: "task", label: "Task" },
   { value: "bug", label: "Bug" },

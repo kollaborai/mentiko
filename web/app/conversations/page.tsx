@@ -37,7 +37,7 @@ function getAgentAccent(role: string): string {
   const r = role.toLowerCase();
   if (r === "claude") return "bg-violet-400";
   if (r === "codex") return "bg-sky-400";
-  if (r === "kollabor") return "bg-amber-400";
+  if (r === "kollab") return "bg-amber-400";
   if (r === "aider") return "bg-rose-400";
   // chain-spawned agents get a muted accent
   if (r) return "bg-sky-300";

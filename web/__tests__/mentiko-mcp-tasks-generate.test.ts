@@ -19,6 +19,9 @@ const mockTaskAddDep = jest.fn();
 jest.mock("@/lib/task-store", () => ({
   _getDb: jest.fn().mockReturnValue({
     transaction: (fn: () => unknown) => fn,
+    prepare: jest.fn().mockReturnValue({
+      all: jest.fn().mockReturnValue([]),
+    }),
   }),
   taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
@@ -31,10 +34,13 @@ jest.mock("@/lib/job-store", () => ({
   getJob: (...args: unknown[]) => mockGetJob(...args),
 }));
 
-const mockSpawnChild = { unref: jest.fn() };
-const mockSpawn = jest.fn().mockReturnValue(mockSpawnChild);
-jest.mock("node:child_process", () => ({
-  spawn: (...args: unknown[]) => mockSpawn(...args),
+const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
+  runId: "run-task",
+  chainId: "task-generation",
+  status: "started",
+});
+jest.mock("@/lib/generation-chain-dispatch", () => ({
+  startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
 jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
@@ -213,6 +219,25 @@ describe("POST /api/mentiko-mcp/ops/tasks/generate", () => {
       expect(Array.isArray(body.tasks)).toBe(true);
       expect(body.tasks.length).toBe(3); // parent + 2 subtasks
     });
+
+    it("starts the task generation core chain", async () => {
+      const res = await POST(makeRequest({
+        description: "build something",
+        workspacePath: "/test/workspace",
+      }));
+      expect(res.status).toBe(200);
+      expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        kind: "task",
+        job: expect.objectContaining({ id: JOB_ID }),
+        prompt: "build something",
+        workspacePath: "/test/workspace",
+        metadata: {
+          createdBySession: "session-1",
+        },
+      }));
+    });
   });
 
   describe("legacy field normalization", () => {
@@ -264,9 +289,10 @@ describe("POST /api/mentiko-mcp/ops/tasks/generate", () => {
 
       for (const call of mockTaskCreate.mock.calls) {
         const taskInput = call[1];
-        expect(taskInput.metadata).toEqual({
+        expect(taskInput.metadata).toMatchObject({
           created_by_session: "session-1",
         });
+        expect(taskInput.metadata.auto_run).toBeUndefined();
       }
     });
   });

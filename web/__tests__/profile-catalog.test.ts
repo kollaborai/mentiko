@@ -59,7 +59,7 @@ describe("buildProfileCatalog", () => {
 
   it("omits model when not set", () => {
     mockListProfiles.mockReturnValue([
-      makeProfile({ id: "kollabor", cli: "kollabor" }),
+      makeProfile({ id: "kollab", cli: "kollab" }),
     ]);
 
     const result = buildProfileCatalog("ns", "org");

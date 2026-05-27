@@ -296,7 +296,7 @@ export type AgentProfileProvider =
   | "claude-code"
   | "codex"
   | "opencode"
-  | "kollabor"
+  | "kollab"
   | "gemini"
   | "custom";
 

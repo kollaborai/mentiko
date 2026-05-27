@@ -1031,7 +1031,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "detect_cli_status",
-    description: "Check which AI CLI tools are installed and authenticated (claude, codex, gemini, aider, kollabor).",
+    description: "Check which AI CLI tools are installed and authenticated (claude, codex, gemini, aider, kollab).",
     inputSchema: { type: "object", properties: {} }
   },
   {

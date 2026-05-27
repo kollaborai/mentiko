@@ -25,9 +25,9 @@ export AGENT_PROFILES_DIR="$MENTIKO_ORG_ROOT/agent-profiles"
 
 mkdir -p "$AGENT_PROFILES_DIR"
 
-cat > "$AGENT_PROFILES_DIR/kollabor.json" <<'JSON'
+cat > "$AGENT_PROFILES_DIR/kollab.json" <<'JSON'
 {
-  "id": "kollabor",
+  "id": "kollab",
   "name": "Kollab / Mentiko",
   "cli": "kollab",
   "isDefault": true,
@@ -90,7 +90,7 @@ cat > "$chain_without_profile" <<'JSON'
 JSON
 
 resolved_default="$(resolve_agent_profile_id "$chain_without_profile" "agent-one")"
-assert_eq "kollabor" "$resolved_default" "uses namespace default profile when chain has no profile"
+assert_eq "kollab" "$resolved_default" "uses namespace default profile when chain has no profile"
 
 chain_with_default="$TEST_TMP_DIR/chain-default.json"
 cat > "$chain_with_default" <<'JSON'
@@ -128,7 +128,7 @@ cat > "$chain_with_missing_default" <<'JSON'
 JSON
 
 resolved_missing_chain_default="$(resolve_agent_profile_id "$chain_with_missing_default" "agent-one")"
-assert_eq "kollabor" "$resolved_missing_chain_default" "skips stale chain default and uses valid namespace default"
+assert_eq "kollab" "$resolved_missing_chain_default" "skips stale chain default and uses valid namespace default"
 
 chain_with_agent_profile="$TEST_TMP_DIR/chain-agent-profile.json"
 cat > "$chain_with_agent_profile" <<'JSON'
@@ -171,12 +171,12 @@ resolved_missing_agent_profile="$(resolve_agent_profile_id "$chain_with_missing_
 assert_eq "codex-default" "$resolved_missing_agent_profile" "skips stale agent profile and uses valid chain default"
 
 resolved_file="$(resolve_agent_profile_file "$chain_without_profile" "agent-one")"
-assert_eq "$AGENT_PROFILES_DIR/kollabor.json" "$resolved_file" "returns profile file for resolved default"
+assert_eq "$AGENT_PROFILES_DIR/kollab.json" "$resolved_file" "returns profile file for resolved default"
 
 resolved_missing_file="$(resolve_agent_profile_file "$chain_with_missing_default" "agent-one")"
-assert_eq "$AGENT_PROFILES_DIR/kollabor.json" "$resolved_missing_file" "returns fallback profile file when chain default is stale"
+assert_eq "$AGENT_PROFILES_DIR/kollab.json" "$resolved_missing_file" "returns fallback profile file when chain default is stale"
 
-kollab_log_dir="$(resolve_log_dir "$AGENT_PROFILES_DIR/kollabor.json" "/Users/malmazan/.mentiko/namespaces/default/workspace/mentiko")"
+kollab_log_dir="$(resolve_log_dir "$AGENT_PROFILES_DIR/kollab.json" "/Users/malmazan/.mentiko/namespaces/default/workspace/mentiko")"
 assert_eq "$HOME/.kollab/projects/Users_malmazan_.mentiko_namespaces_default_workspace_mentiko" \
   "$kollab_log_dir" \
   "resolves kollab conversation directory slug"

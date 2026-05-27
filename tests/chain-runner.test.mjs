@@ -465,7 +465,7 @@ test("launchAgent skips stale chain default and uses namespace default profile",
   const chain = readJson(path);
   chain.default_agent_profile = "claude-opus-4-7";
   writeFileSync(path, JSON.stringify(chain, null, 2));
-  makeProfile("kollabor", {
+  makeProfile("kollab", {
     cli: "kollab",
     model: "example-model",
     isDefault: true,

@@ -2,17 +2,17 @@ import { resolveRunAgentProfileId } from "../run-agent-profile";
 
 const profiles = [
   { id: "claude-sonnet", isDefault: true },
-  { id: "kollabor", isDefault: false },
+  { id: "kollab", isDefault: false },
   { id: "codex-default", isDefault: false },
 ];
 
 describe("resolveRunAgentProfileId", () => {
   it("uses an explicitly requested profile when it exists", () => {
     expect(resolveRunAgentProfileId({
-      requestedProfileId: "kollabor",
+      requestedProfileId: "kollab",
       chainDefaultProfileId: "claude-sonnet",
       profiles,
-    })).toBe("kollabor");
+    })).toBe("kollab");
   });
 
   it("skips stale chain defaults instead of returning missing profile ids", () => {
@@ -25,9 +25,9 @@ describe("resolveRunAgentProfileId", () => {
   it("uses workspace default before namespace default when chain default is stale", () => {
     expect(resolveRunAgentProfileId({
       chainDefaultProfileId: "claude-opus-4-7",
-      workspaceDefaultProfileId: "kollabor",
+      workspaceDefaultProfileId: "kollab",
       profiles,
-    })).toBe("kollabor");
+    })).toBe("kollab");
   });
 
   it("returns undefined when no valid profile exists", () => {

@@ -17,13 +17,13 @@ interface CliTool {
   authenticated?: boolean;
 }
 
-const CLI_TOOLS = ["claude", "codex", "aider", "gemini", "kollabor"] as const;
+const CLI_TOOLS = ["claude", "codex", "aider", "gemini", "kollab"] as const;
 const CLI_BINARIES: Record<string, string> = {
   claude: "claude",
   codex: "codex",
   aider: "aider",
   gemini: "gemini",
-  kollabor: "kollab",
+  kollab: "kollab",
 };
 
 // GET /api/system/detect-cli - detect installed AI CLI tools
@@ -115,7 +115,7 @@ export const GET = withErrorHandling(async (request: Request) => {
             }
             break;
           }
-          case "kollabor":
+          case "kollab":
           case "aider": {
             // auth comes from agent profiles + secrets vault, not env vars
             // leave as undefined (unknown) -- detected by profile config

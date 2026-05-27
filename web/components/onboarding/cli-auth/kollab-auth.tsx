@@ -27,8 +27,8 @@ interface KollabAuthProps {
 
 type AuthMethod = "terminal" | "api-key";
 
-const kollabTool = CLI_TOOLS.find((t) => t.id === "kollabor")!;
-const kollabCreds = PROVIDER_CREDENTIALS.kollabor;
+const kollabTool = CLI_TOOLS.find((t) => t.id === "kollab")!;
+const kollabCreds = PROVIDER_CREDENTIALS.kollab;
 
 export function KollabAuth({
   onSave,
@@ -177,7 +177,7 @@ export function KollabAuth({
       </div>
 
       <div className="min-h-[120px]">
-        {authMethod === "terminal" && <TerminalAuthOption tool="kollabor" />}
+        {authMethod === "terminal" && <TerminalAuthOption tool="kollab" />}
 
         {authMethod === "api-key" && (
           <SecretForm

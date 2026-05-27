@@ -28,7 +28,7 @@ const EXECUTOR_MAP: Record<string, string> = {
   claude: "claude",
   codex: "codex",
   aider: "aider",
-  kollabor: "kl",
+  kollab: "kl",
   cc: "claude",
   kl: "kl",
 };

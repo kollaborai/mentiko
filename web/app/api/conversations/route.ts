@@ -154,8 +154,8 @@ async function parseJsonlSummary(filePath: string): Promise<Partial<Conversation
             result.agentRole = roleMatch[1].trim();
           } else if (msg.includes("codex")) {
             result.agentRole = "codex";
-          } else if (msg.includes("kollabor")) {
-            result.agentRole = "kollabor";
+          } else if (msg.includes("kollab")) {
+            result.agentRole = "kollab";
           } else if (msg.includes("aider")) {
             result.agentRole = "aider";
           } else {

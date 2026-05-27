@@ -230,19 +230,24 @@ export function typeBgColor(t: string): string {
 // group tasks by parent epic
 export function groupByEpic(
   tasks: Task[],
-  epics: EpicStatus[]
+  epics: EpicStatus[],
+  options: { includeEpics?: boolean } = {}
 ): { epic: EpicStatus | null; tasks: Task[] }[] {
   const epicMap = new Map<string, EpicStatus>();
   for (const e of epics) {
     epicMap.set(e.id, e);
   }
+  const includedEpicIds = new Set<string>();
 
   const groups = new Map<string, Task[]>();
   const ungrouped: Task[] = [];
 
   for (const task of tasks) {
     // skip epics themselves from the task list
-    if (task.type === "epic") continue;
+    if (task.type === "epic") {
+      if (options.includeEpics) includedEpicIds.add(task.id);
+      continue;
+    }
 
     // try parentId first, then fall back to ID prefix matching
     // (dot notation: epic "EPIC-001" may have children "EPIC-001.1", etc)
@@ -279,6 +284,8 @@ export function groupByEpic(
     const epicTasks = groups.get(epic.id);
     if (epicTasks && epicTasks.length > 0) {
       result.push({ epic, tasks: epicTasks });
+    } else if (includedEpicIds.has(epic.id)) {
+      result.push({ epic, tasks: [] });
     }
   }
 

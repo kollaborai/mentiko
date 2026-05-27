@@ -22,7 +22,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new Unauthorized();
   }
 
-  const { prompt, workspacePath } = await request.json();
+  const { prompt, workspacePath, parentId, autoRun } = await request.json();
 
   if (!prompt || typeof prompt !== "string") {
     throw new BadRequest("prompt is required", { field: "prompt" });
@@ -47,7 +47,19 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   });
 
   // create job with resolved prompt (job-runner will use it directly)
-  const job = createJob("task" as const, { prompt: generationPrompt, workspacePath: authorizedWorkspacePath }, undefined, undefined, userId, namespaceId);
+  const job = createJob(
+    "task" as const,
+    {
+      prompt: generationPrompt,
+      workspacePath: authorizedWorkspacePath,
+      ...(typeof parentId === "string" && parentId.trim() ? { parentId: parentId.trim() } : {}),
+      ...(autoRun === true ? { autoRun: true } : {}),
+    },
+    undefined,
+    undefined,
+    userId,
+    namespaceId,
+  );
 
   const run = await startGenerationChainRun({
     request,

@@ -32,6 +32,11 @@ jest.mock("@/lib/api-auth", () => ({
   checkAuth: jest.fn().mockResolvedValue(true),
 }));
 
+jest.mock("@/lib/namespace-config", () => ({
+  getNamespaceIdFromRequest: jest.fn().mockResolvedValue("default"),
+  getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
+}));
+
 
 import { GET } from "./route";
 import { createJob, updateJob, getJob, deleteJob } from "@/lib/job-store";

@@ -224,6 +224,10 @@ repeated_bare_nudge="$(monitor_sanitize_nudge $'ok\nok' 1)"
 assert_not_eq $'ok\nok' "$repeated_bare_nudge" "advisor repeated bare acknowledgements are replaced"
 assert_contains "$repeated_bare_nudge" "current assigned task" "repeated bare acknowledgement fallback keeps agent in scope"
 
+advisor_error_nudge="$(monitor_sanitize_nudge $'Error: LLM provider not available due to configuration error:\nProfile missing required api_key or api_token field. Provider: anthropic\nUse /profile to fix the configuration.' 3)"
+assert_not_contains "$advisor_error_nudge" "LLM provider" "advisor provider errors are not sent as nudges"
+assert_contains "$advisor_error_nudge" "assigned task" "advisor provider errors fall back to safe task-scoped nudge"
+
 if monitor_should_ask_advisor 1 3; then
   echo "FAIL: advisor should not run on first stale check"
   exit 1

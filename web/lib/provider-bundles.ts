@@ -28,8 +28,8 @@ const OPENCODE_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3
   <text x="16" y="21" font-family="monospace" font-size="12" font-weight="bold" fill="white" text-anchor="middle">O</text>
 </svg>`;
 
-// Kollabor: purple hexagon with K
-const KOLLABOR_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+// Kollab: purple hexagon with K
+const KOLLAB_LOGO = `<svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
   <path d="M16 2L28 9v14l-12 7-12-7V9z" fill="#8b5cf6" />
   <text x="16" y="21" font-family="monospace" font-size="12" font-weight="bold" fill="white" text-anchor="middle">K</text>
 </svg>`;
@@ -180,14 +180,14 @@ export const PROVIDER_BUNDLES: ProviderBundle[] = [
     ],
   },
   {
-    provider: "kollabor",
+    provider: "kollab",
     name: "Kollab",
-    logo: KOLLABOR_LOGO,
+    logo: KOLLAB_LOGO,
     log_path: "~/.kollab/projects/",
     log_format: "jsonl",
     profiles: [
       {
-        id: "kollabor",
+        id: "kollab",
         name: "Kollab / Mentiko",
         cli: "kollab",
         pipe_flag: "-p",

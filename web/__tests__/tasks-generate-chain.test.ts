@@ -114,4 +114,28 @@ describe("POST /api/tasks/generate", () => {
       prompt: expect.stringContaining("make a UI proof task"),
     }));
   });
+
+  test("stores parent and auto-run selection on the generation job", async () => {
+    const { POST } = await import("@/app/api/tasks/generate/route");
+
+    const response = await POST(makeRequest({
+      prompt: "make a child task",
+      workspacePath: "/repo/app",
+      parentId: "EPIC-001",
+      autoRun: true,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockCreateJob).toHaveBeenCalledWith(
+      "task",
+      expect.objectContaining({
+        parentId: "EPIC-001",
+        autoRun: true,
+      }),
+      undefined,
+      undefined,
+      "user-1",
+      "default",
+    );
+  });
 });

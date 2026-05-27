@@ -49,7 +49,7 @@ const TOOL_TO_BUNDLE: Record<string, string> = {
   claude: "claude-code",
   codex: "codex",
   gemini: "gemini",
-  kollabor: "kollabor",
+  kollab: "kollab",
 };
 
 // top-level mode: provider picker, simple provider auth, or custom (full tool list)
@@ -66,7 +66,7 @@ function ProviderLogo({ id, className }: { id: string; className?: string }) {
       return <OpenAILogo className={className} />;
     case "gemini":
       return <GoogleGemini className={className} />;
-    case "kollabor":
+    case "kollab":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
           <path d="M5 3h3v7.5L13.5 3H17l-6 8 6.5 10H14l-6-9.5V21H5z" />
@@ -192,7 +192,7 @@ export function CliSetupStep({
 
     const nextEnv = {
       ...(targetProfile.env || {}),
-      [PROVIDER_CREDENTIALS.kollabor.envKey]: `{secret:${secretName}}`,
+      [PROVIDER_CREDENTIALS.kollab.envKey]: `{secret:${secretName}}`,
     };
 
     await fetchWithNamespace(`/api/agent-profiles/${encodeURIComponent(targetProfile.id)}`, {
@@ -219,7 +219,7 @@ export function CliSetupStep({
       })
       : Promise.resolve({ ok: true } as Response);
 
-    if (toolId === "kollabor" && config.secretName) {
+    if (toolId === "kollab" && config.secretName) {
       void installBundle
         .then(() => syncKollabProfileSecret(config.secretName!, config.model))
         .catch(() => {
@@ -355,11 +355,11 @@ export function CliSetupStep({
                 backLabel="back to tools"
               />
             )}
-            {activeCustomTool === "kollabor" && (
+            {activeCustomTool === "kollab" && (
               <KollabAuth
-                key="kollabor"
+                key="kollab"
                 {...authProps}
-                onSave={(config) => handleAuthSave("kollabor", config)}
+                onSave={(config) => handleAuthSave("kollab", config)}
               />
             )}
           </AnimatePresence>

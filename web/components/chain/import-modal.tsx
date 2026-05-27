@@ -118,7 +118,7 @@ export function ChainCustomizationModal({
                 <option value="claude">Claude (cc)</option>
                 <option value="codex">Codex</option>
                 <option value="aider">Aider</option>
-                <option value="kollabor">Kollabor (kl)</option>
+                <option value="kollab">Kollab (kl)</option>
               </select>
             </div>
             <div className="space-y-1">

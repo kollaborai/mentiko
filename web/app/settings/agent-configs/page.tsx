@@ -34,7 +34,7 @@ function ProviderBrandIcon({ provider, className }: { provider: string; classNam
     case "codex":
     case "opencode":
       return <OpenAILogo className={className} />;
-    case "kollabor":
+    case "kollab":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
           <path d="M5 3h3v7.5L13.5 3H17l-6 8 6.5 10H14l-6-9.5V21H5z" />
@@ -48,7 +48,7 @@ function ProviderBrandIcon({ provider, className }: { provider: string; classNam
 function getProviderLabel(cli: string): string {
   const map: Record<string, string> = {
     claude: "Claude", gemini: "Gemini", codex: "Codex",
-    opencode: "OpenCode", kollabor: "Kollab",
+    opencode: "OpenCode", kollab: "Kollab",
   };
   const key = cli.toLowerCase();
   return map[key] ?? (cli.charAt(0).toUpperCase() + cli.slice(1));

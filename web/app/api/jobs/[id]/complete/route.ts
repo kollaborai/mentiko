@@ -9,6 +9,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/internal-api-auth";
 import { internalApiUrl } from "@/lib/internal-web-origin";
 import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decision-run-results";
+import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/generated-task-import";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,19 @@ function decisionPhaseForJobType(type: string): DecisionRunPhase | null {
   if (type === "decision_guided_options") return "options";
   if (type === "decision_guided_plan") return "plan";
   return null;
+}
+
+function workspacePathFromJobInput(input: Record<string, unknown>): string | undefined {
+  if (typeof input.workspacePath === "string") return input.workspacePath;
+  if (typeof input.workspaceId === "string") return input.workspaceId;
+  if (typeof input.workspaceCwd === "string") return input.workspaceCwd;
+  return undefined;
+}
+
+function taskGenerationMetadataFromJobInput(input: Record<string, unknown>): Record<string, unknown> | undefined {
+  const metadata = input.taskGenerationMetadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  return metadata as Record<string, unknown>;
 }
 
 /**
@@ -130,7 +144,52 @@ export const POST = withErrorHandling(async (
   }
 
   // re-fetch to get updated state
-  const updatedJob = getJob(id, namespaceId);
+  let updatedJob = getJob(id, namespaceId);
+
+  if (updatedJob?.type === "task" && updatedJob.status === "complete" && updatedJob.result && !updatedJob.taskId) {
+    try {
+      const workspacePath = workspacePathFromJobInput(updatedJob.input);
+      const parentId = typeof updatedJob.input.parentId === "string"
+        ? updatedJob.input.parentId
+        : undefined;
+      const autoRun = updatedJob.input.autoRun === true;
+      const importResult = importGeneratedTaskTree({
+        namespaceId,
+        orgId,
+        generated: updatedJob.result as unknown as GeneratedTask,
+        workspacePath,
+        parentId,
+        createdBy: "mentiko-generation",
+        generationJobId: updatedJob.id,
+        generationRunId: updatedJob.runId,
+        generationChainId: updatedJob.chainId,
+        autoRun,
+        metadata: taskGenerationMetadataFromJobInput(updatedJob.input),
+      });
+      const enrichedResult = {
+        ...updatedJob.result,
+        taskId: importResult.parentId,
+        createdTaskIds: importResult.createdTaskIds,
+        createdTasks: importResult.tasks,
+      };
+      updateJob(id, {
+        taskId: importResult.parentId,
+        result: enrichedResult,
+      }, namespaceId);
+      updatedJob = getJob(id, namespaceId);
+
+      if (autoRun) {
+        await triggerAutoRunContinuation(request, namespaceId, orgId, importResult.parentId);
+      }
+    } catch (e) {
+      updateJob(id, {
+        status: "failed",
+        error: e instanceof Error ? e.message : String(e),
+        completedAt: new Date().toISOString(),
+      }, namespaceId);
+      throw e;
+    }
+  }
 
   // update task metadata if linked
   if (updatedJob?.taskId) {
@@ -141,16 +200,22 @@ export const POST = withErrorHandling(async (
       if (task) {
         const existing = task.metadata || {};
 
-        // determine which job type based on job.type
-        const isAnalysis = updatedJob.type === "recommend";
-        const statusKey = isAnalysis ? "analysis_status" : "generation_status";
+        // Only chain recommendation/generation jobs own these task-binding keys.
+        const statusKey =
+          updatedJob.type === "recommend"
+            ? "analysis_status"
+            : updatedJob.type === "generate"
+              ? "generation_status"
+              : null;
 
-        taskUpdate(orgId, updatedJob.taskId, {
-          metadata: {
-            ...existing,
-            [statusKey]: updatedJob.status,
-          },
-        }, namespaceId);
+        if (statusKey) {
+          taskUpdate(orgId, updatedJob.taskId, {
+            metadata: {
+              ...existing,
+              [statusKey]: updatedJob.status,
+            },
+          }, namespaceId);
+        }
 
         const shouldContinueAutoRun =
           updatedJob.status === "complete" &&
