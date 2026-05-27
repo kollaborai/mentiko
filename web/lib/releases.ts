@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.27",
+    date: "May 26, 2026",
+    title: "Chain-Backed Generation Workflows",
+    description:
+      "Decision and task generation now run through visible core chains with linked run history, editable system workflows, and clearer provenance in the workspace. Runs and chains also include user and system visibility controls so production work stays easier to scan.",
+    category: "new",
+  },
+  {
     version: "v0.3.26",
     date: "May 24, 2026",
     title: "MCP Run and Decision Reliability",
