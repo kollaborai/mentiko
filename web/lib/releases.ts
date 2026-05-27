@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.29",
+    date: "May 27, 2026",
+    title: "Task Generation Launch Reliability",
+    description:
+      "Task generation runs now launch the local terminal from the selected workspace and stop before sending instructions when an agent CLI is waiting on a startup confirmation. This keeps generated-task prompts out of the platform install directory and leaves permission approval to the CLI the user configured.",
+    category: "fix",
+  },
+  {
     version: "v0.3.28",
     date: "May 27, 2026",
     title: "Chain Profile Save Reliability",

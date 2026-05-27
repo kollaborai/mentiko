@@ -88,6 +88,22 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain("ARTIFACTS_DIR=%q");
   });
 
+  it("sets the visible local pty shell cwd to the workspace before launching agents", () => {
+    expect(chainRunner).toContain('send-message "$session_name" "cd $(printf \'%q\' "$REMOTE_PROJECT_ROOT") && bash $(printf \'%q\' "$start_script")"');
+  });
+
+  it("checks startup prompts before sending instructions to a launched CLI", () => {
+    const guard = 'if startup_blocked_reason=$(detect_blocked_terminal_prompt "$startup_capture"); then';
+    const sendInstructions = 'send-message "$session_name" "$instructions"';
+
+    expect(chainRunner).toContain('startup_capture=$(transport_capture "$session_name" 120 2>/dev/null || true)');
+    expect(chainRunner).toContain(guard);
+    expect(chainRunner).toContain('mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "$startup_blocked_reason"');
+    expect(chainRunner.indexOf(guard)).toBeGreaterThan(-1);
+    expect(chainRunner.indexOf(sendInstructions)).toBeGreaterThan(-1);
+    expect(chainRunner.indexOf(guard)).toBeLessThan(chainRunner.indexOf(sendInstructions));
+  });
+
   it("ships a first-class tenant AI gateway smoke profile and chain", () => {
     expect(seedScript).toContain('id: "mentiko-ai-gateway-smoke"');
     expect(seedScript).toContain('name: "AI Gateway Smoke"');

@@ -782,6 +782,69 @@ mark_state_blocked() {
     ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
 }
 
+mark_run_agent_blocked() {
+    local run_id="$1"
+    local agent_id="$2"
+    local reason="$3"
+
+    [[ -z "$run_id" ]] && return 0
+
+    local now
+    now="$(date -Iseconds)"
+
+    if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        local hb_port="${PORT:-3000}"
+        local hb_url="http://localhost:${hb_port}/api/runs/${run_id}/agents/${agent_id}/heartbeat"
+        local hb_secret="${BETTER_AUTH_SECRET:-}"
+        local hb_payload
+        local hb_status
+
+        hb_payload=$(jq -nc \
+            --arg status "blocked" \
+            --arg message "$reason" \
+            '{status: $status, message: $message}')
+        hb_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hb_url" \
+            -H "Content-Type: application/json" \
+            ${hb_secret:+-H "Authorization: Bearer $hb_secret"} \
+            -d "$hb_payload" \
+            --max-time 5 2>/dev/null || echo "0")
+        if [[ "$hb_status" =~ ^2 ]]; then
+            return 0
+        fi
+    fi
+
+    local run_file="$RUNS_DIR/$run_id/run.json"
+    [[ -f "$run_file" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg aid "$agent_id" --arg reason "$reason" --arg now "$now" '
+        .status = "blocked" |
+        .blockedAt = (.blockedAt // $now) |
+        .blockedReason = $reason |
+        .agents = (
+            if ((.agents // []) | any(.id == $aid)) then
+                (.agents // []) | map(
+                    if .id == $aid then
+                        .status = "blocked" |
+                        .lastHeartbeat = $now |
+                        .lastMessage = $reason
+                    else .
+                    end
+                )
+            else
+                (.agents // []) + [{
+                    id: $aid,
+                    status: "blocked",
+                    lastHeartbeat: $now,
+                    lastMessage: $reason
+                }]
+            end
+        )
+    ' "$run_file" > "$tmp_file" && mv "$tmp_file" "$run_file"
+}
+
 echo ""
 echo "  chain: $CHAIN_NAME"
 echo "  agents: $AGENT_COUNT"
@@ -1513,6 +1576,28 @@ $rs_produces
         date -Iseconds > "$snap_dir/${agent_id}-started-at.txt"
     fi
 
+    # update state before CLI launch so startup prompts can mark the run blocked
+    # without first pasting task instructions into the parent shell.
+    mkdir -p "$STATE_DIR"
+    local state_id
+    state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
+    cat > "$STATE_DIR/${state_id}.state" <<SEOF
+status: running
+session: $session_name
+agent_id: $agent_id
+round: $round
+started: $(date -Iseconds)
+chain: $CHAIN_NAME
+emits: $agent_emits
+workspace: $WORKSPACE_TYPE
+timeout: ${agent_timeout:-0}
+retry_max: ${retry_max:-0}
+retry_attempt: 0
+on_error: ${on_error:-}
+on_timeout: ${on_timeout:-}
+start_sha: $(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+SEOF
+
     # start CLI - env vars are sourced from file (never inlined in command)
     # profile env is already handled by build_profile_command (writes env file)
     # gateway env (legacy) also written to a temp file if present
@@ -1542,7 +1627,7 @@ $rs_produces
         else
             printf '%s\n' "$cli_cmd" >> "$start_script"
         fi
-        send-message "$session_name" "bash $(printf '%q' "$start_script")" && sleep 3
+        send-message "$session_name" "cd $(printf '%q' "$REMOTE_PROJECT_ROOT") && bash $(printf '%q' "$start_script")" && sleep 3
 
     elif [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
         # step 1: source profile env locally (API keys, base URL, etc)
@@ -1619,6 +1704,17 @@ $rs_produces
         sleep 3
     fi
 
+    local startup_capture
+    local startup_blocked_reason
+    startup_capture=$(transport_capture "$session_name" 120 2>/dev/null || true)
+    if startup_blocked_reason=$(detect_blocked_terminal_prompt "$startup_capture"); then
+        mark_state_blocked "$STATE_DIR/${state_id}.state" "$startup_blocked_reason"
+        mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "$startup_blocked_reason"
+        echo "  agent blocked: $startup_blocked_reason"
+        _sys_log "warn" "chain-runner" "agent blocked before instructions: $startup_blocked_reason" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
+        return 0
+    fi
+
     # send instructions
     local tmp_instructions=$(mktemp)
     echo "$instructions" > "$tmp_instructions"
@@ -1644,27 +1740,6 @@ $rs_produces
     fi
 
     rm -f "$tmp_instructions"
-
-    # update state (always local)
-    mkdir -p "$STATE_DIR"
-    local state_id
-    state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
-    cat > "$STATE_DIR/${state_id}.state" <<SEOF
-status: running
-session: $session_name
-agent_id: $agent_id
-round: $round
-started: $(date -Iseconds)
-chain: $CHAIN_NAME
-emits: $agent_emits
-workspace: $WORKSPACE_TYPE
-timeout: ${agent_timeout:-0}
-retry_max: ${retry_max:-0}
-retry_attempt: 0
-on_error: ${on_error:-}
-on_timeout: ${on_timeout:-}
-start_sha: $(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-SEOF
 
     # snapshot git state before agent starts (for activity capture)
     if [[ -n "${RUN_ID:-}" ]]; then
