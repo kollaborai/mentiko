@@ -320,7 +320,7 @@ extract_event_field() {
     local field="$2"
     local value=""
 
-    value=$(grep -im1 "^${field}:" "$file" 2>/dev/null | head -1 | sed "s/^[[:alpha:]]*:[[:space:]]*//" | sed 's/[[:space:]]*(.*//' || true)
+    value=$(grep -im1 "^${field}:" "$file" 2>/dev/null | head -1 | sed "s/^[[:alnum:]_]*:[[:space:]]*//" | sed 's/[[:space:]]*(.*//' || true)
 
     if [[ -z "$value" && "$field" == "source" ]]; then
         value=$(grep -im1 "^agent:" "$file" 2>/dev/null | head -1 | sed 's/^[Aa]gent:[[:space:]]*//' | sed 's/[[:space:]]*(.*//' || true)
@@ -335,6 +335,25 @@ extract_event_field() {
     fi
 
     echo "$value"
+}
+
+event_file_matches_current_run() {
+    local event_file="$1"
+    local event_run_id=""
+
+    [[ -n "${RUN_ID:-}" ]] || return 0
+
+    event_run_id=$(extract_event_field "$event_file" "run_id")
+    if [[ -z "$event_run_id" && -f "$event_file" ]] && jq -e . "$event_file" >/dev/null 2>&1; then
+        event_run_id="$(jq -r '.run_id // .runId // empty' "$event_file" 2>/dev/null)"
+    fi
+
+    if [[ -n "$event_run_id" ]]; then
+        [[ "$event_run_id" == "$RUN_ID" ]]
+        return $?
+    fi
+
+    return 1
 }
 
 for event_file in "$EVENTS_DIR"/*; do
@@ -352,6 +371,7 @@ for event_file in "$EVENTS_DIR"/*; do
 
     if [[ "$local_processed" != "true" && -n "$local_source" ]]; then
         if [[ "$local_source" == "$SESSION_PREFIX" ]] || echo "$local_source" | grep -qi "$SESSION_PREFIX\|$CURRENT_AGENT_ID" 2>/dev/null; then
+            event_file_matches_current_run "$event_file" || continue
             TRIGGERED_EVENT_NAME=$(extract_event_field "$event_file" "event")
             if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
                 TRIGGERED_EVENT="$event_file"
@@ -368,10 +388,15 @@ if [[ -z "$TRIGGERED_EVENT_NAME" && -n "$EXPECTED_EVENT" ]]; then
     TRIGGERED_EVENT_NAME="$EXPECTED_EVENT"
 
     # write the fallback event
-    fallback_file="$EVENTS_DIR/${SESSION_PREFIX}-${EXPECTED_EVENT}-fallback.event"
+    if [[ -n "${RUN_ID:-}" ]]; then
+        fallback_file="$EVENTS_DIR/${RUN_ID}-${SESSION_PREFIX}-${EXPECTED_EVENT}-fallback.event"
+    else
+        fallback_file="$EVENTS_DIR/${SESSION_PREFIX}-${EXPECTED_EVENT}-fallback.event"
+    fi
     cat > "$fallback_file" <<FBEOF
 event: ${EXPECTED_EVENT}
 source: ${SESSION_PREFIX}
+run_id: ${RUN_ID:-}
 timestamp: $(date -Iseconds)
 data: fallback (chain.json expected event, agent did not write event file)
 processed: false

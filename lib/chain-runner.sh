@@ -603,6 +603,13 @@ build_completion_contract() {
     local agent_id="$1"
     local s_prefix="$2"
     local agent_emits="$3"
+    local event_file_name="${s_prefix}-${agent_emits}.event"
+    local run_id_line=""
+
+    if [[ -n "${RUN_ID:-}" ]]; then
+        event_file_name="${RUN_ID}-${s_prefix}-${agent_emits}.event"
+        run_id_line="  run_id: ${RUN_ID}"
+    fi
 
     cat <<EOF
 COMPLETION CONTRACT:
@@ -622,9 +629,10 @@ The JSON summary must use this shape:
   "nextAgentHints": ["what the next agent should read or do"]
 }
 
-Then write an event file to $EVENTS_DIR/ named ${s_prefix}-${agent_emits}.event with:
+Then write an event file to $EVENTS_DIR/ named ${event_file_name} with:
   event: $agent_emits
   source: $s_prefix
+${run_id_line}
   timestamp: (current ISO timestamp)
   processed: false
 

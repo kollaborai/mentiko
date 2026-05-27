@@ -157,23 +157,16 @@ function isCoreDecisionChain(chain: CoreChainRecord | null): boolean {
     (metadata as Record<string, unknown>).coreDecisionChain === true;
 }
 
-function hasLegacyClaudePin(chain: CoreChainRecord | null): boolean {
-  return chain?.version === "1.0.1" && chain.default_agent_profile === "claude-sonnet";
-}
-
 function mergeExistingCoreChain(
   existing: CoreChainRecord | null,
   desired: ReturnType<typeof buildChain>
 ): ReturnType<typeof buildChain> {
-  return mergeDefaultAgentProfile(existing, desired, {
-    dropExistingProfile: !existing || hasLegacyClaudePin(existing),
-  });
+  return mergeDefaultAgentProfile(existing, desired);
 }
 
 function shouldWriteChain(existing: CoreChainRecord | null, desired: ReturnType<typeof buildChain>): boolean {
   if (!existing) return true;
   if (!isCoreDecisionChain(existing)) return false;
-  if (hasLegacyClaudePin(existing)) return true;
   try {
     return existing.version !== desired.version ||
       getDecisionPhase(existing) !== desired.metadata.decisionPhase;

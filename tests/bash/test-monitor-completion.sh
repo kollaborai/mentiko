@@ -132,6 +132,86 @@ assert_eq "$EVENTS_DIR/vt-task-pipeline-investigator-pipeline-artifacts-collecte
   "$json_event_file" \
   "detects JSON completion event files emitted by agents"
 
+RUN_EVENTS_DIR="$TEST_TMP_DIR/run-events"
+RUN_CHAIN_DIR="$TEST_TMP_DIR/run-chain"
+RUN_CHAIN_FILE="$RUN_CHAIN_DIR/chain.json"
+mkdir -p "$RUN_EVENTS_DIR" "$RUN_CHAIN_DIR/artifacts"
+cat > "$RUN_CHAIN_FILE" <<'JSON'
+{
+  "agents": [
+    {
+      "id": "task-generator",
+      "name": "Task Generator",
+      "triggers": ["manual-start"],
+      "emits": "task-generation-complete"
+    }
+  ]
+}
+JSON
+
+cat > "$RUN_EVENTS_DIR/task-generation-task-generator-task-generation-complete.event" <<'EOF'
+event: task-generation-complete
+source: task-generation-task-generator
+timestamp: 2026-05-26T16:22:46Z
+processed: false
+EOF
+touch -t 202605261622 "$RUN_EVENTS_DIR/task-generation-task-generator-task-generation-complete.event"
+touch -t 202605261641 "$RUN_CHAIN_DIR/artifacts/task-generator-started-at.txt"
+
+stale_run_event_file="$(RUN_ID=run-current monitor_completion_event_file \
+  "mentiko-task-generation-task-generator-run-1779838906226" \
+  "$RUN_CHAIN_FILE" \
+  "$RUN_EVENTS_DIR" \
+  "task-generator")"
+
+assert_eq "" "$stale_run_event_file" "ignores legacy global event files when current run id exists"
+
+cat > "$RUN_EVENTS_DIR/run-other-task-generation-task-generator-task-generation-complete.event" <<'EOF'
+event: task-generation-complete
+source: task-generation-task-generator
+run_id: run-other
+timestamp: 2026-05-26T16:42:46Z
+processed: false
+EOF
+
+mismatched_run_event_file="$(RUN_ID=run-current monitor_completion_event_file \
+  "mentiko-task-generation-task-generator-run-1779838906226" \
+  "$RUN_CHAIN_FILE" \
+  "$RUN_EVENTS_DIR" \
+  "task-generator")"
+
+assert_eq "" "$mismatched_run_event_file" "ignores mismatched run-scoped completion events"
+
+cat > "$RUN_EVENTS_DIR/run-current-task-generation-task-generator-task-generation-complete.event" <<'EOF'
+event: task-generation-complete
+source: task-generation-task-generator
+run_id: run-current
+timestamp: 2026-05-26T16:42:46Z
+processed: false
+EOF
+
+current_run_event_file="$(RUN_ID=run-current monitor_completion_event_file \
+  "mentiko-task-generation-task-generator-run-1779838906226" \
+  "$RUN_CHAIN_FILE" \
+  "$RUN_EVENTS_DIR" \
+  "task-generator")"
+
+assert_eq "$RUN_EVENTS_DIR/run-current-task-generation-task-generator-task-generation-complete.event" \
+  "$current_run_event_file" \
+  "detects run-scoped completion event for current run"
+
+emit_event_tmp="$TEST_TMP_DIR/emit-events"
+mkdir -p "$emit_event_tmp"
+(
+  EVENTS_DIR="$emit_event_tmp"
+  RUN_ID="run-emit-test"
+  source "$PROJECT_ROOT/lib/event-trigger.sh"
+  emit-event "artifact-ready" "artifact-agent" "ok"
+)
+emitted_event_file="$(find "$emit_event_tmp" -type f -name '*.event' | head -1)"
+assert_contains "$(basename "$emitted_event_file")" "run-emit-test" "emit-event prefixes run id in filename"
+assert_contains "$(cat "$emitted_event_file")" "run_id: run-emit-test" "emit-event writes run id payload"
+
 first_nudge="$(monitor_stale_nudge_message 1)"
 assert_not_eq "proceed" "$first_nudge" "first stale nudge is not bare proceed"
 assert_contains "$first_nudge" "current assigned task" "first stale nudge keeps agent in scope"
@@ -180,7 +260,6 @@ transport_capture() {
 advisor_default_nudge="$(
   PATH="$fake_advisor_bin:$PATH" \
   MENTIKO_FAKE_ADVISOR_MARKER="$fake_advisor_marker" \
-  MENTIKO_MONITOR_CLI="" \
   monitor_stale_nudge_message 1 "fake-session" "fake context" 1
 )"
 assert_contains "$advisor_default_nudge" "current assigned task" "advisor falls back when no explicit monitor CLI is configured"
@@ -190,18 +269,26 @@ if [[ -f "$fake_advisor_marker" ]]; then
 fi
 echo "PASS: advisor does not call claude by default"
 
+monitor_advisor_source="$(sed -n '113,180p' "$PROJECT_ROOT/lib/monitor-completion.sh")"
+assert_not_contains "$monitor_advisor_source" \
+  'advisor_cli' \
+  "advisor monitor does not use unprofiled cli fallback"
+assert_not_contains "$monitor_advisor_source" \
+  '-p "$prompt"' \
+  "advisor monitor does not assume a cli-specific pipe flag"
+
 advisor_profiles_dir="$TEST_TMP_DIR/advisor-profiles"
 advisor_call_marker="$TEST_TMP_DIR/profile-advisor-called"
 mkdir -p "$advisor_profiles_dir"
-cat > "$advisor_profiles_dir/advisor-glm.json" <<'EOF'
+cat > "$advisor_profiles_dir/advisor-profile.json" <<'EOF'
 {
-  "id": "advisor-glm",
-  "name": "Advisor GLM",
+  "id": "advisor-profile",
+  "name": "Advisor Profile",
   "isDefault": false,
   "isAdvisorDefault": true,
   "cli": "fake-advisor",
   "pipe_flag": "--pipe",
-  "model": "glm-advisor"
+  "model": "advisor-model"
 }
 EOF
 cat > "$fake_advisor_bin/fake-advisor" <<'EOF'
@@ -217,12 +304,12 @@ chmod 700 "$fake_advisor_bin/fake-advisor"
 profile_advisor_nudge="$(
   PATH="$fake_advisor_bin:$PATH" \
   AGENT_PROFILES_DIR="$advisor_profiles_dir" \
-  MENTIKO_MONITOR_PROFILE_ID="advisor-glm" \
+  MENTIKO_MONITOR_PROFILE_ID="advisor-profile" \
   MENTIKO_PROFILE_ADVISOR_MARKER="$advisor_call_marker" \
   monitor_stale_nudge_message 2 "fake-session" "fake context" 1
 )"
 assert_eq "profile advisor response" "$profile_advisor_nudge" "advisor can use explicit advisor profile"
-assert_contains "$(cat "$advisor_call_marker")" "--model glm-advisor" "advisor profile passes configured model"
+assert_contains "$(cat "$advisor_call_marker")" "--model advisor-model" "advisor profile passes configured model"
 assert_contains "$(cat "$advisor_call_marker")" "AGENT SESSION CAPTURE" "advisor profile receives captured session prompt"
 
 assert_eq "function" \
@@ -275,7 +362,7 @@ assert_contains "$spec_monitor_source" \
   'MENTIKO_MONITOR_PROFILE_ID' \
   "spec monitor carries advisor profile selection"
 
-chain_complete_cleanup_source="$(sed -n '410,425p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
+chain_complete_cleanup_source="$(sed -n '440,460p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
 assert_contains "$chain_complete_cleanup_source" \
   'transport_session_exists "$MONITOR_SESSION"' \
   "chain completion removes exited monitor sessions"

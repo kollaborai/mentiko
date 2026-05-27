@@ -26,12 +26,12 @@ describe("chain utils", () => {
       name: "Profiled Chain",
       description: "has a chain override",
       version: "1.0.0",
-      default_agent_profile: "claude-sonnet",
+      default_agent_profile: "profile-a",
       agents: [],
     }, null, 2));
 
     const chain = loadChain(chainPath, "profiled-chain", "mentiko");
 
-    expect(chain?.default_agent_profile).toBe("claude-sonnet");
+    expect(chain?.default_agent_profile).toBe("profile-a");
   });
 });

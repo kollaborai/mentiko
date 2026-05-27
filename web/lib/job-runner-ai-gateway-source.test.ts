@@ -21,10 +21,11 @@ describe("job-runner AI gateway source contract", () => {
     expect(envCall).toBeLessThan(spawnCall);
   });
 
-  it("keeps kollab pipe jobs aligned with the detached runner timeout", () => {
+  it("does not inject kollab-specific runtime args outside the configured profile", () => {
     expect(source).toContain('const RUNNER_CHILD_TIMEOUT_MS = 480000;');
-    expect(source).toContain('const KOLLAB_PIPE_TIMEOUT = "8min";');
-    expect(source).toContain("ensureKollabPipeTimeout(resolvedCli, resolvedProfile.cliArgs)");
+    expect(source).not.toContain(["KOLLAB", "PIPE", "TIMEOUT"].join("_"));
+    expect(source).not.toContain(["ensure", "Kollab", "Pipe", "Timeout"].join(""));
+    expect(source).toContain("const resolvedArgs = resolvedProfile.cliArgs;");
     expect(source).toContain("timeout: RUNNER_CHILD_TIMEOUT_MS");
   });
 

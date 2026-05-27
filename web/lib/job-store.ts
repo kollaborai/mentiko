@@ -31,8 +31,8 @@ export interface Job {
   completedAt?: string;
 }
 
-// stale detection: running jobs > 5min are considered failed
-const STALE_MS = 5 * 60 * 1000;
+// stale detection: generation chains can run up to 8min; leave room for import.
+const STALE_MS = 10 * 60 * 1000;
 
 function getJobPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.json`);

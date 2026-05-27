@@ -467,7 +467,7 @@ test("launchAgent skips stale chain default and uses namespace default profile",
   writeFileSync(path, JSON.stringify(chain, null, 2));
   makeProfile("kollabor", {
     cli: "kollab",
-    model: "glm-4.7",
+    model: "example-model",
     isDefault: true,
   });
   const runner = new ChainRunner(path, { workspace: TMP });
@@ -481,7 +481,7 @@ test("launchAgent skips stale chain default and uses namespace default profile",
   assert(calls.spawn.length === 1, "spawn should be called");
   assert(calls.spawn[0].cmd === "kollab", `wrong cmd: ${calls.spawn[0].cmd}`);
   assert(
-    calls.spawn[0].args.join(" ") === "--print --model glm-4.7",
+    calls.spawn[0].args.join(" ") === "--print --model example-model",
     `wrong args: ${calls.spawn[0].args.join(" ")}`
   );
 });
@@ -555,7 +555,11 @@ test("run follows chained events and marks run completed", async () => {
   assert(runData.agents.every((a) => a.status === "completed"), "agents not completed");
   assert(managerCalls.stopLog.length >= 2, "logs should stop for started sessions");
   assert(calls.length > 0, "sysLog should be triggered");
-  assert(existsSync(join(EVENTS_DIR, `${runData.agents[0].id}-a-done.event`)) || readdirSync(EVENTS_DIR).length === 1, "missing emitted event");
+  const eventFiles = readdirSync(EVENTS_DIR).filter((file) => file.endsWith(".event"));
+  assert(eventFiles.length === 2, `expected two emitted events, got ${eventFiles.length}`);
+  const firstEvent = readFileSync(join(EVENTS_DIR, eventFiles[0]), "utf-8");
+  assert(firstEvent.includes(`run_id: ${runner.runId}`), `event missing run_id: ${firstEvent}`);
+  assert(eventFiles.every((file) => file.startsWith(`${runner.runId}-`)), `event filenames not run-scoped: ${eventFiles.join(",")}`);
 });
 
 test("run marks run failed and rethrows when first agent throws", async () => {

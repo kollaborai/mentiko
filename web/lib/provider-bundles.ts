@@ -188,11 +188,11 @@ export const PROVIDER_BUNDLES: ProviderBundle[] = [
     profiles: [
       {
         id: "kollabor",
-        name: "Kollab CLI",
+        name: "Kollab / Mentiko",
         cli: "kollab",
         pipe_flag: "-p",
         permission_flag: "--permissions trust",
-        description: "Kollab CLI",
+        description: "Kollab / Mentiko",
       },
     ],
   },

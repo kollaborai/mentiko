@@ -175,10 +175,17 @@ ensure-event-file() {
     # derive session prefix
     local s_prefix=$(echo "$session_name" | sed "s/^${project_name}-//" | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
 
-    # check if ANY event file from this agent already exists
+    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
+
+    # check if ANY current-run event file from this agent already exists
     for ef in "$events_dir"/*; do
         [[ -f "$ef" ]] || continue
         [[ -d "$ef" ]] && continue
+        if [[ -n "$run_id" ]]; then
+            if ! grep -qi "^run_id:[[:space:]]*${run_id}[[:space:]]*$" "$ef" 2>/dev/null; then
+                continue
+            fi
+        fi
         if grep -qi "source.*${s_prefix}\|agent.*${s_prefix}" "$ef" 2>/dev/null; then
             echo "  event file exists (content match)"
             return 0
@@ -214,9 +221,13 @@ ensure-event-file() {
     fi
 
     local fallback_file="$events_dir/${prefix}-${emit_event}-fallback.event"
+    if [[ -n "$run_id" ]]; then
+        fallback_file="$events_dir/${run_id}-${prefix}-${emit_event}-fallback.event"
+    fi
     cat > "$fallback_file" <<FBEOF
 event: ${emit_event}
 source: ${prefix}
+run_id: ${run_id}
 timestamp: $(date -Iseconds)
 data: fallback event (agent completed but did not write event file)
 processed: false

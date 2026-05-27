@@ -53,7 +53,7 @@ describe("decision core chains", () => {
     }
   });
 
-  test("upgrades old core chains that were pinned to claude", async () => {
+  test("preserves any existing profile override when upgrading old core chains", async () => {
     const { ensureDecisionCoreChains } = await import("../decision-core-chains");
     const chainDir = join(root, "namespaces", "default", "chains", "decision-research");
     mkdirSync(chainDir, { recursive: true });
@@ -62,7 +62,7 @@ describe("decision core chains", () => {
       id: "decision-research",
       name: "Decision Research",
       version: "1.0.1",
-      default_agent_profile: "claude-sonnet",
+      default_agent_profile: "user-selected-profile",
       metadata: {
         coreDecisionChain: true,
         decisionPhase: "research",
@@ -76,7 +76,7 @@ describe("decision core chains", () => {
 
     expect(result.find((chain) => chain.id === "decision-research")?.created).toBe(true);
     expect(upgraded.version).not.toBe("1.0.1");
-    expect(upgraded.default_agent_profile).toBeUndefined();
+    expect(upgraded.default_agent_profile).toBe("user-selected-profile");
   });
 
   test("preserves explicit profile overrides when upgrading core chains", async () => {

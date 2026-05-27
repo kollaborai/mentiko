@@ -31,11 +31,16 @@ emit-event() {
     fi
 
     local timestamp=$(date +%Y%m%d-%H%M%S)
+    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
     local event_file="$EVENTS_DIR/${timestamp}-${event_name}.event"
+    if [[ -n "$run_id" ]]; then
+        event_file="$EVENTS_DIR/${run_id}-${timestamp}-${event_name}.event"
+    fi
 
     cat > "$event_file" <<EOF
 event: $event_name
 source: $source_agent
+run_id: $run_id
 timestamp: $(date -Iseconds)
 processed: false
 data: $data

@@ -78,12 +78,12 @@ describe("agent profile storage", () => {
 
     createProfile("default", "default", {
       id: "kollab",
-      name: "Kollab CLI",
+      name: "Kollab / Mentiko",
       description: "workspace default",
       isDefault: true,
       isAdvisorDefault: false,
       cli: "kollab",
-      model: "glm-4.7",
+      model: "example-model",
       pipe_flag: "-p",
     });
 
@@ -94,10 +94,11 @@ describe("agent profile storage", () => {
     });
 
     const profile = getProfile("default", "default", "kollab");
-    expect(profile?.name).toBe("Kollab CLI");
+    expect(profile?.name).toBe("Kollab / Mentiko");
     expect(profile?.cli).toBe("kollab");
-    expect(profile?.model).toBe("glm-4.7");
+    expect(profile?.model).toBe("example-model");
     expect(profile?.pipe_flag).toBe("-p");
     expect(profile?.isAdvisorDefault).toBe(true);
   });
+
 });

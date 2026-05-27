@@ -70,9 +70,9 @@ describe("AgentProfileBadge", () => {
 
   it("shows profile not found when configured id is invalid", () => {
     const profiles = [makeProfile({ id: "claude-sonnet", isDefault: true })];
-    render(<AgentProfileBadge chainDefaultProfileId="glm51" profiles={profiles} />);
+    render(<AgentProfileBadge chainDefaultProfileId="missing-profile" profiles={profiles} />);
     expect(screen.getByText("profile not found")).toBeInTheDocument();
-    expect(screen.getByText(/glm51/)).toBeInTheDocument();
+    expect(screen.getByText(/missing-profile/)).toBeInTheDocument();
   });
 
   it("shows no profile when no id configured and no default exists", () => {
@@ -90,12 +90,12 @@ describe("AgentProfileBadge", () => {
   it("uses workspace default before namespace default", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: true }),
-      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: false }),
+      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: false }),
     ];
 
     render(<AgentProfileBadge workspaceDefaultProfileId="kollabor" profiles={profiles} />);
 
-    expect(screen.getByText("Kollab CLI")).toBeInTheDocument();
+    expect(screen.getByText("Kollab / Mentiko")).toBeInTheDocument();
     expect(screen.getByText("workspace default")).toBeInTheDocument();
     expect(screen.queryByText("Claude / Sonnet")).not.toBeInTheDocument();
   });
@@ -103,7 +103,7 @@ describe("AgentProfileBadge", () => {
   it("chain default takes priority over workspace default", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
-      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: true }),
+      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
     ];
 
     render(
@@ -122,7 +122,7 @@ describe("AgentProfileBadge", () => {
   it("runtime profile takes priority over saved chain and workspace defaults", () => {
     const profiles = [
       makeProfile({ id: "claude-sonnet", name: "Claude / Sonnet", isDefault: false }),
-      makeProfile({ id: "kollabor", name: "Kollab CLI", cli: "kollab", isDefault: true }),
+      makeProfile({ id: "kollabor", name: "Kollab / Mentiko", cli: "kollab", isDefault: true }),
       makeProfile({ id: "codex-default", name: "Codex / Default", cli: "codex", isDefault: false }),
     ];
 

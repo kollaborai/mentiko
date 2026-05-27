@@ -94,8 +94,9 @@ export function TaskGenerateDialog({
 
       const { jobId } = await res.json() as { jobId: string };
 
-      // poll job until complete or failed
-      for (let i = 0; i < 120; i++) {
+      // poll job until complete or failed. Backend generation chains can run
+      // up to 8 minutes, so keep the modal alive long enough for slow runs.
+      for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const pollRes = await fetchWithNamespace(`/api/jobs/${jobId}`);
         const job = await pollRes.json();

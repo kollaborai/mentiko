@@ -89,7 +89,7 @@ export const POST = withErrorHandling(async (
   updateJob(id, {
     status: jobStatus,
     result: result || job.result,
-    error: error || job.error,
+    error: jobStatus === "failed" ? error || job.error : undefined,
     runId: typeof body.runId === "string" ? body.runId : job.runId,
     chainId: typeof body.chainId === "string" ? body.chainId : job.chainId,
     completedAt: jobStatus === "complete" || jobStatus === "failed" ? new Date().toISOString() : job.completedAt,

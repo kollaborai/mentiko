@@ -28,7 +28,7 @@ mkdir -p "$AGENT_PROFILES_DIR"
 cat > "$AGENT_PROFILES_DIR/kollabor.json" <<'JSON'
 {
   "id": "kollabor",
-  "name": "Kollab CLI",
+  "name": "Kollab / Mentiko",
   "cli": "kollab",
   "isDefault": true,
   "log_path": "~/.kollab/projects/"

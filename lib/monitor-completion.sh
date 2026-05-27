@@ -31,6 +31,8 @@ monitor_completion_event_file() {
     local chain_file="$2"
     local events_dir="$3"
     local agent_id="${4:-}"
+    local run_id="${5:-${MENTIKO_RUN_ID:-${RUN_ID:-}}}"
+    local event_run_id=""
 
     [[ -d "$events_dir" && -f "$chain_file" ]] || return 0
 
@@ -58,6 +60,15 @@ monitor_completion_event_file() {
 
         [[ "$event_name_lower" == "$expected_event_lower" ]] || continue
         printf '%s\n' "$source_name" | grep -qiF "$agent_id" || continue
+
+        if [[ -n "$run_id" ]]; then
+            event_run_id="$(grep -im1 "^run_id:" "$event_file" 2>/dev/null | sed 's/^[Rr]un_id:[[:space:]]*//' | xargs || true)"
+            if [[ -z "$event_run_id" && -f "$event_file" ]] && jq -e . "$event_file" >/dev/null 2>&1; then
+                event_run_id="$(jq -r '.run_id // .runId // empty' "$event_file" 2>/dev/null)"
+            fi
+
+            [[ "$event_run_id" == "$run_id" ]] || continue
+        fi
 
         echo "$event_file"
         return 0
@@ -106,7 +117,6 @@ monitor_stale_advisor_message() {
     local check_interval="${4:-60}"
     local profile_name="${MENTIKO_MONITOR_PROFILE:-mentiko}"
     local profile_file="$MONITOR_COMPLETION_DIR/monitor-profiles/${profile_name}.md"
-    local advisor_cli="${MENTIKO_MONITOR_CLI:-}"
     local advisor_profile_id="${MENTIKO_MONITOR_PROFILE_ID:-}"
     local advisor_command=""
     local full_pane total_lines pane_top pane_bottom profile_content prompt response
@@ -120,8 +130,6 @@ monitor_stale_advisor_message() {
         advisor_profile_file="$(agent_profile_path "$advisor_profile_id")"
         [[ -f "$advisor_profile_file" ]] || return 1
         advisor_command="$(build_profile_command "$advisor_profile_file")"
-    elif [[ -n "$advisor_cli" ]]; then
-        command -v "$advisor_cli" >/dev/null 2>&1 || return 1
     else
         return 1
     fi
@@ -159,11 +167,7 @@ ${profile_content}
 
 Now output exactly ONE message as Mentiko would send it. Nothing else."
 
-    if [[ -n "$advisor_command" ]]; then
-        response="$(printf '%s' "$prompt" | bash -lc "$advisor_command" 2>/dev/null | head -10 || true)"
-    else
-        response="$("$advisor_cli" -p "$prompt" 2>/dev/null | head -10 || true)"
-    fi
+    response="$(printf '%s' "$prompt" | bash -lc "$advisor_command" 2>/dev/null | head -10 || true)"
     [[ -n "$response" ]] || return 1
 
     monitor_sanitize_nudge "$response" "$stale_count"

@@ -23,28 +23,6 @@ source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
 PERF_DIR="${METRICS_DIR:-${MENTIKO_NAMESPACE_ROOT:-$HOME/.mentiko/namespaces/${NAMESPACE_ID:-default}}/metrics}"
 mkdir -p "$PERF_DIR"
 
-# pricing (per 1M tokens, feb 2025)
-# update these as models change
-declare -A MODEL_PRICES_INPUT=(
-    ["claude-opus-4-6"]=15.0
-    ["claude-sonnet-4-6"]=3.0
-    ["claude-haiku-4-5"]=0.80
-    ["gpt-4o"]=2.50
-    ["gpt-4o-mini"]=0.15
-    ["o3-mini"]=1.10
-    ["default"]=3.0
-)
-
-declare -A MODEL_PRICES_OUTPUT=(
-    ["claude-opus-4-6"]=75.0
-    ["claude-sonnet-4-6"]=15.0
-    ["claude-haiku-4-5"]=4.0
-    ["gpt-4o"]=10.0
-    ["gpt-4o-mini"]=0.60
-    ["o3-mini"]=11.0
-    ["default"]=15.0
-)
-
 # -------------------------------------------------------------------
 # perf-get-price: get price per 1M tokens for model
 # -------------------------------------------------------------------
@@ -52,17 +30,28 @@ declare -A MODEL_PRICES_OUTPUT=(
 perf-get-price() {
     local model="$1"
     local type="${2:-input}"
-    local key="MODEL_PRICES_${type^^}"
 
-    # exact match
-    local price="${MODEL_PRICES_INPUT[$model]:-}"
-    [[ "$type" == "output" ]] && price="${MODEL_PRICES_OUTPUT[$model]:-}"
-
-    # fallback
-    [[ -z "$price" ]] && price="${MODEL_PRICES_INPUT[default]:-3.0}"
-    [[ "$type" == "output" ]] && price="${MODEL_PRICES_OUTPUT[default]:-15.0}"
-
-    echo "$price"
+    if [[ "$type" == "output" ]]; then
+        case "$model" in
+            claude-opus-4-6) echo "75.0" ;;
+            claude-sonnet-4-6) echo "15.0" ;;
+            claude-haiku-4-5) echo "4.0" ;;
+            gpt-4o) echo "10.0" ;;
+            gpt-4o-mini) echo "0.60" ;;
+            o3-mini) echo "11.0" ;;
+            *) echo "15.0" ;;
+        esac
+    else
+        case "$model" in
+            claude-opus-4-6) echo "15.0" ;;
+            claude-sonnet-4-6) echo "3.0" ;;
+            claude-haiku-4-5) echo "0.80" ;;
+            gpt-4o) echo "2.50" ;;
+            gpt-4o-mini) echo "0.15" ;;
+            o3-mini) echo "1.10" ;;
+            *) echo "3.0" ;;
+        esac
+    fi
 }
 
 # -------------------------------------------------------------------

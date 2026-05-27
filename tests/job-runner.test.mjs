@@ -143,10 +143,7 @@ process.stdin.on("end", () => {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || null,
       ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
       ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || null,
-      KOLLAB_GLM_API_KEY: process.env.KOLLAB_GLM_API_KEY || null,
-      KOLLAB_GLM_BASE_URL: process.env.KOLLAB_GLM_BASE_URL || null,
-      KOLLAB_GLM_PROVIDER: process.env.KOLLAB_GLM_PROVIDER || null,
-      KOLLAB_NO_AUTO_DETECT: process.env.KOLLAB_NO_AUTO_DETECT || null,
+      KOLLAB_ENV_KEYS: Object.keys(process.env).filter((key) => key.startsWith("KOLLAB_")).sort().join(","),
       MENTIKO_JOB_CWD: process.env.MENTIKO_JOB_CWD || null,
       MENTIKO_WORKSPACE_PATH: process.env.MENTIKO_WORKSPACE_PATH || null,
       PWD: process.env.PWD || null,
@@ -173,10 +170,7 @@ process.stdin.on("end", () => {
               ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || null,
               ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN || null,
               ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL || null,
-              KOLLAB_GLM_API_KEY: process.env.KOLLAB_GLM_API_KEY || null,
-              KOLLAB_GLM_BASE_URL: process.env.KOLLAB_GLM_BASE_URL || null,
-              KOLLAB_GLM_PROVIDER: process.env.KOLLAB_GLM_PROVIDER || null,
-              KOLLAB_NO_AUTO_DETECT: process.env.KOLLAB_NO_AUTO_DETECT || null,
+              KOLLAB_ENV_KEYS: Object.keys(process.env).filter((key) => key.startsWith("KOLLAB_")).sort().join(","),
               MENTIKO_JOB_CWD: process.env.MENTIKO_JOB_CWD || null,
               MENTIKO_WORKSPACE_PATH: process.env.MENTIKO_WORKSPACE_PATH || null,
               PWD: process.env.PWD || null,
@@ -819,16 +813,16 @@ test("keeps profile ANTHROPIC_API_KEY when explicitly set", () => {
   assert(capture.env?.ANTHROPIC_API_KEY === "profile-token-2026", `wrong ANTHROPIC_API_KEY: ${capture.env?.ANTHROPIC_API_KEY}`);
 });
 
-test("forces explicit Kollab profile over provider auto-detect env", () => {
+test("passes Kollab profile args and configured env without provider overrides", () => {
   createMockCliAlias("kollab");
   makeDefaultProfile({
     cli: "kollab",
     pipe_flag: "-p",
     permission_flag: "--permissions trust",
-    extra_args: ["--profile", "glm"],
+    extra_args: ["--profile", "user-owned-profile"],
     env: {
       ANTHROPIC_AUTH_TOKEN: "profile-token-2026",
-      ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+      ANTHROPIC_BASE_URL: "https://provider.example/v1",
     },
   });
   makeJobFile("kollab-profile-arg", { prompt: "prompt profile arg" }, "generate");
@@ -838,13 +832,10 @@ test("forces explicit Kollab profile over provider auto-detect env", () => {
   const args = capture.args || [];
 
   assert(args.includes("--profile"), `missing --profile: ${JSON.stringify(args)}`);
-  assert(args.includes("glm"), `missing glm profile: ${JSON.stringify(args)}`);
-  assert(capture.env?.KOLLAB_NO_AUTO_DETECT === "1", `auto-detect not disabled: ${capture.env?.KOLLAB_NO_AUTO_DETECT}`);
+  assert(args.includes("user-owned-profile"), `missing profile arg: ${JSON.stringify(args)}`);
   assert(capture.env?.ANTHROPIC_AUTH_TOKEN === "profile-token-2026", "profile env token was not preserved");
-  assert(capture.env?.ANTHROPIC_BASE_URL === "https://api.z.ai/api/anthropic", "profile base url was not preserved");
-  assert(capture.env?.KOLLAB_GLM_API_KEY === "profile-token-2026", "kollab profile api key was not mapped");
-  assert(capture.env?.KOLLAB_GLM_BASE_URL === "https://api.z.ai/api/anthropic", "kollab profile base url was not mapped");
-  assert(capture.env?.KOLLAB_GLM_PROVIDER === "anthropic", "kollab profile provider was not mapped");
+  assert(capture.env?.ANTHROPIC_BASE_URL === "https://provider.example/v1", "profile base url was not preserved");
+  assert(capture.env?.KOLLAB_ENV_KEYS === "", `unexpected Kollab override env: ${capture.env?.KOLLAB_ENV_KEYS}`);
 });
 
 test("notifies callback and writes complete status in mocked fetch flow", () => {

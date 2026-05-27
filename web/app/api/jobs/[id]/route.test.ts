@@ -229,8 +229,8 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const job = createJob("generate", { prompt: "stale test" }, "task-stale");
       testJobIds.push(job.id);
 
-      // Set job to running 6 minutes ago (beyond 5 min stale threshold)
-      const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+      // Set job to running 11 minutes ago (beyond 10 min stale threshold)
+      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
 
       // Manually write job file to bypass stale detection in getJob
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -244,7 +244,7 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const staleJob = {
         ...job,
         status: "running",
-        startedAt: sixMinutesAgo
+        startedAt: elevenMinutesAgo
       };
 
       fs.writeFileSync(jobPath, JSON.stringify(staleJob, null, 2));
