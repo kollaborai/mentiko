@@ -85,11 +85,27 @@ resolve_log_dir() {
 # cross-platform file birth time
 # -----------------------------------------------------------------------
 _file_birth_epoch() {
-    stat -f "%B" "$1" 2>/dev/null && return
-    local bt
-    bt=$(stat -c "%W" "$1" 2>/dev/null || echo 0)
-    if [[ "$bt" != "0" && -n "$bt" ]]; then echo "$bt"; return; fi
-    stat -c "%Y" "$1" 2>/dev/null || echo 0
+    local value=""
+
+    value=$(stat -f "%B" "$1" 2>/dev/null || true)
+    if [[ "$value" =~ ^[0-9]+$ && "$value" != "0" ]]; then
+        echo "$value"
+        return
+    fi
+
+    value=$(stat -c "%W" "$1" 2>/dev/null || true)
+    if [[ "$value" =~ ^[0-9]+$ && "$value" != "0" && "$value" != "-1" ]]; then
+        echo "$value"
+        return
+    fi
+
+    value=$(stat -c "%Y" "$1" 2>/dev/null || true)
+    if [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo "$value"
+        return
+    fi
+
+    echo 0
 }
 
 # -----------------------------------------------------------------------
@@ -148,6 +164,7 @@ find_conversation_files() {
     while IFS= read -r f; do
         local be
         be=$(_file_birth_epoch "$f")
+        [[ "$be" =~ ^[0-9]+$ ]] || continue
         local diff=$(( be - start_epoch ))
         if [[ "$diff" -ge -30 && "$diff" -le 30 ]]; then
             matched+=("$f")

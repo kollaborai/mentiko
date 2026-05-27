@@ -303,7 +303,8 @@ source "$SCRIPT_DIR/agent-activity-capture.sh" 2>/dev/null || true
 if declare -f capture-agent-activity &>/dev/null && [[ -n "${RUN_ID:-}" ]]; then
     capture-agent-activity \
         "$CURRENT_AGENT_ID" "$RUN_ID" "$CHAIN_PROJECT_ROOT" \
-        "$REPORT_FILE" "${NAMESPACE_ID:-default}" "$_agent_profile_file"
+        "$REPORT_FILE" "${NAMESPACE_ID:-default}" "$_agent_profile_file" \
+        || _sys_log "warn" "chain-runner-complete" "activity capture failed for ${CURRENT_AGENT_ID}; continuing completion" "run: ${RUN_ID:-unknown}"
 fi
 
 # -------------------------------------------------------------------
@@ -592,7 +593,7 @@ if [[ -n "$RUN_ID" ]]; then
             if [[ -d "$_log_dir" && "$_start_epoch" -gt 0 ]]; then
                 _cli="claude"
                 [[ -n "$_agent_profile_file" && -f "$_agent_profile_file" ]] && _cli=$(jq -r '.cli // "claude"' "$_agent_profile_file" 2>/dev/null)
-                CONV_PATHS=$(find_conversation_files "$_log_dir" "$_start_epoch" "$_cli")
+                CONV_PATHS=$(find_conversation_files "$_log_dir" "$_start_epoch" "$_cli" || true)
                 [[ -n "$CONV_PATHS" ]] && break
             fi
         done

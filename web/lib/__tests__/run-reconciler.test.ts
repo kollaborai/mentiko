@@ -223,4 +223,85 @@ describe("run reconciler", () => {
     expect(run.agents[0].status).toBe("stopped");
     expect(run.agents[0].completed).toBeUndefined();
   });
+
+  it("marks a running run completed when every declared chain agent is complete", async () => {
+    const runDir = join(mockRunsDir, "run-1777857759654");
+    mkdirSync(runDir, { recursive: true });
+
+    writeFileSync(
+      join(runDir, "chain.json"),
+      JSON.stringify({
+        agents: [
+          { id: "task-generator", emits: "task-generation-complete" },
+        ],
+      })
+    );
+
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        id: "run-1777857759654",
+        status: "running",
+        agents: [
+          {
+            id: "task-generator",
+            name: "Task Generator",
+            status: "complete",
+            session: "mentiko-task-generation-task-generator-run-1777857759654",
+            started: "2026-05-04T01:22:42.000Z",
+            completed: new Date(Date.now() - 360_000).toISOString(),
+          },
+        ],
+      })
+    );
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
+
+    expect(result.cleaned).toContain("run-1777857759654");
+    expect(run.status).toBe("completed");
+    expect(run.completed).toBeTruthy();
+    expect(run.agents[0].status).toBe("complete");
+  });
+
+  it("repairs a stopped run as completed when every declared chain agent is complete", async () => {
+    const runDir = join(mockRunsDir, "run-1779903236975");
+    mkdirSync(runDir, { recursive: true });
+
+    writeFileSync(
+      join(runDir, "chain.json"),
+      JSON.stringify({
+        agents: [
+          { id: "task-generator", emits: "task-generation-complete" },
+        ],
+      })
+    );
+
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        id: "run-1779903236975",
+        status: "stopped",
+        completed: "2026-05-27T17:42:19.000Z",
+        agents: [
+          {
+            id: "task-generator",
+            name: "Task Generator",
+            status: "complete",
+            session: "mentiko-task-generation-task-generator-run-1779903236975",
+            started: "2026-05-27T17:33:57.000Z",
+            completed: "2026-05-27T17:34:56.000Z",
+          },
+        ],
+      })
+    );
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf-8"));
+
+    expect(result.cleaned).toContain("run-1779903236975");
+    expect(run.status).toBe("completed");
+    expect(run.completed).toBeTruthy();
+    expect(run.agents[0].status).toBe("complete");
+  });
 });

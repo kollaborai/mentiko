@@ -228,6 +228,41 @@ function readChainAgents(runDir: string): ChainAgent[] {
   }
 }
 
+function allDeclaredAgentsComplete(run: RunJson, runDir: string): boolean {
+  const declaredAgentIds = readChainAgents(runDir)
+    .map((agent) => agent.id)
+    .filter((id): id is string => Boolean(id));
+  if (declaredAgentIds.length === 0) return false;
+
+  const statusByAgentId = new Map(
+    (run.agents || []).map((agent) => [agent.id, agent.status])
+  );
+
+  return declaredAgentIds.every(
+    (agentId) => statusByAgentId.get(agentId) === "complete"
+  );
+}
+
+function latestAgentCompletion(run: RunJson): string | undefined {
+  const latest = (run.agents || [])
+    .filter((agent) => agent.status === "complete" && agent.completed)
+    .map((agent) => new Date(agent.completed!).getTime())
+    .filter((time) => Number.isFinite(time))
+    .sort((a, b) => b - a)[0];
+
+  return latest ? new Date(latest).toISOString() : undefined;
+}
+
+function repairStoppedAllCompleteRun(context: ReconcilerContext, run: RunJson, runDir: string): boolean {
+  if (run.status !== "stopped") return false;
+  if (!allDeclaredAgentsComplete(run, runDir)) return false;
+
+  run.status = "completed";
+  run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
+  reconcilerLog(context, `reclassified ${run.id || "run"} stopped all-complete run as completed`, "warn");
+  return true;
+}
+
 function isQualityGateAgent(runDir: string, agentId?: string): boolean {
   if (!agentId) return false;
 
@@ -412,6 +447,10 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       changed = true;
     }
 
+    if (repairStoppedAllCompleteRun(context, run, runDir)) {
+      changed = true;
+    }
+
     if (run.status === "running" || run.status === "pending") {
       scanned++;
 
@@ -430,31 +469,38 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
 
       if (hasLiveSession) continue; // run is alive
 
-      // grace period: if any agent completed recently, chain-runner-complete
-      // may be doing handoff (artifact capture + next agent launch).
-      // don't mark as orphaned until 5 min after last agent completion.
-      const lastCompletion = agents
-        .filter((a) => a.status === "complete" && a.completed)
-        .map((a) => new Date(a.completed!).getTime())
-        .sort((a, b) => b - a)[0];
+      if (allDeclaredAgentsComplete(run, runDir)) {
+        run.status = "completed";
+        run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
+        changed = true;
+        reconcilerLog(context, `completed ${runId}: all declared agents are complete`, "warn");
+      } else {
+        // grace period: if any agent completed recently, chain-runner-complete
+        // may be doing handoff (artifact capture + next agent launch).
+        // don't mark as orphaned until 5 min after last agent completion.
+        const lastCompletion = agents
+          .filter((a) => a.status === "complete" && a.completed)
+          .map((a) => new Date(a.completed!).getTime())
+          .sort((a, b) => b - a)[0];
 
-      if (lastCompletion && now - lastCompletion < 300_000) {
-        reconcilerLog(context, `skipping ${runId}: agent completed ${Math.round((now - lastCompletion) / 1000)}s ago (handoff window)`);
-        continue;
+        if (lastCompletion && now - lastCompletion < 300_000) {
+          reconcilerLog(context, `skipping ${runId}: agent completed ${Math.round((now - lastCompletion) / 1000)}s ago (handoff window)`);
+          continue;
+        }
+
+        // grace period: don't kill young runs (2 min from start)
+        const runTs = runId.replace("run-", "");
+        if (/^\d+$/.test(runTs) && now - Number(runTs) < 120_000) {
+          reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - Number(runTs)) / 1000)}s old (startup window)`);
+          continue;
+        }
+
+        // no live sessions → orphaned run
+        orphaned++;
+        run.status = "stopped";
+        run.completed = run.completed || new Date().toISOString();
+        changed = true;
       }
-
-      // grace period: don't kill young runs (2 min from start)
-      const runTs = runId.replace("run-", "");
-      if (/^\d+$/.test(runTs) && now - Number(runTs) < 120_000) {
-        reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - Number(runTs)) / 1000)}s old (startup window)`);
-        continue;
-      }
-
-      // no live sessions → orphaned run
-      orphaned++;
-      run.status = "stopped";
-      run.completed = run.completed || new Date().toISOString();
-      changed = true;
     }
 
     // fix stale agent statuses on ANY non-active run

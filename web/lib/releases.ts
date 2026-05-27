@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.30",
+    date: "May 27, 2026",
+    title: "Run Completion Status Repair",
+    description:
+      "Chain runs that finish their declared agents now resolve as completed instead of being reclassified as stopped when optional session-log capture fails. The reconciler also repairs affected all-complete runs so the Runs page reflects the actual outcome.",
+    category: "fix",
+  },
+  {
     version: "v0.3.29",
     date: "May 27, 2026",
     title: "Task Generation Launch Reliability",

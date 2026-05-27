@@ -2,7 +2,15 @@
  * @jest-environment node
  */
 
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 describe("chain-runner AI gateway source contract", () => {
   const chainRunner = readFileSync(new URL("../../lib/chain-runner.sh", import.meta.url), "utf8");
@@ -10,6 +18,8 @@ describe("chain-runner AI gateway source contract", () => {
   const ptyManager = readFileSync(new URL("../../lib/pty-manager.mjs", import.meta.url), "utf8");
   const agentFunctions = readFileSync(new URL("../../lib/agent-functions.sh", import.meta.url), "utf8");
   const chainRunnerComplete = readFileSync(new URL("../../lib/chain-runner-complete.sh", import.meta.url), "utf8");
+  const sessionLogResolverPath = fileURLToPath(new URL("../../lib/session-log-resolver.sh", import.meta.url));
+  const sessionLogResolver = readFileSync(new URL("../../lib/session-log-resolver.sh", import.meta.url), "utf8");
   const shellHelper = readFileSync(new URL("../../lib/ai-gateway-agent-env.sh", import.meta.url), "utf8");
   const seedScript = readFileSync(new URL("../../web/scripts/seed.ts", import.meta.url), "utf8");
   const smokeAgent = readFileSync(new URL("../../bin/ai-gateway-smoke-agent.mjs", import.meta.url), "utf8");
@@ -104,6 +114,48 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner.indexOf(guard)).toBeLessThan(chainRunner.indexOf(sendInstructions));
   });
 
+  it("keeps conversation birth-time lookup numeric on GNU stat", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-stat-"));
+    try {
+      const fakeStat = join(root, "stat");
+      writeFileSync(
+        fakeStat,
+        [
+          "#!/usr/bin/env bash",
+          "if [[ \"$1\" == \"-f\" ]]; then",
+          "  echo '  File: \"fake.jsonl\"'",
+          "  echo 'Blocks: Total: 1'",
+          "  exit 0",
+          "fi",
+          "if [[ \"$1\" == \"-c\" && \"$2\" == \"%W\" ]]; then",
+          "  echo 1779903268",
+          "  exit 0",
+          "fi",
+          "if [[ \"$1\" == \"-c\" && \"$2\" == \"%Y\" ]]; then",
+          "  echo 1779903269",
+          "  exit 0",
+          "fi",
+          "exit 1",
+          "",
+        ].join("\n")
+      );
+      chmodSync(fakeStat, 0o755);
+
+      const script = [
+        "set -euo pipefail",
+        `source ${shellQuote(sessionLogResolverPath)}`,
+        `value=$(_file_birth_epoch ${shellQuote(join(root, "fake.jsonl"))})`,
+        '[[ "$value" == "1779903268" ]]',
+      ].join("\n");
+
+      execFileSync("bash", ["-c", script], {
+        env: { ...process.env, PATH: `${root}:${process.env.PATH || ""}` },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("ships a first-class tenant AI gateway smoke profile and chain", () => {
     expect(seedScript).toContain('id: "mentiko-ai-gateway-smoke"');
     expect(seedScript).toContain('name: "AI Gateway Smoke"');
@@ -127,6 +179,7 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).not.toContain("NAMESPACE_ROOT/agent-profiles");
     expect(chainRunnerComplete).toContain("AGENT_PROFILES_DIR");
     expect(chainRunnerComplete).not.toContain("NAMESPACE_ROOT/agent-profiles");
+    expect(sessionLogResolver).toContain('[[ "$value" =~ ^[0-9]+$');
   });
 });
 
