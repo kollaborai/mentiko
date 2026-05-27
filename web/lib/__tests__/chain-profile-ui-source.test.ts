@@ -26,6 +26,12 @@ describe("chain profile UI source contract", () => {
 
     expect(source).toContain("workspaceId,");
     expect(source).toContain("workspacePath,");
+    expect(source).toContain("getMissingChainDefaultProfileId(chain.default_agent_profile, agentProfiles)");
+    expect(source).toContain("withChainDefaultAgentProfile(chain");
+    expect(source).toContain("Profile not found - {missingDefaultProfileId}");
+    expect(source).toContain("id: data.chain?.id || chainId");
+    expect(source).toContain("encodeURIComponent(chainId)");
+    expect(source).toContain("id: chain.id || chainId");
   });
 
   it("decision settings edits open inside the chains workflow shell", () => {
@@ -33,5 +39,22 @@ describe("chain profile UI source contract", () => {
 
     expect(source).toContain('href={`/chains?chain=${encodeURIComponent(chain.id)}&edit=1`}');
     expect(source).not.toContain('href={`/chains/${encodeURIComponent(chain.id)}/edit`}');
+    expect(source).toContain("getMissingChainDefaultProfileId(chain.default_agent_profile, profiles)");
+    expect(source).toContain("Profile not found - {missingProfileId}");
+  });
+
+  it("workspace settings make stale default profile ids selectable", () => {
+    const source = readFileSync("components/workspace/workspace-settings.tsx", "utf8");
+
+    expect(source).toContain("getMissingAgentProfileId(agentProfile, agentProfiles)");
+    expect(source).toContain("Profile not found - {missingAgentProfileId}");
+  });
+
+  it("the chain detail API returns and saves the directory id", () => {
+    const source = readFileSync("app/api/chains/[id]/route.ts", "utf8");
+
+    expect(source).toContain("chain.id = decodedId");
+    expect(source).toContain("const chainToSave = { ...chain, id: decodedId }");
+    expect(source).toContain("JSON.stringify(chainToSave, null, 2)");
   });
 });

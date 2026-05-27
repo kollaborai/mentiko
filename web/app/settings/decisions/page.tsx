@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api-client";
+import { getMissingChainDefaultProfileId } from "@/lib/chain-profile-settings";
 import type { AgentProfile } from "@/lib/types";
 import {
   ArrowRight2Filled,
@@ -42,6 +43,12 @@ const PHASE_LABELS: Record<string, string> = {
 function getProfileSummary(profile?: AgentProfile) {
   if (!profile) return "workspace default";
   return `${profile.name}${profile.model ? ` / ${profile.model}` : ""}`;
+}
+
+function getProfileSummaryForChain(chain: DecisionCoreChain, profiles: AgentProfile[]) {
+  const missingProfileId = getMissingChainDefaultProfileId(chain.default_agent_profile, profiles);
+  if (missingProfileId) return `profile not found: ${missingProfileId}`;
+  return getProfileSummary(profiles.find((item) => item.id === chain.default_agent_profile));
 }
 
 export default function DecisionSettingsPage() {
@@ -178,7 +185,7 @@ export default function DecisionSettingsPage() {
               loading decision chains...
             </div>
           ) : chains.map((chain) => {
-            const profile = profiles.find((item) => item.id === chain.default_agent_profile);
+            const missingProfileId = getMissingChainDefaultProfileId(chain.default_agent_profile, profiles);
             const phase = PHASE_LABELS[chain.phase] || chain.phase;
             return (
               <div key={chain.id} className="rounded-md border border-border/40 bg-card p-4">
@@ -195,7 +202,7 @@ export default function DecisionSettingsPage() {
                     </div>
                     <p className="line-clamp-2 text-xs text-muted-foreground">{chain.description}</p>
                     <p className="mt-2 text-[10px] text-muted-foreground/70">
-                      effective profile: {getProfileSummary(profile)}
+                      effective profile: {getProfileSummaryForChain(chain, profiles)}
                     </p>
                   </div>
 
@@ -210,6 +217,11 @@ export default function DecisionSettingsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__workspace__">Use workspace default</SelectItem>
+                        {missingProfileId && (
+                          <SelectItem value={missingProfileId}>
+                            Profile not found - {missingProfileId}
+                          </SelectItem>
+                        )}
                         {profiles.map((item) => (
                           <SelectItem key={item.id} value={item.id}>
                             {item.name}{item.model ? ` / ${item.model}` : ""}

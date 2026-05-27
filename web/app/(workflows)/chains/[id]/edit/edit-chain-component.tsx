@@ -28,6 +28,7 @@ import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { useWorkspace } from "@/lib/workspace-context";
 import { getApiErrorMessage } from "@/lib/api-client";
 import { downloadChain, ChainExportFormat } from "@/lib/chain-export";
+import { getMissingChainDefaultProfileId, withChainDefaultAgentProfile } from "@/lib/chain-profile-settings";
 import { validateChain, validateAgent } from "@/lib/validators";
 import { ChainTriggersPanel } from "@/components/chain/chain-triggers-panel";
 import { AgentEventMapping } from "@/components/chain/agent-event-mapping";
@@ -185,8 +186,9 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
       const res = await fetchWithNamespace(`/api/chains/${encodeURIComponent(chainId)}`);
       if (!res.ok) throw new Error("Failed to load chain");
       const data = await res.json();
-      setChain(data.chain);
-      setOriginalChain(JSON.parse(JSON.stringify(data.chain)));
+      const loadedChain = { ...data.chain, id: data.chain?.id || chainId };
+      setChain(loadedChain);
+      setOriginalChain(JSON.parse(JSON.stringify(loadedChain)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -235,17 +237,19 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
     setError("");
     setValidationErrors([]);
     try {
-      const res = await fetchWithNamespace(`/api/chains/${encodeURIComponent(chain.id)}`, {
+      const chainToSave = { ...chain, id: chain.id || chainId };
+      const res = await fetchWithNamespace(`/api/chains/${encodeURIComponent(chainId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chain }),
+        body: JSON.stringify({ chain: chainToSave }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(getApiErrorMessage(data, "Failed to save chain"));
       }
       setSaved(true);
-      setOriginalChain(JSON.parse(JSON.stringify(chain)));
+      setChain(chainToSave);
+      setOriginalChain(JSON.parse(JSON.stringify(chainToSave)));
       setIsDirty(false);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -253,7 +257,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
     } finally {
       setSaving(false);
     }
-  }, [chain, fetchWithNamespace]);
+  }, [chain, chainId, fetchWithNamespace]);
 
   // keyboard shortcuts: Ctrl+S to save
   useEffect(() => {
@@ -599,6 +603,8 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
   }
 
   if (!chain) return null;
+
+  const missingDefaultProfileId = getMissingChainDefaultProfileId(chain.default_agent_profile, agentProfiles);
 
   return (
     <div className="h-full flex flex-col">
@@ -1398,13 +1404,18 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
                 <Label htmlFor="agentProfile">Agent Profile</Label>
                 <Select
                   value={chain.default_agent_profile || "__default__"}
-                  onValueChange={(v) => setChain({ ...chain, default_agent_profile: v === "__default__" ? undefined : v })}
+                  onValueChange={(v) => setChain(withChainDefaultAgentProfile(chain, v === "__default__" ? undefined : v))}
                 >
                   <SelectTrigger className="bg-card w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__default__">Use workspace default</SelectItem>
+                    {missingDefaultProfileId && (
+                      <SelectItem value={missingDefaultProfileId}>
+                        Profile not found - {missingDefaultProfileId}
+                      </SelectItem>
+                    )}
                     {agentProfiles.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name}{p.model ? ` — ${p.model}` : ""}

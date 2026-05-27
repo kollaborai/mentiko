@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (May 2026) ---
   {
+    version: "v0.3.28",
+    date: "May 27, 2026",
+    title: "Chain Profile Save Reliability",
+    description:
+      "Chain settings now save reliably even when older chain files are missing an embedded id. Stale agent profile references are shown clearly in profile selectors, and switching back to the workspace or namespace default removes the stale override.",
+    category: "fix",
+  },
+  {
     version: "v0.3.27",
     date: "May 26, 2026",
     title: "Chain-Backed Generation Workflows",

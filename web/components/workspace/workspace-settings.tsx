@@ -21,6 +21,7 @@ import {
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { useWorkspace } from "@/lib/workspace-context";
 import { getApiErrorMessage } from "@/lib/api-client";
+import { getMissingAgentProfileId } from "@/lib/chain-profile-settings";
 import type { Workspace, WorkspaceExecution } from "@/lib/workspace-storage";
 import { isTaskProviderType, TASK_PROVIDER_META } from "@/lib/task-provider/types";
 import type { TaskProviderType } from "@/lib/task-provider/types";
@@ -154,6 +155,7 @@ export function WorkspaceSettings({
   const [showRuntimeEnv, setShowRuntimeEnv] = useState(false);
 
   const taskProviderMeta = TASK_PROVIDER_META[taskProviderType as keyof typeof TASK_PROVIDER_META];
+  const missingAgentProfileId = getMissingAgentProfileId(agentProfile, agentProfiles);
 
   // Check if credentials need migration (plain-text, not {secret:} references)
   useEffect(() => {
@@ -597,6 +599,11 @@ export function WorkspaceSettings({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__default__" className="text-xs">Use namespace default</SelectItem>
+            {missingAgentProfileId && (
+              <SelectItem value={missingAgentProfileId} className="text-xs">
+                Profile not found - {missingAgentProfileId}
+              </SelectItem>
+            )}
             {agentProfiles.map((p) => (
               <SelectItem key={p.id} value={p.id} className="text-xs">
                 {p.name}{p.model ? ` — ${p.model}` : ""}{p.isDefault ? " (default)" : ""}

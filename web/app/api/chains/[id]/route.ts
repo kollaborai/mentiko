@@ -33,6 +33,7 @@ export const GET = withErrorHandling(async (
 
   const content = readFileSync(chainPath, "utf-8");
   const chain = JSON.parse(content);
+  chain.id = decodedId;
 
   // resolve $ref agents to full definitions
   if (Array.isArray(chain.agents)) {
@@ -73,6 +74,8 @@ export const PATCH = withErrorHandling(async (
     throw new ValidationError("Invalid chain", { errors: validation.errors });
   }
 
+  const chainToSave = { ...chain, id: decodedId };
+
   const chainDir = orgPath(namespaceId, orgId, "chains", decodedId);
   const chainPath = join(chainDir, "chain.json");
 
@@ -80,7 +83,7 @@ export const PATCH = withErrorHandling(async (
     throw new NotFound("Chain", decodedId);
   }
 
-  writeFileSync(chainPath, JSON.stringify(chain, null, 2), "utf-8");
+  writeFileSync(chainPath, JSON.stringify(chainToSave, null, 2), "utf-8");
 
   const forwarded = request.headers.get("x-forwarded-for");
   const ip = forwarded ? forwarded.split(",")[0].trim() : (request.headers.get("x-real-ip") || "unknown");
@@ -92,7 +95,7 @@ export const PATCH = withErrorHandling(async (
     options: { ip },
   }).catch(() => {});
 
-  return apiSuccess({ success: true, chain });
+  return apiSuccess({ success: true, chain: chainToSave });
 });
 
 export const DELETE = withErrorHandling(async (
