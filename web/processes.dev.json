@@ -22,6 +22,7 @@
         "jitter": true
       },
       "critical": true,
+      "daemonize": true,
       "order": 1
     },
     {
@@ -79,10 +80,10 @@
       "cwd": ".",
       "dependsOn": ["ws-terminal"],
       "readiness": {
-        "type": "http",
-        "url": "http://127.0.0.1:3000/api/health",
-        "timeout": 30000,
-        "interval": 1000
+        "type": "port",
+        "port": 3000,
+        "timeout": 90000,
+        "interval": 500
       },
       "restart": {
         "enabled": true,
