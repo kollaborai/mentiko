@@ -821,7 +821,7 @@ export function ChainAssignWorkflow({
             ))}
           </div>
         )}
-        <JobRunLink label="recommendation run" runId={analysisJob?.runId} />
+        <JobRunLink label="analysis run" runId={analysisJob?.runId} />
         {isPending && isStale && (
           <div className="text-[10px] text-amber-400/70">
             Job hasn&apos;t started — runner may be offline
@@ -1053,7 +1053,7 @@ export function ChainAssignWorkflow({
             Job hasn&apos;t started — runner may be offline
           </div>
         )}
-        <JobRunLink label="generation run" runId={generationJob?.runId} />
+        <JobRunLink label="chain generation run" runId={generationJob?.runId} />
         <div className="flex items-center gap-2">
           <button
             className="text-[10px] text-foreground/30 hover:text-foreground/50"

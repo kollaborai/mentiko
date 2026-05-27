@@ -49,11 +49,11 @@ function TaskChainProvenanceLinks({ task }: { task: Task }) {
   return (
     <div className="flex flex-col gap-1 py-1">
       <ProvenanceRunLink
-        label="recommendation run"
+        label="analysis run"
         runId={binding.recommendation_run_id}
       />
       <ProvenanceRunLink
-        label="generation run"
+        label="chain generation run"
         runId={binding.generated_chain_run_id}
       />
     </div>
