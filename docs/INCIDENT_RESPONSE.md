@@ -74,8 +74,8 @@ Create a ticket (Jira, GitHub issue, whatever you use) with
 ### Step 2 — Preserve evidence (BEFORE the fix)
 
 - **Audit log**: the local `audit.log` and remote object-storage copy
-  are the primary record. Do NOT truncate or rotate. See
-  `docs/AUDIT_SETUP.md` step 6 for retrieval.
+  are the primary record. Do NOT truncate or rotate. See the
+  Audit docs page (`/docs/audit`) for retrieval.
 - **ship-failures.log**: if the incident involves audit shipping, copy
   the current log aside before restart:
   ```bash
@@ -101,14 +101,14 @@ post-mortem is written.
 Goal: stop the bleeding without destroying diagnostic state.
 
 - **Suspected cross-tenant leak**: rotate the affected tenant's keys
-  (see `docs/AUDIT_SETUP.md` step 2 for audit credentials). Consider
+  (see `/docs/audit` for audit credential setup). Consider
   suspending the tenant if exposure is active.
 - **Active exploitation of a known auth gap**: revert the faulty route
   via a targeted patch or, if impact is platform-wide, roll back the
   tenant image (see `docs/ROLLBACK_ARCH3.md`).
 - **Infrastructure incident (bucket down, region out)**: no code fix
   available. Document the start time, switch `AUDIT_REMOTE_URL` off
-  (see `docs/AUDIT_SETUP.md` "disabling remote shipping") if that stops
+  (see `/docs/audit`, remote shipping is disabled by unsetting AUDIT_REMOTE_URL) if that stops
   the bleed, monitor your provider's status page.
 - **Deploy-caused outage**: use the auto-rollback that's already in the
   rolling-deploy code if it didn't fire on its own; otherwise manual
@@ -254,7 +254,7 @@ Sources — pointers, not duplicates:
 
 | Source | Retention | How |
 |--------|-----------|-----|
-| audit-log (local + remote) | 365 days minimum (object-lock) | `docs/AUDIT_SETUP.md` step 4a |
+| audit-log (local + remote) | 365 days minimum (object-lock) | `/docs/audit` (object-lock) |
 | ship-failures.log | until truncated by operator | local, copy into incident folder |
 | Container logs (tenant) | journalctl retention (systemd) / whatever your runtime keeps | `docker logs` / `journalctl` |
 | Container logs (control plane) | same | same |
@@ -296,8 +296,5 @@ request makes them a gap. Not before.
   plane, tenants, database.
 - `docs/ROLLBACK_ARCH3.md` — ARCH-3-specific rollback with cross-tenant
   leak canary.
-- `docs/AUDIT_SETUP.md` — audit log remote shipping, object-lock,
-  ship-failures alerting.
+- `/docs/audit` — audit log remote shipping, object-lock, ship-failures alerting.
 - `docs/BACKUP_SETUP.md` — postgres + sqlite backup and restore.
-- `docs/ENTERPRISE_READINESS.md` — enterprise readiness tracker;
-  session log for incident history.

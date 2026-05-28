@@ -179,6 +179,9 @@ const LEGACY_SESSION_ID_KEY = "mentiko-kollabor-session-id";
 const LEGACY_SESSION_REQUIREMENTS_KEY = "mentiko-kollabor-session-requirements";
 const SESSION_ID_KEY = "mentiko-kollabor-session-id-v2";
 const SESSION_REQUIREMENTS_KEY = "mentiko-kollabor-session-requirements-v2";
+const DEFAULT_STORAGE_SCOPE = "anonymous";
+
+let kollaborEngineStorageScope = DEFAULT_STORAGE_SCOPE;
 
 let cachedToken: { token: string; baseUrl: string } | null = null;
 let inflightTokenFetch: Promise<{ token: string; baseUrl: string }> | null =
@@ -189,6 +192,22 @@ let inflightMentikoSetup: Promise<MentikoAgentInstallResult> | null = null;
 export function clearTokenCache(): void {
   cachedToken = null;
   inflightTokenFetch = null;
+}
+
+function normalizeStorageScope(scope?: string | null): string {
+  const value = typeof scope === "string" ? scope.trim() : "";
+  return value || DEFAULT_STORAGE_SCOPE;
+}
+
+function scopedStorageKey(baseKey: string): string {
+  return `${baseKey}:${kollaborEngineStorageScope}`;
+}
+
+export function setKollaborEngineStorageScope(scope?: string | null): void {
+  const nextScope = normalizeStorageScope(scope);
+  if (nextScope === kollaborEngineStorageScope) return;
+  kollaborEngineStorageScope = nextScope;
+  clearTokenCache();
 }
 
 // ----- Internal helpers -----
@@ -295,6 +314,10 @@ function sessionMatchesRequest(info: SessionInfo, opts: CreateSessionRequest): b
 function clearStoredSession(): void {
   if (typeof window === "undefined") return;
   try {
+    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY));
+    window.localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_REQUIREMENTS_KEY));
+    window.localStorage.removeItem(scopedStorageKey(SESSION_ID_KEY));
+    window.localStorage.removeItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
     window.localStorage.removeItem(LEGACY_SESSION_ID_KEY);
     window.localStorage.removeItem(LEGACY_SESSION_REQUIREMENTS_KEY);
     window.localStorage.removeItem(SESSION_ID_KEY);
@@ -302,6 +325,10 @@ function clearStoredSession(): void {
   } catch {
     // ignore
   }
+}
+
+export function clearKollaborEngineStoredSession(): void {
+  clearStoredSession();
 }
 
 // ----- Public API -----
@@ -471,8 +498,8 @@ export async function getOrCreateSession(
   const requiredSignature = requiredSessionSignature(opts);
   if (typeof window !== "undefined") {
     try {
-      existing = window.localStorage.getItem(SESSION_ID_KEY);
-      const existingSignature = window.localStorage.getItem(SESSION_REQUIREMENTS_KEY);
+      existing = window.localStorage.getItem(scopedStorageKey(SESSION_ID_KEY));
+      const existingSignature = window.localStorage.getItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
       if (existing && requiredSignature && existingSignature !== requiredSignature) {
         clearStoredSession();
         existing = null;
@@ -510,11 +537,11 @@ export async function getOrCreateSession(
   const created = await createSession(opts, signal, false);
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(SESSION_ID_KEY, created.session_id);
+      window.localStorage.setItem(scopedStorageKey(SESSION_ID_KEY), created.session_id);
       if (requiredSignature) {
-        window.localStorage.setItem(SESSION_REQUIREMENTS_KEY, requiredSignature);
+        window.localStorage.setItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY), requiredSignature);
       } else {
-        window.localStorage.removeItem(SESSION_REQUIREMENTS_KEY);
+        window.localStorage.removeItem(scopedStorageKey(SESSION_REQUIREMENTS_KEY));
       }
     } catch {
       // ignore

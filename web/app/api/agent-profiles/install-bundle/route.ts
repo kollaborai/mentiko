@@ -40,13 +40,20 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const existingProfiles = listProfiles(namespaceId, orgId);
   const existingIds = new Set(existingProfiles.map((p) => p.id));
   const hasDefault = existingProfiles.some((p) => p.isDefault);
+  let hasAdvisorDefault = existingProfiles.some((p) => p.isAdvisorDefault);
 
   for (const bundleProfile of bundle.profiles) {
     if (existingIds.has(bundleProfile.id)) {
       skipped.push(bundleProfile.id);
     } else {
-      const profileData = bundleProfileToAgentProfile(bundleProfile, bundle);
+      const isAdvisorDefault =
+        !hasAdvisorDefault && bundleProfile.preferredAdvisorDefault === true;
+      const profileData = {
+        ...bundleProfileToAgentProfile(bundleProfile, bundle),
+        isAdvisorDefault,
+      };
       createProfile(namespaceId, orgId, profileData);
+      if (isAdvisorDefault) hasAdvisorDefault = true;
       installed.push(bundleProfile.id);
     }
   }

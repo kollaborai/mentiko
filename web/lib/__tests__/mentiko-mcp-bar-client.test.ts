@@ -1,4 +1,9 @@
-import { MCPBarClient, replyToTool, syncSessionToken } from "../mentiko-mcp-bar-client";
+import {
+  MCPBarClient,
+  replyToTool,
+  setMcpBarStorageScope,
+  syncSessionToken,
+} from "../mentiko-mcp-bar-client";
 
 class MockEventSource {
   static readonly CONNECTING = 0;
@@ -28,11 +33,12 @@ describe("replyToTool", () => {
     MockEventSource.instances = [];
     (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource = MockEventSource;
     (globalThis as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({ ok: true });
+    setMcpBarStorageScope("user-a");
   });
 
   test("posts reply with bearer token and local engine session fallback", async () => {
-    sessionStorage.setItem("mentiko-session-token", "jwt-token");
-    localStorage.setItem("mentiko-kollabor-session-id-v2", "session-a");
+    sessionStorage.setItem("mentiko-session-token:user-a", "jwt-token");
+    localStorage.setItem("mentiko-kollabor-session-id-v2:user-a", "session-a");
     const fetchMock = global.fetch as jest.Mock;
 
     await replyToTool("tool-1", { choice: "approve" });
@@ -55,8 +61,8 @@ describe("replyToTool", () => {
     );
   });
 
-  test("uses legacy local session id when the v2 key is absent", async () => {
-    localStorage.setItem("mentiko-kollabor-session-id", "legacy-session");
+  test("uses scoped legacy local session id when the v2 key is absent", async () => {
+    localStorage.setItem("mentiko-kollabor-session-id:user-a", "legacy-session");
     const fetchMock = global.fetch as jest.Mock;
 
     await replyToTool("tool-2", "ok");
@@ -70,16 +76,16 @@ describe("replyToTool", () => {
   });
 
   test("syncSessionToken clears stale tokens when the session has no fresh token", () => {
-    sessionStorage.setItem("mentiko-session-token", "stale-token");
+    sessionStorage.setItem("mentiko-session-token:user-a", "stale-token");
 
     syncSessionToken(undefined);
 
-    expect(sessionStorage.getItem("mentiko-session-token")).toBeNull();
+    expect(sessionStorage.getItem("mentiko-session-token:user-a")).toBeNull();
   });
 
   test("clears stale tokens when stream refresh returns no replacement token", async () => {
-    sessionStorage.setItem("mentiko-session-token", "stale-token");
-    localStorage.setItem("mentiko-kollabor-session-id-v2", "session-a");
+    sessionStorage.setItem("mentiko-session-token:user-a", "stale-token");
+    localStorage.setItem("mentiko-kollabor-session-id-v2:user-a", "session-a");
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({}),
@@ -90,6 +96,6 @@ describe("replyToTool", () => {
     MockEventSource.instances[0].onerror?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(sessionStorage.getItem("mentiko-session-token")).toBeNull();
+    expect(sessionStorage.getItem("mentiko-session-token:user-a")).toBeNull();
   });
 });

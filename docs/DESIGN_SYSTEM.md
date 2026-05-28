@@ -794,6 +794,5 @@ Rules:
 - Gaia UI docs: https://ui.heygaia.io/docs
 - Gaia UI status: https://ui.heygaia.io/docs/status-beta
 - Gaia UI source: local checkout or public registry docs
-- Page index: `docs/PAGE_INDEX.md`
 - Icon system: `/docs/icon-system` (interactive mapping of all page icons + section colors)
 - PageBanner component: `web/components/ui/page-banner.tsx`

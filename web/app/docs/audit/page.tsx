@@ -81,6 +81,43 @@ export default function AuditDocPage() {
       </section>
 
       <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Setting Up Remote Shipping</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Any S3-compatible backend works (AWS S3, Cloudflare R2, Backblaze B2,
+          Linode Object Storage, MinIO). Shipping runs as a background process
+          on each audit write and is a silent no-op while <code className="text-foreground/70">AUDIT_REMOTE_URL</code> is
+          unset, so you can deploy first and enable it later.
+        </p>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          1. Create a dedicated audit bucket and generate access keys scoped to
+          it (least privilege). For compliance retention, enable object-lock at
+          bucket-creation time — it cannot be turned on for an existing bucket.
+        </p>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          2. Set the shipping variables on each tenant container:
+        </p>
+        <CodeBlock>{`AUDIT_S3_ENDPOINT=https://<region>.<provider>.com
+AUDIT_REMOTE_URL=s3://<your-audit-bucket>/tenants/{NAMESPACE_ID}/
+AUDIT_REMOTE_ACCESS_KEY=<access-key>
+AUDIT_REMOTE_SECRET_KEY=<secret-key>`}</CodeBlock>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          <code className="text-foreground/70">{`{NAMESPACE_ID}`}</code> is substituted at runtime.
+          AWS S3 can leave the endpoint blank (the SDK resolves it per region).
+        </p>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          3. Verify entries land remotely once a container is running:
+        </p>
+        <CodeBlock>{`rclone ls :s3:<your-audit-bucket>/tenants/default/
+# -> 2026/04/22/audit-1713789045000-abc12345.json`}</CodeBlock>
+        <p className="text-xs text-foreground/60 leading-relaxed">
+          Failed uploads never block local writes — they are recorded in
+          <code className="text-foreground/70"> ship-failures.log</code> (see below) with retry detail.
+          The <code className="text-foreground/70">scripts/monitor-audit-ship-failures.sh</code> helper
+          turns that log into a cron-delivered alert.
+        </p>
+      </section>
+
+      <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Failure Logs and Recovery</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           Failed uploads are recorded without blocking local writes:
@@ -99,13 +136,10 @@ export default function AuditDocPage() {
           currently intended for <code className="text-foreground/70">owner</code> and <code className="text-foreground/70">admin</code> roles.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60">
-          <div>For full setup instructions, see <code className="text-foreground/70">docs/AUDIT_SETUP.md</code>.</div>
-          <div className="mt-2">
-            <Link href="/docs/environment" className="inline-flex items-center gap-1 text-foreground/70 hover:text-foreground transition-colors">
-              environment and shipping variables
-              <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
+          <Link href="/docs/environment" className="inline-flex items-center gap-1 text-foreground/70 hover:text-foreground transition-colors">
+            environment and shipping variables
+            <ArrowRight className="h-3 w-3" />
+          </Link>
         </div>
       </section>
       </div>

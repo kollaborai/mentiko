@@ -3,8 +3,7 @@
  *
  * End-to-end: call execAuditLog / execAuditQuery, confirm the entry lands
  * in the audit.log file. No mocks. This test would have caught the
- * /bin/sh-vs-hyphen-in-function-name bug discovered during SEC-1
- * (see docs/ENTERPRISE_READINESS.md phase 3).
+ * /bin/sh-vs-hyphen-in-function-name bug in the audit exec pipeline.
  *
  * The bar is "if this passes, the production audit log pipeline works
  * from a web-origin Node.js context." Silent failure in .catch(() => {})

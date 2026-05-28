@@ -13,7 +13,11 @@ import {
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
-import { CLI_TOOLS, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import {
+  PROVIDER_CREDENTIALS,
+  getAgentConfigOptionsForTool,
+  getDefaultAgentConfigIdForTool,
+} from "@/lib/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface GeminiAuthProps {
@@ -31,13 +35,13 @@ type AuthOption = "login" | "api-key" | "terminal";
 
 type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
-const geminiTool = CLI_TOOLS.find((t) => t.id === "gemini")!;
 const geminiCreds = PROVIDER_CREDENTIALS.gemini;
+const geminiProfileOptions = getAgentConfigOptionsForTool("gemini");
 
 export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: GeminiAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
-  const [model, setModel] = useState(geminiTool.defaultModel);
+  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("gemini"));
   const [profiles, setProfiles] = useState<{id: string, name: string}[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -66,10 +70,14 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         const all = (data.profiles ?? []) as {id: string, name: string, cli?: string}[];
         const filtered = all.filter(p => p.cli === "gemini");
         setProfiles(filtered);
-        if (filtered.length > 0 && !model) setModel(filtered[0].id);
+        const options = filtered.length > 0 ? filtered : geminiProfileOptions;
+        setModel((current) => (
+          options.some((option) => option.id === current)
+            ? current
+            : options[0]?.id ?? ""
+        ));
       })
       .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startLogin = async () => {
@@ -155,6 +163,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
   };
 
   const showFooterSave = authOption === "login";
+  const profileOptions = profiles.length > 0 ? profiles : geminiProfileOptions;
 
   const options: { key: AuthOption; icon: typeof Link2Filled; label: string; desc: string }[] = [
     {
@@ -328,17 +337,11 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
           value={model}
           onChange={(e) => setModel(e.target.value)}
         >
-          {profiles.length > 0
-            ? profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))
-            : geminiTool.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+          {profileOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
         </select>
       </div>
 

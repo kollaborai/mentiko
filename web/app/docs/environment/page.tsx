@@ -88,8 +88,11 @@ MARKETPLACE_SYNC_INTERVAL=86400000`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Audit Docs and Runbooks</h2>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          For shipping setup and retention hardening, follow
-          <span className="text-foreground"> docs/AUDIT_SETUP.md</span>.
+          For shipping setup and retention hardening, see the
+          <Link href="/docs/audit" className="inline-flex items-center gap-1 ml-1 text-foreground/70 hover:text-foreground transition-colors">
+            audit guide
+            <ArrowRight className="h-3 w-3" />
+          </Link>.
           Pair that with <Link href="/docs/deployment" className="inline-flex items-center gap-1 ml-1 text-foreground/70 hover:text-foreground transition-colors">
             deployment readiness
             <ArrowRight className="h-3 w-3" />

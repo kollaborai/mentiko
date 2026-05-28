@@ -108,9 +108,9 @@ cat <<'EOF'
 Next steps:
   1. Check tenant outbound network: rclone ls :s3:$BUCKET/
   2. Verify AUDIT_REMOTE_* credentials still valid.
-  3. Check linode object-storage dashboard for bucket health + quota.
+  3. Check your object-storage provider's dashboard for bucket health + quota.
   4. If rclone works manually but ship fails, pull recent tenant logs:
      docker logs <container> 2>&1 | grep "warn: audit ship"
-  5. See docs/AUDIT_SETUP.md section "ship-failures.log monitoring"
+  5. See the Audit docs page (/docs/audit), "Setting Up Remote Shipping",
      for the full runbook.
 EOF

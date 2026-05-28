@@ -73,4 +73,33 @@ describe("kollabor bar font settings", () => {
       offset: 50,
     });
   });
+
+  it("keeps transcripts scoped per signed-in user and ignores legacy origin-wide transcripts", async () => {
+    localStorage.setItem("mentiko-kollabor-transcript", JSON.stringify([
+      { id: "old", role: "assistant", content: "old install", timestamp: 1 },
+    ]));
+    localStorage.setItem("mentiko-kollabor-transcript:user-a", JSON.stringify([
+      { id: "a", role: "assistant", content: "user a", timestamp: 2 },
+    ]));
+
+    const { setKollaborBarStorageScope, useKollaborBarStore } = await import("../kollabor-bar-store");
+
+    expect(useKollaborBarStore.getState().messages).toEqual([]);
+
+    setKollaborBarStorageScope("user-a");
+    expect(useKollaborBarStore.getState().messages.map((m) => m.content)).toEqual(["user a"]);
+
+    useKollaborBarStore.getState().pushMessage({
+      id: "u",
+      role: "user",
+      content: "new user a message",
+      timestamp: 3,
+    });
+
+    expect(localStorage.getItem("mentiko-kollabor-transcript")).toContain("old install");
+    expect(localStorage.getItem("mentiko-kollabor-transcript:user-a")).toContain("new user a message");
+
+    setKollaborBarStorageScope("user-b");
+    expect(useKollaborBarStore.getState().messages).toEqual([]);
+  });
 });

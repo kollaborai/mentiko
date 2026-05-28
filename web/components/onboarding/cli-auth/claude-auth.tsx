@@ -13,7 +13,11 @@ import {
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
-import { CLI_TOOLS, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import {
+  PROVIDER_CREDENTIALS,
+  getAgentConfigOptionsForTool,
+  getDefaultAgentConfigIdForTool,
+} from "@/lib/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { WebViewport } from "@/components/ui/web-viewport";
 
@@ -32,13 +36,13 @@ type AuthOption = "login" | "api-key" | "gateway" | "terminal";
 
 type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
-const claudeTool = CLI_TOOLS.find((t) => t.id === "claude")!;
 const claudeCreds = PROVIDER_CREDENTIALS.claude;
+const claudeProfileOptions = getAgentConfigOptionsForTool("claude");
 
 export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: ClaudeAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
-  const [model, setModel] = useState(claudeTool.defaultModel);
+  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("claude"));
   const [profiles, setProfiles] = useState<{id: string, name: string}[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -72,10 +76,14 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         const all = (data.profiles ?? []) as {id: string, name: string, cli?: string}[];
         const filtered = all.filter(p => p.cli === "claude");
         setProfiles(filtered);
-        if (filtered.length > 0 && !model) setModel(filtered[0].id);
+        const options = filtered.length > 0 ? filtered : claudeProfileOptions;
+        setModel((current) => (
+          options.some((option) => option.id === current)
+            ? current
+            : options[0]?.id ?? ""
+        ));
       })
       .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startLogin = async () => {
@@ -204,6 +212,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
   };
 
   const showFooterSave = authOption === "login" || authOption === "gateway";
+  const profileOptions = profiles.length > 0 ? profiles : claudeProfileOptions;
 
   const options: { key: AuthOption; icon: typeof KeyFilled; label: string; desc: string }[] = [
     {
@@ -416,17 +425,11 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
           value={model}
           onChange={(e) => setModel(e.target.value)}
         >
-          {profiles.length > 0
-            ? profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))
-            : claudeTool.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+          {profileOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
         </select>
       </div>
 

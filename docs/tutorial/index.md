@@ -169,7 +169,7 @@ after completing tutorials:
 resources
 ---------------------------------------------------------------
 documentation:
-  - api reference: docs/api-reference.md
+  - api reference: docs/API_REFERENCE.md
   - architecture: docs/architecture.md
   - troubleshooting: docs/troubleshooting.md
 

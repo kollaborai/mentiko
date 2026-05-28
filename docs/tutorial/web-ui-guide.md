@@ -361,7 +361,7 @@ curl -X POST http://localhost:3000/api/agents/session-name/message \
   -d '{"message": "please focus on x"}'
 ```
 
-see docs/api-reference.md for complete api docs.
+see docs/API_REFERENCE.md for complete api docs.
 
 troubleshooting
 ---------------------------------------------------------------
@@ -443,5 +443,5 @@ now that you know the ui:
   → set up a scheduled chain
   → configure webhook notifications
 
-for api reference: docs/api-reference.md
+for api reference: docs/API_REFERENCE.md
 for architecture: docs/architecture.md

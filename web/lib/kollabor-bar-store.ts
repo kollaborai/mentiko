@@ -127,6 +127,8 @@ const LS_DOCK_KEY = "mentiko-kollabor-dock";
 const LS_SCALE_KEY = "mentiko-kollabor-scale";
 const LS_FONT_SCALE_KEY = "mentiko-kollabor-font-scale";
 const LS_SESSION_KEY = "mentiko-kollabor-session-id";
+const DEFAULT_STORAGE_SCOPE = "anonymous";
+let kollaborBarStorageScope = DEFAULT_STORAGE_SCOPE;
 
 export const SCALE_MIN = 0.6;
 export const SCALE_MAX = 1.6;
@@ -137,6 +139,15 @@ export const KOLLABOR_BAR_DOCK_OFFSET_MAX = 90;
 export const FONT_SCALE_DEFAULT = 1;
 export const FONT_SCALE_MIN = 0.8;
 export const FONT_SCALE_MAX = 1.35;
+
+function normalizeStorageScope(scope?: string | null): string {
+  const value = typeof scope === "string" ? scope.trim() : "";
+  return value || DEFAULT_STORAGE_SCOPE;
+}
+
+function scopedStorageKey(baseKey: string): string {
+  return `${baseKey}:${kollaborBarStorageScope}`;
+}
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -270,7 +281,7 @@ function saveOffset(x: number, y: number) {
 function loadTranscript(): KollaborMessage[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(scopedStorageKey(LS_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -304,7 +315,7 @@ function loadTranscript(): KollaborMessage[] {
 function saveTranscript(messages: KollaborMessage[]) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(messages.slice(-50)));
+    localStorage.setItem(scopedStorageKey(LS_KEY), JSON.stringify(messages.slice(-50)));
   } catch {
     // quota or disabled; ignore
   }
@@ -313,7 +324,7 @@ function saveTranscript(messages: KollaborMessage[]) {
 function loadSessionId(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(LS_SESSION_KEY);
+    const raw = localStorage.getItem(scopedStorageKey(LS_SESSION_KEY));
     return raw && raw.length > 0 ? raw : null;
   } catch {
     return null;
@@ -324,9 +335,9 @@ function saveSessionId(v: string | null) {
   if (typeof window === "undefined") return;
   try {
     if (v === null || v === "") {
-      localStorage.removeItem(LS_SESSION_KEY);
+      localStorage.removeItem(scopedStorageKey(LS_SESSION_KEY));
     } else {
-      localStorage.setItem(LS_SESSION_KEY, v);
+      localStorage.setItem(scopedStorageKey(LS_SESSION_KEY), v);
     }
   } catch {
     // ignore
@@ -338,6 +349,17 @@ function newMessageId(prefix: string): string {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function setKollaborBarStorageScope(scope?: string | null): void {
+  const nextScope = normalizeStorageScope(scope);
+  if (nextScope === kollaborBarStorageScope) return;
+  kollaborBarStorageScope = nextScope;
+  useKollaborBarStore.setState({
+    messages: loadTranscript(),
+    sessionId: loadSessionId(),
+    drafting: null,
+  });
 }
 
 export const useKollaborBarStore = create<KollaborBarState>((set, get) => {

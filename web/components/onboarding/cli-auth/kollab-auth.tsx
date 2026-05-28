@@ -11,7 +11,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { SecretForm } from "@/components/secrets/secret-form";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { CLI_TOOLS, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import {
+  PROVIDER_CREDENTIALS,
+  getAgentConfigOptionsForTool,
+  getDefaultAgentConfigIdForTool,
+} from "@/lib/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface KollabAuthProps {
@@ -27,8 +31,8 @@ interface KollabAuthProps {
 
 type AuthMethod = "terminal" | "api-key";
 
-const kollabTool = CLI_TOOLS.find((t) => t.id === "kollab")!;
 const kollabCreds = PROVIDER_CREDENTIALS.kollab;
+const kollabProfileOptions = getAgentConfigOptionsForTool("kollab");
 
 export function KollabAuth({
   onSave,
@@ -38,7 +42,7 @@ export function KollabAuth({
 }: KollabAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("terminal");
-  const [model, setModel] = useState(kollabTool.defaultModel);
+  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("kollab"));
   const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -55,10 +59,14 @@ export function KollabAuth({
         }[];
         const filtered = all.filter((p) => p.cli === "kollab");
         setProfiles(filtered);
-        if (filtered.length > 0 && !model) setModel(filtered[0].id);
+        const options = filtered.length > 0 ? filtered : kollabProfileOptions;
+        setModel((current) => (
+          options.some((option) => option.id === current)
+            ? current
+            : options[0]?.id ?? ""
+        ));
       })
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleApiKeySave = async (data: {
@@ -113,6 +121,7 @@ export function KollabAuth({
       desc: `set ${kollabCreds.envKey} as a secret`,
     },
   ];
+  const profileOptions = profiles.length > 0 ? profiles : kollabProfileOptions;
 
   return (
     <motion.div
@@ -197,17 +206,11 @@ export function KollabAuth({
           value={model}
           onChange={(e) => setModel(e.target.value)}
         >
-          {profiles.length > 0
-            ? profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))
-            : kollabTool.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+          {profileOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
         </select>
       </div>
 

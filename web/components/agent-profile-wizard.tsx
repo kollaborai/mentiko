@@ -186,9 +186,9 @@ export function AgentProfileWizard({ open, onOpenChange, onSuccess }: AgentProfi
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                 >
-                  {selectedTool?.models.map((m) => (
+                  {(selectedTool?.models.length ? selectedTool.models : [""]).map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {m || "Use CLI default"}
                     </option>
                   ))}
                 </select>

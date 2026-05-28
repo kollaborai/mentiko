@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   useKollaborBarStore,
+  setKollaborBarStorageScope,
   KollaborMessage,
   KollaborAskRequest,
   DraftTool,
@@ -23,6 +24,8 @@ import {
   sendMessage as engineSendMessage,
   respondToPermission as engineRespondToPermission,
   ping as enginePing,
+  setKollaborEngineStorageScope,
+  clearKollaborEngineStoredSession,
 } from "@/lib/kollabor-engine-client";
 import { KollaborPermissionPrompt } from "@/components/kollabor-permission-prompt";
 import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
@@ -30,6 +33,7 @@ import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   MCPBarClient,
   getStoredSessionToken,
+  setMcpBarStorageScope,
   syncSessionToken,
 } from "@/lib/mentiko-mcp-bar-client";
 import type { UIEffect } from "@/lib/mentiko-mcp-inbox";
@@ -46,9 +50,34 @@ import {
   getFloatingPanelRouteTitle,
   isFloatingPanelRoute,
 } from "@/lib/floating-app-panel-routing";
+import { useUser } from "@/lib/user-context";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+const ANONYMOUS_STORAGE_SCOPE_KEY = "mentiko-anonymous-storage-scope-v1";
+
+function getAnonymousStorageScope(): string {
+  if (typeof window === "undefined") return "anonymous";
+  try {
+    let scope = window.sessionStorage.getItem(ANONYMOUS_STORAGE_SCOPE_KEY);
+    if (!scope) {
+      scope = typeof window.crypto?.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      window.sessionStorage.setItem(ANONYMOUS_STORAGE_SCOPE_KEY, scope);
+    }
+    return `anonymous:${scope}`;
+  } catch {
+    return "anonymous";
+  }
+}
+
+function applyFloatingBarStorageScope(scope: string): void {
+  setKollaborBarStorageScope(scope);
+  setKollaborEngineStorageScope(scope);
+  setMcpBarStorageScope(scope);
 }
 
 // suppress user-facing "engine offline" when the session store says we're
@@ -192,6 +221,7 @@ export function FloatingKollaborBar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setWorkspaceId } = useWorkspace();
+  const { user, loading: userLoading } = useUser();
   const {
     expanded,
     inputValue,
@@ -274,12 +304,57 @@ export function FloatingKollaborBar() {
   const gatewayLoaded = gatewayState !== null;
   const gatewayMode = gatewayState?.gatewayEnabled === true;
   const codexFlowActive = gatewayLoaded && !gatewayMode && SHOULD_OFFER_CODEX_INLINE_AUTH;
-  const CODEX_FALLBACK_MODEL = "gpt-4o";
+  const CODEX_FALLBACK_MODEL = "gpt-5.3-codex";
   // delay reading persisted offset/scale until after mount so SSR output matches first client render
   const [mounted, setMounted] = useState(false);
+  const [storageScopeReady, setStorageScopeReady] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (userLoading) {
+      setStorageScopeReady(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setStorageScopeReady(false);
+
+    if (!user?.id) {
+      applyFloatingBarStorageScope(getAnonymousStorageScope());
+      setStorageScopeReady(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      let installScope: string | null = null;
+      try {
+        const res = await fetch("/api/system/storage-scope", { cache: "no-store" });
+        if (res.ok) {
+          const data = unwrapApiData<{ storageScope?: unknown }>(await res.json());
+          if (typeof data.storageScope === "string" && data.storageScope.trim()) {
+            installScope = data.storageScope.trim();
+          }
+        }
+      } catch {
+        // Keep the bar usable even if the scope endpoint is temporarily down.
+      }
+      if (cancelled) return;
+      const safeInstallScope =
+        installScope ?? getAnonymousStorageScope().replace(/^anonymous:/, "install:unavailable:");
+      applyFloatingBarStorageScope(`${safeInstallScope}:user:${user.id}`);
+      setStorageScopeReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, userLoading]);
 
   // lane B3: ask the server if MENTIKO_AI_GATEWAY_ENABLED is set. boot() waits
   // on this so we don't flash the codex prompt before knowing the mode.
@@ -750,6 +825,11 @@ export function FloatingKollaborBar() {
       setError(null);
       setEngineError(null);
       try {
+        if (userLoading || !storageScopeReady) {
+          setConnecting(false);
+          setConnected(false);
+          return;
+        }
         // lane B3: hold until the ai-gateway probe resolves so we don't
         // either flash the codex prompt or briefly run as "no profile".
         if (!gatewayLoaded) {
@@ -892,6 +972,8 @@ export function FloatingKollaborBar() {
     setError,
     setExpanded,
     setSessionId,
+    storageScopeReady,
+    userLoading,
   ]);
 
   useEffect(() => {
@@ -1017,14 +1099,7 @@ export function FloatingKollaborBar() {
             const msg = "message" in ev ? ev.message : "engine error";
             // Session expired or engine restarted: clear stale IDs and reconnect.
             if (isRecoverableKollaborSessionError(msg)) {
-              if (typeof window !== "undefined") {
-                try {
-                  window.localStorage.removeItem("mentiko-kollabor-session-id");
-                  window.localStorage.removeItem("mentiko-kollabor-session-requirements");
-                  window.localStorage.removeItem("mentiko-kollabor-session-id-v2");
-                  window.localStorage.removeItem("mentiko-kollabor-session-requirements-v2");
-                } catch {}
-              }
+              clearKollaborEngineStoredSession();
               setSessionId(null);
               setConnected(false);
               setConnecting(false);
@@ -1175,6 +1250,7 @@ export function FloatingKollaborBar() {
         left: "50%",
         transform: "translateX(-50%)",
       };
+  if (!storageScopeReady) return null;
   return (
     <>
       {dragging && dragPosition && dragDock && isSideDock(dragDock) && (

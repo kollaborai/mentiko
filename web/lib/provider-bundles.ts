@@ -65,6 +65,7 @@ export interface BundleProfile {
   extra_args?: string[];
   pre_exec?: string;
   description?: string;
+  preferredAdvisorDefault?: boolean;
 }
 
 export interface ProviderBundle {
@@ -192,6 +193,7 @@ export const PROVIDER_BUNDLES: ProviderBundle[] = [
         cli: "kollab",
         pipe_flag: "-p",
         permission_flag: "--permissions trust",
+        preferredAdvisorDefault: true,
         description: "Kollab / Mentiko",
       },
     ],
@@ -262,6 +264,7 @@ export function bundleProfileToAgentProfile(
     name: bundleProfile.name,
     description: bundleProfile.description,
     isDefault: false,
+    isAdvisorDefault: false,
     cli: bundleProfile.cli,
     model: bundleProfile.model,
     pipe_flag: bundleProfile.pipe_flag,

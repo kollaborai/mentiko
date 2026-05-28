@@ -17,20 +17,36 @@ export type EffectHandler = (effect: UIEffect) => void;
 const SESSION_TOKEN_KEY = "mentiko-session-token";
 const LEGACY_SESSION_ID_KEY = "mentiko-kollabor-session-id";
 const SESSION_ID_KEY = "mentiko-kollabor-session-id-v2";
+const DEFAULT_STORAGE_SCOPE = "anonymous";
+
+let mcpBarStorageScope = DEFAULT_STORAGE_SCOPE;
+
+function normalizeStorageScope(scope?: string | null): string {
+  const value = typeof scope === "string" ? scope.trim() : "";
+  return value || DEFAULT_STORAGE_SCOPE;
+}
+
+function scopedStorageKey(baseKey: string): string {
+  return `${baseKey}:${mcpBarStorageScope}`;
+}
+
+export function setMcpBarStorageScope(scope?: string | null): void {
+  mcpBarStorageScope = normalizeStorageScope(scope);
+}
 
 export function getStoredSessionToken(): string | null {
   if (typeof sessionStorage === "undefined") return null;
-  try { return sessionStorage.getItem(SESSION_TOKEN_KEY); } catch { return null; }
+  try { return sessionStorage.getItem(scopedStorageKey(SESSION_TOKEN_KEY)); } catch { return null; }
 }
 
 export function storeSessionToken(token: string): void {
   if (typeof sessionStorage === "undefined") return;
-  try { sessionStorage.setItem(SESSION_TOKEN_KEY, token); } catch {}
+  try { sessionStorage.setItem(scopedStorageKey(SESSION_TOKEN_KEY), token); } catch {}
 }
 
 export function clearSessionToken(): void {
   if (typeof sessionStorage === "undefined") return;
-  try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch {}
+  try { sessionStorage.removeItem(scopedStorageKey(SESSION_TOKEN_KEY)); } catch {}
 }
 
 export function syncSessionToken(token: string | null | undefined): void {
@@ -45,8 +61,8 @@ export function getStoredSessionId(): string | null {
   if (typeof localStorage === "undefined") return null;
   try {
     return (
-      localStorage.getItem(SESSION_ID_KEY) ||
-      localStorage.getItem(LEGACY_SESSION_ID_KEY)
+      localStorage.getItem(scopedStorageKey(SESSION_ID_KEY)) ||
+      localStorage.getItem(scopedStorageKey(LEGACY_SESSION_ID_KEY))
     );
   } catch {
     return null;
@@ -101,8 +117,8 @@ export class MCPBarClient {
       const sessionId = (() => {
         if (typeof localStorage === "undefined") return null;
         try {
-          localStorage.removeItem(LEGACY_SESSION_ID_KEY);
-          return localStorage.getItem(SESSION_ID_KEY);
+          localStorage.removeItem(scopedStorageKey(LEGACY_SESSION_ID_KEY));
+          return localStorage.getItem(scopedStorageKey(SESSION_ID_KEY));
         } catch { return null; }
       })();
 

@@ -5,6 +5,8 @@ import {
   UserFilled as Users,
   MagicStarFilled as Wand2,
 } from "@aliimam/icons";
+import { getBundleByProvider } from "./provider-bundles";
+import type { AgentProfileProvider } from "./types";
 
 // ── CLI tools for agent profile wizard ─────────────────────────────────────────
 
@@ -16,8 +18,8 @@ export const CLI_TOOLS = [
     description: "Anthropic Claude CLI - most capable",
     icon: Cpu,
     color: "text-amber-400",
-    models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
-    defaultModel: "claude-opus-4-6",
+    models: [],
+    defaultModel: "",
   },
   {
     id: "codex",
@@ -26,8 +28,8 @@ export const CLI_TOOLS = [
     description: "OpenAI Codex - code generation",
     icon: Sparkles,
     color: "text-emerald-400",
-    models: ["gpt-4o", "gpt-4o-mini", "o3-mini"],
-    defaultModel: "gpt-4o",
+    models: [],
+    defaultModel: "",
   },
   {
     id: "aider",
@@ -36,8 +38,8 @@ export const CLI_TOOLS = [
     description: "Aider - AI pair programming",
     icon: GitBranch,
     color: "text-indigo-400",
-    models: ["claude-sonnet-4-6", "claude-opus-4-6", "gpt-4o"],
-    defaultModel: "claude-sonnet-4-6",
+    models: [],
+    defaultModel: "",
   },
   {
     id: "gemini",
@@ -46,8 +48,8 @@ export const CLI_TOOLS = [
     description: "Google Gemini CLI - multimodal reasoning",
     icon: Wand2,
     color: "text-blue-400",
-    models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.1-pro-preview"],
-    defaultModel: "gemini-2.5-flash",
+    models: [],
+    defaultModel: "",
   },
   {
     id: "kollab",
@@ -56,10 +58,40 @@ export const CLI_TOOLS = [
     description: "Kollab - collaborative AI",
     icon: Users,
     color: "text-purple-400",
-    models: ["claude-opus-4-6", "claude-sonnet-4-6", "gpt-4o"],
-    defaultModel: "claude-opus-4-6",
+    models: [],
+    defaultModel: "",
   },
 ];
+
+export interface AgentConfigOption {
+  id: string;
+  name: string;
+}
+
+const TOOL_TO_BUNDLE_PROVIDER: Record<string, AgentProfileProvider> = {
+  claude: "claude-code",
+  codex: "codex",
+  gemini: "gemini",
+  kollab: "kollab",
+};
+
+export function getAgentConfigOptionsForTool(toolId: string): AgentConfigOption[] {
+  const bundleProvider = TOOL_TO_BUNDLE_PROVIDER[toolId];
+  const bundle = bundleProvider ? getBundleByProvider(bundleProvider) : undefined;
+  if (bundle && bundle.profiles.length > 0) {
+    return bundle.profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+    }));
+  }
+
+  const tool = CLI_TOOLS.find((candidate) => candidate.id === toolId);
+  return (tool?.models ?? []).map((model) => ({ id: model, name: model }));
+}
+
+export function getDefaultAgentConfigIdForTool(toolId: string): string {
+  return getAgentConfigOptionsForTool(toolId)[0]?.id ?? "";
+}
 
 // ── per-provider credential metadata ───────────────────────────────────────────
 

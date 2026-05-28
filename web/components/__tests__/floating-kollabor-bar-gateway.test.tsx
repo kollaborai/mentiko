@@ -10,6 +10,14 @@
 
 import { act, render } from "@testing-library/react";
 
+let mockUserState: {
+  user: { id: string } | null;
+  loading: boolean;
+} = {
+  user: { id: "user-a" },
+  loading: false,
+};
+
 // motion/react: pass-through
 jest.mock("motion/react", () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -71,6 +79,8 @@ jest.mock("@/lib/kollabor-engine-client", () => ({
   sendMessage: jest.fn(),
   respondToPermission: jest.fn(),
   ping: jest.fn().mockResolvedValue(true),
+  setKollaborEngineStorageScope: jest.fn(),
+  clearKollaborEngineStoredSession: jest.fn(),
 }));
 
 jest.mock("@/lib/mentiko-mcp-bar-client", () => ({
@@ -79,7 +89,12 @@ jest.mock("@/lib/mentiko-mcp-bar-client", () => ({
     disconnect: jest.fn(),
   })),
   getStoredSessionToken: jest.fn().mockReturnValue(null),
+  setMcpBarStorageScope: jest.fn(),
   syncSessionToken: jest.fn(),
+}));
+
+jest.mock("@/lib/user-context", () => ({
+  useUser: () => mockUserState,
 }));
 
 jest.mock("@/components/kollabor-permission-prompt", () => ({
@@ -114,6 +129,8 @@ async function flushAll() {
   }
 }
 
+import { useKollaborBarStore } from "@/lib/kollabor-bar-store";
+import { setKollaborEngineStorageScope } from "@/lib/kollabor-engine-client";
 import { FloatingKollaborBar, shouldShowEngineOffline } from "../floating-kollabor-bar";
 
 describe("FloatingKollaborBar — gateway mode", () => {
@@ -121,6 +138,16 @@ describe("FloatingKollaborBar — gateway mode", () => {
 
   beforeEach(() => {
     originalFetch = global.fetch;
+    mockUserState = { user: { id: "user-a" }, loading: false };
+    useKollaborBarStore.setState({
+      expanded: false,
+      messages: [],
+      sessionId: null,
+      drafting: null,
+      connected: false,
+      connecting: false,
+      error: null,
+    });
   });
 
   afterEach(() => {
@@ -141,6 +168,16 @@ describe("FloatingKollaborBar — gateway mode", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (url.includes("/api/system/storage-scope")) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { storageScope: "install:test" },
+            requestId: "req_test",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       // any other route returns an empty 200 so misc effects don't blow up
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -151,9 +188,62 @@ describe("FloatingKollaborBar — gateway mode", () => {
 
     const calls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(calls.some((u) => u.includes("/api/system/ai-gateway"))).toBe(true);
+    expect(calls.some((u) => u.includes("/api/system/storage-scope"))).toBe(true);
+    expect(setKollaborEngineStorageScope).toHaveBeenCalledWith("install:test:user:user-a");
     expect(calls.some((u) => u.includes("/api/system/codex-token"))).toBe(false);
     // active profile is hardcoded to "mentiko" in gateway mode — never fetched
     expect(calls.some((u) => u.includes("/api/kollabor/profiles/active"))).toBe(false);
+  });
+
+  it("does not render stale anonymous transcript while user scope is unresolved", async () => {
+    global.fetch = jest.fn(async () => (
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+    )) as unknown as typeof fetch;
+    mockUserState = { user: null, loading: true };
+    useKollaborBarStore.setState({
+      expanded: true,
+      messages: [
+        {
+          id: "old",
+          role: "assistant",
+          content: "Research tray2-28226",
+          timestamp: 1,
+        },
+      ],
+    });
+
+    const { queryByText } = render(<FloatingKollaborBar />);
+    await flushAll();
+
+    expect(queryByText("Research tray2-28226")).toBeNull();
+  });
+
+  it("uses a tab-local install fallback when the storage-scope endpoint fails", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/system/storage-scope")) {
+        return new Response("unavailable", { status: 500 });
+      }
+      if (url.includes("/api/system/ai-gateway")) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { gatewayEnabled: true, mentikoProfileActive: true },
+            requestId: "req_test",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<FloatingKollaborBar />);
+    await flushAll();
+
+    expect(setKollaborEngineStorageScope).toHaveBeenCalledWith(
+      expect.stringMatching(/^install:unavailable:.+:user:user-a$/),
+    );
   });
 
   it("shouldShowEngineOffline: suppresses error when session is connected", () => {
