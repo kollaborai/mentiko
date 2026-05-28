@@ -17,7 +17,7 @@ import {
 } from "@aliimam/icons";
 import { BotMessageSquare, ShieldTickFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
+import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import type { AgentProfile, AgentProfileProvider } from "@/lib/types";
 import { useAgentProfiles } from "@/lib/use-agent-profiles";
@@ -34,8 +34,10 @@ function ProviderBrandIcon({ provider, className }: { provider: string; classNam
   switch (provider.toLowerCase()) {
     case "claude":
       return <ClaudeAI className={className} />;
+    case "agy":
+    case "antigravity":
     case "gemini":
-      return <GoogleGemini className={className} />;
+      return <GoogleIcon className={className} />;
     case "codex":
     case "opencode":
       return <OpenAILogo className={className} />;

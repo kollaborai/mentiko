@@ -99,13 +99,9 @@ export const GET = withErrorHandling(async (request: Request) => {
             }
             break;
           }
-          case "gemini": {
-            // gemini stores oauth creds in ~/.gemini/oauth_creds.json
-            const geminiAuth = join(homedir(), ".gemini", "oauth_creds.json");
-            if (existsSync(geminiAuth)) {
-              const data = JSON.parse(readFileSync(geminiAuth, "utf-8"));
-              authenticated = !!(data.access_token || data.refresh_token);
-            }
+          case "antigravity": {
+            // Antigravity CLI uses the OS keyring/browser flow; there is no
+            // stable file token contract to inspect here.
             break;
           }
           case "kollab":

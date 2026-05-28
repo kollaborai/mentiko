@@ -20,7 +20,7 @@ import {
 } from "@/lib/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
-interface GeminiAuthProps {
+interface AntigravityAuthProps {
   onSave: (config: {
     authMethod: "login" | "api-key";
     model?: string;
@@ -35,13 +35,13 @@ type AuthOption = "login" | "api-key" | "terminal";
 
 type LoginStatus = "idle" | "pending" | "complete" | "failed";
 
-const geminiCreds = PROVIDER_CREDENTIALS.gemini;
-const geminiProfileOptions = getAgentConfigOptionsForTool("gemini");
+const antigravityCreds = PROVIDER_CREDENTIALS.gemini;
+const antigravityProfileOptions = getAgentConfigOptionsForTool("antigravity");
 
-export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: GeminiAuthProps) {
+export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMethod, backLabel }: AntigravityAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authOption, setAuthOption] = useState<AuthOption>(initialAuthMethod ?? "api-key");
-  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("gemini"));
+  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("antigravity"));
   const [profiles, setProfiles] = useState<{id: string, name: string}[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -68,9 +68,9 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       .then(raw => {
         const data = raw.data ?? raw;
         const all = (data.profiles ?? []) as {id: string, name: string, cli?: string}[];
-        const filtered = all.filter(p => p.cli === "gemini");
+        const filtered = all.filter(p => p.cli === "agy");
         setProfiles(filtered);
-        const options = filtered.length > 0 ? filtered : geminiProfileOptions;
+        const options = filtered.length > 0 ? filtered : antigravityProfileOptions;
         setModel((current) => (
           options.some((option) => option.id === current)
             ? current
@@ -88,7 +88,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       const res = await fetchWithNamespace("/api/system/cli-auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool: "gemini" }),
+        body: JSON.stringify({ tool: "antigravity" }),
       });
       if (!res.ok) {
         setLoginStatus("failed");
@@ -163,20 +163,20 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
   };
 
   const showFooterSave = authOption === "login";
-  const profileOptions = profiles.length > 0 ? profiles : geminiProfileOptions;
+  const profileOptions = profiles.length > 0 ? profiles : antigravityProfileOptions;
 
   const options: { key: AuthOption; icon: typeof Link2Filled; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,
       label: "use an API key",
-      desc: `set ${geminiCreds.envKey} as a secret`,
+      desc: `set ${antigravityCreds.envKey} as a secret`,
     },
     {
       key: "login",
       icon: Link2Filled,
-      label: "Gemini CLI browser login",
-      desc: "runs gemini auth login",
+      label: "Antigravity CLI browser login",
+      desc: "runs agy and starts Google sign-in if needed",
     },
     {
       key: "terminal",
@@ -188,7 +188,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
 
   return (
     <motion.div
-      key="gemini-auth"
+      key="antigravity-auth"
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -20 }}
@@ -196,7 +196,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
       className="space-y-5"
     >
       <div className="text-center">
-        <h2 className="text-lg font-semibold mb-1">Configure Gemini CLI</h2>
+        <h2 className="text-lg font-semibold mb-1">Configure Antigravity CLI</h2>
         {detectedVersion && (
           <p className="text-[10px] text-foreground/30">
             detected: {detectedVersion}
@@ -259,13 +259,13 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
           <div className="space-y-3">
             {loginStatus === "idle" && (
               <Button onClick={startLogin} className="w-full" size="sm">
-                start Gemini CLI login
+                start Antigravity CLI login
               </Button>
             )}
             {loginStatus === "pending" && (
               <div className="space-y-2 text-center">
                 <p className="text-xs text-foreground/50">
-                  waiting for Gemini CLI...
+                  waiting for Antigravity CLI...
                 </p>
                 {authUrl && (
                   <div className="bg-muted rounded-md p-2">
@@ -317,7 +317,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         {authOption === "api-key" && (
           <SecretForm
             inline
-            prefilledPreset={geminiCreds.envKey}
+            prefilledPreset={antigravityCreds.envKey}
             onSave={handleApiKeySave}
             saving={saving}
             error={error}
@@ -325,7 +325,7 @@ export function GeminiAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
         )}
 
         {authOption === "terminal" && (
-          <TerminalAuthOption tool="gemini" />
+          <TerminalAuthOption tool="antigravity" />
         )}
       </div>
 

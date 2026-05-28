@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listProfiles, createProfile, slugify } from "@/lib/agent-profile-storage";
+import { listProfiles, createProfile, slugify, updateProfile } from "@/lib/agent-profile-storage";
+import { getLegacyProfileSyncUpdates } from "@/lib/agent-profile-legacy-sync";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -13,7 +14,21 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
-  const profiles = listProfiles(namespaceId, orgId);
+  let profiles = listProfiles(namespaceId, orgId);
+  let syncedLegacy = false;
+
+  for (const profile of profiles) {
+    const updates = getLegacyProfileSyncUpdates(profile);
+    if (updates) {
+      updateProfile(namespaceId, orgId, profile.id, updates);
+      syncedLegacy = true;
+    }
+  }
+
+  if (syncedLegacy) {
+    profiles = listProfiles(namespaceId, orgId);
+  }
+
   return apiSuccess({ profiles });
 });
 

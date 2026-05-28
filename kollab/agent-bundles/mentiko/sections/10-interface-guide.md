@@ -228,7 +228,7 @@ DETECT FIRST:
   it returns: { name, found, version, authenticated } per CLI.
   use this to know what's installed and what needs auth.
 
-BROWSER AUTH FLOW (claude, codex, gemini):
+BROWSER AUTH FLOW (claude, codex, antigravity):
   1. show_toast("info", "starting auth — i'll show you the link")
   2. start_cli_auth(tool)  → returns sessionId
   3. poll_cli_auth(sessionId) every 3s, up to 30s
@@ -254,9 +254,9 @@ CODEX SPECIFIC:
   - store as OPENAI_API_KEY in /settings/secrets
   - or: codex CLI prompts for key on first run
 
-GEMINI SPECIFIC:
+ANTIGRAVITY SPECIFIC:
   - option A: GEMINI_API_KEY from aistudio.google.com → store in secrets
-  - option B: gcloud auth (show_terminal → run: gcloud auth application-default login)
+  - option B: browser sign-in (show_terminal → run: agy)
 
 OPENROUTER:
   - get API key from openrouter.ai/keys

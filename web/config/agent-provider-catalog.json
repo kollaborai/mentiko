@@ -43,18 +43,18 @@
       "detectable": true
     },
     {
-      "id": "gemini",
-      "name": "Gemini CLI",
-      "cli": "gemini",
-      "description": "Google Gemini CLI - multimodal reasoning",
-      "iconKey": "gemini",
+      "id": "antigravity",
+      "name": "Antigravity CLI",
+      "cli": "agy",
+      "description": "Google Antigravity CLI - terminal agent harness",
+      "iconKey": "antigravity",
       "color": "text-blue-400",
       "badgeColor": "text-blue-300",
       "badgeBg": "bg-blue-500/20",
       "credentialKey": "gemini",
-      "bundleProvider": "gemini",
-      "terminalAuthCommand": "gemini auth login",
-      "interactiveAuthCommand": "gemini auth login",
+      "bundleProvider": "antigravity",
+      "terminalAuthCommand": "agy",
+      "interactiveAuthCommand": "agy",
       "detectable": true
     },
     {
@@ -244,38 +244,18 @@
       ]
     },
     {
-      "provider": "gemini",
-      "name": "Gemini CLI",
-      "logoKey": "gemini",
-      "log_path": "~/.gemini/tmp/",
+      "provider": "antigravity",
+      "name": "Antigravity CLI",
+      "logoKey": "antigravity",
+      "log_path": "~/.gemini/antigravity-cli/",
       "log_format": "json",
       "profiles": [
         {
-          "id": "gemini-flash",
-          "name": "Gemini / 3.5 Flash",
-          "cli": "gemini",
-          "model": "gemini-3.5-flash",
-          "pipe_flag": "-p",
-          "permission_flag": "-y",
-          "description": "Stable frontier model for agentic and coding tasks"
-        },
-        {
-          "id": "gemini-pro-preview",
-          "name": "Gemini / 3.1 Pro Preview",
-          "cli": "gemini",
-          "model": "gemini-3.1-pro-preview",
-          "pipe_flag": "-p",
-          "permission_flag": "-y",
-          "description": "Advanced intelligence and complex problem solving"
-        },
-        {
-          "id": "gemini-flash-lite",
-          "name": "Gemini / 3.1 Flash-Lite",
-          "cli": "gemini",
-          "model": "gemini-3.1-flash-lite",
-          "pipe_flag": "-p",
-          "permission_flag": "-y",
-          "description": "Low-latency, cost-efficient multimodal model"
+          "id": "antigravity-default",
+          "name": "Antigravity / CLI Default",
+          "cli": "agy",
+          "permission_flag": "--dangerously-skip-permissions",
+          "description": "Uses the Antigravity CLI default model and settings"
         }
       ]
     },
@@ -301,15 +281,43 @@
       }
     },
     {
-      "provider": "gemini",
+      "provider": "antigravity",
+      "profile": {
+        "id": "gemini-flash",
+        "name": "Antigravity / Gemini Flash Legacy",
+        "cli": "agy",
+        "permission_flag": "--dangerously-skip-permissions",
+        "description": "Legacy Gemini Flash profile id synced to Antigravity CLI defaults"
+      }
+    },
+    {
+      "provider": "antigravity",
+      "profile": {
+        "id": "gemini-pro-preview",
+        "name": "Antigravity / Gemini Pro Preview Legacy",
+        "cli": "agy",
+        "permission_flag": "--dangerously-skip-permissions",
+        "description": "Legacy Gemini Pro preview profile id synced to Antigravity CLI defaults"
+      }
+    },
+    {
+      "provider": "antigravity",
+      "profile": {
+        "id": "gemini-flash-lite",
+        "name": "Antigravity / Gemini Flash-Lite Legacy",
+        "cli": "agy",
+        "permission_flag": "--dangerously-skip-permissions",
+        "description": "Legacy Gemini Flash-Lite profile id synced to Antigravity CLI defaults"
+      }
+    },
+    {
+      "provider": "antigravity",
       "profile": {
         "id": "gemini-pro",
-        "name": "Gemini / Pro",
-        "cli": "gemini",
-        "model": "gemini-3.1-pro-preview",
-        "pipe_flag": "-p",
-        "permission_flag": "-y",
-        "description": "Legacy Pro profile id synced to the current Gemini Pro preview"
+        "name": "Antigravity / Gemini Pro Legacy",
+        "cli": "agy",
+        "permission_flag": "--dangerously-skip-permissions",
+        "description": "Legacy Gemini Pro profile id synced to Antigravity CLI defaults"
       }
     }
   ],

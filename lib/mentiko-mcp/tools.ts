@@ -1031,7 +1031,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "detect_cli_status",
-    description: "Check which AI CLI tools are installed and authenticated (claude, codex, gemini, aider, kollab).",
+    description: "Check which AI CLI tools are installed and authenticated (claude, codex, antigravity, aider, kollab).",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -1040,7 +1040,7 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        tool: { type: "string", enum: ["claude", "codex", "gemini"], description: "Which CLI tool to authenticate" }
+        tool: { type: "string", enum: ["claude", "codex", "antigravity"], description: "Which CLI tool to authenticate" }
       },
       required: ["tool"]
     }

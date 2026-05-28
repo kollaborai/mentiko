@@ -30,7 +30,7 @@ Cards for each supported CLI:
   - claude code (anthropic)
   - codex (openai)
   - aider (open source)
-  - gemini cli (google)
+  - antigravity cli (google)
 
 Click a card -> goes to that tool's auth screen.
 Once configured, card shows checkmark.
@@ -42,7 +42,7 @@ Once configured, card shows checkmark.
 Each tool gets the same two-option layout:
 
   option A: interactive login
-    - runs `claude auth login` (or codex/gemini equivalent)
+    - runs `claude auth login` (or codex/antigravity equivalent)
     - opens browser for oauth
     - backend runs CLI in PTY, captures auth URL
     - frontend shows status: waiting... -> signed in
@@ -221,7 +221,7 @@ GET  /api/system/detect-cli
   -> { tools: [{ name, found, version?, path?, authenticated? }] }
 
 POST /api/system/cli-auth
-  body: { tool: "claude" | "codex" | "gemini" }
+  body: { tool: "claude" | "codex" | "antigravity" }
   -> { sessionId }
   (triggers interactive login in PTY)
 
@@ -270,7 +270,7 @@ web/components/onboarding/
     claude-auth.tsx             login vs key vs gateway
     codex-auth.tsx              login vs key
     aider-auth.tsx              provider key (reuse existing)
-    gemini-auth.tsx             login vs key
+    antigravity-auth.tsx        login vs key
   project-setup/
     git-clone-setup.tsx         clone + inline secret-form for private
     local-folder-setup.tsx      folder browser (existing component)

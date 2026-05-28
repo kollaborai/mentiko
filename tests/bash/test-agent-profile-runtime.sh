@@ -45,13 +45,13 @@ cat > "$AGENT_PROFILES_DIR/codex-default.json" <<'JSON'
 }
 JSON
 
-cat > "$AGENT_PROFILES_DIR/gemini-pro.json" <<'JSON'
+cat > "$AGENT_PROFILES_DIR/antigravity-default.json" <<'JSON'
 {
-  "id": "gemini-pro",
-  "name": "Gemini",
-  "cli": "gemini",
+  "id": "antigravity-default",
+  "name": "Antigravity",
+  "cli": "agy",
   "isDefault": false,
-  "log_path": "~/.gemini/tmp/"
+  "log_path": "~/.gemini/antigravity-cli/"
 }
 JSON
 
@@ -139,7 +139,7 @@ cat > "$chain_with_agent_profile" <<'JSON'
     {
       "id": "agent-one",
       "name": "Agent One",
-      "agent_profile": "gemini-pro",
+      "agent_profile": "antigravity-default",
       "triggers": ["manual-start"],
       "emits": "done"
     }
@@ -148,7 +148,7 @@ cat > "$chain_with_agent_profile" <<'JSON'
 JSON
 
 resolved_agent_profile="$(resolve_agent_profile_id "$chain_with_agent_profile" "agent-one")"
-assert_eq "gemini-pro" "$resolved_agent_profile" "uses agent profile before chain default"
+assert_eq "antigravity-default" "$resolved_agent_profile" "uses agent profile before chain default"
 
 chain_with_missing_agent_profile="$TEST_TMP_DIR/chain-missing-agent-profile.json"
 cat > "$chain_with_missing_agent_profile" <<'JSON'

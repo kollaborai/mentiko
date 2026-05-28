@@ -297,7 +297,7 @@ export type AgentProfileProvider =
   | "codex"
   | "opencode"
   | "kollab"
-  | "gemini"
+  | "antigravity"
   | "custom";
 
 export interface AgentProfile {

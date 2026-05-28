@@ -19,7 +19,7 @@ const ICONS = {
   claude: Cpu,
   openai: Sparkles,
   aider: GitBranch,
-  gemini: Wand2,
+  antigravity: Wand2,
   kollab: Users,
   opencode: Sparkles,
   custom: Wand2,

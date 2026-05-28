@@ -18,12 +18,12 @@ steps:
 
   2. if nothing installed:
        ask_choice("which AI service do you use?",
-         ["Claude (claude.ai)", "OpenAI/ChatGPT", "Google Gemini",
+         ["Claude (claude.ai)", "OpenAI/ChatGPT", "Google Antigravity",
           "OpenRouter (access to all models)", "I'll set it up later"])
        → show_modal with install link for their choice:
            claude:  install from claude.ai/claude-code
            codex:   install from platform.openai.com
-           gemini:  install from github.com/google-gemini/gemini-cli
+           agy:     install from antigravity.google/docs/cli-overview
        → come back when installed
 
   3. if installed but NOT authenticated:
@@ -143,7 +143,7 @@ trigger: user context shows no chains, no recent activity,
 steps:
   1. welcome them. one sentence. mentiko = event-driven agent chains.
   2. ask: what do they want to automate first?
-  3. ask: what AI subscription do they have? (Claude / OpenAI / Gemini / other)
+  3. ask: what AI subscription do they have? (Claude / OpenAI / Antigravity / other)
   4. based on answer, set up workspace config with correct CLI
   5. generate their first chain or guide them through the builder
   6. run it once together so they see output live
@@ -252,7 +252,7 @@ steps:
 CLI defaults (use these unless user says otherwise):
   claude       uses whatever model claude CLI defaults to (subscription or API key)
   codex        uses whatever model codex CLI defaults to
-  gemini       uses whatever model gemini CLI defaults to
+  agy          uses whatever model Antigravity CLI defaults to
   kollab     uses the active profile in ~/.kollab/config.json
 
 if user specifies a model: let them. set it in the gateway profile.

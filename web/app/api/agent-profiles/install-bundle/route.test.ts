@@ -150,4 +150,42 @@ describe("POST /api/agent-profiles/install-bundle", () => {
       }),
     );
   });
+
+  it("syncs old Gemini CLI profile ids to Antigravity metadata without reinstalling them", async () => {
+    mockListProfiles.mockReturnValue([
+      {
+        id: "gemini-pro",
+        name: "Gemini / Pro",
+        cli: "gemini",
+        model: "gemini-2.5-pro",
+        pipe_flag: "-p",
+        permission_flag: "-y",
+        log_path: "~/.gemini/tmp/",
+        isDefault: false,
+      },
+    ]);
+
+    const response = await POST(makeRequest("antigravity"));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateProfile).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "gemini-pro",
+      expect.objectContaining({
+        name: "Antigravity / Gemini Pro Legacy",
+        cli: "agy",
+        log_path: "~/.gemini/antigravity-cli/",
+      }),
+    );
+    expect(mockUpdateProfile.mock.calls[0]?.[3]).toHaveProperty("model", "");
+    expect(mockCreateProfile).toHaveBeenCalledTimes(1);
+    expect(mockCreateProfile).not.toHaveBeenCalledWith(
+      "default",
+      "default",
+      expect.objectContaining({
+        id: "gemini-pro",
+      }),
+    );
+  });
 });

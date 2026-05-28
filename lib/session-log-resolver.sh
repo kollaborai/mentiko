@@ -16,7 +16,7 @@ _default_log_path() {
         codex)              echo "$HOME/.codex/sessions/" ;;
         opencode)           echo "$HOME/.config/opencode/" ;;
         kollab*)            echo "$HOME/.kollab/projects/" ;;
-        gemini)             echo "$HOME/.gemini/tmp/" ;;
+        agy|antigravity)    echo "$HOME/.gemini/antigravity-cli/" ;;
         *)                  echo "" ;;
     esac
 }

@@ -24,7 +24,7 @@
 </p>
 
 Mentiko is an operations layer for agent harnesses. It runs terminal-native
-tools like Claude Code, Codex, Kollabor, Aider, OpenCode, Gemini CLI, and custom
+tools like Claude Code, Codex, Kollabor, Aider, OpenCode, Antigravity CLI, and custom
 CLIs in managed PTY sessions, then gives that work a place to live: chains,
 agent links, runs, decisions, tasks, artifacts, conversations, terminals, and
 workspace files.
@@ -51,7 +51,7 @@ them a harness:
 
 | Feature | What it gives you |
 | --- | --- |
-| Agent harness runtime | Managed PTY sessions for Claude Code, Codex, Kollabor, Aider, OpenCode, Gemini CLI, and custom terminal tools |
+| Agent harness runtime | Managed PTY sessions for Claude Code, Codex, Kollabor, Aider, OpenCode, Antigravity CLI, and custom terminal tools |
 | Visual chain orchestration | JSON chains with explicit triggers, emitted events, handoffs, retries, schedules, webhooks, and run history |
 | Agent links | Two-agent debate, collaboration, and review sessions with per-agent profiles, moderator relay, escalation, transcripts, and run records |
 | Decisions | AI-assisted decision workflows with research, tradeoff questions, tailored options, execution plans, task creation, and retrospectives |

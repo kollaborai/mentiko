@@ -8,7 +8,7 @@ import {
   TickCircleFilled,
   SettingFilled,
 } from "@aliimam/icons";
-import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
+import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
 import { BotMessageSquare } from "@aliimam/icons";
 import { motion, AnimatePresence } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
@@ -16,7 +16,7 @@ import { getBundleProviderForTool } from "@/lib/agent-provider-catalog";
 import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
-import { GeminiAuth } from "@/components/onboarding/cli-auth/gemini-auth";
+import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";
 import { AiderAuth } from "@/components/onboarding/cli-auth/aider-auth";
 import { KollabAuth } from "@/components/onboarding/cli-auth/kollab-auth";
 
@@ -45,7 +45,7 @@ interface CliSetupStepProps {
 }
 
 // top-level mode: provider picker, simple provider auth, or custom (full tool list)
-type Mode = null | "claude" | "openai" | "gemini" | "custom";
+type Mode = null | "claude" | "openai" | "antigravity" | "custom";
 
 // when in custom mode, which tool is selected for auth
 type ActiveCustomTool = string | null;
@@ -56,8 +56,8 @@ function ProviderLogo({ id, className }: { id: string; className?: string }) {
       return <ClaudeAI className={className} />;
     case "codex":
       return <OpenAILogo className={className} />;
-    case "gemini":
-      return <GoogleGemini className={className} />;
+    case "antigravity":
+      return <GoogleIcon className={className} />;
     case "kollab":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -79,10 +79,10 @@ const PROVIDERS = [
     bg: "bg-emerald-500/10",
   },
   {
-    mode: "gemini" as const,
-    name: "Gemini",
+    mode: "antigravity" as const,
+    name: "Antigravity",
     description: "use an API key or CLI login",
-    icon: GoogleGemini,
+    icon: GoogleIcon,
     color: "text-blue-400",
     bg: "bg-blue-500/10",
   },
@@ -228,7 +228,7 @@ export function CliSetupStep({
     setActiveCustomTool(null);
   };
 
-  // ── simple provider auth views (claude, openai, gemini) ──────────────
+  // ── simple provider auth views (claude, openai, antigravity) ─────────
 
   if (mode === "claude") {
     return (
@@ -274,21 +274,21 @@ export function CliSetupStep({
     );
   }
 
-  if (mode === "gemini") {
+  if (mode === "antigravity") {
     return (
       <motion.div
         data-source="components/onboarding/steps/cli-setup-step.tsx"
-        key="auth-gemini-simple"
+        key="auth-antigravity-simple"
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -20 }}
         transition={{ duration: 0.3 }}
         className="space-y-4"
       >
-        <GeminiAuth
+        <AntigravityAuth
           onBack={() => setMode(null)}
-          onSave={(config) => handleAuthSave("gemini", config)}
-          detectedVersion={getDetectedVersion("gemini")}
+          onSave={(config) => handleAuthSave("antigravity", config)}
+          detectedVersion={getDetectedVersion("antigravity")}
           initialAuthMethod="api-key"
           backLabel="back"
         />
@@ -332,11 +332,11 @@ export function CliSetupStep({
                 onSave={(config) => handleAuthSave("codex", config)}
               />
             )}
-            {activeCustomTool === "gemini" && (
-              <GeminiAuth
-                key="gemini"
+            {activeCustomTool === "antigravity" && (
+              <AntigravityAuth
+                key="antigravity"
                 {...authProps}
-                onSave={(config) => handleAuthSave("gemini", config)}
+                onSave={(config) => handleAuthSave("antigravity", config)}
               />
             )}
             {activeCustomTool === "aider" && (

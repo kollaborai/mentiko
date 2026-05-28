@@ -271,11 +271,14 @@ RUN echo "=== claude-code (pinned ${CLAUDE_CODE_VERSION}) ===" && \
 
 RUN echo "=== AI CLI tools ===" && \
     for pkg in \
-      @google/gemini-cli \
       @openai/codex \
       opencode-ai; do \
     npm install -g "$pkg" || echo "WARNING: $pkg install failed, skipping"; \
     done
+
+RUN echo "=== Antigravity CLI ===" && \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+    || echo "WARNING: Antigravity CLI install failed, skipping"
 
 # ---------------------------------------------------------------------------
 # 9. python tools (uv for kollab, pipx for aider)

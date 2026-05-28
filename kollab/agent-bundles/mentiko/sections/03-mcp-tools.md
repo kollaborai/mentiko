@@ -336,13 +336,13 @@ cli auth tools (phase 3 — check tools.ts to confirm shipped)
 detect_cli_status()
   tier A — read, no side effects
   returns: list of { name, found, version, authenticated }
-  CLIs checked: claude, codex, gemini, aider, kollabor
+  CLIs checked: claude, codex, antigravity, aider, kollabor
   use: on session start for new users, when user mentions CLI setup
   use: proactively if no CLIs authenticated — offer to walk through setup
 
 start_cli_auth(tool)
   tier B — spawns a PTY process running auth login
-  tool: "claude" | "codex" | "gemini"
+  tool: "claude" | "codex" | "antigravity"
   returns: { sessionId }
   use: after detect_cli_status shows not authenticated
 

@@ -73,8 +73,8 @@ these are the options and when to suggest each:
              good for pure coding tasks. needs OpenAI API key.
              env: OPENAI_API_KEY
 
-  gemini     Google Gemini CLI. strong on research, long context.
-             set up: https://github.com/google-gemini/gemini-cli
+  agy        Google Antigravity CLI. strong on research and terminal-native agent work.
+             set up: https://antigravity.google/docs/cli-overview
              env: GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT
 
   aider      OSS pair programmer. works with any OpenAI-compatible API.
@@ -85,7 +85,7 @@ these are the options and when to suggest each:
              ships with the mentiko floating bar.
 
 first-time user: ask what they use.
-  "do you use Claude, ChatGPT/OpenAI, Gemini, or something else?"
+  "do you use Claude, ChatGPT/OpenAI, Antigravity, or something else?"
 then set the CLI in their workspace config or chain config accordingly.
 
 if they have an API key: put it in a GATEWAY profile (never inline).
@@ -99,7 +99,7 @@ MULTI-PROVIDER CHAINS — when to suggest mixing
 ================================================
 
 some workflows genuinely benefit from multiple providers:
-  researcher (gemini — long context, web search)
+  researcher (antigravity — long context, web search)
     → coder (claude — best at code)
       → reviewer (codex — focused diff review)
 

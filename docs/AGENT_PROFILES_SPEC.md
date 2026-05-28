@@ -50,7 +50,7 @@ type AgentProfileProvider =
   | "kollabor"      // Kollabor
   | "glm"           // GLM / z.ai
   | "aider"         // Aider
-  | "gemini"        // Google Gemini
+  | "antigravity"   // Google Antigravity CLI
   | "custom";       // user-defined
 ```
 

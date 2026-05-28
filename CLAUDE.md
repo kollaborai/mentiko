@@ -446,7 +446,7 @@ platform image build pipeline:
 7. run smoke tests before publishing or deploying
 
 Dockerfile includes: node 22, zsh, python3, git, sqlite3, rclone,
-AI CLIs (claude, codex, gemini-cli, opencode), kollabor + aider,
+AI CLIs (claude, codex, antigravity-cli, opencode), kollabor + aider,
 and pty-mgr.
 
 self-hosting rules:
@@ -1079,7 +1079,7 @@ platform image build pipeline:
 7. run smoke tests before publishing or deploying
 
 Dockerfile includes: node 22, zsh, python3, git, sqlite3, rclone,
-AI CLIs (claude, codex, gemini-cli, opencode), kollabor + aider,
+AI CLIs (claude, codex, antigravity-cli, opencode), kollabor + aider,
 and pty-mgr.
 
 self-hosting rules:

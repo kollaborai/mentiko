@@ -125,7 +125,7 @@ export function GettingStarted() {
     {
       id: "agent-config",
       title: "Configure an AI provider",
-      description: "Set up Claude, Gemini, or another CLI — add your API key",
+      description: "Set up Claude, Antigravity, or another CLI — add your API key",
       href: "/settings/agent-configs",
       done: hasAgentProfile,
     },
