@@ -131,7 +131,7 @@ from @/hooks/use-analytics:
 ### usetrackagent
 
   const { start, message, end } = useTrackAgent();
-  start("claude-opus");
+  start("research-agent");
   message(sessionId, true);
   end(sessionId, 10, 30000);
 

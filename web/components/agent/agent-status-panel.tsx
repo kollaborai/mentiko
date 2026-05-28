@@ -22,21 +22,11 @@ import Link from "next/link";
 import type { Agent } from "@/lib/types";
 import { useAgentProfiles } from "@/lib/use-agent-profiles";
 import type { AgentProfile } from "@/lib/types";
-
-// ============================================================
-// provider color mapping for badge backgrounds
-// ============================================================
-
-const CLI_COLORS: Record<string, string> = {
-  "claude": "bg-amber-500/10 text-amber-400",
-  "codex": "bg-emerald-500/10 text-emerald-400",
-  "opencode": "bg-indigo-500/10 text-indigo-400",
-  "kollab": "bg-purple-500/10 text-purple-400",
-  "gemini": "bg-blue-500/10 text-blue-400",
-};
+import { getProviderColors } from "@/lib/agent-provider-catalog";
 
 function getCliBadgeColor(cli: string): string {
-  return CLI_COLORS[cli.toLowerCase()] || "bg-gray-500/10 text-gray-400";
+  const { color, bg } = getProviderColors(cli);
+  return `${bg} ${color}`;
 }
 
 // fallback color for when no profile resolves

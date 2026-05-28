@@ -2,18 +2,9 @@
 
 import { useState, useCallback } from "react";
 import { CommandSquareFilled } from "@aliimam/icons";
+import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 
-const AUTH_COMMANDS: Record<string, string> = {
-  claude: "claude auth login",
-  codex: "codex auth login",
-  gemini: "gemini auth login",
-  kollab: "kollab --login openai",
-  aider: "aider --help", // aider has no login, but users might want to verify install
-};
-
-export function getTerminalAuthCommand(tool: string): string {
-  return AUTH_COMMANDS[tool] || `${tool} auth login`;
-}
+export { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 
 interface TerminalAuthOptionProps {
   tool: string;

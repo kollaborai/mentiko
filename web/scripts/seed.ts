@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import path from "path";
+import { MENTIKO_GATEWAY_PROFILE } from "../lib/agent-provider-catalog";
 
 // -- config ---------------------------------------------------------
 
@@ -116,7 +117,7 @@ const AGENT_PROFILES = [
     cli: "bash",
     extra_args: ["-lc", 'node "$MENTIKO_CODE_ROOT/bin/ai-gateway-smoke-agent.mjs"'],
     env: {
-      MENTIKO_AI_GATEWAY_SMOKE_MODEL: "glm-5.1",
+      MENTIKO_AI_GATEWAY_SMOKE_MODEL: MENTIKO_GATEWAY_PROFILE.model,
     },
     log_path: "",
     log_format: "jsonl",

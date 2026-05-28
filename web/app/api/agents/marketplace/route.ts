@@ -6,6 +6,7 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import type { AgentDefinition } from "@/lib/agent-loader";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -128,7 +129,7 @@ function scanAgentsDir(
         triggers: agent.triggers || [],
         emits: agent.emits || "",
         tools: agent.tools || [],
-        model: agent.model || "claude-sonnet-4-6",
+        model: agent.model || DEFAULT_MARKETPLACE_AGENT_MODEL,
         prompt: agent.prompt || "",
         rating: agentRating.average,
         ratingCount: agentRating.count,

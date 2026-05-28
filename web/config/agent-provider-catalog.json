@@ -1,0 +1,372 @@
+{
+  "cliTools": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "cli": "claude",
+      "description": "Anthropic Claude CLI - most capable",
+      "iconKey": "claude",
+      "color": "text-amber-400",
+      "badgeColor": "text-amber-300",
+      "badgeBg": "bg-amber-500/20",
+      "credentialKey": "claude",
+      "bundleProvider": "claude-code",
+      "terminalAuthCommand": "claude auth login",
+      "interactiveAuthCommand": "claude auth login",
+      "detectable": true
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "cli": "codex",
+      "description": "OpenAI Codex - code generation",
+      "iconKey": "openai",
+      "color": "text-emerald-400",
+      "badgeColor": "text-emerald-300",
+      "badgeBg": "bg-emerald-500/20",
+      "credentialKey": "codex",
+      "bundleProvider": "codex",
+      "terminalAuthCommand": "codex login --device-auth",
+      "interactiveAuthCommand": "codex login --device-auth",
+      "detectable": true
+    },
+    {
+      "id": "aider",
+      "name": "Aider",
+      "cli": "aider",
+      "description": "Aider - AI pair programming",
+      "iconKey": "aider",
+      "color": "text-indigo-400",
+      "badgeColor": "text-indigo-300",
+      "badgeBg": "bg-indigo-500/20",
+      "terminalAuthCommand": "aider --help",
+      "detectable": true
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "cli": "gemini",
+      "description": "Google Gemini CLI - multimodal reasoning",
+      "iconKey": "gemini",
+      "color": "text-blue-400",
+      "badgeColor": "text-blue-300",
+      "badgeBg": "bg-blue-500/20",
+      "credentialKey": "gemini",
+      "bundleProvider": "gemini",
+      "terminalAuthCommand": "gemini auth login",
+      "interactiveAuthCommand": "gemini auth login",
+      "detectable": true
+    },
+    {
+      "id": "kollab",
+      "name": "Kollab",
+      "cli": "kollab",
+      "description": "Kollab - collaborative AI",
+      "iconKey": "kollab",
+      "color": "text-purple-400",
+      "badgeColor": "text-purple-300",
+      "badgeBg": "bg-purple-500/20",
+      "credentialKey": "kollab",
+      "bundleProvider": "kollab",
+      "terminalAuthCommand": "kollab --login openai",
+      "detectable": true
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "cli": "opencode",
+      "description": "OpenCode - multi-provider coding runner",
+      "iconKey": "openai",
+      "color": "text-indigo-400",
+      "badgeColor": "text-indigo-300",
+      "badgeBg": "bg-indigo-500/20",
+      "credentialKey": "opencode",
+      "bundleProvider": "opencode",
+      "terminalAuthCommand": "opencode auth login",
+      "detectable": false
+    }
+  ],
+  "providerCredentials": {
+    "claude": {
+      "envKey": "ANTHROPIC_AUTH_TOKEN",
+      "label": "Anthropic API Key",
+      "placeholder": "sk-ant-...",
+      "docsUrl": "https://console.anthropic.com/settings/keys",
+      "docsLabel": "Get API key"
+    },
+    "gemini": {
+      "envKey": "GEMINI_API_KEY",
+      "label": "Google Gemini API Key",
+      "placeholder": "AIza...",
+      "docsUrl": "https://aistudio.google.com/app/apikey",
+      "docsLabel": "Get API key"
+    },
+    "codex": {
+      "envKey": "OPENAI_API_KEY",
+      "label": "OpenAI API Key",
+      "placeholder": "sk-...",
+      "docsUrl": "https://platform.openai.com/api-keys",
+      "docsLabel": "Get API key"
+    },
+    "opencode": {
+      "envKey": "OPENAI_API_KEY",
+      "label": "OpenAI API Key",
+      "placeholder": "sk-...",
+      "docsUrl": "https://platform.openai.com/api-keys",
+      "docsLabel": "Get API key"
+    },
+    "kollab": {
+      "envKey": "KOLLAB_API_KEY",
+      "label": "Kollab API Key",
+      "placeholder": "sk-...",
+      "docsUrl": "https://github.com/kollaborai/kollab#readme",
+      "docsLabel": "Kollab auth docs"
+    }
+  },
+  "secretPresets": [
+    { "label": "Anthropic API Key", "envVar": "ANTHROPIC_AUTH_TOKEN" },
+    { "label": "OpenAI API Key", "envVar": "OPENAI_API_KEY" },
+    { "label": "Google Gemini API Key", "envVar": "GEMINI_API_KEY" },
+    { "label": "Kollab API Key", "envVar": "KOLLAB_API_KEY" },
+    { "label": "GitHub Token", "envVar": "GITHUB_TOKEN" },
+    { "label": "Custom", "envVar": "" }
+  ],
+  "profileBundles": [
+    {
+      "provider": "claude-code",
+      "name": "Claude Code",
+      "logoKey": "claude-code",
+      "log_path": "~/.claude/projects/",
+      "log_format": "jsonl",
+      "profiles": [
+        {
+          "id": "claude-sonnet",
+          "name": "Claude / Sonnet",
+          "cli": "claude",
+          "model": "sonnet",
+          "pipe_flag": "-p",
+          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "pre_exec": "unset CLAUDECODE",
+          "description": "Balanced performance - always latest Sonnet"
+        },
+        {
+          "id": "claude-opus",
+          "name": "Claude / Opus",
+          "cli": "claude",
+          "model": "opus",
+          "pipe_flag": "-p",
+          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "pre_exec": "unset CLAUDECODE",
+          "description": "Highest capability - always latest Opus"
+        },
+        {
+          "id": "claude-haiku",
+          "name": "Claude / Haiku",
+          "cli": "claude",
+          "model": "haiku",
+          "pipe_flag": "-p",
+          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "pre_exec": "unset CLAUDECODE",
+          "description": "Fastest for simple tasks - always latest Haiku"
+        }
+      ]
+    },
+    {
+      "provider": "codex",
+      "name": "Codex",
+      "logoKey": "codex",
+      "log_path": "~/.codex/sessions/",
+      "log_format": "jsonl",
+      "profiles": [
+        {
+          "id": "codex-default",
+          "name": "Codex / GPT-5.5",
+          "cli": "codex",
+          "model": "gpt-5.5",
+          "pipe_flag": "exec",
+          "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
+          "extra_args": ["--skip-git-repo-check"],
+          "description": "Flagship model for complex coding and agentic work"
+        },
+        {
+          "id": "codex-fast",
+          "name": "Codex / GPT-5.4 mini",
+          "cli": "codex",
+          "model": "gpt-5.4-mini",
+          "pipe_flag": "exec",
+          "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
+          "extra_args": ["--skip-git-repo-check"],
+          "description": "Faster, lower-cost Codex profile for focused tasks"
+        }
+      ]
+    },
+    {
+      "provider": "opencode",
+      "name": "OpenCode",
+      "logoKey": "opencode",
+      "log_path": "~/.config/opencode/",
+      "log_format": "sqlite",
+      "profiles": [
+        {
+          "id": "opencode-sonnet",
+          "name": "OpenCode / Sonnet 4.6",
+          "cli": "opencode",
+          "model": "anthropic/claude-sonnet-4-6",
+          "pipe_flag": "-p",
+          "description": "Claude Sonnet 4.6 via OpenCode runner"
+        },
+        {
+          "id": "opencode-gpt",
+          "name": "OpenCode / GPT-5.5",
+          "cli": "opencode",
+          "model": "openai/gpt-5.5",
+          "pipe_flag": "-p",
+          "description": "OpenAI GPT-5.5 via OpenCode runner"
+        }
+      ]
+    },
+    {
+      "provider": "kollab",
+      "name": "Kollab",
+      "logoKey": "kollab",
+      "log_path": "~/.kollab/projects/",
+      "log_format": "jsonl",
+      "profiles": [
+        {
+          "id": "kollab",
+          "name": "Kollab / Mentiko",
+          "cli": "kollab",
+          "pipe_flag": "-p",
+          "permission_flag": "--permissions trust",
+          "preferredAdvisorDefault": true,
+          "description": "Kollab / Mentiko"
+        }
+      ]
+    },
+    {
+      "provider": "gemini",
+      "name": "Gemini CLI",
+      "logoKey": "gemini",
+      "log_path": "~/.gemini/tmp/",
+      "log_format": "json",
+      "profiles": [
+        {
+          "id": "gemini-flash",
+          "name": "Gemini / 3.5 Flash",
+          "cli": "gemini",
+          "model": "gemini-3.5-flash",
+          "pipe_flag": "-p",
+          "permission_flag": "-y",
+          "description": "Stable frontier model for agentic and coding tasks"
+        },
+        {
+          "id": "gemini-pro-preview",
+          "name": "Gemini / 3.1 Pro Preview",
+          "cli": "gemini",
+          "model": "gemini-3.1-pro-preview",
+          "pipe_flag": "-p",
+          "permission_flag": "-y",
+          "description": "Advanced intelligence and complex problem solving"
+        },
+        {
+          "id": "gemini-flash-lite",
+          "name": "Gemini / 3.1 Flash-Lite",
+          "cli": "gemini",
+          "model": "gemini-3.1-flash-lite",
+          "pipe_flag": "-p",
+          "permission_flag": "-y",
+          "description": "Low-latency, cost-efficient multimodal model"
+        }
+      ]
+    },
+    {
+      "provider": "custom",
+      "name": "Custom",
+      "logoKey": "custom",
+      "profiles": []
+    }
+  ],
+  "legacyProfileReplacements": [
+    {
+      "provider": "codex",
+      "profile": {
+        "id": "codex-spark",
+        "name": "Codex / Spark",
+        "cli": "codex",
+        "model": "gpt-5.4-mini",
+        "pipe_flag": "exec",
+        "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
+        "extra_args": ["--skip-git-repo-check"],
+        "description": "Legacy Spark profile id synced to the current fast Codex model"
+      }
+    },
+    {
+      "provider": "gemini",
+      "profile": {
+        "id": "gemini-pro",
+        "name": "Gemini / Pro",
+        "cli": "gemini",
+        "model": "gemini-3.1-pro-preview",
+        "pipe_flag": "-p",
+        "permission_flag": "-y",
+        "description": "Legacy Pro profile id synced to the current Gemini Pro preview"
+      }
+    }
+  ],
+  "engineProviders": [
+    {
+      "value": "anthropic",
+      "label": "Anthropic",
+      "model": "claude-sonnet-4-6",
+      "baseUrl": "",
+      "iconKey": "claude"
+    },
+    {
+      "value": "openai",
+      "label": "OpenAI",
+      "model": "gpt-5.5",
+      "baseUrl": "",
+      "iconKey": "openai"
+    },
+    {
+      "value": "openrouter",
+      "label": "OpenRouter",
+      "model": "deepseek/deepseek-v4-flash",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "iconKey": "openrouter"
+    },
+    {
+      "value": "gemini",
+      "label": "Google Gemini",
+      "model": "gemini-3.5-flash",
+      "baseUrl": "",
+      "iconKey": "gemini"
+    },
+    {
+      "value": "custom",
+      "label": "Custom / Local",
+      "model": "",
+      "baseUrl": "",
+      "iconKey": "custom"
+    },
+    {
+      "value": "auto",
+      "label": "Auto (env vars)",
+      "model": "",
+      "baseUrl": "",
+      "iconKey": "custom"
+    }
+  ],
+  "mentikoGatewayProfile": {
+    "name": "mentiko",
+    "provider": "openai",
+    "model": "glm-5.1",
+    "description": "Mentiko AI gateway (included AI)"
+  },
+  "runtimeDefaults": {
+    "marketplaceAgentModel": "claude-sonnet-4-6",
+    "costModel": "claude-sonnet-4-6",
+    "linkEscalationModel": "haiku",
+    "codexInlineAuthModel": "gpt-5.5"
+  }
+}

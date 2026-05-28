@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { nsPath } from "./config";
+import { DEFAULT_COST_MODEL } from "./agent-provider-catalog";
 
 // ---------------------------------------------------------------------------
 // types
@@ -63,17 +64,22 @@ interface ModelPricing {
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
   // Claude (Anthropic)
+  "claude-opus-4-7":               { inputCentsPerMillion: 500,  outputCentsPerMillion: 2500 },
   "claude-opus-4-6":               { inputCentsPerMillion: 1500, outputCentsPerMillion: 7500 },
   "claude-opus-4":                 { inputCentsPerMillion: 1500, outputCentsPerMillion: 7500 },
   "claude-sonnet-4-6":             { inputCentsPerMillion: 300,  outputCentsPerMillion: 1500 },
   "claude-sonnet-4-5":             { inputCentsPerMillion: 300,  outputCentsPerMillion: 1500 },
   "claude-sonnet-3-5":             { inputCentsPerMillion: 300,  outputCentsPerMillion: 1500 },
-  "claude-haiku-4-5":              { inputCentsPerMillion: 80,   outputCentsPerMillion: 400,  cacheReadCentsPerMillion: 8,  cacheWriteCentsPerMillion: 100 },
+  "claude-haiku-4-5":              { inputCentsPerMillion: 100,  outputCentsPerMillion: 500,  cacheReadCentsPerMillion: 10,  cacheWriteCentsPerMillion: 125 },
   "claude-haiku-3-5":              { inputCentsPerMillion: 80,   outputCentsPerMillion: 400 },
   "claude-3-5-sonnet-20241022":    { inputCentsPerMillion: 300,  outputCentsPerMillion: 1500 },
   "claude-3-5-haiku-20241022":     { inputCentsPerMillion: 80,   outputCentsPerMillion: 400 },
   "claude-3-opus-20240229":        { inputCentsPerMillion: 1500, outputCentsPerMillion: 7500 },
   // OpenAI
+  "gpt-5.5":                       { inputCentsPerMillion: 500,  outputCentsPerMillion: 3000 },
+  "gpt-5.4":                       { inputCentsPerMillion: 250,  outputCentsPerMillion: 1500 },
+  "gpt-5.4-mini":                  { inputCentsPerMillion: 75,   outputCentsPerMillion: 450 },
+  // Legacy models remain here only so old run logs can still price correctly.
   "gpt-4o":                        { inputCentsPerMillion: 250,  outputCentsPerMillion: 1000 },
   "gpt-4o-mini":                   { inputCentsPerMillion: 15,   outputCentsPerMillion: 60 },
   "gpt-4-turbo":                   { inputCentsPerMillion: 1000, outputCentsPerMillion: 3000 },
@@ -83,6 +89,9 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   "o1-mini":                       { inputCentsPerMillion: 300,  outputCentsPerMillion: 1200 },
   "o3-mini":                       { inputCentsPerMillion: 110,  outputCentsPerMillion: 440 },
   // Gemini
+  "gemini-3.5-flash":              { inputCentsPerMillion: 8,    outputCentsPerMillion: 30 },
+  "gemini-3.1-pro-preview":        { inputCentsPerMillion: 125,  outputCentsPerMillion: 500 },
+  "gemini-3.1-flash-lite":         { inputCentsPerMillion: 8,    outputCentsPerMillion: 30 },
   "gemini-1.5-pro":                { inputCentsPerMillion: 125,  outputCentsPerMillion: 500 },
   "gemini-1.5-flash":              { inputCentsPerMillion: 8,    outputCentsPerMillion: 30 },
   "gemini-2.0-flash":              { inputCentsPerMillion: 8,    outputCentsPerMillion: 30 },
@@ -95,7 +104,7 @@ export function computeTokenCost(
   cacheReadTokens = 0,
   cacheWriteTokens = 0
 ): number {
-  const pricing = MODEL_PRICING[model] || MODEL_PRICING["claude-sonnet-4-6"];
+  const pricing = MODEL_PRICING[model] || MODEL_PRICING[DEFAULT_COST_MODEL];
   const inputCost  = (inputTokens  / 1_000_000) * pricing.inputCentsPerMillion;
   const outputCost = (outputTokens / 1_000_000) * pricing.outputCentsPerMillion;
   const cacheRead  = cacheReadTokens  > 0 ? (cacheReadTokens  / 1_000_000) * (pricing.cacheReadCentsPerMillion  ?? pricing.inputCentsPerMillion * 0.1) : 0;
@@ -104,7 +113,7 @@ export function computeTokenCost(
 }
 
 export function getModelPricing(model: string): ModelPricing {
-  return MODEL_PRICING[model] || { inputCentsPerMillion: 300, outputCentsPerMillion: 1500 };
+  return MODEL_PRICING[model] || MODEL_PRICING[DEFAULT_COST_MODEL];
 }
 
 export function listKnownModels(): string[] {

@@ -9,6 +9,7 @@
  */
 
 import { createHmac } from "node:crypto";
+import { MENTIKO_GATEWAY_PROFILE } from "./agent-provider-catalog";
 
 const INTERNAL_AUTH_CONTEXT = "ai-gateway-local-proxy";
 const INTERNAL_AUTH_INFO = `mentiko-internal-api:${INTERNAL_AUTH_CONTEXT}`;
@@ -16,10 +17,10 @@ const ENGINE_BASE_URL = "http://127.0.0.1:7433";
 export const ENGINE_WAIT_MS = 90_000;
 export const ENGINE_POLL_INTERVAL_MS = 1_000;
 const LOCAL_PROXY_BASE_URL = "http://127.0.0.1:3000/api/ai-gateway/local/v1";
-const PROFILE_NAME = "mentiko";
-const PROFILE_MODEL = "glm-5.1";
-const PROFILE_PROVIDER = "openai";
-const PROFILE_DESCRIPTION = "Mentiko AI gateway (included AI)";
+const PROFILE_NAME = MENTIKO_GATEWAY_PROFILE.name;
+const PROFILE_MODEL = MENTIKO_GATEWAY_PROFILE.model;
+const PROFILE_PROVIDER = MENTIKO_GATEWAY_PROFILE.provider;
+const PROFILE_DESCRIPTION = MENTIKO_GATEWAY_PROFILE.description;
 
 export interface MentikoProfileConfig {
   name: string;

@@ -3,17 +3,11 @@ import { checkAuth } from "@/lib/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { pty } from "@/lib/pty-client";
+import { getInteractiveAuthCommand, getInteractiveAuthTools } from "@/lib/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED_TOOLS = ["claude", "codex", "gemini"] as const;
-type AuthTool = (typeof ALLOWED_TOOLS)[number];
-
-const AUTH_COMMANDS: Record<AuthTool, string> = {
-  claude: "claude auth login",
-  codex: "codex login --device-auth",
-  gemini: "gemini auth login",
-};
+const ALLOWED_TOOLS = getInteractiveAuthTools().map((tool) => tool.id);
 
 // POST /api/system/cli-auth - start interactive CLI auth session
 export const POST = withErrorHandling(async (request: NextRequest) => {
@@ -29,16 +23,22 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const body = await request.json();
   const { tool } = body as { tool?: string };
 
-  if (!tool || !ALLOWED_TOOLS.includes(tool as AuthTool)) {
+  if (!tool || !ALLOWED_TOOLS.includes(tool)) {
     throw new BadRequest(
       `Invalid tool. Must be one of: ${ALLOWED_TOOLS.join(", ")}`,
       { field: "tool", allowed: [...ALLOWED_TOOLS] }
     );
   }
 
-  const authTool = tool as AuthTool;
+  const authTool = tool;
   const sessionName = `cli-auth-${authTool}-${Date.now()}`;
-  const authCommand = AUTH_COMMANDS[authTool];
+  const authCommand = getInteractiveAuthCommand(authTool);
+  if (!authCommand) {
+    throw new BadRequest(
+      `Invalid tool. Must be one of: ${ALLOWED_TOOLS.join(", ")}`,
+      { field: "tool", allowed: [...ALLOWED_TOOLS] }
+    );
+  }
 
   // split command into binary + args for pty.spawn
   const [cmd, ...args] = authCommand.split(" ");

@@ -163,7 +163,7 @@ export function AgentEditDialog({
               </pre>
             </div>
             <Textarea
-              placeholder={`Describe the changes you want to make...\n\ne.g. "Add bash and file read tools. Make the prompt more concise. Set model to claude-opus-4-6."`}
+              placeholder={`Describe the changes you want to make...\n\ne.g. "Add bash and file read tools. Make the prompt more concise. Use the default profile model."`}
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               className="flex-1 min-h-[120px] text-sm bg-muted resize-none"

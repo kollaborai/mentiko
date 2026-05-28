@@ -10,6 +10,7 @@ import { findDefaultProfile } from "@/lib/agent-profile-storage";
 import { buildChildEnv } from "@/lib/child-env";
 import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/link-run-runtime";
 import { hasInternalAuth } from "@/lib/internal-api-auth";
+import { LINK_ESCALATION_FALLBACK_MODEL } from "@/lib/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ function generateSummary(peer1Last: string, peer2Last: string, namespaceId: stri
     const profileEnv = profile?.env || {};
 
     const prompt = `Summarize this disagreement in ONE sentence. Peer 1: "${peer1Last.slice(0, 500)}" Peer 2: "${peer2Last.slice(0, 500)}"`;
-    const args = [pipeFlag, prompt, "--model", profile?.model || "haiku"];
+    const args = [pipeFlag, prompt, "--model", profile?.model || LINK_ESCALATION_FALLBACK_MODEL];
 
     const result = execFileSync(cliBin, args, {
       timeout: 30000,

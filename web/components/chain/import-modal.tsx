@@ -28,6 +28,7 @@ import {
   TickCircleFilled as Check,
   SettingsFilled as Settings,
 } from "@aliimam/icons";
+import { CLI_TOOLS } from "@/lib/agent-provider-catalog";
 
 // ─── Customization Modal ─────────────────────────────────────────────────────
 
@@ -115,10 +116,11 @@ export function ChainCustomizationModal({
                 className="w-full bg-muted rounded px-3 py-1.5 text-sm focus:outline-none focus:bg-card"
               >
                 <option value="">Use chain default</option>
-                <option value="claude">Claude (cc)</option>
-                <option value="codex">Codex</option>
-                <option value="aider">Aider</option>
-                <option value="kollab">Kollab (kl)</option>
+                {CLI_TOOLS
+                  .filter((tool) => tool.id !== "opencode")
+                  .map((tool) => (
+                    <option key={tool.id} value={tool.id}>{tool.name}</option>
+                  ))}
               </select>
             </div>
             <div className="space-y-1">

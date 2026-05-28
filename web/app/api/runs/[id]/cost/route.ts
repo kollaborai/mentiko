@@ -39,6 +39,7 @@ import path from "path";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { DEFAULT_COST_MODEL } from "@/lib/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,7 @@ interface JasonlMessage {
 async function parseJsonlTokens(
   filePath: string
 ): Promise<{ model: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }> {
-  const result = { model: "claude-sonnet-4-6", inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0 };
+  const result = { model: DEFAULT_COST_MODEL, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0 };
   if (!existsSync(filePath)) return result;
 
   try {
@@ -165,7 +166,7 @@ export const GET = withErrorHandling(async (
 
   for (const [agentId, convPaths] of Object.entries(agentConvPaths)) {
     const agentMeta = agents.find((a) => a.id === agentId);
-    let model = "claude-sonnet-4-6";
+    let model = DEFAULT_COST_MODEL;
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheRead = 0;

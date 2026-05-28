@@ -172,14 +172,14 @@ curl -s http://localhost:3000/api/metrics | jq '.runs.by_status'
 curl -s http://localhost:3000/api/metrics | jq '.execution_times'
 # Output:
 # {
-#   "claude-opus": {
+#   "research-agent": {
 #     "count": 100,
 #     "total_ms": 4500000,
 #     "avg_ms": 45000,
 #     "min_ms": 15000,
 #     "max_ms": 120000
 #   },
-#   "codex": {
+#   "coding-agent": {
 #     "count": 50,
 #     "total_ms": 1000000,
 #     "avg_ms": 20000,
@@ -189,7 +189,7 @@ curl -s http://localhost:3000/api/metrics | jq '.execution_times'
 # }
 ```
 
-**Analysis:** `claude-opus` avg 45s vs `codex` avg 20s. Max time 120s indicates some runs hit timeouts. Consider adjusting `timeout` settings or optimizing prompts.
+**Analysis:** `research-agent` avg 45s vs `coding-agent` avg 20s. Max time 120s indicates some runs hit timeouts. Consider adjusting `timeout` settings or optimizing prompts.
 
 ### Monitor Webhook Delivery
 

@@ -12,6 +12,7 @@ import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { BotMessageSquare } from "@aliimam/icons";
 import { motion, AnimatePresence } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { getBundleProviderForTool } from "@/lib/agent-provider-catalog";
 import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
@@ -42,15 +43,6 @@ interface CliSetupStepProps {
   onSkip: () => void;
   preloadedDetection?: DetectedTool[] | null;
 }
-
-// map onboarding tool id -> provider-bundles provider key
-// (used to auto-install agent config profiles after auth save)
-const TOOL_TO_BUNDLE: Record<string, string> = {
-  claude: "claude-code",
-  codex: "codex",
-  gemini: "gemini",
-  kollab: "kollab",
-};
 
 // top-level mode: provider picker, simple provider auth, or custom (full tool list)
 type Mode = null | "claude" | "openai" | "gemini" | "custom";
@@ -210,7 +202,7 @@ export function CliSetupStep({
 
     // fire-and-forget: install the provider's agent config bundle
     // so the user gets default profiles (e.g. Claude/Sonnet, Claude/Opus)
-    const bundleProvider = TOOL_TO_BUNDLE[toolId];
+    const bundleProvider = getBundleProviderForTool(toolId);
     const installBundle = bundleProvider
       ? fetchWithNamespace("/api/agent-profiles/install-bundle", {
         method: "POST",

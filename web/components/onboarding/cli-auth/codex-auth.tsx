@@ -18,6 +18,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/provider-config";
+import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface CodexAuthProps {
@@ -180,7 +181,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
       key: "login",
       icon: Link2Filled,
       label: "sign in with openai",
-      desc: "runs codex auth login, opens browser",
+      desc: `runs ${getTerminalAuthCommand("codex")}, opens browser`,
     },
     {
       key: "terminal",

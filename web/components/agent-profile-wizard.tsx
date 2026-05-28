@@ -51,7 +51,7 @@ export function AgentProfileWizard({ open, onOpenChange, onSuccess }: AgentProfi
 
   const handleToolSelect = (tool: typeof CLI_TOOLS[number]) => {
     setSelectedTool(tool);
-    setModel(tool.defaultModel);
+    setModel("");
   };
 
   const handleCreate = async () => {
@@ -181,17 +181,12 @@ export function AgentProfileWizard({ open, onOpenChange, onSuccess }: AgentProfi
 
               <div>
                 <Label className="text-xs text-foreground/50">Model</Label>
-                <select
-                  className="mt-1.5 w-full h-9 px-3 text-xs rounded-md bg-muted/50 border-0 focus:ring-1 focus:ring-accent"
+                <Input
+                  className="mt-1.5 h-9 text-xs font-mono"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                >
-                  {(selectedTool?.models.length ? selectedTool.models : [""]).map((m) => (
-                    <option key={m} value={m}>
-                      {m || "Use CLI default"}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Use CLI default"
+                />
               </div>
 
               <div>
@@ -250,7 +245,7 @@ export function AgentProfileWizard({ open, onOpenChange, onSuccess }: AgentProfi
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-foreground/50">Model</span>
-                  <span className="text-sm font-mono">{model}</span>
+                  <span className="text-sm font-mono">{model || "Use CLI default"}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-foreground/50">Context Window</span>

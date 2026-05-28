@@ -150,12 +150,12 @@ function SelectExample() {
     <ExampleWrap>
       <Select>
         <SelectTrigger className="max-w-[200px]">
-          <SelectValue placeholder="Select model..." />
+          <SelectValue placeholder="Select profile..." />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="opus">Claude Opus</SelectItem>
-          <SelectItem value="sonnet">Claude Sonnet</SelectItem>
-          <SelectItem value="haiku">Claude Haiku</SelectItem>
+          <SelectItem value="default">Default profile</SelectItem>
+          <SelectItem value="fast">Fast profile</SelectItem>
+          <SelectItem value="custom">Custom profile</SelectItem>
         </SelectContent>
       </Select>
     </ExampleWrap>

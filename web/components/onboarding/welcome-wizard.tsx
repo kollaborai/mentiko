@@ -7,6 +7,7 @@ import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
 import { CliSetupStep } from "@/components/onboarding/steps/cli-setup-step";
 import { ProjectSetupStep } from "@/components/onboarding/steps/project-setup-step";
 import { DoneStep } from "@/components/onboarding/steps/done-step";
+import { getBundleProviderForTool } from "@/lib/agent-provider-catalog";
 import { getOnboardingStateKey, getOnboardingStepKey } from "@/lib/onboarding-storage";
 
 type Step = "welcome" | "cli-setup" | "project-setup" | "done";
@@ -102,12 +103,6 @@ export function WelcomeWizard({
   // also auto-install provider bundles for any detected CLIs
   useEffect(() => {
     let cancelled = false;
-    const TOOL_TO_BUNDLE: Record<string, string> = {
-      claude: "claude-code",
-      codex: "codex",
-      gemini: "gemini",
-      kollab: "kollab",
-    };
     async function preloadDetection() {
       try {
         const res = await fetch("/api/system/detect-cli");
@@ -119,7 +114,7 @@ export function WelcomeWizard({
           // auto-install bundles for all detected (installed) CLIs
           for (const tool of tools) {
             if (tool.found) {
-              const bundleProvider = TOOL_TO_BUNDLE[tool.name];
+              const bundleProvider = getBundleProviderForTool(tool.name);
               if (bundleProvider) {
                 fetch("/api/agent-profiles/install-bundle", {
                   method: "POST",

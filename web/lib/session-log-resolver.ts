@@ -7,6 +7,7 @@
 
 import path from "path";
 import { homedir } from "os";
+import { getBundleProviderForTool } from "./agent-provider-catalog";
 import { getBundleByProvider } from "./provider-bundles";
 import type { AgentProfileProvider } from "./types";
 
@@ -41,15 +42,7 @@ export function resolveLogDir(
   let logPath = logPathOverride || "";
 
   if (!logPath) {
-    const providerMap: Record<string, AgentProfileProvider> = {
-      claude: "claude-code",
-      "claude-code": "claude-code",
-      codex: "codex",
-      opencode: "opencode",
-      kollab: "kollab",
-      gemini: "gemini",
-    };
-    const providerId = providerMap[provider] || (provider as AgentProfileProvider);
+    const providerId = getBundleProviderForTool(provider) || (provider as AgentProfileProvider);
     const bundle = getBundleByProvider(providerId);
     logPath = bundle?.log_path || "";
   }

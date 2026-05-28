@@ -354,7 +354,7 @@ export default function AgentEditPage() {
                 id="model"
                 value={form.model}
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
-                placeholder="claude-opus-4-6, gpt-4, etc."
+                placeholder="Use profile default"
               />
             </div>
 

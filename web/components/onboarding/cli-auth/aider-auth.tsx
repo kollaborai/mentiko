@@ -12,7 +12,7 @@ import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
-import { CLI_TOOLS, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import { getDefaultAgentConfigIdForTool, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface AiderAuthProps {
@@ -33,8 +33,6 @@ interface ExistingSecret {
   name: string;
   envVar: string;
 }
-
-const aiderTool = CLI_TOOLS.find((t) => t.id === "aider")!;
 
 const PROVIDER_MAP: Record<Provider, {
   label: string;
@@ -66,7 +64,7 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [authMethod, setAuthMethod] = useState<AuthMethod>("api-key");
   const [provider, setProvider] = useState<Provider>("anthropic");
-  const [model, setModel] = useState(aiderTool.defaultModel);
+  const [model, setModel] = useState(getDefaultAgentConfigIdForTool("aider"));
   const [profiles, setProfiles] = useState<{id: string, name: string}[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -312,11 +310,9 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
                   {p.name}
                 </option>
               ))
-            : aiderTool.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+            : (
+                <option value="">Use CLI default</option>
+              )}
         </select>
       </div>
 

@@ -2,6 +2,7 @@
 
 import { PageBanner } from "@/components/ui/page-banner";
 import { BotMessageSquare, LinkFilled, RouteSquareFilled } from "@aliimam/icons";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
 
 const CodeBlock = ({ children }: { children: string }) => (
   <pre className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto mb-4">
@@ -56,7 +57,7 @@ export default function AgentsDocPage() {
   "prompt": "You are a research agent...\\n\\n{TASK}",
   "triggers": ["research-request"],
   "emits": "research-complete",
-  "model": "claude-sonnet-4-6",
+  "model": "${DEFAULT_MARKETPLACE_AGENT_MODEL}",
   "tools": ["web_search", "read_file", "write_file"],
   "category": "research",
   "tags": ["research", "analysis"],
@@ -207,7 +208,7 @@ export default function AgentsDocPage() {
             <div><code className="text-foreground/70">prompt</code> - inline instructions (used if no spec file)</div>
             <div><code className="text-foreground/70">triggers</code> - events that start this agent (use hyphens: research-request)</div>
             <div><code className="text-foreground/70">emits</code> - event produced on completion (use hyphens: research-complete)</div>
-            <div><code className="text-foreground/70">model</code> - LLM model override (e.g. claude-sonnet-4-6)</div>
+            <div><code className="text-foreground/70">model</code> - optional LLM model override from the catalog</div>
             <div><code className="text-foreground/70">tools</code> - tool list override</div>
             <div><code className="text-foreground/70">agent_profile</code> - profile ID defining LLM model and tools config</div>
             <div><code className="text-foreground/70">session_prefix</code> - prefix for the PTY session name</div>

@@ -51,6 +51,7 @@ import {
   isFloatingPanelRoute,
 } from "@/lib/floating-app-panel-routing";
 import { useUser } from "@/lib/user-context";
+import { CODEX_INLINE_AUTH_MODEL } from "@/lib/agent-provider-catalog";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -304,7 +305,6 @@ export function FloatingKollaborBar() {
   const gatewayLoaded = gatewayState !== null;
   const gatewayMode = gatewayState?.gatewayEnabled === true;
   const codexFlowActive = gatewayLoaded && !gatewayMode && SHOULD_OFFER_CODEX_INLINE_AUTH;
-  const CODEX_FALLBACK_MODEL = "gpt-5.3-codex";
   // delay reading persisted offset/scale until after mount so SSR output matches first client render
   const [mounted, setMounted] = useState(false);
   const [storageScopeReady, setStorageScopeReady] = useState(false);
@@ -891,7 +891,7 @@ export function FloatingKollaborBar() {
         if (codexFlowActive && codexToken && codexAuthDecision === "accept") {
           sessionRequest.credentials = {
             provider: "openai",
-            model: CODEX_FALLBACK_MODEL,
+            model: CODEX_INLINE_AUTH_MODEL,
             api_key: codexToken,
           };
         }

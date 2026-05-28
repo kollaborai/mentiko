@@ -22,7 +22,12 @@ import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import type { AgentProfile, AgentProfileProvider } from "@/lib/types";
 import { useAgentProfiles } from "@/lib/use-agent-profiles";
 import { AgentProfileWizard } from "@/components/agent-profile-wizard";
-import { PROVIDER_CREDENTIALS, getProviderColors } from "@/lib/provider-config";
+import {
+  DEFAULT_MARKETPLACE_AGENT_MODEL,
+  PROVIDER_CREDENTIALS,
+  getProviderColors,
+  getProviderDisplayName,
+} from "@/lib/agent-provider-catalog";
 
 // brand icons for AI providers
 function ProviderBrandIcon({ provider, className }: { provider: string; className?: string }) {
@@ -43,15 +48,6 @@ function ProviderBrandIcon({ provider, className }: { provider: string; classNam
     default:
       return <BotMessageSquare className={className} />;
   }
-}
-
-function getProviderLabel(cli: string): string {
-  const map: Record<string, string> = {
-    claude: "Claude", gemini: "Gemini", codex: "Codex",
-    opencode: "OpenCode", kollab: "Kollab",
-  };
-  const key = cli.toLowerCase();
-  return map[key] ?? (cli.charAt(0).toUpperCase() + cli.slice(1));
 }
 
 // ── env var editor (reused from workspaces) ────────────────────────────────────
@@ -666,7 +662,7 @@ export default function AgentProfilesPage() {
                   {order.map((cli) => (
                     <div key={cli}>
                       <p className="text-[10px] font-medium text-foreground/35 uppercase tracking-wider px-2 mb-1">
-                        {getProviderLabel(cli)}
+                        {getProviderDisplayName(cli)}
                       </p>
                       <div className="space-y-0.5">
                         {groups[cli].map((p) => {
@@ -829,7 +825,7 @@ export default function AgentProfilesPage() {
                       <Label className="text-xs text-foreground/50">Model</Label>
                       <Input
                         className="mt-1.5 h-9 text-xs font-mono"
-                        placeholder="claude-sonnet-4-6"
+                        placeholder={DEFAULT_MARKETPLACE_AGENT_MODEL}
                         value={editModel}
                         onChange={(e) => setEditModel(e.target.value)}
                       />

@@ -10,6 +10,7 @@ import { SearchNormalFilled, FilterFilled, ArrowUp2Filled, EyeFilled, TickCircle
 import { PageBanner } from "@/components/ui/page-banner";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { useDebounce } from "@/lib/performance";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
 
 interface RegistryAgent {
   id: string;
@@ -77,7 +78,7 @@ export default function MarketplaceAgentsPage() {
           triggers: a.triggers || [],
           emits: a.emits || "",
           tools: a.tools || [],
-          model: a.model || "claude-sonnet-4-6",
+          model: a.model || DEFAULT_MARKETPLACE_AGENT_MODEL,
           prompt: a.prompt || "",
           source: "local" as const,
           installed: true,

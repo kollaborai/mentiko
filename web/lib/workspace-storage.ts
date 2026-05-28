@@ -21,7 +21,7 @@ export interface WorkspaceExecution {
 
 export interface WorkspaceModel {
   cli?: string;       // e.g. 'cc', 'claude'
-  model?: string;     // e.g. 'claude-opus-4-6'
+  model?: string;
   cli_args?: string[];
 }
 

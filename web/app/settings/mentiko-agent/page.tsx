@@ -22,6 +22,11 @@ import {
   FONT_SCALE_MIN,
   useKollaborBarStore,
 } from "@/lib/kollabor-bar-store";
+import {
+  ENGINE_PROVIDER_DEFAULTS,
+  MENTIKO_GATEWAY_PROFILE,
+  getEngineProviderDefault,
+} from "@/lib/agent-provider-catalog";
 
 interface EngineProfile {
   name: string;
@@ -43,14 +48,8 @@ interface ProfilesResponse {
   count: number;
 }
 
-const PROVIDERS = [
-  { value: "anthropic",   label: "Anthropic",         defaultModel: "claude-sonnet-4-6",             defaultBaseUrl: "" },
-  { value: "openai",      label: "OpenAI",             defaultModel: "gpt-4o",                        defaultBaseUrl: "" },
-  { value: "openrouter",  label: "OpenRouter",         defaultModel: "deepseek/deepseek-v4-flash",    defaultBaseUrl: "https://openrouter.ai/api/v1" },
-  { value: "gemini",      label: "Google Gemini",      defaultModel: "gemini-2.0-flash",              defaultBaseUrl: "" },
-  { value: "custom",      label: "Custom / Local",     defaultModel: "",                              defaultBaseUrl: "" },
-  { value: "auto",        label: "Auto (env vars)",    defaultModel: "",                              defaultBaseUrl: "" },
-];
+const PROVIDERS = ENGINE_PROVIDER_DEFAULTS;
+const DEFAULT_PROVIDER = getEngineProviderDefault("anthropic") ?? PROVIDERS[0];
 
 function ProviderIcon({ provider, className }: { provider: string; className?: string }) {
   switch (provider.toLowerCase()) {
@@ -63,10 +62,10 @@ function ProviderIcon({ provider, className }: { provider: string; className?: s
 
 const EMPTY_FORM = {
   name: "",
-  provider: "anthropic",
-  model: "claude-sonnet-4-6",
+  provider: DEFAULT_PROVIDER.value,
+  model: DEFAULT_PROVIDER.model,
   api_key_secret: "",   // secret name from vault
-  base_url: "",
+  base_url: DEFAULT_PROVIDER.baseUrl,
   description: "",
 };
 
@@ -151,8 +150,8 @@ export default function MentikoAgentSettingsPage() {
     setForm((f) => ({
       ...f,
       provider,
-      model:    def?.defaultModel   ?? "",
-      base_url: def?.defaultBaseUrl ?? f.base_url,
+      model:    def?.model   ?? "",
+      base_url: def?.baseUrl ?? f.base_url,
     }));
   }
 
@@ -481,7 +480,7 @@ export default function MentikoAgentSettingsPage() {
                 id="model"
                 value={form.model}
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-                placeholder="Example: claude-sonnet-4-6"
+                placeholder={`Example: ${getEngineProviderDefault(form.provider)?.model || MENTIKO_GATEWAY_PROFILE.model}`}
                 className="text-sm"
               />
             </div>

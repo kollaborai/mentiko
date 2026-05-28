@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { getApiErrorMessage, unwrapApiData } from "@/lib/api-client";
 import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
+import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 
 interface AuthCommand {
   cli: string;
@@ -19,7 +20,7 @@ const AUTH_COMMANDS: AuthCommand[] = [
   {
     cli: "claude",
     label: "Claude Code",
-    cmd: "claude login",
+    cmd: getTerminalAuthCommand("claude"),
     description: "Browser OAuth — opens claude.ai to authorize",
   },
   {
@@ -31,7 +32,7 @@ const AUTH_COMMANDS: AuthCommand[] = [
   {
     cli: "codex",
     label: "OpenAI Codex",
-    cmd: "codex auth login",
+    cmd: getTerminalAuthCommand("codex"),
     description: "OpenAI OAuth flow",
   },
   {

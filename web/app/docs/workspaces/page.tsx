@@ -52,7 +52,7 @@ export default function WorkspacesDocPage() {
   },
   "config": {
     "cli": "claude",
-    "model": "claude-opus-4-6",
+    "model": "sonnet",
     "maxAgents": 10,
     "maxRounds": 50,
     "defaultBranch": "main"

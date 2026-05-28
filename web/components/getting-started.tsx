@@ -8,6 +8,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { unwrapApiData } from "@/lib/api-client";
 import { useSharedRuns } from "@/lib/runs-store";
 import { useSharedChains } from "@/lib/chains-store";
+import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 
 interface Step {
   id: string;
@@ -138,7 +139,7 @@ export function GettingStarted() {
     {
       id: "cli-auth",
       title: "Authenticate your CLI",
-      description: "Run 'claude login' in the terminal to complete OAuth auth",
+      description: `Run '${getTerminalAuthCommand("claude")}' in the terminal to complete OAuth auth`,
       onClick: () => { openTerminal(); },
       done: cliAuthConfirmed,
     },

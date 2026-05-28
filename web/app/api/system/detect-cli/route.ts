@@ -6,6 +6,7 @@ import { checkAuth } from "@/lib/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
 import { buildChildEnv } from "@/lib/child-env";
+import { getCliBinary, getDetectableCliTools } from "@/lib/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -16,15 +17,6 @@ interface CliTool {
   path?: string;
   authenticated?: boolean;
 }
-
-const CLI_TOOLS = ["claude", "codex", "aider", "gemini", "kollab"] as const;
-const CLI_BINARIES: Record<string, string> = {
-  claude: "claude",
-  codex: "codex",
-  aider: "aider",
-  gemini: "gemini",
-  kollab: "kollab",
-};
 
 // GET /api/system/detect-cli - detect installed AI CLI tools
 export const GET = withErrorHandling(async (request: Request) => {
@@ -42,8 +34,9 @@ export const GET = withErrorHandling(async (request: Request) => {
 
   const tools: CliTool[] = [];
 
-  for (const cli of CLI_TOOLS) {
-    const binary = CLI_BINARIES[cli] || cli;
+  for (const tool of getDetectableCliTools()) {
+    const cli = tool.id;
+    const binary = getCliBinary(cli);
     let found = false;
     let version: string | undefined;
     let path: string | undefined;

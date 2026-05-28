@@ -10,7 +10,7 @@
  *   agentId      string  required
  *   agentName?   string
  *   provider?    string  "claude"|"openai"|"gemini"|"ollama"|"unknown"
- *   model        string  required (e.g. "claude-sonnet-4-6")
+ *   model        string  required
  *   inputTokens  number
  *   outputTokens number
  *   cacheReadTokens?  number
