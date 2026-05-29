@@ -30,6 +30,25 @@ MENTIKO_GLOBAL_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
 NAMESPACE_ID="${NAMESPACE_ID:-default}"
 ORG_ID="${ORG_ID:-default}"
 
+_mentiko_slug_part() {
+  printf '%s' "$1" \
+    | sed 's/[^A-Za-z0-9_-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//' \
+    | cut -c1-48
+}
+
+_mentiko_derive_pty_daemon() {
+  local root_slug namespace_slug org_slug
+  root_slug="$(_mentiko_slug_part "${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}")"
+  namespace_slug="$(_mentiko_slug_part "${NAMESPACE_ID:-default}")"
+  org_slug="$(_mentiko_slug_part "${ORG_ID:-default}")"
+  [[ -n "$root_slug" ]] || root_slug="root"
+  [[ -n "$namespace_slug" ]] || namespace_slug="default"
+  [[ -n "$org_slug" ]] || org_slug="default"
+  printf 'mentiko-%s-%s-%s\n' "$root_slug" "$namespace_slug" "$org_slug"
+}
+
+PTY_DAEMON="${PTY_DAEMON:-$(_mentiko_derive_pty_daemon)}"
+
 # project directory: the actual codebase being worked on.
 # for scripts run from this repo, it IS the code root.
 MENTIKO_PROJECT_DIR="${MENTIKO_PROJECT_DIR:-$MENTIKO_CODE_ROOT}"
@@ -172,6 +191,7 @@ export BIN_DIR LIB_DIR
 # defaults
 export DEFAULT_CLI DEFAULT_SESSION_PREFIX DEFAULT_PROJECT_ROOT
 export WEB_PORT MAX_CONCURRENT_AGENTS DEFAULT_MAX_ROUNDS
+export PTY_DAEMON
 
 # -------------------------------------------------------------------
 # helper functions

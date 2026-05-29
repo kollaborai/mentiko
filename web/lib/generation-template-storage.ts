@@ -331,6 +331,7 @@ AVAILABLE CHAIN CATALOG:
 DECISION RULES:
 - If an existing chain is a good fit (>70% match to the task requirements), recommend "use_existing"
 - If no chain fits well, recommend "generate_new" with suggested agents and a generation prompt
+- Do not return "no_match", "execute directly", or "no chain needed"; if the task is not covered by an existing chain, create a new chain recommendation
 - Always provide reasoning (2-3 sentences) and a confidence score (0-1)
 - Always provide 1-3 alternatives from existing chains if any are partially relevant
 - For "use_existing": include match_reasons as bullet points explaining why this chain fits

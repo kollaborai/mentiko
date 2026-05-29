@@ -411,4 +411,66 @@ describe("POST /api/tasks/auto-run", () => {
       "default",
     );
   });
+
+  it("starts generation when a completed recommendation has no existing chain", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-3",
+      title: "Run smoke tests",
+      description: "Run local smoke tests and fix failures",
+      issue_type: "task",
+      priority: 2,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis",
+      type: "recommend",
+      status: "complete",
+      result: {
+        recommendation: {
+          chain_id: null,
+          confidence: "none",
+          rationale: "No existing chain handles smoke testing plus code repair.",
+          suggested_approach: "Execute directly in one session.",
+        },
+      },
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: true,
+      data: { jobId: "job-generation", status: "pending" },
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-3" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-3",
+      jobId: "job-generation",
+      action: "generation_started",
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/api/jobs",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"type":"generate"'),
+      }),
+    );
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-3",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          generation_job_id: "job-generation",
+          generation_status: "running",
+          analysis_status: "accepted",
+        }),
+      }),
+      "default",
+    );
+  });
 });

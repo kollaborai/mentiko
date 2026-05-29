@@ -80,6 +80,22 @@ test("watchdog does not reap completion sessions as orphans", () => {
   );
 });
 
+test("agent run context exposes the mentiko CLI on PATH", () => {
+  const command = `
+    set -euo pipefail
+    eval "$(sed -n '/^agent_run_context_export_command()/,/^}/p' ${JSON.stringify(chainRunner)})"
+    RUN_ID=run-ctx
+    EVENTS_DIR="$MENTIKO_GLOBAL_ROOT/events"
+    ARTIFACTS_DIR="$MENTIKO_GLOBAL_ROOT/artifacts"
+    eval "$(agent_run_context_export_command chain-recommender chain-recommendation-complete)"
+    printf '%s\\n%s' "$MENTIKO_BIN" "$(command -v mentiko)"
+  `;
+  const lines = runBash(command).split("\n");
+
+  assert(lines[0] === `${repoRoot}/bin/mentiko`, `MENTIKO_BIN should point at repo CLI: ${lines[0]}`);
+  assert(lines[1] === `${repoRoot}/bin/mentiko`, `mentiko should resolve from PATH: ${lines[1]}`);
+});
+
 for (const item of tests) {
   try {
     item.fn();

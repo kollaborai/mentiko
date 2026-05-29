@@ -30,6 +30,10 @@ import config, { nsPath } from "@/lib/config";
 import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import {
+  buildGenerationPromptFromTaskRecommendation,
+  normalizeTaskChainRecommendation,
+} from "@/lib/task-chain-recommendation";
 import { internalApiUrl } from "@/lib/internal-web-origin";
 
 export const dynamic = "force-dynamic";
@@ -601,10 +605,19 @@ async function autoAcceptRecommendation(
   request: NextRequest,
   workspacePath?: string
 ): Promise<TriggerResult> {
-  const action = recommendation.action as string;
+  const normalized = normalizeTaskChainRecommendation(recommendation);
+  if (!normalized) {
+    return {
+      triggered: false,
+      taskId,
+      error: "Invalid recommendation payload",
+    };
+  }
+
+  const action = normalized.action;
 
   if (action === "use_existing") {
-    const chainId = recommendation.chain_id as string;
+    const chainId = normalized.chain_id;
     if (!chainId)
       return { triggered: false, taskId, error: "Recommendation missing chain_id" };
 
@@ -612,7 +625,7 @@ async function autoAcceptRecommendation(
     const updated = {
       ...metadata,
       chain_id: chainId,
-      chain_name: recommendation.chain_name,
+      chain_name: normalized.chain_name,
       analysis_status: "accepted",
     };
     try {
@@ -638,12 +651,33 @@ async function autoAcceptRecommendation(
     return await startGenerationJob(
       taskId,
       metadata,
-      recommendation.generation_prompt as string,
+      buildGenerationPromptFromTaskRecommendation({ title: taskTitle }, normalized),
       namespaceId,
       orgId,
       request,
       workspacePath
     );
+  }
+
+  if (action === "execute_directly") {
+    const updated = {
+      ...metadata,
+      auto_run: false,
+      analysis_status: "accepted",
+      chain_recommendation_action: "execute_directly",
+      chain_recommendation_reason: normalized.reasoning,
+    };
+    try {
+      taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
+    } catch {
+      /* non-fatal */
+    }
+    return {
+      triggered: false,
+      taskId,
+      action: "execute_directly",
+      reason: normalized.reasoning,
+    };
   }
 
   return {

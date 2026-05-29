@@ -23,6 +23,24 @@ function expandTilde(p: string): string {
   return p;
 }
 
+function slugPart(value: string): string {
+  const slug = value
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+  return slug || "root";
+}
+
+export function derivePtyDaemonName(root: string, namespace: string, org: string): string {
+  return [
+    "mentiko",
+    slugPart(root),
+    slugPart(namespace || "default"),
+    slugPart(org || "default"),
+  ].join("-");
+}
+
 /**
  * Encode a directory path into a filesystem-safe ID.
  * $MENTIKO_CODE_ROOT -> -workspace-mentiko
@@ -58,6 +76,8 @@ const codeRoot =
 
 const namespaceId = process.env.NAMESPACE_ID || "default";
 const orgId = process.env.ORG_ID || "default";
+const ptyDaemonName = process.env.PTY_DAEMON || derivePtyDaemonName(globalRoot, namespaceId, orgId);
+process.env.PTY_DAEMON = ptyDaemonName;
 
 // Project directory: the actual codebase being worked on.
 // For local dev, this is the code root itself.
@@ -190,6 +210,7 @@ export const config = {
   ptyManagerDir,
   ptySocketPath: process.env.PTY_SOCKET_PATH || null,
   ptyTokenPath: process.env.PTY_TOKEN_PATH || null,
+  ptyDaemonName,
   demoWorkspaceDir,
   claudeProjectsDir: claudeProjectsBase,
   infraSshPublicKey: process.env.MENTIKO_SSH_PUBLIC_KEY || null,

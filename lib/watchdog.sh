@@ -362,6 +362,43 @@ get_active_run_sessions() {
     echo "$sessions"
 }
 
+session_env_value() {
+    local env_text="$1"
+    local key="$2"
+    printf '%s\n' "$env_text" | tr '\0' ' ' | sed -n "s/.*${key}=\\([^ ]*\\).*/\\1/p" | tail -1
+}
+
+session_in_watchdog_scope() {
+    local session="$1"
+    local pid
+    pid=$(transport_pid "$session" 2>/dev/null || true)
+
+    # If the session is exited or pid lookup is unavailable, keep legacy cleanup
+    # behavior. The cross-root danger only applies to live processes.
+    [[ -n "$pid" ]] || return 0
+
+    local env_text
+    env_text=$(ps eww -p "$pid" 2>/dev/null || true)
+    [[ -n "$env_text" ]] || return 0
+
+    local session_root session_namespace session_org
+    session_root=$(session_env_value "$env_text" "MENTIKO_GLOBAL_ROOT")
+    session_namespace=$(session_env_value "$env_text" "NAMESPACE_ID")
+    session_org=$(session_env_value "$env_text" "ORG_ID")
+
+    if [[ -n "$session_root" && -n "${MENTIKO_GLOBAL_ROOT:-}" && "$session_root" != "$MENTIKO_GLOBAL_ROOT" ]]; then
+        return 1
+    fi
+    if [[ -n "$session_namespace" && "$session_namespace" != "${NAMESPACE_ID:-default}" ]]; then
+        return 1
+    fi
+    if [[ -n "$session_org" && "$session_org" != "${ORG_ID:-default}" ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
 # kill sessions that exist in pty-manager but are not in any active run
 cleanup_orphaned_sessions() {
     local active_sessions="$1"
@@ -371,8 +408,10 @@ cleanup_orphaned_sessions() {
         [[ -z "$session" ]] && continue
         # skip watchdog's own session
         [[ "$session" == "mentiko-watchdog" ]] && continue
+        [[ "$session" == mentiko-watchdog-* ]] && continue
         # skip chain event watcher
         [[ "$session" == "mentiko-chain-watcher" ]] && continue
+        [[ "$session" == mentiko-chain-watcher-* ]] && continue
         # skip monitor sessions - they're companion processes to agent sessions
         # and are not tracked in run.json but are essential for chain progression
         [[ "$session" == monitor-* ]] && continue
@@ -387,6 +426,14 @@ cleanup_orphaned_sessions() {
         # skip link/peer sessions - managed by peer-manager, not chain-runner
         [[ "$session" == link-* ]] && continue
         [[ "$session" == peer-* ]] && continue
+        # pty-manager is global on the host, while run files are scoped under
+        # MENTIKO_GLOBAL_ROOT/NAMESPACE_ID/ORG_ID. Do not let a temp namespace
+        # watchdog reap live sessions that clearly belong to another root.
+        if ! session_in_watchdog_scope "$session"; then
+            _sys_log "info" "watchdog" "skipped foreign session: $session" \
+                "session is outside this watchdog root/namespace"
+            continue
+        fi
         # check if this session is referenced by an active run
         if ! echo "$active_sessions" | grep -qxF "$session"; then
             echo "  ~~ orphan: $session (no active run)"

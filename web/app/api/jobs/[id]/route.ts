@@ -5,10 +5,59 @@ import { taskGet, taskUpdate } from "@/lib/task-store";
 import { getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import type { Job } from "@/lib/job-store";
 
 export const dynamic = "force-dynamic";
 
 export const runtime = "nodejs";
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function syncTaskAuditMetadata(job: Job, orgId: string, namespaceId: string): void {
+  if (!job.taskId) return;
+
+  const isRecommend = job.type === "recommend";
+  const isGenerate = job.type === "generate";
+  if (!isRecommend && !isGenerate) return;
+
+  const task = taskGet(orgId, job.taskId, namespaceId);
+  if (!task) return;
+
+  const existing = metadataRecord(task.metadata);
+  const jobKey = isRecommend ? "analysis_job_id" : "generation_job_id";
+  if (existing[jobKey] !== job.id) return;
+
+  const nextMetadata = isRecommend
+    ? {
+      ...existing,
+      analysis_status: job.status,
+      ...(job.runId ? { recommendation_run_id: job.runId } : {}),
+      ...(job.chainId ? { recommendation_chain_id: job.chainId } : {}),
+    }
+    : {
+      ...existing,
+      generation_status: job.status,
+      ...(job.runId ? { generated_chain_run_id: job.runId } : {}),
+      ...(job.chainId ? { generated_chain_source_chain_id: job.chainId } : {}),
+    };
+
+  taskUpdate(orgId, job.taskId, { metadata: nextMetadata }, namespaceId);
+}
 
 export const GET = withErrorHandling(async (
   request: NextRequest,
@@ -25,6 +74,9 @@ export const GET = withErrorHandling(async (
   if (!job) {
     throw new NotFound("Job", id);
   }
+
+  const orgId = await getOrgIdFromRequest(request);
+  syncTaskAuditMetadata(job, orgId, namespaceId);
 
   return apiSuccess(job);
 });

@@ -20,6 +20,7 @@ const ALLOWED_KEYS = [
   "TERM",
   "TMPDIR",
   "NODE_ENV",
+  "PTY_DAEMON",
 
   // mentiko data hierarchy
   "MENTIKO_GLOBAL_ROOT",

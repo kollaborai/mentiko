@@ -10,7 +10,7 @@
       "daemonize": true,
       "readiness": {
         "type": "socket",
-        "path": "$HOME/.pty-manager/default.sock",
+        "path": "$HOME/.pty-manager/$PTY_DAEMON.sock",
         "timeout": 10000,
         "interval": 250
       },

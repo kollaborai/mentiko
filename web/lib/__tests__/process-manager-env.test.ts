@@ -10,6 +10,7 @@ describe("process manager environment", () => {
   it("passes pty manager override variables to managed child processes", () => {
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("MENTIKO_PTY_MGR_BIN");
+    expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_DAEMON");
   });
 
   it("loads the web-local env file when run from the web directory", () => {

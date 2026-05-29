@@ -29,19 +29,19 @@ NC='\033[0m' # No Color
 # ============================================================================
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[PASS]${NC} $1"
+    echo -e "${GREEN}[PASS]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[FAIL]${NC} $1"
+    echo -e "${RED}[FAIL]${NC} $1" >&2
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 # Create output directory
@@ -290,14 +290,12 @@ EOF
     # Run the puppeteer test
     log_info "Running UI page checks..."
 
-    cd "$SMOKE_OUTPUT_DIR"
+    local ui_exit=0
     SMOKE_BASE_URL="$SMOKE_BASE_URL" \
-    SMOKE_EMAIL="$SMOKE_EMAIL" \
-    SMOKE_PASSWORD="$SMOKE_PASSWORD" \
-    SMOKE_OUTPUT_DIR="$SMOKE_OUTPUT_DIR" \
-    node "${SMOKE_OUTPUT_DIR}/puppeteer-test.mjs" 2>&1 || true
-
-    cd - >/dev/null
+        SMOKE_EMAIL="$SMOKE_EMAIL" \
+        SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+        SMOKE_OUTPUT_DIR="$SMOKE_OUTPUT_DIR" \
+        node "${SMOKE_OUTPUT_DIR}/puppeteer-test.mjs" 2>&1 || ui_exit=$?
 
     # Parse results
     if [ -f "${SMOKE_OUTPUT_DIR}/ui-results.json" ]; then
@@ -310,6 +308,9 @@ EOF
         FAILED=$((FAILED + failed))
 
         log_info "UI page checks: $passed passed, $failed failed"
+    elif [ "$ui_exit" -ne 0 ]; then
+        log_error "UI page checks failed before writing results"
+        ((FAILED++))
     fi
 }
 
@@ -325,9 +326,13 @@ test_authenticated_api() {
     # (actual terminal token test requires a running ws-terminal daemon)
 
     cat > "${SMOKE_OUTPUT_DIR}/auth-api-test.mjs" << 'EOF'
+import { writeFileSync } from 'fs';
+import { join } from 'path';
+
 const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3000';
 const EMAIL = process.env.SMOKE_EMAIL || '';
 const PASSWORD = process.env.SMOKE_PASSWORD || '';
+const OUTPUT_DIR = process.env.SMOKE_OUTPUT_DIR || './smoke-test-results';
 
 async function testAuthRequired() {
     const endpoints = [
@@ -367,12 +372,35 @@ async function testAuthRequired() {
 }
 
 testAuthRequired().then(results => {
+    writeFileSync(join(OUTPUT_DIR, 'auth-api-results.json'), JSON.stringify(results, null, 2));
     process.exit(results.some(r => r.status === 'fail') ? 1 : 0);
 });
 EOF
 
+    local auth_exit=0
     SMOKE_BASE_URL="$SMOKE_BASE_URL" \
-    node "${SMOKE_OUTPUT_DIR}/auth-api-test.mjs" 2>&1 || true
+        SMOKE_OUTPUT_DIR="$SMOKE_OUTPUT_DIR" \
+        node "${SMOKE_OUTPUT_DIR}/auth-api-test.mjs" 2>&1 || auth_exit=$?
+
+    if [ "$auth_exit" -ne 0 ] && [ ! -f "${SMOKE_OUTPUT_DIR}/auth-api-results.json" ]; then
+        log_error "Authenticated API checks failed"
+        ((FAILED++))
+    fi
+
+    if [ -f "${SMOKE_OUTPUT_DIR}/auth-api-results.json" ]; then
+        local passed
+        local failed
+        local warnings
+        passed=$(jq '[.[] | select(.status == "pass")] | length' "${SMOKE_OUTPUT_DIR}/auth-api-results.json")
+        failed=$(jq '[.[] | select(.status == "fail")] | length' "${SMOKE_OUTPUT_DIR}/auth-api-results.json")
+        warnings=$(jq '[.[] | select(.status == "warn")] | length' "${SMOKE_OUTPUT_DIR}/auth-api-results.json")
+
+        PASSED=$((PASSED + passed))
+        FAILED=$((FAILED + failed))
+        WARNINGS=$((WARNINGS + warnings))
+
+        log_info "Authenticated API checks: $passed passed, $warnings warnings, $failed failed"
+    fi
 }
 
 # ============================================================================

@@ -17,7 +17,7 @@ export const DECISION_CORE_CHAIN_IDS = [
 
 export type DecisionCoreChainId = typeof DECISION_CORE_CHAIN_IDS[number];
 
-const DECISION_CORE_CHAIN_VERSION = "1.0.4";
+const DECISION_CORE_CHAIN_VERSION = "1.0.5";
 
 interface CoreChainDefinition {
   id: DecisionCoreChainId;
@@ -35,6 +35,8 @@ function importInstructions(phase: string): string {
     "",
     "Then import it into Mentiko with:",
     `  mentiko decision import "$ARTIFACTS_DIR/decision-result.json" --decision "$MENTIKO_DECISION_ID" --phase ${phase} --run "$MENTIKO_RUN_ID"`,
+    "",
+    "The Mentiko CLI is already on PATH as mentiko. Use mentiko, not ./bin/mentiko.",
     "",
     "Do not use MCP tools for the import. Use the Mentiko CLI command above.",
     "If the import command fails, stop and report the exact import error. Do not write directly to decision storage, task storage, job storage, or project files.",

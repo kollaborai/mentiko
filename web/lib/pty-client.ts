@@ -14,7 +14,7 @@ import { join, dirname } from "path";
 import { existsSync } from "fs";
 import { spawn as cpSpawn } from "child_process";
 
-const DAEMON_NAME = process.env.PTY_DAEMON || "default";
+const DAEMON_NAME = config.ptyDaemonName;
 const getSocketPath = (): string => {
   if (config.ptySocketPath) return config.ptySocketPath;
   return join(config.ptyManagerDir, `${DAEMON_NAME}.sock`);
@@ -146,6 +146,7 @@ async function ensureDaemon(): Promise<void> {
           MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
           NAMESPACE_ID: config.namespaceId,
           ORG_ID: config.orgId,
+          PTY_DAEMON: DAEMON_NAME,
         },
       });
     } catch {

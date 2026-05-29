@@ -114,7 +114,7 @@ describe("POST /api/jobs chain dispatch migration", () => {
         type: "recommend",
         input: {
           chainCatalog: "chain_id: c1",
-          task: { title: "Ship v1" },
+          task: { title: "Ship v1", chainGuidance: "create a new chain" },
         },
       }) as never,
     );
@@ -137,7 +137,7 @@ describe("POST /api/jobs chain dispatch migration", () => {
     expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
       kind: "chain_recommendation",
       job: expect.objectContaining({ id: "job-1" }),
-      prompt: expect.stringContaining("recommend"),
+      prompt: expect.stringContaining("chain guidance: create a new chain"),
       workspacePath: "/repo/ws",
     }));
   });

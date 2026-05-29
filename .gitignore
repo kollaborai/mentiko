@@ -44,6 +44,7 @@ docs/clients/
 
 # agent reports (runtime output, belongs in namespaces/)
 reports/
+smoke-test-results/
 
 # marketplace published chains (user-generated runtime data)
 namespaces/*/marketplace/

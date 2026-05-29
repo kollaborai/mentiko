@@ -137,6 +137,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       task.acceptance ? `acceptance criteria: ${task.acceptance}` : null,
       task.design ? `design notes: ${task.design}` : null,
       task.notes ? `notes: ${task.notes}` : null,
+      task.chainGuidance ? `chain guidance: ${task.chainGuidance}` : null,
     ].filter(Boolean).join("\n") : "";
 
     // ensure chainCatalog exists (might not have been built above if chainsDir missing)

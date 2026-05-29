@@ -222,6 +222,14 @@ async function testApiEnvelope() {
     for (const endpoint of endpoints) {
         checkTimeout();
         const response = await apiGet(endpoint);
+        if (endpoint === '/health') {
+            if (response.json?.status) {
+                recordPass(`${endpoint} - health json`);
+            } else {
+                recordFail(`${endpoint} - health json`, { reason: 'Missing status field' });
+            }
+            continue;
+        }
         verifyEnvelope(response, endpoint);
     }
 }

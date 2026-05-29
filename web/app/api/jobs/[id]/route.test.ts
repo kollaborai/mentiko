@@ -40,6 +40,7 @@ jest.mock("@/lib/namespace-config", () => ({
 
 import { GET } from "./route";
 import { createJob, updateJob, getJob, deleteJob } from "@/lib/job-store";
+import { taskCreate, taskDelete, taskGet } from "@/lib/task-store";
 
 function createMockRequest() {
   return {
@@ -54,11 +55,15 @@ function createMockRequest() {
 
 describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
   const testJobIds: string[] = [];
+  const testTaskIds: string[] = [];
 
   afterAll(async () => {
     // Cleanup all test jobs
     for (const id of testJobIds) {
       deleteJob(id);
+    }
+    for (const id of testTaskIds) {
+      taskDelete("default", id);
     }
   });
 
@@ -266,6 +271,56 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const freshJob = getJob(job.id);
       expect(freshJob?.status).toBe("failed");
       expect(freshJob?.error).toBe("Job timed out (stale)");
+    });
+
+    test("should sync stale recommendation failure back to linked task metadata", async () => {
+      const job = createJob("recommend", { prompt: "stale test" });
+      testJobIds.push(job.id);
+
+      const task = taskCreate("default", {
+        title: "stale recommendation task",
+        metadata: {
+          analysis_job_id: job.id,
+          analysis_status: "running",
+        },
+      });
+      testTaskIds.push(task.id);
+      updateJob(job.id, { taskId: task.id });
+
+      const elevenMinutesAgo = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require("node:fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require("node:path");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const config = require("@/lib/config").default;
+      const jobPath = path.join(config.jobsDir, `${job.id}.json`);
+
+      const staleJob = {
+        ...job,
+        taskId: task.id,
+        status: "running",
+        startedAt: elevenMinutesAgo,
+        runId: "run-stale-recommend",
+        chainId: "chain-recommendation",
+      };
+
+      fs.writeFileSync(jobPath, JSON.stringify(staleJob, null, 2));
+
+      const request = createMockRequest();
+      const response = await GET(request, {
+        params: Promise.resolve({ id: job.id })
+      });
+
+      expect(response.status).toBe(200);
+      const updatedTask = taskGet("default", task.id);
+      expect(updatedTask?.metadata).toMatchObject({
+        analysis_job_id: job.id,
+        analysis_status: "failed",
+        recommendation_run_id: "run-stale-recommend",
+        recommendation_chain_id: "chain-recommendation",
+      });
     });
   });
 

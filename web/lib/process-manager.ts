@@ -65,6 +65,17 @@ function log(msg: string) { process.stdout.write(`[pm] ${msg}\n`); }
 function logErr(msg: string) { process.stderr.write(`[pm] ${msg}\n`); }
 function sleep(ms: number) { return new Promise<void>(r => setTimeout(r, ms)); }
 function expandEnv(s: string) { return s.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, n) => process.env[n] || ''); }
+function slugPart(value: string): string {
+  const slug = value
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return slug || 'root';
+}
+function derivePtyDaemonName(root: string, namespace: string, org: string): string {
+  return ['mentiko', slugPart(root), slugPart(namespace || 'default'), slugPart(org || 'default')].join('-');
+}
 function errorMessage(err: unknown, fallback = 'internal error') {
   if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
@@ -715,7 +726,11 @@ async function housekeep() {
   const nsId = process.env.NAMESPACE_ID || 'default';
   const oId = process.env.ORG_ID || 'default';
   const tier = process.env.MENTIKO_TIER;
+  if (!process.env.PTY_DAEMON) {
+    process.env.PTY_DAEMON = derivePtyDaemonName(nsRoot || path.join(home, '.mentiko'), nsId, oId);
+  }
   log(`namespace: ${nsId}, org: ${oId}, root: ${nsRoot || '(dev)'}, tier: ${tier || '(none)'}`);
+  log(`pty daemon: ${process.env.PTY_DAEMON}`);
   if (nsId === 'default' && tier) {
     logErr(`WARNING: NAMESPACE_ID is "default" in ${tier} tier — possible tenant isolation issue`);
   }

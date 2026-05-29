@@ -23,6 +23,26 @@
 # otherwise fall back to pty-mgr on PATH (container/production)
 _TRANSPORT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _LOCAL_P="${_TRANSPORT_SCRIPT_DIR}/../bin/p"
+
+_transport_slug_part() {
+    printf '%s' "$1" \
+        | sed 's/[^A-Za-z0-9_-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//' \
+        | cut -c1-48
+}
+
+_transport_derive_pty_daemon() {
+    local root_slug namespace_slug org_slug
+    root_slug="$(_transport_slug_part "${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}")"
+    namespace_slug="$(_transport_slug_part "${NAMESPACE_ID:-default}")"
+    org_slug="$(_transport_slug_part "${ORG_ID:-default}")"
+    [[ -n "$root_slug" ]] || root_slug="root"
+    [[ -n "$namespace_slug" ]] || namespace_slug="default"
+    [[ -n "$org_slug" ]] || org_slug="default"
+    printf 'mentiko-%s-%s-%s\n' "$root_slug" "$namespace_slug" "$org_slug"
+}
+
+export PTY_DAEMON="${PTY_DAEMON:-$(_transport_derive_pty_daemon)}"
+
 if [[ -x "$_LOCAL_P" ]] && ! [[ -L "$_LOCAL_P" && ! -e "$_LOCAL_P" ]]; then
     PTY_CMD="$_LOCAL_P"
 elif command -v pty-mgr >/dev/null 2>&1; then

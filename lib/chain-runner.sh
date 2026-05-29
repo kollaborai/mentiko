@@ -981,18 +981,24 @@ get_gateway_env() {
 agent_run_context_export_command() {
     local agent_id="${1:-}"
     local agent_emits="${2:-}"
-    local mentiko_bin_dir="${MENTIKO_CODE_ROOT:-}/bin"
+    local mentiko_code_root="${MENTIKO_CODE_ROOT:-}"
+    if [[ -z "$mentiko_code_root" ]]; then
+        mentiko_code_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    fi
+    local mentiko_bin_dir="$mentiko_code_root/bin"
+    local mentiko_bin="$mentiko_bin_dir/mentiko"
     local agent_path="$mentiko_bin_dir:${PATH:-}"
 
-    printf "export PATH=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q" \
+    printf "export PATH=%q MENTIKO_BIN=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q; hash -r 2>/dev/null || true" \
         "$agent_path" \
+        "$mentiko_bin" \
         "${RUN_ID:-}" \
         "${RUN_ID:-}" \
         "${NAMESPACE_ID:-default}" \
         "${ORG_ID:-default}" \
         "$agent_id" \
         "$agent_emits" \
-        "${MENTIKO_CODE_ROOT:-}" \
+        "$mentiko_code_root" \
         "${MENTIKO_PROJECT_ROOT:-}" \
         "${MENTIKO_ORG_ROOT:-}" \
         "${MENTIKO_NAMESPACE_ROOT:-}" \

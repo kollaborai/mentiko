@@ -181,6 +181,12 @@ transport_session_exists() {
 transport_kill_session() {
   echo "\$1" >> "\$MOCK_KILLED_FILE"
 }
+transport_pid() {
+  local session="\$1"
+  local pid_file="\$MOCK_STATE_DIR/pid_\${session}"
+  [[ -f "\$pid_file" ]] || return 1
+  cat "\$pid_file"
+}
 transport_list_sessions() {
   cat "\$MOCK_LIST_FILE" 2>/dev/null
 }
@@ -203,6 +209,8 @@ dispatch-chain-stalled() {
 
 eval "$(sed -n '/^check_run()/,/^}/p' "${WATCHDOG}")"
 eval "$(sed -n '/^get_active_run_sessions()/,/^}/p' "${WATCHDOG}")"
+eval "$(sed -n '/^session_env_value()/,/^}/p' "${WATCHDOG}")"
+eval "$(sed -n '/^session_in_watchdog_scope()/,/^}/p' "${WATCHDOG}")"
 eval "$(sed -n '/^cleanup_orphaned_sessions()/,/^}/p' "${WATCHDOG}")"
 
 get_live_sessions() {
@@ -561,6 +569,30 @@ echo "done"
 `);
   const killed = readFileLines(join(TMP, "mock-state", "killed_sessions"));
   assert(killed.length === 0, `should not kill protected sessions: ${killed}`);
+});
+
+test("cleanup_orphaned_sessions skips sessions from another namespace root", () => {
+  resetTmp();
+  setupDirs();
+
+  const result = runBash(`
+cat > "$MOCK_STATE_DIR/ps" <<'EOF'
+#!/bin/bash
+echo "1234 MENTIKO_GLOBAL_ROOT=/Users/malmazan/.mentiko NAMESPACE_ID=default ORG_ID=default"
+EOF
+chmod +x "$MOCK_STATE_DIR/ps"
+echo "1234" > "$MOCK_STATE_DIR/pid_mentiko-chain-recommendation-chain-recommender-run-1"
+PATH="$MOCK_STATE_DIR:$PATH"
+export MENTIKO_GLOBAL_ROOT="/tmp/mentiko-cache-proof"
+export NAMESPACE_ID="cacheproof"
+
+cleanup_orphaned_sessions "" "mentiko-chain-recommendation-chain-recommender-run-1"
+echo "done"
+`);
+
+  assert(result.stdout.includes("done"), `should complete: ${result.stdout}`);
+  const killed = readFileLines(join(TMP, "mock-state", "killed_sessions"));
+  assert(killed.length === 0, `should not kill cross-root session: ${killed}`);
 });
 
 test("get_active_run_sessions collects sessions from running runs", () => {

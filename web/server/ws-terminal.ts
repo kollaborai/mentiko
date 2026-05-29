@@ -35,9 +35,33 @@ import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "fs";
 
 const WS_PORT = parseInt(process.env.WS_TERMINAL_PORT || "3099", 10);
-const DAEMON_NAME = process.env.PTY_DAEMON || "default";
-const SOCKET_PATH = join(homedir(), ".pty-manager", `${DAEMON_NAME}.sock`);
-const TOKEN_PATH = join(homedir(), ".pty-manager", "ws-token");
+const PTY_MANAGER_DIR = process.env.PTY_MANAGER_DIR || join(homedir(), ".pty-manager");
+const DAEMON_NAME = process.env.PTY_DAEMON || derivePtyDaemonName(
+  process.env.MENTIKO_GLOBAL_ROOT || process.env.MENTIKO_ROOT || join(homedir(), ".mentiko"),
+  process.env.NAMESPACE_ID || "default",
+  process.env.ORG_ID || "default",
+);
+process.env.PTY_DAEMON = DAEMON_NAME;
+const SOCKET_PATH = join(PTY_MANAGER_DIR, `${DAEMON_NAME}.sock`);
+const TOKEN_PATH = join(PTY_MANAGER_DIR, "ws-token");
+
+function slugPart(value: string | undefined, fallback: string): string {
+  const slug = (value || fallback)
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || fallback;
+}
+
+function derivePtyDaemonName(root: string, namespace: string, org: string): string {
+  return [
+    "mentiko",
+    slugPart(root, "root"),
+    slugPart(namespace, "default"),
+    slugPart(org, "default"),
+  ].join("-");
+}
 
 // localhost defaults cover `npm run dev` directly. Anything else (including
 // docker with remapped host ports) gets added below from BETTER_AUTH_URL.
@@ -306,7 +330,7 @@ function createBridge() {
   httpServer.on("listening", () => {
     // write server auth token file for internal API communication
     try {
-      mkdirSync(join(homedir(), ".pty-manager"), { recursive: true, mode: 0o700 });
+      mkdirSync(PTY_MANAGER_DIR, { recursive: true, mode: 0o700 });
       writeFileSync(TOKEN_PATH, SERVER_AUTH_TOKEN, { mode: 0o600 });
     } catch {}
     console.log(`ws-terminal bridge listening on ws://${BIND_HOST}:${WS_PORT}`);

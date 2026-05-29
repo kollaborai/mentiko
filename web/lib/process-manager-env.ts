@@ -28,7 +28,7 @@ export const MANAGED_PROCESS_ENV_WHITELIST = [
   // optional override for the platform's server-side engine proxy
   "KOLLABOR_ENGINE_URL",
   // optional override for local/bundled PTY manager binary selection
-  "PTY_MGR_BIN", "MENTIKO_PTY_MGR_BIN",
+  "PTY_MGR_BIN", "MENTIKO_PTY_MGR_BIN", "PTY_DAEMON",
   // internal service auth -- used by engine->web refresh-token calls
   "INTERNAL_SERVICE_SECRET",
   // SaaS signup gate -- auth-deployment.ts + auth-server.ts read these

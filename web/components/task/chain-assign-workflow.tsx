@@ -6,12 +6,18 @@ import { useJobStatus } from "@/hooks/use-job-status";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { useSharedChains } from "@/lib/chains-store";
+import {
+  buildGenerationPromptFromTaskRecommendation,
+  normalizeTaskChainRecommendation,
+  type TaskChainRecommendation,
+} from "@/lib/task-chain-recommendation";
 import type { Task } from "@/lib/task-types";
 
 type WorkflowStep =
   | "idle"
   | "checking_job"
   | "analyzing"
+  | "assigning"
   | "recommendation"
   | "manual_picker"
   | "generating"
@@ -19,19 +25,7 @@ type WorkflowStep =
   | "error"
   | "stale";  // metadata exists but job is gone/failed - needs reset
 
-interface Recommendation {
-  action: "use_existing" | "generate_new";
-  reasoning: string;
-  confidence: number;
-  chain_id?: string;
-  chain_name?: string;
-  chain_description?: string;
-  match_reasons?: string[];
-  suggested_name?: string;
-  suggested_description?: string;
-  suggested_agents?: { name: string; role: string }[];
-  generation_prompt?: string;
-}
+type Recommendation = TaskChainRecommendation;
 
 interface Alternative {
   chain_id: string;
@@ -103,6 +97,7 @@ export function ChainAssignWorkflow({
   const [showChainJson, setShowChainJson] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [savedChainName, setSavedChainName] = useState<string | null>(null);
+  const [chainGuidance, setChainGuidance] = useState("");
 
   // track job IDs locally - task prop doesn't refresh after PATCH
   const [activeAnalysisJobId, setActiveAnalysisJobId] = useState<string | null>(
@@ -117,9 +112,59 @@ export function ChainAssignWorkflow({
   const { fetchWithNamespace } = useNamespaceFetch();
 
   const hasMounted = useRef(false);
+  const autoApplyAnalysisJobIds = useRef<Set<string>>(new Set());
+  const handledAutoAnalysisJobIds = useRef<Set<string>>(new Set());
+  const handledAnalysisCompleteJobIds = useRef<Set<string>>(new Set());
+  const handledGenerationCompleteJobIds = useRef<Set<string>>(new Set());
 
   // helper to append workspace query param to URLs
   const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : "";
+
+  const generateChain = useCallback(async (prompt: string) => {
+    // double-submit protection
+    if (task.chainBinding?.generation_status === "running") {
+      return;
+    }
+
+    setStep("generating");
+    setErrorMessage(null);
+    setStaleJobId(null);
+
+    try {
+      const jobRes = await fetchWithNamespace(`/api/jobs${wsParam}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "generate",
+          taskId: task.id,
+          input: { prompt },
+        }),
+      });
+
+      if (!jobRes.ok) {
+        throw new Error("Failed to start generation");
+      }
+
+      const jobData = await jobRes.json();
+
+      // server handles metadata persistence now - just update local state
+      const metadata = {
+        ...task.chainBinding,
+        generation_job_id: jobData.jobId,
+        generation_status: "running" as const,
+        ...(typeof jobData.runId === "string" ? { generated_chain_run_id: jobData.runId } : {}),
+        ...(typeof jobData.chainId === "string" ? { generated_chain_source_chain_id: jobData.chainId } : {}),
+      };
+      onMetadataUpdate?.(metadata);
+
+      setActiveGenerationJobId(jobData.jobId);
+      setGenerationJob(jobData);
+    } catch (e: unknown) {
+      setErrorMessage(e instanceof Error ? e.message : "Failed to start generation");
+      setStep("recommendation");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
+  }, [task, setGenerationJob, fetchWithNamespace, wsParam]);
 
   // reset local state when task changes
   useEffect(() => {
@@ -132,6 +177,7 @@ export function ChainAssignWorkflow({
       setChains([]);
       setStaleJobId(null);
       setSavedChainName(null);
+      setChainGuidance("");
     }
     hasMounted.current = true;
   }, [task.id]);
@@ -149,10 +195,22 @@ export function ChainAssignWorkflow({
     if (!analysisJob) return;
 
     if (analysisJob.status === "complete") {
+      const completedJobId = typeof analysisJob.id === "string"
+        ? analysisJob.id
+        : activeAnalysisJobId;
+      if (completedJobId && handledAnalysisCompleteJobIds.current.has(completedJobId)) {
+        return;
+      }
+      if (completedJobId) {
+        handledAnalysisCompleteJobIds.current.add(completedJobId);
+      }
+
       const result = analysisJob.result as unknown;
+      let normalizedRecommendation: Recommendation | null = null;
       if (result && typeof result === "object") {
         if ("recommendation" in result) {
-          setRecommendation((result as { recommendation: Recommendation }).recommendation);
+          normalizedRecommendation = normalizeTaskChainRecommendation((result as { recommendation: unknown }).recommendation);
+          setRecommendation(normalizedRecommendation);
         }
         if ("alternatives" in result) {
           setAlternatives((result as { alternatives: Alternative[] }).alternatives || []);
@@ -166,9 +224,29 @@ export function ChainAssignWorkflow({
         ...(typeof analysisJob.chainId === "string" ? { recommendation_chain_id: analysisJob.chainId } : {}),
       };
       onMetadataUpdate?.(metadata);
-      // only go to recommendation if no generation job is active
-      // (generation takes priority - don't regress from "generating" to "recommendation")
-      if (!activeGenerationJobId && !task.chainBinding?.generation_job_id) {
+
+      const shouldAutoApply = completedJobId
+        ? autoApplyAnalysisJobIds.current.has(completedJobId) &&
+          !handledAutoAnalysisJobIds.current.has(completedJobId)
+        : false;
+
+      if (shouldAutoApply && completedJobId && normalizedRecommendation) {
+        handledAutoAnalysisJobIds.current.add(completedJobId);
+        if (normalizedRecommendation.action === "use_existing" && normalizedRecommendation.chain_id) {
+          setStep("assigning");
+          onAssignChain(
+            normalizedRecommendation.chain_id,
+            normalizedRecommendation.chain_name || normalizedRecommendation.chain_id
+          ).catch((error) => {
+            setErrorMessage(error instanceof Error ? error.message : "Failed to assign chain");
+            setStep("recommendation");
+          });
+        } else {
+          void generateChain(buildGenerationPromptFromTaskRecommendation(task, normalizedRecommendation));
+        }
+      } else if (!activeGenerationJobId && !task.chainBinding?.generation_job_id) {
+        // only go to recommendation if no generation job is active
+        // (generation takes priority - don't regress from "generating" to "recommendation")
         setStep("recommendation");
       }
       setErrorMessage(null);
@@ -177,13 +255,23 @@ export function ChainAssignWorkflow({
       setStep("error");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
-  }, [analysisJob]);
+  }, [analysisJob, activeAnalysisJobId, activeGenerationJobId, generateChain, onAssignChain, task]);
 
   // respond to generation job status changes via SSE
   useEffect(() => {
     if (!generationJob) return;
 
     if (generationJob.status === "complete") {
+      const completedJobId = typeof generationJob.id === "string"
+        ? generationJob.id
+        : activeGenerationJobId;
+      if (completedJobId && handledGenerationCompleteJobIds.current.has(completedJobId)) {
+        return;
+      }
+      if (completedJobId) {
+        handledGenerationCompleteJobIds.current.add(completedJobId);
+      }
+
       const result = generationJob.result as unknown;
       let chainData: GeneratedChain | null = null;
       if (result && typeof result === "object") {
@@ -353,7 +441,7 @@ export function ChainAssignWorkflow({
             return;
           } else if (jobData.status === "complete" && jobData.result) {
             if (jobData.result.recommendation) {
-              setRecommendation(jobData.result.recommendation);
+              setRecommendation(normalizeTaskChainRecommendation(jobData.result.recommendation));
             }
             if (jobData.result.alternatives) {
               setAlternatives(jobData.result.alternatives);
@@ -412,6 +500,7 @@ export function ChainAssignWorkflow({
               acceptance: task.acceptance,
               design: task.design,
               notes: task.notes,
+              ...(chainGuidance.trim() ? { chainGuidance: chainGuidance.trim() } : {}),
             },
           },
         }),
@@ -434,6 +523,7 @@ export function ChainAssignWorkflow({
       onMetadataUpdate?.(metadata);
 
       // update local job ID so useJobStatus hooks into the right SSE/poll
+      autoApplyAnalysisJobIds.current.add(jobData.jobId);
       setActiveAnalysisJobId(jobData.jobId);
       setAnalysisJob(jobData);
     } catch (e: unknown) {
@@ -441,7 +531,7 @@ export function ChainAssignWorkflow({
       setStep("error");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
-  }, [task, setAnalysisJob, fetchWithNamespace, wsParam]);
+  }, [task, setAnalysisJob, fetchWithNamespace, wsParam, chainGuidance]);
 
   const retryAnalysis = useCallback(async () => {
     // clear old job refs from metadata
@@ -480,6 +570,7 @@ export function ChainAssignWorkflow({
               acceptance: task.acceptance,
               design: task.design,
               notes: task.notes,
+              ...(chainGuidance.trim() ? { chainGuidance: chainGuidance.trim() } : {}),
             },
           },
         }),
@@ -498,6 +589,7 @@ export function ChainAssignWorkflow({
         ...(typeof jobData.chainId === "string" ? { recommendation_chain_id: jobData.chainId } : {}),
       };
       onMetadataUpdate?.(metadata);
+      autoApplyAnalysisJobIds.current.add(jobData.jobId);
       setActiveAnalysisJobId(jobData.jobId);
       setAnalysisJob(jobData);
     } catch (e: unknown) {
@@ -505,53 +597,7 @@ export function ChainAssignWorkflow({
       setStep("error");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
-  }, [task, setAnalysisJob, fetchWithNamespace, wsParam]);
-
-  const generateChain = useCallback(async (prompt: string) => {
-    // double-submit protection
-    if (task.chainBinding?.generation_status === "running") {
-      return;
-    }
-
-    setStep("generating");
-    setErrorMessage(null);
-    setStaleJobId(null);
-
-    try {
-      const jobRes = await fetchWithNamespace(`/api/jobs${wsParam}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "generate",
-          taskId: task.id,
-          input: { prompt },
-        }),
-      });
-
-      if (!jobRes.ok) {
-        throw new Error("Failed to start generation");
-      }
-
-      const jobData = await jobRes.json();
-
-      // server handles metadata persistence now - just update local state
-      const metadata = {
-        ...task.chainBinding,
-        generation_job_id: jobData.jobId,
-        generation_status: "running" as const,
-        ...(typeof jobData.runId === "string" ? { generated_chain_run_id: jobData.runId } : {}),
-        ...(typeof jobData.chainId === "string" ? { generated_chain_source_chain_id: jobData.chainId } : {}),
-      };
-      onMetadataUpdate?.(metadata);
-
-      setActiveGenerationJobId(jobData.jobId);
-      setGenerationJob(jobData);
-    } catch (e: unknown) {
-      setErrorMessage(e instanceof Error ? e.message : "Failed to start generation");
-      setStep("recommendation");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
-  }, [task, setGenerationJob, fetchWithNamespace, wsParam]);
+  }, [task, setAnalysisJob, fetchWithNamespace, wsParam, chainGuidance]);
 
   function sanitizeChain(chain: GeneratedChain): GeneratedChain {
     const sanitized = { ...chain };
@@ -755,8 +801,15 @@ export function ChainAssignWorkflow({
     return (
       <div className="space-y-2">
         <div className="text-[10px] text-foreground/30">
-          let AI analyze this task and recommend a chain
+          analyze, then assign or generate a chain
         </div>
+        <input
+          type="text"
+          value={chainGuidance}
+          onChange={(event) => setChainGuidance(event.target.value)}
+          placeholder="optional guidance for chain analysis"
+          className="w-full px-2.5 py-1.5 rounded-md bg-muted text-[10px] text-foreground/60 placeholder:text-foreground/20 outline-none"
+        />
         <div className="flex items-center gap-2">
           <button
             className="px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 text-[10px] font-medium hover:bg-cyan-500/25 transition-colors"
@@ -853,6 +906,21 @@ export function ChainAssignWorkflow({
     );
   }
 
+  // assigning
+  if (step === "assigning") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+          <span className="text-xs text-foreground/50">
+            Assigning recommended chain...
+          </span>
+        </div>
+        <JobRunLink label="analysis run" runId={analysisJob?.runId} />
+      </div>
+    );
+  }
+
   // error state
   if (step === "error") {
     return (
@@ -887,6 +955,7 @@ export function ChainAssignWorkflow({
   // recommendation
   if (step === "recommendation" && recommendation) {
     const isExisting = recommendation.action === "use_existing";
+    const isGenerateNew = recommendation.action === "generate_new";
 
     return (
       <div className="space-y-2">
@@ -913,7 +982,7 @@ export function ChainAssignWorkflow({
               </div>
             )}
           </>
-        ) : (
+        ) : isGenerateNew ? (
           <>
             <div className="text-[10px] text-foreground/30">
               recommendation: generate new chain
@@ -929,6 +998,20 @@ export function ChainAssignWorkflow({
                     {a.name} - {a.role}
                   </div>
                 ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="text-[10px] text-foreground/30">
+              recommendation: execute directly
+            </div>
+            <div className="text-[10px] text-foreground/40 leading-relaxed">
+              {recommendation.reasoning}
+            </div>
+            {recommendation.direct_instructions && recommendation.direct_instructions !== recommendation.reasoning && (
+              <div className="text-[10px] text-foreground/35 leading-relaxed">
+                {recommendation.direct_instructions}
               </div>
             )}
           </>
@@ -1012,7 +1095,7 @@ export function ChainAssignWorkflow({
                 generateChain(prompt);
               }}
             >
-              {errorMessage ? "Retry Generation" : "Generate This Chain"}
+              {errorMessage ? "Retry Generation" : isGenerateNew ? "Generate This Chain" : "Generate Anyway"}
             </button>
           )}
           <button

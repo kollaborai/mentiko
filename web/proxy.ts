@@ -35,8 +35,19 @@ function getTenantId(request: NextRequest): string {
   return getUserId(request);
 }
 
-function isOptOut(pathname: string): boolean {
-  return OPT_OUT_PATHS.some((p) => pathname.startsWith(p));
+function isTaskReadPath(pathname: string): boolean {
+  return (
+    pathname === "/api/tasks" ||
+    pathname === "/api/tasks/epics" ||
+    pathname === "/api/tasks/graph" ||
+    /^\/api\/tasks\/[^/]+$/.test(pathname) ||
+    /^\/api\/tasks\/[^/]+\/(deps|comments)$/.test(pathname)
+  );
+}
+
+function isOptOut(pathname: string, method: string): boolean {
+  if (OPT_OUT_PATHS.some((p) => pathname.startsWith(p))) return true;
+  return method === "GET" && isTaskReadPath(pathname);
 }
 
 function rateLimitedResponse(retryAfterSec: number) {
@@ -59,7 +70,7 @@ async function applyRateLimit(
 
   if (!pathname.startsWith("/api/")) return null;
 
-  if (isOptOut(pathname)) return null;
+  if (isOptOut(pathname, request.method)) return null;
 
   // internal service calls (chain-runner, watchdog, scheduler) use bearer
   const authHeader = request.headers.get("authorization");
