@@ -78,7 +78,9 @@ assert_contains "$expanded" "chain=placeholder-chain" "expands chain name"
 assert_not_contains "$expanded" '$TASK_' "does not leave literal task variables"
 assert_not_contains "$expanded" '${' "does not leave shell-style placeholders"
 
-chain_runner_source="$(sed -n '1195,1210p' "$PROJECT_ROOT/lib/chain-runner.sh")"
+# search the whole file rather than a hardcoded line range (line numbers drift as
+# chain-runner.sh changes; the assertion is about the call existing, not its location)
+chain_runner_source="$(cat "$PROJECT_ROOT/lib/chain-runner.sh")"
 assert_contains "$chain_runner_source" \
   'agent_workspace=$(substitute_placeholders "$agent_workspace")' \
   "expands agent context workspace placeholders"

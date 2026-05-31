@@ -100,6 +100,24 @@ describe("getAutoRunCandidates", () => {
     expect(getAutoRunCandidates("default")).toEqual([]);
   });
 
+  it("skips open auto-run tasks after a completed execution", () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-040",
+        title: "Needs human close",
+        status: "open",
+        issue_type: "task",
+        metadata: {
+          auto_run: true,
+          last_run_status: "completed",
+          last_run_id: "run-done",
+        },
+      },
+    ] as never);
+
+    expect(getAutoRunCandidates("default")).toEqual([]);
+  });
+
   it("skips a retryable task when live run state says it is already active", () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue(["run-active"] as never);

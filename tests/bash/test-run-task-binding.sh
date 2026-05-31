@@ -37,4 +37,53 @@ if [[ "$workspace_path" != "/repo/live-mentiko" ]]; then
   exit 1
 fi
 
-echo "PASS: create-run persists task id and workspace path"
+cat > "$run_file" <<JSON
+{
+  "id": "$run_id",
+  "taskId": "TASK-001",
+  "chain": "task-bound-chain",
+  "chainId": "task-bound-chain",
+  "status": "completed",
+  "started": "2026-05-29T00:00:00.000Z",
+  "completed": "2026-05-29T00:01:00.000Z",
+  "agents": [],
+  "artifacts": []
+}
+JSON
+
+curl_log="$TEST_TMP_DIR/curl.log"
+curl() {
+  printf '%s\n' "$*" >> "$curl_log"
+  local url="${!#}"
+  case "$url" in
+    *"/api/tasks/TASK-001")
+      if [[ "$*" == *"-X PATCH"* ]]; then
+        printf '{}\n'
+      else
+        printf '{"data":{"issue":{"status":"in_progress","metadata":{"auto_run":true}}}}\n'
+      fi
+      ;;
+    *"/api/tasks/TASK-001/comments")
+      printf '{}\n'
+      ;;
+    *)
+      printf '{}\n'
+      ;;
+  esac
+}
+
+update-task-from-run "$run_id" "completed" >/dev/null
+
+if grep -q '/api/tasks/TASK-001/close' "$curl_log"; then
+  echo "FAIL: completed chain run should not close linked task automatically"
+  cat "$curl_log"
+  exit 1
+fi
+
+if ! grep -q '"status":"open"' "$curl_log"; then
+  echo "FAIL: completed chain run should return linked task to open"
+  cat "$curl_log"
+  exit 1
+fi
+
+echo "PASS: create-run persists task binding and completed runs leave task open"

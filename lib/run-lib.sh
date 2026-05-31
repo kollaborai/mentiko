@@ -349,36 +349,6 @@ export -f write-debug-state
 export -f get-debug-state
 export -f clear-debug-state
 
-trigger-auto-run-scan() {
-    local completed_task_id="$1"
-    local run_id="$2"
-    local current_meta="${3:-{}}"
-
-    local auto_run
-    auto_run=$(echo "$current_meta" | jq -r '.auto_run == true' 2>/dev/null || echo "false")
-    [[ "$auto_run" != "true" ]] && return 0
-
-    local api_base="http://localhost:${WEB_PORT:-3000}"
-    local auth_header="Authorization: Bearer ${BETTER_AUTH_SECRET:-}"
-    local ns_header="x-namespace-id: ${NAMESPACE_ID:-default}"
-    local org_header="x-org-id: ${ORG_ID:-default}"
-
-    echo "  auto-run: queueing follow-up scan after $completed_task_id"
-    _sys_log "info" "auto-run" "queueing follow-up scan" "task: $completed_task_id, run: $run_id"
-
-    (
-        sleep 2
-        curl -sf -X POST \
-            -H "$auth_header" \
-            -H "$ns_header" \
-            -H "$org_header" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            "${api_base}/api/tasks/auto-run" >/dev/null 2>&1 || true
-    ) &
-    disown $! 2>/dev/null || true
-}
-
 # -------------------------------------------------------------------
 # build-run-summary-json: aggregate agent summaries into a run verdict
 # -------------------------------------------------------------------
@@ -666,7 +636,7 @@ update-task-from-run() {
     ' 2>/dev/null || echo "{\"last_run_status\":\"$status\",\"last_run_id\":\"$run_id\"}")
 
     local task_patch_payload
-    if [[ "$status" == "completed" && "$decision_required" == "true" && "$current_task_status" != "open" ]]; then
+    if [[ "$status" == "completed" && "$current_task_status" != "open" ]]; then
         task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta, status: "open"}')
     else
         task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta}')
@@ -701,20 +671,11 @@ Artifacts: $artifacts_count files"
         echo "  task summary written ($artifacts_count artifacts)"
     fi
 
-    # if run completed successfully, close the task
-    if [[ "$status" == "completed" && "$decision_required" != "true" ]]; then
-        echo "  closing task $task_id (chain completed)"
-        curl -sf -X POST \
-            -H "$auth_header" \
-            -H "$ns_header" \
-            -H "$org_header" \
-            "${api_base}/api/tasks/${task_id}/close" >/dev/null 2>&1 || true
-        trigger-auto-run-scan "$task_id" "$run_id" "$current_meta"
-    elif [[ "$status" == "completed" ]]; then
+    if [[ "$status" == "completed" ]]; then
         if [[ "$current_task_status" != "open" ]]; then
-            echo "  set task $task_id open (run requires review: $run_outcome)"
+            echo "  set task $task_id open (chain completed; manual close required)"
         else
-            echo "  leaving task $task_id open (run requires review: $run_outcome)"
+            echo "  leaving task $task_id open (chain completed; manual close required)"
         fi
     fi
 
@@ -736,4 +697,3 @@ export -f cleanup-old-runs
 export -f build-run-summary-json
 export -f write-run-summary-artifact
 export -f update-task-from-run
-export -f trigger-auto-run-scan
