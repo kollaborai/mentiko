@@ -41,7 +41,6 @@ const localProxyToken = args.get("local-proxy-token") || process.env.MENTIKO_AI_
 const gatewayAdminUrl = args.get("gateway-admin-url") || process.env.AI_GATEWAY_ADMIN_URL || "";
 const gatewayAdminToken = args.get("gateway-admin-token") || process.env.AI_GATEWAY_ADMIN_TOKEN || "";
 const runJobRunner = args.get("job-runner") === "true";
-const runChainRunner = args.get("chain-runner") === "true";
 const keepTemp = args.get("keep-temp") === "true";
 
 function fail(code, detail) {
@@ -299,126 +298,6 @@ async function runProviderlessJobRunner() {
   }
 }
 
-function latestRun(namespaceRoot) {
-  const runsDir = join(namespaceRoot, "runs");
-  const runs = readdirSync(runsDir)
-    .filter((entry) => entry.startsWith("run-"))
-    .sort();
-  const runId = runs.at(-1);
-  if (!runId) {
-    throw new Error("chain-runner did not create a run directory");
-  }
-  const runDir = join(runsDir, runId);
-  const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
-  return { runId, runDir, run };
-}
-
-async function runProviderlessChainRunner() {
-  if (!localProxyToken) {
-    throw new Error("local proxy token is required for chain-runner smoke");
-  }
-
-  const tempRoot = args.get("temp-root") ||
-    `/tmp/mentiko-ai-gateway-agent-smoke-${Date.now()}`;
-  const namespaceRoot = join(tempRoot, "namespaces", "default");
-  const chainsDir = join(namespaceRoot, "chains");
-  const profilesDir = join(namespaceRoot, "agent-profiles");
-  const workspaceDir = join(namespaceRoot, "workspace");
-  const cliPath = join(tempRoot, "providerless-agent-cli.mjs");
-  const chainPath = join(chainsDir, "ai-gateway-chain-smoke.json");
-
-  mkdirp(chainsDir);
-  mkdirp(profilesDir);
-  mkdirp(workspaceDir);
-  writeProviderlessAgentCli(cliPath);
-  writeJson(join(profilesDir, "default.json"), {
-    id: "default",
-    name: "Gateway Smoke Providerless Chain Agent",
-    isDefault: true,
-    cli: process.execPath,
-    pipe_flag: cliPath,
-    env: {},
-  });
-  writeJson(chainPath, {
-    name: "ai-gateway-chain-smoke",
-    description: "providerless chain smoke",
-    default_agent_profile: "default",
-    config: {
-      max_rounds: 1,
-      session_prefix: "ai-gw-smoke",
-    },
-    agents: [
-      {
-        id: "providerless-chain",
-        name: "Providerless Chain Smoke",
-        role: "smoke",
-        triggers: ["manual-start"],
-        emits: "done",
-        prompt: "Call the local AI gateway proxy, then print AGENT_COMPLETE.",
-      },
-    ],
-  });
-
-  try {
-    const result = await runNode(
-      process.execPath,
-      [
-        join(repoRoot, "lib", "chain-runner.mjs"),
-        chainPath,
-        "--workspace",
-        workspaceDir,
-        "--timeout",
-        "60000",
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          MENTIKO_GLOBAL_ROOT: tempRoot,
-          MENTIKO_CODE_ROOT: repoRoot,
-          MENTIKO_PROJECT_ROOT: namespaceRoot,
-          MENTIKO_ORG_ROOT: namespaceRoot,
-          MENTIKO_NAMESPACE_ROOT: namespaceRoot,
-          NAMESPACE_ID: "default",
-          ORG_ID: "default",
-          WEB_PORT: new URL(tenantBaseUrl).port || "3000",
-          BETTER_AUTH_SECRET: localProxyToken,
-          MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
-          MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: `${tenantBaseUrl.replace(/\/+$/, "")}/api/ai-gateway/local/v1`,
-          MENTIKO_AI_GATEWAY_LOCAL_TOKEN: localProxyToken,
-          AI_GATEWAY_SMOKE_MODEL: model,
-          AI_GATEWAY_SMOKE_AGENT_LABEL: "providerless-chain-runner",
-          AI_GATEWAY_SMOKE_PRINT_AGENT_COMPLETE: "true",
-          OPENAI_API_KEY: "server-openai-should-be-stripped",
-          GLM_TOKEN: "server-glm-should-be-stripped",
-        },
-        timeoutMs: 120000,
-      },
-    );
-    const { runId, runDir, run } = latestRun(namespaceRoot);
-    console.log(`chain_runner_exit: ${result.code}`);
-    console.log(`chain_runner_run_id: ${runId}`);
-    console.log(`chain_runner_status: ${run.status}`);
-    const agent = run.agents?.find((entry) => entry.id === "providerless-chain");
-    console.log(`chain_runner_agent_status: ${agent?.status || "missing"}`);
-    if (result.code !== 0 || run.status !== "completed" || agent?.status !== "completed") {
-      throw new Error((run.status_message || result.stderr || result.stdout || "chain-runner failed").slice(0, 360));
-    }
-    const outputPath = join(runDir, "artifacts", "providerless-chain-output.txt");
-    const output = readFileSync(outputPath, "utf8");
-    if (!output.includes("providerless-chain-runner") || !output.includes("AGENT_COMPLETE")) {
-      throw new Error("chain-runner artifact did not contain providerless gateway proof");
-    }
-    console.log("chain_runner_agent: providerless-chain-runner");
-  } finally {
-    if (keepTemp) {
-      console.log(`temp_root: ${tempRoot}`);
-    } else {
-      safeRemoveTemp(tempRoot);
-    }
-  }
-}
-
 async function main() {
   console.log(`tenant: ${tenant}`);
   console.log(`tenant_url: ${tenantBaseUrl}`);
@@ -490,26 +369,6 @@ async function main() {
       }
     }
     console.log("status: ✔ providerless_job_runner_ok");
-  }
-
-  if (runChainRunner) {
-    const chainBefore = await readUsageSnapshot();
-    if (chainBefore) {
-      console.log(`chain_usage_before: requests=${chainBefore.requestsUsed} total=${chainBefore.totalTokensUsed}`);
-    }
-    await runProviderlessChainRunner();
-    const chainAfter = await readUsageSnapshot();
-    if (chainBefore && chainAfter) {
-      const requestDelta = Number(chainAfter.requestsUsed) - Number(chainBefore.requestsUsed);
-      const tokenDelta = Number(chainAfter.totalTokensUsed) - Number(chainBefore.totalTokensUsed);
-      console.log(`chain_usage_after: requests=${chainAfter.requestsUsed} total=${chainAfter.totalTokensUsed}`);
-      console.log(`chain_usage_delta: requests=${requestDelta} total=${tokenDelta}`);
-      if (requestDelta < 1 || tokenDelta < 1) {
-        fail("chain_runner_usage_not_incremented", "chain-runner succeeded but gateway usage did not increase");
-        return;
-      }
-    }
-    console.log("status: ✔ providerless_chain_runner_ok");
   }
 
   console.log("status: ✔ platform_proxy_chat_ok");

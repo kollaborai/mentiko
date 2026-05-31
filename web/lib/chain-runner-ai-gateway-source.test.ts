@@ -14,7 +14,6 @@ function shellQuote(value: string): string {
 
 describe("chain-runner AI gateway source contract", () => {
   const chainRunner = readFileSync(new URL("../../lib/chain-runner.sh", import.meta.url), "utf8");
-  const jsChainRunner = readFileSync(new URL("../../lib/chain-runner.mjs", import.meta.url), "utf8");
   const ptyManager = readFileSync(new URL("../../lib/pty-manager.mjs", import.meta.url), "utf8");
   const agentFunctions = readFileSync(new URL("../../lib/agent-functions.sh", import.meta.url), "utf8");
   const chainRunnerComplete = readFileSync(new URL("../../lib/chain-runner-complete.sh", import.meta.url), "utf8");
@@ -62,27 +61,8 @@ describe("chain-runner AI gateway source contract", () => {
     expect(agentFunctions).not.toContain('MENTIKO_AI_GATEWAY_LOCAL_TOKEN="${MENTIKO_AI_GATEWAY_LOCAL_TOKEN:-}"');
   });
 
-  it("keeps the JavaScript chain-runner on the same env helper", () => {
-    expect(jsChainRunner).toContain('import { buildPtyAiGatewayAgentEnv } from "./ai-gateway-agent-env.mjs";');
-    expect(jsChainRunner).toContain("const agentEnv = buildPtyAiGatewayAgentEnv(tierEnv, env);");
-    expect(jsChainRunner).toContain("env: agentEnv");
-    expect(jsChainRunner).toContain("MENTIKO_RUN_ID: this.runId ||");
-    expect(jsChainRunner).toContain("RUN_ID: this.runId ||");
-    expect(jsChainRunner).toContain("MENTIKO_AGENT_ID: agentId");
-    expect(jsChainRunner).toContain("MENTIKO_AGENT_EMITS: agent.emits ||");
-    expect(jsChainRunner).toContain("EVENTS_DIR: p.eventsDir");
-    expect(jsChainRunner).toContain("ARTIFACTS_DIR: this.runId ?");
-    expect(jsChainRunner).toContain("setTimeout(r, 100)");
+  it("resolves better-sqlite3 via the web node_modules from pty-manager", () => {
     expect(ptyManager).toContain('createRequire(join(__dirname, "..", "web", "package.json"))');
-  });
-
-  it("keeps the JavaScript chain-runner from using stale profiles as bare Claude", () => {
-    expect(jsChainRunner).toContain("function resolveAgentProfile(agent, chain, workspacePath = null)");
-    expect(jsChainRunner).toContain("findWorkspaceProfile(workspacePath)");
-    expect(jsChainRunner).toContain("findDefaultProfile()");
-    expect(jsChainRunner).toContain("requested agent profile");
-    expect(jsChainRunner).toContain("no agent profile resolved for agent");
-    expect(jsChainRunner).not.toContain('let cmd = "claude";');
   });
 
   it("passes run context into shell pty agent commands", () => {

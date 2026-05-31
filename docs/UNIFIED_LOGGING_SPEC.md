@@ -86,14 +86,12 @@ log when:
   - conversation files found (count, paths)
   - capture failed (which step, error)
 
-### 5. chain-runner.mjs logging
+### 5. chain-runner.mjs logging — RETIRED, do not implement
 
-the node chain runner needs the same coverage as the bash version.
-it can call writeLog directly since it runs in the same process,
-or POST to /api/system/logs.
-
-log the same phases: run create, agent launch, agent complete,
-next agent routing, run complete, errors.
+chain-runner.mjs has been retired (moved to .trash). Production chains run
+exclusively through bash lib/chain-runner.sh — every entry point (web /api/chains/run,
+MCP, scheduler, webhooks, resume) spawns it via `mentiko run`. There is no node chain
+runner to add logging to. Logging work belongs in chain-runner.sh (section 1).
 
 ### 6. event system logging
 

@@ -36,7 +36,7 @@ bin
 ☐ [agent-3] bin/validate-artifacts
 
 lib
-☐ [agent-4] lib/chain-runner.mjs
+☑ lib/chain-runner.mjs — RETIRED (moved to .trash; production chains run via bash lib/chain-runner.sh)
 ☐ [agent-1] lib/job-runner.mjs
 ☐ [agent-2] lib/pty-manager.mjs
 ☐ [agent-3] lib/mentiko-cli-schedules.mjs
@@ -63,7 +63,6 @@ agent priority order
 1 lib/pty-manager.mjs
 2 bin/secrets-resolve.mjs
 3 lib/job-runner.mjs
-4 lib/chain-runner.mjs
 5 bin/secrets-rotate
 6 bin/validate-artifacts
 7 lib/mentiko-cli-schedules.mjs
