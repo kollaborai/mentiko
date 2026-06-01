@@ -163,11 +163,16 @@ async function checkAuth(): Promise<{ status: "pass" | "fail" | "warn"; message:
   }
 }
 
-function checkDiskSpace(): { status: "pass" | "warn" | "fail"; message: string; value?: number } {
+function checkDiskSpace(mode: RuntimeMode): { status: "pass" | "warn" | "fail"; message: string; value?: number } {
   try {
     const stats = statfsSync("/");
     const availablePercent = Math.round((stats.bavail / stats.blocks) * 100);
-    if (availablePercent < 5) return { status: "fail", message: `disk critically low: ${availablePercent}% free`, value: availablePercent };
+    if (availablePercent < 5) {
+      // in development, disk pressure is an infra warning not an app failure — no process
+      // manager or LB is polling this endpoint, so 503 would just break dev tooling
+      const status = mode === "development" ? "warn" : "fail";
+      return { status, message: `disk critically low: ${availablePercent}% free`, value: availablePercent };
+    }
     if (availablePercent < 15) return { status: "warn", message: `disk space low: ${availablePercent}% free`, value: availablePercent };
     return { status: "pass", message: `disk ok: ${availablePercent}% free`, value: availablePercent };
   } catch {
@@ -301,7 +306,7 @@ export async function GET(_request: NextRequest) {
     pty_daemon: ptyCheck,
     directories: checkDirectories(),
     sessions: sessionsCheck,
-    disk: checkDiskSpace(),
+    disk: checkDiskSpace(runtimeMode),
     memory: checkMemory(),
     metrics: checkMetrics(),
     runs: checkRecentRuns(),

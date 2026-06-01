@@ -82,12 +82,12 @@ api_get() {
 
     if [ "$status" -eq "$expected_status" ]; then
         log_success "API $endpoint returned $status"
-        ((PASSED++))
+        PASSED=$((PASSED + 1))
         echo "$body"
         return 0
     else
         log_error "API $endpoint returned $status (expected $expected_status)"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         echo "$body"
         return 1
     fi
@@ -100,18 +100,18 @@ verify_envelope() {
 
     if ! echo "$response" | jq -e '.success' >/dev/null 2>&1; then
         log_error "API $endpoint missing 'success' field"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         return 1
     fi
 
     if ! echo "$response" | jq -e '.requestId' >/dev/null 2>&1; then
         log_warn "API $endpoint missing 'requestId' field"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
         return 0
     fi
 
     log_success "API $endpoint has valid envelope"
-    ((PASSED++))
+    PASSED=$((PASSED + 1))
     return 0
 }
 
@@ -135,7 +135,7 @@ test_health() {
 
     if [ -z "$status" ]; then
         log_error "Health check missing 'status' field"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         return 1
     fi
 
@@ -151,18 +151,18 @@ test_health() {
 
         if [ "$mode" = "development" ] && [ "$db_status" = "fail" ]; then
             log_warn "Health check: $status (dev mode, database fail acceptable)"
-            ((WARNINGS++))
+            WARNINGS=$((WARNINGS + 1))
         else
             log_error "Health check status: $status"
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
             return 1
         fi
     elif [ "$status" = "degraded" ]; then
         log_warn "Health check status: $status"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
     else
         log_success "Health check status: $status"
-        ((PASSED++))
+        PASSED=$((PASSED + 1))
     fi
 
     # Verify critical checks (database in production)
@@ -171,17 +171,17 @@ test_health() {
 
     if [ "$db_status" = "fail" ] && [ "$mode" != "development" ]; then
         log_error "Database check failed in $mode mode"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         return 1
     fi
 
     if [ "$db_status" = "fail" ] && [ "$mode" = "development" ]; then
         log_warn "Database check failed (acceptable in dev mode)"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
     fi
 
     log_success "Health check passed"
-    ((PASSED++))
+    PASSED=$((PASSED + 1))
     return 0
 }
 
@@ -202,10 +202,10 @@ test_api_envelope() {
     # Health endpoint has different structure, just verify it returns JSON
     if echo "$response" | jq -e '.status' >/dev/null 2>&1; then
         log_success "Health endpoint returns valid JSON"
-        ((PASSED++))
+        PASSED=$((PASSED + 1))
     else
         log_error "Health endpoint returned invalid JSON"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 }
 
@@ -225,6 +225,8 @@ const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3000';
 const EMAIL = process.env.SMOKE_EMAIL || '';
 const PASSWORD = process.env.SMOKE_PASSWORD || '';
 const OUTPUT_DIR = process.env.SMOKE_OUTPUT_DIR || './smoke-test-results';
+const ALLOW_DEV_AUTH_BYPASS = process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === '1' ||
+    process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === 'true';
 
 // In CI, use puppeteer MCP server. Locally, we can't directly call MCP from node.
 // For CI compatibility, we'll output curl commands and screenshot targets.
@@ -310,7 +312,7 @@ EOF
         log_info "UI page checks: $passed passed, $failed failed"
     elif [ "$ui_exit" -ne 0 ]; then
         log_error "UI page checks failed before writing results"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 }
 
@@ -333,12 +335,14 @@ const BASE_URL = process.env.SMOKE_BASE_URL || 'http://localhost:3000';
 const EMAIL = process.env.SMOKE_EMAIL || '';
 const PASSWORD = process.env.SMOKE_PASSWORD || '';
 const OUTPUT_DIR = process.env.SMOKE_OUTPUT_DIR || './smoke-test-results';
+const ALLOW_DEV_AUTH_BYPASS = process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === '1' ||
+    process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === 'true';
 
 async function testAuthRequired() {
     const endpoints = [
         '/api/workspaces',
         '/api/chains',
-        '/api/tasks/list',
+        '/api/tasks',
         '/api/terminal/token',
     ];
 
@@ -354,8 +358,9 @@ async function testAuthRequired() {
 
             // Auth-required endpoints should either:
             // - Return 401 when not authenticated
-            // - Return 200 with empty data when authenticated
-            if (status === 401 || status === 200 || status === 302) {
+            // - Return 302/307 redirect to login
+            // - Return 200 only when explicit dev auth bypass is enabled
+            if (status === 401 || status === 302 || status === 307 || (ALLOW_DEV_AUTH_BYPASS && status === 200)) {
                 console.log(`[PASS] ${endpoint} returned ${status} (auth check)`);
                 results.push({ endpoint, status: 'pass', httpStatus: status });
             } else {
@@ -384,7 +389,7 @@ EOF
 
     if [ "$auth_exit" -ne 0 ] && [ ! -f "${SMOKE_OUTPUT_DIR}/auth-api-results.json" ]; then
         log_error "Authenticated API checks failed"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 
     if [ -f "${SMOKE_OUTPUT_DIR}/auth-api-results.json" ]; then

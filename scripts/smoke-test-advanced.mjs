@@ -244,7 +244,7 @@ async function testAuthRequired() {
     const endpoints = [
         { path: '/workspaces', shouldBe: 401 },
         { path: '/chains', shouldBe: 401 },
-        { path: '/tasks/list', shouldBe: 401 },
+        { path: '/tasks', shouldBe: 401 },
         { path: '/terminal/token', shouldBe: 401 },
     ];
 
@@ -253,9 +253,12 @@ async function testAuthRequired() {
 
         const response = await apiGet(path);
 
-        // Auth endpoints should return 401 when not logged in
-        // Or 302 redirect to login in some cases
-        if (response.status === shouldBe || response.status === 302 || response.status === 307) {
+        const allowDevAuthBypass = process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === "1" ||
+            process.env.MENTIKO_ALLOW_DEV_AUTH_BYPASS === "true";
+        // Auth endpoints should return 401 when not logged in, or 302/307 redirect to login.
+        // Unauthenticated 200 is accepted only when an explicit dev bypass is enabled.
+        if (response.status === shouldBe || response.status === 302 || response.status === 307 ||
+            (allowDevAuthBypass && response.status === 200)) {
             recordPass(`Auth required: ${path}`, { status: response.status });
         } else {
             recordWarn(`Auth required: ${path}`, { status: response.status, expected: shouldBe });
@@ -405,7 +408,7 @@ async function testTerminalToken() {
         return;
     }
 
-    if (response.status === 200 && response.json?.token) {
+    if (response.status === 200 && (response.json?.token || response.json?.data?.token)) {
         recordPass('Terminal token generated', { hasToken: true });
         return;
     }
