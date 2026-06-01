@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { TerminalViewer } from "@/components/terminal/terminal-viewer";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { CommandSquareFilled as Terminal, RefreshFilled as RefreshCw, CopyFilled as Copy, CheckFilled as Check } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { getApiErrorMessage, unwrapApiData } from "@/lib/api-client";
-import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
 
 interface AuthCommand {
@@ -54,7 +53,6 @@ export function WorkspaceTerminal({
   workspacePath,
   installedClis,
 }: WorkspaceTerminalProps) {
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "spawning" | "ready" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -67,15 +65,6 @@ export function WorkspaceTerminal({
     setStatus("spawning");
     setErrorMsg("");
     try {
-      // get ws token
-      const tokenRes = await fetch("/api/terminal/token");
-      const tokenData = unwrapApiData<{ token?: string }>(await tokenRes.json());
-      if (!tokenData.token) {
-        setErrorMsg("ws-terminal server not running. Start it with: npm run ws:terminal");
-        setStatus("error");
-        return;
-      }
-
       // spawn session
       const spawnRes = await fetch("/api/terminal/spawn", {
         method: "POST",
@@ -90,8 +79,6 @@ export function WorkspaceTerminal({
         return;
       }
 
-      const base = await getTerminalWsBaseUrl();
-      setWsUrl(`${base}?token=${tokenData.token}`);
       setSessionName(spawnData.name || name);
       setStatus("ready");
     } catch {
@@ -176,12 +163,12 @@ export function WorkspaceTerminal({
               Retry
             </Button>
           </div>
-        ) : wsUrl && sessionName ? (
-          <TerminalViewer
+        ) : sessionName ? (
+          <TerminalPanel
             session={sessionName}
-            wsUrl={wsUrl}
             readOnly={false}
             className="absolute inset-0"
+            compact
           />
         ) : null}
       </div>

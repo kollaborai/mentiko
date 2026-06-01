@@ -8,34 +8,15 @@
  * captured text when the session is dead or WS bridge is unavailable.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { TerminalViewer, type TerminalStatus } from "./terminal-viewer";
+import { useTerminalWsConnection } from "./use-terminal-ws-connection";
 import { Button } from "@/components/ui/button";
 import {
   Terminal as TerminalIcon,
   RefreshFilled as RefreshCw,
   CloseCircleFilled as XCircle,
 } from "@aliimam/icons";
-import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
-
-function useWsToken() {
-  const [token, setToken] = useState<string | null>(null);
-  const fetchToken = useCallback(() => {
-    return fetch("/api/terminal/token", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => {
-        const t = d.data?.token || d.token || null;
-        setToken(t);
-        return t;
-      })
-      .catch(() => {
-        setToken(null);
-        return null;
-      });
-  }, []);
-  useEffect(() => { fetchToken(); }, [fetchToken]);
-  return { token, refreshToken: fetchToken };
-}
 
 interface TerminalPanelProps {
   session: string;
@@ -72,27 +53,16 @@ export function TerminalPanel({
   className = "",
   onActivity,
 }: TerminalPanelProps) {
-  const { token: wsToken, refreshToken } = useWsToken();
   const [status, setStatus] = useState<TerminalStatus>("connecting");
   const [statusMsg, setStatusMsg] = useState<string | undefined>();
   const [reconnectKey, setReconnectKey] = useState(0);
   const [showTerminal, setShowTerminal] = useState(sessionAlive);
-  const [fetchedWsUrl, setFetchedWsUrl] = useState<string | null>(null);
-
-  // resolve ws base URL from server config when no explicit override is passed
-  useEffect(() => {
-    if (wsUrl) return;
-    let cancelled = false;
-    getTerminalWsBaseUrl()
-      .then((base) => { if (!cancelled) setFetchedWsUrl(base); })
-      .catch(() => { if (!cancelled) setFetchedWsUrl(null); });
-    return () => { cancelled = true; };
-  }, [wsUrl]);
-
-  const resolvedWsUrl = wsUrl ?? fetchedWsUrl;
-  const authWsUrl = wsToken && resolvedWsUrl
-    ? `${resolvedWsUrl}?token=${wsToken}`
-    : null;
+  const {
+    refreshToken,
+    refreshUrl,
+    status: wsStatus,
+    wsUrl: authWsUrl,
+  } = useTerminalWsConnection(wsUrl, { enabled: showTerminal && sessionAlive });
 
   const handleStatus = useCallback(
     (s: TerminalStatus, msg?: string) => {
@@ -102,17 +72,22 @@ export function TerminalPanel({
     []
   );
 
-  const handleReconnect = useCallback(() => {
+  const handleReconnect = useCallback(async () => {
+    await refreshUrl();
     setReconnectKey((k) => k + 1);
     setShowTerminal(true);
-  }, []);
+  }, [refreshUrl]);
 
   const handleDetach = useCallback(() => {
     setShowTerminal(false);
     setStatus("disconnected");
   }, []);
 
-  const isLive = status === "attached" || status === "connecting";
+  const displayStatus: TerminalStatus =
+    wsStatus === "down" && status !== "attached" ? "error" : status;
+  const displayStatusMsg =
+    wsStatus === "down" && status !== "attached" ? "terminal server unavailable" : statusMsg;
+  const isLive = displayStatus === "attached" || displayStatus === "connecting";
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
@@ -126,17 +101,17 @@ export function TerminalPanel({
             </span>
             <div className="flex items-center gap-1.5 shrink-0">
               <div
-                className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[status]} ${
-                  status === "attached" ? "animate-pulse" : ""
+                className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[displayStatus]} ${
+                  displayStatus === "attached" ? "animate-pulse" : ""
                 }`}
               />
               <span className="text-[10px] text-foreground/50">
-                {STATUS_LABELS[status]}
+                {STATUS_LABELS[displayStatus]}
               </span>
             </div>
-            {statusMsg && status === "error" && (
+            {displayStatusMsg && displayStatus === "error" && (
               <span className="text-[10px] text-red-400 truncate">
-                {statusMsg}
+                {displayStatusMsg}
               </span>
             )}
           </div>

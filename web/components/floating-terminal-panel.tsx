@@ -20,6 +20,7 @@ import {
 } from "@aliimam/icons";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { TerminalViewer } from "@/components/terminal/terminal-viewer";
+import { useTerminalWsConnection } from "@/components/terminal/use-terminal-ws-connection";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,7 +36,6 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
 import { unwrapApiData } from "@/lib/api-client";
 import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
-import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
 
 interface PtySession {
   name: string;
@@ -59,7 +59,6 @@ const SESSION_COLORS = [
 ];
 
 type PanelSize = "normal" | "maximized";
-type WsStatus = "checking" | "running" | "down";
 
 interface PanelGeometry {
   x: number;
@@ -91,8 +90,6 @@ export function FloatingTerminalPanel() {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<PtySession[]>([]);
   const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
-  const [wsStatus, setWsStatus] = useState<WsStatus>("checking");
   const [spawning, setSpawning] = useState(false);
   const [panelSize, setPanelSize] = useState<PanelSize>("normal");
   const [terminalKey, setTerminalKey] = useState(0);
@@ -111,6 +108,12 @@ export function FloatingTerminalPanel() {
   const dragState = useRef<{ startX: number; startY: number; startPanelX: number; startPanelY: number } | null>(null);
   const resizeState = useRef<{ startX: number; startY: number; startW: number; startH: number; startPanelX: number; startPanelY: number; edge: string } | null>(null);
   const requestedSessionRef = useRef<string | null>(null);
+  const {
+    refreshToken,
+    refreshUrl: fetchWsUrl,
+    status: wsStatus,
+    wsUrl,
+  } = useTerminalWsConnection(undefined, { enabled: open });
 
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
@@ -130,27 +133,6 @@ export function FloatingTerminalPanel() {
       }
     } catch {
       // pty-manager not running
-    }
-  }, []);
-
-  const fetchWsUrl = useCallback(async () => {
-    setWsStatus("checking");
-    try {
-      const res = await fetch("/api/terminal/token");
-      const data = unwrapApiData<{ token?: string }>(await res.json());
-      if (data.token) {
-        const base = await getTerminalWsBaseUrl();
-        const url = `${base}?token=${data.token}`;
-        setWsUrl(url);
-        setWsStatus("running");
-        return url;
-      } else {
-        setWsStatus("down");
-        return null;
-      }
-    } catch {
-      setWsStatus("down");
-      return null;
     }
   }, []);
 
@@ -687,7 +669,7 @@ export function FloatingTerminalPanel() {
               <p className="text-sm text-white/40">Terminal server not running</p>
               <p className="text-[11px] font-mono text-white/25">npm run ws:terminal</p>
               <button
-                onClick={() => { setWsUrl(null); void fetchWsUrl(); }}
+                onClick={() => { void fetchWsUrl(); }}
                 className="mt-1 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-colors"
               >
                 <RefreshFilled className="h-3 w-3" /> Retry
@@ -719,12 +701,7 @@ export function FloatingTerminalPanel() {
                 readOnly={false}
                 className="absolute inset-0"
                 contentClassName="inset-3"
-                onRefreshToken={async () => {
-                  const url = await fetchWsUrl();
-                  if (!url) return null;
-                  const token = new URL(url).searchParams.get("token");
-                  return token;
-                }}
+                onRefreshToken={refreshToken}
               />
             </div>
           )}

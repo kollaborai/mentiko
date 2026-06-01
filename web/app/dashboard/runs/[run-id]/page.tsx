@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge, type Status } from "@/components/status-badge";
 import { RunComparison } from "@/components/run/run-comparison";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import {
   ArrowLeftFilled,
   PlayFilled as Play,
@@ -585,6 +586,7 @@ export default function RunDetailPage() {
                 {selectedAgent ? (() => {
                   const agent = run.agents?.find((a) => a.id === selectedAgent);
                   const output = agentOutputs[agent?.session || ""] || "";
+                  const agentAlive = agent?.status === "running";
                   return (
                     <>
                       <div className="flex items-center justify-between px-4 py-2 border-b border-foreground/5">
@@ -599,8 +601,20 @@ export default function RunDetailPage() {
                           </Button>
                         </div>
                       </div>
-                      <div className="flex-1 bg-card text-green-500 p-4 overflow-y-auto font-mono text-xs">
-                        <pre className="whitespace-pre-wrap">{output || "no output yet..."}</pre>
+                      <div className="flex-1 min-h-0 overflow-hidden">
+                        {agent?.session ? (
+                          <TerminalPanel
+                            session={agent.session}
+                            sessionAlive={agentAlive}
+                            fallbackOutput={output}
+                            readOnly
+                            compact
+                          />
+                        ) : (
+                          <div className="h-full bg-card text-foreground/30 p-4 font-mono text-xs">
+                            no session
+                          </div>
+                        )}
                       </div>
                     </>
                   );

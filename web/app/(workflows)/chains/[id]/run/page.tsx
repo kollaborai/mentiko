@@ -6,6 +6,7 @@ import Link from "next/link";
 import { StatusBadge, type Status } from "@/components/status-badge";
 import { AgentStatusPanel, type AgentStatusDetail } from "@/components/agent/agent-status-panel";
 import { PerformanceTab } from "@/components/run/performance-tab";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
@@ -405,6 +406,10 @@ function TerminalOutput({ sessionStates }: { runId: string | null; sessionStates
   }, [sessions, selectedSession]);
 
   const currentOutput = selectedSession ? outputs[selectedSession] || "" : "";
+  const selectedSessionState = selectedSession
+    ? Object.values(sessionStates).find((s) => s.session === selectedSession)
+    : undefined;
+  const selectedSessionAlive = selectedSessionState?.status === "running";
 
   return (
     <div className="h-full flex flex-col">
@@ -453,7 +458,15 @@ function TerminalOutput({ sessionStates }: { runId: string | null; sessionStates
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {loading && !currentOutput ? (
+        {selectedSession ? (
+          <TerminalPanel
+            session={selectedSession}
+            sessionAlive={selectedSessionAlive}
+            fallbackOutput={currentOutput}
+            readOnly
+            compact
+          />
+        ) : loading && !currentOutput ? (
           <div className="h-full flex items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-foreground/30" />
           </div>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { RefreshFilled as RefreshCw, CommandSquareFilled as Terminal, CopyFilled as Copy } from "@aliimam/icons";
@@ -22,7 +23,6 @@ export function LiveOutput({
   const { fetchWithNamespace } = useNamespaceFetch();
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(true);
-  const outputRef = useRef<HTMLDivElement>(null);
 
   const fetchOutput = useCallback(async () => {
     try {
@@ -45,12 +45,6 @@ export function LiveOutput({
       return () => clearInterval(interval);
     }
   }, [session, autoRefresh, refreshInterval, fetchOutput]);
-
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
-  }, [output]);
 
   const handleCopy = () => {
     copyToClipboard(output);
@@ -75,18 +69,19 @@ export function LiveOutput({
         </div>
       </CardHeader>
       <CardContent>
-        <div
-          ref={outputRef}
-          className="bg-black text-green-500 p-3 rounded font-mono text-xs h-80 overflow-y-auto"
-        >
-          {loading ? (
+        <div className="bg-black rounded h-80 overflow-hidden">
+          {loading && !output ? (
             <div className="flex items-center justify-center py-8">
               <WaveSpinner size="sm" color="primary" animation="ripple" />
             </div>
-          ) : output ? (
-            <pre className="whitespace-pre-wrap">{output}</pre>
           ) : (
-            <p className="text-muted-foreground">No output yet...</p>
+            <TerminalPanel
+              session={session}
+              sessionAlive
+              fallbackOutput={output}
+              readOnly
+              compact
+            />
           )}
         </div>
       </CardContent>

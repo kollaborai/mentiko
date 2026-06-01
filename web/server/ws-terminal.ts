@@ -33,6 +33,7 @@ import { join } from "path";
 import { createServer, IncomingMessage } from "http";
 import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "fs";
+import { createInitialCaptureState, formatInitialCaptureChunk } from "../lib/terminal-stream";
 
 const WS_PORT = parseInt(process.env.WS_TERMINAL_PORT || "3099", 10);
 const PTY_MANAGER_DIR = process.env.PTY_MANAGER_DIR || join(homedir(), ".pty-manager");
@@ -512,6 +513,16 @@ function handleAttach(
   const conn = createConnection(SOCKET_PATH);
   let gotAck = false;
   let headerBuf = "";
+  const initialCapture = createInitialCaptureState();
+
+  const sendData = (data: string) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "data", data }));
+  };
+
+  const sendInitialCaptureData = (data: string) => {
+    sendData(formatInitialCaptureChunk(data, initialCapture));
+  };
 
   conn.on("error", (err: NodeJS.ErrnoException) => {
     const message =
@@ -561,13 +572,10 @@ function handleAttach(
           })
         );
 
-        // forward any remaining data after the ack line
-        // initial capture is plain text (\n only), convert to \r\n for xterm
+        // forward any remaining data after the ack line. pty-manager's attach
+        // snapshot is rendered text, so normalize it before xterm sees it.
         if (remainder.length > 0) {
-          if (ws.readyState === WebSocket.OPEN) {
-            const captureData = remainder.replace(/(?<!\r)\n/g, "\r\n");
-            ws.send(JSON.stringify({ type: "data", data: captureData }));
-          }
+          sendInitialCaptureData(remainder);
         }
       } catch {
         ws.send(JSON.stringify({ type: "error", message: "invalid ack from daemon" }));
@@ -580,6 +588,11 @@ function handleAttach(
     // PTY output already has proper \r\n - don't convert (corrupts ANSI escapes)
     const str = data.toString("utf-8");
 
+    if (initialCapture.pending) {
+      sendInitialCaptureData(str);
+      return;
+    }
+
     // ACTIVITY: messages are newline-delimited: "ACTIVITY:{json}\n"
     // split chunks on that boundary, forward PTY data and activity separately
     let remaining = str;
@@ -587,18 +600,14 @@ function handleAttach(
       const actIdx = remaining.indexOf("ACTIVITY:");
       if (actIdx === -1) {
         // no more activity messages, rest is PTY output
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "data", data: remaining }));
-        }
+        sendData(remaining);
         break;
       }
 
       // send any PTY data before the activity marker
       if (actIdx > 0) {
         const ptyData = remaining.slice(0, actIdx);
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "data", data: ptyData }));
-        }
+        sendData(ptyData);
       }
 
       // find end of activity JSON (newline-terminated)
@@ -613,9 +622,7 @@ function handleAttach(
         }
       } catch {
         // malformed activity, forward as data
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "data", data: `ACTIVITY:${activityStr}` }));
-        }
+        sendData(`ACTIVITY:${activityStr}`);
       }
 
       remaining = nlIdx !== -1 ? afterMarker.slice(nlIdx + 1) : "";

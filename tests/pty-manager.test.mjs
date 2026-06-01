@@ -149,6 +149,17 @@ test("capture returns screen content", async () => {
   mgr.destroyAll();
 });
 
+test("attach snapshot formatting converts rendered capture newlines to CRLF", async () => {
+  const { formatRenderedCaptureForTerminalStream } = await import(`file://${SCRIPT}`);
+
+  const output = formatRenderedCaptureForTerminalStream("alpha\nbeta\r\ngamma\rdone");
+
+  assert(
+    output === "alpha\r\nbeta\r\ngamma\r\ndone",
+    `expected CRLF-normalized output, got ${JSON.stringify(output)}`
+  );
+});
+
 test("capture with tailLines returns limited lines", async () => {
   const { PtyManager } = await import(`file://${SCRIPT}`);
   const mgr = new PtyManager();
