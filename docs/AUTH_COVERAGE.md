@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-05-22)
+# api route auth coverage (as of 2026-06-01)
 
 ## summary
-- total routes: 318
-- authenticated: 302   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 322
+- authenticated: 306   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 16
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -100,6 +100,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - decisions/[id]/guided/plan/route.ts
 - decisions/[id]/guided/questions/route.ts
 - decisions/[id]/guided/synthesize/route.ts
+- decisions/[id]/import/route.ts
 - decisions/[id]/research/route.ts
 - decisions/[id]/resolve/route.ts
 - decisions/[id]/retrospective/route.ts
@@ -269,15 +270,18 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - secrets/rotate/route.ts
 - seed/route.ts
 - sessions/[name]/recording/route.ts
+- settings/decisions/core-chains/route.ts
 - settings/data/route.ts
 - settings/notifications/route.ts
 - setup/route.ts
 - ssh-keys/route.ts
+- system/ai-gateway/route.ts
 - system/cli-auth/route.ts
 - system/codex-token/route.ts
 - system/detect-cli/route.ts
 - system/logs/route.ts
 - system/settings/route.ts
+- system/storage-scope/route.ts
 - system/stop-all/route.ts
 - system/viewport/route.ts
 - system/web-proxy/route.ts
