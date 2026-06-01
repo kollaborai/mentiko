@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { reconcileOrphanedRuns } from "../run-reconciler";
 import { getLiveSessions } from "../pty-client";
-import { taskGet, taskMergeMeta } from "../task-store";
+import { taskGet, taskMergeMeta, taskUpdate } from "../task-store";
 
 let mockRunsDir = "";
 let mockEventsDir = "";
@@ -33,6 +33,7 @@ jest.mock("../system-logger", () => ({
 jest.mock("../task-store", () => ({
   taskGet: jest.fn(() => ({ metadata: {} })),
   taskMergeMeta: jest.fn(),
+  taskUpdate: jest.fn(),
 }));
 
 describe("run reconciler", () => {
@@ -47,6 +48,7 @@ describe("run reconciler", () => {
     (getLiveSessions as jest.Mock).mockResolvedValue(new Set());
     (taskGet as jest.Mock).mockReturnValue({ metadata: {} });
     (taskMergeMeta as jest.Mock).mockClear();
+    (taskUpdate as jest.Mock).mockClear();
   });
 
   afterEach(() => {
@@ -130,6 +132,50 @@ describe("run reconciler", () => {
       }),
       "default"
     );
+  });
+
+  it("repairs misclassified recommendation runs using shared task metadata cleanup", async () => {
+    const runId = "run-1777862548347";
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        id: runId,
+        status: "completed",
+        taskId: "TASK-044",
+        chainId: "chain-recommendation",
+        metadata: {
+          generationKind: "chain_recommendation",
+        },
+        agents: [],
+      })
+    );
+    (taskGet as jest.Mock).mockReturnValue({
+      metadata: {
+        auto_run: true,
+        last_run_id: runId,
+        last_run_status: "running",
+        last_run_chain: "Chain Recommendation",
+      },
+    });
+
+    const result = await reconcileOrphanedRuns();
+
+    expect(result.cleaned).toContain(runId);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      {
+        metadata: {
+          auto_run: true,
+          recommendation_run_id: runId,
+          recommendation_chain_id: "chain-recommendation",
+        },
+      },
+      "default"
+    );
+    expect(taskMergeMeta).not.toHaveBeenCalled();
   });
 
   it("does not recover an agent from an event written after that run already stopped", async () => {

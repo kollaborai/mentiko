@@ -35,6 +35,7 @@ import {
   normalizeTaskChainRecommendation,
 } from "@/lib/task-chain-recommendation";
 import { internalApiUrl } from "@/lib/internal-web-origin";
+import { isNonExecutionRun } from "@/lib/run-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -233,8 +234,10 @@ function readResumableRunId(
       chainId?: string;
       status?: string;
       agents?: Array<{ status?: string }>;
+      metadata?: unknown;
     };
     if (run.taskId !== taskId) return null;
+    if (isNonExecutionRun(run)) return null;
     if (run.chainId && run.chainId !== chainId) return null;
     if (run.status === "running" || run.status === "pending") return null;
     if (!run.status || !RESUMABLE_RUN_STATUSES.has(run.status)) return null;

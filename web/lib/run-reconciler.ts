@@ -16,7 +16,7 @@ import { writeLog } from "./system-logger";
 import { getLiveSessions } from "./pty-client";
 import { taskGet, taskMergeMeta, taskUpdate } from "./task-store";
 import { normalizeRunId } from "./run-acl";
-import { generationKindFromMetadata, isGenerationAuditRun } from "./run-provenance";
+import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
 
 interface ReconcilerContext {
   namespaceId: string;
@@ -332,7 +332,7 @@ function shouldPropagateRunToTask(
   runId: string
 ): run is RunJson & { taskId: string } {
   if (!run.taskId) return false;
-  if (isGenerationAuditRun(run)) return false;
+  if (isNonExecutionRun(run)) return false;
 
   try {
     const task = taskGet(context.orgId, run.taskId, context.namespaceId);
@@ -344,43 +344,22 @@ function shouldPropagateRunToTask(
   }
 }
 
-function repairMisclassifiedAuditRunTask(
+function repairMisclassifiedNonExecutionRunTask(
   context: ReconcilerContext,
   run: RunJson,
   runId: string
 ): boolean {
   if (!run.taskId) return false;
-  const generationKind = generationKindFromMetadata(run.metadata);
-  if (!generationKind) return false;
+  if (!isNonExecutionRun(run)) return false;
 
   try {
     const task = taskGet(context.orgId, run.taskId, context.namespaceId);
     const metadata = (task?.metadata || {}) as Record<string, unknown>;
     if (metadata.last_run_id !== runId) return false;
 
-    const cleaned = { ...metadata };
-    delete cleaned.last_run_id;
-    delete cleaned.last_run_status;
-    delete cleaned.last_run_outcome;
-    delete cleaned.last_run_decision_required;
-    delete cleaned.last_run_error;
-    delete cleaned.last_run_completed;
-    delete cleaned.last_run_chain;
-    delete cleaned.last_run_started;
-    delete cleaned.last_run_agents;
-    delete cleaned.last_run_artifacts;
-    delete cleaned.last_run_summary;
-
-    if (generationKind === "chain_recommendation") {
-      cleaned.recommendation_run_id = runId;
-      if (typeof run.chainId === "string") cleaned.recommendation_chain_id = run.chainId;
-    } else if (generationKind === "chain_generation") {
-      cleaned.generated_chain_run_id = runId;
-      if (typeof run.chainId === "string") cleaned.generated_chain_source_chain_id = run.chainId;
-    }
-
+    const cleaned = cleanTaskExecutionRunMetadata(metadata, run, runId);
     taskUpdate(context.orgId, run.taskId, { metadata: cleaned }, context.namespaceId);
-    reconcilerLog(context, `repaired audit run metadata on task ${run.taskId}: ${runId}`, "warn");
+    reconcilerLog(context, `repaired non-execution run metadata on task ${run.taskId}: ${runId}`, "warn");
     return true;
   } catch {
     return false;
@@ -431,7 +410,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
     let changed = false;
     const runDir = join(runsDir, entry.name);
 
-    if (repairMisclassifiedAuditRunTask(context, run, runId)) {
+    if (repairMisclassifiedNonExecutionRunTask(context, run, runId)) {
       if (!cleaned.includes(runId)) cleaned.push(runId);
     }
 

@@ -311,6 +311,81 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("starts a fresh chain run instead of resuming a stale audit run id", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Run recommended chain",
+      status: "in_progress",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-audit",
+        last_run_status: "stopped",
+      },
+    });
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      taskId: "TASK-1",
+      chainId: "release-review",
+      status: "stopped",
+      agents: [
+        { id: "advisor", status: "stopped" },
+      ],
+      metadata: {
+        generationKind: "chain_recommendation",
+      },
+    }));
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).includes("/api/runs/run-audit/resume")) {
+        return Promise.resolve(jsonResponse({ error: "audit run must not resume" }, 500));
+      }
+      if (String(url).includes("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: {
+            chain: {
+              name: "Release Review",
+              config: {},
+              agents: [{ id: "reviewer", prompt: "Review {TASK}" }],
+            },
+          },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-1",
+      runId: "run-exec",
+      action: "chain_run",
+    });
+    expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url))).toEqual([
+      "http://localhost:3000/api/chains/release-review",
+      "http://localhost:3000/api/chains/run",
+    ]);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        }),
+      }),
+      "default",
+    );
+  });
+
   it("saves, assigns, and starts a run when a generation job completes", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-2",

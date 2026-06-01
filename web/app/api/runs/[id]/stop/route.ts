@@ -10,7 +10,7 @@ import { checkRunAccess } from "@/lib/run-acl";
 import { NotFound, BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { isGenerationAuditRun } from "@/lib/run-provenance";
+import { isNonExecutionRun } from "@/lib/run-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -102,7 +102,7 @@ export const POST = withErrorHandling(async (
   }
 
   // propagate status to linked task metadata
-  if (run.taskId && !isGenerationAuditRun(run)) {
+  if (run.taskId && !isNonExecutionRun(run)) {
     try {
       const agentSummary = (run.agents || [])
         .map((a: { id: string; status: string }) => `${a.id}|${a.status}`)

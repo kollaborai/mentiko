@@ -12,6 +12,7 @@ import config from "@/lib/config";
 import { writeLog } from "@/lib/system-logger";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/run-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,21 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     } else {
       try {
         const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+        if (isNonExecutionRun(run)) {
+          const safeId = validateTaskId(issue.id);
+          const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
+          taskUpdate(orgId, safeId, { metadata: cleaned }, namespaceId);
+          writeLog(namespaceId, orgId, "warn", "task-reconciler",
+            `task ${issue.id} ignored non-execution run ${runId}`, "non-execution run is not a task execution run");
+          results.push({
+            taskId: issue.id,
+            runId,
+            previousStatus: "running",
+            newStatus: "non_execution_ignored",
+            reason: "non-execution run is not a task execution run",
+          });
+          continue;
+        }
 
         if (run.status !== "running" && run.status !== "pending") {
           newStatus = run.status;

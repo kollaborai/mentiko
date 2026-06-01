@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { getAutoRunCandidates, reconcileTaskActiveRun } from "../auto-run";
+import { findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../auto-run";
 import { taskGet, taskList, taskUpdate } from "../task-store";
 
 jest.mock("fs", () => ({
@@ -143,6 +143,54 @@ describe("getAutoRunCandidates", () => {
     ] as never);
 
     expect(getAutoRunCandidates("default")).toEqual([]);
+  });
+
+  it("does not classify generation audit runs as active task runs", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(["run-audit"] as never);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-audit",
+      taskId: "TASK-044",
+      status: "running",
+      chain: "Chain Recommendation",
+      started: "2026-05-01T01:00:00.000Z",
+      metadata: {
+        generationKind: "chain_recommendation",
+      },
+    }));
+
+    expect(findActiveRunForTask("TASK-044", "default")).toBeNull();
+
+    const result = reconcileTaskActiveRun("default", {
+      id: "TASK-044",
+      title: "Run recommended chain",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+      },
+    } as never, "default");
+
+    expect(result).toEqual({ activeRun: null, reconciled: false });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not classify decision runs as active task runs", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(["run-decision"] as never);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-decision",
+      taskId: "TASK-044",
+      status: "running",
+      chain: "Decision Research",
+      started: "2026-05-01T01:00:00.000Z",
+      metadata: {
+        decisionId: "decision-1",
+        decisionPhase: "research",
+      },
+    }));
+
+    expect(findActiveRunForTask("TASK-044", "default")).toBeNull();
   });
 
   it("reconciles stale task metadata from active run state", () => {

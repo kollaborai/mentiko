@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.33",
+    date: "June 1, 2026",
+    title: "Auto-Run Execution Guard",
+    description:
+      "Auto-run tasks now keep recommendation, generation, and decision analysis separate from real execution runs. Recommended chains are assigned and launched before a task can close, and stale analysis run metadata is repaired automatically.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.32",
     date: "June 1, 2026",
     title: "Generation and Terminal Reliability",

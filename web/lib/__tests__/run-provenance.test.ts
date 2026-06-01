@@ -1,20 +1,21 @@
 /**
  * @jest-environment node
  *
- * Covers the live generation-audit classification helpers in web/lib/run-provenance.ts.
+ * Covers the live run provenance helpers in web/lib/run-provenance.ts.
  * These functions are consumed in production by run-reconciler.ts and the runs API
- * (cancel/stop/delete) to avoid stamping execution metadata onto generation/recommendation
- * runs. The equivalent JS logic previously lived only in lib/chain-runner.mjs (now retired
- * to .trash); this test owns the coverage for the surviving production copy.
+ * (cancel/stop/delete) to avoid stamping execution metadata onto non-execution runs.
  */
 
 import {
+  cleanTaskExecutionRunMetadata,
   generationKindFromMetadata,
   isGenerationAuditRun,
+  isNonExecutionRun,
+  isNonExecutionRunMetadata,
   shouldRecordTaskExecutionMetadata,
 } from "@/lib/run-provenance";
 
-describe("run-provenance generation classification", () => {
+describe("run-provenance classification", () => {
   const recommendationRun = {
     id: "run-recommend",
     chain: "Chain Recommendation",
@@ -69,11 +70,70 @@ describe("run-provenance generation classification", () => {
       expect(shouldRecordTaskExecutionMetadata({ generationKind: "" })).toBe(true);
     });
 
-    it("skips execution metadata for generation and recommendation runs", () => {
+    it("skips execution metadata for generation, recommendation, and decision runs", () => {
       expect(shouldRecordTaskExecutionMetadata({ generationKind: "chain_generation" })).toBe(false);
       expect(shouldRecordTaskExecutionMetadata({ generationKind: "chain_recommendation" })).toBe(
         false,
       );
+      expect(shouldRecordTaskExecutionMetadata({
+        decisionId: "decision-1",
+        decisionPhase: "research",
+      })).toBe(false);
+    });
+  });
+
+  describe("isNonExecutionRun", () => {
+    it("classifies generation and decision runs as non-execution runs", () => {
+      expect(isNonExecutionRun(recommendationRun)).toBe(true);
+      expect(isNonExecutionRun({
+        id: "run-decision",
+        metadata: {
+          decisionId: "decision-1",
+          decisionPhase: "research",
+        },
+      })).toBe(true);
+      expect(isNonExecutionRunMetadata({
+        decisionId: "decision-1",
+        decisionPhase: "research",
+      })).toBe(true);
+    });
+
+    it("requires both decision id and phase before classifying decision metadata", () => {
+      expect(isNonExecutionRunMetadata({ decisionId: "decision-1" })).toBe(false);
+      expect(isNonExecutionRunMetadata({ decisionPhase: "research" })).toBe(false);
+      expect(isNonExecutionRun({ metadata: { decisionPhase: "research" } })).toBe(false);
+    });
+  });
+
+  describe("cleanTaskExecutionRunMetadata", () => {
+    it("strips execution fields and refiles recommendation audit run ids", () => {
+      expect(cleanTaskExecutionRunMetadata({
+        auto_run: true,
+        last_run_id: "run-recommend",
+        last_run_status: "running",
+        last_run_chain: "Chain Recommendation",
+        last_run_summary: { outcome: "pass" },
+      }, recommendationRun, "run-recommend")).toEqual({
+        auto_run: true,
+        recommendation_run_id: "run-recommend",
+        recommendation_chain_id: "chain-recommendation",
+      });
+    });
+
+    it("strips execution fields for decision runs without inventing task metadata", () => {
+      expect(cleanTaskExecutionRunMetadata({
+        auto_run: true,
+        last_run_id: "run-decision",
+        last_run_status: "running",
+      }, {
+        chainId: "decision-research",
+        metadata: {
+          decisionId: "decision-1",
+          decisionPhase: "research",
+        },
+      }, "run-decision")).toEqual({
+        auto_run: true,
+      });
     });
   });
 });

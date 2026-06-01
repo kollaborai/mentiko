@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { nsPath } from "@/lib/config";
+import { isNonExecutionRun } from "@/lib/run-provenance";
 import { taskGet, taskList, taskUpdate } from "@/lib/task-store";
 import type { TaskRecord } from "@/lib/task-store-types";
 
@@ -121,8 +122,10 @@ export function findActiveRunForTask(taskId: string, namespaceId?: string): Acti
         chain?: string;
         chainId?: string;
         started?: string;
+        metadata?: unknown;
       };
       if (run.taskId !== taskId) continue;
+      if (isNonExecutionRun(run)) continue;
       if (!run.status || !ACTIVE_RUN_STATUSES.has(run.status)) continue;
       activeRuns.push({
         id: run.id || dir,
