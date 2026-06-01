@@ -8,6 +8,16 @@ export interface Release {
 }
 
 export const releases: Release[] = [
+  // --- v0.3.x (June 2026) ---
+  {
+    version: "v0.3.32",
+    date: "June 1, 2026",
+    title: "Generation and Terminal Reliability",
+    description:
+      "Agent handoffs, generation imports, and live terminal views are more resilient. Terminal captures now render correctly in live panels, generation templates save custom prompts reliably, and the navigation shine defaults to a quieter grey preset while keeping rainbow available.",
+    category: "fix",
+    docsHref: "/settings/pill-nav",
+  },
   // --- v0.3.x (May 2026) ---
   {
     version: "v0.3.31",
