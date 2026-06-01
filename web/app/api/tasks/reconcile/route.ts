@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 
 const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
+const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
 
 interface ReconcileResult {
   taskId: string;
@@ -107,7 +108,11 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
             if (anyRunning || anyPending) {
               const startedAt = parseTimeMs(run.started) || parseTimeMs(meta.last_run_started);
               const ageMs = startedAt ? Date.now() - startedAt : RUN_STARTUP_GRACE_MS;
-              if (ageMs >= RUN_STARTUP_GRACE_MS) {
+              const lastCompletionMs = latestAgentCompletionMs(agents);
+              const inHandoffWindow = lastCompletionMs
+                ? Date.now() - lastCompletionMs < RUN_HANDOFF_GRACE_MS
+                : false;
+              if (ageMs >= RUN_STARTUP_GRACE_MS && !inHandoffWindow) {
                 newStatus = "stopped";
                 reason = "no live sessions found";
               }
@@ -217,4 +222,11 @@ function parseTimeMs(value: unknown): number | undefined {
   if (typeof value !== "string") return undefined;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+function latestAgentCompletionMs(agents: Array<{ completed?: unknown }>): number | undefined {
+  return agents
+    .map((agent) => parseTimeMs(agent.completed))
+    .filter((ms): ms is number => typeof ms === "number")
+    .sort((a, b) => b - a)[0];
 }

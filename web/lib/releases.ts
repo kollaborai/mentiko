@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.35",
+    date: "June 1, 2026",
+    title: "Auto-Run Handoff Grace",
+    description:
+      "Auto-run task reconciliation now waits through both chain startup and next-agent handoff windows before declaring an execution run stopped. Multi-agent recommended chains can keep their task binding from recommendation through real execution and final close.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.34",
     date: "June 1, 2026",
     title: "Auto-Run Startup Grace",

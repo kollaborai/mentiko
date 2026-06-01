@@ -300,6 +300,51 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
+  it("does not mark a real run stopped during the next-agent handoff window", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 300_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      agents: [
+        {
+          id: "codebase-explorer",
+          status: "complete",
+          session: "finished-session",
+          completed: new Date(Date.now() - 3_000).toISOString(),
+        },
+        { id: "test-strategist", status: "pending" },
+      ],
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 0,
+      checked: 1,
+      results: [],
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
   it("still marks an old orphaned real run stopped", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
