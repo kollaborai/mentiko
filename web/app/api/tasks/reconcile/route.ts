@@ -17,6 +17,7 @@ import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/run-prov
 export const dynamic = "force-dynamic";
 
 const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
+const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 
 interface ReconcileResult {
   taskId: string;
@@ -104,8 +105,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
             const anyRunning = agents.some((a: { status: string }) => a.status === "running");
             const anyPending = agents.some((a: { status: string }) => a.status === "pending");
             if (anyRunning || anyPending) {
-              newStatus = "stopped";
-              reason = "no live sessions found";
+              const startedAt = parseTimeMs(run.started) || parseTimeMs(meta.last_run_started);
+              const ageMs = startedAt ? Date.now() - startedAt : RUN_STARTUP_GRACE_MS;
+              if (ageMs >= RUN_STARTUP_GRACE_MS) {
+                newStatus = "stopped";
+                reason = "no live sessions found";
+              }
             }
           }
         }
@@ -206,4 +211,10 @@ function parseMetadata(
     }
   }
   return raw;
+}
+
+function parseTimeMs(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
 }

@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.34",
+    date: "June 1, 2026",
+    title: "Auto-Run Startup Grace",
+    description:
+      "Auto-run reconciliation now gives newly launched execution runs a startup window before treating missing terminal sessions as stopped. This keeps recommended chains attached to their task through launch and preserves close-on-success for the real execution run.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.33",
     date: "June 1, 2026",
     title: "Auto-Run Execution Guard",

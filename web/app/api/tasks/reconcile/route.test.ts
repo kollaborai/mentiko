@@ -260,4 +260,125 @@ describe("GET /api/tasks/reconcile", () => {
       }),
     );
   });
+
+  it("does not mark a young real run stopped before its first session launches", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 3_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      agents: [
+        { id: "codebase-explorer", status: "pending" },
+      ],
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 0,
+      checked: 1,
+      results: [],
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it("still marks an old orphaned real run stopped", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 180_000).toISOString(),
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+      agents: [
+        { id: "codebase-explorer", status: "running", session: "missing-session" },
+      ],
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-044",
+          runId: "run-exec",
+          newStatus: "stopped",
+          reason: "no live sessions found",
+        }),
+      ],
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      {
+        metadata: expect.objectContaining({
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "stopped",
+        }),
+      },
+      "default",
+    );
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          auto_run: true,
+          last_run_id: undefined,
+          last_run_status: "stopped",
+          auto_run_retries: 1,
+        }),
+      },
+      "default",
+    );
+    expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      "default",
+      expect.objectContaining({
+        type: "warning",
+        title: "Auto-run failed",
+        metadata: {
+          taskId: "TASK-044",
+          runId: "run-exec",
+          status: "stopped",
+        },
+      }),
+    );
+  });
 });
