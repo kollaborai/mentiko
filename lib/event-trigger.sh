@@ -20,6 +20,15 @@ mkdir -p "$EVENTS_DIR"
 # -------------------------------------------------------------------
 # emit-event: write an event file
 # -------------------------------------------------------------------
+event-filename-component() {
+    local value="${1:-}"
+    value="$(printf '%s' "$value" | LC_ALL=C sed 's#[/[:cntrl:]]#_#g; s#[^A-Za-z0-9._-]#_#g')"
+    case "$value" in
+        ""|"."|"..") value="_" ;;
+    esac
+    printf '%s' "$value"
+}
+
 emit-event() {
     local event_name="$1"
     local source_agent="$2"
@@ -30,14 +39,20 @@ emit-event() {
         return 1
     fi
 
-    local timestamp=$(date +%Y%m%d-%H%M%S)
     local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
-    local event_file="$EVENTS_DIR/${timestamp}-${event_name}.event"
-    if [[ -n "$run_id" ]]; then
-        event_file="$EVENTS_DIR/${run_id}-${timestamp}-${event_name}.event"
-    fi
+    # canonical event naming: ${run_id}-${source}-${event}.event (run_id prefix dropped
+    # when empty for manual CLI use). the completion matcher keys off the source: field,
+    # not the filename, but a stable predictable name lets it infer source from the
+    # filename as a fallback. the OLD timestamp scheme (${timestamp}-${event}.event) was
+    # the bug source: LLM agents couldn't reproduce it, so emitted events went unmatched.
+    local source_file_part
+    local event_file_part
+    source_file_part="$(event-filename-component "$source_agent")"
+    event_file_part="$(event-filename-component "$event_name")"
+    local event_file="$EVENTS_DIR/${run_id:+${run_id}-}${source_file_part}-${event_file_part}.event"
 
-    cat > "$event_file" <<EOF
+    mkdir -p "$EVENTS_DIR"
+    if ! cat > "$event_file" <<EOF
 event: $event_name
 source: $source_agent
 run_id: $run_id
@@ -45,10 +60,14 @@ timestamp: $(date -Iseconds)
 processed: false
 data: $data
 EOF
+    then
+        echo "error: failed to write event file: $event_file" >&2
+        return 1
+    fi
 
     echo "  event emitted: $event_name"
     echo "  file: $event_file"
-    _sys_log "info" "event-trigger" "event written: $event_name" "source: $source_agent, file: $(basename "$event_file")"
+    _sys_log "info" "event-trigger" "event written: $event_name" "source: $source_agent, file: $(basename "$event_file")" || true
 }
 
 # -------------------------------------------------------------------
@@ -154,6 +173,7 @@ clean-events() {
 
 # exports
 export -f emit-event
+export -f event-filename-component
 export -f list-events
 export -f mark-processed
 export -f archive-all-events

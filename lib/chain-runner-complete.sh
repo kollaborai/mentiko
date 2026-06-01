@@ -373,8 +373,13 @@ for event_file in "$EVENTS_DIR"/*; do
     if [[ "$local_processed" != "true" && -n "$local_source" ]]; then
         if [[ "$local_source" == "$SESSION_PREFIX" ]] || echo "$local_source" | grep -qi "$SESSION_PREFIX\|$CURRENT_AGENT_ID" 2>/dev/null; then
             event_file_matches_current_run "$event_file" || continue
-            TRIGGERED_EVENT_NAME=$(extract_event_field "$event_file" "event")
-            if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
+            candidate_event_name=$(extract_event_field "$event_file" "event")
+            if [[ -n "$candidate_event_name" ]]; then
+                if [[ -n "$EXPECTED_EVENT" && "$candidate_event_name" != "$EXPECTED_EVENT" ]]; then
+                    echo "  ignoring event with unexpected name: $candidate_event_name (expected: $EXPECTED_EVENT) [$(basename "$event_file")]"
+                    continue
+                fi
+                TRIGGERED_EVENT_NAME="$candidate_event_name"
                 TRIGGERED_EVENT="$event_file"
                 echo "  found event: $TRIGGERED_EVENT_NAME [$(basename "$event_file")]"
                 break
@@ -404,6 +409,16 @@ processed: false
 FBEOF
     TRIGGERED_EVENT="$fallback_file"
     echo "  fallback event written"
+fi
+
+# Capture the completion event's `data:` field NOW, before phase 5 archives the file.
+# Generation chains complete their *job* via `mentiko generation import`; when the agent
+# emits the payload as event data instead of writing $ARTIFACTS_DIR/generation-result.json,
+# this is the salvage source the generation backstop (phase 5b) uses to materialize the
+# artifact so the import can still proceed.
+TRIGGERED_EVENT_DATA=""
+if [[ -n "${TRIGGERED_EVENT:-}" && -f "$TRIGGERED_EVENT" ]]; then
+    TRIGGERED_EVENT_DATA=$(sed -n 's/^data:[[:space:]]*//p' "$TRIGGERED_EVENT" 2>/dev/null | head -1 || true)
 fi
 
 # write events.json artifact (captures what event the agent fired)
@@ -708,6 +723,7 @@ if [[ -n "$RUN_ID" ]]; then
             "${_task_api_base}/api/tasks/${TASK_ID}" >/dev/null 2>&1 || true
         echo "  task updated: $TASK_ID"
     fi
+
 fi
 
 # record performance: agent completed
@@ -909,6 +925,35 @@ if [[ "$route_coverage_gate_applies" == "true" ]]; then
             quality_gate_fail_chain \
                 "route coverage below required gate" \
                 "protected=${protected_routes:-unknown}/${total_routes:-unknown}, unprotected=${unprotected_routes:-unknown}, rate=${protection_rate:-unknown}%, required=${required_rate}%, report=$coverage_report"
+        fi
+    fi
+fi
+
+# -----------------------------------------------------------------
+# 5b-gen. generation-job import backstop
+# -----------------------------------------------------------------
+# Generation jobs unblock the UI only when a payload is imported through
+# /api/jobs/<id>/complete. Run this after quality gates so failed/blocked agents
+# cannot publish a successful generation result.
+if [[ -n "${RUN_ID:-}" ]]; then
+    _gen_job_id=$(jq -r '.metadata.generationJobId // .metadata.jobId // empty' "$RUN_DIR/run.json" 2>/dev/null || true)
+    _gen_kind=$(jq -r '.metadata.generationKind // empty' "$RUN_DIR/run.json" 2>/dev/null || true)
+    if [[ -n "$_gen_job_id" && "$_gen_job_id" != "null" && -n "$_gen_kind" && "$_gen_kind" != "null" ]]; then
+        _gen_bin="${BIN_DIR:-$SCRIPT_DIR/../bin}/mentiko"
+        if ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+           MENTIKO_GENERATION_JOB_ID="$_gen_job_id" \
+           MENTIKO_GENERATION_KIND="$_gen_kind" \
+           MENTIKO_RUN_ID="$RUN_ID" \
+           MENTIKO_COMPLETION_EVENT_DATA="${TRIGGERED_EVENT_DATA:-}" \
+           NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+           ORG_ID="${ORG_ID:-default}" \
+           MENTIKO_WEB_URL="http://localhost:${WEB_PORT:-3000}" \
+           "$_gen_bin" generation import >/dev/null 2>&1; then
+            echo "  generation: job $_gen_job_id ($_gen_kind) import ok"
+            _sys_log "info" "chain-runner-complete" "run ${RUN_ID} generation import backstop ok" "job: $_gen_job_id, kind: $_gen_kind"
+        else
+            echo "  generation: import backstop could not complete job $_gen_job_id (agent produced no payload?)"
+            _sys_log "warn" "chain-runner-complete" "run ${RUN_ID} generation import backstop failed" "job: $_gen_job_id, kind: $_gen_kind"
         fi
     fi
 fi

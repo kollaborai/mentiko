@@ -228,6 +228,23 @@ advisor_error_nudge="$(monitor_sanitize_nudge $'Error: LLM provider not availabl
 assert_not_contains "$advisor_error_nudge" "LLM provider" "advisor provider errors are not sent as nudges"
 assert_contains "$advisor_error_nudge" "assigned task" "advisor provider errors fall back to safe task-scoped nudge"
 
+event_specific_nudge="$(CHAIN_FILE="$CHAIN_FILE" monitor_stale_nudge_message \
+  3 \
+  "mentiko-uam-rbac-guest-enforcer-run-1777862548347" \
+  "" \
+  5)"
+assert_contains "$event_specific_nudge" \
+  "mentiko emit guest-enforcement-implemented" \
+  "stale fallback nudge includes exact expected event"
+assert_contains "$event_specific_nudge" \
+  "rbac-guest-enforcer" \
+  "stale fallback nudge includes exact current agent id"
+
+completion_matcher_block="$(sed -n '/for event_file in "$EVENTS_DIR"/,/# fallback: if no event found/p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
+assert_contains "$completion_matcher_block" \
+  "EXPECTED_EVENT" \
+  "chain completion filters current-agent events by declared emits event"
+
 if monitor_should_ask_advisor 1 3; then
   echo "FAIL: advisor should not run on first stale check"
   exit 1
@@ -328,6 +345,15 @@ assert_eq "1" \
   "$sanitized_marker_count" \
   "strips ANSI/control codes so AGENT_COMPLETE matches on its own line"
 
+decorated_marker_count="$(printf 'noise\n\342\217\272 AGENT_COMPLETE\n' \
+  | strip-terminal-control \
+  | sed -E 's/^[[:space:]]*[^[:alnum:]_[:space:]]+[[:space:]]*/ /' \
+  | grep -Ec '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$' || true)"
+
+assert_eq "1" \
+  "$decorated_marker_count" \
+  "normalizes cli status glyphs before matching AGENT_COMPLETE"
+
 chain_runner_source="$(sed -n '1590,1650p' "$PROJECT_ROOT/lib/chain-runner.sh")"
 assert_not_contains "$chain_runner_source" \
   'transport_send_keys "$monitor_session" "bash' \
@@ -360,6 +386,10 @@ assert_contains "$chain_completion_gate_source" \
 assert_contains "$chain_completion_gate_source" \
   "waiting for AGENT_COMPLETE" \
   "chain monitor waits for terminal completion marker after event files"
+
+assert_contains "$chain_completion_gate_source" \
+  "completion event already exists; nudging for AGENT_COMPLETE" \
+  "chain monitor does not let post-event spinner repainting reset the marker nudge forever"
 
 assert_not_contains "$chain_completion_gate_source" \
   "completion event detected" \

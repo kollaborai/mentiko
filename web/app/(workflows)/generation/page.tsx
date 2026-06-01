@@ -158,6 +158,15 @@ export default function GenerationPage() {
     setDirty(false);
     setLoading(true);
     try {
+      // Restore DEFAULT_* content by clearing saved overrides. The store merges
+      // saved-over-defaults (getTemplates), so persisting an empty override set makes
+      // every template fall back to its DEFAULT_* value. Without this PUT, re-fetching
+      // would return the saved customizations again — the button would not actually reset.
+      await fetchWithNamespace("/api/generation-templates", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templates: [] }),
+      });
       const res = await fetchWithNamespace("/api/generation-templates");
       if (res.ok) {
         const raw = await res.json();

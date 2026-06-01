@@ -304,6 +304,10 @@ check_run() {
         ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
 
         # emit run-stalled event
+        # NOTE: this is a SYSTEM event (observed by hooks/notifications), not an agent
+        # handoff event, so it intentionally keeps its own ${ts}-run-stalled.event naming
+        # rather than the canonical ${run_id}-${source}-${event}.event used for agent
+        # completion handoffs (see lib/event-trigger.sh emit-event). Do not "unify" it.
         local ts=$(date -u +"%Y%m%dT%H%M%S")
         local event_file="$EVENTS_DIR/${ts}-run-stalled.event"
         cat > "$event_file" <<EOF

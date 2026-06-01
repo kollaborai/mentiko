@@ -15,7 +15,7 @@
 #   mentiko kill-all
 #   mentiko list
 #   mentiko events [--unprocessed]
-#   mentiko emit <event-name> <source>
+#   mentiko emit <event-name> [source] [data]  (source defaults to $MENTIKO_AGENT_ID)
 #   mentiko init [directory]
 #   mentiko monitor <session-name> "end state" [profile] [interval]
 #   mentiko audit [summary|export-json|export-csv|query|archive|clear]
@@ -219,26 +219,36 @@ case "$CMD" in
 
     emit)
         EVENT_NAME="${1:-}"
-        SOURCE="${2:-}"
+        SOURCE="${2:-${MENTIKO_AGENT_ID:-}}"
+        DATA="${3:-}"
 
-        if [[ -z "$EVENT_NAME" || -z "$SOURCE" ]]; then
-            echo "usage: mentiko emit <event-name> <source>"
+        # `mentiko emit --help` must print usage, NOT emit an event literally named "--help"
+        # (agents probe the command this way and were polluting the event stream).
+        if [[ "$EVENT_NAME" == "--help" || "$EVENT_NAME" == "-h" || "$EVENT_NAME" == "help" ]]; then
+            echo "usage: mentiko emit <event-name> [source] [data]  (source defaults to \$MENTIKO_AGENT_ID)"
+            exit 0
+        fi
+        if [[ -z "$EVENT_NAME" ]]; then
+            echo "usage: mentiko emit <event-name> [source] [data]  (source defaults to \$MENTIKO_AGENT_ID)"
+            exit 1
+        fi
+        if [[ -z "$SOURCE" ]]; then
+            echo "  error: no source given and MENTIKO_AGENT_ID is not set"
+            echo "  usage: mentiko emit <event-name> [source] [data]"
             exit 1
         fi
 
-        mkdir -p "$EVENTS_DIR"
-
-        event_file="$EVENTS_DIR/${SOURCE}-${EVENT_NAME}.event"
-        cat > "$event_file" <<EOF
-event: $EVENT_NAME
-source: $SOURCE
-timestamp: $(date -Iseconds)
-processed: false
-data:
-EOF
-
-        echo "  emitted: $EVENT_NAME from $SOURCE"
-        echo "  file: $event_file"
+        # Route through the single canonical writer (event-trigger.sh emit-event) so the
+        # CLI, the helper, and the chain-runner fallback all produce byte-identical event
+        # files. event-trigger.sh honors the already-set EVENTS_DIR (config.sh sourced at
+        # the top) and reads MENTIKO_RUN_ID/RUN_ID for the run-id filename prefix.
+        # >/dev/null on the source suppresses the "event functions loaded" banner only;
+        # emit-event's own output still prints. emit-event ignores optional _sys_log
+        # failures internally, so a non-zero return here means the event was not written.
+        source "$LIB_DIR/event-trigger.sh" >/dev/null 2>&1
+        if ! emit-event "$EVENT_NAME" "$SOURCE" "$DATA"; then
+            exit 1
+        fi
 
         if declare -f audit-log-event-emit > /dev/null; then
             audit-log-event-emit "$EVENT_NAME" "$SOURCE" 2>/dev/null || true
@@ -395,7 +405,7 @@ usage:
   mentiko kill-all
   mentiko list
   mentiko events [--unprocessed]
-  mentiko emit <event-name> <source>
+  mentiko emit <event-name> [source] [data]  (source defaults to $MENTIKO_AGENT_ID)
   mentiko init [directory]
   mentiko monitor <session> "end state" [profile] [interval]
   mentiko audit [summary|export-json|export-csv|query|archive|clear]

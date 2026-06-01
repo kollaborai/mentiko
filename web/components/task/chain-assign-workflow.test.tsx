@@ -51,6 +51,28 @@ const existingChainJob = {
   chainId: "chain-recommendation",
 };
 
+const completedChainGenerationJob = {
+  id: "job-chain-generation",
+  status: "complete",
+  result: {
+    output: JSON.stringify({
+      id: "shell-command-executor",
+      name: "Shell Command Executor",
+      version: "1.0.0",
+      agents: [
+        { $ref: "shell-executor" },
+        { $ref: "result-verifier" },
+      ],
+    }),
+    createdAgents: [
+      { id: "shell-executor", name: "Shell Executor" },
+      { id: "result-verifier", name: "Result Verifier" },
+    ],
+  },
+  runId: "run-generation",
+  chainId: "chain-generation",
+};
+
 const jobsById = new Map<string, unknown>();
 const mockSetJob = jest.fn();
 const mockFetchWithNamespace = jest.fn();
@@ -247,5 +269,44 @@ describe("ChainAssignWorkflow", () => {
     await waitFor(() => {
       expect(onAssignChain).toHaveBeenCalledWith("release-review", "Release Review");
     });
+  });
+
+  it("saves and assigns completed chain generation jobs with output json strings", async () => {
+    jobsById.set("job-chain-generation", completedChainGenerationJob);
+    mockFetchWithNamespace.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/jobs/job-chain-generation")) {
+        return { ok: true, json: async () => completedChainGenerationJob };
+      }
+      if (url === "/api/chains/save" && init?.method === "POST") {
+        return { ok: true, text: async () => "", json: async () => ({ success: true }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    const onAssignChain = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: false,
+          generation_job_id: "job-chain-generation",
+          generation_status: "complete",
+        })}
+        onAssignChain={onAssignChain}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+        "/api/chains/save",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"name":"Shell Command Executor"'),
+        })
+      );
+    });
+    expect(onAssignChain).toHaveBeenCalledWith("shell-command-executor", "Shell Command Executor");
   });
 });

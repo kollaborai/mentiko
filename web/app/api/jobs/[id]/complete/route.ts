@@ -156,6 +156,15 @@ export const POST = withErrorHandling(async (
     throw new NotFound("Job", id);
   }
 
+  // Completion can be called by both the agent and the orchestration backstop.
+  // A prior call may have marked the job complete and then died before side
+  // effects such as task import ran, so retries must keep repairing missing
+  // side effects. Prefer the stored complete result over a retry body's result
+  // to avoid re-processing already-normalized output.
+  if (job.status === "complete" && job.result && typeof job.result === "object" && !Array.isArray(job.result)) {
+    result = job.result as Record<string, unknown>;
+  }
+
   // update job
   const jobStatus = status || (error ? "failed" : "complete");
   updateJob(id, {
@@ -168,7 +177,7 @@ export const POST = withErrorHandling(async (
   }, namespaceId);
 
   // post-process chain generation: extract inline agents -> write to registry -> rewrite with $refs
-  if (status === "complete" && result && job.type === "generate") {
+  if (jobStatus === "complete" && result && job.type === "generate" && !("createdAgents" in result)) {
     try {
       const nsId = (job.input.namespaceId as string) || "default";
       const oId = (job.input.orgId as string) || "default";
@@ -364,7 +373,7 @@ export const POST = withErrorHandling(async (
   }
 
   // link summary: write result to run directory
-  if (status === "complete" && updatedJob?.type === "link_summary" && updatedJob.result) {
+  if (updatedJob?.status === "complete" && updatedJob.type === "link_summary" && updatedJob.result) {
     try {
       const runId = updatedJob.input?.runId as string | undefined;
       if (runId) {

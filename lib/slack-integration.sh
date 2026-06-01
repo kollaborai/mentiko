@@ -13,6 +13,27 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# slack uses associative arrays (declare -A), which require bash 4.0+. macOS ships
+# /bin/bash 3.2, and chain-runner.sh can be sourced under /bin/bash when launched from a
+# stripped-PATH session — specifically, the monitor-spawned completion handler launches
+# the next agent via bare `bash`, which resolves to /bin/bash 3.2. Under bash 3.2 + set -u,
+# `declare -A arr=(["key"]=val)` parses the key as an arithmetic index and aborts with
+# "key: unbound variable". That crashed chain-runner.sh mid-launch and stalled the whole
+# chain: the next agent never started (see docs/PHASE6_STALL_ROOTCAUSE.md). slack is
+# optional, so on bash < 4 degrade to no-ops instead of aborting the orchestration.
+if (( ${BASH_VERSINFO[0]:-0} < 4 )); then
+    send-slack() { return 0; }
+    send-slack-chain-start() { return 0; }
+    send-slack-chain-complete() { return 0; }
+    send-slack-agent-error() { return 0; }
+    get-slack-webhook() { return 1; }
+    format-slack-message() { return 1; }
+    slack-config-test() { echo "  slack requires bash 4.0+ (running bash ${BASH_VERSINFO[0]:-?}); skipping"; return 1; }
+    export -f send-slack send-slack-chain-start send-slack-chain-complete \
+              send-slack-agent-error get-slack-webhook format-slack-message slack-config-test 2>/dev/null || true
+    return 0 2>/dev/null || exit 0
+fi
+
 # slack emoji/status mappings
 declare -A STATUS_EMOJI=(
     ["chain_start"]="rocket"

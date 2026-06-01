@@ -4,6 +4,10 @@
 
 export {};
 
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
 const mockGetNamespaceIdFromRequest = jest.fn().mockResolvedValue("default");
 const mockGetOrgIdFromRequest = jest.fn().mockResolvedValue("default");
 jest.mock("@/lib/namespace-config", () => ({
@@ -72,6 +76,11 @@ jest.mock("@/lib/decision-run-results", () => ({
   applyDecisionRunResult: jest.fn(),
 }));
 
+let linkRunDir = "";
+jest.mock("@/lib/link-run-runtime", () => ({
+  resolveLinkRunPaths: jest.fn(() => ({ runDir: linkRunDir })),
+}));
+
 function makeRequest(body: Record<string, unknown>) {
   return {
     json: async () => body,
@@ -107,6 +116,13 @@ function generatedTask() {
 }
 
 describe("POST /api/jobs/[id]/complete", () => {
+  afterEach(() => {
+    if (linkRunDir) {
+      rmSync(linkRunDir, { recursive: true, force: true });
+      linkRunDir = "";
+    }
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
 
@@ -192,6 +208,41 @@ describe("POST /api/jobs/[id]/complete", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  test("retries a complete task generation job when task import side effects are missing", async () => {
+    let currentJob = {
+      id: "job-task",
+      type: "task",
+      status: "complete",
+      input: {
+        workspacePath: "/repo/mentiko",
+      },
+      result: generatedTask(),
+      runId: "run-task",
+      chainId: "task-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: generatedTask(),
+      runId: "run-task",
+      chainId: "task-generation",
+      generationKind: "task",
+    }), { params: Promise.resolve({ id: "job-task" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskCreate).toHaveBeenCalledTimes(3);
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-task", expect.objectContaining({
+      taskId: "EPIC-001",
+    }), "default");
+  });
+
   test("recommend completion stores recommendation run provenance without clobbering execution run", async () => {
     let currentJob = {
       id: "job-recommend",
@@ -236,6 +287,33 @@ describe("POST /api/jobs/[id]/complete", () => {
         recommendation_chain_id: "chain-recommendation",
       }),
     }, "default");
+  });
+
+  test("retries a complete link summary job when summary side effect is missing", async () => {
+    linkRunDir = mkdtempSync(join(tmpdir(), "link-summary-run-"));
+    let currentJob = {
+      id: "job-link-summary",
+      type: "link_summary",
+      status: "complete",
+      input: { runId: "link-run-1" },
+      result: { summary: "Recovered summary" },
+      runId: "run-link-summary",
+      chainId: "link-summary",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({}), { params: Promise.resolve({ id: "job-link-summary" }) });
+
+    expect(response.status).toBe(200);
+    const summaryPath = join(linkRunDir, "summary.json");
+    expect(existsSync(summaryPath)).toBe(true);
+    expect(JSON.parse(readFileSync(summaryPath, "utf8"))).toEqual({ summary: "Recovered summary" });
   });
 
   test("generate completion stores generated-chain run provenance without clobbering execution run", async () => {

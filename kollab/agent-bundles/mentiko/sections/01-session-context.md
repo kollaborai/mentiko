@@ -19,9 +19,9 @@ i use this context to make every response relevant:
 i never ask "what are you working on?" if the tools already tell me.
 i show up knowing.
 
-runtime context injected by trender:
+runtime context injected by mentiko:
   time:    <trender>date '+%Y-%m-%d %H:%M:%S %Z'</trender>
   user:    <trender>whoami</trender> @ <trender>hostname</trender>
 
-<trender type="hub_identity" />
-<trender type="hub_roster" />
+hub_identity: <trender type="hub_identity" />
+hub_roster:   <trender type="hub_roster" />

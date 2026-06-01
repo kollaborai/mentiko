@@ -220,6 +220,11 @@ ensure-event-file() {
         return 1
     fi
 
+    # Safety net for when the agent fails to emit. Mirrors the canonical event naming
+    # (${run_id}-${source}-${event}.event) with a -fallback marker. source: ${prefix} is
+    # the session prefix, which chain-runner-complete.sh's matcher accepts (it matches
+    # SESSION_PREFIX or CURRENT_AGENT_ID). Once agents emit via `mentiko emit`, this
+    # should rarely fire. Do NOT revert this to a timestamp filename.
     local fallback_file="$events_dir/${prefix}-${emit_event}-fallback.event"
     if [[ -n "$run_id" ]]; then
         fallback_file="$events_dir/${run_id}-${prefix}-${emit_event}-fallback.event"
@@ -244,6 +249,7 @@ agent-complete-marker-seen() {
 
     transport_capture "$session_name" "$tail_lines" 2>/dev/null |
         strip-terminal-control |
+        sed -E 's/^[[:space:]]*[^[:alnum:]_[:space:]]+[[:space:]]*/ /' |
         grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
 }
 
@@ -592,6 +598,29 @@ monitor-chain-agent() {
         [[ -f "$state_file" ]] && old_state=$(cat "$state_file")
 
         if [[ "$new_state" != "$old_state" ]]; then
+            if [[ -n "$completion_event_file" ]]; then
+                local stale_count=$(cat "$stale_count_file")
+                stale_count=$((stale_count + 1))
+                echo "$stale_count" > "$stale_count_file"
+
+                if declare -f monitor_should_ask_advisor >/dev/null && ! monitor_should_ask_advisor "$stale_count" "$advisor_stale_threshold"; then
+                    echo "$(date '+%H:%M:%S') - completion event exists; waiting for AGENT_COMPLETE threshold ($stale_count/$advisor_stale_threshold)."
+                    echo "$new_state" > "$state_file"
+                    continue
+                fi
+
+                echo "$(date '+%H:%M:%S') - completion event already exists; nudging for AGENT_COMPLETE..."
+                local nudge_msg="Your completion event exists. Finish the final terminal response and make the final non-empty line exactly AGENT_COMPLETE. Do not redo the task."
+                if declare -f monitor_sanitize_nudge >/dev/null; then
+                    nudge_msg="$(monitor_sanitize_nudge "$nudge_msg" "$stale_count")"
+                fi
+                transport_send_raw "$session_name" "$nudge_msg"
+                sleep 1
+                transport_send_raw "$session_name" $'\r'
+                sleep 0.5
+                echo "$new_state" > "$state_file"
+                continue
+            fi
             # output changed → agent is actively working
             echo "$(date '+%H:%M:%S') - active"
             echo "0" > "$stale_count_file"

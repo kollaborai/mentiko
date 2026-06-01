@@ -290,7 +290,7 @@ Common commands:
 | `mentiko validate <chain.json>` | Validate a chain config |
 | `mentiko graph <chain.json>` | Print a chain graph |
 | `mentiko init [directory]` | Scaffold a starter project layout |
-| `mentiko emit <event-name> <source>` | Emit an event |
+| `mentiko emit <event-name> [source] [data]` | Emit an event (source defaults to `$MENTIKO_AGENT_ID`) |
 | `mentiko list` | List active PTY sessions |
 | `mentiko peek <session>` | Read session output |
 | `mentiko send <session> "message"` | Send input to a live session |

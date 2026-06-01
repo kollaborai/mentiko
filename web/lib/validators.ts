@@ -59,6 +59,34 @@ function agentTimeout(value: unknown, field: string, errors: string[]): void {
   }
 }
 
+function optionalStrictString(value: unknown, field: string, errors: string[]): void {
+  if (value !== undefined && typeof value !== "string") {
+    collect(errors, field, "must be a string");
+  }
+}
+
+function validateRetryConfig(value: unknown, field: string, errors: string[]): void {
+  if (value === undefined) return;
+
+  if (typeof value !== "object" || value === null) {
+    collect(errors, field, "must be an object");
+    return;
+  }
+
+  const retry = value as Record<string, unknown>;
+  numberRange(retry.max_retries, `${field}.max_retries`, errors, 0);
+  numberRange(retry.initial_delay, `${field}.initial_delay`, errors, 0);
+  numberRange(retry.max_delay, `${field}.max_delay`, errors, 0);
+  numberRange(retry.backoff_multiplier, `${field}.backoff_multiplier`, errors, 0);
+
+  if (retry.backoff !== undefined) {
+    const valid = ["fixed", "exponential", "linear"];
+    if (!valid.includes(retry.backoff as string)) {
+      collect(errors, `${field}.backoff`, `must be one of: ${valid.join(", ")}`);
+    }
+  }
+}
+
 // helper: check url format
 function isValidUrl(url: string): boolean {
   try {
@@ -157,22 +185,10 @@ export function validateAgent(agent: unknown): ValidationResult {
   // timeout: 0 = no timeout, -1 = use chain default
   agentTimeout(a.timeout, "timeout", errors);
 
-  // retry: object if present
-  if (a.retry !== undefined) {
-    if (typeof a.retry !== "object" || a.retry === null) {
-      collect(errors, "retry", "must be an object");
-    } else {
-      const r = a.retry as Record<string, unknown>;
-      numberRange(r.max_retries, "retry.max_retries", errors, 0);
-
-      if (r.backoff !== undefined) {
-        const valid = ["fixed", "exponential", "linear"];
-        if (!valid.includes(r.backoff as string)) {
-          collect(errors, "retry.backoff", `must be one of: ${valid.join(", ")}`);
-        }
-      }
-    }
-  }
+  validateRetryConfig(a.retry, "retry", errors);
+  optionalStrictString(a.agent_profile, "agent_profile", errors);
+  optionalStrictString(a.on_error, "on_error", errors);
+  optionalStrictString(a.on_timeout, "on_timeout", errors);
 
   return { valid: errors.length === 0, errors };
 }
@@ -215,6 +231,63 @@ export function validateChain(chain: unknown): ValidationResult {
     collect(errors, "agents", "must have at least one agent");
   } else {
     c.agents.forEach((agent, i) => {
+      // $ref agents reference an agent in the registry; their id/name/triggers/emits
+      // resolve at runtime (chain-runner.sh resolves refs, and /api/chains/save already
+      // treats $ref agents specially). A non-empty $ref string is valid on its own —
+      // don't demand the inline fields, or generated/ref-based chains can never be saved.
+      if (agent && typeof agent === "object" && "$ref" in agent) {
+        const refAgent = agent as {
+          $ref?: unknown;
+          id?: unknown;
+          name?: unknown;
+          role?: unknown;
+          prompt?: unknown;
+          triggers?: unknown;
+          emits?: unknown;
+          timeout?: unknown;
+          agent_profile?: unknown;
+          retry?: unknown;
+          on_error?: unknown;
+          on_timeout?: unknown;
+        };
+        const ref = refAgent.$ref;
+        if (typeof ref !== "string" || ref.trim() === "") {
+          collect(errors, `agents[${i}].$ref`, "must be a non-empty string");
+        }
+        if (refAgent.id !== undefined && typeof refAgent.id !== "string") {
+          collect(errors, `agents[${i}].id`, "must be a string");
+        }
+        if (refAgent.name !== undefined && typeof refAgent.name !== "string") {
+          collect(errors, `agents[${i}].name`, "must be a string");
+        }
+        if (refAgent.role !== undefined && typeof refAgent.role !== "string") {
+          collect(errors, `agents[${i}].role`, "must be a string");
+        }
+        if (refAgent.prompt !== undefined && typeof refAgent.prompt !== "string") {
+          collect(errors, `agents[${i}].prompt`, "must be a string");
+        }
+        if (refAgent.triggers !== undefined) {
+          if (!Array.isArray(refAgent.triggers)) {
+            collect(errors, `agents[${i}].triggers`, "must be an array");
+          } else if (!refAgent.triggers.every((t) => typeof t === "string")) {
+            collect(errors, `agents[${i}].triggers`, "must contain only strings");
+          }
+        }
+        if (refAgent.emits !== undefined && typeof refAgent.emits !== "string") {
+          collect(errors, `agents[${i}].emits`, "must be a string");
+        }
+        if (refAgent.timeout !== undefined) {
+          const timeout = Number(refAgent.timeout);
+          if (Number.isNaN(timeout) || (timeout < 0 && timeout !== -1)) {
+            collect(errors, `agents[${i}].timeout`, "must be -1 or at least 0");
+          }
+        }
+        optionalStrictString(refAgent.agent_profile, `agents[${i}].agent_profile`, errors);
+        validateRetryConfig(refAgent.retry, `agents[${i}].retry`, errors);
+        optionalStrictString(refAgent.on_error, `agents[${i}].on_error`, errors);
+        optionalStrictString(refAgent.on_timeout, `agents[${i}].on_timeout`, errors);
+        return;
+      }
       const agentResult = validateAgent(agent);
       if (!agentResult.valid) {
         agentResult.errors.forEach(e => errors.push(`agents[${i}].${e}`));

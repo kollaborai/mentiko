@@ -270,11 +270,11 @@ Now output exactly ONE message as Mentiko would send it. Nothing else."
         # fallback if LLM returned nothing
         if [[ -z "$NUDGE" ]]; then
             if [[ "$STALE_COUNT" -le 2 ]]; then
-                NUDGE="Resume only the current assigned task. If it is complete, write its event file and make the final non-empty line exactly AGENT_COMPLETE."
+                NUDGE="Resume only the current assigned task. If it is complete, write any required artifacts, run your completion command (mentiko emit), and make the final non-empty line exactly AGENT_COMPLETE."
             elif [[ "$STALE_COUNT" -le 4 ]]; then
-                NUDGE="You look stalled. State the blocker in one sentence, then continue the assigned task or write the event file and finish with AGENT_COMPLETE."
+                NUDGE="You look stalled. State the blocker in one sentence, then continue the assigned task or, if done, write your required artifacts, run your completion command (mentiko emit), and finish with AGENT_COMPLETE."
             else
-                NUDGE="Stop waiting. Finish only the assigned task: write required artifacts, write the event file, and make your final non-empty line exactly AGENT_COMPLETE."
+                NUDGE="Stop waiting. Finish only the assigned task: write required artifacts, run your completion command (mentiko emit), and make your final non-empty line exactly AGENT_COMPLETE. Do not hand-write event files."
             fi
         fi
 
@@ -282,7 +282,7 @@ Now output exactly ONE message as Mentiko would send it. Nothing else."
         NUDGE=$(echo "$NUDGE" | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//")
         NUDGE_LOWER=$(printf '%s' "$NUDGE" | tr '[:upper:]' '[:lower:]' | tr '\r\n\t' '   ' | sed 's/[[:space:]]\+/ /g;s/^[[:space:]]*//;s/[[:space:]]*$//')
         if [[ -z "$NUDGE_LOWER" ]] || printf '%s\n' "$NUDGE_LOWER" | grep -Eq '^(proceed|continue|go|k|ok|yes|y)([[:space:]]+(proceed|continue|go|k|ok|yes|y))*[.!]*$'; then
-            NUDGE="Resume only the current assigned task. If it is complete, write its event file and make the final non-empty line exactly AGENT_COMPLETE."
+            NUDGE="Resume only the current assigned task. If it is complete, write any required artifacts, run your completion command (mentiko emit), and make the final non-empty line exactly AGENT_COMPLETE."
         fi
 
         echo "  -> $NUDGE"

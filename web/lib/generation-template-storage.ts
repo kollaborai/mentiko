@@ -5,7 +5,7 @@ import { orgPath } from "./config";
 export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "link_summary";
 
 export interface GenerationTemplate {
-  id: GenerationTemplateId;
+  id: GenerationTemplateId | `custom_${string}`;
   label: string;
   content: string;
   updatedAt: string;
@@ -1619,7 +1619,7 @@ Output ONLY valid JSON matching this schema:
 
 Raw JSON only. No backticks, no explanation, nothing but the JSON object.`;
 
-function getDefaultTemplates(): GenerationTemplate[] {
+export function getDefaultTemplates(): GenerationTemplate[] {
   const now = new Date().toISOString();
   return [
     {
@@ -1743,9 +1743,12 @@ export function getTemplates(namespaceId: string, orgId: string): GenerationTemp
     const raw = readFileSync(filePath, "utf-8");
     const data = JSON.parse(raw) as GenerationTemplatesFile;
     const saved = data.templates;
-    // merge: saved overrides defaults, new defaults fill in missing types
+    // merge: saved overrides defaults, new defaults fill in missing types,
+    // custom_* templates append after built-ins so the UI can round-trip them.
     const savedMap = new Map(saved.map((t) => [t.id, t]));
-    return defaults.map((d) => savedMap.get(d.id) ?? d);
+    const defaultIds = new Set(defaults.map((t) => t.id));
+    const custom = saved.filter((t) => !defaultIds.has(t.id));
+    return [...defaults.map((d) => savedMap.get(d.id) ?? d), ...custom];
   } catch {
     return defaults;
   }

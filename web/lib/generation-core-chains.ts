@@ -35,7 +35,10 @@ export type GenerationChainKind =
   | "run_summary"
   | "template_test";
 
-const GENERATION_CORE_CHAIN_VERSION = "1.0.4";
+// 1.0.5: agent's only deliverable is generation-result.json; the orchestration owns the
+// `mentiko generation import` step (chain-runner-complete.sh backstop). Removes the
+// agent-runs-import critical path and the conflicting import-vs-emit completion instruction.
+const GENERATION_CORE_CHAIN_VERSION = "1.0.5";
 
 interface CoreGenerationChainDefinition {
   id: GenerationCoreChainId;
@@ -47,21 +50,25 @@ interface CoreGenerationChainDefinition {
   promptIntro: string;
 }
 
-function importInstructions(kind: GenerationChainKind): string {
+function importInstructions(): string {
   return [
-    "Write ONLY the final JSON payload to:",
+    "Your ONE AND ONLY deliverable is to WRITE this file:",
     "  $ARTIFACTS_DIR/generation-result.json",
     "",
-    "Then import it into Mentiko with:",
-    `  mentiko generation import "$ARTIFACTS_DIR/generation-result.json" --job "$MENTIKO_GENERATION_JOB_ID" --kind ${kind} --run "$MENTIKO_RUN_ID"`,
+    "It must contain ONLY the final JSON payload — no markdown, no code fences, no prose.",
+    "This FILE is the result. Printing the JSON to your terminal, describing it, or writing",
+    "it anywhere else does NOT count — the request will hang waiting for the file. Write it.",
     "",
-    "The Mentiko CLI is already on PATH as mentiko. Use mentiko, not ./bin/mentiko.",
+    "You do NOT import the result yourself. Mentiko reads generation-result.json and imports",
+    "it automatically once your run completes. Do NOT run `mentiko generation import`, do NOT",
+    "POST to any API, and do NOT write to task storage, job storage, or project files. Use",
+    "the file above — that is the entire handoff.",
     "",
-    "Inspect relevant repository files, docs, or existing task patterns when that context will make the generated task more accurate. Keep inspection targeted to the request, then stop researching and produce the JSON payload.",
+    "Inspect relevant repository files, docs, or existing patterns when that context will make",
+    "the generated output more accurate. Keep inspection targeted to the request, then stop",
+    "researching and write the JSON payload to the file above.",
     "",
-    "Do not use MCP tools for the import. Use the Mentiko CLI command above.",
-    "If the import command fails, stop and report the exact import error. Do not write directly to task storage, job storage, or project files.",
-    "After the import succeeds, output AGENT_COMPLETE.",
+    "When generation-result.json is written, signal completion and finish with AGENT_COMPLETE.",
   ].join("\n");
 }
 
@@ -194,7 +201,7 @@ function buildChain(definition: CoreGenerationChainDefinition) {
           "Complete this generation request:",
           "{TASK}",
           "",
-          importInstructions(definition.kind),
+          importInstructions(),
         ].join("\n"),
         triggers: ["manual-start"],
         emits: `${definition.id}-complete`,

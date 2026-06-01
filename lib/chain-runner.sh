@@ -600,15 +600,9 @@ AGENT_COUNT=$(jq '.agents | length' "$CHAIN_FILE")
 
 build_completion_contract() {
     local agent_id="$1"
-    local s_prefix="$2"
+    local s_prefix="$2"   # retained for signature compatibility; events are now emitted
+                          # via `mentiko emit`, which derives source from MENTIKO_AGENT_ID
     local agent_emits="$3"
-    local event_file_name="${s_prefix}-${agent_emits}.event"
-    local run_id_line=""
-
-    if [[ -n "${RUN_ID:-}" ]]; then
-        event_file_name="${RUN_ID}-${s_prefix}-${agent_emits}.event"
-        run_id_line="  run_id: ${RUN_ID}"
-    fi
 
     cat <<EOF
 COMPLETION CONTRACT:
@@ -628,12 +622,11 @@ The JSON summary must use this shape:
   "nextAgentHints": ["what the next agent should read or do"]
 }
 
-Then write an event file to $EVENTS_DIR/ named ${event_file_name} with:
-  event: $agent_emits
-  source: $s_prefix
-${run_id_line}
-  timestamp: (current ISO timestamp)
-  processed: false
+When you are completely finished, signal completion by running this bash command:
+    mentiko emit ${agent_emits}
+Do NOT hand-write any .event file. The command reads RUN_ID, MENTIKO_AGENT_ID, and
+EVENTS_DIR from your environment and writes the correctly-named, matcher-recognized
+event automatically. Hand-written event files are the #1 cause of stalled chains.
 
 Your final terminal response must be in this order:
 SUMMARY:

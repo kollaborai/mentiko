@@ -87,17 +87,18 @@ event not triggering next agent
   cause: event file not written or wrong event name
 
   solutions:
-    # check events directory
-    ls agents/events/
+    # check the actual resolved event directory
+    echo "$EVENTS_DIR"
+    mentiko events --unprocessed
 
     # read event file
-    cat agents/events/*.event
+    cat "$EVENTS_DIR"/*.event
 
-    # check next agent's triggers match
-    grep -r "triggers:" agents/specs/
+    # check next agent's triggers in the active chain json
+    jq '.agents[] | {id, triggers, emits}' <chain.json>
 
-    # manually trigger
-    mentiko emit <event-name> <source>
+    # manually trigger (inside an agent session, source defaults to $MENTIKO_AGENT_ID)
+    mentiko emit <event-name> [source]
 
 ---
 
@@ -110,8 +111,8 @@ event file format not recognized
     - contains "event:" or "event" key
     - event name doesn't have special chars
 
-  if all else fails, use minimal format:
-    echo "event: my-event" > agents/events/my-event.event
+  if all else fails, verify the canonical emitter:
+    EVENTS_DIR=agents/events MENTIKO_RUN_ID=<run-id> MENTIKO_AGENT_ID=<agent-id> mentiko emit my-event
 
 ---
 

@@ -41,10 +41,17 @@ interface ChainListItem {
   agents?: { name: string; role?: string }[];
 }
 
+interface GeneratedAgent {
+  id?: string;
+  name?: string;
+  role?: string;
+  $ref?: string;
+}
+
 interface GeneratedChain {
   name: string;
   description?: string;
-  agents?: { id: string; name: string; role?: string }[];
+  agents?: GeneratedAgent[];
   [key: string]: unknown;
 }
 
@@ -74,6 +81,54 @@ function JobRunLink({
       {label}: {runId}
     </a>
   );
+}
+
+function isGeneratedChain(value: unknown): value is GeneratedChain {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.name === "string" && Array.isArray(candidate.agents);
+}
+
+function parseGeneratedChainOutput(output: string): GeneratedChain | null {
+  const cleaned = output
+    .replace(/^```(?:json)?\n?/m, "")
+    .replace(/\n?```\s*$/m, "")
+    .trim();
+
+  if (!cleaned) return null;
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return extractGeneratedChain(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function extractGeneratedChain(result: unknown): GeneratedChain | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+
+  if (isGeneratedChain(result)) {
+    return result;
+  }
+
+  const record = result as Record<string, unknown>;
+  if (isGeneratedChain(record.chain)) {
+    return record.chain;
+  }
+
+  if (typeof record.output === "string") {
+    return parseGeneratedChainOutput(record.output);
+  }
+
+  return null;
+}
+
+function chainStorageName(chain: GeneratedChain): string {
+  return chain.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 export function ChainAssignWorkflow({
@@ -272,35 +327,24 @@ export function ChainAssignWorkflow({
         handledGenerationCompleteJobIds.current.add(completedJobId);
       }
 
-      const result = generationJob.result as unknown;
-      let chainData: GeneratedChain | null = null;
-      if (result && typeof result === "object") {
-        // job-runner returns the chain directly (not wrapped in { chain: ... })
-        if ("chain" in result) {
-          chainData = (result as { chain: GeneratedChain }).chain;
-        } else if ("name" in result && "agents" in result) {
-          chainData = result as GeneratedChain;
-        }
-        if (chainData) {
-          setGeneratedChain(chainData);
-          // auto-save to disk + assign to task so chain persists across page loads
-          // only bind chain to task if save succeeds - otherwise user gets "chain not found"
-          autoSaveChain(chainData)
-            .then(() => {
-              const name = chainData!.name
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-|-$/g, "");
-              onAssignChain(name, chainData!.name).catch(() => {});
-            })
-            .catch((err) => {
-              console.error("Chain save failed:", err.message);
-              setErrorMessage(
-                "Chain was generated but could not be saved. Try again or save manually from the Chains page."
-              );
-              setStep("recommendation");
-            });
-        }
+      const chainData = extractGeneratedChain(generationJob.result);
+      if (chainData) {
+        setGeneratedChain(chainData);
+        // auto-save to disk + assign to task so chain persists across page loads
+        // only bind chain to task if save succeeds - otherwise user gets "chain not found"
+        autoSaveChain(chainData)
+          .then((name) => {
+            onAssignChain(name, chainData.name).catch(() => {});
+          })
+          .catch((err) => {
+            console.error("Chain save failed:", err.message);
+            setErrorMessage(
+              "Chain was generated but could not be saved. Try again or save manually from the Chains page."
+            );
+            setStep("recommendation");
+          });
+      } else {
+        setErrorMessage("Chain generation completed but no valid chain JSON was found.");
       }
       // update local state (backend already updated via callback)
       const metadata = {
@@ -327,10 +371,7 @@ export function ChainAssignWorkflow({
   // retries up to 3 times on failure since this is critical for the run-chain flow
   async function autoSaveChain(chain: GeneratedChain) {
     const sanitized = sanitizeChain(chain);
-    const name = chain.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
+    const name = chainStorageName(chain);
 
     const maxRetries = 3;
     let lastError: string | null = null;
@@ -345,7 +386,7 @@ export function ChainAssignWorkflow({
 
         if (res.ok) {
           setSavedChainName(name);
-          return; // success
+          return name; // success
         }
 
         // parse error response for diagnostics
@@ -389,12 +430,22 @@ export function ChainAssignWorkflow({
             setStep("generating");
             return;
           } else if (jobData.status === "complete" && jobData.result) {
-            // job-runner returns the chain directly or wrapped in { chain: ... }
-            const chainData = jobData.result.chain ? jobData.result.chain : jobData.result;
-            if (chainData.name && chainData.agents) {
+            const chainData = extractGeneratedChain(jobData.result);
+            if (chainData) {
               setGeneratedChain(chainData);
-              // auto-save chain to disk so it can be viewed/edited
-              autoSaveChain(chainData);
+              try {
+                const name = await autoSaveChain(chainData);
+                await onAssignChain(name, chainData.name).catch(() => {});
+              } catch (err) {
+                console.error("Chain save failed:", err instanceof Error ? err.message : String(err));
+                setErrorMessage(
+                  "Chain was generated but could not be saved. Try again or save manually from the Chains page."
+                );
+                setStep("recommendation");
+                return;
+              }
+            } else {
+              setErrorMessage("Chain generation completed but no valid chain JSON was found.");
             }
             setStep("generated");
             return;
@@ -1158,7 +1209,7 @@ export function ChainAssignWorkflow({
   // generated - preview + save
   if (step === "generated" && generatedChain) {
     const agents = (generatedChain.agents || []).map((a) => ({
-      name: a.name,
+      name: a.name || a.$ref || a.id || "agent",
       role: a.role,
     }));
 

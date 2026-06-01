@@ -75,15 +75,67 @@ monitor_completion_event_file() {
     done
 }
 
+monitor_expected_event_for_session() {
+    local session_name="$1"
+    local chain_file="$2"
+    local agent_id="${3:-}"
+
+    [[ -f "$chain_file" ]] || return 0
+
+    if [[ -z "$agent_id" ]]; then
+        agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"
+    fi
+    [[ -n "$agent_id" ]] || return 0
+
+    jq -r --arg id "$agent_id" '.agents[]? | select(.id == $id) | .emits // empty' "$chain_file" 2>/dev/null
+}
+
+monitor_emit_command_hint() {
+    local session_name="$1"
+    local chain_file="$2"
+    local agent_id="${3:-}"
+    local expected_event=""
+
+    [[ -f "$chain_file" ]] || return 0
+
+    if [[ -z "$agent_id" ]]; then
+        agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"
+    fi
+    [[ -n "$agent_id" ]] || return 0
+
+    expected_event="$(monitor_expected_event_for_session "$session_name" "$chain_file" "$agent_id")"
+    [[ -n "$expected_event" && "$expected_event" != "null" ]] || return 0
+
+    printf 'mentiko emit %s %s' "$expected_event" "$agent_id"
+}
+
 monitor_stale_nudge_fallback() {
     local stale_count="${1:-1}"
+    local session_name="${2:-}"
+    local chain_file="${3:-${CHAIN_FILE:-}}"
+    local emit_hint=""
+
+    if [[ -n "$session_name" && -n "$chain_file" ]]; then
+        emit_hint="$(monitor_emit_command_hint "$session_name" "$chain_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$emit_hint" ]]; then
+        if [[ "$stale_count" -le 2 ]]; then
+            echo "Resume only the current assigned task. If it is complete, write any required artifacts, run your exact completion command (${emit_hint}), and make the final non-empty line exactly AGENT_COMPLETE."
+        elif [[ "$stale_count" -le 4 ]]; then
+            echo "You look stalled. State the blocker in one sentence, then continue the assigned task or, if done, write your required artifacts, run your exact completion command (${emit_hint}), and finish with AGENT_COMPLETE."
+        else
+            echo "Stop waiting. Finish only the assigned task: write required artifacts, run your exact completion command (${emit_hint}), and make your final non-empty line exactly AGENT_COMPLETE. Do not hand-write event files or invent another event name."
+        fi
+        return 0
+    fi
 
     if [[ "$stale_count" -le 2 ]]; then
-        echo "Resume only the current assigned task. If it is complete, write its event file and make the final non-empty line exactly AGENT_COMPLETE."
+        echo "Resume only the current assigned task. If it is complete, write any required artifacts, run your completion command (mentiko emit), and make the final non-empty line exactly AGENT_COMPLETE."
     elif [[ "$stale_count" -le 4 ]]; then
-        echo "You look stalled. State the blocker in one sentence, then continue the assigned task or write the event file and finish with AGENT_COMPLETE."
+        echo "You look stalled. State the blocker in one sentence, then continue the assigned task or, if done, write your required artifacts, run your completion command (mentiko emit), and finish with AGENT_COMPLETE."
     else
-        echo "Stop waiting. Finish only the assigned task: write required artifacts, write the event file, and make your final non-empty line exactly AGENT_COMPLETE."
+        echo "Stop waiting. Finish only the assigned task: write required artifacts, run your completion command (mentiko emit), and make your final non-empty line exactly AGENT_COMPLETE. Do not hand-write event files."
     fi
 }
 
@@ -190,5 +242,5 @@ monitor_stale_nudge_message() {
         return 0
     fi
 
-    monitor_stale_nudge_fallback "$stale_count"
+    monitor_stale_nudge_fallback "$stale_count" "$session_name" "${CHAIN_FILE:-}"
 }
