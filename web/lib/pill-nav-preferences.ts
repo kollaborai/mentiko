@@ -2,9 +2,29 @@
 
 import { create } from "zustand";
 
-export type PillNavPresetColorScheme = "rainbow" | "blue" | "green" | "pink" | "purple" | "amber" | "cyan";
+export type PillNavPresetColorScheme = "grey" | "rainbow" | "blue" | "green" | "pink" | "purple" | "amber" | "cyan";
 export type PillNavColorScheme = PillNavPresetColorScheme | "custom";
 export type PillNavNavigationMode = "page" | "floating-nav-panels";
+
+export const PILL_NAV_PRESET_COLOR_SCHEMES: PillNavPresetColorScheme[] = [
+  "grey",
+  "rainbow",
+  "blue",
+  "green",
+  "pink",
+  "purple",
+  "amber",
+  "cyan",
+];
+
+export const DEFAULT_PILL_NAV_COLOR_SCHEME: PillNavPresetColorScheme = "grey";
+export const DEFAULT_PILL_NAV_CUSTOM_GLOW_COLORS = [
+  "#929292",
+  "#ffffff",
+  "#606060",
+  "#000000",
+  "#232323",
+];
 
 export interface PillNavPreferences {
   colorScheme: PillNavColorScheme;
@@ -15,14 +35,15 @@ export interface PillNavPreferences {
 }
 
 const defaults: PillNavPreferences = {
-  colorScheme: "rainbow",
-  customGlowColors: ["#ff00ff", "#00ffff", "#ff3131", "#00ff00", "#ffea00"],
+  colorScheme: DEFAULT_PILL_NAV_COLOR_SCHEME,
+  customGlowColors: DEFAULT_PILL_NAV_CUSTOM_GLOW_COLORS,
   scale: 1.0,
   showRecents: true,
   navigationMode: "page",
 };
 
 export const COLOR_SCHEME_GRADIENTS: Record<PillNavPresetColorScheme, string> = {
+  grey:    "#929292, #ffffff, #606060, #000000, #232323",
   rainbow: "#ff00ff, #00ffff, #ff3131, #00ff00, #ffea00",
   blue:    "#1e3a5f, #3b82f6, #60a5fa, #93c5fd, #1e3a5f",
   green:   "#064e3b, #10b981, #34d399, #6ee7b7, #064e3b",
@@ -33,6 +54,7 @@ export const COLOR_SCHEME_GRADIENTS: Record<PillNavPresetColorScheme, string> = 
 };
 
 export const COLOR_SCHEME_LABELS: Record<PillNavPresetColorScheme, string> = {
+  grey:    "Grey",
   rainbow: "Rainbow",
   blue:    "Blue",
   green:   "Green",
@@ -44,6 +66,7 @@ export const COLOR_SCHEME_LABELS: Record<PillNavPresetColorScheme, string> = {
 
 // preview swatch color for each scheme (middle tone)
 export const COLOR_SCHEME_SWATCH: Record<PillNavPresetColorScheme, string> = {
+  grey:    "conic-gradient(#929292, #ffffff, #606060, #000000, #232323, #929292)",
   rainbow: "conic-gradient(#ff00ff, #00ffff, #ff3131, #00ff00, #ffea00, #ff00ff)",
   blue:    "#3b82f6",
   green:   "#10b981",

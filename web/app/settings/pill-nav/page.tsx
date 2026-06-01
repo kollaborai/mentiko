@@ -8,15 +8,16 @@ import { PageBanner } from "@/components/ui/page-banner";
 import { cn } from "@/lib/utils";
 import {
   usePillNavPreferences,
+  DEFAULT_PILL_NAV_COLOR_SCHEME,
+  DEFAULT_PILL_NAV_CUSTOM_GLOW_COLORS,
+  PILL_NAV_PRESET_COLOR_SCHEMES,
   COLOR_SCHEME_SWATCH,
   COLOR_SCHEME_LABELS,
   getPillNavShineGradient,
-  type PillNavPresetColorScheme,
 } from "@/lib/pill-nav-preferences";
 
 const SCALE_KEY = "mentiko-pill-scale";
 const SCALE_CHANGE_EVENT = "mentiko-pill-scale-change";
-const SCHEMES: PillNavPresetColorScheme[] = ["rainbow", "blue", "green", "pink", "purple", "amber", "cyan"];
 
 function loadPillScale(): number {
   try {
@@ -59,8 +60,8 @@ export default function PillNavSettingsPage() {
   }, []);
 
   const handleReset = () => {
-    setCustomGlowColors(["#ff00ff", "#00ffff", "#ff3131", "#00ff00", "#ffea00"]);
-    setColorScheme("rainbow");
+    setCustomGlowColors(DEFAULT_PILL_NAV_CUSTOM_GLOW_COLORS);
+    setColorScheme(DEFAULT_PILL_NAV_COLOR_SCHEME);
     setShowRecents(true);
     setNavigationMode("page");
     handleScaleChange(1);
@@ -96,8 +97,8 @@ export default function PillNavSettingsPage() {
               Choose the animated shine color around the navigation bar, terminal, and code panels.
             </p>
 
-            <div className="grid grid-cols-4 sm:grid-cols-7 gap-3 mt-3">
-              {SCHEMES.map((scheme) => {
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-3 mt-3">
+              {PILL_NAV_PRESET_COLOR_SCHEMES.map((scheme) => {
                 const isActive = prefs.colorScheme === scheme;
                 const swatch = COLOR_SCHEME_SWATCH[scheme];
                 const isGradient = swatch.includes("gradient");
