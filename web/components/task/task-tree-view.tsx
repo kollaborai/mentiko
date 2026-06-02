@@ -227,10 +227,9 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
 
   // stats
   const stats = useMemo(() => {
-    const nonEpics = nodes.filter((n) => n.type !== "epic");
-    const open = nonEpics.filter((n) => n.status !== "closed").length;
-    const closed = nonEpics.filter((n) => n.status === "closed").length;
-    return { open, closed, total: nonEpics.length };
+    const open = nodes.filter((n) => n.status !== "closed").length;
+    const closed = nodes.filter((n) => n.status === "closed").length;
+    return { open, closed, total: nodes.length };
   }, [nodes]);
 
   const toggleCollapse = useCallback((id: string) => {

@@ -15,6 +15,7 @@ import { TaskEditDialog } from "@/components/task/task-edit-dialog";
 import { TaskOverview } from "@/components/task/task-overview";
 import { TaskTreeView } from "@/components/task/task-tree-view";
 import { toTask, groupByEpic, priorityOrder } from "@/lib/task-transforms";
+import { buildTaskListQuery } from "@/lib/task-filter-query";
 import { sortTasksByDependencyOrder } from "@/lib/task-ordering";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
@@ -140,7 +141,7 @@ function TasksPageContent() {
   // filters (read initial values from URL)
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [filterStatus, setFilterStatus] = useState<TaskFilterStatus>(
-    (searchParams.get("status") as TaskFilterStatus) || "open"
+    (searchParams.get("status") as TaskFilterStatus) || "all"
   );
   const [filterType, setFilterType] = useState<TaskFilterType>(
     (searchParams.get("type") as TaskFilterType) || "all"
@@ -156,8 +157,8 @@ function TasksPageContent() {
       if (value === def) params.delete(key);
       else params.set(key, value);
     };
-    sync("view", viewMode, "tree");
-    sync("status", filterStatus, "open");
+    sync("view", viewMode, "list");
+    sync("status", filterStatus, "all");
     sync("type", filterType, "all");
     sync("sort", sortBy, "priority");
     sync("q", searchQuery, "");
@@ -168,10 +169,12 @@ function TasksPageContent() {
   // fetch all tasks
   const fetchTasks = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      params.set("status", filterStatus); // "all" handled in bdList to include closed
-      if (searchQuery.trim()) params.set("q", searchQuery.trim());
-      if (workspacePath) params.set("workspace", workspacePath);
+      const params = buildTaskListQuery({
+        status: filterStatus,
+        type: filterType,
+        query: searchQuery,
+        workspacePath,
+      });
 
       const res = await fetchWithNamespace(`/api/tasks?${params}`);
       const raw = await res.json();
@@ -183,7 +186,7 @@ function TasksPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, searchQuery, workspacePath, fetchWithNamespace]);
+  }, [filterStatus, filterType, searchQuery, workspacePath, fetchWithNamespace]);
 
   // fetch epics
   const fetchEpics = useCallback(async () => {
@@ -363,7 +366,7 @@ function TasksPageContent() {
       }
     });
 
-  const shouldShowMatchingEpics = filterType === "epic" || searchQuery.trim().length > 0;
+  const shouldShowMatchingEpics = filterType === "all" || filterType === "epic" || searchQuery.trim().length > 0;
   const groups = groupByEpic(filtered, epics, { includeEpics: shouldShowMatchingEpics }).map((group) =>
     group.epic
       ? { ...group, tasks: sortTasksByDependencyOrder(group.tasks, depInfo) }

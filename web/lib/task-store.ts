@@ -557,8 +557,8 @@ const MAX_ID_LEN = 80;
 
 export function validateTaskId(id: string): string {
   const trimmed = id.trim().slice(0, MAX_ID_LEN);
-  // accept native format only (TASK-001, FEAT-001, BUG-001...)
-  if (!/^[A-Z]+-\d+$/.test(trimmed)) {
+  // Accept native IDs (TASK-001) and imported/generated IDs used by task providers.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(trimmed)) {
     throw new Error("Invalid task ID format");
   }
   return trimmed;

@@ -451,6 +451,38 @@ describe("groupByEpic", () => {
     expect(groups[0].epic?.id).toBe("epic-1");
     expect(groups[0].tasks).toHaveLength(0);
   });
+
+  it("keeps epic headers while also grouping their child tasks", () => {
+    const tasks = [
+      { id: "epic-1", type: "epic" as const },
+      { id: "t1", parentId: "epic-1", type: "task" as const },
+    ].map(
+      (t) =>
+        ({
+          ...t,
+          title: t.id,
+          description: "",
+          completed: false,
+          status: "open" as const,
+          priority: "medium" as const,
+          rawPriority: 2,
+          owner: "",
+          assignee: "",
+          createdBy: "",
+          createdAt: "",
+          updatedAt: "",
+          labels: [],
+          dependencyCount: 0,
+          dependentCount: 0,
+          commentCount: 0,
+        })
+    );
+
+    const groups = groupByEpic(tasks, epics, { includeEpics: true });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].epic?.id).toBe("epic-1");
+    expect(groups[0].tasks.map((task) => task.id)).toEqual(["t1"]);
+  });
 });
 
 describe("timeAgo", () => {

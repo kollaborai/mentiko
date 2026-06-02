@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { mapPriority } from "@/lib/task-transforms";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
@@ -60,10 +61,18 @@ function shortId(id: string): string {
   return id.slice(dot);
 }
 
-type PriorityFilter = "all" | 0 | 1 | 2 | 3;
+type PriorityFilter = "all" | "p0" | "p0-p1" | "p2-plus";
+
+export function taskOverviewPriorityMatches(priority: number, filter: PriorityFilter): boolean {
+  if (filter === "p0") return priority === 0;
+  if (filter === "p0-p1") return priority <= 1;
+  if (filter === "p2-plus") return priority >= 2;
+  return true;
+}
 
 export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: TaskOverviewProps) {
-  const { workspacePath } = useWorkspace();
+  const { workspacePath, workspaceReady } = useWorkspace();
+  const { fetchWithNamespace } = useNamespaceFetch();
   const [nodes, setNodes] = useState<ApiNode[]>([]);
   const [deps, setDeps] = useState<ApiDep[]>([]);
   const [links, setLinks] = useState<ApiLink[]>([]);
@@ -74,9 +83,10 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
   const [compact, setCompact] = useState(false);
 
   useEffect(() => {
+    if (!workspaceReady) return;
     const params = new URLSearchParams();
     if (workspacePath) params.set("workspace", workspacePath);
-    fetch(`/api/tasks/graph?${params}`)
+    fetchWithNamespace(`/api/tasks/graph?${params}`)
       .then((res) => res.json())
       .then((raw) => {
         const data = unwrapApiData<{
@@ -95,7 +105,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
       })
       .catch(() => setError("Failed to load graph"))
       .finally(() => setLoading(false));
-  }, [workspacePath]);
+  }, [workspacePath, workspaceReady, fetchWithNamespace]);
 
   // build lookup: nodeId -> label (for dep display)
   const labelMap = useMemo(() => {
@@ -133,7 +143,9 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
     const epicIds = new Set(epics.map((e) => e.id));
     const visibleNodes = nodes.filter((n) => {
       if (hideCompleted && n.status === "closed") return false;
-      if (priorityFilter !== "all" && n.type !== "epic" && n.priority !== priorityFilter) return false;
+      if (n.type !== "epic") {
+        if (!taskOverviewPriorityMatches(n.priority, priorityFilter)) return false;
+      }
       return true;
     });
 
@@ -246,9 +258,9 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
   const completedCount = nodes.filter((n) => n.status === "closed" && n.type !== "epic").length;
   const PRIORITY_OPTIONS: { label: string; value: PriorityFilter }[] = [
     { label: "All", value: "all" },
-    { label: "P0", value: 0 },
-    { label: "P0–P1", value: 1 },
-    { label: "P2+", value: 2 },
+    { label: "P0", value: "p0" },
+    { label: "P0-P1", value: "p0-p1" },
+    { label: "P2+", value: "p2-plus" },
   ];
 
   return (
@@ -261,14 +273,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
             <button
               key={String(opt.value)}
               onClick={() => {
-                if (opt.value === "all") {
-                  setPriorityFilter("all");
-                } else if (opt.value === 1) {
-                  // P0-P1 means show 0 and 1
-                  setPriorityFilter(priorityFilter === 1 ? "all" : 1);
-                } else {
-                  setPriorityFilter(priorityFilter === opt.value ? "all" : opt.value);
-                }
+                setPriorityFilter(priorityFilter === opt.value ? "all" : opt.value);
               }}
               className={cn(
                 "px-2 py-0.5 rounded text-[10px] font-mono transition-colors",

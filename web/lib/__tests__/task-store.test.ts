@@ -401,6 +401,7 @@ describe("task-store", () => {
       expect(validateTaskId("TASK-001")).toBe("TASK-001");
       expect(validateTaskId("FEAT-042")).toBe("FEAT-042");
       expect(validateTaskId("BUG-1000")).toBe("BUG-1000");
+      expect(validateTaskId("task-default-mpn51vyj-khcf")).toBe("task-default-mpn51vyj-khcf");
     });
 
     it("rejects injection attempts", () => {
