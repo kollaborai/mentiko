@@ -258,6 +258,7 @@ export default function AgentProfilesPage() {
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [advisorSaving, setAdvisorSaving] = useState(false);
+  const [defaultSaving, setDefaultSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -484,6 +485,37 @@ export default function AgentProfilesPage() {
       setError("save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSetProfileDefault = async () => {
+    setError("");
+
+    // new/unsaved profile: flag locally, persists when the profile is saved
+    if (isNew || !selected) {
+      setEditIsDefault(true);
+      return;
+    }
+
+    setDefaultSaving(true);
+    try {
+      const res = await fetchWithNamespace(`/api/agent-profiles/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDefault: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(getApiErrorMessage(data, "failed to set default profile"));
+        return;
+      }
+      setEditIsDefault(true);
+      setSelected((prev) => (prev ? { ...prev, isDefault: true } : prev));
+      await refetch();
+    } catch {
+      setError("failed to set default profile");
+    } finally {
+      setDefaultSaving(false);
     }
   };
 
@@ -775,18 +807,21 @@ export default function AgentProfilesPage() {
                     />
                   </div>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="isDefault"
-                      checked={editIsDefault}
-                      onChange={(e) => setEditIsDefault(e.target.checked)}
-                      className="h-4 w-4 rounded border-muted bg-background accent-foreground"
-                    />
-                    <Label htmlFor="isDefault" className="text-xs text-foreground/70 cursor-pointer">
-                      {editIsDefault ? "This is the default profile" : "Set as default profile"}
-                    </Label>
-                  </div>
-                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={editIsDefault ? "secondary" : "outline"}
+                      className="h-7 text-xs"
+                      onClick={handleSetProfileDefault}
+                      disabled={defaultSaving || editIsDefault}
+                    >
+                      <TickCircleFilled className="h-3.5 w-3.5 mr-1" />
+                      {defaultSaving
+                        ? "Setting..."
+                        : editIsDefault
+                          ? "Default profile"
+                          : "Set as default profile"}
+                    </Button>
                     <Button
                       type="button"
                       size="sm"
@@ -802,7 +837,7 @@ export default function AgentProfilesPage() {
                           ? "Default advisor"
                           : "Set as default advisor"}
                     </Button>
-                    {isNew && editIsAdvisorDefault && (
+                    {isNew && (editIsDefault || editIsAdvisorDefault) && (
                       <span className="text-[10px] text-foreground/40">applies on save</span>
                     )}
                   </div>

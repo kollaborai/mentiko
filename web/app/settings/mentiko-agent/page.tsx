@@ -11,7 +11,7 @@ import {
 import {
   AddFilled, TrashFilled, TickCircleFilled, CloseCircleFilled,
   RefreshFilled, MagicStarFilled, CloudConnectionFilled, Setting2Filled,
-  ShieldTickFilled,
+  ShieldTickFilled, FlashFilled,
 } from "@aliimam/icons";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { cn } from "@/lib/utils";
@@ -93,6 +93,7 @@ export default function MentikoAgentSettingsPage() {
   const [activating, setActivating]       = useState<string | null>(null);
   const [deleting, setDeleting]           = useState<string | null>(null);
   const { fontScale, setFontScale }       = useKollaborBarStore();
+  const { yoloMode, setYoloMode }         = useKollaborBarStore();
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
@@ -328,6 +329,45 @@ export default function MentikoAgentSettingsPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-md border border-border/40 bg-background p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-2.5">
+              <FlashFilled
+                className={cn(
+                  "h-4 w-4 mt-0.5 shrink-0",
+                  yoloMode ? "text-amber-400" : "text-muted-foreground",
+                )}
+              />
+              <div>
+                <p className="text-sm font-medium">YOLO mode</p>
+                <p className="text-xs text-muted-foreground mt-0.5 max-w-md">
+                  Run tools automatically without asking for approval each time.
+                  When off, the agent prompts before running each tool. You can
+                  also toggle this from the floating bar by typing{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[10px]">/yolo</code>.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={yoloMode}
+              onClick={() => setYoloMode(!yoloMode)}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+                yoloMode ? "bg-amber-400" : "bg-muted-foreground/30",
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 transform rounded-full bg-background transition-transform",
+                  yoloMode ? "translate-x-4" : "translate-x-0.5",
+                )}
+              />
+            </button>
           </div>
         </div>
 

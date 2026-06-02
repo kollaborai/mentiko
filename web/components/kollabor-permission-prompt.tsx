@@ -45,6 +45,30 @@ function getRiskClasses(riskLevel: string): string {
   return RISK_BADGE_CLASSES[riskLevel] ?? "bg-muted text-muted-foreground";
 }
 
+/** A tool label is usable only if it's a real, non-placeholder string. */
+function isUsableToolLabel(value?: string): value is string {
+  const v = value?.trim().toLowerCase();
+  return !!v && v !== "unknown" && v !== "tool";
+}
+
+/**
+ * Resolve a human-readable tool name. The engine sometimes reports
+ * tool_name/tool_type as "unknown" while embedding the real type in the
+ * risk reason ("ask for tool type 'terminal'"). Fall back through that chain
+ * so the prompt never reads "unknown wants to run".
+ */
+function resolveToolLabel(
+  toolName?: string,
+  toolType?: string,
+  riskReason?: string,
+): string {
+  if (isUsableToolLabel(toolName)) return toolName.trim();
+  if (isUsableToolLabel(toolType)) return toolType.trim();
+  const fromReason = riskReason?.match(/tool type ['"]([^'"]+)['"]/i)?.[1];
+  if (isUsableToolLabel(fromReason)) return fromReason.trim();
+  return "a tool";
+}
+
 function formatInput(input: unknown): string {
   let formatted: string;
   try {
@@ -63,7 +87,7 @@ function formatInput(input: unknown): string {
 export function KollaborPermissionPrompt({
   toolId: _toolId,
   toolName,
-  toolType: _toolType,
+  toolType,
   input,
   riskLevel,
   riskReason,
@@ -73,13 +97,14 @@ export function KollaborPermissionPrompt({
 }: KollaborPermissionPromptProps): JSX.Element {
   const inputPreview = formatInput(input);
   const pending = decision === undefined;
+  const displayName = resolveToolLabel(toolName, toolType, riskReason);
 
   return (
     <div className="max-w-[85%] self-start rounded-2xl bg-muted px-3.5 py-2.5 flex flex-col gap-2">
       <div className="flex items-center gap-2 text-sm text-foreground">
         <ShieldTickFilled className="w-4 h-4 shrink-0 text-foreground/70" />
         <span className="truncate">
-          <span className="font-medium">{toolName}</span>
+          <span className="font-medium">{displayName}</span>
           <span className="text-muted-foreground"> wants to run</span>
         </span>
         <span

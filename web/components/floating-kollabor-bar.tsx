@@ -29,12 +29,14 @@ import {
 } from "@/lib/kollabor-engine-client";
 import { KollaborPermissionPrompt } from "@/components/kollabor-permission-prompt";
 import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
+import { KollaborModeChoicePrompt } from "@/components/kollabor-mode-choice-prompt";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   MCPBarClient,
   getStoredSessionToken,
   setMcpBarStorageScope,
   syncSessionToken,
+  replyToTool,
 } from "@/lib/mentiko-mcp-bar-client";
 import type { UIEffect } from "@/lib/mentiko-mcp-inbox";
 import { showToast } from "@/components/notifications-panel";
@@ -247,12 +249,15 @@ export function FloatingKollaborBar() {
     appendDraftText,
     setDraftThinking,
     addDraftTool,
-    updateDraftTool,
+    updateToolByCallId,
     finishDraft,
     pushPermissionRequest,
     resolvePermission,
     pushAskRequest,
     resolveAsk,
+    setYoloMode,
+    setYoloPromptSeen,
+    resolveModeChoice,
   } = useKollaborBarStore();
 
   const { offsetX, offsetY, dock, setOffset, setDock, scale, setScale, fontScale } =
@@ -264,6 +269,8 @@ export function FloatingKollaborBar() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const sendingRef = useRef<boolean>(false);
   const pendingToolInstancesRef = useRef<Map<string, string[]>>(new Map());
+  // message stashed while the first-run mode choice is pending
+  const pendingFirstMessageRef = useRef<string | null>(null);
   const bootRef = useRef<(() => Promise<void>) | null>(null);
   const routerRef = useRef(router);
   const mcpClientRef = useRef<MCPBarClient | null>(null);
@@ -470,19 +477,33 @@ export function FloatingKollaborBar() {
         }
         case "ask_confirm":
         case "ask_input":
-        case "ask_choice":
+        case "ask_choice": {
+          const askToolId = stringPayload(payload, "toolId") || "";
+          const askPrompt =
+            stringPayload(payload, "question") ||
+            stringPayload(payload, "prompt") ||
+            "";
+          // YOLO mode: auto-approve MCP permission gates ("allow <tool>?")
+          // without prompting. Read live state so a mid-turn toggle applies.
+          if (
+            kind === "ask_choice" &&
+            askToolId &&
+            /^allow .+\?/.test(askPrompt) &&
+            useKollaborBarStore.getState().yoloMode
+          ) {
+            void replyToTool(askToolId, "approve").catch(() => {});
+            break;
+          }
           pushAskRequest({
-            toolId: stringPayload(payload, "toolId") || "",
+            toolId: askToolId,
             kind: kind as KollaborAskRequest["kind"],
-            prompt:
-              stringPayload(payload, "question") ||
-              stringPayload(payload, "prompt") ||
-              "",
+            prompt: askPrompt,
             options: arrayPayload(payload, "options"),
             placeholder: stringPayload(payload, "placeholder"),
           });
           setExpanded(true);
           break;
+        }
         case "highlight": {
           // find element by CSS selector or data-mentiko-id
           const sel = String(payload.selector ?? "");
@@ -1023,15 +1044,12 @@ export function FloatingKollaborBar() {
     return null;
   }, [messages]);
 
-  const handleSend = useCallback(async () => {
-    const state = useKollaborBarStore.getState();
-    const content = state.inputValue.trim();
-    const sid = state.sessionId;
-    if (content.length === 0 || sendingRef.current || !state.connected || !sid) return;
+  const runSend = useCallback(async (content: string) => {
+    const sid = useKollaborBarStore.getState().sessionId;
+    if (!sid || sendingRef.current) return;
     const uid = randomId();
     pendingToolInstancesRef.current.clear();
     pushMessage({ id: uid, role: "user", content, timestamp: Date.now() });
-    setInputValue("");
     sendingRef.current = true;
     startDraft();
     try {
@@ -1044,14 +1062,26 @@ export function FloatingKollaborBar() {
             setDraftThinking(true);
             break;
           case "tool_start": {
-            const engineToolId = String(ev.tool_id ?? ev.tool_name ?? "tool");
-            const toolInstanceId = `${engineToolId}-${randomId()}`;
-            const pendingInstances =
-              pendingToolInstancesRef.current.get(engineToolId) ?? [];
-            pendingInstances.push(toolInstanceId);
-            pendingToolInstancesRef.current.set(engineToolId, pendingInstances);
+            // The engine reuses the same tool_id on tool_start and tool_result,
+            // so use it directly as the chip id — a stable key that survives
+            // draft commit (permission gating) and turn_complete clears. Only
+            // synthesize an id (with FIFO tracking) when the engine omits one.
+            const startToolId =
+              typeof ev.tool_id === "string" && ev.tool_id.length > 0
+                ? ev.tool_id
+                : null;
+            let callId: string;
+            if (startToolId) {
+              callId = startToolId;
+            } else {
+              const key = String(ev.tool_name ?? "tool");
+              callId = `${key}-${randomId()}`;
+              const pending = pendingToolInstancesRef.current.get(key) ?? [];
+              pending.push(callId);
+              pendingToolInstancesRef.current.set(key, pending);
+            }
             addDraftTool({
-              callId: toolInstanceId,
+              callId,
               name: ev.tool_name,
               args: ev.input,
               status: "running",
@@ -1060,14 +1090,22 @@ export function FloatingKollaborBar() {
             break;
           }
           case "tool_result": {
-            const resultToolId = String(ev.tool_id ?? ev.tool_name ?? "tool");
-            const resultPendingInstances =
-              pendingToolInstancesRef.current.get(resultToolId);
-            const resultInstanceId = resultPendingInstances?.shift() ?? resultToolId;
-            if (resultPendingInstances && resultPendingInstances.length === 0) {
-              pendingToolInstancesRef.current.delete(resultToolId);
+            const resultToolId =
+              typeof ev.tool_id === "string" && ev.tool_id.length > 0
+                ? ev.tool_id
+                : null;
+            let callId: string;
+            if (resultToolId) {
+              callId = resultToolId;
+            } else {
+              const key = String(ev.tool_name ?? "tool");
+              const pending = pendingToolInstancesRef.current.get(key);
+              callId = pending?.shift() ?? key;
+              if (pending && pending.length === 0) {
+                pendingToolInstancesRef.current.delete(key);
+              }
             }
-            updateDraftTool(resultInstanceId, {
+            updateToolByCallId(callId, {
               status: ev.success ? "done" : "error",
               output: ev.output,
               error: ev.error || undefined,
@@ -1077,13 +1115,22 @@ export function FloatingKollaborBar() {
           case "permission_request":
             // commit any current draft so far, then push the permission message
             finishDraft();
-            pushPermissionRequest({
-              toolId: ev.tool_id,
-              toolName: ev.tool_name,
-              input: ev.input,
-              riskLevel: ev.risk_level,
-              riskReason: ev.risk_reason,
-            });
+            // YOLO mode: auto-approve without prompting. Read live state so a
+            // mid-turn /yolo toggle takes effect on the very next tool call.
+            if (useKollaborBarStore.getState().yoloMode) {
+              void engineRespondToPermission(sid, ev.tool_id, "approve").catch(
+                () => {},
+              );
+            } else {
+              pushPermissionRequest({
+                toolId: ev.tool_id,
+                toolName: ev.tool_name,
+                toolType: ev.tool_type,
+                input: ev.input,
+                riskLevel: ev.risk_level,
+                riskReason: ev.risk_reason,
+              });
+            }
             // start a fresh draft so subsequent tokens (after approval) keep streaming
             startDraft();
             break;
@@ -1138,10 +1185,99 @@ export function FloatingKollaborBar() {
     appendDraftText,
     setDraftThinking,
     addDraftTool,
-    updateDraftTool,
+    updateToolByCallId,
     finishDraft,
     pushPermissionRequest,
   ]);
+
+  // When YOLO turns on, clear any prompts already waiting on screen so the
+  // user isn't stuck approving the one that's blocking the turn.
+  const flushPendingApprovals = useCallback(() => {
+    const { sessionId: sid, messages: msgs } = useKollaborBarStore.getState();
+    for (const m of msgs) {
+      if (m.permission && m.permission.decision === undefined) {
+        resolvePermission(m.id, "approve");
+        if (sid) {
+          void engineRespondToPermission(sid, m.permission.toolId, "approve").catch(
+            () => {},
+          );
+        }
+      } else if (
+        m.ask &&
+        m.ask.result === undefined &&
+        /^allow .+\?/.test(m.ask.prompt)
+      ) {
+        void replyToTool(m.ask.toolId, "approve").catch(() => {});
+        resolveAsk(m.id, "approve");
+      }
+    }
+  }, [resolvePermission, resolveAsk]);
+
+  const handleSend = useCallback(async () => {
+    const state = useKollaborBarStore.getState();
+    const content = state.inputValue.trim();
+    if (content.length === 0) return;
+
+    // local slash command: /yolo [on|off|toggle] — handled locally and allowed
+    // mid-turn, so it can switch off prompting while a turn is blocked on one.
+    const yolo = parseYoloCommand(content);
+    if (yolo !== null) {
+      setInputValue("");
+      const next = yolo === "toggle" ? !state.yoloMode : yolo === "on";
+      setYoloMode(next);
+      setYoloPromptSeen(true);
+      setExpanded(true);
+      if (next) flushPendingApprovals();
+      pushMessage({
+        id: randomId(),
+        role: "system",
+        content: next
+          ? "⚡ YOLO mode on — I'll run tools without asking for approval. You can change this anytime in Settings → Mentiko Agent."
+          : "🛡️ Approval mode on — I'll ask before running each tool. You can change this anytime in Settings → Mentiko Agent.",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    // anything sent to the engine needs an idle, connected session.
+    if (sendingRef.current || !state.connected || !state.sessionId) return;
+
+    // first run: let the user pick approval vs YOLO before the first real send.
+    if (!state.yoloPromptSeen) {
+      pendingFirstMessageRef.current = content;
+      setInputValue("");
+      setExpanded(true);
+      pushMessage({
+        id: randomId(),
+        role: "system",
+        content: "",
+        timestamp: Date.now(),
+        modeChoice: {},
+      });
+      return;
+    }
+
+    setInputValue("");
+    await runSend(content);
+  }, [
+    runSend,
+    pushMessage,
+    setInputValue,
+    setExpanded,
+    setYoloMode,
+    setYoloPromptSeen,
+    flushPendingApprovals,
+  ]);
+
+  const handleModeChoice = useCallback(
+    (messageId: string, choice: "permission" | "yolo") => {
+      resolveModeChoice(messageId, choice);
+      const pending = pendingFirstMessageRef.current;
+      pendingFirstMessageRef.current = null;
+      if (pending) void runSend(pending);
+    },
+    [resolveModeChoice, runSend],
+  );
 
   const handlePermissionRespond = useCallback(
     async (
@@ -1426,6 +1562,7 @@ export function FloatingKollaborBar() {
                       trayAskMessageId={activeAskMessage?.id ?? null}
                       onPermissionRespond={handlePermissionRespond}
                       onAskRespond={resolveAsk}
+                      onModeChoose={handleModeChoice}
                     />
                   ))}
                   {drafting && (
@@ -1558,11 +1695,25 @@ export function FloatingKollaborBar() {
   );
 }
 
+/**
+ * Parse the local /yolo slash command. Returns the requested action or null
+ * when the text isn't a yolo command (so it's sent to the engine as normal).
+ *   /yolo, /yolo on  -> "on"   /yolo off -> "off"   /yolo toggle -> "toggle"
+ */
+function parseYoloCommand(content: string): "on" | "off" | "toggle" | null {
+  const text = content.trim().toLowerCase();
+  if (text === "/yolo" || text === "/yolo on") return "on";
+  if (text === "/yolo off") return "off";
+  if (text === "/yolo toggle") return "toggle";
+  return null;
+}
+
 function MessageBubble({
   message,
   trayAskMessageId,
   onPermissionRespond,
   onAskRespond,
+  onModeChoose,
 }: {
   message: KollaborMessage;
   trayAskMessageId?: string | null;
@@ -1572,7 +1723,35 @@ function MessageBubble({
     decision: "approve" | "approve_always" | "deny",
   ) => void;
   onAskRespond: (messageId: string, result: unknown) => void;
+  onModeChoose: (messageId: string, choice: "permission" | "yolo") => void;
 }) {
+  // first-run mode choice bubble (permission vs YOLO)
+  if (message.modeChoice) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="flex items-start"
+      >
+        <KollaborModeChoicePrompt
+          result={message.modeChoice.result}
+          onChoose={(choice) => onModeChoose(message.id, choice)}
+        />
+      </motion.div>
+    );
+  }
+
+  // system note (mode toggles, hints) — centered, muted
+  if (message.role === "system") {
+    if (!message.content) return null;
+    return (
+      <div className="px-2 py-1 text-center text-[11px] leading-snug text-muted-foreground/70">
+        {message.content}
+      </div>
+    );
+  }
+
   // permission prompt bubble — rendered inline in transcript
   if (message.role === "permission" && message.permission) {
     const p = message.permission;
@@ -1586,6 +1765,7 @@ function MessageBubble({
         <KollaborPermissionPrompt
           toolId={p.toolId}
           toolName={p.toolName}
+          toolType={p.toolType}
           input={p.input}
           riskLevel={p.riskLevel}
           riskReason={p.riskReason}
@@ -1943,17 +2123,54 @@ function ToolChipCluster({ tools }: { tools: DraftTool[] }) {
 function ToolSummaryChip({ tools }: { tools: DraftTool[] }) {
   const toolNames = tools.map((tool) => tool.name).join(", ");
   return (
-    <div
-      className="inline-flex h-5 items-center gap-1 rounded-full border border-border/35 bg-background/30 px-1.5 text-muted-foreground/65 backdrop-blur whitespace-nowrap"
-      title={toolNames}
-      aria-label={`${tools.length} tools ran: ${toolNames}`}
-      style={{
-        fontSize: "calc(var(--mentiko-agent-chip-font-size) * 0.92)",
-        lineHeight: "1",
-      }}
-    >
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
-      <span className="text-foreground/70">{tools.length} tools ran</span>
+    <div className="group/summary relative inline-flex">
+      <div
+        className="inline-flex h-5 items-center gap-1 rounded-full border border-border/35 bg-background/30 px-1.5 text-muted-foreground/65 backdrop-blur whitespace-nowrap cursor-default"
+        aria-label={`${tools.length} tools ran: ${toolNames}`}
+        style={{
+          fontSize: "calc(var(--mentiko-agent-chip-font-size) * 0.92)",
+          lineHeight: "1",
+        }}
+      >
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+        <span className="text-foreground/70">{tools.length} tools ran</span>
+      </div>
+
+      {/* hover card: what the summarized tools called */}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden min-w-[200px] max-w-[300px] flex-col gap-1 rounded-lg border border-border/60 bg-popover/95 p-2 text-[11px] shadow-lg backdrop-blur group-hover/summary:flex"
+      >
+        <div className="px-0.5 pb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
+          {tools.length} tools ran
+        </div>
+        <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
+          {tools.map((tool, index) => {
+            const argsStr = formatToolArgs(tool.args);
+            return (
+              <div
+                key={toolChipKey(tool, index)}
+                className="flex items-center gap-1.5 rounded px-1 py-0.5"
+              >
+                <span
+                  className={cn(
+                    "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                    tool.status === "error" ? "bg-red-400" : "bg-green-400",
+                  )}
+                />
+                <span className="shrink-0 font-mono text-foreground/85">
+                  {tool.name}
+                </span>
+                {argsStr && (
+                  <span className="truncate font-mono text-muted-foreground/70">
+                    {argsStr}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

@@ -17,10 +17,17 @@ export type DraftTool = {
 export interface KollaborPermission {
   toolId: string;
   toolName: string;
+  /** engine tool category (e.g. "terminal"); fallback when toolName is "unknown"/empty */
+  toolType?: string;
   input: unknown;
   riskLevel: string;
   riskReason: string;
   decision?: "approve" | "approve_always" | "deny";
+}
+
+/** First-run choice: ask-every-time vs YOLO (auto-approve). */
+export interface KollaborModeChoice {
+  result?: "permission" | "yolo";
 }
 
 export interface KollaborAskRequest {
@@ -43,6 +50,7 @@ export interface KollaborMessage {
   thinking?: boolean;
   permission?: KollaborPermission;
   ask?: KollaborAskRequest & { result?: unknown };
+  modeChoice?: KollaborModeChoice;
 }
 
 export type KollaborBarDockEdge = "bottom" | "left" | "right";
@@ -83,6 +91,11 @@ interface KollaborBarState {
   engineReady: boolean;
   engineError: string | null;
 
+  // YOLO mode: when true the agent runs tools without asking for approval.
+  // yoloPromptSeen tracks whether the first-run mode choice has been resolved.
+  yoloMode: boolean;
+  yoloPromptSeen: boolean;
+
   setExpanded: (v: boolean) => void;
   setInputValue: (v: string) => void;
   setAgent: (v: string) => void;
@@ -101,12 +114,24 @@ interface KollaborBarState {
   setEngineReady: (v: boolean) => void;
   setEngineError: (v: string | null) => void;
 
+  // YOLO mode setters
+  setYoloMode: (v: boolean) => void;
+  setYoloPromptSeen: (v: boolean) => void;
+  resolveModeChoice: (messageId: string, choice: "permission" | "yolo") => void;
+
   // drafting lifecycle
   startDraft: () => void;
   appendDraftText: (t: string) => void;
   setDraftThinking: (v: boolean) => void;
   addDraftTool: (t: DraftTool) => void;
   updateDraftTool: (callId: string, patch: Partial<DraftTool>) => void;
+  /**
+   * Update a tool by callId wherever it lives — the active draft OR an
+   * already-committed message. Needed because permission gating calls
+   * finishDraft() between tool_start and tool_result, so the running chip is
+   * committed before its result arrives.
+   */
+  updateToolByCallId: (callId: string, patch: Partial<DraftTool>) => void;
   finishDraft: () => void;
 
   // permission prompt lifecycle
@@ -127,6 +152,8 @@ const LS_DOCK_KEY = "mentiko-kollabor-dock";
 const LS_SCALE_KEY = "mentiko-kollabor-scale";
 const LS_FONT_SCALE_KEY = "mentiko-kollabor-font-scale";
 const LS_SESSION_KEY = "mentiko-kollabor-session-id";
+const LS_YOLO_KEY = "mentiko-kollabor-yolo";
+const LS_YOLO_SEEN_KEY = "mentiko-kollabor-yolo-seen";
 const DEFAULT_STORAGE_SCOPE = "anonymous";
 let kollaborBarStorageScope = DEFAULT_STORAGE_SCOPE;
 
@@ -344,6 +371,24 @@ function saveSessionId(v: string | null) {
   }
 }
 
+function loadBool(key: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveBool(key: string, v: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(key, v ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 function newMessageId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -382,6 +427,9 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
     drafting: null,
     engineReady: false,
     engineError: null,
+
+    yoloMode: loadBool(LS_YOLO_KEY),
+    yoloPromptSeen: loadBool(LS_YOLO_SEEN_KEY),
 
     setExpanded: (v) => set({ expanded: v }),
     setInputValue: (v) => set({ inputValue: v }),
@@ -425,6 +473,30 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
     setEngineReady: (v) => set({ engineReady: v }),
     setEngineError: (v) => set({ engineError: v }),
 
+    setYoloMode: (v) => {
+      saveBool(LS_YOLO_KEY, v);
+      set({ yoloMode: v });
+    },
+    setYoloPromptSeen: (v) => {
+      saveBool(LS_YOLO_SEEN_KEY, v);
+      set({ yoloPromptSeen: v });
+    },
+    resolveModeChoice: (messageId, choice) => {
+      saveBool(LS_YOLO_KEY, choice === "yolo");
+      saveBool(LS_YOLO_SEEN_KEY, true);
+      const next = get().messages.map((m) =>
+        m.id === messageId && m.modeChoice
+          ? { ...m, modeChoice: { result: choice } }
+          : m,
+      );
+      saveTranscript(next);
+      set({
+        messages: next,
+        yoloMode: choice === "yolo",
+        yoloPromptSeen: true,
+      });
+    },
+
     startDraft: () => {
       set({ drafting: { text: "", tools: [], thinking: false } });
     },
@@ -460,6 +532,38 @@ export const useKollaborBarStore = create<KollaborBarState>((set, get) => {
         tool.callId === callId ? { ...tool, ...patch } : tool,
       );
       set({ drafting: { ...d, tools } });
+    },
+    updateToolByCallId: (callId, patch) => {
+      // prefer the live draft (in-flight turn)
+      const d = get().drafting;
+      if (d && d.tools.some((tool) => tool.callId === callId)) {
+        set({
+          drafting: {
+            ...d,
+            tools: d.tools.map((tool) =>
+              tool.callId === callId ? { ...tool, ...patch } : tool,
+            ),
+          },
+        });
+        return;
+      }
+      // otherwise the chip was already committed (e.g. permission gate) —
+      // patch it in the transcript so it doesn't stay stuck on "running".
+      let changed = false;
+      const next = get().messages.map((m) => {
+        if (!m.tools || !m.tools.some((tool) => tool.callId === callId)) return m;
+        changed = true;
+        return {
+          ...m,
+          tools: m.tools.map((tool) =>
+            tool.callId === callId ? { ...tool, ...patch } : tool,
+          ),
+        };
+      });
+      if (changed) {
+        saveTranscript(next);
+        set({ messages: next });
+      }
     },
     finishDraft: () => {
       const d = get().drafting;
