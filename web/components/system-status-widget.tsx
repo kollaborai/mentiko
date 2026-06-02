@@ -193,7 +193,7 @@ export function SystemStatusWidget() {
   const uptime = health?.uptime_seconds ?? null;
 
   return (
-    <div className="bg-card rounded-md p-3 flex flex-col gap-2 min-w-0">
+    <div className="flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5">
       {/* header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
@@ -218,9 +218,7 @@ export function SystemStatusWidget() {
               )}`}
             />
           )}
-          <span
-            className={`text-xs font-medium ${overallColor(overall)}`}
-          >
+          <span className={`text-sm font-bold ${overallColor(overall)}`}>
             {loading
               ? "checking..."
               : overall === "healthy"
@@ -233,7 +231,7 @@ export function SystemStatusWidget() {
           </span>
         </div>
         {uptime != null && !loading && (
-          <span className="text-[10px] text-foreground/25 tabular-nums">
+          <span className="text-[11px] font-medium text-foreground/35 tabular-nums">
             up {formatUptime(uptime)}
           </span>
         )}
@@ -241,11 +239,11 @@ export function SystemStatusWidget() {
 
       {/* service rows */}
       {!loading && services.length > 0 && (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {services.map((svc) => (
             <div
               key={svc.label}
-              className="flex items-center gap-1.5 min-w-0"
+              className="grid min-w-0 grid-cols-[auto_auto_minmax(3.25rem,1fr)_auto] items-center gap-1.5"
             >
               <span
                 className={`inline-block h-1 w-1 rounded-full shrink-0 ${statusDot(
@@ -253,10 +251,10 @@ export function SystemStatusWidget() {
                 )} ${statusGlow(svc.status)}`}
               />
               <svc.icon className="h-2.5 w-2.5 shrink-0 text-foreground/25" />
-              <span className="text-[10px] text-foreground/40 shrink-0">
+              <span className="text-[10px] font-medium text-foreground/45">
                 {svc.label}
               </span>
-              <span className="text-[10px] text-foreground/25 truncate ml-auto tabular-nums">
+              <span className="min-w-0 truncate text-right text-[10px] font-semibold text-foreground/45 tabular-nums">
                 {svc.detail}
               </span>
             </div>

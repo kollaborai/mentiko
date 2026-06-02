@@ -12,7 +12,11 @@ import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
 export const dynamic = "force-dynamic";
 
 const JOB_POLL_INTERVAL_MS = 1000;
-const JOB_TIMEOUT_MS = 120_000;
+// Task generation runs an AI agent and routinely takes 2-4 min; the old 120s cap
+// 504'd while the job was still working (tasks then landed async, so the call
+// "failed" even on success). Kept under Node's default 300s server requestTimeout
+// / undici headers timeout. Override via MENTIKO_TASKGEN_TIMEOUT_MS if needed.
+const JOB_TIMEOUT_MS = Number(process.env.MENTIKO_TASKGEN_TIMEOUT_MS) || 240_000;
 
 /**
  * POST /api/mentiko-mcp/ops/tasks/generate

@@ -15,6 +15,7 @@ import {
 } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { EventLogViewer } from "@/components/event-log-viewer";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
 
@@ -95,10 +96,10 @@ export function QuickActions({ className }: QuickActionsProps) {
 
   return (
     <div className={className}>
-      <div className="h-full flex flex-col">
+      <div className="flex h-full min-h-0 flex-col gap-3">
         <h3 className="text-xs font-medium mb-2 px-1">Quick Actions</h3>
 
-        <div className="grid grid-cols-2 gap-2 flex-1 auto-rows-fr">
+        <div className="grid grid-cols-2 gap-2 auto-rows-[3.75rem]">
           <QuickAction
             onClick={() => window.dispatchEvent(new CustomEvent("open-welcome-panel"))}
             icon={Wand}
@@ -157,6 +158,8 @@ export function QuickActions({ className }: QuickActionsProps) {
             />
           </div>
         </div>
+
+        <EventLogViewer className="min-h-[220px] flex-1" />
       </div>
     </div>
   );

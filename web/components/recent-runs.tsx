@@ -71,10 +71,10 @@ export function RecentRuns({ className }: RecentRunsProps) {
             no runs yet
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="flex flex-col gap-2">
             {runs.map((run) => (
-              <Link key={run.id} href={`/runs?runId=${run.id}`}>
-                <div className="flex items-center gap-2 px-2 py-2 bg-muted rounded-md hover:bg-accent transition-colors">
+              <Link key={run.id} href={`/runs?runId=${run.id}`} className="block">
+                <div className="flex items-center gap-2 rounded-md border border-border/20 bg-gradient-to-r from-muted/90 via-muted/65 to-muted/35 px-2 py-2 transition-colors hover:border-border/35 hover:from-muted hover:via-muted/80 hover:to-accent/35">
                   {getStatusIcon(run.status)}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-foreground/70 truncate">

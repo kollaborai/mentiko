@@ -751,6 +751,17 @@ detect_blocked_terminal_prompt() {
     return 1
 }
 
+session_has_active_command() {
+    local session_name="$1"
+    command -v pgrep >/dev/null 2>&1 || return 0
+
+    local session_pid
+    session_pid="$(transport_pid "$session_name" 2>/dev/null || true)"
+    [[ -n "$session_pid" ]] || return 0
+
+    pgrep -P "$session_pid" >/dev/null 2>&1
+}
+
 instruction_submission_marker() {
     local instructions="$1"
 
@@ -801,6 +812,30 @@ mark_state_blocked() {
             if (!wrote_status) print "status: blocked"
             print "blocked_reason: " reason
             print "blocked_at: " at
+        }
+    ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+}
+
+mark_state_failed() {
+    local state_file="$1"
+    local reason="$2"
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    awk -v reason="$reason" -v at="$(date -Iseconds)" '
+        BEGIN { wrote_status = 0 }
+        /^status:/ {
+            print "status: failed"
+            wrote_status = 1
+            next
+        }
+        /^error:/ { next }
+        /^failed_at:/ { next }
+        { print }
+        END {
+            if (!wrote_status) print "status: failed"
+            print "error: " reason
+            print "failed_at: " at
         }
     ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
 }
@@ -860,6 +895,51 @@ mark_run_agent_blocked() {
                 (.agents // []) + [{
                     id: $aid,
                     status: "blocked",
+                    lastHeartbeat: $now,
+                    lastMessage: $reason
+                }]
+            end
+        )
+    ' "$run_file" > "$tmp_file" && mv "$tmp_file" "$run_file"
+}
+
+mark_run_agent_failed() {
+    local run_id="$1"
+    local agent_id="$2"
+    local reason="$3"
+
+    [[ -z "$run_id" ]] && return 0
+
+    update-run-status "$run_id" "failed" "$reason" 2>/dev/null || true
+
+    local now
+    now="$(date -Iseconds)"
+    local run_file="$RUNS_DIR/$run_id/run.json"
+    [[ -f "$run_file" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg aid "$agent_id" --arg reason "$reason" --arg now "$now" '
+        .status = "failed" |
+        .status_message = $reason |
+        .completed = (.completed // $now) |
+        .agents = (
+            if ((.agents // []) | any(.id == $aid)) then
+                (.agents // []) | map(
+                    if .id == $aid then
+                        .status = "failed" |
+                        .completed = (.completed // $now) |
+                        .lastHeartbeat = $now |
+                        .lastMessage = $reason
+                    else .
+                    end
+                )
+            else
+                (.agents // []) + [{
+                    id: $aid,
+                    status: "failed",
+                    completed: $now,
                     lastHeartbeat: $now,
                     lastMessage: $reason
                 }]
@@ -1741,6 +1821,15 @@ SEOF
         mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "$startup_blocked_reason"
         echo "  agent blocked: $startup_blocked_reason"
         _sys_log "warn" "chain-runner" "agent blocked before instructions: $startup_blocked_reason" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
+        return 0
+    fi
+
+    if ! session_has_active_command "$session_name"; then
+        local startup_failed_reason="agent CLI exited before instructions were sent"
+        mark_state_failed "$STATE_DIR/${state_id}.state" "$startup_failed_reason"
+        mark_run_agent_failed "${RUN_ID:-}" "$agent_id" "$startup_failed_reason"
+        echo "  agent startup failed: $startup_failed_reason"
+        _sys_log "error" "chain-runner" "agent CLI exited before instructions" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
         return 0
     fi
 

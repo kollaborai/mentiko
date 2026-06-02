@@ -24,21 +24,21 @@ interface StatCardProps {
 
 function StatCard({ icon, watermarkIcon: WatermarkIcon, watermarkColor, label, value, subtext }: StatCardProps) {
   return (
-    <div className="relative bg-background border border-border/40 rounded-xl p-3 overflow-hidden">
+    <div className="relative overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5">
       <div
-        className="absolute -right-6 -bottom-6 pointer-events-none"
-        style={{ color: watermarkColor, opacity: 0.1 }}
+        className="absolute -right-7 -bottom-7 pointer-events-none"
+        style={{ color: watermarkColor, opacity: 0.13 }}
       >
-        <WatermarkIcon className="h-32 w-32" />
+        <WatermarkIcon className="h-36 w-36" />
       </div>
       <div className="relative z-10">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2">
           <div className="text-foreground/60">{icon}</div>
-          <span className="text-xs font-medium">{label}</span>
+          <span className="text-xs font-semibold text-foreground/80">{label}</span>
         </div>
-        <div className="text-2xl font-semibold">{value}</div>
+        <div className="mt-2 text-3xl font-black leading-none tracking-normal text-foreground tabular-nums md:text-4xl">{value}</div>
         {subtext && (
-          <p className="text-xs text-foreground/40 mt-1">{subtext}</p>
+          <p className="mt-1.5 text-xs text-foreground/45">{subtext}</p>
         )}
       </div>
     </div>

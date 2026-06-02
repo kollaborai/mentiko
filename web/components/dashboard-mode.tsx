@@ -5,11 +5,30 @@ import { EmergencyMode } from "@/components/emergency-mode";
 import { useWorkspace } from "@/lib/workspace-context";
 import { unwrapApiData } from "@/lib/api-client";
 import { useSharedRuns } from "@/lib/runs-store";
+import type { Run } from "@/lib/types";
+
+interface DashboardDecision {
+  id: string;
+  title?: string;
+  prompt?: string;
+  createdAt?: string;
+}
 
 export function DashboardMode() {
   const { workspacePath } = useWorkspace();
   const { runs } = useSharedRuns({ workspacePath });
-  const [pendingDecisions, setPendingDecisions] = useState(0);
+  const [pendingDecisions, setPendingDecisions] = useState<DashboardDecision[]>([]);
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const timeout = setTimeout(tick, 0);
+    const interval = setInterval(tick, 60000);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
+  }, []);
 
   // decisions aren't in shared store yet — keep a single lightweight poll
   useEffect(() => {
@@ -19,8 +38,8 @@ export function DashboardMode() {
         const res = await fetch(`/api/decisions?status=pending${wsParam}`);
         if (!res.ok) return;
         const decisionsJson = await res.json().catch(() => ({}));
-        const data = unwrapApiData<{ decisions?: unknown[] }>(decisionsJson);
-        setPendingDecisions((data.decisions ?? []).length);
+        const data = unwrapApiData<{ decisions?: DashboardDecision[] }>(decisionsJson);
+        setPendingDecisions(data.decisions ?? []);
       } catch {}
     };
     fetchDecisions();
@@ -28,20 +47,20 @@ export function DashboardMode() {
     return () => clearInterval(interval);
   }, [workspacePath]);
 
-  const failedRuns = runs.filter(r => r.status === "failed" || (r.status as string) === "error").length;
-  const stalledAgents = runs.filter(r => {
-    if (r.status !== "running") return false;
-    const hoursSinceStart = (Date.now() - new Date(r.started).getTime()) / (1000 * 60 * 60);
+  const failedRuns = runs.filter(r => r.status === "failed" || (r.status as string) === "error");
+  const stalledRuns = runs.filter((r: Run) => {
+    if (r.status !== "running" || now === 0) return false;
+    const hoursSinceStart = (now - new Date(r.started).getTime()) / (1000 * 60 * 60);
     return hoursSinceStart > 2;
-  }).length;
+  });
 
-  const hasEmergencies = failedRuns > 0 || stalledAgents > 0 || pendingDecisions > 0;
+  const hasEmergencies = failedRuns.length > 0 || stalledRuns.length > 0 || pendingDecisions.length > 0;
   if (!hasEmergencies) return null;
 
   return (
     <EmergencyMode
       failedRuns={failedRuns}
-      stalledAgents={stalledAgents}
+      stalledRuns={stalledRuns}
       pendingDecisions={pendingDecisions}
     />
   );

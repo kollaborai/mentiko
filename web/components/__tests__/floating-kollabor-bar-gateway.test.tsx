@@ -8,7 +8,7 @@
  *   - /api/system/codex-token is NOT fetched when gatewayEnabled=true
  */
 
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 let mockUserState: {
   user: { id: string } | null;
@@ -131,13 +131,26 @@ async function flushAll() {
 
 import { useKollaborBarStore } from "@/lib/kollabor-bar-store";
 import { setKollaborEngineStorageScope } from "@/lib/kollabor-engine-client";
-import { FloatingKollaborBar, shouldShowEngineOffline } from "../floating-kollabor-bar";
+import {
+  FloatingKollaborBar,
+  nextKollaborBarScaleFromWheel,
+  shouldShowEngineOffline,
+} from "../floating-kollabor-bar";
 
 describe("FloatingKollaborBar — gateway mode", () => {
   let originalFetch: typeof fetch;
+  let originalRequestAnimationFrame: typeof requestAnimationFrame;
+  let originalCancelAnimationFrame: typeof cancelAnimationFrame;
 
   beforeEach(() => {
     originalFetch = global.fetch;
+    originalRequestAnimationFrame = global.requestAnimationFrame;
+    originalCancelAnimationFrame = global.cancelAnimationFrame;
+    global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    }) as typeof requestAnimationFrame;
+    global.cancelAnimationFrame = jest.fn() as typeof cancelAnimationFrame;
     mockUserState = { user: { id: "user-a" }, loading: false };
     useKollaborBarStore.setState({
       expanded: false,
@@ -147,11 +160,14 @@ describe("FloatingKollaborBar — gateway mode", () => {
       connected: false,
       connecting: false,
       error: null,
+      scale: 1,
     });
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    global.requestAnimationFrame = originalRequestAnimationFrame;
+    global.cancelAnimationFrame = originalCancelAnimationFrame;
     jest.clearAllMocks();
   });
 
@@ -251,6 +267,26 @@ describe("FloatingKollaborBar — gateway mode", () => {
     // ping (transient 401, network blip) must NOT surface "engine offline".
     expect(shouldShowEngineOffline(true)).toBe(false);
     expect(shouldShowEngineOffline(false)).toBe(true);
+  });
+
+  it("resizes from wheel delta and clamps the floating bar scale", () => {
+    expect(nextKollaborBarScaleFromWheel(1, 100)).toBeCloseTo(0.85);
+    expect(nextKollaborBarScaleFromWheel(1, -100)).toBeCloseTo(1.15);
+    expect(nextKollaborBarScaleFromWheel(0.6, 1000)).toBe(0.6);
+    expect(nextKollaborBarScaleFromWheel(1.6, -1000)).toBe(1.6);
+  });
+
+  it("resizes when scrolling the drag handle", async () => {
+    global.fetch = jest.fn(async () => (
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
+    )) as unknown as typeof fetch;
+
+    render(<FloatingKollaborBar />);
+    await flushAll();
+
+    fireEvent.wheel(screen.getByRole("button", { name: "drag to move" }), { deltaY: -120 });
+
+    expect(useKollaborBarStore.getState().scale).toBeCloseTo(1.18);
   });
 
   it("still mounts cleanly when gatewayEnabled=false (legacy path)", async () => {

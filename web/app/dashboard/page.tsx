@@ -3,7 +3,6 @@ import { DashboardMode } from "@/components/dashboard-mode";
 import { DashboardBanner } from "@/components/dashboard-banner";
 import { ActiveChains } from "@/components/active-chains";
 import { ActivityFeed } from "@/components/activity-feed";
-import { EventLogViewer } from "@/components/event-log-viewer";
 import { QuickActions } from "@/components/quick-actions";
 import { GettingStarted } from "@/components/getting-started";
 import { RecentRuns } from "@/components/recent-runs";
@@ -36,7 +35,6 @@ export default async function DashboardPage() {
           <ActivityFeed />
           <PendingDecisions />
           <ActiveChains />
-          <EventLogViewer />
         </div>
       </div>
     </div>

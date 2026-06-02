@@ -71,6 +71,33 @@ test("chain runner and completion handler both use run-scoped state files", () =
   );
 });
 
+test("chain runner marks startup exits failed before sending instructions", () => {
+  const runnerSource = readFileSync(chainRunner, "utf8");
+  const activeCheck = 'if ! session_has_active_command "$session_name"; then';
+  const sendInstructions = 'instruction_send_capture="$(send-message "$session_name" "$instructions")"';
+
+  assert(
+    runnerSource.includes("session_has_active_command()"),
+    "chain-runner.sh should know how to detect exited startup commands"
+  );
+  assert(
+    runnerSource.includes('mark_state_failed "$STATE_DIR/${state_id}.state" "$startup_failed_reason"'),
+    "chain-runner.sh should mark shell state failed on startup exit"
+  );
+  assert(
+    runnerSource.includes('mark_run_agent_failed "${RUN_ID:-}" "$agent_id" "$startup_failed_reason"'),
+    "chain-runner.sh should mark run.json failed on startup exit"
+  );
+  assert(
+    runnerSource.indexOf(activeCheck) > -1,
+    "chain-runner.sh should check the startup command before instructions"
+  );
+  assert(
+    runnerSource.indexOf(activeCheck) < runnerSource.indexOf(sendInstructions),
+    "chain-runner.sh should not paste instructions into a shell after the CLI exits"
+  );
+});
+
 test("watchdog does not reap completion sessions as orphans", () => {
   const source = readFileSync(watchdog, "utf8");
 

@@ -92,6 +92,13 @@ export function shouldShowEngineOffline(stateConnected: boolean): boolean {
   return !stateConnected;
 }
 
+export function nextKollaborBarScaleFromWheel(current: number, deltaY: number): number {
+  return Math.min(
+    SCALE_MAX,
+    Math.max(SCALE_MIN, current - deltaY * 0.0015),
+  );
+}
+
 const SHOULD_OFFER_CODEX_INLINE_AUTH = false;
 const HIDDEN_TOOL_CHIP_NAMES = new Set(["ask_confirm", "ask_input", "ask_choice"]);
 const TASK_DIGEST_ID_RE = /\b(?:EPIC|TASK|CHOR)-\d{3}\b/g;
@@ -704,10 +711,12 @@ export function FloatingKollaborBar() {
     };
   }, [dragging, onDragEnd, updateDragPosition]);
 
-  // scroll-wheel anywhere over the pill to resize (hover + scroll = zoom)
+  // scroll-wheel over the pill or drag grip to resize (hover + scroll = zoom)
   useEffect(() => {
     const pill = pillRef.current;
-    if (!pill) return;
+    const grip = gripRef.current;
+    const targets = Array.from(new Set([pill, grip].filter(Boolean))) as HTMLElement[];
+    if (targets.length === 0) return;
     // proportional to wheel delta, then rate-limited via rAF so trackpad bursts
     // don't run away. feels like a smooth continuous zoom instead of step-per-tick.
     let pendingDelta = 0;
@@ -716,10 +725,7 @@ export function FloatingKollaborBar() {
       rafId = null;
       if (pendingDelta === 0) return;
       const current = useKollaborBarStore.getState().scale;
-      const next = Math.min(
-        SCALE_MAX,
-        Math.max(SCALE_MIN, current - pendingDelta * 0.0015),
-      );
+      const next = nextKollaborBarScaleFromWheel(current, pendingDelta);
       pendingDelta = 0;
       setScale(next);
     };
@@ -728,15 +734,30 @@ export function FloatingKollaborBar() {
       const target = e.target as Element;
       if (target.tagName === "TEXTAREA") return;
       e.preventDefault();
+      e.stopPropagation();
       pendingDelta += e.deltaY;
       if (rafId === null) rafId = requestAnimationFrame(flush);
     };
-    pill.addEventListener("wheel", onWheel, { passive: false });
+    for (const target of targets) {
+      target.addEventListener("wheel", onWheel, { passive: false });
+    }
     return () => {
-      pill.removeEventListener("wheel", onWheel);
+      for (const target of targets) {
+        target.removeEventListener("wheel", onWheel);
+      }
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
   }, [setScale]);
+
+  const handleGripWheel = useCallback(
+    (e: React.WheelEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const current = useKollaborBarStore.getState().scale;
+      setScale(nextKollaborBarScaleFromWheel(current, e.deltaY));
+    },
+    [setScale],
+  );
 
   const CODEX_TOKEN_PREF_KEY = "mentiko-floater-codex-auth-choice";
 
@@ -1176,7 +1197,6 @@ export function FloatingKollaborBar() {
     }
   }, [
     pushMessage,
-    setInputValue,
     setError,
     setSessionId,
     setConnected,
@@ -1450,7 +1470,7 @@ export function FloatingKollaborBar() {
       <div
         ref={barRef}
         data-floating-kollabor-bar=""
-        className="fixed w-[min(373px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
+        className="fixed w-[min(338px,calc(100vw-2rem))] pointer-events-none flex flex-col items-stretch gap-2"
         style={{
           ...fontVars,
           zIndex: FLOATING_SURFACE_Z.kollaborBar,
@@ -1505,9 +1525,10 @@ export function FloatingKollaborBar() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="no-scrollbar pointer-events-auto flex flex-col-reverse gap-2 max-h-[55vh] overflow-y-auto overflow-x-hidden"
+            className="no-scrollbar pointer-events-auto flex min-h-0 w-full flex-col-reverse gap-2 overflow-y-auto overflow-x-hidden rounded-2xl border border-border/70 bg-background/90 p-2 shadow-xl backdrop-blur-md"
             ref={transcriptRef}
             style={{
+              maxHeight: `calc((100vh - 14rem) / ${effScale.toFixed(3)})`,
               maskImage:
                 "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 6%, rgba(0,0,0,0.7) 14%, #000 24%)",
               WebkitMaskImage:
@@ -1536,19 +1557,10 @@ export function FloatingKollaborBar() {
                 />
                 <span className={statusColor}>{statusText}</span>
               </div>
-              <div className="flex items-center gap-3 transition-opacity duration-200">
-                <button
-                  type="button"
-                  onClick={() => clearMessages()}
-                  className="text-muted-foreground/40 hover:text-foreground"
-                >
-                  clear
-                </button>
-              </div>
             </div>
 
             {/* render bubbles newest-at-bottom; flex-col-reverse inverts while keeping natural scroll */}
-            <div className="flex flex-col gap-2">
+            <div className="flex w-full flex-col gap-2">
               {messages.length === 0 ? (
                 <div className="text-xs text-muted-foreground/60 text-center py-4">
                   nothing yet
@@ -1598,22 +1610,35 @@ export function FloatingKollaborBar() {
 
       <AnimatePresence initial={false}>
         {expanded && (
-          <motion.button
-            key="close-above"
-            type="button"
+          <motion.div
+            key="transcript-controls"
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 4 }}
             transition={{ duration: 0.2 }}
-            onClick={() => setExpanded(false)}
-            aria-label="close"
-            title="close (esc)"
-            className="pointer-events-auto self-end flex items-center justify-center w-6 h-6 rounded-full border border-border/60 bg-background/80 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-background transition-colors shadow-sm"
+            className="pointer-events-auto self-end flex items-center gap-2"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </motion.button>
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => clearMessages()}
+                className="h-6 rounded-full border border-border/60 bg-background/80 px-2.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-background transition-colors shadow-sm backdrop-blur"
+              >
+                clear
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              aria-label="close"
+              title="close (esc)"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground hover:text-foreground hover:bg-background transition-colors shadow-sm backdrop-blur"
+            >
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -1649,6 +1674,7 @@ export function FloatingKollaborBar() {
         <button
           ref={gripRef}
           type="button"
+          onWheel={handleGripWheel}
           onPointerDown={onDragStart}
           onPointerMove={(e) => updateDragPosition(e.clientX, e.clientY)}
           onPointerUp={onDragEnd}
@@ -1810,7 +1836,7 @@ function MessageBubble({
       initial={{ opacity: 0, y: 6, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
+      className={cn("flex w-full flex-col gap-1", isUser ? "items-end" : "items-start")}
     >
       {/* render committed tool chips first (if any) */}
       <ToolChipCluster tools={tools} />
@@ -1820,8 +1846,8 @@ function MessageBubble({
           className={cn(
             "text-sm leading-relaxed break-words",
             isUser
-              ? "max-w-[78%] rounded-[1.25rem] px-3 py-1.5 bg-muted/70 text-foreground whitespace-pre-wrap"
-              : "mentiko-agent-markdown max-w-[92%] px-0.5 text-foreground/90",
+              ? "max-w-full rounded-[1.25rem] px-3 py-1.5 bg-muted/80 text-foreground whitespace-pre-wrap"
+              : "mentiko-agent-markdown max-w-full px-0.5 text-foreground/90",
           )}
           style={{
             fontSize: "var(--mentiko-agent-message-font-size)",
@@ -1847,7 +1873,7 @@ function DraftBubble({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className="flex flex-col gap-1 items-start"
+      className="flex w-full flex-col gap-1 items-start"
     >
       {!draft.text && draft.tools.length === 0 && (
         <div className="px-1 py-1.5">
@@ -1857,7 +1883,7 @@ function DraftBubble({
       <ToolChipCluster tools={visibleToolChips(draft.tools)} />
       {draft.text && (
         <div
-          className="mentiko-agent-markdown max-w-[92%] text-sm leading-relaxed break-words px-0.5 text-foreground/90"
+          className="mentiko-agent-markdown max-w-full text-sm leading-relaxed break-words px-0.5 text-foreground/90"
           style={{
             fontSize: "var(--mentiko-agent-message-font-size)",
             lineHeight: "var(--mentiko-agent-message-line-height)",
