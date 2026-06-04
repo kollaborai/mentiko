@@ -1,9 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import config, { orgPath } from "./config";
-import type { RetryConfig, AgentAuthority, AgentContext } from "./types";
-
-export type ArtifactType = "markdown" | "json" | "code" | "patch" | "csv" | "text" | "image";
+import type { RetryConfig, AgentAuthority, AgentContext, ArtifactType } from "./types";
 
 export interface ArtifactProduces {
   id: string;

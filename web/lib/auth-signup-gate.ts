@@ -3,19 +3,15 @@
  * MENTIKO_DISABLE_PUBLIC_SIGNUP is enabled.
  */
 
-import { timingSafeEqual } from "crypto";
+import { timingSafeEqual } from "@/lib/security";
 import { loadInvites } from "@/lib/org-storage";
 
+// Constant-time comparison delegates to security.timingSafeEqual (same
+// Buffer/length/try-catch core). The empty-string guard stays here because
+// callers treat a missing or blank token as an automatic non-match.
 export function timingSafeTokenMatch(expected: string, received: string | undefined): boolean {
   if (!received || !expected) return false;
-  try {
-    const a = Buffer.from(expected, "utf8");
-    const b = Buffer.from(received, "utf8");
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+  return timingSafeEqual(expected, received);
 }
 
 /**

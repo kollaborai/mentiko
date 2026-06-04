@@ -1,31 +1,15 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import path from "path";
 import { orgPath } from "./config";
+import type { AgentProfile } from "./types";
 
 // ============================================================
 // types
 // ============================================================
 
-export interface AgentProfile {
-  id: string;
-  name: string;
-  description?: string;
-  isDefault: boolean;
-  isAdvisorDefault?: boolean;
-  cli: string;
-  model?: string;
-  relay_model?: string;
-  pipe_flag?: string;
-  permission_flag?: string;
-  extra_args?: string[];
-  disallowed_tools?: string;
-  env?: Record<string, string>;
-  pre_exec?: string;
-  log_path?: string;
-  log_format?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+// AgentProfile is defined canonically in ./types; re-export keeps the existing
+// "@/lib/agent-profile-storage" import path working for consumers.
+export type { AgentProfile };
 
 // ============================================================
 // paths

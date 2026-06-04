@@ -5,7 +5,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useCallback, useState } from "react";
 import type { Task } from "@/lib/task-types";
-import { ChainAssignWorkflow } from "./chain-assign-workflow";
+import { ChainAssignWorkflow } from "../chain-assign-workflow";
 
 const legacyNoMatchJob = {
   id: "job-legacy",

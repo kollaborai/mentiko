@@ -1,8 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "./config";
+import type { ArtifactType } from "./types";
 
-export type ArtifactType = "markdown" | "json" | "code" | "patch" | "csv" | "text" | "image";
+// ArtifactType lives canonically in ./types; re-export keeps the existing
+// "@/lib/artifact-template-storage" import path working for consumers.
+export type { ArtifactType };
 
 export const ARTIFACT_TYPE_EXT: Record<ArtifactType, string> = {
   markdown: ".md",
