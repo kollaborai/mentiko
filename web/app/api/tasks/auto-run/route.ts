@@ -11,7 +11,6 @@ import { enforceGuestWrites } from "@/lib/middleware";
 import {
   getNamespaceIdFromRequest,
   getOrgIdFromRequest,
-  getNamespaceConfig,
 } from "@/lib/namespace-config";
 import { readSystemSettings } from "@/lib/system/system-settings";
 import {
@@ -23,9 +22,6 @@ import {
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getWorkspace, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
 import { getJob } from "@/lib/runs/job-store";
-import { getAllChains, buildChainSummary } from "@/lib/chains/chain-utils";
-import { getTemplate } from "@/lib/generation/generation-template-storage";
-import { resolveTemplate } from "@/lib/system/template-resolver";
 import config, { nsPath } from "@/lib/config";
 import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -35,6 +31,7 @@ import {
   normalizeTaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +39,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const RESUMABLE_RUN_STATUSES = new Set(["stopped", "failed", "cancelled"]);
+const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
+const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -460,6 +459,18 @@ async function triggerAutoRun(
 ): Promise<TriggerResult> {
   const chainId = metadata.chain_id as string | undefined;
   const orgId = await getOrgIdFromRequest(request);
+  const taskStatus = typeof task.status === "string" ? task.status : undefined;
+  const lastRunStatus =
+    typeof metadata.last_run_status === "string" ? metadata.last_run_status : undefined;
+
+  if (taskStatus && DONE_TASK_STATUSES.has(taskStatus)) {
+    return {
+      triggered: false,
+      taskId,
+      action: "already_completed",
+      reason: "task is already complete",
+    };
+  }
 
   if (metadata.last_run_decision_required === true) {
     return {
@@ -467,6 +478,15 @@ async function triggerAutoRun(
       taskId,
       action: "decision_required",
       reason: "last run requires review",
+    };
+  }
+
+  if (lastRunStatus && COMPLETED_RUN_STATUSES.has(lastRunStatus)) {
+    return {
+      triggered: false,
+      taskId,
+      action: "already_completed",
+      reason: "last auto-run completed",
     };
   }
 
@@ -507,7 +527,17 @@ async function triggerAutoRun(
   const generationJobId = metadata.generation_job_id as string | undefined;
   if (generationJobId) {
     const job = getJob(generationJobId, namespaceId);
-    if (!job) return { triggered: false, taskId, action: "generation_pending" };
+    if (!job) {
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          generation_job_id: undefined,
+          generation_status: "missing",
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        },
+      }, namespaceId);
+      return { triggered: false, taskId, action: "generation_missing", jobId: generationJobId };
+    }
 
     if (job.status === "running" || job.status === "pending") {
       return {
@@ -552,7 +582,17 @@ async function triggerAutoRun(
   const analysisJobId = metadata.analysis_job_id as string | undefined;
   if (analysisJobId) {
     const job = getJob(analysisJobId, namespaceId);
-    if (!job) return { triggered: false, taskId, action: "analysis_pending" };
+    if (!job) {
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          analysis_job_id: undefined,
+          analysis_status: "missing",
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        },
+      }, namespaceId);
+      return { triggered: false, taskId, action: "analysis_missing", jobId: analysisJobId };
+    }
 
     if (job.status === "running" || job.status === "pending") {
       return {
@@ -774,7 +814,7 @@ async function startGenerationJob(
     body: JSON.stringify({
       type: "generate",
       taskId,
-      input: { prompt, workspacePath },
+      input: { prompt, workspacePath, namespaceId, orgId },
     }),
   });
 
@@ -916,31 +956,7 @@ async function startAnalysisJob(
 ): Promise<TriggerResult> {
   if (!task) return { triggered: false, taskId, error: "Task not found" };
 
-  const namespaceConfig = await getNamespaceConfig(request);
-  const chains = getAllChains(namespaceConfig.chainsDir, config.cliBin);
-  const chainCatalog = buildChainSummary(chains);
-
-  const taskContext = [
-    `title: ${task.title}`,
-    task.description ? `description: ${task.description}` : null,
-    task.issue_type ? `type: ${task.issue_type}` : null,
-    task.priority !== undefined
-      ? `priority: ${task.priority} (0=critical, 4=backlog)`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  // keep this prompt resolution as a local fallback smoke check, but pass the
-  // structured task to /api/jobs so the job route owns template resolution.
-  const template = getTemplate(namespaceId, orgId, "chain_recommendation");
-  resolveTemplate(template.content, {
-    TASK_CONTEXT: taskContext,
-    CHAIN_CATALOG: chainCatalog,
-    WORKSPACE_CONTEXT: workspacePath
-      ? `\nWORKSPACE CONTEXT: This task belongs to the project in "${workspacePath}". Recommend or generate a chain for that specific codebase.\n`
-      : "",
-  });
+  // /api/jobs owns namespace-aware template resolution and chain catalog loading.
 
   const jobRes = await fetch(internalApiUrl("/api/jobs", request.url), {
     method: "POST",
@@ -960,8 +976,9 @@ async function startAnalysisJob(
           design: task.design || undefined,
           notes: task.notes || undefined,
         },
-        chainCatalog,
         workspacePath,
+        namespaceId,
+        orgId,
       },
     }),
   });
@@ -1013,7 +1030,9 @@ function countActiveRuns(namespaceId?: string): number {
     if (!existsSync(rjPath)) continue;
     try {
       const rj = JSON.parse(readFileSync(rjPath, "utf-8"));
-      if (rj.status === "running" || rj.status === "pending") count++;
+      if ((rj.status === "running" || rj.status === "pending") && !allDeclaredAgentsComplete(rj, join(runsDir, dir))) {
+        count++;
+      }
     } catch { /* skip corrupt */ }
   }
   return count;

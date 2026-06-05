@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { taskList, taskUpdate, taskClose } from "@/lib/tasks/task-store";
@@ -13,10 +13,12 @@ import { writeLog } from "@/lib/system/system-logger";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
+import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
 
 export const dynamic = "force-dynamic";
 
 const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
+const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
 
@@ -26,6 +28,14 @@ interface ReconcileResult {
   previousStatus: string;
   newStatus: string;
   reason: string;
+}
+
+function canCloseCompletedAutoRun(meta: Record<string, unknown>): boolean {
+  return (
+    meta.auto_run === true &&
+    meta.last_run_decision_required !== true &&
+    meta.last_run_outcome === "complete"
+  );
 }
 
 // GET /api/tasks/reconcile - sweep tasks with stale "running" status
@@ -54,8 +64,21 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     return meta?.last_run_status === "running" && meta?.last_run_id;
   });
+  const completedAutoRunTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    const lastRunStatus =
+      typeof meta?.last_run_status === "string" ? meta.last_run_status : undefined;
+    return (
+      meta?.auto_run === true &&
+      meta?.last_run_id &&
+      !!lastRunStatus &&
+      COMPLETED_RUN_STATUSES.has(lastRunStatus) &&
+      canCloseCompletedAutoRun(meta)
+    );
+  });
 
-  if (runningTasks.length === 0) {
+  if (runningTasks.length === 0 && completedAutoRunTasks.length === 0) {
     return apiSuccess({ reconciled: 0, results: [] });
   }
 
@@ -97,12 +120,19 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           reason = `run.json status is ${run.status}`;
         } else {
           const agents = run.agents || [];
+          if (allDeclaredAgentsComplete(run, runDir)) {
+            run.status = "completed";
+            run.completed = latestAgentCompletion(run) || run.completed || new Date().toISOString();
+            writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+            newStatus = "completed";
+            reason = "all declared agents are complete";
+          }
           const anyAlive = agents.some(
             (a: { status: string; session?: string }) =>
               a.status === "running" && a.session && liveSessions.has(a.session)
           );
 
-          if (!anyAlive) {
+          if (!newStatus && !anyAlive) {
             const anyRunning = agents.some((a: { status: string }) => a.status === "running");
             const anyPending = agents.some((a: { status: string }) => a.status === "pending");
             if (anyRunning || anyPending) {
@@ -128,12 +158,15 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     if (newStatus) {
       try {
         const safeId = validateTaskId(issue.id);
-        const updatedMeta = { ...meta, last_run_status: newStatus };
+        const updatedMeta: Record<string, unknown> = { ...meta, last_run_status: newStatus };
+        if (newStatus === "completed") {
+          updatedMeta.last_run_completed = new Date().toISOString();
+        }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
         // auto-run handling: close on success, clear state on failure so retry works
         const autoRun = meta?.auto_run === true;
-        if (autoRun && newStatus === "completed") {
+        if (autoRun && newStatus === "completed" && canCloseCompletedAutoRun(updatedMeta)) {
           try {
             taskClose(orgId, safeId, undefined, namespaceId);
             createNotification(namespaceId, {
@@ -195,9 +228,72 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
+  for (const issue of completedAutoRunTasks) {
+    const meta = parseMetadata(issue.metadata)!;
+    const runId = meta.last_run_id as string;
+    const runDir = join(config.runsDir, runId);
+    const runJsonPath = join(runDir, "run.json");
+
+    try {
+      if (!existsSync(runDir) || !existsSync(runJsonPath)) {
+        failed.push({ taskId: issue.id, error: `Completed run ${runId} no longer exists` });
+        continue;
+      }
+
+      const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+      if (isNonExecutionRun(run)) {
+        const safeId = validateTaskId(issue.id);
+        const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
+        taskUpdate(orgId, safeId, { metadata: cleaned }, namespaceId);
+        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          `task ${issue.id} ignored completed non-execution run ${runId}`,
+          "non-execution run is not a task execution run");
+        results.push({
+          taskId: issue.id,
+          runId,
+          previousStatus: String(meta.last_run_status || "completed"),
+          newStatus: "non_execution_ignored",
+          reason: "non-execution run is not a task execution run",
+        });
+        continue;
+      }
+
+      if (!run.status || !COMPLETED_RUN_STATUSES.has(run.status)) {
+        continue;
+      }
+
+      if (!canCloseCompletedAutoRun(meta)) {
+        continue;
+      }
+
+      const safeId = validateTaskId(issue.id);
+      taskClose(orgId, safeId, undefined, namespaceId);
+      createNotification(namespaceId, {
+        type: "success",
+        title: "Auto-run completed",
+        message: `Task "${issue.title}" completed successfully and was closed.`,
+        metadata: { taskId: issue.id, runId },
+      });
+      writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        `task ${issue.id} run ${runId}: completed`, "completed auto-run task was still open");
+      results.push({
+        taskId: issue.id,
+        runId,
+        previousStatus: String(meta.last_run_status || "completed"),
+        newStatus: "closed",
+        reason: "completed auto-run task was still open",
+      });
+    } catch (error) {
+      failed.push({
+        taskId: issue.id,
+        error: (error as Error).message,
+      });
+    }
+  }
+
   return apiSuccess({
     reconciled: results.length,
-    checked: runningTasks.length,
+    checked: runningTasks.length + completedAutoRunTasks.length,
     failed: failed.length,
     results,
     errors: failed,

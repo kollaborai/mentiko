@@ -179,8 +179,8 @@ export const POST = withErrorHandling(async (
   // post-process chain generation: extract inline agents -> write to registry -> rewrite with $refs
   if (jobStatus === "complete" && result && job.type === "generate" && !("createdAgents" in result)) {
     try {
-      const nsId = (job.input.namespaceId as string) || "default";
-      const oId = (job.input.orgId as string) || "default";
+      const nsId = typeof job.input.namespaceId === "string" ? job.input.namespaceId : namespaceId;
+      const oId = typeof job.input.orgId === "string" ? job.input.orgId : orgId;
       const rawOutput = (result.output as string) || "";
 
       // try to parse the chain JSON from the output
@@ -385,6 +385,39 @@ export const POST = withErrorHandling(async (
       }
     } catch (e) {
       console.error("Failed to write link summary:", e);
+    }
+  }
+
+  if (updatedJob?.type === "task_run_summary" && updatedJob.taskId) {
+    try {
+      const task = taskGet(orgId, updatedJob.taskId, namespaceId);
+      if (task) {
+        const existing = metadataRecord(task.metadata);
+        const sourceRunId = typeof updatedJob.input?.sourceRunId === "string"
+          ? updatedJob.input.sourceRunId
+          : undefined;
+        taskUpdate(orgId, updatedJob.taskId, {
+          metadata: {
+            ...existing,
+            task_outcome_summary_status: updatedJob.status,
+            task_outcome_summary_job_id: updatedJob.id,
+            task_outcome_summary_run_id: updatedJob.runId,
+            task_outcome_summary_chain_id: updatedJob.chainId,
+            ...(sourceRunId ? { task_outcome_summary_source_run_id: sourceRunId } : {}),
+            ...(updatedJob.status === "complete" && updatedJob.result
+              ? {
+                  task_outcome_summary: updatedJob.result,
+                  task_outcome_summary_completed_at: updatedJob.completedAt || new Date().toISOString(),
+                  task_outcome_summary_error: undefined,
+                }
+              : {
+                  task_outcome_summary_error: updatedJob.error || "Task outcome summary failed",
+                }),
+          },
+        }, namespaceId);
+      }
+    } catch (e) {
+      console.error("Failed to write task outcome summary:", e);
     }
   }
 

@@ -3,7 +3,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, re
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
 import { execAuditLog, shellEscape } from "@/lib/api/audit-exec";
-import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { getSessionUser, type SessionUser } from "@/lib/auth/auth-bridge";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { getProfile, listProfiles } from "@/lib/agents/agent-profile-storage";
 import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
@@ -19,6 +19,7 @@ import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
+import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 
@@ -126,6 +127,63 @@ function normalizeRunMetadata(value: unknown): Record<string, unknown> | undefin
   return value as Record<string, unknown>;
 }
 
+interface ChainSessionActor {
+  id: string;
+  role?: SessionUser["role"];
+}
+
+async function resolveChainSessionActor(
+  request: Request,
+  namespaceId: string,
+  orgId: string,
+): Promise<ChainSessionActor | null> {
+  const user = await getSessionUser(request);
+  if (user) return { id: user.id, role: user.role };
+
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+
+  try {
+    const claims = await verifySessionToken(authHeader.slice(7));
+    if (claims.ns !== namespaceId || claims.org !== orgId) return null;
+    return {
+      id: claims.sub,
+      ...(claims.role ? { role: claims.role } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function buildChainSessionEnv(
+  request: Request,
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+  actor: ChainSessionActor | null,
+): Promise<Record<string, string | undefined>> {
+  if (!actor) {
+    throw new Forbidden("Session user required to start chain run");
+  }
+
+  const sessionId = `chain-${runId}`;
+  const sessionToken = await mintSessionToken({
+    sub: actor.id,
+    jti: sessionId,
+    ns: namespaceId,
+    org: orgId,
+    role: actor.role,
+    scopes: ["ops:*"],
+  });
+
+  return {
+    MENTIKO_SESSION_ID: sessionId,
+    MENTIKO_SESSION_TOKEN: sessionToken,
+    MENTIKO_WEB_URL: new URL(request.url).origin,
+    KOLLABOR_ENGINE_URL: process.env.KOLLABOR_ENGINE_URL,
+  };
+}
+
 export function shouldRecordTaskExecutionRun({
   taskId,
   metadata,
@@ -143,7 +201,7 @@ export async function startChainRun({
 }: StartChainRunInput): Promise<StartChainRunResult> {
   const ip = getClientIp(request);
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);
-  const user = await getSessionUser(request);
+  const actor = await resolveChainSessionActor(request, namespaceId, orgId);
   const chain = body.chain as Chain | null;
   const {
     chainId: callerChainId,
@@ -162,7 +220,7 @@ export async function startChainRun({
       : typeof workspaceId === "string"
         ? workspaceId
         : undefined;
-  const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, requestedWorkspace, user?.id);
+  const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, requestedWorkspace, actor?.id);
   if (requestedWorkspace && !authorizedWorkspacePath) {
     throw new Forbidden("Workspace not found or inaccessible");
   }
@@ -359,6 +417,7 @@ export async function startChainRun({
       workspaceEnv = resolvedWorkspaceRecord.env;
     }
   }
+  const sessionEnv = await buildChainSessionEnv(request, namespaceId, orgId, runId, actor);
 
   const child = spawn(
     "/bin/zsh",
@@ -371,6 +430,7 @@ export async function startChainRun({
         ...workspaceEnv,
         ...getSecretsEnvVars(namespaceId, orgId),
         ...profileEnv,
+        ...sessionEnv,
         BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-run"),
         MENTIKO_DECISION_IMPORT_TOKEN: resolveInternalAuthSecret("decision-import"),
         MENTIKO_DECISION_ID: typeof decisionRunMetadata?.decisionId === "string" ? decisionRunMetadata.decisionId : undefined,

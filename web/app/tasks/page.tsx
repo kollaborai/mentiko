@@ -269,17 +269,30 @@ function TasksPageContent() {
       const data = unwrapApiData<{ issue?: TaskRecord }>(raw);
       if (data.issue) {
         const detail = toTask(data.issue);
+        const mergedDetail = {
+          ...task,
+          ...detail,
+          // preserve counts from list data if show didn't include them
+          dependencyCount: detail.dependencyCount || task.dependencyCount,
+          dependentCount: detail.dependentCount || task.dependentCount,
+          commentCount: detail.commentCount || task.commentCount,
+        };
         setSelected((prev) =>
-          prev
+          prev && prev.id === task.id
             ? {
                 ...prev,
-                ...detail,
+                ...mergedDetail,
                 // preserve counts from list data if show didn't include them
                 dependencyCount: detail.dependencyCount || prev.dependencyCount,
                 dependentCount: detail.dependentCount || prev.dependentCount,
                 commentCount: detail.commentCount || prev.commentCount,
               }
-            : detail
+            : mergedDetail
+        );
+        setTasks((current) =>
+          current.map((item) =>
+            item.id === detail.id ? { ...item, ...mergedDetail } : item
+          )
         );
       }
     }
@@ -301,6 +314,11 @@ function TasksPageContent() {
       setComments([]);
     }
   }, [workspacePath, fetchWithNamespace]);
+
+  const refreshSelectedTask = useCallback(async () => {
+    if (!selected) return;
+    await loadDetail(selected);
+  }, [loadDetail, selected]);
 
   const handleSelect = useCallback(
     (task: Task) => {
@@ -859,9 +877,10 @@ function TasksPageContent() {
     const interval = setInterval(() => {
       fetchTasks();
       fetchDepInfo();
+      refreshSelectedTask();
     }, 15000);
     return () => clearInterval(interval);
-  }, [fetchTasks, fetchDepInfo, workspaceReady]);
+  }, [fetchTasks, fetchDepInfo, refreshSelectedTask, workspaceReady]);
 
   return (
     <div className="h-full flex flex-col">
@@ -936,6 +955,7 @@ function TasksPageContent() {
                 onResetAutoRunAttempts={handleResetAutoRunAttempts}
                 onClearMetadata={handleClearMetadata}
                 onMetadataUpdate={handleMetadataUpdate}
+                onRefreshTask={refreshSelectedTask}
                 onAddComment={handleAddComment}
                 isRunning={isRunning}
                 workspacePath={workspacePath}
@@ -995,6 +1015,7 @@ function TasksPageContent() {
               onToggleAutoRun={handleToggleAutoRun}
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
               onMetadataUpdate={handleMetadataUpdate}
+              onRefreshTask={refreshSelectedTask}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}
@@ -1134,6 +1155,7 @@ function TasksPageContent() {
               onToggleAutoRun={handleToggleAutoRun}
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
               onMetadataUpdate={handleMetadataUpdate}
+              onRefreshTask={refreshSelectedTask}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}

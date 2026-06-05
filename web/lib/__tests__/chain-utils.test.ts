@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadChain } from "../chains/chain-utils";
+import { buildChainSummary, loadChain } from "../chains/chain-utils";
 
 const root = join(tmpdir(), `mentiko-chain-utils-${process.pid}`);
 
@@ -55,5 +55,44 @@ describe("chain utils", () => {
       coreGenerationChain: true,
       generationKind: "task",
     });
+  });
+
+  it("includes agent prompt hints in chain summaries", () => {
+    const summary = buildChainSummary([
+      {
+        id: "smoke-chain",
+        name: "Smoke Chain",
+        description: "Creates artifacts",
+        version: "1.0.0",
+        agentCount: 1,
+        cli: "mentiko",
+        monitor: true,
+        agents: [
+          {
+            id: "artifact-writer",
+            name: "Artifact Writer",
+            role: "writer",
+            triggers: ["chain_start"],
+            emits: "artifact-written",
+            prompt: "Create cli-agnostic-pointer-proof.json and verify the exact artifact name.",
+            artifacts: {
+              produces: [
+                {
+                  id: "cli-agnostic-pointer-proof.json",
+                  type: "json",
+                  description: "Exact smoke proof artifact",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(summary).toContain("triggers: chain_start");
+    expect(summary).toContain("emits: artifact-written");
+    expect(summary).toContain("artifacts:");
+    expect(summary).toContain("prompt_hint:");
+    expect(summary).toContain("cli-agnostic-pointer-proof.json");
   });
 });

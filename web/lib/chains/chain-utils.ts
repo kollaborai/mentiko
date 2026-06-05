@@ -59,6 +59,7 @@ export function loadChain(
         role: a.role || "",
         triggers: a.triggers || [],
         emits: a.emits || "",
+        prompt: a.prompt,
         description: a.description,
         agent_profile: (a as unknown as Record<string, unknown>).agent_profile as string | undefined,
         on_error: a.on_error,
@@ -75,12 +76,14 @@ export function loadChain(
         role: (a.role as string) || "",
         triggers: (a.triggers as string[]) || [],
         emits: (a.emits as string) || "",
+        prompt: a.prompt as string | undefined,
         description: a.description as string | undefined,
         agent_profile: a.agent_profile as string | undefined,
         on_error: a.on_error as string | undefined,
         on_timeout: a.on_timeout as string | undefined,
         timeout: a.timeout as number | undefined,
         retry: a.retry as { max_retries?: number } | undefined,
+        artifacts: a.artifacts as { produces?: Array<{ id: string; type?: string; description?: string }> } | undefined,
       }));
     }
 
@@ -185,15 +188,43 @@ export function getAllChains(chainsDir: string, cliBin: string, runsDir?: string
 export function buildChainSummary(chains: ChainData[]): string {
   if (chains.length === 0) return "No chains available.";
 
+  const summarizePrompt = (prompt?: string) => {
+    if (!prompt) return "";
+    return prompt.replace(/\s+/g, " ").trim().slice(0, 800);
+  };
+
+  const summarizeArtifacts = (agent: ChainAgent) => {
+    const produces = agent.artifacts?.produces;
+    if (!produces?.length) return "";
+    return produces
+      .map((artifact) => [
+        artifact.id,
+        artifact.type ? `type=${artifact.type}` : null,
+        artifact.description ? `desc=${artifact.description}` : null,
+      ].filter(Boolean).join(" "))
+      .join("; ");
+  };
+
   return chains
     .map((c) => {
       const agentList = c.agents
-        .map((a) => `${a.name}${a.role ? ` (${a.role})` : ""}`)
-        .join(" -> ");
+        .map((a) => {
+          const promptHint = summarizePrompt(a.prompt || a.description);
+          const artifactHint = summarizeArtifacts(a);
+          return [
+            `    - ${a.name}${a.role ? ` (${a.role})` : ""}`,
+            a.triggers?.length ? `      triggers: ${a.triggers.join(", ")}` : null,
+            a.emits ? `      emits: ${a.emits}` : null,
+            artifactHint ? `      artifacts: ${artifactHint}` : null,
+            promptHint ? `      prompt_hint: ${promptHint}` : null,
+          ].filter(Boolean).join("\n");
+        })
+        .join("\n");
       return [
         `chain: ${c.name} [id: ${c.id}]`,
         c.description ? `  description: ${c.description}` : null,
-        `  agents (${c.agentCount}): ${agentList}`,
+        `  agents (${c.agentCount}):`,
+        agentList,
         c.maxRounds ? `  max_rounds: ${c.maxRounds}` : null,
       ]
         .filter(Boolean)

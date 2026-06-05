@@ -51,8 +51,31 @@ describe("generation core chains", () => {
       expect(chain.agents[0].prompt).toContain("mentiko generation import");
       expect(chain.agents[0].prompt).toContain("$ARTIFACTS_DIR/generation-result.json");
       expect(chain.agents[0].prompt).toContain("Inspect relevant repository files");
+      expect(chain.agents[0].prompt).toContain("Inspection budget");
+      expect(chain.agents[0].prompt).toContain("Never run recursive grep/find across the whole");
       expect(chain.agents[0].prompt).not.toContain("Do not inspect repository files");
+      expect(chain.agents[0].prompt.indexOf("$ARTIFACTS_DIR/generation-result.json"))
+        .toBeLessThan(chain.agents[0].prompt.indexOf("{TASK}"));
     }
+  });
+
+  test("upgrades generation core chains when managed prompts drift at same version", async () => {
+    const { ensureGenerationCoreChains, getGenerationCoreChain } = await import("../generation/generation-core-chains");
+    const chainDir = join(root, "namespaces", "default", "chains", "task-generation");
+    mkdirSync(chainDir, { recursive: true });
+    const chainPath = join(chainDir, "chain.json");
+    const staleChain = getGenerationCoreChain("task-generation");
+    staleChain.agents[0].prompt = "old prompt at same version";
+    (staleChain as typeof staleChain & { default_agent_profile: string }).default_agent_profile = "kollab";
+    writeFileSync(chainPath, `${JSON.stringify(staleChain, null, 2)}\n`, "utf8");
+
+    const result = ensureGenerationCoreChains("default", "default");
+    const upgraded = JSON.parse(readFileSync(chainPath, "utf8"));
+
+    expect(result.find((chain) => chain.id === "task-generation")?.created).toBe(true);
+    expect(upgraded.agents[0].prompt).toContain("$ARTIFACTS_DIR/generation-result.json");
+    expect(upgraded.agents[0].prompt).not.toBe("old prompt at same version");
+    expect(upgraded.default_agent_profile).toBe("kollab");
   });
 
   test("preserves explicit profile overrides when upgrading generation core chains", async () => {

@@ -830,6 +830,39 @@ quality_gate_fail_chain() {
     exit 0
 }
 
+fail_generation_job() {
+    local job_id="$1"
+    local generation_kind="$2"
+    local reason="$3"
+    local token="${MENTIKO_JOB_IMPORT_TOKEN:-}"
+    local token_path="${RUN_DIR:-}/.internal/generation-import-token"
+    local base_url="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-3000}}"
+    local payload=""
+
+    if [[ -z "$token" && -f "$token_path" ]]; then
+        token="$(head -n 1 "$token_path" 2>/dev/null || true)"
+    fi
+    if [[ -z "$token" ]]; then
+        token="${BETTER_AUTH_SECRET:-}"
+    fi
+    [[ -n "$job_id" && -n "$token" ]] || return 0
+
+    payload=$(jq -nc \
+        --arg status "failed" \
+        --arg error "$reason" \
+        --arg runId "${RUN_ID:-}" \
+        --arg generationKind "$generation_kind" \
+        '{status:$status,error:$error,runId:$runId,generationKind:$generationKind}')
+
+    curl -sf -X POST \
+        -H "Authorization: Bearer $token" \
+        -H "x-namespace-id: ${NAMESPACE_ID:-default}" \
+        -H "x-org-id: ${ORG_ID:-default}" \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        "$base_url/api/jobs/$job_id/complete" >/dev/null 2>&1 || true
+}
+
 summary_artifact="${SUMMARY_JSON_ARTIFACT:-}"
 if [[ -z "$summary_artifact" || ! -f "$summary_artifact" ]]; then
     summary_artifact="${ARTIFACTS_DIR:-}/$CURRENT_AGENT_ID-summary.json"
@@ -940,20 +973,26 @@ if [[ -n "${RUN_ID:-}" ]]; then
     _gen_kind=$(jq -r '.metadata.generationKind // empty' "$RUN_DIR/run.json" 2>/dev/null || true)
     if [[ -n "$_gen_job_id" && "$_gen_job_id" != "null" && -n "$_gen_kind" && "$_gen_kind" != "null" ]]; then
         _gen_bin="${BIN_DIR:-$SCRIPT_DIR/../bin}/mentiko"
-        if ARTIFACTS_DIR="$ARTIFACTS_DIR" \
-           MENTIKO_GENERATION_JOB_ID="$_gen_job_id" \
-           MENTIKO_GENERATION_KIND="$_gen_kind" \
-           MENTIKO_RUN_ID="$RUN_ID" \
-           MENTIKO_COMPLETION_EVENT_DATA="${TRIGGERED_EVENT_DATA:-}" \
-           NAMESPACE_ID="${NAMESPACE_ID:-default}" \
-           ORG_ID="${ORG_ID:-default}" \
-           MENTIKO_WEB_URL="http://localhost:${WEB_PORT:-3000}" \
-           "$_gen_bin" generation import >/dev/null 2>&1; then
+        if _gen_output=$(ARTIFACTS_DIR="$ARTIFACTS_DIR" \
+            MENTIKO_GENERATION_JOB_ID="$_gen_job_id" \
+            MENTIKO_GENERATION_KIND="$_gen_kind" \
+            MENTIKO_RUN_ID="$RUN_ID" \
+            MENTIKO_COMPLETION_EVENT_DATA="${TRIGGERED_EVENT_DATA:-}" \
+            NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+            ORG_ID="${ORG_ID:-default}" \
+            MENTIKO_WEB_URL="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-3000}}" \
+            "$_gen_bin" generation import 2>&1); then
             echo "  generation: job $_gen_job_id ($_gen_kind) import ok"
             _sys_log "info" "chain-runner-complete" "run ${RUN_ID} generation import backstop ok" "job: $_gen_job_id, kind: $_gen_kind"
         else
-            echo "  generation: import backstop could not complete job $_gen_job_id (agent produced no payload?)"
-            _sys_log "warn" "chain-runner-complete" "run ${RUN_ID} generation import backstop failed" "job: $_gen_job_id, kind: $_gen_kind"
+            _gen_error="generation import failed for job $_gen_job_id ($_gen_kind): agent produced no importable payload in $ARTIFACTS_DIR/generation-result.json"
+            echo "  generation: $_gen_error"
+            if [[ -n "${_gen_output:-}" ]]; then
+                printf '%s\n' "$_gen_output" | tail -n 3 | sed 's/^/  generation: /'
+            fi
+            fail_generation_job "$_gen_job_id" "$_gen_kind" "$_gen_error"
+            _sys_log "error" "chain-runner-complete" "run ${RUN_ID} generation import backstop failed" "job: $_gen_job_id, kind: $_gen_kind"
+            quality_gate_fail_chain "generation import failed" "$_gen_error"
         fi
     fi
 fi

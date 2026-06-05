@@ -68,6 +68,12 @@ function importInstructions(): string {
     "the generated output more accurate. Keep inspection targeted to the request, then stop",
     "researching and write the JSON payload to the file above.",
     "",
+    "Inspection budget: read the README plus at most 8 targeted source files or command",
+    "outputs. Prefer rg/fd/git ls-files. Never run recursive grep/find across the whole",
+    "workspace without pruning heavy directories like .git, target, node_modules, dist,",
+    "build, and .next. If inspection is slow or uncertain, stop researching and write the",
+    "best valid generation-result.json you can.",
+    "",
     "When generation-result.json is written, signal completion and finish with AGENT_COMPLETE.",
   ].join("\n");
 }
@@ -158,7 +164,7 @@ const CORE_CHAIN_DEFINITIONS: Record<GenerationCoreChainId, CoreGenerationChainD
     id: "run-summary-generation",
     kind: "run_summary",
     name: "Run Summary Generation",
-    description: "Generates a structured summary for a link run.",
+    description: "Generates a structured summary for a completed run.",
     agentId: "run-summary-generator",
     agentName: "Run Summary Generator",
     promptIntro: "You are the Mentiko core run summary generation agent.",
@@ -198,10 +204,10 @@ function buildChain(definition: CoreGenerationChainDefinition) {
         prompt: [
           definition.promptIntro,
           "",
+          importInstructions(),
+          "",
           "Complete this generation request:",
           "{TASK}",
-          "",
-          importInstructions(),
         ].join("\n"),
         triggers: ["manual-start"],
         emits: `${definition.id}-complete`,
@@ -246,11 +252,33 @@ function shouldWriteChain(existing: CoreChainRecord | null, desired: ReturnType<
   if (!existing) return true;
   if (!isCoreGenerationChain(existing)) return false;
   try {
-    return existing.version !== desired.version ||
-      getGenerationKind(existing) !== desired.metadata.generationKind;
+    return JSON.stringify(stableGenerationChainShape(existing)) !==
+      JSON.stringify(stableGenerationChainShape(desired));
   } catch {
     return true;
   }
+}
+
+function stableGenerationChainShape(chain: CoreChainRecord): unknown {
+  const agents = Array.isArray(chain.agents) ? chain.agents : [];
+  return {
+    id: chain.id,
+    name: chain.name,
+    version: chain.version,
+    description: chain.description,
+    metadata: {
+      coreGenerationChain: isCoreGenerationChain(chain),
+      generationKind: getGenerationKind(chain),
+    },
+    config: chain.config,
+    agents: agents.map((agent) => {
+      if (!agent || typeof agent !== "object" || Array.isArray(agent)) return agent;
+      const stableAgent = { ...(agent as Record<string, unknown>) };
+      delete stableAgent.created_at;
+      delete stableAgent.updated_at;
+      return stableAgent;
+    }),
+  };
 }
 
 export function getGenerationCoreChain(id: GenerationCoreChainId) {

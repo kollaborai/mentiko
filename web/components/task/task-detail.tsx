@@ -8,6 +8,7 @@ import { TaskChildren } from "./task-children";
 import { TaskComments } from "./task-comments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
+import { TaskRunStoryPanels } from "./task-run-story-panels";
 import type { Task, TaskComment } from "@/lib/tasks/task-types";
 import { Markdown } from "@/components/ui/markdown";
 
@@ -29,6 +30,7 @@ interface TaskDetailProps {
   onToggleEpicAutoRun?: (autoRun: boolean) => Promise<void>;
   onMetadataUpdate?: (metadata: Record<string, unknown>) => void;
   onClearMetadata?: () => void;
+  onRefreshTask?: () => Promise<void>;
   onAddComment: (text: string) => Promise<void>;
   isRunning: boolean;
   workspacePath?: string;
@@ -84,6 +86,7 @@ export function TaskDetail({
   onToggleEpicAutoRun,
   onMetadataUpdate,
   onClearMetadata,
+  onRefreshTask,
   onAddComment,
   isRunning,
   workspacePath,
@@ -116,6 +119,8 @@ export function TaskDetail({
         onClearMetadata={onClearMetadata}
         workspacePath={workspacePath}
       />
+
+      <TaskRunStoryPanels task={task} onRefreshTask={onRefreshTask} />
 
       {/* description */}
       {task.description && (

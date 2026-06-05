@@ -792,6 +792,44 @@ ensure-instructions-submitted() {
     fi
 }
 
+write-agent-instructions-file() {
+    local agent_id="$1"
+    local instructions="$2"
+    local base_dir="${ARTIFACTS_DIR:-}"
+
+    if [[ -z "$base_dir" ]]; then
+        base_dir="$(mktemp -d /tmp/mentiko-agent-instructions-XXXXXX)"
+    fi
+
+    mkdir -p "$base_dir"
+    local instruction_file="$base_dir/${agent_id}-instructions.md"
+    printf '%s\n' "$instructions" > "$instruction_file"
+    printf '%s\n' "$instruction_file"
+}
+
+build-instruction-pointer() {
+    local agent_id="$1"
+    local instruction_file="$2"
+
+    cat <<EOF
+You are Mentiko agent: $agent_id.
+
+Your full instructions are in this file:
+$instruction_file
+
+Read that file first, then execute it exactly. Start with a local shell read,
+for example cat "$instruction_file" or sed -n '1,220p' "$instruction_file".
+If your CLI provides a local file-reading capability, that is also acceptable,
+but do not use app-specific, remote, networked, or session-gated helper tools
+for this local instruction artifact.
+
+Do not work from this short pointer alone. Do not output AGENT_COMPLETE unless
+you actually read the full instruction file and completed it.
+
+When the instructions are complete, finish with AGENT_COMPLETE on its own final line.
+EOF
+}
+
 mark_state_blocked() {
     local state_file="$1"
     local reason="$2"
@@ -1062,7 +1100,7 @@ agent_run_context_export_command() {
     local mentiko_bin="$mentiko_bin_dir/mentiko"
     local agent_path="$mentiko_bin_dir:${PATH:-}"
 
-    printf "export PATH=%q MENTIKO_BIN=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q; hash -r 2>/dev/null || true" \
+    printf "export PATH=%q MENTIKO_BIN=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_SESSION_ID=%q MENTIKO_SESSION_TOKEN=%q MENTIKO_WEB_URL=%q KOLLABOR_ENGINE_URL=%q KOLLAB_NO_HUB=%q KOLLAB_HUB_DISABLED=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q; hash -r 2>/dev/null || true" \
         "$agent_path" \
         "$mentiko_bin" \
         "${RUN_ID:-}" \
@@ -1077,6 +1115,12 @@ agent_run_context_export_command() {
         "${MENTIKO_NAMESPACE_ROOT:-}" \
         "${EVENTS_DIR:-}" \
         "${ARTIFACTS_DIR:-}" \
+        "${MENTIKO_SESSION_ID:-}" \
+        "${MENTIKO_SESSION_TOKEN:-}" \
+        "${MENTIKO_WEB_URL:-}" \
+        "${KOLLABOR_ENGINE_URL:-}" \
+        "${KOLLAB_NO_HUB:-1}" \
+        "${KOLLAB_HUB_DISABLED:-1}" \
         "${MENTIKO_DECISION_IMPORT_TOKEN:-}" \
         "${MENTIKO_DECISION_ID:-}" \
         "${MENTIKO_DECISION_PHASE:-}" \
@@ -1833,31 +1877,40 @@ SEOF
         return 0
     fi
 
-    # send instructions
+    # Send a short pointer instead of pasting the full prompt into the TUI. Long
+    # terminal paste is lossy for some clients, which can drop critical clauses.
+    local instruction_file
+    local instruction_pointer
+    instruction_file="$(write-agent-instructions-file "$agent_id" "$instructions")"
+    instruction_pointer="$(build-instruction-pointer "$agent_id" "$instruction_file")"
     local tmp_instructions=$(mktemp)
-    echo "$instructions" > "$tmp_instructions"
+    printf '%s\n' "$instructions" > "$tmp_instructions"
 
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
         local instruction_send_capture=""
-        instruction_send_capture="$(send-message "$session_name" "$instructions")"
+        instruction_send_capture="$(send-message "$session_name" "$instruction_pointer")"
         printf '%s\n' "$instruction_send_capture"
-        ensure-instructions-submitted "$session_name" "$instructions" "$instruction_send_capture"
+        ensure-instructions-submitted "$session_name" "$instruction_pointer" "$instruction_send_capture"
         sleep 1
     elif [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
         local remote_tmp="/tmp/agent-instructions-${session_name}.txt"
         scp -q -i "${SSH_KEY:-~/.ssh/id_rsa}" -P "$SSH_PORT" \
             "$tmp_instructions" "${SSH_USER}@${SSH_HOST}:${remote_tmp}"
-        transport_send_keys "$session_name" "cat $remote_tmp"
-        sleep 2
-        transport_send_keys "$session_name" ""
+        local remote_pointer
+        remote_pointer="$(build-instruction-pointer "$agent_id" "$remote_tmp")"
+        instruction_send_capture="$(send-message "$session_name" "$remote_pointer")"
+        printf '%s\n' "$instruction_send_capture"
+        ensure-instructions-submitted "$session_name" "$remote_pointer" "$instruction_send_capture"
         sleep 1
     elif [[ "$WORKSPACE_TYPE" == "docker" ]]; then
+        local container_tmp="/tmp/agent-instructions-${session_name}.txt"
         docker cp "$tmp_instructions" \
-            "$DOCKER_CONTAINER:/tmp/agent-instructions-${session_name}.txt"
-        transport_send_keys "$session_name" \
-            "cat /tmp/agent-instructions-${session_name}.txt"
-        sleep 2
-        transport_send_keys "$session_name" ""
+            "$DOCKER_CONTAINER:$container_tmp"
+        local container_pointer
+        container_pointer="$(build-instruction-pointer "$agent_id" "$container_tmp")"
+        instruction_send_capture="$(send-message "$session_name" "$container_pointer")"
+        printf '%s\n' "$instruction_send_capture"
+        ensure-instructions-submitted "$session_name" "$container_pointer" "$instruction_send_capture"
         sleep 1
     fi
 

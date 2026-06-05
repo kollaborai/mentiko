@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
 
-export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "link_summary";
+export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "link_summary" | "task_run_summary";
 
 export interface GenerationTemplate {
   id: GenerationTemplateId | `custom_${string}`;
@@ -332,6 +332,8 @@ DECISION RULES:
 - If an existing chain is a good fit (>70% match to the task requirements), recommend "use_existing"
 - If no chain fits well, recommend "generate_new" with suggested agents and a generation prompt
 - Do not return "no_match", "execute directly", or "no chain needed"; if the task is not covered by an existing chain, create a new chain recommendation
+- A good fit means the chain satisfies the exact task contract, not just the general category. If the task names a required file, artifact, command, framework, workspace, acceptance criterion, or output shape and the existing chain is hardcoded for a different one, recommend "generate_new".
+- Do not recommend reusable-looking chains that produce task-specific hardcoded outputs unless those outputs exactly match the current task or the chain description/catalog clearly says the chain parameterizes them from task context.
 - Always provide reasoning (2-3 sentences) and a confidence score (0-1)
 - Always provide 1-3 alternatives from existing chains if any are partially relevant
 - For "use_existing": include match_reasons as bullet points explaining why this chain fits
@@ -1619,6 +1621,52 @@ Output ONLY valid JSON matching this schema:
 
 Raw JSON only. No backticks, no explanation, nothing but the JSON object.`;
 
+export const DEFAULT_TASK_RUN_SUMMARY_TEMPLATE = `You are summarizing a completed task-backed chain run from the mentiko AI orchestration platform. Your job is to turn raw task/run metadata into a factual outcome dashboard summary for a project manager and for future Mentiko improvement agents.
+
+TASK DATA:
+{{TASK_DATA}}
+
+RUN SUMMARY:
+{{RUN_SUMMARY}}
+
+RUN ARTIFACTS:
+{{RUN_ARTIFACTS}}
+
+GENERATION FLOW:
+{{GENERATION_FLOW}}
+
+WORKSPACE CONTEXT:
+{{WORKSPACE_CONTEXT}}
+
+Based on the data above, produce a concise but useful outcome summary.
+
+RULES:
+1. Be specific and factual. Use only the provided task/run/artifact data.
+2. Do not invent files, edits, errors, costs, agents, or acceptance proof.
+3. The headline should be one sentence that captures the most important outcome.
+4. The narrative should explain what happened, why it matters, and whether the user can move forward.
+5. Evidence should include concrete artifacts, findings, or acceptance proof.
+6. Improvement signals should describe Mentiko orchestration learnings, not generic next steps.
+7. If no improvement signal is present, include "No orchestration issue detected."
+8. If no next action is needed, use an empty next_actions array.
+
+OUTPUT FORMAT:
+Output ONLY valid JSON matching this schema:
+
+{
+  "headline": "one sentence capturing the task outcome",
+  "narrative": "two to four sentences explaining what happened and why it matters",
+  "outcome": "complete" | "partial" | "failed" | "unknown",
+  "confidence": "high" | "medium" | "low",
+  "decision_required": false,
+  "what_happened": ["specific factual event from the run"],
+  "evidence": ["specific artifact, finding, or acceptance proof"],
+  "improvement_signals": ["system-level learning or No orchestration issue detected."],
+  "next_actions": ["actionable next step"]
+}
+
+Raw JSON only. No backticks, no explanation, nothing but the JSON object.`;
+
 export function getDefaultTemplates(): GenerationTemplate[] {
   const now = new Date().toISOString();
   return [
@@ -1728,6 +1776,12 @@ export function getDefaultTemplates(): GenerationTemplate[] {
       id: "link_summary",
       label: "Link Summary",
       content: DEFAULT_LINK_SUMMARY_TEMPLATE,
+      updatedAt: now,
+    },
+    {
+      id: "task_run_summary",
+      label: "Task Run Summary",
+      content: DEFAULT_TASK_RUN_SUMMARY_TEMPLATE,
       updatedAt: now,
     },
   ];

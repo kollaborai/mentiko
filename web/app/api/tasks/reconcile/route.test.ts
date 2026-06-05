@@ -9,9 +9,11 @@ jest.mock("@/lib/auth/api-auth", () => ({
 
 const mockExistsSync = jest.fn();
 const mockReadFileSync = jest.fn();
+const mockWriteFileSync = jest.fn();
 jest.mock("fs", () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+  writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 }));
 
 jest.mock("path", () => jest.requireActual("path"));
@@ -215,6 +217,8 @@ describe("GET /api/tasks/reconcile", () => {
           auto_run: true,
           last_run_id: "run-exec",
           last_run_status: "running",
+          last_run_outcome: "complete",
+          last_run_decision_required: false,
         },
       },
     ]);
@@ -247,6 +251,111 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
+    expect(mockTaskClose).toHaveBeenCalledWith("default", "TASK-044", undefined, "default");
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      "default",
+      expect.objectContaining({
+        type: "success",
+        title: "Auto-run completed",
+        metadata: {
+          taskId: "TASK-044",
+          runId: "run-exec",
+        },
+      }),
+    );
+  });
+
+  it("does not close a completed auto-run task until completion proof metadata exists", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "completed",
+      chainId: "release-review",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "running",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-044",
+          runId: "run-exec",
+          newStatus: "completed",
+        }),
+      ],
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      {
+        metadata: expect.objectContaining({
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+        }),
+      },
+      "default",
+    );
+    expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  it("closes an open auto-run task whose execution metadata already completed", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "completed",
+      chainId: "release-review",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+          last_run_outcome: "complete",
+          last_run_decision_required: false,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-044",
+          runId: "run-exec",
+          previousStatus: "completed",
+          newStatus: "closed",
+          reason: "completed auto-run task was still open",
+        }),
+      ],
+    });
     expect(mockTaskClose).toHaveBeenCalledWith("default", "TASK-044", undefined, "default");
     expect(mockCreateNotification).toHaveBeenCalledWith(
       "default",

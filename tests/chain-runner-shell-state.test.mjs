@@ -74,7 +74,7 @@ test("chain runner and completion handler both use run-scoped state files", () =
 test("chain runner marks startup exits failed before sending instructions", () => {
   const runnerSource = readFileSync(chainRunner, "utf8");
   const activeCheck = 'if ! session_has_active_command "$session_name"; then';
-  const sendInstructions = 'instruction_send_capture="$(send-message "$session_name" "$instructions")"';
+  const sendInstructions = 'instruction_send_capture="$(send-message "$session_name" "$instruction_pointer")"';
 
   assert(
     runnerSource.includes("session_has_active_command()"),
@@ -114,13 +114,48 @@ test("agent run context exposes the mentiko CLI on PATH", () => {
     RUN_ID=run-ctx
     EVENTS_DIR="$MENTIKO_GLOBAL_ROOT/events"
     ARTIFACTS_DIR="$MENTIKO_GLOBAL_ROOT/artifacts"
+    MENTIKO_SESSION_ID=session-ctx
+    MENTIKO_SESSION_TOKEN=token-ctx
+    MENTIKO_WEB_URL=http://localhost:3333
+    KOLLABOR_ENGINE_URL=http://localhost:4444
     eval "$(agent_run_context_export_command chain-recommender chain-recommendation-complete)"
-    printf '%s\\n%s' "$MENTIKO_BIN" "$(command -v mentiko)"
+    printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s' "$MENTIKO_BIN" "$(command -v mentiko)" "$MENTIKO_SESSION_ID" "$MENTIKO_SESSION_TOKEN" "$MENTIKO_WEB_URL" "$KOLLABOR_ENGINE_URL" "$KOLLAB_NO_HUB" "$KOLLAB_HUB_DISABLED"
   `;
   const lines = runBash(command).split("\n");
 
   assert(lines[0] === `${repoRoot}/bin/mentiko`, `MENTIKO_BIN should point at repo CLI: ${lines[0]}`);
   assert(lines[1] === `${repoRoot}/bin/mentiko`, `mentiko should resolve from PATH: ${lines[1]}`);
+  assert(lines[2] === "session-ctx", `MENTIKO_SESSION_ID should survive run context: ${lines[2]}`);
+  assert(lines[3] === "token-ctx", `MENTIKO_SESSION_TOKEN should survive run context: ${lines[3]}`);
+  assert(lines[4] === "http://localhost:3333", `MENTIKO_WEB_URL should survive run context: ${lines[4]}`);
+  assert(lines[5] === "http://localhost:4444", `KOLLABOR_ENGINE_URL should survive run context: ${lines[5]}`);
+  assert(lines[6] === "1", `KOLLAB_NO_HUB should default on for chain agents: ${lines[6]}`);
+  assert(lines[7] === "1", `KOLLAB_HUB_DISABLED should default on for chain agents: ${lines[7]}`);
+});
+
+test("instruction pointer stays cli agnostic", () => {
+  const source = readFileSync(chainRunner, "utf8");
+
+  assert(
+    !source.includes("Use Kollab native file_read"),
+    "instruction pointer must not hardcode Kollab file-read wording"
+  );
+  assert(
+    !source.includes("Mentiko MCP file tools"),
+    "instruction pointer must not hardcode Mentiko MCP file-tool wording"
+  );
+  assert(
+    !source.includes("MENTIKO_SESSION_TOKEN is missing"),
+    "instruction pointer must not hardcode token-specific recovery wording"
+  );
+  assert(
+    source.includes("Start with a local shell read"),
+    "instruction pointer should make shell reads the first path"
+  );
+  assert(
+    source.includes("cat \"$instruction_file\""),
+    "instruction pointer should include a CLI-agnostic shell fallback"
+  );
 });
 
 for (const item of tests) {

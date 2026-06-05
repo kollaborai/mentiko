@@ -11,7 +11,7 @@ function getJobsDir(namespaceId?: string): string {
   return nsPath(nsId, "jobs");
 }
 
-export type JobType = "recommend" | "generate" | "link" | "task" | "agent" | "artifact" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "template_test" | "link_summary";
+export type JobType = "recommend" | "generate" | "link" | "task" | "agent" | "artifact" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "template_test" | "link_summary" | "task_run_summary";
 export type JobStatus = "pending" | "running" | "complete" | "failed";
 
 export interface Job {

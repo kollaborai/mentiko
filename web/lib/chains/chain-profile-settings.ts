@@ -18,11 +18,11 @@ export function getMissingChainDefaultProfileId(
   return getMissingAgentProfileId(defaultProfileId, profiles);
 }
 
-export function withChainDefaultAgentProfile<T extends { default_agent_profile?: string }>(
+export function withChainDefaultAgentProfile<T extends object>(
   chain: T,
   profileId: string | null | undefined,
-): T {
-  const next = { ...chain };
+): T & { default_agent_profile?: string } {
+  const next = { ...chain } as T & { default_agent_profile?: string };
   const cleanProfileId = typeof profileId === "string" ? profileId.trim() : "";
   if (cleanProfileId) {
     next.default_agent_profile = cleanProfileId;

@@ -31,7 +31,7 @@ export function resolveTemplate(
 export const KNOWN_VARIABLES: Array<{
   name: string;
   description: string;
-  usedIn: ("chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "link_summary")[];
+  usedIn: ("chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "link_summary" | "task_run_summary")[];
 }> = [
   {
     name: "SCHEMA",
@@ -46,7 +46,7 @@ export const KNOWN_VARIABLES: Array<{
   {
     name: "WORKSPACE_CONTEXT",
     description: "Workspace path and project-specific context for AI generation",
-    usedIn: ["chain_generation", "agent_generation", "task_generation", "chain_recommendation", "link_generation", "decision_research", "decision_steering"],
+    usedIn: ["chain_generation", "agent_generation", "task_generation", "chain_recommendation", "link_generation", "decision_research", "decision_steering", "link_summary", "task_run_summary"],
   },
   {
     name: "AGENT_CATALOG",
@@ -112,5 +112,25 @@ export const KNOWN_VARIABLES: Array<{
     name: "LINK_ESCALATIONS",
     description: "Escalation data (triggers, human replies, resolutions)",
     usedIn: ["link_summary"],
+  },
+  {
+    name: "TASK_DATA",
+    description: "JSON data from the task being summarized",
+    usedIn: ["task_run_summary"],
+  },
+  {
+    name: "RUN_SUMMARY",
+    description: "Deterministic run-summary.json payload for the execution run",
+    usedIn: ["task_run_summary"],
+  },
+  {
+    name: "RUN_ARTIFACTS",
+    description: "Artifacts attached to the execution run",
+    usedIn: ["task_run_summary"],
+  },
+  {
+    name: "GENERATION_FLOW",
+    description: "Recommendation, generated chain, and execution provenance",
+    usedIn: ["task_run_summary"],
   },
 ];

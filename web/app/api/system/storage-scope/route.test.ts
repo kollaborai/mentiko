@@ -17,7 +17,7 @@ describe("GET /api/system/storage-scope", () => {
   it("requires auth before returning the install storage scope", async () => {
     (checkAuth as jest.Mock).mockResolvedValue(false);
 
-    const response = await GET(new Request("http://localhost/api/system/storage-scope"));
+    const response = await GET(new Request("http://localhost/api/system/storage-scope") as never);
 
     expect(response.status).toBe(401);
   });
@@ -25,7 +25,7 @@ describe("GET /api/system/storage-scope", () => {
   it("returns a stable opaque install scope for browser storage keys", async () => {
     (checkAuth as jest.Mock).mockResolvedValue(true);
 
-    const response = await GET(new Request("http://localhost/api/system/storage-scope"));
+    const response = await GET(new Request("http://localhost/api/system/storage-scope") as never);
     const body = await response.json();
 
     expect(response.status).toBe(200);

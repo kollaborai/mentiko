@@ -76,6 +76,12 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain("MENTIKO_AGENT_ID=%q");
     expect(chainRunner).toContain("MENTIKO_AGENT_EMITS=%q");
     expect(chainRunner).toContain("ARTIFACTS_DIR=%q");
+    expect(chainRunner).toContain("MENTIKO_SESSION_ID=%q");
+    expect(chainRunner).toContain("MENTIKO_SESSION_TOKEN=%q");
+    expect(chainRunner).toContain("MENTIKO_WEB_URL=%q");
+    expect(chainRunner).toContain("KOLLABOR_ENGINE_URL=%q");
+    expect(chainRunner).toContain("KOLLAB_NO_HUB=%q");
+    expect(chainRunner).toContain("KOLLAB_HUB_DISABLED=%q");
   });
 
   it("sets the visible local pty shell cwd to the workspace before launching agents", () => {
@@ -84,7 +90,7 @@ describe("chain-runner AI gateway source contract", () => {
 
   it("checks startup prompts before sending instructions to a launched CLI", () => {
     const guard = 'if startup_blocked_reason=$(detect_blocked_terminal_prompt "$startup_capture"); then';
-    const sendInstructions = 'send-message "$session_name" "$instructions"';
+    const sendInstructions = 'send-message "$session_name" "$instruction_pointer"';
 
     expect(chainRunner).toContain('startup_capture=$(transport_capture "$session_name" 120 2>/dev/null || true)');
     expect(chainRunner).toContain(guard);
@@ -100,7 +106,14 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain('marker="$(instruction_submission_marker "$instructions")"');
     expect(chainRunner).toContain('instructions still visible after send; pressing enter again');
     expect(chainRunner).toContain('transport_send_raw "$session_name" $\'\\r\'');
-    expect(chainRunner).toContain('ensure-instructions-submitted "$session_name" "$instructions" "$instruction_send_capture"');
+    expect(chainRunner).toContain('ensure-instructions-submitted "$session_name" "$instruction_pointer" "$instruction_send_capture"');
+  });
+
+  it("hard-fails generation jobs when the agent did not produce an importable payload", () => {
+    expect(chainRunnerComplete).toContain("fail_generation_job()");
+    expect(chainRunnerComplete).toContain('{status:$status,error:$error,runId:$runId,generationKind:$generationKind}');
+    expect(chainRunnerComplete).toContain("generation import failed for job");
+    expect(chainRunnerComplete).toContain('quality_gate_fail_chain "generation import failed" "$_gen_error"');
   });
 
   it("keeps conversation birth-time lookup numeric on GNU stat", () => {
@@ -244,5 +257,18 @@ describe("chain run decision metadata contract", () => {
     expect(source).toContain("MENTIKO_DECISION_PHASE");
     expect(source).toContain("MENTIKO_DECISION_SELECTED_OPTION_ID");
     expect(source).toContain("MENTIKO_DECISION_WORKSPACE_PATH");
+  });
+});
+
+describe("chain run session actor contract", () => {
+  const source = readFileSync(new URL("./runs/chain-run-service.ts", import.meta.url), "utf8");
+
+  it("accepts verified MCP ops session-token bearer claims, not only browser cookies", () => {
+    expect(source).toContain('import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token"');
+    expect(source).toContain("async function resolveChainSessionActor");
+    expect(source).toContain("const claims = await verifySessionToken");
+    expect(source).toContain("claims.ns !== namespaceId || claims.org !== orgId");
+    expect(source).toContain("resolveAuthorizedWorkspacePath(namespaceId, orgId, requestedWorkspace, actor?.id)");
+    expect(source).toContain("buildChainSessionEnv(request, namespaceId, orgId, runId, actor)");
   });
 });

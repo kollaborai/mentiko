@@ -166,6 +166,8 @@ describe("POST /api/tasks/auto-run", () => {
       taskId: "TASK-1",
       input: {
         workspacePath: "/repo",
+        namespaceId: "default",
+        orgId: "default",
         task: {
           title: "Implement auto-run",
           description: "Make ready tasks analyze and run",
@@ -174,6 +176,87 @@ describe("POST /api/tasks/auto-run", () => {
         },
       },
     });
+    expect(body.input.chainCatalog).toBeUndefined();
+  });
+
+  it("clears a missing analysis job so auto-run can retry", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Analyze again",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-missing",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue(null);
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      action: "analysis_missing",
+      jobId: "job-missing",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      {
+        metadata: expect.objectContaining({
+          analysis_job_id: undefined,
+          analysis_status: "missing",
+          auto_run_retries: 1,
+        }),
+      },
+      "default",
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("clears a missing generation job so auto-run can retry", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Generate again",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        generation_job_id: "job-missing",
+        generation_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue(null);
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      action: "generation_missing",
+      jobId: "job-missing",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "missing",
+          auto_run_retries: 1,
+        }),
+      },
+      "default",
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("prefers task.workspace_id over stale metadata workspace_path", async () => {
@@ -248,6 +331,35 @@ describe("POST /api/tasks/auto-run", () => {
       taskId: "TASK-1",
       action: "decision_required",
       reason: "last run requires review",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("skips explicit task triggers when the assigned chain already completed", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Already completed",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-complete",
+        last_run_status: "completed",
+        last_run_decision_required: false,
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      action: "already_completed",
+      reason: "last auto-run completed",
     });
     expect(global.fetch).not.toHaveBeenCalled();
   });

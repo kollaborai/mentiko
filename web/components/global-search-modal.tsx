@@ -314,10 +314,12 @@ function DrawerCard({
       className="group relative min-h-[4.25rem] min-w-0 overflow-hidden rounded-md border border-border/35 bg-card/60 p-3 text-left transition-colors hover:border-border/60 hover:bg-accent/35"
     >
       <div className="absolute inset-0 pointer-events-none bg-gradient-to-br from-muted/20 via-transparent to-transparent opacity-80" />
-      <Icon
+      <div
         className="pointer-events-none absolute -right-5 -bottom-6 h-24 w-24 opacity-10 transition-opacity group-hover:opacity-15"
         style={{ color: item.color }}
-      />
+      >
+        <Icon className="h-full w-full" />
+      </div>
       <div className="relative z-10 flex items-center gap-3">
         <div
           className="flex h-10 w-10 shrink-0 items-center justify-center"

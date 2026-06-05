@@ -64,8 +64,9 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
   updateDecision: jest.fn(),
 }));
 
+const mockPostProcessChain = jest.fn();
 jest.mock("@/lib/chains/chain-postprocessor", () => ({
-  postProcessChain: jest.fn(),
+  postProcessChain: (...args: unknown[]) => mockPostProcessChain(...args),
 }));
 
 jest.mock("@/lib/auth/internal-web-origin", () => ({
@@ -149,6 +150,14 @@ describe("POST /api/jobs/[id]/complete", () => {
       id: taskId,
       metadata: {},
     }));
+    mockPostProcessChain.mockResolvedValue({
+      chain: {
+        name: "Processed Chain",
+        agents: [{ $ref: "processed-agent" }],
+      },
+      createdAgents: ["processed-agent"],
+      extractedCount: 1,
+    });
 
     let createCount = 0;
     mockTaskCreate.mockImplementation((_orgId, input) => {
@@ -243,6 +252,54 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "default");
   });
 
+  test("post-processes generated chain agents in the request namespace and org", async () => {
+    mockGetNamespaceIdFromRequest.mockResolvedValueOnce("team-a");
+    mockGetOrgIdFromRequest.mockResolvedValueOnce("org-a");
+    let currentJob = {
+      id: "job-chain",
+      type: "generate",
+      status: "running",
+      input: {
+        namespaceId: "team-a",
+        orgId: "org-a",
+      },
+      runId: "run-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          name: "Generated Chain",
+          agents: [{ id: "agent-a", name: "Agent A", prompt: "Do work" }],
+        }),
+      },
+      runId: "run-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-chain" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockPostProcessChain).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Generated Chain" }),
+      "team-a",
+      "org-a",
+    );
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-chain", expect.objectContaining({
+      result: expect.objectContaining({
+        createdAgents: ["processed-agent"],
+        extractedCount: 1,
+      }),
+    }), "team-a");
+  });
+
   test("recommend completion stores recommendation run provenance without clobbering execution run", async () => {
     let currentJob = {
       id: "job-recommend",
@@ -314,6 +371,64 @@ describe("POST /api/jobs/[id]/complete", () => {
     const summaryPath = join(linkRunDir, "summary.json");
     expect(existsSync(summaryPath)).toBe(true);
     expect(JSON.parse(readFileSync(summaryPath, "utf8"))).toEqual({ summary: "Recovered summary" });
+  });
+
+  test("task run summary completion writes dashboard summary metadata", async () => {
+    let currentJob = {
+      id: "job-task-summary",
+      type: "task_run_summary",
+      status: "running",
+      taskId: "TASK-070",
+      input: { sourceRunId: "run-execution" },
+      result: undefined,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-070",
+      metadata: {
+        last_run_id: "run-execution",
+        chain_id: "cli-agnostic-pointer-validator-v4",
+      },
+    });
+
+    const { POST } = await import("./route");
+
+    const result = {
+      headline: "Pointer validation completed",
+      narrative: "The run completed and produced the required proof artifact.",
+      outcome: "complete",
+      confidence: "high",
+      decision_required: false,
+      what_happened: ["created proof artifact"],
+      evidence: ["cli-agnostic-pointer-proof-v4.json"],
+      improvement_signals: ["No orchestration issue detected."],
+      next_actions: [],
+    };
+    const response = await POST(makeRequest({
+      status: "complete",
+      result,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+    }), { params: Promise.resolve({ id: "job-task-summary" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "TASK-070", {
+      metadata: expect.objectContaining({
+        last_run_id: "run-execution",
+        task_outcome_summary_status: "complete",
+        task_outcome_summary_job_id: "job-task-summary",
+        task_outcome_summary_run_id: "run-summary",
+        task_outcome_summary_chain_id: "run-summary-generation",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_outcome_summary: result,
+      }),
+    }, "default");
   });
 
   test("generate completion stores generated-chain run provenance without clobbering execution run", async () => {

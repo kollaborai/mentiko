@@ -3,8 +3,6 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { createJob, listJobs, cleanupOldJobs, type JobType } from "@/lib/runs/job-store";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import config from "@/lib/config";
-import { join } from "node:path";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { resolveTemplate } from "@/lib/system/template-resolver";
@@ -15,6 +13,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
+import { buildChainSummary, getAllChains } from "@/lib/chains/chain-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +83,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     delete input.workspaceId;
     delete input.workspace;
   }
+  input.namespaceId = namespaceId;
+  input.orgId = orgId;
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT: This job belongs to the project in "${authorizedWorkspacePath}". Tailor the output to that specific codebase.\n`
     : "";
@@ -94,32 +95,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // build chain catalog for recommend jobs so the LLM knows what's available
   if (type === "recommend" && !input.chainCatalog) {
     try {
-      const chainsDir = config.chainsDir;
-      if (existsSync(chainsDir)) {
-        const entries = readdirSync(chainsDir, { withFileTypes: true });
-        const summaries: string[] = [];
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-          const chainFile = join(chainsDir, entry.name, "chain.json");
-          if (!existsSync(chainFile)) continue;
-          try {
-            const raw = readFileSync(chainFile, "utf-8");
-            const chain = JSON.parse(raw);
-            const agents = (chain.agents || [])
-              .map((a: { name?: string; role?: string; $ref?: string }) => {
-                const label = a.name || (a.$ref ? a.$ref : "unknown");
-                return `    - ${label}${a.role ? ` (${a.role})` : ""}`;
-              })
-              .join("\n");
-            summaries.push(
-              `chain_id: ${entry.name}\n  name: ${chain.name || entry.name}\n  description: ${chain.description || "none"}\n  agents:\n${agents}`
-            );
-          } catch {
-            // skip unparseable chain files
-          }
-        }
-        input.chainCatalog = summaries.join("\n\n") || "No chains available.";
-      }
+      input.chainCatalog = buildChainSummary(
+        getAllChains(config.chainsDir, config.cliBin, undefined, namespaceId, orgId)
+      );
     } catch {
       input.chainCatalog = "Failed to load chain catalog.";
     }
