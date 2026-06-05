@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.36",
+    date: "June 5, 2026",
+    title: "Task Outcome Dashboard",
+    description:
+      "Task details now show a focused outcome dashboard for completed auto-run work, including execution provenance, run evidence, and AI-generated summaries. Summary generation now fails visibly instead of getting stuck, and chain runs preserve the session context needed for generated-task workflows.",
+    category: "improvement",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.35",
     date: "June 1, 2026",
     title: "Auto-Run Handoff Grace",
