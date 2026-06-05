@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-06-01)
 
 ## summary
-- total routes: 322
-- authenticated: 306   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 323
+- authenticated: 307   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 16
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -289,6 +289,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - tasks/[id]/close/route.ts
 - tasks/[id]/comments/route.ts
 - tasks/[id]/deps/route.ts
+- tasks/[id]/outcome-summary/route.ts
 - tasks/[id]/route.ts
 - tasks/[id]/run-chain/route.ts
 - tasks/activity/route.ts
