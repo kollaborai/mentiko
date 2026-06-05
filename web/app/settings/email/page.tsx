@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { TickCircleFilled, CloseCircleFilled, RefreshFilled, SendFilled, SmsFilled, NotificationFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Button } from "@/components/ui/button";

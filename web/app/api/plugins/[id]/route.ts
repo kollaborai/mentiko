@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getPlugin, enablePlugin, disablePlugin, configurePlugin, maskConfig } from "@/lib/plugin-registry";
+import { getPlugin, enablePlugin, disablePlugin, configurePlugin, maskConfig } from "@/lib/system/plugin-registry";
 import { NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

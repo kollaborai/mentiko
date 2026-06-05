@@ -23,12 +23,12 @@ import { VisualChainEditor as VisualChainEditorOld } from "@/components/chain/vi
 import { VisualChainEditor as VisualChainEditorNew } from "@/components/chain/visual-editor-reactflow";
 import { AddAgentDialog } from "@/components/chain/add-agent-dialog";
 import { TestRunPanel } from "@/components/chain/test-run-panel";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { downloadChain, ChainExportFormat } from "@/lib/chain-export";
-import { getMissingChainDefaultProfileId, withChainDefaultAgentProfile } from "@/lib/chain-profile-settings";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { downloadChain, ChainExportFormat } from "@/lib/chains/chain-export";
+import { getMissingChainDefaultProfileId, withChainDefaultAgentProfile } from "@/lib/chains/chain-profile-settings";
 import { validateChain, validateAgent } from "@/lib/validators";
 import { ChainTriggersPanel } from "@/components/chain/chain-triggers-panel";
 import { AgentEventMapping } from "@/components/chain/agent-event-mapping";
@@ -37,10 +37,10 @@ import type { ChainEventTrigger } from "@/components/chain/chain-triggers-panel"
 import { RotateFilled, ArchiveFilled, DocumentDownloadFilled, AddFilled, TrashFilled, Edit2Filled, PlayFilled, BotMessageSquare, Link2Filled, HierarchyFilled, InfoCircleFilled, ArrowDown2Filled, ArrowRight2Filled } from "@aliimam/icons";
 import { ArrowLeftFilled } from "@aliimam/icons";
 import { Warning2Filled as Bug, CheckFilled as Check, FlashFilled as Zap, GlobalFilled as Globe, SmsFilled as Mail, RefreshFilled as RefreshCw } from "@aliimam/icons";
-import type { ChainWebhook } from "@/lib/webhook-utils";
+import type { ChainWebhook } from "@/lib/webhooks/webhook-utils";
 import { useBreakpoints } from "@/hooks/use-breakpoints";
 import { DebugPanel as ChainDebugPanel } from "@/components/chain/debug-panel";
-import type { EmailInbox } from "@/lib/email-types";
+import type { EmailInbox } from "@/lib/email/email-types";
 import type { BranchConfig } from "@/lib/types";
 
 interface ChainConfig {

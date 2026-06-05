@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useEditorStore } from "@/lib/editor-store";
-import { unwrapApiData } from "@/lib/api-client";
+import { useEditorStore } from "@/lib/ui/editor-store";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface FlatFile {
   name: string;

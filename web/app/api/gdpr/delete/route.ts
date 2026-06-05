@@ -13,14 +13,14 @@
 
 import { NextRequest } from "next/server";
 import { exec } from "child_process";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { getDb } from "@/lib/auth-server";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { getDb } from "@/lib/auth/auth-server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { execAuditLog } from "@/lib/audit-exec";
-import { shredDEK } from "@/lib/user-crypto";
+import { execAuditLog } from "@/lib/api/audit-exec";
+import { shredDEK } from "@/lib/auth/user-crypto";
 import config from "@/lib/config";
 import { join } from "path";
 import { mkdirSync, writeFileSync, existsSync } from "fs";

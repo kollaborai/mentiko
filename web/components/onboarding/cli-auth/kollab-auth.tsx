@@ -10,12 +10,12 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { SecretForm } from "@/components/secrets/secret-form";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import {
   PROVIDER_CREDENTIALS,
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
-} from "@/lib/provider-config";
+} from "@/lib/agents/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface KollabAuthProps {

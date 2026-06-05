@@ -2,16 +2,16 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useSyncExternalStore } from "react";
-import { NamespaceProvider } from "@/lib/namespace-context";
-import { WorkspaceProvider } from "@/lib/workspace-context";
-import { UserProvider } from "@/lib/user-context";
+import { NamespaceProvider } from "@/lib/ui-context/namespace-context";
+import { WorkspaceProvider } from "@/lib/ui-context/workspace-context";
+import { UserProvider } from "@/lib/ui-context/user-context";
 import { ThemeProvider } from "next-themes";
 import { ToastContainer } from "@/components/notifications-panel";
 import { useNotificationsListener } from "@/hooks/use-notifications-listener";
 import { OfflineIndicator, OnlineStatusBanner } from "@/components/offline-indicator";
-import { useSyncQueue } from "@/lib/sync-queue";
+import { useSyncQueue } from "@/lib/system/sync-queue";
 import { useOnlineStatus } from "@/hooks";
-import { useNotificationPreferences } from "@/lib/notification-preferences";
+import { useNotificationPreferences } from "@/lib/notifications/notification-preferences";
 import { GlobalSearchModal } from "@/components/global-search-modal";
 import { KeyboardShortcutsModal } from "@/components/keyboard-shortcuts-modal";
 import { FloatingTerminalPanel } from "@/components/floating-terminal-panel";
@@ -21,11 +21,11 @@ import { FloatingCodePill } from "@/components/editor/floating-code-pill";
 import { FloatingWelcomePanel } from "@/components/onboarding/floating-welcome-panel";
 import { FloatingKollaborBar } from "@/components/floating-kollabor-bar";
 import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/panel-mode-background";
-import { isKollaborBarEnabled } from "@/lib/kollabor-bar-flag";
+import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
 import { MustChangePasswordGate } from "@/components/must-change-password-gate";
-import { getFloatingPanelSrc, isFloatingPanelRoute, isFloatingPanelSurface } from "@/lib/floating-app-panel-routing";
-import { usePillNavPreferences } from "@/lib/pill-nav-preferences";
-import { applyStoredUserDisplayPreferences } from "@/lib/user-display-preferences";
+import { getFloatingPanelSrc, isFloatingPanelRoute, isFloatingPanelSurface } from "@/lib/ui/floating-app-panel-routing";
+import { usePillNavPreferences } from "@/lib/ui/pill-nav-preferences";
+import { applyStoredUserDisplayPreferences } from "@/lib/ui/user-display-preferences";
 
 // pages that render standalone (no nav, no sidebar, no providers)
 const STANDALONE_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/welcome"];

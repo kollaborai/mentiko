@@ -4,7 +4,7 @@ import * as React from "react"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z"
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z"
 
 function HoverCard({
   ...props

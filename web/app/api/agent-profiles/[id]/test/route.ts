@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getProfile } from "@/lib/agent-profile-storage";
+import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { execSync } from "child_process";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

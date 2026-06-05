@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   deleteWebhook,
   getWebhookById,
   logWebhookEvent,
-} from "@/lib/webhook-storage";
-import type { WebhookEvent, WebhookSource, WebhookEventType } from "@/lib/webhook-types";
+} from "@/lib/webhooks/webhook-storage";
+import type { WebhookEvent, WebhookSource, WebhookEventType } from "@/lib/webhooks/webhook-types";
 import { NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

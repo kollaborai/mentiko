@@ -21,7 +21,7 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-test",
     sessionId: "session-test",
@@ -34,12 +34,12 @@ jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
 }));
 
 const mockGetDecision = jest.fn();
-jest.mock("@/lib/decision-storage", () => ({
+jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => mockGetDecision(...args),
 }));
 
 const mockResolveDecisionToTasks = jest.fn();
-jest.mock("@/lib/decision-resolution", () => ({
+jest.mock("@/lib/decisions/decision-resolution", () => ({
   resolveDecisionToTasks: (...args: unknown[]) => mockResolveDecisionToTasks(...args),
 }));
 

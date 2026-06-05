@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkflowSidebarSectionHeader } from "@/components/ui/workflow-sidebar";
-import type { EpicStatus } from "@/lib/task-types";
+import type { EpicStatus } from "@/lib/tasks/task-types";
 
 interface EpicGroupHeaderProps {
   epic: EpicStatus | null;

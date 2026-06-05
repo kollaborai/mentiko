@@ -8,7 +8,7 @@ import {
   ArrowDown2Filled as ChevronDown,
   ArrowUp2Filled as ChevronUp,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { TimeAgo } from "@/components/shared/time-ago";
 
 interface ScheduleExecution {

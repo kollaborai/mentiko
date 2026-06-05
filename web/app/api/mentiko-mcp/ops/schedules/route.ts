@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import {
   addSchedule,
   calculateAndStoreNextRun,
@@ -8,9 +8,9 @@ import {
   removeSchedule,
   slugify,
   updateSchedule,
-} from "@/lib/schedule-storage";
+} from "@/lib/schedules/schedule-storage";
 import { validateSchedule } from "@/lib/validators";
-import { requiresElevatedScheduleTargetPermission, validateScheduleTarget } from "@/lib/schedule-targets";
+import { requiresElevatedScheduleTargetPermission, validateScheduleTarget } from "@/lib/schedules/schedule-targets";
 import type { Schedule, ScheduleTarget, ScheduleTrigger } from "@/lib/types";
 
 export const dynamic = "force-dynamic";

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { loadInboxes, saveInboxes, appendAuditLog } from "@/lib/email-storage";
+import { loadInboxes, saveInboxes, appendAuditLog } from "@/lib/email/email-storage";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

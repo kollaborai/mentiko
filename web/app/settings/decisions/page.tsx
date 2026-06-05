@@ -5,9 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { getMissingChainDefaultProfileId } from "@/lib/chain-profile-settings";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { getMissingChainDefaultProfileId } from "@/lib/chains/chain-profile-settings";
 import type { AgentProfile } from "@/lib/types";
 import {
   ArrowRight2Filled,

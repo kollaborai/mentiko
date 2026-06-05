@@ -1,6 +1,6 @@
 "use client";
 
-import type { Decision } from "@/lib/decision-types";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { OptionCards } from "./option-cards";
 
 interface OptionsTabProps {

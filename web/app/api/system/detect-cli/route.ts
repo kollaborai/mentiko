@@ -2,11 +2,11 @@ import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
-import { buildChildEnv } from "@/lib/child-env";
-import { getCliBinary, getDetectableCliTools } from "@/lib/agent-provider-catalog";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { getCliBinary, getDetectableCliTools } from "@/lib/agents/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 

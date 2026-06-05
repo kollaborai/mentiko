@@ -5,7 +5,7 @@
 export {};
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
@@ -19,7 +19,7 @@ jest.mock("@/lib/namespace-config", () => ({
 const mockGetTemplate = jest.fn().mockReturnValue({
   content: "prompt={{USER_PROMPT}}\nagents={{AGENT_CATALOG}}\nworkspace={{WORKSPACE_CONTEXT}}",
 });
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: (...args: unknown[]) => mockGetTemplate(...args),
 }));
 
@@ -30,7 +30,7 @@ const mockResolveTemplate = jest.fn().mockImplementation((_template: string, var
   }
   return rendered;
 });
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (...args: unknown[]) => mockResolveTemplate(...args),
 }));
 
@@ -38,7 +38,7 @@ const mockCreateJob = jest.fn().mockReturnValue({
   id: "job-link",
   status: "pending",
 });
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
 }));
 
@@ -47,11 +47,11 @@ const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
   chainId: "link-generation",
   status: "started",
 });
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/agent-loader", () => ({
+jest.mock("@/lib/agents/agent-loader", () => ({
   getAllStandaloneAgents: () => [
     {
       id: "agent-1",
@@ -62,12 +62,12 @@ jest.mock("@/lib/agent-loader", () => ({
   ],
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn().mockResolvedValue({ id: "user-1" }),
 }));
 
 const mockResolveWorkspace = jest.fn((...args: unknown[]) => args[2]);
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: (...args: unknown[]) => mockResolveWorkspace(args[0], args[1], args[2], args[3]),
 }));
 

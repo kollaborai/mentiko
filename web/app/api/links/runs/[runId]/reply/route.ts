@@ -2,8 +2,8 @@ import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { checkRunAccess } from "@/lib/run-acl";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import {
@@ -11,7 +11,7 @@ import {
   resolveLinkRunPaths,
   resolvePeerReplyPath,
   validateLinkRunId,
-} from "@/lib/link-run-runtime";
+} from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
 import { timingSafeEqual } from "crypto";
-import type { BouncePayload } from "@/lib/email-types";
+import type { BouncePayload } from "@/lib/email/email-types";
 import {
   processBounce,
   emitBounceEvent,
   deriveBounceSecret,
-} from "@/lib/email-bounce";
+} from "@/lib/email/email-bounce";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized, BadRequest, ValidationError } from "@/lib/api-errors";
 
@@ -127,7 +127,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type");
 
-  const { listUnmatchedBounces, listSuppressions } = await import("@/lib/email-bounce");
+  const { listUnmatchedBounces, listSuppressions } = await import("@/lib/email/email-bounce");
 
   if (type === "unmatched") {
     const limit = parseInt(searchParams.get("limit") || "100", 10);

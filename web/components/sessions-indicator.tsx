@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CommandSquareFilled } from "@aliimam/icons";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 export function SessionsIndicator() {
   const [activeCount, setActiveCount] = useState(0);

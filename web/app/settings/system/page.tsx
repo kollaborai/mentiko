@@ -6,9 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { LATEST_VERSION } from "@/lib/releases";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Setting2Filled, DangerFilled } from "@aliimam/icons";
 

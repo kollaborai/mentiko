@@ -10,8 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ArtifactSelector, type ArtifactTemplate, type SelectedArtifact } from "./artifact-selector";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 interface Props {
   open: boolean;

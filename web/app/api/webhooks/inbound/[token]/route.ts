@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import { findWebhookByToken, recordUsage } from "@/lib/inbound-webhook-storage";
-import { writeLog } from "@/lib/system-logger";
+import { findWebhookByToken, recordUsage } from "@/lib/webhooks/inbound-webhook-storage";
+import { writeLog } from "@/lib/system/system-logger";
 import { Unauthorized, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { internalApiUrl } from "@/lib/internal-web-origin";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 

@@ -13,8 +13,8 @@ import {
   DangerFilled as OctagonX,
   CommandSquareFilled as Wand,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { EventLogViewer } from "@/components/event-log-viewer";
 
 type IconComponent = React.ComponentType<{ className?: string }>;

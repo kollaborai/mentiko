@@ -1,6 +1,6 @@
 import { getNamespaceConfig } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getAllLinks } from "@/lib/link-utils";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getAllLinks } from "@/lib/links/link-utils";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";

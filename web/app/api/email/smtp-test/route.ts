@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, ServiceUnavailable } from "@/lib/api-errors";
 

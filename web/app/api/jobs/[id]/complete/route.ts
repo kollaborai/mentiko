@@ -1,15 +1,15 @@
 import { NextRequest } from "next/server";
-import { getJob, updateJob } from "@/lib/job-store";
-import { taskGet, taskUpdate } from "@/lib/task-store";
+import { getJob, updateJob } from "@/lib/runs/job-store";
+import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getDecision, updateDecision } from "@/lib/decision-storage";
-import { postProcessChain } from "@/lib/chain-postprocessor";
+import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
+import { postProcessChain } from "@/lib/chains/chain-postprocessor";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { hasInternalAuth } from "@/lib/internal-api-auth";
-import { internalApiUrl } from "@/lib/internal-web-origin";
-import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decision-run-results";
-import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/generated-task-import";
+import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
+import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/tasks/generated-task-import";
 
 export const dynamic = "force-dynamic";
 
@@ -377,7 +377,7 @@ export const POST = withErrorHandling(async (
     try {
       const runId = updatedJob.input?.runId as string | undefined;
       if (runId) {
-        const { resolveLinkRunPaths } = await import("@/lib/link-run-runtime");
+        const { resolveLinkRunPaths } = await import("@/lib/links/link-run-runtime");
         const { runDir } = resolveLinkRunPaths(namespaceId, orgId, runId);
         const { writeFileSync } = await import("fs");
         const { join } = await import("path");

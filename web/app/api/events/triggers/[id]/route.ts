@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { nsPath } from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";

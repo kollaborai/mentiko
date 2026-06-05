@@ -9,7 +9,7 @@ import { join } from "path";
 const root = mkdtempSync(join(tmpdir(), "generation-templates-route-"));
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 

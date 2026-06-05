@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, basename } from "path";
 import config from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 

@@ -3,7 +3,7 @@ import {
   replyToTool,
   setMcpBarStorageScope,
   syncSessionToken,
-} from "../mentiko-mcp-bar-client";
+} from "../ai-engine/mentiko-mcp-bar-client";
 
 class MockEventSource {
   static readonly CONNECTING = 0;

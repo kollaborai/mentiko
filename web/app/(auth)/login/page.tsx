@@ -3,8 +3,8 @@
 import { Suspense, useState, useEffect, FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { signIn, isMockOAuth, authClient } from "@/lib/auth-client";
-import { ONBOARDING_DISMISSED_KEY, OPEN_WELCOME_PANEL_KEY } from "@/lib/onboarding-storage";
+import { signIn, isMockOAuth, authClient } from "@/lib/auth/auth-client";
+import { ONBOARDING_DISMISSED_KEY, OPEN_WELCOME_PANEL_KEY } from "@/lib/system/onboarding-storage";
 
 export default function LoginPage() {
   return (

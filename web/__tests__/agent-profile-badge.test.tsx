@@ -42,7 +42,7 @@ jest.mock("@aliimam/icons", () => ({
   MessageSquareFilled: () => null,
 }));
 
-jest.mock("@/lib/use-agent-profiles", () => ({
+jest.mock("@/lib/hooks/use-agent-profiles", () => ({
   useAgentProfiles: () => [],
 }));
 

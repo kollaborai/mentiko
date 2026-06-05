@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useRunNotifications, notifyAgentEvent } from "@/hooks/use-notifications-listener";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
@@ -50,8 +50,8 @@ import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { PeerSplitView } from "@/components/terminal/peer-split-view";
 import { LinkRunTimeline } from "@/components/run/link-run-timeline";
 import { Markdown } from "@/components/ui/markdown";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
 
 interface RunAgent extends Omit<WorkflowAgent, "emits"> {

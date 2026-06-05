@@ -3,10 +3,10 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { sanitizeOutput } from "@/lib/sanitize-output";
-import { checkRunAccess } from "@/lib/run-acl";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

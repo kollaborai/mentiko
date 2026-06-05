@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { calculateCronNextRun } from "@/lib/cron-next-run";
-import { normalizeCronExpression, normalizeTimezone } from "@/lib/cron-validation";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { calculateCronNextRun } from "@/lib/schedules/cron-next-run";
+import { normalizeCronExpression, normalizeTimezone } from "@/lib/schedules/cron-validation";
 
 export const dynamic = "force-dynamic";
 

@@ -8,9 +8,9 @@ import { MarketplaceCard } from "@/components/ui/marketplace-card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchNormalFilled, FilterFilled, ArrowUp2Filled, EyeFilled, TickCircleFilled, DocumentDownloadFilled, BotMessageSquare, ShopFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useDebounce } from "@/lib/performance";
-import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useDebounce } from "@/lib/system/performance";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 interface RegistryAgent {
   id: string;

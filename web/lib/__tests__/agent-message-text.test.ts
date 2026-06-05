@@ -1,7 +1,7 @@
 import {
   appendAgentDraftText,
   repairAgentTextSpacing,
-} from "../agent-message-text";
+} from "../agents/agent-message-text";
 
 describe("agent message text spacing", () => {
   it("repairs sentence boundaries that lost their chunk whitespace", () => {

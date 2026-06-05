@@ -18,15 +18,15 @@ import {
   RouteSquareFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { statusBar, statusPill, statusLabel } from "@/lib/status-colors";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { statusBar, statusPill, statusLabel } from "@/lib/ui/status-colors";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
 import { buildRunsListQuery } from "./runs-query";
-import { useSharedChains } from "@/lib/chains-store";
-import { isSystemChainRecord, isSystemChainRun } from "@/lib/system-chain";
+import { useSharedChains } from "@/lib/chains/chains-store";
+import { isSystemChainRecord, isSystemChainRun } from "@/lib/chains/system-chain";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarItem,

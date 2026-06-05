@@ -5,8 +5,8 @@ import {
   updateLastHistoryEntry,
   escalationDir,
   replyFile,
-} from "@/lib/peer-escalations";
-import { sendMessage } from "@/lib/telegram";
+} from "@/lib/system/peer-escalations";
+import { sendMessage } from "@/lib/notifications/telegram";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

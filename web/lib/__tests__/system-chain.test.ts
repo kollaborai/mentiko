@@ -4,7 +4,7 @@ import {
   isSystemChainRecord,
   isSystemChainRun,
   isSystemRunMetadata,
-} from "../system-chain";
+} from "../chains/system-chain";
 
 describe("system chain helpers", () => {
   it("detects managed core chain metadata", () => {

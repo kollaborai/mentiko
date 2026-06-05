@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import type { PluginManifest } from "@/lib/plugin-types";
+import type { PluginManifest } from "@/lib/system/plugin-types";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";

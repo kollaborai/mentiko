@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useParams, useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

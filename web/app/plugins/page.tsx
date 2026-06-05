@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 import {
   LinkFilled as Workflow,
   SmsFilled as Mail,

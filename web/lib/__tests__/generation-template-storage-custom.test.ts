@@ -21,7 +21,7 @@ describe("generation template storage custom templates", () => {
   });
 
   test("round-trips custom templates after merging defaults", async () => {
-    const { getTemplates, saveTemplates } = await import("../generation-template-storage");
+    const { getTemplates, saveTemplates } = await import("../generation/generation-template-storage");
     const custom = {
       id: "custom_1780330000000",
       label: "New Template",

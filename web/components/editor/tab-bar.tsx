@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { CloseCircleFilled, ArrowRight1Filled } from "@aliimam/icons";
-import { useEditorStore, usePane, isDirty } from "@/lib/editor-store";
+import { useEditorStore, usePane, isDirty } from "@/lib/ui/editor-store";
 import { getFileAccentColor } from "./file-tree";
 
 interface TabBarProps {

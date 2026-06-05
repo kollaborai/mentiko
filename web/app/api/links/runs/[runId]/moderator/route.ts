@@ -2,13 +2,13 @@ import { NextRequest } from "next/server";
 import { readFileSync, readdirSync, statSync, existsSync, createReadStream } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
-import { resolveLogDir } from "@/lib/session-log-resolver";
+import { resolveLogDir } from "@/lib/runs/session-log-resolver";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { checkRunAccess } from "@/lib/run-acl";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/link-run-runtime";
+import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

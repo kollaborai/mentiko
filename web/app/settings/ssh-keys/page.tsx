@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { PageBanner } from "@/components/ui/page-banner";
 import { AddFilled, KeyFilled, RefreshFilled } from "@aliimam/icons";

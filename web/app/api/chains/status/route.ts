@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { orgPath } from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { resolveChainAgents } from "@/lib/agent-loader";
+import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

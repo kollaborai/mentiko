@@ -1,4 +1,4 @@
-import { DEFAULT_TASK_TEMPLATE } from "@/lib/generation-template-storage";
+import { DEFAULT_TASK_TEMPLATE } from "@/lib/generation/generation-template-storage";
 
 describe("DEFAULT_TASK_TEMPLATE", () => {
   it("keeps the example acceptance criteria aligned with Given/When/Then instructions", () => {

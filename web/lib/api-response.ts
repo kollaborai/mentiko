@@ -9,7 +9,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { ApiError } from './api-errors';
 import { randomUUID } from 'crypto';
-import { recordRequest, extractRoute } from './api-metrics';
+import { recordRequest, extractRoute } from './api/api-metrics';
 
 export interface ApiResponseSuccess<T = unknown> {
   success: true;

@@ -3,7 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { RootLayoutClient } from "./layout-client";
-import { getUserDisplayPreferencesInitScript } from "@/lib/user-display-preferences";
+import { getUserDisplayPreferencesInitScript } from "@/lib/ui/user-display-preferences";
 
 const inter = Inter({
   subsets: ["latin"],

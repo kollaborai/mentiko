@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { TickCircleFilled, CloseCircleFilled, ClockFilled, InfoCircleFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface ApprovalRequest {
   id: string;

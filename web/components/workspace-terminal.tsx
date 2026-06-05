@@ -4,9 +4,9 @@ import { useState, useEffect } from "react";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { CommandSquareFilled as Terminal, RefreshFilled as RefreshCw, CopyFilled as Copy, CheckFilled as Check } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { getApiErrorMessage, unwrapApiData } from "@/lib/api-client";
-import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { getApiErrorMessage, unwrapApiData } from "@/lib/api/api-client";
+import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 
 interface AuthCommand {
   cli: string;

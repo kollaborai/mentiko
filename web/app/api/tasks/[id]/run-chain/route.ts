@@ -2,16 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { requirePermission } from "@/lib/api-auth";
+import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { taskGet, taskUpdate, taskGetComments, validateTaskId } from "@/lib/task-store";
-import { createNotification } from "@/lib/notification-server";
+import { taskGet, taskUpdate, taskGetComments, validateTaskId } from "@/lib/tasks/task-store";
+import { createNotification } from "@/lib/notifications/notification-server";
 import { apiError } from "@/lib/api-response";
 import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
-import { taskDetailHref } from "@/lib/task-routes";
-import { internalApiUrl } from "@/lib/internal-web-origin";
-import type { TaskChainBinding } from "@/lib/task-types";
+import { taskDetailHref } from "@/lib/tasks/task-routes";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import type { TaskChainBinding } from "@/lib/tasks/task-types";
 
 export const dynamic = "force-dynamic";
 

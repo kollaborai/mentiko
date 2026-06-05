@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getTemplates,
   saveTemplates,
   getDefaultTemplates,
   type GenerationTemplate,
-} from "@/lib/generation-template-storage";
+} from "@/lib/generation/generation-template-storage";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

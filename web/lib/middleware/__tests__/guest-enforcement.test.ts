@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach } from "@jest/globals";
 import type { NextRequest as NextRequestType } from "next/server";
 
-jest.mock("../../auth-bridge", () => ({
+jest.mock("../../auth/auth-bridge", () => ({
   getSessionUser: jest.fn(),
 }));
 
@@ -16,7 +16,7 @@ const TestNextRequest = (globalThis as unknown as {
 
 import { enforceGuestWrites, isWriteMethod, isReadMethod } from "../guest-enforcement";
 import { setAuditLogger } from "../audit-logger";
-import * as authBridge from "../../auth-bridge";
+import * as authBridge from "../../auth/auth-bridge";
 
 const mockGetSessionUser = authBridge.getSessionUser as jest.MockedFunction<typeof authBridge.getSessionUser>;
 const mockSession = (id: string, role: "guest" | "member" | "admin" | "owner") => ({

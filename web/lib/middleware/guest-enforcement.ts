@@ -4,8 +4,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "../auth-bridge";
-import { type OrgRole } from "../org-types";
+import { getSessionUser } from "../auth/auth-bridge";
+import { type OrgRole } from "../orgs/org-types";
 import { emitGuestEnforcementAudit } from "./audit-logger";
 import { incrementCounter, recordLatency } from "./metrics";
 

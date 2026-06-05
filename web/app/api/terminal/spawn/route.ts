@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets-store";
-import { getWorkspace } from "@/lib/workspace-storage";
-import { getProfile, findDefaultProfile } from "@/lib/agent-profile-storage";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
+import { getWorkspace } from "@/lib/workspaces/workspace-storage";
+import { getProfile, findDefaultProfile } from "@/lib/agents/agent-profile-storage";
 import config from "@/lib/config";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -31,7 +31,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
 
-  const { pty } = await import("@/lib/pty-client");
+  const { pty } = await import("@/lib/pty/pty-client");
 
   // check if session already exists
   try {

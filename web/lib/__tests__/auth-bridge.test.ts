@@ -5,22 +5,22 @@
  */
 
 // mock auth-server before importing auth-bridge
-jest.mock("../auth-server", () => ({
+jest.mock("../auth/auth-server", () => ({
   getAuth: jest.fn(),
 }));
 
 // mock security module
-jest.mock("../security", () => ({
+jest.mock("../auth/security", () => ({
   timingSafeEqual: (a: string, b: string) => a === b,
 }));
 
-import { getAuth } from "../auth-server";
+import { getAuth } from "../auth/auth-server";
 import {
   getServerSession,
   checkAuthCompat,
   getNamespaceFromSession,
   getSessionUser,
-} from "../auth-bridge";
+} from "../auth/auth-bridge";
 
 const mockGetAuth = getAuth as jest.Mock;
 
@@ -130,16 +130,16 @@ describe("auth-bridge", () => {
       jest.resetModules();
 
       // re-mock after reset
-      jest.doMock("../auth-server", () => ({
+      jest.doMock("../auth/auth-server", () => ({
         getAuth: jest.fn().mockReturnValue({
           api: { getSession: jest.fn().mockResolvedValue(null) },
         }),
       }));
-      jest.doMock("../security", () => ({
+      jest.doMock("../auth/security", () => ({
         timingSafeEqual: (a: string, b: string) => a === b,
       }));
 
-      const bridge = await import("../auth-bridge");
+      const bridge = await import("../auth/auth-bridge");
       const result = await bridge.checkAuthCompat(
         makeRequest({ Authorization: "Bearer secret-token" })
       );
@@ -151,16 +151,16 @@ describe("auth-bridge", () => {
       process.env.BETTER_AUTH_SECRET = "secret-token";
       jest.resetModules();
 
-      jest.doMock("../auth-server", () => ({
+      jest.doMock("../auth/auth-server", () => ({
         getAuth: jest.fn().mockReturnValue({
           api: { getSession: jest.fn().mockResolvedValue(null) },
         }),
       }));
-      jest.doMock("../security", () => ({
+      jest.doMock("../auth/security", () => ({
         timingSafeEqual: (a: string, b: string) => a === b,
       }));
 
-      const bridge = await import("../auth-bridge");
+      const bridge = await import("../auth/auth-bridge");
       const result = await bridge.checkAuthCompat(
         makeRequest({ Authorization: "Bearer wrong-token" })
       );
@@ -285,16 +285,16 @@ describe("auth-bridge", () => {
       process.env.BETTER_AUTH_SECRET = "secret-token";
       jest.resetModules();
 
-      jest.doMock("../auth-server", () => ({
+      jest.doMock("../auth/auth-server", () => ({
         getAuth: jest.fn().mockReturnValue({
           api: { getSession: jest.fn().mockResolvedValue(null) },
         }),
       }));
-      jest.doMock("../security", () => ({
+      jest.doMock("../auth/security", () => ({
         timingSafeEqual: (a: string, b: string) => a === b,
       }));
 
-      const bridge = await import("../auth-bridge");
+      const bridge = await import("../auth/auth-bridge");
       const user = await bridge.getSessionUser(
         makeRequest({ Authorization: "Bearer secret-token" })
       );

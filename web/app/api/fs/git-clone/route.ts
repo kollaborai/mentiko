@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, rmSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import { execSync, ExecSyncOptionsWithBufferEncoding } from "child_process";
 import os from "os";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { writeLog } from "@/lib/system-logger";
-import { resolveAndValidate, getAllowedRoots } from "@/lib/path-validation";
+import { writeLog } from "@/lib/system/system-logger";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { BadRequest, Conflict, Forbidden, InternalServerError, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -38,7 +38,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   let authToken = token;
   if (!authToken && url.startsWith("https://")) {
     try {
-      const { getSecretByName } = await import("@/lib/secrets-store");
+      const { getSecretByName } = await import("@/lib/secrets/secrets-store");
       authToken = getSecretByName(namespaceId, orgId, "GitHub Token") || undefined;
     } catch { /* secrets not available */ }
   }

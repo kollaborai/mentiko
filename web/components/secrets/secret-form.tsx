@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { EyeFilled, EyeSlashFilled } from "@aliimam/icons";
-import { COMMON_PRESETS, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import { COMMON_PRESETS, PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
 
 export interface SecretFormProps {
   onSave: (data: { name: string; envVar: string; value: string; description?: string }) => Promise<void>;

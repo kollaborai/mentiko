@@ -8,8 +8,8 @@ import {
 } from "fs";
 import { join } from "path";
 import { orgPath } from "@/lib/config";
-import { getAllChains } from "@/lib/chain-utils";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { getAllChains } from "@/lib/chains/chain-utils";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 /**
  * /api/mentiko-mcp/ops/chains

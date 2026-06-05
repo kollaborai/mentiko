@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 interface InviteDetails {
   email: string;

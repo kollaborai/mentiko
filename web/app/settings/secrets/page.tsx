@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { ShieldTickFilled, AddFilled, TrashFilled, EditFilled, LockFilled, SecurityFilled, BotMessageSquare } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { SecretMeta } from "@/lib/secrets-store";
+import type { SecretMeta } from "@/lib/secrets/secrets-store";
 import { SecretForm } from "@/components/secrets/secret-form";
 
 interface SecretMetaWithUsage extends SecretMeta {

@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { BotMessageSquare as Bot, MagicStarFilled as Sparkles, AddFilled as Plus, SearchNormalFilled as Search, RotateFilled as Loader2, ArrowLeftFilled as ArrowLeft } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";

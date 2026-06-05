@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 export interface PollerState {
   lastPollAt: Date | null;

@@ -26,7 +26,7 @@ describe("decision-storage", () => {
   });
 
   it("finds and updates a workspace-scoped decision when workspace is omitted", async () => {
-    const { createDecision, getDecision, updateDecision } = await import("../decision-storage");
+    const { createDecision, getDecision, updateDecision } = await import("../decisions/decision-storage");
 
     const created = createDecision(
       "mike",

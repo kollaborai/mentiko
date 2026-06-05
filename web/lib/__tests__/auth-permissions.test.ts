@@ -17,7 +17,7 @@ jest.mock("better-auth/plugins/access", () => {
   return { createAccessControl };
 });
 
-import { ac, owner, admin, member, guest } from "../auth-permissions";
+import { ac, owner, admin, member, guest } from "../auth/auth-permissions";
 
 describe("auth-permissions", () => {
   describe("access control statement", () => {

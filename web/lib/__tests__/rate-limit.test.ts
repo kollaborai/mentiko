@@ -39,15 +39,15 @@ function makeRequest(ip = "127.0.0.1") {
         return null;
       },
     },
-  } as Parameters<typeof import("../security").rateLimiters.api.check>[0];
+  } as Parameters<typeof import("../auth/security").rateLimiters.api.check>[0];
 }
 
 describe("rate limiting", () => {
-  let rateLimiters: typeof import("../security").rateLimiters;
+  let rateLimiters: typeof import("../auth/security").rateLimiters;
 
   beforeEach(async () => {
     jest.resetModules();
-    const security = await import("../security");
+    const security = await import("../auth/security");
     rateLimiters = security.rateLimiters;
   });
 

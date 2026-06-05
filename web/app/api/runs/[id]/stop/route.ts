@@ -1,16 +1,16 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { pty } from "@/lib/pty-client";
-import { taskMergeMeta } from "@/lib/task-store";
-import { writeLog } from "@/lib/system-logger";
-import { checkRunAccess } from "@/lib/run-acl";
+import { pty } from "@/lib/pty/pty-client";
+import { taskMergeMeta } from "@/lib/tasks/task-store";
+import { writeLog } from "@/lib/system/system-logger";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { NotFound, BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { isNonExecutionRun } from "@/lib/run-provenance";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
 

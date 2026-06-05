@@ -17,7 +17,7 @@
 
 import { createHmac } from "crypto";
 import { Buffer } from "buffer";
-import { generateUnsubscribeToken } from "@/lib/unsubscribe-token";
+import { generateUnsubscribeToken } from "@/lib/auth/unsubscribe-token";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
 

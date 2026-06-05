@@ -13,7 +13,7 @@ import {
   isNonExecutionRun,
   isNonExecutionRunMetadata,
   shouldRecordTaskExecutionMetadata,
-} from "@/lib/run-provenance";
+} from "@/lib/runs/run-provenance";
 
 describe("run-provenance classification", () => {
   const recommendationRun = {

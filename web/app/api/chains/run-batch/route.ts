@@ -4,11 +4,11 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 
 import { join, resolve } from "path";
 import config, { nsPath } from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { buildChildEnv } from "@/lib/child-env";
-import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 
 export const dynamic = "force-dynamic";
 

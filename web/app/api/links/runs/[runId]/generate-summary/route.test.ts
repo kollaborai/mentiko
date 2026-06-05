@@ -28,46 +28,46 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: (...args: unknown[]) => mockGetOrgId(...args),
 }));
 
-jest.mock("@/lib/rbac-auth", () => ({
+jest.mock("@/lib/auth/rbac-auth", () => ({
   requirePermission: (...args: unknown[]) => mockRequirePermission(...args),
 }));
 
-jest.mock("@/lib/run-acl", () => ({
+jest.mock("@/lib/auth/run-acl", () => ({
   checkRunAccess: (...args: unknown[]) => mockCheckRunAccess(...args),
 }));
 
-jest.mock("@/lib/link-run-runtime", () => ({
+jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunPaths: (...args: unknown[]) => mockResolveLinkRunPaths(...args),
   resolvePeerOutputDir: (...args: unknown[]) => mockResolvePeerOutputDir(...args),
   validateLinkRunId: () => true,
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: (...args: unknown[]) => mockGetTemplate(...args),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (...args: unknown[]) => mockResolveTemplate(...args),
 }));
 
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
 }));
 
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
 }));
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: (...args: unknown[]) =>
     mockResolveAuthorizedWorkspacePath(...args),
 }));
 
-jest.mock("@/lib/session-log-resolver", () => ({
+jest.mock("@/lib/runs/session-log-resolver", () => ({
   resolveLogDir: (...args: unknown[]) => mockResolveLogDir(...args),
 }));
 

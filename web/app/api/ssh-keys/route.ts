@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import {
   listSshKeys,
   addSshKey,
@@ -7,7 +7,7 @@ import {
   getSshKeyFingerprint,
   getSshKeyAlgorithm,
   isValidSshKey,
-} from "@/lib/linux-users";
+} from "@/lib/workspaces/linux-users";
 import { Unauthorized, BadRequest, Conflict, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

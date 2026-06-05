@@ -2,13 +2,13 @@ import { NextRequest } from "next/server";
 import { createReadStream } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
-import { checkAuth } from "@/lib/api-auth";
-import { pty, listSessionNames } from "@/lib/pty-client";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { pty, listSessionNames } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { claudeProjectPath, config } from "@/lib/config";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

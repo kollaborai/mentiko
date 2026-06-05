@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { listWorkspaces } from "@/lib/workspace-storage";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { listWorkspaces } from "@/lib/workspaces/workspace-storage";
 
 export const dynamic = "force-dynamic";
 

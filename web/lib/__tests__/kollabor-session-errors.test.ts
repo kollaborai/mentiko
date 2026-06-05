@@ -1,4 +1,4 @@
-import { isRecoverableKollaborSessionError } from "../kollabor-session-errors";
+import { isRecoverableKollaborSessionError } from "../ai-engine/kollabor-session-errors";
 
 describe("isRecoverableKollaborSessionError", () => {
   it.each([

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 export interface JobStatusEvent {
   type: "job_status";

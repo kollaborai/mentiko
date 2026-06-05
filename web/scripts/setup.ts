@@ -7,7 +7,7 @@ import {
   parseEnvContent,
   upsertEnvContent,
   type PtyManagerCandidate,
-} from "../lib/dev-environment-checks";
+} from "../lib/system/dev-environment-checks";
 
 type StepResult = "changed" | "skipped";
 

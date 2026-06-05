@@ -41,7 +41,7 @@ describe("audit-exec smoke test", () => {
 
   it("execAuditLog writes a real entry that can be read back", async () => {
     // require inside the test so the env override is in effect.
-    const { execAuditLog } = await import("../audit-exec");
+    const { execAuditLog } = await import("../api/audit-exec");
 
     const uniqueTag = `smoke_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const id = await execAuditLog("smoke_event", uniqueTag, {
@@ -68,7 +68,7 @@ describe("audit-exec smoke test", () => {
   });
 
   it("execAuditLog neutralizes shell-injection payloads (SEC-1 regression)", async () => {
-    const { execAuditLog } = await import("../audit-exec");
+    const { execAuditLog } = await import("../api/audit-exec");
 
     const pwnFile = join(tmpGlobalRoot, "sec1_smoke_pwned");
     const payload = `x"; touch ${pwnFile}; echo "`;
@@ -89,7 +89,7 @@ describe("audit-exec smoke test", () => {
   });
 
   it("execAuditQuery returns entries written by execAuditLog", async () => {
-    const { execAuditLog, execAuditQuery } = await import("../audit-exec");
+    const { execAuditLog, execAuditQuery } = await import("../api/audit-exec");
 
     const tag = `query_smoke_${Date.now()}`;
     await execAuditLog("query_probe", tag, {});
@@ -105,7 +105,7 @@ describe("audit-exec smoke test", () => {
   it("hyphenated function names work (proves shell: /bin/bash, not /bin/sh)", async () => {
     // This is the canary for the SEC-1 regression. /bin/sh (dash or bash -p)
     // rejects `audit-log` as "not a valid identifier". /bin/bash accepts it.
-    const { execAuditLog } = await import("../audit-exec");
+    const { execAuditLog } = await import("../api/audit-exec");
 
     // if this throws "not a valid identifier", audit-exec has regressed to /bin/sh.
     await expect(execAuditLog("bash_canary", "hyphen function name", {})).resolves.toBeDefined();

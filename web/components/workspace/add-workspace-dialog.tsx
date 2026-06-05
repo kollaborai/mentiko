@@ -9,9 +9,9 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { FolderBrowser } from "@/components/workspace/folder-browser";
 
 interface AddWorkspaceDialogProps {

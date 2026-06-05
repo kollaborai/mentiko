@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { FloatingAppPanels } from "../floating-app-panels";
-import { OPEN_FLOATING_APP_PANEL_EVENT } from "@/lib/floating-app-panel-routing";
+import { OPEN_FLOATING_APP_PANEL_EVENT } from "@/lib/ui/floating-app-panel-routing";
 
 jest.mock("motion/react", () => ({
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,

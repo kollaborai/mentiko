@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { Button } from "@/components/ui/button";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import {
   RefreshFilled as RefreshCw,
   BotMessageSquare as Bot,

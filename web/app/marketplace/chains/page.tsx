@@ -10,9 +10,9 @@ import Link from "next/link";
 import { Star1Filled, DocumentDownloadFilled, FilterFilled, SearchNormalFilled, LinkFilled, ShopFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { TemplateGridSkeleton } from "@/components/skeletons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useDebounce } from "@/lib/performance";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useDebounce } from "@/lib/system/performance";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 
 interface Template {
   id: string;

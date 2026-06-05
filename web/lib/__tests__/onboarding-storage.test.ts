@@ -5,7 +5,7 @@ import {
   isOnboardingDismissed,
   setOnboardingDismissed,
   shouldAutoOpenWelcome,
-} from "../onboarding-storage";
+} from "../system/onboarding-storage";
 
 class MemoryStorage implements Pick<Storage, "getItem" | "setItem" | "removeItem"> {
   private readonly values = new Map<string, string>();

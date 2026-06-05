@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
-import { taskGet, taskGetAllDeps, taskList } from "@/lib/task-store";
-import { sortTasksByDependencyOrder } from "@/lib/task-ordering";
-import { validateTaskId } from "@/lib/task-store";
-import { getWorkspaceId } from "@/lib/workspace-params";
+import { requirePermission } from "@/lib/auth/api-auth";
+import { taskGet, taskGetAllDeps, taskList } from "@/lib/tasks/task-store";
+import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
+import { validateTaskId } from "@/lib/tasks/task-store";
+import { getWorkspaceId } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { apiSuccess, apiError } from "@/lib/api-response";
 

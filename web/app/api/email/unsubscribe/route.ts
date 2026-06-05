@@ -7,9 +7,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   validateUnsubscribeToken,
-} from "@/lib/unsubscribe-token";
-import { suppressForUnsubscribe } from "@/lib/email-suppression";
-import { appendAuditLog } from "@/lib/email-storage";
+} from "@/lib/auth/unsubscribe-token";
+import { suppressForUnsubscribe } from "@/lib/email/email-suppression";
+import { appendAuditLog } from "@/lib/email/email-storage";
 import { BadRequest, RateLimitExceeded } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

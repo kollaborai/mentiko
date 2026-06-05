@@ -1,15 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { BoxFilled, BotMessageSquare, LinkFilled, RouteSquareFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { ArtifactTemplateEditor } from "@/components/settings/artifact-template-editor";
 import { ArtifactGenerateDialog } from "@/components/artifact/artifact-generate-dialog";
 import { ArtifactCreateDialog } from "@/components/agent/artifact-create-dialog";
 import { EmptyState } from "@/components/empty-state";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 interface ArtifactTemplate {
   id: string;

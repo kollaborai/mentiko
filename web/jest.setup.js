@@ -136,7 +136,7 @@ const TestNamespaceContext = createContext({
   namespaces: [{ id: 'default', name: 'Default' }],
 })
 
-jest.mock('@/lib/namespace-context', () => {
+jest.mock('@/lib/ui-context/namespace-context', () => {
   const contextValue = {
     namespaceId: 'default',
     setNamespaceId: () => {},

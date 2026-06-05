@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,16 +18,16 @@ import {
 import { BotMessageSquare, ShieldTickFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import type { AgentProfile, AgentProfileProvider } from "@/lib/types";
-import { useAgentProfiles } from "@/lib/use-agent-profiles";
+import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import { AgentProfileWizard } from "@/components/agent-profile-wizard";
 import {
   DEFAULT_MARKETPLACE_AGENT_MODEL,
   PROVIDER_CREDENTIALS,
   getProviderColors,
   getProviderDisplayName,
-} from "@/lib/agent-provider-catalog";
+} from "@/lib/agents/agent-provider-catalog";
 
 // brand icons for AI providers
 function ProviderBrandIcon({ provider, className }: { provider: string; className?: string }) {

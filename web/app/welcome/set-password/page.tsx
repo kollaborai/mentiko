@@ -2,8 +2,8 @@
 
 import { useState, FormEvent } from "react";
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
-import { hardReplace } from "@/lib/browser-navigation";
+import { authClient } from "@/lib/auth/auth-client";
+import { hardReplace } from "@/lib/ui/browser-navigation";
 
 const MIN_LEN = 12;
 

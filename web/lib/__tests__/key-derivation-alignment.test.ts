@@ -16,7 +16,7 @@
 
 import { execFileSync } from "child_process";
 import { join } from "path";
-import { encrypt, decrypt } from "../secrets-store";
+import { encrypt, decrypt } from "../secrets/secrets-store";
 
 const TEST_SECRET = "test-alignment-secret-key-2026";
 const CODE_ROOT = join(__dirname, "..", "..", "..");

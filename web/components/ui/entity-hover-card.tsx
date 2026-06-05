@@ -7,8 +7,8 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   LinkFilled,

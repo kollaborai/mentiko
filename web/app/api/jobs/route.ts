@@ -1,20 +1,20 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { createJob, listJobs, cleanupOldJobs, type JobType } from "@/lib/job-store";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { createJob, listJobs, cleanupOldJobs, type JobType } from "@/lib/runs/job-store";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import config from "@/lib/config";
 import { join } from "node:path";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
 import { getChainSchema } from "@/lib/schema-loader";
-import { taskGet, taskUpdate } from "@/lib/task-store";
+import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveJobWorkspaceCwd } from "@/lib/job-runner-launch";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
-import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
+import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 

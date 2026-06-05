@@ -18,7 +18,7 @@ import {
   verifyPassword,
   getSecurityHeaders,
   sanitizeSvg,
-} from "../security";
+} from "../auth/security";
 
 // mock NextRequest for testing
 class MockNextRequest {

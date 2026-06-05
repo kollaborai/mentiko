@@ -1,11 +1,11 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { readAgentStates, mergeAgentStates } from "@/lib/run-state";
-import { checkRunAccess } from "@/lib/run-acl";
+import { readAgentStates, mergeAgentStates } from "@/lib/runs/run-state";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

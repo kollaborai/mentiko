@@ -26,20 +26,20 @@
  *   }
  */
 
-import { checkRunAccess } from "@/lib/run-acl";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getRunTokenUsage,
   saveTokenUsage,
   computeTokenCost,
-} from "@/lib/token-store";
+} from "@/lib/system/token-store";
 import { existsSync, readFileSync } from "fs";
 import { config } from "@/lib/config";
 import path from "path";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { DEFAULT_COST_MODEL } from "@/lib/agent-provider-catalog";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { DEFAULT_COST_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 

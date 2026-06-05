@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { AddFilled as Plus, TrashFilled as Trash2, FlashFilled as Zap, HierarchyFilled as GitMerge, PlayFilled as Play } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 export interface ChainEventTrigger {
   event: string;

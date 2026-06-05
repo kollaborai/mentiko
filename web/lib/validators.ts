@@ -1,6 +1,6 @@
-import { validateScheduleTarget } from "./schedule-targets";
+import { validateScheduleTarget } from "./schedules/schedule-targets";
 import type { ScheduleTarget, ScheduleTrigger } from "./types";
-import { isSafeCronExpression } from "./cron-validation";
+import { isSafeCronExpression } from "./schedules/cron-validation";
 
 // validation result type
 export interface ValidationResult {

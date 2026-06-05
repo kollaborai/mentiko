@@ -1,9 +1,9 @@
-import type { Decision } from "../decision-types";
+import type { Decision } from "../decisions/decision-types";
 
 const getDecision = jest.fn();
 const updateDecision = jest.fn();
 
-jest.mock("../decision-storage", () => ({
+jest.mock("../decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => getDecision(...args),
   updateDecision: (...args: unknown[]) => updateDecision(...args),
 }));
@@ -35,7 +35,7 @@ describe("applyDecisionRunResult", () => {
   });
 
   test("applies research output and links the generating run", async () => {
-    const { applyDecisionRunResult } = await import("../decision-run-results");
+    const { applyDecisionRunResult } = await import("../decisions/decision-run-results");
 
     await applyDecisionRunResult({
       namespaceId: "default",
@@ -67,7 +67,7 @@ describe("applyDecisionRunResult", () => {
   });
 
   test("applies guided plan output and links round 3 to the run", async () => {
-    const { applyDecisionRunResult } = await import("../decision-run-results");
+    const { applyDecisionRunResult } = await import("../decisions/decision-run-results");
 
     await applyDecisionRunResult({
       namespaceId: "default",
@@ -104,7 +104,7 @@ describe("applyDecisionRunResult", () => {
   });
 
   test("applies guided questions output and links round 1 to the run", async () => {
-    const { applyDecisionRunResult } = await import("../decision-run-results");
+    const { applyDecisionRunResult } = await import("../decisions/decision-run-results");
 
     await applyDecisionRunResult({
       namespaceId: "default",
@@ -147,7 +147,7 @@ describe("applyDecisionRunResult", () => {
   });
 
   test("applies guided options output and links round 2 to the run", async () => {
-    const { applyDecisionRunResult } = await import("../decision-run-results");
+    const { applyDecisionRunResult } = await import("../decisions/decision-run-results");
 
     await applyDecisionRunResult({
       namespaceId: "default",

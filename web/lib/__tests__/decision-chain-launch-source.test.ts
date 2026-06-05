@@ -19,7 +19,7 @@ describe("decision chain launch source contract", () => {
   });
 
   test("shared chain run service preserves the route response shape", () => {
-    const source = readFileSync(new URL("../chain-run-service.ts", import.meta.url), "utf8");
+    const source = readFileSync(new URL("../runs/chain-run-service.ts", import.meta.url), "utf8");
     expect(source).toContain("export interface StartChainRunResult");
     expect(source).toContain("runId: string");
     expect(source).toContain("chainId: string");

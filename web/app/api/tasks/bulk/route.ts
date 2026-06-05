@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
+import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskClose, taskDelete, validateTaskId } from "@/lib/task-store";
+import { taskClose, taskDelete, validateTaskId } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";

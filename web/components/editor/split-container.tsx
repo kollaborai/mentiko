@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useState, useEffect } from "react";
-import { useEditorStore, type SplitNode } from "@/lib/editor-store";
+import { useEditorStore, type SplitNode } from "@/lib/ui/editor-store";
 import { TabBar } from "./tab-bar";
 import { EditorPane } from "./editor-pane";
 

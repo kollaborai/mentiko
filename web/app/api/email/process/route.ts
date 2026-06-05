@@ -14,10 +14,10 @@ import {
   moveEmail,
   appendAuditLog,
   readEmail,
-} from "@/lib/email-storage";
-import { requirePermission } from "@/lib/rbac-auth";
+} from "@/lib/email/email-storage";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import type { NormalizedEmail } from "@/lib/email-types";
+import type { NormalizedEmail } from "@/lib/email/email-types";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";

@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listProfiles, createProfile, slugify, updateProfile } from "@/lib/agent-profile-storage";
-import { getLegacyProfileSyncUpdates } from "@/lib/agent-profile-legacy-sync";
+import { listProfiles, createProfile, slugify, updateProfile } from "@/lib/agents/agent-profile-storage";
+import { getLegacyProfileSyncUpdates } from "@/lib/agents/agent-profile-legacy-sync";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

@@ -1,19 +1,19 @@
 import { NextRequest } from "next/server";
 import { BadRequest, InternalServerError, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getNamespaceConfig, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getSchedule, incrementRunCount } from "@/lib/schedule-storage";
-import { listWorkspaces } from "@/lib/workspace-storage";
-import { normalizeScheduleTarget } from "@/lib/schedule-targets";
-import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "@/lib/schedule-dispatcher";
-import { mintSessionToken } from "@/lib/session-token";
-import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "@/lib/scheduled-application-storage";
-import { internalApiUrl } from "@/lib/internal-web-origin";
+import { getSchedule, incrementRunCount } from "@/lib/schedules/schedule-storage";
+import { listWorkspaces } from "@/lib/workspaces/workspace-storage";
+import { normalizeScheduleTarget } from "@/lib/schedules/schedule-targets";
+import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "@/lib/schedules/schedule-dispatcher";
+import { mintSessionToken } from "@/lib/auth/session-token";
+import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "@/lib/schedules/scheduled-application-storage";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 

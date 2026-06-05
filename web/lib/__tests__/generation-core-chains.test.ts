@@ -27,7 +27,7 @@ describe("generation core chains", () => {
   });
 
   test("installs visible generation core chains idempotently", async () => {
-    const { ensureGenerationCoreChains, GENERATION_CORE_CHAIN_IDS } = await import("../generation-core-chains");
+    const { ensureGenerationCoreChains, GENERATION_CORE_CHAIN_IDS } = await import("../generation/generation-core-chains");
 
     const first = ensureGenerationCoreChains("default", "default");
     const second = ensureGenerationCoreChains("default", "default");
@@ -56,7 +56,7 @@ describe("generation core chains", () => {
   });
 
   test("preserves explicit profile overrides when upgrading generation core chains", async () => {
-    const { ensureGenerationCoreChains } = await import("../generation-core-chains");
+    const { ensureGenerationCoreChains } = await import("../generation/generation-core-chains");
     const chainDir = join(root, "namespaces", "default", "chains", "task-generation");
     mkdirSync(chainDir, { recursive: true });
     const chainPath = join(chainDir, "chain.json");

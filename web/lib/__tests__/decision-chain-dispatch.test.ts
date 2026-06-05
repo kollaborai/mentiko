@@ -8,11 +8,11 @@ const mockStartChainRun = jest.fn().mockResolvedValue({
   status: "started",
 });
 
-jest.mock("@/lib/chain-run-service", () => ({
+jest.mock("@/lib/runs/chain-run-service", () => ({
   startChainRun: (...args: unknown[]) => mockStartChainRun(...args),
 }));
 
-jest.mock("@/lib/decision-core-chains", () => ({
+jest.mock("@/lib/decisions/decision-core-chains", () => ({
   ensureDecisionCoreChains: jest.fn(),
 }));
 
@@ -30,7 +30,7 @@ describe("startDecisionChainRun", () => {
   });
 
   test("maps synthesis phase to decision-preference-synthesis core chain", async () => {
-    const { startDecisionChainRun } = await import("../decision-chain-dispatch");
+    const { startDecisionChainRun } = await import("../decisions/decision-chain-dispatch");
     await startDecisionChainRun({
       request: new Request("http://localhost/api/decisions/1/guided/synthesize", { method: "POST" }),
       namespaceId: "default",
@@ -56,7 +56,7 @@ describe("startDecisionChainRun", () => {
   });
 
   test("maps retrospective phase to decision-retrospective core chain", async () => {
-    const { startDecisionChainRun } = await import("../decision-chain-dispatch");
+    const { startDecisionChainRun } = await import("../decisions/decision-chain-dispatch");
     await startDecisionChainRun({
       request: new Request("http://localhost/api/decisions/1/retrospective", { method: "POST" }),
       namespaceId: "default",

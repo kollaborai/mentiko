@@ -1,4 +1,4 @@
-import { generateDEKForUser, unwrapDEKForUser, encryptForUser, decryptForUser, shredDEK } from "@/lib/user-crypto";
+import { generateDEKForUser, unwrapDEKForUser, encryptForUser, decryptForUser, shredDEK } from "@/lib/auth/user-crypto";
 import Database from "better-sqlite3";
 import { randomBytes } from "crypto";
 

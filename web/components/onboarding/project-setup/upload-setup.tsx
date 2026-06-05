@@ -10,8 +10,8 @@ import {
   CloseCircleFilled,
 } from "@aliimam/icons";
 import { FolderBrowser } from "@/components/workspace/folder-browser";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 interface UploadSetupProps {
   onComplete: (data: {

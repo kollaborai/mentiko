@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { apiSuccess, withErrorHandling } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
 import config from "@/lib/config";

@@ -12,12 +12,12 @@
  */
 
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { loadOrg, orgMatchesId } from "@/lib/org-storage";
-import { listSharedChains, saveSharedChain, listSharedProfiles } from "@/lib/shared-resources";
-import type { OrgMarketplaceItem } from "@/lib/marketplace-types";
+import { loadOrg, orgMatchesId } from "@/lib/orgs/org-storage";
+import { listSharedChains, saveSharedChain, listSharedProfiles } from "@/lib/system/shared-resources";
+import type { OrgMarketplaceItem } from "@/lib/marketplace/marketplace-types";
 import { Unauthorized, NotFound, Forbidden, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

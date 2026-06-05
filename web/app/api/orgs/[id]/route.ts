@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import {
   deleteOrg,
   loadOrgById,
   saveOrg,
   orgMatchesId,
-} from "@/lib/org-storage";
+} from "@/lib/orgs/org-storage";
 import { Unauthorized, NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

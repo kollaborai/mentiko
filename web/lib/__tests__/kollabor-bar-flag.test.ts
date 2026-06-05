@@ -1,4 +1,4 @@
-import { isKollaborBarEnabled } from "../kollabor-bar-flag";
+import { isKollaborBarEnabled } from "../ai-engine/kollabor-bar-flag";
 
 describe("isKollaborBarEnabled", () => {
   it("defaults the floating Kollabor bar on when the flag is unset", () => {

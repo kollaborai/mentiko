@@ -16,7 +16,7 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-1",
     sessionId: "session-1",

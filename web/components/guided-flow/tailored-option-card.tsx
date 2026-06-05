@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { cn } from "@/lib/utils";
-import type { TailoredOption } from "@/lib/decision-types";
+import type { TailoredOption } from "@/lib/decisions/decision-types";
 
 interface TailoredOptionCardProps {
   option: TailoredOption;

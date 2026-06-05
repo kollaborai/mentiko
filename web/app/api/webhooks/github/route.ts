@@ -7,14 +7,14 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import {
   loadWebhooks,
   logWebhookEvent,
-} from "@/lib/webhook-storage";
+} from "@/lib/webhooks/webhook-storage";
 import type {
   WebhookEvent,
   WebhookSubscription,
   WebhookEventType,
-} from "@/lib/webhook-types";
-import { buildChildEnv } from "@/lib/child-env";
-import { rateLimiters, withRateLimit } from "@/lib/security";
+} from "@/lib/webhooks/webhook-types";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { rateLimiters, withRateLimit } from "@/lib/auth/security";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 

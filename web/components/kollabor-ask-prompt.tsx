@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { replyToTool } from "@/lib/mentiko-mcp-bar-client";
+import { replyToTool } from "@/lib/ai-engine/mentiko-mcp-bar-client";
 import { ShieldTickFilled, Warning2Filled } from "@aliimam/icons";
 
 interface KollaborAskPromptProps {

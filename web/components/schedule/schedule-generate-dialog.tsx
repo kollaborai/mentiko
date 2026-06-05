@@ -14,10 +14,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { getCronDescription, getTimezones, isValidCron, isValidTimezone } from "@/lib/schedule-utils";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { getCronDescription, getTimezones, isValidCron, isValidTimezone } from "@/lib/schedules/schedule-utils";
 import {
   buildScheduleCreateRequest,
   getScheduleTargetSummary,

@@ -5,20 +5,20 @@ import config from "@/lib/config";
 import { existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceConfig, getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { checkAuth } from "@/lib/api-auth";
-import { requirePermission } from "@/lib/rbac-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { spawn } from "child_process";
 import { validateSchedule } from "@/lib/validators";
-import { checkScheduleConflicts } from "@/lib/schedule-utils";
-import { canExecute, incrementActiveRuns, decrementActiveRuns } from "@/lib/circuit-breaker";
-import { buildChildEnv } from "@/lib/child-env";
-import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
+import { checkScheduleConflicts } from "@/lib/schedules/schedule-utils";
+import { canExecute, incrementActiveRuns, decrementActiveRuns } from "@/lib/api/circuit-breaker";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import {
   requiresElevatedScheduleTargetPermission,
   scheduleMatchesWorkspace,
   validateScheduleTarget,
-} from "@/lib/schedule-targets";
+} from "@/lib/schedules/schedule-targets";
 import {
   listSchedules,
   getSchedule,
@@ -28,8 +28,8 @@ import {
   addSchedule,
   removeSchedule,
   slugify,
-} from "@/lib/schedule-storage";
-import { listWorkspaces, getWorkspace } from "@/lib/workspace-storage";
+} from "@/lib/schedules/schedule-storage";
+import { listWorkspaces, getWorkspace } from "@/lib/workspaces/workspace-storage";
 import type { Schedule, ScheduleTarget, ScheduleTrigger } from "@/lib/types";
 
 export const dynamic = "force-dynamic";

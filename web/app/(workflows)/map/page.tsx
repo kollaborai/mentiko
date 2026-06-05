@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { ArrowRight2Filled as ChevronRight, BoxFilled as Box, BotMessageSquare as Bot, LinkFilled as Workflow, ArrowSwapFilled as GitBranch, ArrowRight } from "@aliimam/icons";
 
 interface ArtifactTemplate {

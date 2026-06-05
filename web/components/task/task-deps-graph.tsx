@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { ArrowDown2Filled as ChevronDown, ArrowRight2Filled as ChevronRight, ArrowUpFilled as ArrowUp, ArrowDownFilled as ArrowDown, AddFilled as Plus } from "@aliimam/icons";
-import { graphToNodes, mapPriority } from "@/lib/task-transforms";
+import { graphToNodes, mapPriority } from "@/lib/tasks/task-transforms";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
-import { unwrapApiData } from "@/lib/api-client";
-import type { GraphOutput, Task } from "@/lib/task-types";
+import { unwrapApiData } from "@/lib/api/api-client";
+import type { GraphOutput, Task } from "@/lib/tasks/task-types";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TaskDepPickerDialog } from "./task-dep-picker-dialog";
 

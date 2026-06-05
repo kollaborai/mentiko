@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { TaskSquareFilled, RouteSquareFilled, LinkFilled, JudgeFilled } from "@aliimam/icons";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { PageBanner } from "@/components/ui/page-banner";
 import { TaskFilters } from "@/components/task/task-filters";
 import { TaskListItem } from "@/components/task/task-list-item";
@@ -14,13 +14,13 @@ import { TaskGenerateDialog } from "@/components/task/task-generate-dialog";
 import { TaskEditDialog } from "@/components/task/task-edit-dialog";
 import { TaskOverview } from "@/components/task/task-overview";
 import { TaskTreeView } from "@/components/task/task-tree-view";
-import { toTask, groupByEpic, priorityOrder } from "@/lib/task-transforms";
-import { buildTaskListQuery } from "@/lib/task-filter-query";
-import { sortTasksByDependencyOrder } from "@/lib/task-ordering";
+import { toTask, groupByEpic, priorityOrder } from "@/lib/tasks/task-transforms";
+import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
+import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarResizeHandle,
@@ -34,7 +34,7 @@ import type {
   TaskFilterStatus,
   TaskFilterType,
   TaskSortBy,
-} from "@/lib/task-types";
+} from "@/lib/tasks/task-types";
 
 export default function TasksPage() {
   return (

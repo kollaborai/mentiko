@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import { rotateSecrets } from "@/lib/secrets-store";
+import { rotateSecrets } from "@/lib/secrets/secrets-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { BadRequest, Unauthorized, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { timingSafeEqual } from "@/lib/security";
+import { timingSafeEqual } from "@/lib/auth/security";
 
 export const dynamic = "force-dynamic";
 

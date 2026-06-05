@@ -15,18 +15,18 @@ import {
 } from "@aliimam/icons";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { cn } from "@/lib/utils";
-import type { SecretMeta } from "@/lib/secrets-store";
+import type { SecretMeta } from "@/lib/secrets/secrets-store";
 import {
   FONT_SCALE_DEFAULT,
   FONT_SCALE_MAX,
   FONT_SCALE_MIN,
   useKollaborBarStore,
-} from "@/lib/kollabor-bar-store";
+} from "@/lib/ui/kollabor-bar-store";
 import {
   ENGINE_PROVIDER_DEFAULTS,
   MENTIKO_GATEWAY_PROFILE,
   getEngineProviderDefault,
-} from "@/lib/agent-provider-catalog";
+} from "@/lib/agents/agent-provider-catalog";
 
 interface EngineProfile {
   name: string;

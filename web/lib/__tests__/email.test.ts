@@ -25,7 +25,7 @@ describe("sendEmail", () => {
   });
 
   it("reads authenticated SMTP env at send time", async () => {
-    const { sendEmail } = await import("../email");
+    const { sendEmail } = await import("../email/email");
 
     process.env.SMTP_HOST = "74.207.252.96";
     process.env.SMTP_PORT = "587";
@@ -53,7 +53,7 @@ describe("sendEmail", () => {
   });
 
   it("supports unauthenticated relay mode for tenant-hosted email", async () => {
-    const { sendEmail } = await import("../email");
+    const { sendEmail } = await import("../email/email");
 
     process.env.SMTP_HOST = "74.207.252.96";
     process.env.SMTP_PORT = "587";
@@ -74,7 +74,7 @@ describe("sendEmail", () => {
   });
 
   it("allows transactional callers to override the from address", async () => {
-    const { sendEmail } = await import("../email");
+    const { sendEmail } = await import("../email/email");
 
     process.env.SMTP_HOST = "74.207.252.96";
     process.env.SMTP_PORT = "587";

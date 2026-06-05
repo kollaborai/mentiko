@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ClockFilled as Clock, GlobalFilled as Globe, TickCircleFilled as Check, CloseCircleFilled as X } from "@aliimam/icons";
-import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedule-utils";
+import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedules/schedule-utils";
 
 interface ScheduleEditorProps {
   chainName: string;

@@ -24,10 +24,10 @@ import {
   BotMessageSquare as Bot,
 } from "@aliimam/icons";
 import { useRouter } from "next/navigation";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { useSharedChains } from "@/lib/chains-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { useSharedChains } from "@/lib/chains/chains-store";
 
 interface ChainAgent {
   id: string;

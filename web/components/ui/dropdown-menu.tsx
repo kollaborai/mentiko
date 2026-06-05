@@ -5,7 +5,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { TickCircleFilled as Check, ArrowRight2Filled as ChevronRight, RecordCircleFilled as Circle } from "@aliimam/icons"
 
 import { cn } from "@/lib/utils"
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z"
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z"
 
 const DropdownMenu = DropdownMenuPrimitive.Root
 

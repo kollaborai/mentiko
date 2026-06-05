@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Abstract60Shapes } from "@aliimam/vectors";
 import { GradientDots } from "@/components/ui/gradient-dots";
-import type { TradeoffQuestion, TradeoffAnswer } from "@/lib/decision-types";
+import type { TradeoffQuestion, TradeoffAnswer } from "@/lib/decisions/decision-types";
 import { TradeoffCard } from "@/components/guided-flow/tradeoff-card";
 
 interface Round1CardsProps {

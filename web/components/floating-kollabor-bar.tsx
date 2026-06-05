@@ -14,9 +14,9 @@ import {
   KOLLABOR_BAR_DEFAULT_DOCK,
   getKollaborBarDockForPoint,
   type KollaborBarDock,
-} from "@/lib/kollabor-bar-store";
-import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
+} from "@/lib/ui/kollabor-bar-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
 import { cn } from "@/lib/utils";
 import {
   getOrCreateSession,
@@ -26,7 +26,7 @@ import {
   ping as enginePing,
   setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
-} from "@/lib/kollabor-engine-client";
+} from "@/lib/ai-engine/kollabor-engine-client";
 import { KollaborPermissionPrompt } from "@/components/kollabor-permission-prompt";
 import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
 import { KollaborModeChoicePrompt } from "@/components/kollabor-mode-choice-prompt";
@@ -37,23 +37,23 @@ import {
   setMcpBarStorageScope,
   syncSessionToken,
   replyToTool,
-} from "@/lib/mentiko-mcp-bar-client";
-import type { UIEffect } from "@/lib/mentiko-mcp-inbox";
+} from "@/lib/ai-engine/mentiko-mcp-bar-client";
+import type { UIEffect } from "@/lib/ai-engine/mentiko-mcp-inbox";
 import { showToast } from "@/components/notifications-panel";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { unwrapApiData } from "@/lib/api-client";
-import { isRecoverableKollaborSessionError } from "@/lib/kollabor-session-errors";
-import { normalizeTaskNavigationRoute } from "@/lib/task-routes";
-import { repairAgentTextSpacing } from "@/lib/agent-message-text";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { isRecoverableKollaborSessionError } from "@/lib/ai-engine/kollabor-session-errors";
+import { normalizeTaskNavigationRoute } from "@/lib/tasks/task-routes";
+import { repairAgentTextSpacing } from "@/lib/agents/agent-message-text";
 import {
   OPEN_FLOATING_APP_PANEL_EVENT,
   getFloatingPanelRouteTitle,
   isFloatingPanelRoute,
-} from "@/lib/floating-app-panel-routing";
-import { useUser } from "@/lib/user-context";
-import { CODEX_INLINE_AUTH_MODEL } from "@/lib/agent-provider-catalog";
+} from "@/lib/ui/floating-app-panel-routing";
+import { useUser } from "@/lib/ui-context/user-context";
+import { CODEX_INLINE_AUTH_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 10);

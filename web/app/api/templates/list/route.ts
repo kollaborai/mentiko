@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getTemplates } from "@/lib/templates";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getTemplates } from "@/lib/system/templates";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

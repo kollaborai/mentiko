@@ -1,4 +1,4 @@
-import { normalizeTaskNavigationRoute, taskDetailHref } from "../task-routes";
+import { normalizeTaskNavigationRoute, taskDetailHref } from "../tasks/task-routes";
 
 describe("task routes", () => {
   it("builds the split-pane task detail href", () => {

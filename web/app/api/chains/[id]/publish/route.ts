@@ -11,8 +11,8 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceConfig, getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import {
   publishChain,
@@ -20,7 +20,7 @@ import {
   getPublishedChain,
   type ChainVisibility,
   type PublishRequest,
-} from "@/lib/chain-publish-store";
+} from "@/lib/chains/chain-publish-store";
 import { Unauthorized, NotFound, Forbidden, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

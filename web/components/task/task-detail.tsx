@@ -8,7 +8,7 @@ import { TaskChildren } from "./task-children";
 import { TaskComments } from "./task-comments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
-import type { Task, TaskComment } from "@/lib/task-types";
+import type { Task, TaskComment } from "@/lib/tasks/task-types";
 import { Markdown } from "@/components/ui/markdown";
 
 interface TaskDetailProps {

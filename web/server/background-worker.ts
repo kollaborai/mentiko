@@ -4,18 +4,18 @@ import {
   clearBackgroundWorkerPid,
   writeBackgroundWorkerPid,
   writeBackgroundWorkerStatusFile,
-} from "../lib/background-worker-state";
-import { reconcileOrphanedRuns } from "../lib/run-reconciler";
+} from "../lib/system/background-worker-state";
+import { reconcileOrphanedRuns } from "../lib/runs/run-reconciler";
 import {
   getSchedulerStatus,
   startScheduler,
   stopScheduler,
-} from "../lib/scheduler-service";
+} from "../lib/schedules/scheduler-service";
 import {
   getAutoRunServiceStatus,
   startAutoRunService,
   stopAutoRunService,
-} from "../lib/auto-run-service";
+} from "../lib/runs/auto-run-service";
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;

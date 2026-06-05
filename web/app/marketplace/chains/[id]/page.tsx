@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { VisualChainEditor as VisualChainEditorNew } from "@/components/chain/visual-editor-reactflow";
 import { TodoItem } from "@/components/ui/todo-item";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { Star1Filled, DocumentDownloadFilled, CopyFilled, FlashFilled, GlobalFilled, PeopleFilled, DocumentFilled, TrendUpFilled, LinkFilled, BotMessageSquare, Link2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import type { ChainAgent, ChainBranch } from "@/lib/types";
 
 interface Template {

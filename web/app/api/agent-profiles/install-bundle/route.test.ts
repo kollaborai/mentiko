@@ -4,7 +4,7 @@
 
 import type { NextRequest } from "next/server";
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
@@ -17,14 +17,14 @@ const mockCreateProfile = jest.fn();
 const mockListProfiles = jest.fn();
 const mockUpdateProfile = jest.fn();
 
-jest.mock("@/lib/agent-profile-storage", () => ({
+jest.mock("@/lib/agents/agent-profile-storage", () => ({
   createProfile: (...args: unknown[]) => mockCreateProfile(...args),
   listProfiles: (...args: unknown[]) => mockListProfiles(...args),
   updateProfile: (...args: unknown[]) => mockUpdateProfile(...args),
 }));
 
 import { POST } from "./route";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 function makeRequest(provider: string): NextRequest {
   return new Request("http://localhost/api/agent-profiles/install-bundle", {

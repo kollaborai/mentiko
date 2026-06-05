@@ -3,11 +3,11 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync, copyFileSync } from
 import { join } from "path";
 import { orgPath } from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getDefaultVersion } from "@/lib/version-utils";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getDefaultVersion } from "@/lib/system/version-utils";
 import { validateChain } from "@/lib/validators";
-import { execAuditLog } from "@/lib/audit-exec";
-import { addAuditLog } from "@/lib/audit-queue";
+import { execAuditLog } from "@/lib/api/audit-exec";
+import { addAuditLog } from "@/lib/api/audit-queue";
 import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

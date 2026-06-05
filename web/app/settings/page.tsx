@@ -7,7 +7,7 @@ import {
   Setting2Filled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { SETTINGS_SIDEBAR_GROUPS, type SettingsNavItem } from "@/lib/settings-nav";
+import { SETTINGS_SIDEBAR_GROUPS, type SettingsNavItem } from "@/lib/ui/settings-nav";
 
 const SETTINGS_DESCRIPTIONS: Record<string, string> = {
   dashboard: "Top-level settings overview",

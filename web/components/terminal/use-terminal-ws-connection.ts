@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { unwrapApiData } from "@/lib/api-client";
-import { getTerminalWsBaseUrl } from "@/lib/terminal-ws-url";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { getTerminalWsBaseUrl } from "@/lib/pty/terminal-ws-url";
 
 export type TerminalWsStatus = "checking" | "running" | "down";
 

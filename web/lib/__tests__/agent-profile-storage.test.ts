@@ -32,7 +32,7 @@ describe("agent profile storage", () => {
       findAdvisorDefaultProfile,
       getProfile,
       updateProfile,
-    } = await import("../agent-profile-storage");
+    } = await import("../agents/agent-profile-storage");
 
     createProfile("default", "default", {
       id: "agent-default",
@@ -74,7 +74,7 @@ describe("agent profile storage", () => {
       createProfile,
       getProfile,
       updateProfile,
-    } = await import("../agent-profile-storage");
+    } = await import("../agents/agent-profile-storage");
 
     createProfile("default", "default", {
       id: "kollab",

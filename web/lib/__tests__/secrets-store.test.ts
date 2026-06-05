@@ -17,11 +17,11 @@ jest.mock("../config", () => ({
   },
 }));
 
-jest.mock("../agent-profile-storage", () => ({
+jest.mock("../agents/agent-profile-storage", () => ({
   listProfiles: jest.fn(() => []),
 }));
 
-const { listProfiles } = require("../agent-profile-storage");
+const { listProfiles } = require("../agents/agent-profile-storage");
 
 import {
   encrypt,
@@ -35,7 +35,7 @@ import {
   getSecretByName,
   resolveProfileEnvVars,
   findProfilesUsingSecret,
-} from "../secrets-store";
+} from "../secrets/secrets-store";
 
 describe("secrets-store", () => {
   const testNamespace = "test-ns";

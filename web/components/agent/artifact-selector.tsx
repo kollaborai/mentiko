@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 const TYPE_META: Record<ArtifactType, { label: string; ext: string; icon: React.ReactNode; color: string }> = {
   markdown: { label: "Markdown", ext: ".md", icon: <FileText className="h-3 w-3" />, color: "text-blue-400" },

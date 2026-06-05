@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MentikoAgentSettingsPage from "./page";
-import { FONT_SCALE_DEFAULT, useKollaborBarStore } from "@/lib/kollabor-bar-store";
+import { FONT_SCALE_DEFAULT, useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
 
 jest.mock("@/components/ui/page-banner", () => ({
   PageBanner: ({ title, subtitle }: { title: string; subtitle: string }) => (

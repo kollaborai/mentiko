@@ -1,7 +1,7 @@
 import * as React from "react"
 import { CheckFilled as Check, CopyFilled as Copy } from "@aliimam/icons"
 import { cn } from "@/lib/utils"
-import { copyToClipboard } from "@/lib/copy-to-clipboard"
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard"
 import { Button } from "@/components/ui/button"
 
 export interface CodeBlockProps extends React.HTMLAttributes<HTMLDivElement> {

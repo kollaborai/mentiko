@@ -33,15 +33,15 @@ jest.mock("@/components/must-change-password-gate", () => ({
   ),
 }));
 
-jest.mock("@/lib/namespace-context", () => ({
+jest.mock("@/lib/ui-context/namespace-context", () => ({
   NamespaceProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-jest.mock("@/lib/workspace-context", () => ({
+jest.mock("@/lib/ui-context/workspace-context", () => ({
   WorkspaceProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-jest.mock("@/lib/user-context", () => ({
+jest.mock("@/lib/ui-context/user-context", () => ({
   UserProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
@@ -58,7 +58,7 @@ jest.mock("@/components/offline-indicator", () => ({
   OnlineStatusBanner: () => null,
 }));
 
-jest.mock("@/lib/sync-queue", () => ({
+jest.mock("@/lib/system/sync-queue", () => ({
   useSyncQueue: () => ({ process: jest.fn() }),
 }));
 
@@ -66,7 +66,7 @@ jest.mock("@/hooks", () => ({
   useOnlineStatus: () => ({ isOnline: true, wasOffline: false }),
 }));
 
-jest.mock("@/lib/notification-preferences", () => ({
+jest.mock("@/lib/notifications/notification-preferences", () => ({
   useNotificationPreferences: () => ({ init: jest.fn() }),
 }));
 
@@ -102,22 +102,22 @@ jest.mock("@/components/floating-kollabor-bar", () => ({
   FloatingKollaborBar: () => null,
 }));
 
-jest.mock("@/lib/kollabor-bar-flag", () => ({
+jest.mock("@/lib/ai-engine/kollabor-bar-flag", () => ({
   isKollaborBarEnabled: () => false,
 }));
 
-jest.mock("@/lib/floating-app-panel-routing", () => ({
+jest.mock("@/lib/ui/floating-app-panel-routing", () => ({
   getFloatingPanelSrc: (path: string) => path,
   isFloatingPanelRoute: () => false,
   isFloatingPanelSurface: () => mockIsFloatingPanelSurface,
 }));
 
-jest.mock("@/lib/pill-nav-preferences", () => ({
+jest.mock("@/lib/ui/pill-nav-preferences", () => ({
   usePillNavPreferences: (selector: (state: { hydrate: () => void }) => unknown) =>
     selector({ hydrate: mockHydrate }),
 }));
 
-jest.mock("@/lib/user-display-preferences", () => ({
+jest.mock("@/lib/ui/user-display-preferences", () => ({
   applyStoredUserDisplayPreferences: jest.fn(),
 }));
 

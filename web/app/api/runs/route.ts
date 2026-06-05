@@ -1,15 +1,15 @@
 import { NextRequest } from "next/server";
 import { readdirSync, readFileSync, existsSync, rmdirSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listWorkspaces, checkWorkspaceAccess } from "@/lib/workspace-storage";
-import { getRunTokenUsage } from "@/lib/token-store";
-import { checkRunAccess, normalizeRunId } from "@/lib/run-acl";
+import { listWorkspaces, checkWorkspaceAccess } from "@/lib/workspaces/workspace-storage";
+import { getRunTokenUsage } from "@/lib/system/token-store";
+import { checkRunAccess, normalizeRunId } from "@/lib/auth/run-acl";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

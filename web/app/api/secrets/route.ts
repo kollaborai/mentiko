@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listSecrets, createSecret, deleteSecret, updateSecret, findProfilesUsingSecret, getSecretsStatus } from "@/lib/secrets-store";
+import { listSecrets, createSecret, deleteSecret, updateSecret, findProfilesUsingSecret, getSecretsStatus } from "@/lib/secrets/secrets-store";
 import { Unauthorized, BadRequest, NotFound, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

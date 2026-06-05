@@ -15,23 +15,23 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-inbox", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-inbox", () => ({
   consumeResult: jest.fn(),
   storeResult: jest.fn(),
 }));
 
-jest.mock("@/lib/auth", () => ({
+jest.mock("@/lib/auth/auth", () => ({
   validateRequest: jest.fn(),
 }));
 
-jest.mock("@/lib/session-token", () => ({
+jest.mock("@/lib/auth/session-token", () => ({
   verifySessionToken: jest.fn(),
 }));
 
 import { GET, POST } from "./route";
-import { consumeResult, storeResult } from "@/lib/mentiko-mcp-inbox";
-import { validateRequest } from "@/lib/auth";
-import { verifySessionToken } from "@/lib/session-token";
+import { consumeResult, storeResult } from "@/lib/ai-engine/mentiko-mcp-inbox";
+import { validateRequest } from "@/lib/auth/auth";
+import { verifySessionToken } from "@/lib/auth/session-token";
 
 function makeRequest(
   url: string,

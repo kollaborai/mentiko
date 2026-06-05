@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { join } from "path";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
 import { BadRequest, NotFound } from "@/lib/api-errors";

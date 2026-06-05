@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import {
   createOrg,
   listOrgs,
   type Org,
-} from "@/lib/org-storage";
-import { ensureNamespaceDirs } from "@/lib/auth-server";
+} from "@/lib/orgs/org-storage";
+import { ensureNamespaceDirs } from "@/lib/auth/auth-server";
 import { Conflict, BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

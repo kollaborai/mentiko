@@ -6,36 +6,36 @@
 import { NextRequest } from "next/server";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
   getNamespaceIdFromRequest,
   getOrgIdFromRequest,
   getNamespaceConfig,
 } from "@/lib/namespace-config";
-import { readSystemSettings } from "@/lib/system-settings";
+import { readSystemSettings } from "@/lib/system/system-settings";
 import {
   getAutoRunCandidates,
   isTaskReady,
   reconcileActiveAutoRunTasks,
   reconcileTaskActiveRun,
-} from "@/lib/auto-run";
-import { taskGet, taskUpdate } from "@/lib/task-store";
-import { getWorkspace, resolveAutoRun } from "@/lib/workspace-storage";
-import { getJob } from "@/lib/job-store";
-import { getAllChains, buildChainSummary } from "@/lib/chain-utils";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
+} from "@/lib/runs/auto-run";
+import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { getWorkspace, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
+import { getJob } from "@/lib/runs/job-store";
+import { getAllChains, buildChainSummary } from "@/lib/chains/chain-utils";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
 import config, { nsPath } from "@/lib/config";
 import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import {
   buildGenerationPromptFromTaskRecommendation,
   normalizeTaskChainRecommendation,
-} from "@/lib/task-chain-recommendation";
-import { internalApiUrl } from "@/lib/internal-web-origin";
-import { isNonExecutionRun } from "@/lib/run-provenance";
+} from "@/lib/tasks/task-chain-recommendation";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
 

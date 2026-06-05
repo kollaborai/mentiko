@@ -1,7 +1,7 @@
 "use client";
 
 import { TaskSquareFilled } from "@aliimam/icons";
-import type { Decision } from "@/lib/decision-types";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { GradientDots } from "@/components/ui/gradient-dots";
 import { Abstract65Shapes } from "@aliimam/vectors";
 import {

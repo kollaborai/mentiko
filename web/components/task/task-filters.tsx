@@ -6,7 +6,7 @@ import type {
   TaskFilterStatus,
   TaskFilterType,
   TaskSortBy,
-} from "@/lib/task-types";
+} from "@/lib/tasks/task-types";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,

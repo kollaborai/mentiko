@@ -2,7 +2,7 @@ import {
   getMissingAgentProfileId,
   getMissingChainDefaultProfileId,
   withChainDefaultAgentProfile,
-} from "../chain-profile-settings";
+} from "../chains/chain-profile-settings";
 
 describe("chain profile settings", () => {
   const profiles = [

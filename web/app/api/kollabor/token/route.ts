@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 // Session-gated engine endpoint discovery. The browser talks to a same-origin
 // proxy; the proxy reads ~/.kollab/engine.token server-side.

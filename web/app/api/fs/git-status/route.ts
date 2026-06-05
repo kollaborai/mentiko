@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { execSync } from "child_process";
-import { checkAuth } from "@/lib/api-auth";
-import { resolveAndValidate, getAllowedRoots } from "@/lib/path-validation";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { BadRequest, Forbidden, InternalServerError, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

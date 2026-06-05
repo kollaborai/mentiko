@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import config from "@/lib/config";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";

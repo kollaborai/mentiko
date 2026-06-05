@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { RefreshFilled, InfoCircleFilled, DangerFilled, FilterFilled, DocumentTextFilled, CommandSquareFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import type { LogLevel, LogEntry } from "@/lib/system-logger";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import type { LogLevel, LogEntry } from "@/lib/system/system-logger";
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   error: "text-red-400",

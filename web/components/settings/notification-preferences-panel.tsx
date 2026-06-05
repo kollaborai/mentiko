@@ -17,7 +17,7 @@ import {
   useNotificationPreferences,
   NotificationCategory,
   NotificationChannel,
-} from "@/lib/notification-preferences";
+} from "@/lib/notifications/notification-preferences";
 
 const categoryInfo: Record<
   NotificationCategory,

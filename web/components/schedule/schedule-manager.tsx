@@ -11,10 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { CRON_PRESETS, getTimezones, getUserTimezone, getCronDescription, formatNextRun } from "@/lib/schedule-utils";
+import { CRON_PRESETS, getTimezones, getUserTimezone, getCronDescription, formatNextRun } from "@/lib/schedules/schedule-utils";
 import type { Chain } from "@/lib/types";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface ScheduleManagerProps {
   chain: Chain;

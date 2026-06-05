@@ -9,7 +9,7 @@ import { useJobStatus } from "../use-job-status";
 // Mock namespace fetch
 const mockFetchWithNamespace = jest.fn();
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace
   })

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { authClient, useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DangerFilled, UserFilled, LockFilled, ColorSwatchFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { AgentAvatar } from "@/components/agent/agent-avatar";
-import { sanitizeSvg } from "@/lib/security";
+import { sanitizeSvg } from "@/lib/auth/security";
 import Image from "next/image";
 
 

@@ -5,9 +5,9 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { MessageSquareFilled as MessageSquare, PlayFilled as Play, TickCircleFilled as CheckCircle2, InfoCircleFilled as AlertCircle, ActivityFilled as Activity, RecordCircleFilled as Circle, CloseCircleFilled as X, StopFilled as Square } from "@aliimam/icons";
 import { ActivityItemSkeleton } from "@/components/skeletons";
-import { useWorkspace } from "@/lib/workspace-context";
-import { unwrapApiData } from "@/lib/api-client";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 
 interface AgentEvent {
   filename: string;

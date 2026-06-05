@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getArtifactTemplates,
   saveArtifactTemplates,
   type ArtifactTemplate,
   type ArtifactType,
-} from "@/lib/artifact-template-storage";
+} from "@/lib/system/artifact-template-storage";
 import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

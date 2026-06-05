@@ -14,7 +14,7 @@ import type {
   SendEmailOptions,
   EmailQuota,
   AuditLogEntry,
-} from "../email-types";
+} from "../email/email-types";
 
 // type guards
 function isValidEmailSource(value: unknown): value is EmailSource {

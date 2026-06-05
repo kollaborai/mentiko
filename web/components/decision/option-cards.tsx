@@ -6,7 +6,7 @@ import {
   ArrowDown2Filled as ChevronDown,
   ArrowUp2Filled as ChevronUp,
 } from "@aliimam/icons";
-import type { Option, Recommendation } from "@/lib/decision-types";
+import type { Option, Recommendation } from "@/lib/decisions/decision-types";
 import { cn } from "@/lib/utils";
 import { GradientDots } from "@/components/ui/gradient-dots";
 import { Abstract80Shapes } from "@aliimam/vectors";

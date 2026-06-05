@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
-import { loadLink, deleteLink } from "@/lib/link-utils";
+import { loadLink, deleteLink } from "@/lib/links/link-utils";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { normalizeLinkId } from "@/lib/link-run-runtime";
+import { normalizeLinkId } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

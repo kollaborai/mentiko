@@ -4,15 +4,15 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { CloseCircleFilled } from "@aliimam/icons";
 import { WelcomeWizard } from "./welcome-wizard";
-import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useUser } from "@/lib/user-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useUser } from "@/lib/ui-context/user-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import {
   consumeWelcomeOpenRequest,
   setOnboardingDismissed,
   shouldAutoOpenWelcome,
-} from "@/lib/onboarding-storage";
+} from "@/lib/system/onboarding-storage";
 
 export function FloatingWelcomePanel({ workspacesDir }: { workspacesDir?: string }) {
   const [open, setOpen] = useState(false);

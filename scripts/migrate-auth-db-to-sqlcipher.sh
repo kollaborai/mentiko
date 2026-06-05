@@ -28,5 +28,5 @@ fi
 
 echo "[migrate] running sqlcipher migration..."
 cd "$WEB_DIR"
-node -e "require('./lib/sqlcipher-migrate').migrateToSqlCipher().then(() => process.exit(0), e => { console.error(e); process.exit(1) })"
+node -e "require('./lib/system/sqlcipher-migrate').migrateToSqlCipher().then(() => process.exit(0), e => { console.error(e); process.exit(1) })"
 echo "[migrate] done"

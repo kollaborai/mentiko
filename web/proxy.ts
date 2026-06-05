@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { getSecurityHeaders } from "@/lib/security";
-import { getStore, LIMITS, OPT_OUT_PATHS } from "@/lib/rate-limit";
+import { getSecurityHeaders } from "@/lib/auth/security";
+import { getStore, LIMITS, OPT_OUT_PATHS } from "@/lib/api/rate-limit";
 import {
   applyFloatingPanelFrameHeaders,
   isFloatingPanelFrameRequest,
-} from "@/lib/floating-app-panel-routing";
+} from "@/lib/ui/floating-app-panel-routing";
 // note: CSRF validation via double-submit cookie is deferred.
 // SameSite=Strict on session cookies already mitigates CSRF risk.
 // Full CSRF token validation would require auth-client.ts to send x-csrf-token header.

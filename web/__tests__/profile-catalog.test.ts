@@ -2,10 +2,10 @@
  * @jest-environment node
  */
 
-import { buildProfileCatalog } from "@/lib/profile-catalog";
+import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
 const mockListProfiles = jest.fn();
-jest.mock("@/lib/agent-profile-storage", () => ({
+jest.mock("@/lib/agents/agent-profile-storage", () => ({
   listProfiles: (...args: unknown[]) => mockListProfiles(...args),
 }));
 

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { join, relative, resolve } from "path";
 import { orgPath } from "@/lib/config";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { readLogs, type LogEntry, type LogLevel } from "@/lib/system-logger";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { readLogs, type LogEntry, type LogLevel } from "@/lib/system/system-logger";
 
 export const dynamic = "force-dynamic";
 

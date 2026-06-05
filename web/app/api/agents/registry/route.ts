@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceConfig } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getAllStandaloneAgents, type AgentArtifacts } from "@/lib/agent-loader";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getAllStandaloneAgents, type AgentArtifacts } from "@/lib/agents/agent-loader";
 import type { RetryConfig, AgentAuthority, AgentContext } from "@/lib/types";
 import { apiSuccess } from "@/lib/api-response";
 

@@ -1,15 +1,15 @@
 import { readFileSync, writeFileSync, existsSync, rmSync } from "fs";
 import { join } from "path";
-import { taskMergeMeta } from "@/lib/task-store";
-import { writeLog } from "@/lib/system-logger";
+import { taskMergeMeta } from "@/lib/tasks/task-store";
+import { writeLog } from "@/lib/system/system-logger";
 import { getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { readAgentStates, mergeAgentStates } from "@/lib/run-state";
-import { pty } from "@/lib/pty-client";
-import { checkRunAccess } from "@/lib/run-acl";
+import { readAgentStates, mergeAgentStates } from "@/lib/runs/run-state";
+import { pty } from "@/lib/pty/pty-client";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { isNonExecutionRun } from "@/lib/run-provenance";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
 

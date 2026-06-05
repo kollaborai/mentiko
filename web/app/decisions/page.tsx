@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { AddFilled as Plus, MagicStarFilled as Sparkles, HierarchyFilled as GitBranch, JudgeFilled, TaskSquareFilled, RouteSquareFilled, LinkFilled } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";
 import { DecisionDetail } from "@/components/decision/decision-detail";
@@ -21,7 +21,7 @@ import {
   WorkflowSidebarSectionHeader,
   WorkflowSidebarSegmentedControl,
 } from "@/components/ui/workflow-sidebar";
-import type { Decision, DecisionStatus } from "@/lib/decision-types";
+import type { Decision, DecisionStatus } from "@/lib/decisions/decision-types";
 import { cn } from "@/lib/utils";
 
 /** Append workspace query param to a URL path if workspace is available */

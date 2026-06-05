@@ -5,7 +5,7 @@ import {
   renderScheduleTemplate,
   scheduleMatchesWorkspace,
   validateScheduleTarget,
-} from "../schedule-targets";
+} from "../schedules/schedule-targets";
 import type { Schedule } from "../types";
 
 describe("schedule-targets", () => {

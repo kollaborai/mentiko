@@ -17,7 +17,7 @@ import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { nsPath } from "@/lib/config";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 
 export const dynamic = "force-dynamic";
 

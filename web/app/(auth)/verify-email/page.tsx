@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { authClient, useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth/auth-client";
 
 export default function VerifyEmailPage() {
   return (

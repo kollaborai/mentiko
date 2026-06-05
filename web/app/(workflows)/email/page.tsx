@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { RefreshFilled, TickCircleFilled, DirectSendFilled, Webhook, LinkFilled, SendFilled } from "@aliimam/icons";
 import { AddFilled, EditFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSegmentedControl,
 } from "@/components/ui/workflow-sidebar";
-import type { EmailInbox, NormalizedEmail } from "@/lib/email-types";
+import type { EmailInbox, NormalizedEmail } from "@/lib/email/email-types";
 import { useEmailPoller } from "@/hooks/use-email-poller";
 
 function formatRelativeTime(iso: string): string {

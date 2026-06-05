@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch"
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch"
 
 interface PollResponse {
   counts: Record<string, string>

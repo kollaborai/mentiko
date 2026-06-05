@@ -1,7 +1,7 @@
 "use client";
 
 import { SendFilled } from "@aliimam/icons";
-import type { Option } from "@/lib/decision-types";
+import type { Option } from "@/lib/decisions/decision-types";
 import { RaisedButton } from "@/components/ui/raised-button";
 
 interface ApprovalBarProps {

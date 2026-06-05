@@ -3,12 +3,12 @@ import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getJob } from "@/lib/job-store";
-import { saveLink, slugifyLinkName } from "@/lib/link-utils";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getJob } from "@/lib/runs/job-store";
+import { saveLink, slugifyLinkName } from "@/lib/links/link-utils";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import type { Link, LinkAgent } from "@/lib/link-types";
+import type { Link, LinkAgent } from "@/lib/links/link-types";
 
 export const dynamic = "force-dynamic";
 

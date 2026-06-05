@@ -9,9 +9,9 @@ import {
   AddFilled,
   ShieldTickFilled,
 } from "@aliimam/icons";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 interface SshSetupProps {
   onComplete: (data: {

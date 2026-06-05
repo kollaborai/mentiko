@@ -28,7 +28,7 @@ jest.mock("next/server", () => {
 });
 
 // mock auth to always pass (route calls checkAuth)
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn().mockResolvedValue(true),
 }));
 
@@ -39,8 +39,8 @@ jest.mock("@/lib/namespace-config", () => ({
 
 
 import { GET } from "./route";
-import { createJob, updateJob, getJob, deleteJob } from "@/lib/job-store";
-import { taskCreate, taskDelete, taskGet } from "@/lib/task-store";
+import { createJob, updateJob, getJob, deleteJob } from "@/lib/runs/job-store";
+import { taskCreate, taskDelete, taskGet } from "@/lib/tasks/task-store";
 
 function createMockRequest() {
   return {

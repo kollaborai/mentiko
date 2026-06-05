@@ -61,14 +61,14 @@ jest.mock('@aliimam/icons', () => ({
 
 // Mock useNamespaceFetch
 const mockFetchWithNamespace = jest.fn()
-jest.mock('@/lib/use-namespace-fetch', () => ({
+jest.mock('@/lib/hooks/use-namespace-fetch', () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),
 }))
 
 // Mock unwrapApiData
-jest.mock('@/lib/api-client', () => ({
+jest.mock('@/lib/api/api-client', () => ({
   unwrapApiData: (data: { success: boolean; data: unknown }) => data.data,
 }))
 

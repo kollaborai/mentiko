@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useSharedChains } from "@/lib/chains-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useSharedChains } from "@/lib/chains/chains-store";
 import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -26,8 +26,8 @@ import {
   getScheduleTargetSummary,
   getScheduleTriggerSummary,
 } from "@/components/schedule/schedule-create-payload";
-import { useSnoozeState } from "@/lib/use-snooze-state";
-import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedule-utils";
+import { useSnoozeState } from "@/lib/hooks/use-snooze-state";
+import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedules/schedule-utils";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

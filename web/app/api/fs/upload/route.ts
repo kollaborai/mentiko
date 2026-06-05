@@ -5,8 +5,8 @@ import { execSync, ExecSyncOptionsWithBufferEncoding } from "child_process";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import os from "os";
-import { checkAuth } from "@/lib/api-auth";
-import { resolveAndValidate, getAllowedRoots } from "@/lib/path-validation";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { BadRequest, Forbidden, InternalServerError, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

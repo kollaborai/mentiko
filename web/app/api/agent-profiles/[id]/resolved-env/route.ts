@@ -1,7 +1,7 @@
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getProfile } from "@/lib/agent-profile-storage";
-import { resolveProfileEnvVars } from "@/lib/secrets-store";
+import { getProfile } from "@/lib/agents/agent-profile-storage";
+import { resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

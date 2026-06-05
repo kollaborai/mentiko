@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
-import { pty } from "@/lib/pty-client";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { pty } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

@@ -16,7 +16,7 @@ describe("kollabor engine storage scope", () => {
       getOrCreateSession,
       setKollaborEngineStorageScope,
       clearTokenCache,
-    } = await import("../kollabor-engine-client");
+    } = await import("../ai-engine/kollabor-engine-client");
 
     setKollaborEngineStorageScope("user-a");
     clearTokenCache();

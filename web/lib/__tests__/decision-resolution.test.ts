@@ -4,19 +4,19 @@
 
 const mockGetDecision = jest.fn();
 const mockUpdateDecision = jest.fn();
-jest.mock("@/lib/decision-storage", () => ({
+jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => mockGetDecision(...args),
   updateDecision: (...args: unknown[]) => mockUpdateDecision(...args),
 }));
 
 const mockTaskCreate = jest.fn();
 const mockTaskAddDep = jest.fn();
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
 }));
 
-import { resolveDecisionToTasks } from "@/lib/decision-resolution";
+import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
 
 function makeDecision() {
   return {

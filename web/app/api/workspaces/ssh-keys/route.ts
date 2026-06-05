@@ -23,7 +23,7 @@ import { NextRequest } from "next/server";
 import { execSync } from "child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { nsPath } from "@/lib/config";
 import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";

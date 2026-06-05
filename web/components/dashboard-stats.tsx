@@ -7,10 +7,10 @@ import {
   ChartSuccessFilled as CheckCircle,
   ChartFailFilled as XCircle,
 } from "@aliimam/icons";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useSharedRuns } from "@/lib/runs-store";
-import { useSharedChains } from "@/lib/chains-store";
-import { useSharedAgents } from "@/lib/agents-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useSharedRuns } from "@/lib/runs/runs-store";
+import { useSharedChains } from "@/lib/chains/chains-store";
+import { useSharedAgents } from "@/lib/agents/agents-store";
 import { SystemStatusWidget } from "@/components/system-status-widget";
 
 interface StatCardProps {

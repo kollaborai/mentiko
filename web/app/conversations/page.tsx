@@ -26,12 +26,12 @@ import {
   TaskSquareFilled,
 } from "@aliimam/icons";
 import { TimeAgo } from "@/components/shared/time-ago";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { PageBanner } from "@/components/ui/page-banner";
 import { cn } from "@/lib/utils";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 function getAgentAccent(role: string): string {
   const r = role.toLowerCase();

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { Decision } from "@/lib/decision-types";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { RaisedButton } from "@/components/ui/raised-button";
 import { GradientDots } from "@/components/ui/gradient-dots";
 import { GlowingLabel } from "@/components/ui/glowing-label";

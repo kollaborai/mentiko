@@ -3,11 +3,11 @@ import AuditTrailPage from "./page";
 
 const mockFetchWithNamespace = jest.fn();
 
-jest.mock("@/lib/namespace-context", () => ({
+jest.mock("@/lib/ui-context/namespace-context", () => ({
   useNamespace: () => ({ namespaceId: "default" }),
 }));
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),

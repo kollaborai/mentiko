@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { scanAllSkills, skillToAgent } from "@/lib/skill-scanner";
-import { getAllStandaloneAgents } from "@/lib/agent-loader";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { scanAllSkills, skillToAgent } from "@/lib/system/skill-scanner";
+import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { InternalServerError } from "@/lib/api-errors";

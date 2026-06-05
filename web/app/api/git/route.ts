@@ -1,5 +1,5 @@
 import { execSync, execFileSync } from "child_process";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
 import { NextRequest } from "next/server";

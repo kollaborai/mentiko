@@ -12,12 +12,12 @@ import { writeFileSync, mkdirSync } from "fs";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
 import config from "@/lib/config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { loadLink, resolveLinkAgentName } from "@/lib/link-utils";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { loadLink, resolveLinkAgentName } from "@/lib/links/link-utils";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import {
   buildLinkRunEnv,
   buildShellSetup,
@@ -25,7 +25,7 @@ import {
   resolveLinkRunPaths,
   resolveLinkRunSecret,
   shellQuote,
-} from "@/lib/link-run-runtime";
+} from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

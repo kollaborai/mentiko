@@ -13,8 +13,8 @@ import {
 import { PageBanner } from "@/components/ui/page-banner";
 import { StatusBadge } from "@/components/status-badge";
 import { LinkFilled, BotMessageSquare, RouteSquareFilled } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { EmptyState } from "@/components/empty-state";
 import {
   WorkflowSidebarPane,
@@ -25,8 +25,8 @@ import {
   WorkflowSidebarItem,
 } from "@/components/ui/workflow-sidebar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import type { LinkSummary, LinkMode, LinkStatus } from "@/lib/link-types";
-import { useNotificationActions } from "@/lib/notifications-store";
+import type { LinkSummary, LinkMode, LinkStatus } from "@/lib/links/link-types";
+import { useNotificationActions } from "@/lib/notifications/notifications-store";
 
 type FilterMode = "all" | "debate" | "collaboration" | "review";
 

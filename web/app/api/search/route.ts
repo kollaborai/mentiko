@@ -1,16 +1,16 @@
 import { NextRequest } from "next/server";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getAllChains } from "@/lib/chain-utils";
-import { getAllStandaloneAgents } from "@/lib/agent-loader";
+import { getAllChains } from "@/lib/chains/chain-utils";
+import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { taskList } from "@/lib/task-store";
-import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspace-params";
-import { taskDetailHref } from "@/lib/task-routes";
+import { taskList } from "@/lib/tasks/task-store";
+import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
+import { taskDetailHref } from "@/lib/tasks/task-routes";
 
 export const dynamic = "force-dynamic";
 

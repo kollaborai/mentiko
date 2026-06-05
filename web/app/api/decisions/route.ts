@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listDecisions, createDecision } from "@/lib/decision-storage";
-import { getWorkspacePath } from "@/lib/workspace-params";
+import { listDecisions, createDecision } from "@/lib/decisions/decision-storage";
+import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

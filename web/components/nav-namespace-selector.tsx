@@ -1,6 +1,6 @@
 "use client";
 
-import { useNamespace } from "@/lib/namespace-context";
+import { useNamespace } from "@/lib/ui-context/namespace-context";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

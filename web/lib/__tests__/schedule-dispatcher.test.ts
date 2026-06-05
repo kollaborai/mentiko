@@ -1,4 +1,4 @@
-import { dispatchScheduleTarget } from "../schedule-dispatcher";
+import { dispatchScheduleTarget } from "../schedules/schedule-dispatcher";
 
 describe("schedule-dispatcher", () => {
   const payload = {

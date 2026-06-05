@@ -8,8 +8,8 @@ import {
   resolveLinkRunSecret,
   resolveLinkRunsDir,
   validateLinkRunId,
-} from "../link-run-runtime";
-import { resolveAppSecret } from "../dev-secret";
+} from "../links/link-run-runtime";
+import { resolveAppSecret } from "../secrets/dev-secret";
 
 jest.mock("../config", () => ({
   __esModule: true,
@@ -28,7 +28,7 @@ jest.mock("../config", () => ({
       : ["/data/namespaces", namespaceId, "orgs", orgId, ...segments].join("/"),
 }));
 
-jest.mock("../dev-secret", () => ({
+jest.mock("../secrets/dev-secret", () => ({
   resolveAppSecret: jest.fn(() => "runtime-secret"),
 }));
 

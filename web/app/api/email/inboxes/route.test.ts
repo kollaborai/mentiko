@@ -33,7 +33,7 @@ jest.mock("next/server", () => ({
 }));
 
 // mock email-storage
-jest.mock("@/lib/email-storage", () => ({
+jest.mock("@/lib/email/email-storage", () => ({
   loadInboxes: jest.fn(),
   saveInboxes: jest.fn(),
   validateInboxFolder: jest.fn(),
@@ -44,7 +44,7 @@ jest.mock("@/lib/email-storage", () => ({
 }));
 
 // mock rbac-auth
-jest.mock("@/lib/rbac-auth", () => ({
+jest.mock("@/lib/auth/rbac-auth", () => ({
   requirePermission: jest.fn(),
 }));
 
@@ -66,8 +66,8 @@ import {
   checkDiskQuota,
   getSendCount,
   deriveInboundSecret,
-} from "@/lib/email-storage";
-import { requirePermission } from "@/lib/rbac-auth";
+} from "@/lib/email/email-storage";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 
 const mockRequirePermission = requirePermission as jest.Mock;
 const mockLoadInboxes = loadInboxes as jest.Mock;

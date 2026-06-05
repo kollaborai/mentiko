@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listProfiles } from "@/lib/agent-profile-storage";
+import { listProfiles } from "@/lib/agents/agent-profile-storage";
 import {
   PROVIDER_BUNDLES,
   type ProviderBundle,
-} from "@/lib/provider-bundles";
+} from "@/lib/agents/provider-bundles";
 import type { AgentProfileProvider } from "@/lib/types";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";

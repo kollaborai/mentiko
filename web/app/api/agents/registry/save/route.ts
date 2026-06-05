@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";

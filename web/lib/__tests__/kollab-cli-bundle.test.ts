@@ -1,6 +1,6 @@
-import { PROVIDER_BUNDLES } from "@/lib/provider-bundles";
-import { PROVIDER_CREDENTIALS } from "@/lib/provider-config";
-import { bundleProfileToAgentProfile } from "@/lib/provider-bundles";
+import { PROVIDER_BUNDLES } from "@/lib/agents/provider-bundles";
+import { PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
+import { bundleProfileToAgentProfile } from "@/lib/agents/provider-bundles";
 
 describe("kollab cli bundle", () => {
   it("uses the env key expected by the kollab cli", () => {

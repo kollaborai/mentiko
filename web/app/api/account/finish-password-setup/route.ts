@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { clearMustChangePasswordFlag } from "@/lib/auth-server";
-import { getServerSession } from "@/lib/auth-bridge";
+import { clearMustChangePasswordFlag } from "@/lib/auth/auth-server";
+import { getServerSession } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 

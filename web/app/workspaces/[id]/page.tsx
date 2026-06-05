@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview";
 import { WorkspaceTerminal } from "@/components/workspace/workspace-terminal";
 import { WorkspaceEditor } from "@/components/workspace/workspace-editor";
@@ -14,7 +14,7 @@ import {
   Setting2Filled,
   ArrowLeft1Filled as ArrowLeft,
 } from "@aliimam/icons";
-import type { Workspace } from "@/lib/workspace-storage";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 type Tab = "overview" | "terminal" | "editor" | "settings";
 

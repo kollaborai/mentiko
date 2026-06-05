@@ -11,8 +11,8 @@ import {
   ArrowSwapFilled as ArrowUpDown,
   TrashFilled as Trash
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 interface DirEntry {
   name: string;

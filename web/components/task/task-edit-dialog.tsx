@@ -3,9 +3,9 @@
 import { useState, useEffect } from "react";
 import { CloseCircleFilled as X, Link2Filled as Link2 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import type { Task } from "@/lib/task-types";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useSharedChains } from "@/lib/chains-store";
+import type { Task } from "@/lib/tasks/task-types";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useSharedChains } from "@/lib/chains/chains-store";
 
 interface Chain {
   id: string;

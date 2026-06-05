@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import {
   loadBreakpoints,
   setBreakpoint,
@@ -9,7 +9,7 @@ import {
   clearAllBreakpoints,
   requestResume,
   type Breakpoint,
-} from "@/lib/breakpoint-store";
+} from "@/lib/runs/breakpoint-store";
 
 export const dynamic = "force-dynamic";
 

@@ -14,8 +14,8 @@ import {
 } from "@aliimam/icons";
 import { GoalCard } from "@/components/ui/goal-card";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 
 interface Metrics {
   runs: {

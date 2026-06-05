@@ -19,13 +19,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { readdirSync, existsSync } from "fs";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
-import { sendEmail } from "@/lib/email";
+import { sendEmail } from "@/lib/email/email";
 import { nsPath } from "@/lib/config";
 import { getOrgIdFromRequest } from "@/lib/namespace-config";
-import { loadPrefs, isInQuietHours } from "@/lib/notification-prefs";
+import { loadPrefs, isInQuietHours } from "@/lib/notifications/notification-prefs";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { hasInternalAuth } from "@/lib/internal-api-auth";
+import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 
 export const dynamic = "force-dynamic";
 

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { listWorkspaces } from "@/lib/workspace-storage";
-import { resolveAndValidate } from "@/lib/path-validation";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { listWorkspaces } from "@/lib/workspaces/workspace-storage";
+import { resolveAndValidate } from "@/lib/system/path-validation";
 
 export const dynamic = "force-dynamic";
 

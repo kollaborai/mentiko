@@ -5,7 +5,7 @@ jest.mock("@/lib/middleware/audit-logger", () => ({
   setAuditLogger: mockSetAuditLogger,
 }));
 
-jest.mock("@/lib/audit-exec", () => ({
+jest.mock("@/lib/api/audit-exec", () => ({
   execAuditLog: mockExecAuditLog,
 }));
 

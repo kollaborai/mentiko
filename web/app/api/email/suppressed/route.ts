@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { requirePermission, getCurrentUser } from "@/lib/rbac-auth";
+import { requirePermission, getCurrentUser } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   listSuppressed,
   unsuppress,
   suppressManually,
   type SuppressionReason,
-} from "@/lib/email-suppression";
+} from "@/lib/email/email-suppression";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

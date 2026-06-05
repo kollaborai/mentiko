@@ -5,12 +5,12 @@
 export {};
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
 const mockCreateJob = jest.fn().mockReturnValue({ id: "job-1", status: "pending", type: "artifact" });
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
 }));
 
@@ -19,15 +19,15 @@ const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
   chainId: "artifact-generation",
   status: "started",
 });
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: () => ({ content: "prompt={{USER_PROMPT}} ws={{WORKSPACE_CONTEXT}} schema={{SCHEMA}}" }),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (_template: string, vars: Record<string, string>) =>
     `prompt=${vars.USER_PROMPT} ws=${vars.WORKSPACE_CONTEXT ?? ""} schema=${vars.SCHEMA ?? ""}`,
 }));
@@ -37,12 +37,12 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn().mockResolvedValue({ id: "user-1" }),
 }));
 
 const mockResolveWorkspace = jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath);
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: (...args: unknown[]) => mockResolveWorkspace(args[0], args[1], args[2]),
 }));
 

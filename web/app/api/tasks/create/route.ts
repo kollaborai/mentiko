@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
+import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskCreate } from "@/lib/task-store";
-import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspace-params";
+import { taskCreate } from "@/lib/tasks/task-store";
+import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { validateChainId, buildChainMetadata } from "@/lib/chain-validation";
+import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

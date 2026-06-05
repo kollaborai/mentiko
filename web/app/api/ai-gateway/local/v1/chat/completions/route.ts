@@ -1,5 +1,5 @@
-import { invokeTenantAiGatewayChatCompletions } from "@/lib/ai-gateway-client";
-import { requireInternalAuth } from "@/lib/internal-api-auth";
+import { invokeTenantAiGatewayChatCompletions } from "@/lib/ai-gateway/client";
+import { requireInternalAuth } from "@/lib/auth/internal-api-auth";
 
 const MAX_GATEWAY_BODY_BYTES = 1_048_576;
 

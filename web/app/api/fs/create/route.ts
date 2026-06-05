@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { mkdir, writeFile, stat } from "fs/promises";
 import { dirname } from "path";
-import { checkAuth } from "@/lib/api-auth";
-import { resolveAndValidate, getAllowedRoots } from "@/lib/path-validation";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { BadRequest, Conflict, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

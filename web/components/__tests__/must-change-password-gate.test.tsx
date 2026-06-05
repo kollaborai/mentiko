@@ -11,7 +11,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
 }));
 
-jest.mock("@/lib/auth-client", () => ({
+jest.mock("@/lib/auth/auth-client", () => ({
   useSession: () => ({ data: mockSession, isPending: mockIsPending }),
 }));
 

@@ -11,7 +11,7 @@ import {
   type CommandResult,
   type DevCheck,
   type PtyManagerCandidate,
-} from "../lib/dev-environment-checks";
+} from "../lib/system/dev-environment-checks";
 
 const args = new Set(process.argv.slice(2));
 const preflight = args.has("--preflight");

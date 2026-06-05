@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { createDecision, getDecision, updateDecision } from "@/lib/decision-storage";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { createDecision, getDecision, updateDecision } from "@/lib/decisions/decision-storage";
 import { withErrorHandling } from "@/lib/api-response";
 import { BadRequest, NotFound } from "@/lib/api-errors";
-import type { DecisionMode, GuidedFlow } from "@/lib/decision-types";
+import type { DecisionMode, GuidedFlow } from "@/lib/decisions/decision-types";
 
 export const dynamic = "force-dynamic";
 

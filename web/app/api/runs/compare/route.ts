@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { checkRunAccess } from "@/lib/run-acl";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { diffLines } from "diff";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";

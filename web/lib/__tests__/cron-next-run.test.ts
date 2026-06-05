@@ -3,8 +3,8 @@ jest.mock("child_process", () => ({
 }));
 
 import { execFileSync } from "child_process";
-import { calculateCronNextRun } from "../cron-next-run";
-import { isSafeCronExpression, normalizeTimezone } from "../cron-validation";
+import { calculateCronNextRun } from "../schedules/cron-next-run";
+import { isSafeCronExpression, normalizeTimezone } from "../schedules/cron-validation";
 
 const mockedExecFileSync = execFileSync as jest.MockedFunction<typeof execFileSync>;
 

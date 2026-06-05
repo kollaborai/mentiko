@@ -3,15 +3,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ChainPreviewCard } from "./chain-preview-card";
 import { useJobStatus } from "@/hooks/use-job-status";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useSharedChains } from "@/lib/chains-store";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useSharedChains } from "@/lib/chains/chains-store";
 import {
   buildGenerationPromptFromTaskRecommendation,
   normalizeTaskChainRecommendation,
   type TaskChainRecommendation,
-} from "@/lib/task-chain-recommendation";
-import type { Task } from "@/lib/task-types";
+} from "@/lib/tasks/task-chain-recommendation";
+import type { Task } from "@/lib/tasks/task-types";
 
 type WorkflowStep =
   | "idle"

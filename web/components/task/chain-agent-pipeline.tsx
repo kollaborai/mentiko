@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { BotMessageSquare as Bot, ArrowRightFilled as ArrowRight, RadarFilled as Radio, FlashFilled as Zap } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface ChainAgent {
   id: string;

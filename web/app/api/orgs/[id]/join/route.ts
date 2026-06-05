@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import {
   loadOrg,
@@ -9,8 +9,8 @@ import {
   saveMembers,
   orgMatchesId,
   type OrgMember,
-} from "@/lib/org-storage";
-import type { OrgRole } from "@/lib/org-types";
+} from "@/lib/orgs/org-storage";
+import type { OrgRole } from "@/lib/orgs/org-types";
 import {
   Unauthorized,
   NotFound,

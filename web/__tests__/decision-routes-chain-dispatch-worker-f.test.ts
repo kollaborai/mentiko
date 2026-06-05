@@ -5,20 +5,20 @@
 export {};
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
 const mockGetDecision = jest.fn();
 const mockUpdateDecision = jest.fn();
-jest.mock("@/lib/decision-storage", () => ({
+jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => mockGetDecision(...args),
   updateDecision: (...args: unknown[]) => mockUpdateDecision(...args),
 }));
 
 const mockCreateJob = jest.fn().mockReturnValue({ id: "job-1", status: "pending" });
 const mockGetJob = jest.fn();
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
   getJob: (...args: unknown[]) => mockGetJob(...args),
 }));
@@ -28,15 +28,15 @@ const mockStartDecisionChainRun = jest.fn().mockResolvedValue({
   chainId: "decision-preference-synthesis",
   status: "started",
 });
-jest.mock("@/lib/decision-chain-dispatch", () => ({
+jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
   startDecisionChainRun: (...args: unknown[]) => mockStartDecisionChainRun(...args),
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: jest.fn().mockReturnValue({ content: "template={{DECISION_CONTEXT}}" }),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (_template: string, vars: Record<string, string>) =>
     `resolved=${vars.DECISION_CONTEXT ?? ""}${vars.QUESTIONS_AND_ANSWERS ? `\n${vars.QUESTIONS_AND_ANSWERS}` : ""}`,
 }));
@@ -46,15 +46,15 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
 }));
 
-jest.mock("@/lib/workspace-params", () => ({
+jest.mock("@/lib/workspaces/workspace-params", () => ({
   getWorkspacePath: jest.fn().mockReturnValue("/repo"),
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn().mockResolvedValue({ id: "user-1" }),
 }));
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath),
 }));
 

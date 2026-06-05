@@ -15,7 +15,7 @@ jest.mock("ioredis", () => {
   };
 });
 
-jest.mock("../audit-exec", () => ({
+jest.mock("../api/audit-exec", () => ({
   execAuditLog: jest.fn(),
 }));
 
@@ -53,7 +53,7 @@ describe("optional redis in development", () => {
   });
 
   it("does not create a localhost redis client by default in dev", async () => {
-    const redis = await import("../redis");
+    const redis = await import("../system/redis");
 
     expect(redis.redisConfigured).toBe(false);
     expect(redis.redis).toBeNull();
@@ -63,7 +63,7 @@ describe("optional redis in development", () => {
 
   it("skips audit queue work when redis is not configured in dev", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { addAuditLog } = await import("../audit-queue");
+    const { addAuditLog } = await import("../api/audit-queue");
 
     await expect(
       addAuditLog({
@@ -95,7 +95,7 @@ describe("optional redis in development", () => {
       return instance;
     });
 
-    const { addAuditLog } = await import("../audit-queue");
+    const { addAuditLog } = await import("../api/audit-queue");
 
     await expect(
       addAuditLog({

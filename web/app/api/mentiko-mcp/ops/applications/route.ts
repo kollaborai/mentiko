@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import {
   getScheduledApplication,
   listScheduledApplications,
   removeScheduledApplication,
   upsertScheduledApplication,
   type ScheduledApplication,
-} from "@/lib/scheduled-application-storage";
-import { validateScheduleTarget } from "@/lib/schedule-targets";
-import { slugify } from "@/lib/schedule-storage";
+} from "@/lib/schedules/scheduled-application-storage";
+import { validateScheduleTarget } from "@/lib/schedules/schedule-targets";
+import { slugify } from "@/lib/schedules/schedule-storage";
 
 export const dynamic = "force-dynamic";
 

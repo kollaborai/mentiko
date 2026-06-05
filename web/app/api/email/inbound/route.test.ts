@@ -78,7 +78,7 @@ jest.mock("next/server", () => {
 });
 
 // mock email-storage
-jest.mock("@/lib/email-storage", () => ({
+jest.mock("@/lib/email/email-storage", () => ({
   loadInboxes: jest.fn(),
   writeEmail: jest.fn(),
   appendAuditLog: jest.fn(),
@@ -128,7 +128,7 @@ import {
   appendAuditLog,
   checkDiskQuota,
   deriveInboundSecret,
-} from "@/lib/email-storage";
+} from "@/lib/email/email-storage";
 
 // mock crypto.randomUUID BEFORE importing route
 // this mocks both the global crypto and the Node.js crypto module
@@ -151,7 +151,7 @@ jest.mock("crypto", () => {
 });
 
 // type imports for fixtures
-import type { EmailInbox } from "@/lib/email-types";
+import type { EmailInbox } from "@/lib/email/email-types";
 
 // test inbox fixtures
 const mockInbox: EmailInbox = {

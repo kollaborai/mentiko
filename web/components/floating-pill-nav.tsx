@@ -18,19 +18,19 @@ import { cn } from "@/lib/utils";
 import { NotificationsPanel } from "@/components/notifications-panel";
 import { SessionsIndicator } from "@/components/sessions-indicator";
 import { NavNamespaceSelector } from "@/components/nav-namespace-selector";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useEditorStore } from "@/lib/editor-store";
-import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useEditorStore } from "@/lib/ui/editor-store";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
 import { EntityHoverCard, hasRouteMeta } from "@/components/ui/entity-hover-card";
-import { SETTINGS_QUICK_MENU_GROUPS } from "@/lib/settings-nav";
-import { invalidateRunsCache } from "@/lib/runs-store";
-import { invalidateChainsCache } from "@/lib/chains-store";
-import { invalidateAgentsCache } from "@/lib/agents-store";
+import { SETTINGS_QUICK_MENU_GROUPS } from "@/lib/ui/settings-nav";
+import { invalidateRunsCache } from "@/lib/runs/runs-store";
+import { invalidateChainsCache } from "@/lib/chains/chains-store";
+import { invalidateAgentsCache } from "@/lib/agents/agents-store";
 import {
   OPEN_FLOATING_APP_PANEL_EVENT,
   isFloatingPanelRoute,
-} from "@/lib/floating-app-panel-routing";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+} from "@/lib/ui/floating-app-panel-routing";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 
 
 // ─── categories ──────────────────────────────────────────────

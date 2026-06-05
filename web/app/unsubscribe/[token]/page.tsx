@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 
 type TokenState =
   | { status: "loading" }

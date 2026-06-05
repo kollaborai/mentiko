@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized, NotFound, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

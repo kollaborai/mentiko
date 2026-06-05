@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import type { Template } from "@/lib/types";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 const RECENT_SEARCHES_KEY = "global-search-recent";
 const MAX_RECENT = 8;

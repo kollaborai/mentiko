@@ -1,15 +1,15 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getAllStandaloneAgents } from "@/lib/agent-loader";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob } from "@/lib/job-store";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
+import { createJob } from "@/lib/runs/job-store";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 export const dynamic = "force-dynamic";
 

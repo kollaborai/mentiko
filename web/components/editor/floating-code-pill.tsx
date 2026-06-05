@@ -11,12 +11,12 @@ import {
   CloseCircleFilled,
   AttachCircleFilled,
 } from "@aliimam/icons";
-import { unwrapApiData } from "@/lib/api-client";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import { cn } from "@/lib/utils";
-import { useEditorStore, isDirty } from "@/lib/editor-store";
-import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
+import { useEditorStore, isDirty } from "@/lib/ui/editor-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
 import { FileTree } from "./file-tree";
 import { SplitContainer } from "./split-container";
 import { SearchPanel } from "./search-panel";

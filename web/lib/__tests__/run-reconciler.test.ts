@@ -1,9 +1,9 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { reconcileOrphanedRuns } from "../run-reconciler";
-import { getLiveSessions } from "../pty-client";
-import { taskGet, taskMergeMeta, taskUpdate } from "../task-store";
+import { reconcileOrphanedRuns } from "../runs/run-reconciler";
+import { getLiveSessions } from "../pty/pty-client";
+import { taskGet, taskMergeMeta, taskUpdate } from "../tasks/task-store";
 
 let mockRunsDir = "";
 let mockEventsDir = "";
@@ -22,15 +22,15 @@ jest.mock("../config", () => ({
   },
 }));
 
-jest.mock("../pty-client", () => ({
+jest.mock("../pty/pty-client", () => ({
   getLiveSessions: jest.fn(),
 }));
 
-jest.mock("../system-logger", () => ({
+jest.mock("../system/system-logger", () => ({
   writeLog: jest.fn(),
 }));
 
-jest.mock("../task-store", () => ({
+jest.mock("../tasks/task-store", () => ({
   taskGet: jest.fn(() => ({ metadata: {} })),
   taskMergeMeta: jest.fn(),
   taskUpdate: jest.fn(),

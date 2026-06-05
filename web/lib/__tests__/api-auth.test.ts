@@ -15,14 +15,14 @@ jest.mock("next/server", () => ({
 }));
 
 // mock auth-bridge
-jest.mock("../auth-bridge", () => ({
+jest.mock("../auth/auth-bridge", () => ({
   checkAuthCompat: jest.fn(),
   getSessionUser: jest.fn(),
 }));
 
 import { NextRequest } from "next/server";
-import { checkAuthCompat, getSessionUser } from "../auth-bridge";
-import { withAuth, checkAuth, checkPermission, requirePermission } from "../api-auth";
+import { checkAuthCompat, getSessionUser } from "../auth/auth-bridge";
+import { withAuth, checkAuth, checkPermission, requirePermission } from "../auth/api-auth";
 
 const mockCheckAuth = checkAuthCompat as jest.Mock;
 const mockGetSessionUser = getSessionUser as jest.Mock;

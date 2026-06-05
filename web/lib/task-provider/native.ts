@@ -9,7 +9,7 @@ import {
   taskUpdate as tsUpdate,
   taskClose as tsClose,
   taskAddComment as tsComment,
-} from "@/lib/task-store";
+} from "@/lib/tasks/task-store";
 import type { TaskProvider, CreateTaskInput, UpdateTaskInput, TaskRecord } from "./types";
 
 export class NativeTaskProvider implements TaskProvider {

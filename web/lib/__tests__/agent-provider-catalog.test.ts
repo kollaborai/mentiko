@@ -8,7 +8,7 @@ import {
   getDefaultAgentConfigIdForTool,
   getEngineProviderDefault,
   getTerminalAuthCommand,
-} from "@/lib/agent-provider-catalog";
+} from "@/lib/agents/agent-provider-catalog";
 
 describe("agent provider catalog", () => {
   it("keeps cli tools free of raw model ownership", () => {

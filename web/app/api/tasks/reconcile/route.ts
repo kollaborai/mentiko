@@ -1,18 +1,18 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
-import { taskList, taskUpdate, taskClose } from "@/lib/task-store";
-import { validateTaskId } from "@/lib/task-store";
-import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspace-params";
-import { getLiveSessions } from "@/lib/pty-client";
-import { createNotification } from "@/lib/notification-server";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { taskList, taskUpdate, taskClose } from "@/lib/tasks/task-store";
+import { validateTaskId } from "@/lib/tasks/task-store";
+import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
+import { getLiveSessions } from "@/lib/pty/pty-client";
+import { createNotification } from "@/lib/notifications/notification-server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import config from "@/lib/config";
-import { writeLog } from "@/lib/system-logger";
+import { writeLog } from "@/lib/system/system-logger";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/run-provenance";
+import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
 

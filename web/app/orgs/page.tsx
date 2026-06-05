@@ -10,7 +10,7 @@ import {
   WorkflowSidebarItem,
   WorkflowSidebarSectionHeader,
 } from "@/components/ui/workflow-sidebar";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 
 interface Org {
   id: string;

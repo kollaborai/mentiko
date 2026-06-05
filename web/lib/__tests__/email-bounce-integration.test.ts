@@ -28,8 +28,8 @@ import {
   isDuplicate,
   findOutboundSent,
   emitBounceEvent,
-} from "@/lib/email-bounce";
-import type { BouncePayload, BounceType } from "@/lib/email-types";
+} from "@/lib/email/email-bounce";
+import type { BouncePayload, BounceType } from "@/lib/email/email-types";
 
 // test helpers
 const testNamespace = "test-bounce-ns";

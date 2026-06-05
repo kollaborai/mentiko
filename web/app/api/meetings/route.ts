@@ -14,9 +14,9 @@ import { join } from "path";
 import { readdirSync } from "fs";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolvePeerOutputDir } from "@/lib/link-run-runtime";
+import { resolvePeerOutputDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

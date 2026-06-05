@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listWorkspaces, removeWorkspace, updateWorkspace, checkWorkspaceAccess } from "@/lib/workspace-storage";
-import type { WorkspaceExecution, WorkspaceModel, WorkspaceProject } from "@/lib/workspace-storage";
+import { listWorkspaces, removeWorkspace, updateWorkspace, checkWorkspaceAccess } from "@/lib/workspaces/workspace-storage";
+import type { WorkspaceExecution, WorkspaceModel, WorkspaceProject } from "@/lib/workspaces/workspace-storage";
 import { Unauthorized, NotFound, Forbidden } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight1Filled } from "@aliimam/icons";
-import { usePane } from "@/lib/editor-store";
+import { usePane } from "@/lib/ui/editor-store";
 
 interface BreadcrumbProps {
   paneId: string;

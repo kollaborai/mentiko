@@ -10,15 +10,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 const ARTIFACT_TYPES: { value: ArtifactType; label: string }[] = [
   { value: "markdown", label: "Markdown" },

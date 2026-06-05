@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { ArrowLeftFilled, TickCircleFilled, DocumentDownloadFilled, BoxFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 

@@ -7,8 +7,8 @@
 import { NextRequest } from "next/server";
 import { promises as fs } from "fs";
 import { nsPath } from "@/lib/config";
-import { loadInboxes } from "@/lib/email-storage";
-import { requirePermission } from "@/lib/rbac-auth";
+import { loadInboxes } from "@/lib/email/email-storage";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

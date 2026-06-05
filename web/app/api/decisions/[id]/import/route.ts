@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getWorkspacePath } from "@/lib/workspace-params";
+import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { requireInternalAuth } from "@/lib/internal-api-auth";
-import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decision-run-results";
+import { requireInternalAuth } from "@/lib/auth/internal-api-auth";
+import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
 
 export const dynamic = "force-dynamic";
 

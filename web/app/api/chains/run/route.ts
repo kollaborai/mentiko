@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { startChainRun } from "@/lib/chain-run-service";
+import { startChainRun } from "@/lib/runs/chain-run-service";
 
 export const dynamic = "force-dynamic";
 

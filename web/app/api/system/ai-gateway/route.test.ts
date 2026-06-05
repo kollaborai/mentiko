@@ -4,7 +4,7 @@
 
 import type { NextRequest } from "next/server";
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
@@ -17,7 +17,7 @@ jest.mock("fs", () => ({
 }));
 
 import { GET } from "@/app/api/system/ai-gateway/route";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 function makeRequest(): NextRequest {
   return new Request("http://localhost/api/system/ai-gateway") as unknown as NextRequest;

@@ -2,9 +2,9 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { mintSessionToken } from "@/lib/session-token";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { mintSessionToken } from "@/lib/auth/session-token";
 import { randomBytes } from "crypto";
 
 export const dynamic = "force-dynamic";

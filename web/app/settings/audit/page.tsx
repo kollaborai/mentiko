@@ -1,8 +1,8 @@
 "use client";
 
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useNamespace } from "@/lib/namespace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespace } from "@/lib/ui-context/namespace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { PageBanner } from "@/components/ui/page-banner";
 import { ShieldTickFilled, RefreshFilled, DocumentDownloadFilled, ArrowDown2Filled, ArrowUp2Filled, DocumentTextFilled } from "@aliimam/icons";
 

@@ -7,10 +7,10 @@ import {
 } from "@aliimam/icons";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth/auth-client";
 import { cn } from "@/lib/utils";
-import { getFloatingPanelSrc } from "@/lib/floating-app-panel-routing";
-import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/settings-nav";
+import { getFloatingPanelSrc } from "@/lib/ui/floating-app-panel-routing";
+import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/ui/settings-nav";
 
 interface SettingsLayoutProps {
   children: React.ReactNode;

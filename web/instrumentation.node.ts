@@ -9,7 +9,7 @@
 async function startMarketplaceSync() {
   if (process.env.MARKETPLACE_AUTO_SYNC === "false") return;
 
-  const { syncMarketplace } = await import("@/lib/marketplace-sync");
+  const { syncMarketplace } = await import("@/lib/marketplace/marketplace-sync");
 
   const run = async (label: string) => {
     try {
@@ -47,7 +47,7 @@ type GuestEnforcementAuditPayload = {
 export async function initAuditLogger() {
   const [{ setAuditLogger }, { execAuditLog }] = await Promise.all([
     import("@/lib/middleware/audit-logger"),
-    import("@/lib/audit-exec"),
+    import("@/lib/api/audit-exec"),
   ]);
 
   setAuditLogger(async (payload: unknown) => {
@@ -94,7 +94,7 @@ export async function initAuditLogger() {
 
 async function initDatabase() {
   try {
-    const { getAuth, getDb } = await import("@/lib/auth-server");
+    const { getAuth, getDb } = await import("@/lib/auth/auth-server");
     const auth = await getAuth();
     if (auth) {
       try {
@@ -131,7 +131,7 @@ async function initDatabase() {
 async function registerMentikoEngineProfile() {
   if (process.env.MENTIKO_AI_GATEWAY_ENABLED !== "true") return;
   try {
-    const { registerMentikoProfile } = await import("@/lib/mentiko-engine-profile");
+    const { registerMentikoProfile } = await import("@/lib/agents/mentiko-engine-profile");
     await registerMentikoProfile();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

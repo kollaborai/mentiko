@@ -24,7 +24,7 @@ jest.mock("next/server", () => {
 });
 
 // mock auth to always return a valid context
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-test",
     sessionId: "session-test",
@@ -35,7 +35,7 @@ jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
 }));
 
 // mock task-store so we can spy on taskCreate without hitting sqlite
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskCreate: jest.fn().mockReturnValue({
     id: "task-created-1",
     title: "Test task",
@@ -46,7 +46,7 @@ jest.mock("@/lib/task-store", () => ({
   taskClose: jest.fn(),
 }));
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn((_namespaceId, _orgId, workspacePath) => (
     workspacePath === "/workspace/path" || workspacePath === "/home/user/my-project"
       ? workspacePath
@@ -55,8 +55,8 @@ jest.mock("@/lib/workspace-auth", () => ({
 }));
 
 import { POST } from "./route";
-import { taskCreate } from "@/lib/task-store";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { taskCreate } from "@/lib/tasks/task-store";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 function makeRequest(body: Record<string, unknown>): Request {
   return {

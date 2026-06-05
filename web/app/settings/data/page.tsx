@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { DocumentDownloadFilled, TrashFilled, DangerFilled, TickCircleFilled, ArchiveFilled, ExportFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Button } from "@/components/ui/button";
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/lib/auth/auth-client";
 import { useRouter } from "next/navigation";
 
 const RETENTION_OPTIONS = [

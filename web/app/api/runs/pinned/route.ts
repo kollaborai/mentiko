@@ -2,12 +2,12 @@ import { NextRequest } from "next/server";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { nsPath } from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
-import { checkRunAccess, filterRunsByAccess } from "@/lib/run-acl";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { checkRunAccess, filterRunsByAccess } from "@/lib/auth/run-acl";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

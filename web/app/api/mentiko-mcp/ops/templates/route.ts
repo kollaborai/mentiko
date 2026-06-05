@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { getTemplates, type Template } from "@/lib/templates";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { getTemplates, type Template } from "@/lib/system/templates";
 import { orgPath } from "@/lib/config";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";

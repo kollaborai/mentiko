@@ -18,12 +18,12 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-inbox", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-inbox", () => ({
   markEffectDelivered: jest.fn(),
   popEffects: jest.fn(() => []),
 }));
 
-jest.mock("@/lib/session-token", () => ({
+jest.mock("@/lib/auth/session-token", () => ({
   verifySessionToken: jest.fn(),
 }));
 

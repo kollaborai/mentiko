@@ -3,7 +3,7 @@ import { EventLogViewer } from '../event-log-viewer'
 import { renderWithNamespace } from '@/lib/test-utils'
 
 // Mock dependencies
-jest.mock('@/lib/websocket', () => ({
+jest.mock('@/lib/pty/websocket', () => ({
   useWebSocket: () => ({
     connected: true,
     lastEvent: null,

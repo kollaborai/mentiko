@@ -12,9 +12,9 @@ import {
   DangerFilled,
   InfoCircleFilled,
 } from "@aliimam/icons";
-import { useNotifications } from "@/lib/notifications-store";
+import { useNotifications } from "@/lib/notifications/notifications-store";
 import { cn } from "@/lib/utils";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 
 /** coerce value to string for safe rendering */
 function safeStr(v: unknown): string {

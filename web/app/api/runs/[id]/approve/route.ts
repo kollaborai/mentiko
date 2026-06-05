@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
-import { checkRunAccess } from "@/lib/run-acl";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

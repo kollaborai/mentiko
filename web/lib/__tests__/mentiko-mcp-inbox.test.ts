@@ -5,7 +5,7 @@ import {
   popEffects,
   pushEffect,
   setCurrentPage,
-} from "../mentiko-mcp-inbox";
+} from "../ai-engine/mentiko-mcp-inbox";
 
 describe("mentiko MCP inbox", () => {
   it("marks an effect delivered only after the session stream drains it", () => {

@@ -174,11 +174,11 @@ describe("chain-runner AI gateway source contract", () => {
 
 describe("chain launch surfaces pass local proxy env to runners", () => {
   const files = [
-    "../../web/lib/chain-run-service.ts",
+    "./runs/chain-run-service.ts",
     "../../web/app/api/runs/[id]/resume/route.ts",
     "../../web/app/api/schedules/route.ts",
     "../../web/app/api/chains/run-batch/route.ts",
-    "./scheduler-service.ts",
+    "./schedules/scheduler-service.ts",
   ];
 
   for (const file of files) {
@@ -190,7 +190,7 @@ describe("chain launch surfaces pass local proxy env to runners", () => {
 
   it("passes request origins when route handlers have them", () => {
     const routeFiles = [
-      "../../web/lib/chain-run-service.ts",
+      "./runs/chain-run-service.ts",
       "../../web/app/api/runs/[id]/resume/route.ts",
       "../../web/app/api/schedules/route.ts",
       "../../web/app/api/chains/run-batch/route.ts",
@@ -205,7 +205,7 @@ describe("chain launch surfaces pass local proxy env to runners", () => {
 });
 
 describe("chain run profile override contract", () => {
-  const source = readFileSync(new URL("../../web/lib/chain-run-service.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./runs/chain-run-service.ts", import.meta.url), "utf8");
 
   it("stamps request-selected agent profile onto the run-local chain", () => {
     expect(source).toContain("applyRuntimeAgentProfileOverride");
@@ -221,7 +221,7 @@ describe("chain run profile override contract", () => {
   });
 
   it("resolves stale chain defaults before stamping the run-local chain", () => {
-    expect(source).toContain('import { resolveRunAgentProfileId } from "@/lib/run-agent-profile"');
+    expect(source).toContain('import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile"');
     expect(source).toContain("const effectiveAgentProfileId = resolveRunAgentProfileId");
     expect(source).toContain("chainDefaultProfileId: runChain.default_agent_profile");
     expect(source).toContain("workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile");
@@ -235,7 +235,7 @@ describe("chain run profile override contract", () => {
 });
 
 describe("chain run decision metadata contract", () => {
-  const source = readFileSync(new URL("../../web/lib/chain-run-service.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./runs/chain-run-service.ts", import.meta.url), "utf8");
 
   it("persists decision metadata and exports it to chain agents", () => {
     expect(source).toContain("metadata: runMetadata");

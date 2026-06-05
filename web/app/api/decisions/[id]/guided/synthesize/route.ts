@@ -1,17 +1,17 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getDecision, updateDecision } from "@/lib/decision-storage";
-import { getWorkspacePath } from "@/lib/workspace-params";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob, getJob } from "@/lib/job-store";
-import { getSessionUser } from "@/lib/auth-bridge";
-import type { GuidedFlow, PreferenceProfile } from "@/lib/decision-types";
+import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
+import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
+import { createJob, getJob } from "@/lib/runs/job-store";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import type { GuidedFlow, PreferenceProfile } from "@/lib/decisions/decision-types";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { startDecisionChainRun } from "@/lib/decision-chain-dispatch";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 export const dynamic = "force-dynamic";
 

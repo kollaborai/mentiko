@@ -4,9 +4,9 @@ import { promisify } from "util";
 import { join } from "path";
 import { Unauthorized, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import config from "@/lib/config";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

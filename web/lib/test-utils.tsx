@@ -1,5 +1,5 @@
 import { render, type RenderOptions } from '@testing-library/react'
-import { NamespaceProvider } from './namespace-context'
+import { NamespaceProvider } from './ui-context/namespace-context'
 
 export function renderWithNamespace(
   ui: React.ReactElement,

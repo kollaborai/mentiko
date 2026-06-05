@@ -4,7 +4,7 @@ import Link from "next/link";
 import { TickCircleFilled as CheckCircle2, CloseCircleFilled as XCircle, ClockFilled as Clock, InfoCircleFilled as AlertCircle, StopCircleFilled as StopCircle, RouteSquareFilled } from "@aliimam/icons";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 
 interface RecentRunsProps {
   className?: string;

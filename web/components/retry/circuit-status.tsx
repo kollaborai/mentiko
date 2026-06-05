@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { FlashFilled as Zap, RotateLeftFilled as RotateCcw, ClockFilled as Clock } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface CircuitState {
   state: "closed" | "open" | "half_open";

@@ -10,14 +10,14 @@
 
 import { InternalServerError, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { requirePermission } from "@/lib/rbac-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
   getBackgroundWorkerStatus,
   checkBackgroundWorker,
   stopBackgroundWorker,
-} from "@/lib/background-worker-control";
+} from "@/lib/system/background-worker-control";
 
 export const dynamic = "force-dynamic";
 

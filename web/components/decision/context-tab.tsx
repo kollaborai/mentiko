@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { Decision } from "@/lib/decision-types";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { GradientDots } from "@/components/ui/gradient-dots";
 import { Abstract50Shapes } from "@aliimam/vectors";
 import {

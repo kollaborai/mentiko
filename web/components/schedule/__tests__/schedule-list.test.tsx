@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { ScheduleList } from '../schedule-list'
 
-jest.mock('@/lib/workspace-context', () => ({
+jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
     workspacePath: '/tmp/test',
@@ -14,7 +14,7 @@ jest.mock('@/lib/workspace-context', () => ({
 // Mock dependencies
 const mockFetchWithNamespace = jest.fn()
 
-jest.mock('@/lib/use-namespace-fetch', () => ({
+jest.mock('@/lib/hooks/use-namespace-fetch', () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),
@@ -78,7 +78,7 @@ jest.mock('@/components/shared/time-ago', () => ({
   }) => <span>{format} ago</span>,
 }))
 
-jest.mock('@/lib/schedule-utils', () => ({
+jest.mock('@/lib/schedules/schedule-utils', () => ({
   formatNextRun: (_date: string) => 'in 2 hours',
   getSnoozeRemaining: (_date: string) => '25min',
 }))

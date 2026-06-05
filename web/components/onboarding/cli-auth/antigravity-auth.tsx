@@ -11,13 +11,13 @@ import {
   CommandSquareFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
 import {
   PROVIDER_CREDENTIALS,
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
-} from "@/lib/provider-config";
+} from "@/lib/agents/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface AntigravityAuthProps {

@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
 import { createHmac } from "crypto";
-import type { NormalizedEmail, EmailAttachment, EmailInbox } from "@/lib/email-types";
-import { verifySendgridWebhook } from "@/lib/sendgrid-verify";
+import type { NormalizedEmail, EmailAttachment, EmailInbox } from "@/lib/email/email-types";
+import { verifySendgridWebhook } from "@/lib/email/sendgrid-verify";
 import {
   loadInboxes,
   writeEmail,
   appendAuditLog,
   checkDiskQuota,
   deriveInboundSecret,
-} from "@/lib/email-storage";
+} from "@/lib/email/email-storage";
 import { join } from "path";
 import { orgPath } from "@/lib/config";
 import { promises as fs } from "fs";
@@ -19,7 +19,7 @@ import {
   ServiceUnavailable,
 } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { timingSafeEqual } from "@/lib/security";
+import { timingSafeEqual } from "@/lib/auth/security";
 
 export const dynamic = "force-dynamic";
 

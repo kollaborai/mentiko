@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   try {
-    const { pty } = await import("@/lib/pty-client");
+    const { pty } = await import("@/lib/pty/pty-client");
     const rawSessions = await pty.list();
 
     const sessions: PtySession[] = rawSessions.map((s) => {

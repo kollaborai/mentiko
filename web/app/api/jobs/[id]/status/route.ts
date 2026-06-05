@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getJob } from "@/lib/job-store";
-import type { JobStatusResponse } from "@/lib/job-types";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getJob } from "@/lib/runs/job-store";
+import type { JobStatusResponse } from "@/lib/runs/job-types";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";

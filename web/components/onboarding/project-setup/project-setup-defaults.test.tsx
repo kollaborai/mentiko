@@ -5,7 +5,7 @@ import { ProjectSetupStep } from "../steps/project-setup-step";
 
 const mockFetchWithNamespace = jest.fn();
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),

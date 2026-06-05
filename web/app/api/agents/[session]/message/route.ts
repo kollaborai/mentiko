@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { pty } from "@/lib/pty-client";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { pty } from "@/lib/pty/pty-client";
 import { BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

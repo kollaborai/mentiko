@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../auto-run";
-import { taskGet, taskList, taskUpdate } from "../task-store";
+import { findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../runs/auto-run";
+import { taskGet, taskList, taskUpdate } from "../tasks/task-store";
 
 jest.mock("fs", () => ({
   existsSync: jest.fn(),
@@ -12,7 +12,7 @@ jest.mock("@/lib/config", () => ({
   nsPath: (_nsId: string, ...segments: string[]) => ["/tmp/mentiko-test", ...segments].join("/"),
 }));
 
-jest.mock("../task-store", () => ({
+jest.mock("../tasks/task-store", () => ({
   taskGet: jest.fn(),
   taskList: jest.fn(),
   taskUpdate: jest.fn(),

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { markEffectDelivered, popEffects } from "@/lib/mentiko-mcp-inbox";
-import { verifySessionToken } from "@/lib/session-token";
+import { markEffectDelivered, popEffects } from "@/lib/ai-engine/mentiko-mcp-inbox";
+import { verifySessionToken } from "@/lib/auth/session-token";
 
 export const dynamic = "force-dynamic";
 

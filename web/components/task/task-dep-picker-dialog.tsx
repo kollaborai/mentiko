@@ -5,7 +5,7 @@ import { AddFilled as Plus } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
-import type { Task } from "@/lib/task-types";
+import type { Task } from "@/lib/tasks/task-types";
 import {
   Dialog,
   DialogContent,

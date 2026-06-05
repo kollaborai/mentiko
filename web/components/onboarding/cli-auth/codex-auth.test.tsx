@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { CodexAuth } from "./codex-auth";
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: jest.fn(),
   }),

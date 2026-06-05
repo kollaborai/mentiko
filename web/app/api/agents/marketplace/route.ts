@@ -1,12 +1,12 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import type { AgentDefinition } from "@/lib/agent-loader";
+import type { AgentDefinition } from "@/lib/agents/agent-loader";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 

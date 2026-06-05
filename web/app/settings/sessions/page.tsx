@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "@/lib/auth/auth-client";
 import { Button } from "@/components/ui/button";
 import { MonitorFilled, MobileFilled, GlobalFilled, DangerFilled, SecurityFilled, LockFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";

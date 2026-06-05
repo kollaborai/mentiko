@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
   const action = searchParams.get("action") || "list";
 
   try {
-    const { pty } = await import("@/lib/pty-client");
+    const { pty } = await import("@/lib/pty/pty-client");
 
     if (action === "list") {
       const sessions = await pty.list();
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
   if (!session) return new NextResponse("session required", { status: 400 });
 
   try {
-    const { pty } = await import("@/lib/pty-client");
+    const { pty } = await import("@/lib/pty/pty-client");
 
     if (action === "send") {
       if (!command) return new NextResponse("command required", { status: 400 });

@@ -144,7 +144,7 @@ export function codePath(...segments: string[]): string {
   return path.join(codeRoot, ...segments);
 }
 
-export { claudeProjectPath } from "./session-log-resolver";
+export { claudeProjectPath } from "./runs/session-log-resolver";
 
 // ---------------------------------------------------------------------------
 // config object

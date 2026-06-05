@@ -14,9 +14,9 @@ import {
   LinkFilled,
   TaskSquareFilled,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import type { Workspace } from "@/lib/workspace-storage";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 import { PageBanner } from "@/components/ui/page-banner";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/empty-state";

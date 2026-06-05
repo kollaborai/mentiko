@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { isManagedTenantSignupLocked } from "@/lib/auth-deployment";
-import { getDb } from "@/lib/auth-server";
+import { isManagedTenantSignupLocked } from "@/lib/auth/auth-deployment";
+import { getDb } from "@/lib/auth/auth-server";
 
 export const dynamic = "force-dynamic";
 

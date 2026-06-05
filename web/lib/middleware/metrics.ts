@@ -3,7 +3,7 @@
  * non-blocking, graceful degradation if metrics service unavailable.
  */
 
-import type { OrgRole } from "../org-types";
+import type { OrgRole } from "../orgs/org-types";
 
 export type GuestEnforcementMetricType =
   | "guest_block_total"

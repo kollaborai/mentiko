@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { EmergencyMode } from "@/components/emergency-mode";
-import { useWorkspace } from "@/lib/workspace-context";
-import { unwrapApiData } from "@/lib/api-client";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 import type { Run } from "@/lib/types";
 
 interface DashboardDecision {

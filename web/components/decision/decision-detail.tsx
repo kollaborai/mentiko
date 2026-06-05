@@ -10,9 +10,9 @@ import {
   NextFilled,
   TaskSquareFilled,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
-import type { Decision } from "@/lib/decision-types";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { Button } from "@/components/ui/button";
 import { RaisedButton } from "@/components/ui/raised-button";
 import { WorkflowSidebarSegmentedControl } from "@/components/ui/workflow-sidebar";

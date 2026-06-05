@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { typeLabel, typeBgColor } from "@/lib/task-transforms";
+import { typeLabel, typeBgColor } from "@/lib/tasks/task-transforms";
 
 interface TypeBadgeProps {
   type: string;

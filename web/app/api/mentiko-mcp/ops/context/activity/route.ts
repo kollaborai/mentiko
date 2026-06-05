@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import config from "@/lib/config";
-import { getAllChains } from "@/lib/chain-utils";
+import { getAllChains } from "@/lib/chains/chain-utils";
 import { orgPath } from "@/lib/config";
 
 export const dynamic = "force-dynamic";

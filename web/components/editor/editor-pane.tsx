@@ -1,9 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEditorStore, usePane, isDirty } from "@/lib/editor-store";
+import { useEditorStore, usePane, isDirty } from "@/lib/ui/editor-store";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { StatusBar } from "./status-bar";
 import { getFileAccentColor } from "./file-tree";

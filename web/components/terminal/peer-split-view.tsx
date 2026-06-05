@@ -18,8 +18,8 @@ import {
   ArrowUp2Filled as ChevronUp,
   SendFilled as Send,
 } from "@aliimam/icons";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface EscalationEvent {
   id: string;

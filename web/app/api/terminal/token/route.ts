@@ -5,7 +5,7 @@ import { randomBytes } from "crypto";
 import { writeFileSync, readFileSync, mkdirSync, renameSync, existsSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import config from "@/lib/config";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { Unauthorized, ServiceUnavailable } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { CalendarEventCard } from "@/components/ui/calendar-event-card";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 
 interface Schedule {
   chainId: string;

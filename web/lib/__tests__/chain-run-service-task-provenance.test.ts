@@ -4,7 +4,7 @@
 
 describe("chain run task provenance", () => {
   test("assigned task chain runs are execution runs", async () => {
-    const { shouldRecordTaskExecutionRun } = await import("../chain-run-service");
+    const { shouldRecordTaskExecutionRun } = await import("../runs/chain-run-service");
 
     expect(shouldRecordTaskExecutionRun({
       taskId: "CHOR-001",
@@ -14,7 +14,7 @@ describe("chain run task provenance", () => {
   });
 
   test("recommendation and generation audit runs are not execution runs", async () => {
-    const { shouldRecordTaskExecutionRun } = await import("../chain-run-service");
+    const { shouldRecordTaskExecutionRun } = await import("../runs/chain-run-service");
 
     expect(shouldRecordTaskExecutionRun({
       taskId: "CHOR-001",

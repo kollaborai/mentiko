@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Badge } from "@/components/ui/badge";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { RefreshFilled as RefreshCw, ActivityFilled as Activity, DocumentTextFilled } from "@aliimam/icons";
 import { ArrowDown1Filled, ArrowRight1Filled } from "@aliimam/icons";

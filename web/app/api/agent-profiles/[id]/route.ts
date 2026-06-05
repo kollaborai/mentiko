@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getProfile,
   updateProfile,
   deleteProfile,
-} from "@/lib/agent-profile-storage";
+} from "@/lib/agents/agent-profile-storage";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

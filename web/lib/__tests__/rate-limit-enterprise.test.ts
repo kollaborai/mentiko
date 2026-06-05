@@ -1,7 +1,7 @@
 // tests for the enterprise rate limiter (lib/rate-limit.ts)
 // sliding window, per-user + per-tenant
 
-import { InMemoryStore, LIMITS } from "../rate-limit";
+import { InMemoryStore, LIMITS } from "../api/rate-limit";
 
 describe("InMemoryStore (sliding window)", () => {
   let store: InMemoryStore;

@@ -1,7 +1,7 @@
 import {
   buildGenerationPromptFromTaskRecommendation,
   normalizeTaskChainRecommendation,
-} from "@/lib/task-chain-recommendation";
+} from "@/lib/tasks/task-chain-recommendation";
 
 describe("task chain recommendation helpers", () => {
   it("treats legacy no-match recommendation payloads as generate-new", () => {

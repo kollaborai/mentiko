@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
+import { requirePermission } from "@/lib/auth/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import {
   getEndpointMetrics,
   getSubTimingMetrics,
   getSlowLog,
   resetMetrics,
-} from "@/lib/api-metrics";
+} from "@/lib/api/api-metrics";
 
 export const dynamic = "force-dynamic";
 

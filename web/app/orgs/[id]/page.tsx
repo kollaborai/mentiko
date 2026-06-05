@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,7 +21,7 @@ import {
   TrendUpFilled,
   RouteSquareFilled,
 } from "@aliimam/icons";
-import type { OrgMember } from "@/lib/org-types";
+import type { OrgMember } from "@/lib/orgs/org-types";
 
 type OrgTab = "overview" | "members" | "settings";
 

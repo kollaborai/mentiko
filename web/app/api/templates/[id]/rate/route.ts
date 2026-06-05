@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { nsPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";

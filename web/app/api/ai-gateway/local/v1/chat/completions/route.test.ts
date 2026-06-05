@@ -2,16 +2,16 @@
  * @jest-environment node
  */
 
-jest.mock("@/lib/internal-api-auth", () => ({
+jest.mock("@/lib/auth/internal-api-auth", () => ({
   requireInternalAuth: jest.fn(),
 }));
 
-jest.mock("@/lib/ai-gateway-client", () => ({
+jest.mock("@/lib/ai-gateway/client", () => ({
   invokeTenantAiGatewayChatCompletions: jest.fn(),
 }));
 
-import { requireInternalAuth } from "@/lib/internal-api-auth";
-import { invokeTenantAiGatewayChatCompletions } from "@/lib/ai-gateway-client";
+import { requireInternalAuth } from "@/lib/auth/internal-api-auth";
+import { invokeTenantAiGatewayChatCompletions } from "@/lib/ai-gateway/client";
 import { POST } from "./route";
 
 const LOCAL_PROXY_PATH = "/api/ai-gateway/local/v1/chat/completions";

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getWebhookLogs } from "@/lib/webhook-storage";
+import { getWebhookLogs } from "@/lib/webhooks/webhook-storage";
 import { apiSuccess, apiError } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";

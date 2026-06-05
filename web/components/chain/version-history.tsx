@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { UndoFilled as History, RotateLeftFilled as RotateCcw, ArrowSwapFilled as GitCompare, RotateFilled as Loader2, ClockFilled as Clock, DocumentCodeFilled as FileJson } from "@aliimam/icons";
 
 interface ChainVersion {

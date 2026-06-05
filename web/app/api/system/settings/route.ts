@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { readSystemSettings, writeSystemSettings as writeSettings, type SystemSettings } from "@/lib/system-settings";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { readSystemSettings, writeSystemSettings as writeSettings, type SystemSettings } from "@/lib/system/system-settings";
 
 export const dynamic = "force-dynamic";
 

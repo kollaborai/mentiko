@@ -56,11 +56,11 @@ jest.mock("better-auth/db/migration", () => ({
 }));
 
 const mockSendEmail = jest.fn(() => Promise.resolve(true));
-jest.mock("../email", () => ({
+jest.mock("../email/email", () => ({
   sendEmail: mockSendEmail,
 }));
 
-jest.mock("../email-templates", () => ({
+jest.mock("../email/email-templates", () => ({
   renderPasswordReset: jest.fn(({ resetUrl }: { resetUrl: string }) => ({
     subject: "Reset your password",
     text: `Reset: ${resetUrl}`,
@@ -84,7 +84,7 @@ describe("auth-server", () => {
   it("getAuth returns auth instance when no DATABASE_URL (uses default)", async () => {
     delete process.env.DATABASE_URL;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getAuth } = require("../auth-server");
+    const { getAuth } = require("../auth/auth-server");
     const auth = await getAuth();
     // Should initialize with default DATABASE_URL
     expect(auth).toBeDefined();
@@ -95,7 +95,7 @@ describe("auth-server", () => {
   it("getAuth does not mutate DATABASE_URL when using the default sqlite path", async () => {
     delete process.env.DATABASE_URL;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getAuth } = require("../auth-server");
+    const { getAuth } = require("../auth/auth-server");
 
     await getAuth();
 
@@ -105,7 +105,7 @@ describe("auth-server", () => {
   it("getAuth caches result on second call", async () => {
     delete process.env.DATABASE_URL;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getAuth } = require("../auth-server");
+    const { getAuth } = require("../auth/auth-server");
     const first = await getAuth();
     const second = await getAuth();
     expect(first).toBe(second);
@@ -113,7 +113,7 @@ describe("auth-server", () => {
 
   it("onOrgCreated does not throw for valid slug", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { onOrgCreated } = require("../auth-server");
+    const { onOrgCreated } = require("../auth/auth-server");
     // should not throw even if dir doesn't exist
     expect(() => onOrgCreated("test-org-" + Date.now())).not.toThrow();
   });
@@ -123,7 +123,7 @@ describe("auth-server", () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { betterAuth } = require("better-auth");
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getAuth } = require("../auth-server");
+    const { getAuth } = require("../auth/auth-server");
 
     await getAuth();
 

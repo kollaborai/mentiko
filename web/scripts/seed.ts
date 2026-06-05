@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import path from "path";
-import { MENTIKO_GATEWAY_PROFILE } from "../lib/agent-provider-catalog";
+import { MENTIKO_GATEWAY_PROFILE } from "../lib/agents/agent-provider-catalog";
 
 // -- config ---------------------------------------------------------
 

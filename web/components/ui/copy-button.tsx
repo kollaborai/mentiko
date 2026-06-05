@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { CopyFilled as Copy, TickCircleFilled as Check } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 
 interface CopyButtonProps {
   /** text to copy on single click */

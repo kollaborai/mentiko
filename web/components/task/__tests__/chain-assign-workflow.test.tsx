@@ -4,7 +4,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useCallback, useState } from "react";
-import type { Task } from "@/lib/task-types";
+import type { Task } from "@/lib/tasks/task-types";
 import { ChainAssignWorkflow } from "../chain-assign-workflow";
 
 const legacyNoMatchJob = {
@@ -84,13 +84,13 @@ jest.mock("@/hooks/use-job-status", () => ({
   }),
 }));
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),
 }));
 
-jest.mock("@/lib/chains-store", () => ({
+jest.mock("@/lib/chains/chains-store", () => ({
   useSharedChains: () => ({ chains: [] }),
 }));
 

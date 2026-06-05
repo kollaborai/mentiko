@@ -1,5 +1,5 @@
 import config, { orgPath } from "./config";
-import { getNamespaceFromSession, getSessionUser } from "./auth-bridge";
+import { getNamespaceFromSession, getSessionUser } from "./auth/auth-bridge";
 
 /**
  * Namespace-scoped config resolved from the authenticated request/session.

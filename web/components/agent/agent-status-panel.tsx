@@ -20,9 +20,9 @@ import { AgentAvatar } from "./agent-avatar";
 import { CopyButton } from "@/components/ui/copy-button";
 import Link from "next/link";
 import type { Agent } from "@/lib/types";
-import { useAgentProfiles } from "@/lib/use-agent-profiles";
+import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import type { AgentProfile } from "@/lib/types";
-import { getProviderColors } from "@/lib/agent-provider-catalog";
+import { getProviderColors } from "@/lib/agents/agent-provider-catalog";
 
 function getCliBadgeColor(cli: string): string {
   const { color, bg } = getProviderColors(cli);

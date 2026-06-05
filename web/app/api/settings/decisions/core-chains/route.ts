@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
-import { listProfiles } from "@/lib/agent-profile-storage";
+import { listProfiles } from "@/lib/agents/agent-profile-storage";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import {
@@ -13,7 +13,7 @@ import {
   restoreDecisionCoreChain,
   updateDecisionCoreChainProfile,
   type DecisionCoreChainId,
-} from "@/lib/decision-core-chains";
+} from "@/lib/decisions/decision-core-chains";
 
 export const dynamic = "force-dynamic";
 

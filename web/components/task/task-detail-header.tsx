@@ -18,11 +18,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
-import { timeAgo } from "@/lib/task-transforms";
-import type { Task } from "@/lib/task-types";
+import { timeAgo } from "@/lib/tasks/task-transforms";
+import type { Task } from "@/lib/tasks/task-types";
 
 interface TaskDetailHeaderProps {
   task: Task;

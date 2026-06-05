@@ -8,18 +8,18 @@
  */
 
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { loadOrg, orgMatchesId } from "@/lib/org-storage";
+import { loadOrg, orgMatchesId } from "@/lib/orgs/org-storage";
 import {
   listSharedSecrets,
   getSharedSecret,
   saveSharedSecret,
   deleteSharedSecret,
   type SecretMinRole,
-} from "@/lib/shared-resources";
-import type { OrgRole } from "@/lib/org-types";
+} from "@/lib/system/shared-resources";
+import type { OrgRole } from "@/lib/orgs/org-types";
 import { Unauthorized, NotFound, Forbidden, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

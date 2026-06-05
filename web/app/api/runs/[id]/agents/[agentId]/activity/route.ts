@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { resolveLogDir } from "@/lib/session-log-resolver";
+import { resolveLogDir } from "@/lib/runs/session-log-resolver";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { sanitizeOutput } from "@/lib/sanitize-output";
-import { checkRunAccess } from "@/lib/run-acl";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

@@ -57,7 +57,7 @@ jest.mock("next/navigation", () => ({
 // jest.fn each call), handleEffect's useCallback dep churns every render
 // and the boot useEffect re-runs every render → infinite loop. Keep the
 // object + setter pinned to a single ref.
-jest.mock("@/lib/workspace-context", () => {
+jest.mock("@/lib/ui-context/workspace-context", () => {
   const setter = jest.fn();
   const ws = { workspaceId: "ws", setWorkspaceId: setter };
   return {
@@ -65,7 +65,7 @@ jest.mock("@/lib/workspace-context", () => {
   };
 });
 
-jest.mock("@/lib/pill-nav-preferences", () => {
+jest.mock("@/lib/ui/pill-nav-preferences", () => {
   const prefs = { prefs: { navigationMode: "floating-pill-nav" } };
   return {
     usePillNavPreferences: () => prefs,
@@ -73,7 +73,7 @@ jest.mock("@/lib/pill-nav-preferences", () => {
   };
 });
 
-jest.mock("@/lib/kollabor-engine-client", () => ({
+jest.mock("@/lib/ai-engine/kollabor-engine-client", () => ({
   getOrCreateSession: jest.fn().mockResolvedValue({ sessionId: "sid-1", sessionToken: "tok" }),
   ensureMentikoAgentInstalled: jest.fn().mockResolvedValue({ agentFingerprint: "fp" }),
   sendMessage: jest.fn(),
@@ -83,7 +83,7 @@ jest.mock("@/lib/kollabor-engine-client", () => ({
   clearKollaborEngineStoredSession: jest.fn(),
 }));
 
-jest.mock("@/lib/mentiko-mcp-bar-client", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-bar-client", () => ({
   MCPBarClient: jest.fn().mockImplementation(() => ({
     connect: jest.fn(),
     disconnect: jest.fn(),
@@ -93,7 +93,7 @@ jest.mock("@/lib/mentiko-mcp-bar-client", () => ({
   syncSessionToken: jest.fn(),
 }));
 
-jest.mock("@/lib/user-context", () => ({
+jest.mock("@/lib/ui-context/user-context", () => ({
   useUser: () => mockUserState,
 }));
 
@@ -129,8 +129,8 @@ async function flushAll() {
   }
 }
 
-import { useKollaborBarStore } from "@/lib/kollabor-bar-store";
-import { setKollaborEngineStorageScope } from "@/lib/kollabor-engine-client";
+import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
+import { setKollaborEngineStorageScope } from "@/lib/ai-engine/kollabor-engine-client";
 import {
   FloatingKollaborBar,
   nextKollaborBarScaleFromWheel,

@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { taskMergeMeta } from "@/lib/task-store";
-import { writeLog } from "@/lib/system-logger";
-import { pty } from "@/lib/pty-client";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { checkRunAccessForUser, normalizeRunId } from "@/lib/run-acl";
-import { isNonExecutionRun } from "@/lib/run-provenance";
+import { taskMergeMeta } from "@/lib/tasks/task-store";
+import { writeLog } from "@/lib/system/system-logger";
+import { pty } from "@/lib/pty/pty-client";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { checkRunAccessForUser, normalizeRunId } from "@/lib/auth/run-acl";
+import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
 export const dynamic = "force-dynamic";
 

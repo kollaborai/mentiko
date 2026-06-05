@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { timeAgo } from "@/lib/task-transforms";
-import type { TaskActivity as TaskActivityEntry } from "@/lib/task-types";
+import { timeAgo } from "@/lib/tasks/task-transforms";
+import type { TaskActivity as TaskActivityEntry } from "@/lib/tasks/task-types";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface TaskActivityProps {
   taskId: string;

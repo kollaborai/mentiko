@@ -2,10 +2,10 @@ import { NextRequest } from "next/server";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceConfig, getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { checkAuth } from "@/lib/api-auth";
-import { pty } from "@/lib/pty-client";
-import { checkRunAccess } from "@/lib/run-acl";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { pty } from "@/lib/pty/pty-client";
+import { checkRunAccess } from "@/lib/auth/run-acl";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

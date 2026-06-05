@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, Unauthorized, NotFound } from "@/lib/api-errors";
-import { viewportManager } from "@/lib/viewport-manager";
+import { viewportManager } from "@/lib/ui/viewport-manager";
 
 export const dynamic = "force-dynamic";
 

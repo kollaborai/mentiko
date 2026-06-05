@@ -13,8 +13,8 @@ import {
   ArrowRight2Filled as ChevronRight,
   CheckFilled as Check,
 } from "@aliimam/icons";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { CLI_TOOLS } from "@/lib/provider-config";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { CLI_TOOLS } from "@/lib/agents/provider-config";
 
 interface AgentProfileWizardProps {
   open: boolean;

@@ -1,4 +1,4 @@
-import { syncMarketplace } from "@/lib/marketplace-sync";
+import { syncMarketplace } from "@/lib/marketplace/marketplace-sync";
 import { InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

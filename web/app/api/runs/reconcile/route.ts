@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { reconcileOrphanedRuns } from "@/lib/run-reconciler";
-import { requirePermission } from "@/lib/rbac-auth";
+import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";

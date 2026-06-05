@@ -9,10 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import type { RegistryAgent } from "@/app/api/agents/registry/route";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import type { ArtifactTemplate } from "@/lib/artifact-template-storage";
+import type { ArtifactTemplate } from "@/lib/system/artifact-template-storage";
 
 interface AgentForm {
   id: string;

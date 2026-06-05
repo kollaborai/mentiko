@@ -54,7 +54,7 @@ describe("session-token", () => {
     setNodeEnv("test");
     jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    const { mintSessionToken, verifySessionToken } = await import("../session-token");
+    const { mintSessionToken, verifySessionToken } = await import("../auth/session-token");
 
     const token = await mintSessionToken({
       sub: "user-1",
@@ -77,7 +77,7 @@ describe("session-token", () => {
   it("still requires an explicit secret in production", async () => {
     setNodeEnv("production");
 
-    const { mintSessionToken } = await import("../session-token");
+    const { mintSessionToken } = await import("../auth/session-token");
 
     await expect(
       mintSessionToken({

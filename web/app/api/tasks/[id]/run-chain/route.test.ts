@@ -6,7 +6,7 @@ const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskGetComments = jest.fn();
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   requirePermission: () => (handler: unknown) => handler,
 }));
 
@@ -19,7 +19,7 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
 }));
 
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskGetComments: (...args: unknown[]) => mockTaskGetComments(...args),
@@ -33,11 +33,11 @@ jest.mock("@/lib/config", () => ({
   },
 }));
 
-jest.mock("@/lib/notification-server", () => ({
+jest.mock("@/lib/notifications/notification-server", () => ({
   createNotification: jest.fn(),
 }));
 
-jest.mock("@/lib/task-routes", () => ({
+jest.mock("@/lib/tasks/task-routes", () => ({
   taskDetailHref: (id: string) => `/tasks/${id}`,
 }));
 

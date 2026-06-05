@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { ArrowDown1Filled, ArrowRight1Filled } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
-import type { Decision } from "@/lib/decision-types";
+import type { Decision } from "@/lib/decisions/decision-types";
 import { Markdown } from "@/components/ui/markdown";
 
 export function CollapsibleSection({

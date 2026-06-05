@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { getJob, deleteJob } from "@/lib/job-store";
-import { taskGet, taskUpdate } from "@/lib/task-store";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getJob, deleteJob } from "@/lib/runs/job-store";
+import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import type { Job } from "@/lib/job-store";
+import type { Job } from "@/lib/runs/job-store";
 
 export const dynamic = "force-dynamic";
 
@@ -135,7 +135,7 @@ export const DELETE = withErrorHandling(async (
   // clear decision metadata if this was a decision job
   if (job.decisionId) {
     try {
-      const { getDecision, updateDecision } = await import("@/lib/decision-storage");
+      const { getDecision, updateDecision } = await import("@/lib/decisions/decision-storage");
       const jobWorkspacePath =
         typeof job.input?.workspacePath === "string"
           ? job.input.workspacePath

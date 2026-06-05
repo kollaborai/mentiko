@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TickCircleFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { PeopleFilled, LinkFilled, BotMessageSquare } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import type { LinkMode } from "@/lib/link-types";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import type { LinkMode } from "@/lib/links/link-types";
 import Link from "next/link";
 
 interface AgentDef {

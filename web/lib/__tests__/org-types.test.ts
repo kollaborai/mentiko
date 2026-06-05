@@ -1,4 +1,4 @@
-import { canRolePerformAction } from "../org-types";
+import { canRolePerformAction } from "../orgs/org-types";
 
 describe("org-types RBAC", () => {
   it("allows owner to perform view_audit", () => {

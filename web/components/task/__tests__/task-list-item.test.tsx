@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { TaskListItem } from "../task-list-item";
-import type { Task } from "@/lib/task-types";
+import type { Task } from "@/lib/tasks/task-types";
 
 jest.mock("@/components/ui/workflow-sidebar", () => ({
   WorkflowSidebarItem: ({
@@ -55,7 +55,7 @@ jest.mock("lucide-react", () => ({
   ),
 }));
 
-jest.mock("@/lib/task-transforms", () => ({
+jest.mock("@/lib/tasks/task-transforms", () => ({
   timeAgo: (_d: string) => "2h ago",
 }));
 

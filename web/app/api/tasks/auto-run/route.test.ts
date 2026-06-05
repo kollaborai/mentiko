@@ -3,7 +3,7 @@
  */
 
 const mockCheckAuth = jest.fn();
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
@@ -26,7 +26,7 @@ jest.mock("@/lib/namespace-config", () => ({
   }),
 }));
 
-jest.mock("@/lib/system-settings", () => ({
+jest.mock("@/lib/system/system-settings", () => ({
   readSystemSettings: jest.fn().mockReturnValue({
     auto_run_enabled: true,
     max_concurrent_runs: 10,
@@ -36,7 +36,7 @@ jest.mock("@/lib/system-settings", () => ({
 const mockIsTaskReady = jest.fn();
 const mockReconcileActiveAutoRunTasks = jest.fn();
 const mockReconcileTaskActiveRun = jest.fn();
-jest.mock("@/lib/auto-run", () => ({
+jest.mock("@/lib/runs/auto-run", () => ({
   getAutoRunCandidates: jest.fn().mockReturnValue([]),
   isTaskReady: (...args: unknown[]) => mockIsTaskReady(...args),
   reconcileActiveAutoRunTasks: (...args: unknown[]) => mockReconcileActiveAutoRunTasks(...args),
@@ -45,31 +45,31 @@ jest.mock("@/lib/auto-run", () => ({
 
 const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));
 
-jest.mock("@/lib/workspace-storage", () => ({
+jest.mock("@/lib/workspaces/workspace-storage", () => ({
   getWorkspace: jest.fn(),
   resolveAutoRun: jest.fn().mockReturnValue(true),
 }));
 
 const mockGetJob = jest.fn();
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   getJob: (...args: unknown[]) => mockGetJob(...args),
 }));
 
-jest.mock("@/lib/chain-utils", () => ({
+jest.mock("@/lib/chains/chain-utils", () => ({
   getAllChains: jest.fn().mockReturnValue([]),
   buildChainSummary: jest.fn().mockReturnValue("No chains available."),
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: jest.fn().mockReturnValue({ content: "{{TASK_CONTEXT}}\n{{CHAIN_CATALOG}}\n{{WORKSPACE_CONTEXT}}" }),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: jest.fn().mockImplementation((_template: string, vars: Record<string, string>) =>
     [vars.TASK_CONTEXT, vars.CHAIN_CATALOG, vars.WORKSPACE_CONTEXT].filter(Boolean).join("\n"),
   ),
@@ -89,7 +89,7 @@ jest.mock("@/lib/config", () => {
   };
 });
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath),
 }));
 

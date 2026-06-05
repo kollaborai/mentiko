@@ -12,7 +12,7 @@ import { LinearTaskProvider } from "./linear";
 import { NotionTaskProvider } from "./notion";
 import { MondayTaskProvider } from "./monday";
 import { JiraTaskProvider } from "./jira";
-import { getSecretByName } from "@/lib/secrets-store";
+import { getSecretByName } from "@/lib/secrets/secrets-store";
 
 const SECRET_REF_PATTERN = /^\{secret:([^}]+)\}$/;
 

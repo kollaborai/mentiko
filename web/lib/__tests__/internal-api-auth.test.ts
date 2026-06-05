@@ -3,7 +3,7 @@ import {
   isDevLocalInternalRequest,
   requireInternalAuth,
   resolveInternalAuthSecret,
-} from "../internal-api-auth";
+} from "../auth/internal-api-auth";
 
 describe("internal api auth", () => {
   const originalEnv = { ...process.env };

@@ -14,7 +14,7 @@ import {
   COLOR_SCHEME_SWATCH,
   COLOR_SCHEME_LABELS,
   getPillNavShineGradient,
-} from "@/lib/pill-nav-preferences";
+} from "@/lib/ui/pill-nav-preferences";
 
 const SCALE_KEY = "mentiko-pill-scale";
 const SCALE_CHANGE_EVENT = "mentiko-pill-scale-change";

@@ -4,11 +4,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 
 import { TickCircleFilled, RecordCircleFilled, ArrowRight2Filled, ExportFilled, FolderOpenFilled } from "@aliimam/icons";
-import { useWorkspace } from "@/lib/workspace-context";
-import { unwrapApiData } from "@/lib/api-client";
-import { useSharedRuns } from "@/lib/runs-store";
-import { useSharedChains } from "@/lib/chains-store";
-import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { useSharedRuns } from "@/lib/runs/runs-store";
+import { useSharedChains } from "@/lib/chains/chains-store";
+import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 
 interface Step {
   id: string;

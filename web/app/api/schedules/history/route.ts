@@ -4,11 +4,11 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { readFileSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { checkAuth } from "@/lib/api-auth";
-import { requirePermission } from "@/lib/rbac-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { orgPath } from "@/lib/config";
-import { generateExecutionId, parseExecutionHistory } from "@/lib/schedule-utils";
+import { generateExecutionId, parseExecutionHistory } from "@/lib/schedules/schedule-utils";
 
 export const dynamic = "force-dynamic";
 

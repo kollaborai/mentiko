@@ -6,12 +6,12 @@
 
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getWorkspace, updateWorkspace, checkWorkspaceAccess } from "@/lib/workspace-storage";
+import { getWorkspace, updateWorkspace, checkWorkspaceAccess } from "@/lib/workspaces/workspace-storage";
 import { createTaskProvider, isTaskProviderType, TASK_PROVIDER_META } from "@/lib/task-provider";
 import type { TaskProviderConfig, TaskProvider } from "@/lib/task-provider/types";
 import { Unauthorized, NotFound, BadRequest, Forbidden, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 

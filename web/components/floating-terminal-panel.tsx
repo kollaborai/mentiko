@@ -18,7 +18,7 @@ import {
   ColorSwatchFilled,
   DangerFilled,
 } from "@aliimam/icons";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { TerminalViewer } from "@/components/terminal/terminal-viewer";
 import { useTerminalWsConnection } from "@/components/terminal/use-terminal-ws-connection";
 import {
@@ -32,10 +32,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { useWorkspace } from "@/lib/workspace-context";
-import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/pill-nav-preferences";
-import { unwrapApiData } from "@/lib/api-client";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 
 interface PtySession {
   name: string;

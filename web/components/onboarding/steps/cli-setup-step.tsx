@@ -11,9 +11,9 @@ import {
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
 import { BotMessageSquare } from "@aliimam/icons";
 import { motion, AnimatePresence } from "motion/react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getBundleProviderForTool } from "@/lib/agent-provider-catalog";
-import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getBundleProviderForTool } from "@/lib/agents/agent-provider-catalog";
+import { CLI_TOOLS, getProviderColors, PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
 import { ClaudeAuth } from "@/components/onboarding/cli-auth/claude-auth";
 import { CodexAuth } from "@/components/onboarding/cli-auth/codex-auth";
 import { AntigravityAuth } from "@/components/onboarding/cli-auth/antigravity-auth";

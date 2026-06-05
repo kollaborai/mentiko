@@ -17,7 +17,7 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => {
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => {
   const { NextResponse } = jest.requireMock("next/server");
   return {
     requireOpsAuth: jest.fn(),
@@ -29,7 +29,7 @@ jest.mock("@/lib/mentiko-mcp-ops-auth", () => {
   };
 });
 
-jest.mock("@/lib/schedule-storage", () => ({
+jest.mock("@/lib/schedules/schedule-storage", () => ({
   addSchedule: jest.fn(),
   calculateAndStoreNextRun: jest.fn().mockResolvedValue(null),
   getSchedule: jest.fn(),
@@ -43,13 +43,13 @@ jest.mock("@/lib/validators", () => ({
   validateSchedule: jest.fn().mockReturnValue({ valid: true, errors: [] }),
 }));
 
-jest.mock("@/lib/schedule-targets", () => ({
+jest.mock("@/lib/schedules/schedule-targets", () => ({
   validateScheduleTarget: jest.fn().mockReturnValue([]),
 }));
 
 import { DELETE, POST } from "./route";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
-import { addSchedule, removeSchedule } from "@/lib/schedule-storage";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { addSchedule, removeSchedule } from "@/lib/schedules/schedule-storage";
 
 const guestCtx = {
   userId: "guest-user",

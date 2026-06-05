@@ -2,8 +2,8 @@ import { readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { registerMentikoProfile } from "@/lib/mentiko-engine-profile";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { registerMentikoProfile } from "@/lib/agents/mentiko-engine-profile";
 
 export const dynamic = "force-dynamic";
 

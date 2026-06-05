@@ -2,7 +2,7 @@
 
 import { PageBanner } from "@/components/ui/page-banner";
 import { BotMessageSquare, LinkFilled, RouteSquareFilled } from "@aliimam/icons";
-import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agent-provider-catalog";
+import { DEFAULT_MARKETPLACE_AGENT_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 const CodeBlock = ({ children }: { children: string }) => (
   <pre className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto mb-4">

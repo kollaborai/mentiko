@@ -4,8 +4,8 @@ import { ArrowDownFilled, ArrowUpFilled, Link2Filled as Link2 } from "@aliimam/i
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
-import type { Task } from "@/lib/task-types";
-import { sortTasksByDependencyOrder } from "@/lib/task-ordering";
+import type { Task } from "@/lib/tasks/task-types";
+import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
 
 interface TaskChildrenProps {
   items: Task[];

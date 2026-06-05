@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
-import type { Breakpoint } from "@/lib/breakpoint-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
+import type { Breakpoint } from "@/lib/runs/breakpoint-store";
 
 export interface BreakpointState {
   chainId: string;

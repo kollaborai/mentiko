@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useState, useEffect } from "react";
-import { useEditorStore, usePane } from "@/lib/editor-store";
+import { useEditorStore, usePane } from "@/lib/ui/editor-store";
 import { TabBar } from "./tab-bar";
 import { EditorPane } from "./editor-pane";
 

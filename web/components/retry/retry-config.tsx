@@ -14,8 +14,8 @@ import type { Chain } from "@/lib/types";
 import type {
   RetryPolicy,
   ChainRetryConfig,
-} from "@/lib/retry-types";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+} from "@/lib/runs/retry-types";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 const DEFAULT_RETRY: RetryPolicy = {
   enabled: false,

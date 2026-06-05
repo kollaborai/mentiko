@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { TickCircleFilled } from "@aliimam/icons";
 import { Abstract75Shapes } from "@aliimam/vectors";
 import { GradientDots } from "@/components/ui/gradient-dots";
-import type { TailoredOption, Recommendation } from "@/lib/decision-types";
+import type { TailoredOption, Recommendation } from "@/lib/decisions/decision-types";
 import { TailoredOptionCard } from "@/components/guided-flow/tailored-option-card";
 
 interface Round2OptionsProps {

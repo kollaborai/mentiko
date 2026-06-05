@@ -1,11 +1,11 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadChain } from "../chain-utils";
+import { loadChain } from "../chains/chain-utils";
 
 const root = join(tmpdir(), `mentiko-chain-utils-${process.pid}`);
 
-jest.mock("../agent-loader", () => ({
+jest.mock("../agents/agent-loader", () => ({
   resolveChainAgents: (agents: unknown[]) => agents,
 }));
 

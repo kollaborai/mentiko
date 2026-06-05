@@ -7,12 +7,12 @@ import { NextRequest } from "next/server";
 import { existsSync, readdirSync } from "fs";
 import { execSync } from "child_process";
 import path from "path";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { nsPath, orgPath } from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized, InternalServerError } from "@/lib/api-errors";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { orgPath } from "@/lib/config";

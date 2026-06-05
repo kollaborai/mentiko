@@ -3,7 +3,7 @@ import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import config, { orgPath } from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import type { Agent } from "@/lib/types";
 import { BadRequest, NotFound } from "@/lib/api-errors";

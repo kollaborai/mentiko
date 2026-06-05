@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { Unauthorized, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export const GET = withErrorHandling(
     const { name } = await context.params;
 
     try {
-      const { pty } = await import("@/lib/pty-client");
+      const { pty } = await import("@/lib/pty/pty-client");
       const output = await pty.capture(name, 100);
       return apiSuccess({ output });
     } catch (error) {
@@ -34,7 +34,7 @@ export const DELETE = withErrorHandling(
     const { name } = await context.params;
 
     try {
-      const { pty } = await import("@/lib/pty-client");
+      const { pty } = await import("@/lib/pty/pty-client");
       await pty.remove(name);
       return apiSuccess({ ok: true });
     } catch (error) {

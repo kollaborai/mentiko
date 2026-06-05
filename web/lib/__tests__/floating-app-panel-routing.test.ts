@@ -5,7 +5,7 @@ import {
   isFloatingPanelFrameRequest,
   isFloatingPanelRoute,
   isFloatingPanelSurface,
-} from "../floating-app-panel-routing";
+} from "../ui/floating-app-panel-routing";
 
 describe("floating app panel routing", () => {
   it("allows only safe internal app routes", () => {

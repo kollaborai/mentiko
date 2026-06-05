@@ -11,8 +11,8 @@ import {
   LinkFilled as Workflow,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 
 interface AgentSession {
   name: string;

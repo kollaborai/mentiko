@@ -1,6 +1,6 @@
 "use client";
 
-import { usePane, isDirty } from "@/lib/editor-store";
+import { usePane, isDirty } from "@/lib/ui/editor-store";
 
 const EXT_TO_LANG: Record<string, string> = {
   ".ts": "TypeScript",

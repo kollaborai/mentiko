@@ -1,15 +1,15 @@
 import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync, rmSync } from "fs";
 import { join } from "path";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
 import { validateChain } from "@/lib/validators";
-import { resolveChainAgents } from "@/lib/agent-loader";
+import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { BadRequest, NotFound, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { addAuditLog } from "@/lib/audit-queue";
+import { addAuditLog } from "@/lib/api/audit-queue";
 
 export const dynamic = "force-dynamic";
 

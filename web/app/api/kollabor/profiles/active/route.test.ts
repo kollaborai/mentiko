@@ -19,17 +19,17 @@ jest.mock("fs/promises", () => ({
   writeFile: jest.fn(),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
-jest.mock("@/lib/mentiko-engine-profile", () => ({
+jest.mock("@/lib/agents/mentiko-engine-profile", () => ({
   registerMentikoProfile: jest.fn(),
 }));
 
 import { readFile, writeFile } from "fs/promises";
 import { POST } from "./route";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 function makeRequest(body?: Record<string, unknown>) {
   return {
@@ -101,7 +101,7 @@ describe("/api/kollabor/profiles/active", () => {
       let mockRegister: jest.Mock | undefined;
       await jest.isolateModulesAsync(async () => {
         const routeMod = (await import("./route")) as unknown as { GET: GetFn };
-        const engineMod = (await import("@/lib/mentiko-engine-profile")) as unknown as {
+        const engineMod = (await import("@/lib/agents/mentiko-engine-profile")) as unknown as {
           registerMentikoProfile: jest.Mock;
         };
         GET = routeMod.GET;

@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { checkRunAccess, normalizeRunId } from "../run-acl";
+import { checkRunAccess, normalizeRunId } from "../auth/run-acl";
 
 jest.mock("../config", () => ({
   __esModule: true,
@@ -10,7 +10,7 @@ jest.mock("../config", () => ({
   },
 }));
 
-jest.mock("../auth-bridge", () => ({
+jest.mock("../auth/auth-bridge", () => ({
   getSessionUser: jest.fn(() => ({
     id: "user-1",
     email: "user@example.com",
@@ -26,7 +26,7 @@ jest.mock("../namespace-config", () => ({
   getOrgIdFromRequest: jest.fn(() => "default"),
 }));
 
-jest.mock("../workspace-storage", () => ({
+jest.mock("../workspaces/workspace-storage", () => ({
   getWorkspace: jest.fn(() => null),
   listWorkspaces: jest.fn(() => []),
   checkWorkspaceAccess: jest.fn(() => true),

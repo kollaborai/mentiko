@@ -4,10 +4,10 @@ import { join } from "path";
 import { spawn } from "child_process";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { writeLog } from "@/lib/system-logger";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { writeLog } from "@/lib/system/system-logger";
 import config from "@/lib/config";
-import { pty } from "@/lib/pty-client";
+import { pty } from "@/lib/pty/pty-client";
 
 export const dynamic = "force-dynamic";
 

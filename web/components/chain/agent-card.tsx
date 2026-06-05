@@ -6,7 +6,7 @@ import { StatusBadge, type Status } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { CommandSquareFilled as Terminal, SendFilled as Send, StopFilled as Square, MaximizeFilled as Maximize2, DocumentTextFilled as FileText, DocumentCodeFilled as FileJson, Code1Filled as Code2, HierarchyFilled as GitBranch, DocumentTextFilled as Sheet, TextalignLeftFilled as AlignLeft, ImageFilled as Image } from "@aliimam/icons";
 import type { AgentSession as BaseAgentSession } from "@/lib/types";
-import type { ArtifactProduces } from "@/lib/agent-loader";
+import type { ArtifactProduces } from "@/lib/agents/agent-loader";
 
 export interface AgentSession extends Omit<BaseAgentSession, 'status' | 'agent_name'> {
   name: string;

@@ -2,13 +2,13 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { getServerSession } from "@/lib/auth";
-import { mintSessionToken } from "@/lib/session-token";
-import { decodeSessionTokenClaims } from "@/lib/session-token";
-import { checkAndIncrementRateLimit } from "@/lib/refresh-rate-limiter";
-import { timingSafeEqual } from "@/lib/security";
-import type { OrgRole } from "@/lib/org-types";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { getServerSession } from "@/lib/auth/auth";
+import { mintSessionToken } from "@/lib/auth/session-token";
+import { decodeSessionTokenClaims } from "@/lib/auth/session-token";
+import { checkAndIncrementRateLimit } from "@/lib/api/refresh-rate-limiter";
+import { timingSafeEqual } from "@/lib/auth/security";
+import type { OrgRole } from "@/lib/orgs/org-types";
 
 export const dynamic = "force-dynamic";
 

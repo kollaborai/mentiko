@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { CalendarFilled, PeopleFilled, RouteSquareFilled, FlashFilled } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { PageBanner } from "@/components/ui/page-banner";
 
 interface TranscriptEntry {

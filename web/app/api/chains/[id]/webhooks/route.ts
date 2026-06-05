@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getChainWebhooks, saveChainWebhooks, type ChainWebhook } from "@/lib/webhook-utils";
+import { getChainWebhooks, saveChainWebhooks, type ChainWebhook } from "@/lib/webhooks/webhook-utils";
 import { randomUUID } from "crypto";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";

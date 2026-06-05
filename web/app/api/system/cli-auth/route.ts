@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
-import { pty } from "@/lib/pty-client";
-import { getInteractiveAuthCommand, getInteractiveAuthTools } from "@/lib/agent-provider-catalog";
+import { pty } from "@/lib/pty/pty-client";
+import { getInteractiveAuthCommand, getInteractiveAuthTools } from "@/lib/agents/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 

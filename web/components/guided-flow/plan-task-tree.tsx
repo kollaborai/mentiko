@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { PlanTask, PlanDependency } from "@/lib/decision-types";
+import type { PlanTask, PlanDependency } from "@/lib/decisions/decision-types";
 
 interface PlanTaskTreeProps {
   tasks: PlanTask[];

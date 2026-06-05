@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { scanAllSkills, skillToAgent } from "@/lib/skill-scanner";
+import { scanAllSkills, skillToAgent } from "@/lib/system/skill-scanner";
 import config from "@/lib/config";
 import { BadRequest } from "@/lib/api-errors";
 

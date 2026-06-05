@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SmsFilled as Mail, TrashFilled as Trash2, AddFilled as Plus, Star1Filled as Crown, ClockFilled as Clock, CloseCircleFilled as X, SearchNormalFilled as Search } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { AgentAvatar } from "@/components/agent/agent-avatar";
 import { OrgInviteDialog } from "./org-invite-dialog";
-import type { OrgMember } from "@/lib/org-types";
+import type { OrgMember } from "@/lib/orgs/org-types";
 
 interface OrgMembersPanelProps {
   orgId: string;

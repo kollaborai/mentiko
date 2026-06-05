@@ -10,9 +10,9 @@ import {
 } from "@aliimam/icons";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { motion } from "motion/react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
-import { getDefaultAgentConfigIdForTool, PROVIDER_CREDENTIALS } from "@/lib/provider-config";
+import { getDefaultAgentConfigIdForTool, PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface AiderAuthProps {

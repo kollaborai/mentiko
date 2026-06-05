@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { apiSuccess, withErrorHandling } from "@/lib/api-response";
 import { Unauthorized } from "@/lib/api-errors";
 

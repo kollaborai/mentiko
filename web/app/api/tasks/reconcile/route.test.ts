@@ -3,7 +3,7 @@
  */
 
 const mockCheckAuth = jest.fn();
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
@@ -19,25 +19,25 @@ jest.mock("path", () => jest.requireActual("path"));
 const mockTaskList = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClose = jest.fn();
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskList: (...args: unknown[]) => mockTaskList(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClose: (...args: unknown[]) => mockTaskClose(...args),
   validateTaskId: (id: string) => id,
 }));
 
-jest.mock("@/lib/workspace-params", () => ({
+jest.mock("@/lib/workspaces/workspace-params", () => ({
   getWorkspaceId: jest.fn().mockReturnValue(undefined),
   hasWorkspaceParam: jest.fn().mockReturnValue(false),
 }));
 
 const mockGetLiveSessions = jest.fn();
-jest.mock("@/lib/pty-client", () => ({
+jest.mock("@/lib/pty/pty-client", () => ({
   getLiveSessions: (...args: unknown[]) => mockGetLiveSessions(...args),
 }));
 
 const mockCreateNotification = jest.fn();
-jest.mock("@/lib/notification-server", () => ({
+jest.mock("@/lib/notifications/notification-server", () => ({
   createNotification: (...args: unknown[]) => mockCreateNotification(...args),
 }));
 
@@ -54,7 +54,7 @@ jest.mock("@/lib/config", () => ({
 }));
 
 const mockWriteLog = jest.fn();
-jest.mock("@/lib/system-logger", () => ({
+jest.mock("@/lib/system/system-logger", () => ({
   writeLog: (...args: unknown[]) => mockWriteLog(...args),
 }));
 

@@ -55,10 +55,10 @@ import type {
   WebhookSource,
   WebhookEventType,
   WebhookEventFilter,
-} from "@/lib/webhook-types";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
-import { useSharedChains } from "@/lib/chains-store";
+} from "@/lib/webhooks/webhook-types";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
+import { useSharedChains } from "@/lib/chains/chains-store";
 
 const WEBHOOK_SOURCES: { value: WebhookSource; label: string }[] = [
   { value: "github", label: "GitHub" },

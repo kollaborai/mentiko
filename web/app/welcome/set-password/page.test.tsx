@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { authClient } from "@/lib/auth-client";
-import { hardReplace } from "@/lib/browser-navigation";
+import { authClient } from "@/lib/auth/auth-client";
+import { hardReplace } from "@/lib/ui/browser-navigation";
 import WelcomeSetPasswordPage from "./page";
 
-jest.mock("@/lib/auth-client", () => ({
+jest.mock("@/lib/auth/auth-client", () => ({
   authClient: {
     changePassword: jest.fn(),
   },
 }));
 
-jest.mock("@/lib/browser-navigation", () => ({
+jest.mock("@/lib/ui/browser-navigation", () => ({
   hardReplace: jest.fn(),
 }));
 

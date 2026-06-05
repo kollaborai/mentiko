@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { loadPrefs, savePrefs, NotificationPreferences } from "@/lib/notification-prefs";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { loadPrefs, savePrefs, NotificationPreferences } from "@/lib/notifications/notification-prefs";
 
 export const dynamic = "force-dynamic";
 

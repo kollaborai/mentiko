@@ -1,4 +1,4 @@
-import { buildTaskListQuery } from "@/lib/task-filter-query";
+import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
 
 describe("buildTaskListQuery", () => {
   it("sends selected type and all status to the tasks api", () => {

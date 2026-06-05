@@ -20,7 +20,7 @@ interface LinkMockProps {
   [key: string]: unknown
 }
 
-jest.mock('@/lib/workspace-context', () => ({
+jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
     workspacePath: '/tmp/test',
@@ -31,7 +31,7 @@ jest.mock('@/lib/workspace-context', () => ({
 }))
 
 // Mock dependencies
-jest.mock('@/lib/websocket', () => ({
+jest.mock('@/lib/pty/websocket', () => ({
   useWebSocket: () => ({
     connected: true,
     lastEvent: null,

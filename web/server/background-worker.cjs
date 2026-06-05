@@ -12,18 +12,18 @@ const {
   clearBackgroundWorkerPid,
   writeBackgroundWorkerPid,
   writeBackgroundWorkerStatusFile,
-} = require("../lib/background-worker-state");
-const { reconcileOrphanedRuns } = require("../lib/run-reconciler");
+} = require("../lib/system/background-worker-state");
+const { reconcileOrphanedRuns } = require("../lib/runs/run-reconciler");
 const {
   getSchedulerStatus,
   startScheduler,
   stopScheduler,
-} = require("../lib/scheduler-service");
+} = require("../lib/schedules/scheduler-service");
 const {
   getAutoRunServiceStatus,
   startAutoRunService,
   stopAutoRunService,
-} = require("../lib/auto-run-service");
+} = require("../lib/runs/auto-run-service");
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;

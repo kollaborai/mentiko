@@ -2,8 +2,8 @@ import { NextRequest } from "next/server";
 import { readdirSync, statSync, createReadStream } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
-import { checkAuth } from "@/lib/api-auth";
-import { resolveLogDir } from "@/lib/session-log-resolver";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveLogDir } from "@/lib/runs/session-log-resolver";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

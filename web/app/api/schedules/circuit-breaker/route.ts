@@ -8,8 +8,8 @@
 
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { requirePermission } from "@/lib/rbac-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
   getCircuitBreakerState,
@@ -19,7 +19,7 @@ import {
   killSwitch,
   enableCircuitBreaker,
   type CircuitBreakerState,
-} from "@/lib/circuit-breaker";
+} from "@/lib/api/circuit-breaker";
 
 export const dynamic = "force-dynamic";
 

@@ -3,11 +3,11 @@ import { existsSync, accessSync, constants } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listWorkspaces, addWorkspace, slugify, checkWorkspaceAccess } from "@/lib/workspace-storage";
-import type { Workspace } from "@/lib/workspace-storage";
+import { listWorkspaces, addWorkspace, slugify, checkWorkspaceAccess } from "@/lib/workspaces/workspace-storage";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { getSessionUser } from "@/lib/auth-bridge";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 

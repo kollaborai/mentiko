@@ -8,7 +8,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-jest.mock("@/lib/auth-client", () => ({
+jest.mock("@/lib/auth/auth-client", () => ({
   useSession: () => ({
     data: {
       user: {

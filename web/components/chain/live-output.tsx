@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

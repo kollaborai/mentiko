@@ -1,5 +1,5 @@
-import { useLocaleStore } from "@/lib/locale-store";
-import { t, tParams } from "@/lib/i18n";
+import { useLocaleStore } from "@/lib/i18n/locale-store";
+import { t, tParams } from "@/lib/i18n/i18n";
 import { useMemo } from "react";
 
 export function useTranslations() {

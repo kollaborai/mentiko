@@ -2,8 +2,8 @@ import { NextRequest } from "next/server";
 import { existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { syncMarketplace } from "@/lib/marketplace-sync";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { syncMarketplace } from "@/lib/marketplace/marketplace-sync";
 import { BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

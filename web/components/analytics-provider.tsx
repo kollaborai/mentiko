@@ -9,7 +9,7 @@ interface Gtag {
 
 import { Suspense, useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { analytics } from "@/lib/analytics";
+import { analytics } from "@/lib/system/analytics";
 
 // ga4 script loader
 function loadGa4(measurementId: string): void {

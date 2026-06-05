@@ -13,17 +13,17 @@ import { readFileSync, writeFileSync, existsSync, openSync, closeSync } from "fs
 import { join } from "path";
 import { spawn } from "child_process";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { shellEscape } from "@/lib/audit-exec";
-import { requirePermission } from "@/lib/rbac-auth";
-import { pty } from "@/lib/pty-client";
+import { shellEscape } from "@/lib/api/audit-exec";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { pty } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { buildChildEnv } from "@/lib/child-env";
-import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway-local-proxy-env";
-import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets-store";
-import { getProfile } from "@/lib/agent-profile-storage";
-import { checkRunAccess } from "@/lib/run-acl";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { resolveInternalAuthSecret } from "@/lib/internal-api-auth";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
+import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
+import { getProfile } from "@/lib/agents/agent-profile-storage";
+import { checkRunAccess } from "@/lib/auth/run-acl";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

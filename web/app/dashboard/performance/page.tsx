@@ -7,7 +7,7 @@ import { TrendUpFilled, ChartFilled, ChartFilled as BarChart3, RefreshFilled, Cl
 import { BotMessageSquare as Bot } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { StatusBadge, type Status } from "@/components/status-badge";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface TokenCounts {
   total_input: number;

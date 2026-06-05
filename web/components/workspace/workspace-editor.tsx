@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useEditorStore } from "@/lib/editor-store";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import { FileTree } from "@/components/editor/file-tree";
 import { SplitContainer } from "@/components/editor/split-container";
 import { QuickOpen } from "@/components/editor/quick-open";
 import { SearchPanel } from "@/components/editor/search-panel";
 import { EditorConfigPanel } from "@/components/editor/editor-config";
 import { DocumentFilled as Files, SearchNormalFilled as Search, Setting3Filled as Settings } from "@aliimam/icons";
-import type { Workspace } from "@/lib/workspace-storage";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 const SIDEBAR_KEY = "editor-sidebar-width";
 const MIN_W = 180;

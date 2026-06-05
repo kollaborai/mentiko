@@ -16,7 +16,7 @@ jest.mock("@/lib/namespace-config", () => ({
 }));
 
 const mockHasInternalAuth = jest.fn().mockReturnValue(true);
-jest.mock("@/lib/internal-api-auth", () => ({
+jest.mock("@/lib/auth/internal-api-auth", () => ({
   hasInternalAuth: (...args: unknown[]) => mockHasInternalAuth(...args),
 }));
 
@@ -36,7 +36,7 @@ jest.mock("@/lib/api-errors", () => ({
 
 const mockGetJob = jest.fn();
 const mockUpdateJob = jest.fn();
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   getJob: (...args: unknown[]) => mockGetJob(...args),
   updateJob: (...args: unknown[]) => mockUpdateJob(...args),
 }));
@@ -51,7 +51,7 @@ const mockTaskDb = {
     all: jest.fn().mockReturnValue([]),
   }),
 };
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   _getDb: jest.fn().mockReturnValue(mockTaskDb),
   taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
@@ -59,25 +59,25 @@ jest.mock("@/lib/task-store", () => ({
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));
 
-jest.mock("@/lib/decision-storage", () => ({
+jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: jest.fn(),
   updateDecision: jest.fn(),
 }));
 
-jest.mock("@/lib/chain-postprocessor", () => ({
+jest.mock("@/lib/chains/chain-postprocessor", () => ({
   postProcessChain: jest.fn(),
 }));
 
-jest.mock("@/lib/internal-web-origin", () => ({
+jest.mock("@/lib/auth/internal-web-origin", () => ({
   internalApiUrl: (path: string) => `http://localhost:3000${path}`,
 }));
 
-jest.mock("@/lib/decision-run-results", () => ({
+jest.mock("@/lib/decisions/decision-run-results", () => ({
   applyDecisionRunResult: jest.fn(),
 }));
 
 let linkRunDir = "";
-jest.mock("@/lib/link-run-runtime", () => ({
+jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunPaths: jest.fn(() => ({ runDir: linkRunDir })),
 }));
 

@@ -21,12 +21,12 @@ import { NextRequest } from "next/server";
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync } from "fs";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { listWorkspaces, checkWorkspaceAccess } from "@/lib/workspace-storage";
+import { listWorkspaces, checkWorkspaceAccess } from "@/lib/workspaces/workspace-storage";
 import { nsPath, config } from "@/lib/config";
 import { Unauthorized, BadRequest, NotFound, Forbidden, ApiError } from "@/lib/api-errors";
 import { apiError } from "@/lib/api-response";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { buildChildEnv } from "@/lib/child-env";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { buildChildEnv } from "@/lib/runs/child-env";
 
 export const dynamic = "force-dynamic";
 

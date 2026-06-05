@@ -8,7 +8,7 @@ import {
   ShieldTickFilled,
   ChartFilled,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 // 30s between polls -- health API does disk I/O, don't hammer it
 const POLL_INTERVAL = 30_000;

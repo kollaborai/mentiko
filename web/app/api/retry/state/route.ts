@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getRetryState,
   listRetryStates,
-} from "@/lib/retry-storage";
+} from "@/lib/runs/retry-storage";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
 

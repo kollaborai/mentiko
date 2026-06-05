@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
-import { taskList } from "@/lib/task-store";
-import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspace-params";
+import { requirePermission } from "@/lib/auth/api-auth";
+import { taskList } from "@/lib/tasks/task-store";
+import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

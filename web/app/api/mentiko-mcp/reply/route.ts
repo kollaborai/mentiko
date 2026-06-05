@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { consumeResult, storeResult } from "@/lib/mentiko-mcp-inbox";
-import { validateRequest } from "@/lib/auth";
-import { verifySessionToken } from "@/lib/session-token";
+import { consumeResult, storeResult } from "@/lib/ai-engine/mentiko-mcp-inbox";
+import { validateRequest } from "@/lib/auth/auth";
+import { verifySessionToken } from "@/lib/auth/session-token";
 
 /**
  * GET /api/mentiko-mcp/reply?toolId=...&sessionId=...

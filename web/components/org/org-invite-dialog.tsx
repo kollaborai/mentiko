@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
 import { SmsFilled as MailIcon, Link2Filled as LinkIcon, TickCircleFilled as CheckIcon, RotateFilled as Loader2Icon } from "@aliimam/icons";
 import {
   Dialog,

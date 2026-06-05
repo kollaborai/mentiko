@@ -7,10 +7,10 @@
 // under test, so stub it. NOTE: we deliberately do NOT mock @/lib/security —
 // timingSafeTokenMatch now delegates to the real security.timingSafeEqual, and
 // exercising that delegation end-to-end is the point of this suite.
-jest.mock("@/lib/org-storage", () => ({ loadInvites: jest.fn() }));
+jest.mock("@/lib/orgs/org-storage", () => ({ loadInvites: jest.fn() }));
 
-import { loadInvites } from "@/lib/org-storage";
-import { timingSafeTokenMatch, isValidOrgInviteSignup } from "@/lib/auth-signup-gate";
+import { loadInvites } from "@/lib/orgs/org-storage";
+import { timingSafeTokenMatch, isValidOrgInviteSignup } from "@/lib/auth/auth-signup-gate";
 
 const mockLoadInvites = loadInvites as jest.MockedFunction<typeof loadInvites>;
 

@@ -1,4 +1,4 @@
-import { resolveRunAgentProfileId } from "../run-agent-profile";
+import { resolveRunAgentProfileId } from "../agents/run-agent-profile";
 
 const profiles = [
   { id: "claude-sonnet", isDefault: true },

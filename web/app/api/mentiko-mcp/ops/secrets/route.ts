@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
-import { listSecrets, createSecret, findProfilesUsingSecret } from "@/lib/secrets-store";
+import { listSecrets, createSecret, findProfilesUsingSecret } from "@/lib/secrets/secrets-store";
 
 export const dynamic = "force-dynamic";
 

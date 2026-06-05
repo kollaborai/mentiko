@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { getDecision } from "@/lib/decision-storage";
-import { resolveDecisionToTasks } from "@/lib/decision-resolution";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { getDecision } from "@/lib/decisions/decision-storage";
+import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 

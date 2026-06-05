@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -27,8 +27,8 @@ import {
   SendFilled as Send,
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
-import type { EmailInbox } from "@/lib/email-types";
-import { unwrapApiData } from "@/lib/api-client";
+import type { EmailInbox } from "@/lib/email/email-types";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface QuotaDisk {
   usedMb: number;

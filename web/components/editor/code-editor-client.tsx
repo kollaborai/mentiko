@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useEditorStore } from "@/lib/editor-store";
-import { useWorkspace } from "@/lib/workspace-context";
-import { unwrapApiData } from "@/lib/api-client";
+import { useEditorStore } from "@/lib/ui/editor-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { FileTree } from "./file-tree";
 import { FloatingWindowManager } from "./floating-window-manager";
 import { QuickOpen } from "./quick-open";

@@ -7,7 +7,7 @@ import { ChainAssignWorkflow } from "./chain-assign-workflow";
 import { ChainAgentPipeline } from "./chain-agent-pipeline";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { useJobStatus } from "@/hooks/use-job-status";
-import type { Task } from "@/lib/task-types";
+import type { Task } from "@/lib/tasks/task-types";
 
 interface TaskChainSectionProps {
   task: Task;

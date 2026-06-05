@@ -2,9 +2,9 @@
 
 import { useState, useCallback } from "react";
 import { CommandSquareFilled } from "@aliimam/icons";
-import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
+import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 
-export { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
+export { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 
 interface TerminalAuthOptionProps {
   tool: string;

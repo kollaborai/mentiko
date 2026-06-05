@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import AppearancePage from "./page";
-import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/user-display-preferences";
+import { USER_PREFERENCES_STORAGE_KEY } from "@/lib/ui/user-display-preferences";
 
 jest.mock("next-themes", () => ({
   useTheme: () => ({ theme: "dark", setTheme: jest.fn() }),

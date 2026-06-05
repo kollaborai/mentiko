@@ -6,13 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { VisualChainEditorReactFlow as ChainFlowPreview } from "@/components/chain";
 import { AgentProfileBadge } from "@/components/agent/agent-status-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { TimeAgo } from "@/components/shared/time-ago";
-import { useAgentProfiles } from "@/lib/use-agent-profiles";
-import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
+import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
+import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import Link from "next/link";
 import {
   PlayFilled, DocumentDownloadFilled, DocumentUploadFilled, GlobalFilled, Edit2Filled,
@@ -24,10 +24,10 @@ import { LinkFilled, AddFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { BotMessageSquare, RouteSquareFilled, CategoryFilled } from "@aliimam/icons";
 import { ChainIcon } from "@/components/chain/chain-icon";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
-import { useSharedRuns } from "@/lib/runs-store";
-import { useDebounce } from "@/lib/performance";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
+import { useSharedRuns } from "@/lib/runs/runs-store";
+import { useDebounce } from "@/lib/system/performance";
 import {
   downloadChain,
   ChainExportFormat,
@@ -36,7 +36,7 @@ import {
   createChainPreview,
   type ChainImportPreview,
   type ChainImportFormat,
-} from "@/lib/chain-export";
+} from "@/lib/chains/chain-export";
 import { ChainImportInputModal, ChainImportPreviewModal } from "@/components/chain";
 import { ChainCustomizationModal, type ChainCustomization } from "@/components/chain/import-modal";
 import { ChainListSkeleton } from "@/components/skeletons";
@@ -47,7 +47,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
-import { isSystemChainRecord } from "@/lib/system-chain";
+import { isSystemChainRecord } from "@/lib/chains/system-chain";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,

@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { AgentStatus, Agent as BaseAgent } from "@/lib/types";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 export interface RunningAgent extends Omit<BaseAgent, 'status'> {
   session: string;

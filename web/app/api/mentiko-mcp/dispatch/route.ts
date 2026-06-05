@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isEffectDelivered, pushEffect } from "@/lib/mentiko-mcp-inbox";
+import { isEffectDelivered, pushEffect } from "@/lib/ai-engine/mentiko-mcp-inbox";
 
 /**
  * POST /api/mentiko-mcp/dispatch

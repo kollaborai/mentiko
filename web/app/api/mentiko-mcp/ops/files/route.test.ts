@@ -23,7 +23,7 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse, NextRequest: MockNextRequest };
 });
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-1",
     sessionId: "session-1",
@@ -52,12 +52,12 @@ jest.mock("@/lib/config", () => ({
   },
 }));
 
-jest.mock("@/lib/workspace-storage", () => ({
+jest.mock("@/lib/workspaces/workspace-storage", () => ({
   listWorkspaces: jest.fn().mockReturnValue([]),
 }));
 
 import { GET } from "./route";
-import { listWorkspaces } from "@/lib/workspace-storage";
+import { listWorkspaces } from "@/lib/workspaces/workspace-storage";
 
 describe("/api/mentiko-mcp/ops/files", () => {
   test("builds allowed roots from the ops token namespace and org", async () => {

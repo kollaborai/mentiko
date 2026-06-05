@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { Decision, Option } from "@/lib/decision-types";
+import type { Decision, Option } from "@/lib/decisions/decision-types";
 import { Textarea } from "@/components/ui/textarea";
 import { GradientDots } from "@/components/ui/gradient-dots";
 import { SearchStatusFilled } from "@aliimam/icons";

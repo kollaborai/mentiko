@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { createJob, getJob } from "@/lib/job-store";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { createJob, getJob } from "@/lib/runs/job-store";
 import { getTaskSchema } from "@/lib/schema-loader";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
-import { internalApiUrl } from "@/lib/internal-web-origin";
-import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/generated-task-import";
-import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/tasks/generated-task-import";
+import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 

@@ -11,14 +11,14 @@ import {
   CommandSquareFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
 import {
   PROVIDER_CREDENTIALS,
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
-} from "@/lib/provider-config";
-import { getTerminalAuthCommand } from "@/lib/agent-provider-catalog";
+} from "@/lib/agents/provider-config";
+import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface CodexAuthProps {

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { orgPath } from "@/lib/config";
-import { getAllStandaloneAgents } from "@/lib/agent-loader";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 /**
  * /api/mentiko-mcp/ops/agents

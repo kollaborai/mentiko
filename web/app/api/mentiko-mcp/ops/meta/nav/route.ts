@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 export const dynamic = "force-dynamic";
 

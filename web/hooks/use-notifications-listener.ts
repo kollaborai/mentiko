@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { useNotificationActions } from "@/lib/notifications-store";
+import { useNotificationActions } from "@/lib/notifications/notifications-store";
 import { showToast } from "@/components/notifications-panel";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 
 interface WebhookDelivery {
   event_id: string;

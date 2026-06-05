@@ -10,11 +10,11 @@ import { GET } from "@/app/api/conversations/find-by-agent/route";
 
 const mockResolveLogDir = jest.fn();
 
-jest.mock("@/lib/session-log-resolver", () => ({
+jest.mock("@/lib/runs/session-log-resolver", () => ({
   resolveLogDir: (...args: string[]) => mockResolveLogDir(...args),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn().mockResolvedValue(true),
 }));
 

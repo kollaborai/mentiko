@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { DetailHeader } from "@/components/ui/detail-header";
 import { WorkspaceOverview } from "@/components/workspace/workspace-overview";
 import { WorkspaceTerminal } from "@/components/workspace/workspace-terminal";
@@ -14,7 +14,7 @@ import {
   Setting2Filled,
 } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import type { Workspace } from "@/lib/workspace-storage";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 type Tab = "overview" | "terminal" | "editor" | "settings";
 

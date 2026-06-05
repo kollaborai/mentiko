@@ -6,7 +6,7 @@
 import { NextRequest } from "next/server";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, Gone } from "@/lib/api-errors";
-import { validateUnsubscribeToken } from "@/lib/unsubscribe-token";
+import { validateUnsubscribeToken } from "@/lib/auth/unsubscribe-token";
 
 export const dynamic = "force-dynamic";
 

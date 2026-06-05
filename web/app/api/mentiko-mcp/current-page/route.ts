@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getCurrentPage, setCurrentPage } from "@/lib/mentiko-mcp-inbox";
-import { validateRequest } from "@/lib/auth";
-import { requireOpsAuth } from "@/lib/mentiko-mcp-ops-auth";
+import { getCurrentPage, setCurrentPage } from "@/lib/ai-engine/mentiko-mcp-inbox";
+import { validateRequest } from "@/lib/auth/auth";
+import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 /**
  * /api/mentiko-mcp/current-page

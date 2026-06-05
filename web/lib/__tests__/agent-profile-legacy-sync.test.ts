@@ -1,5 +1,5 @@
-import { getLegacyProfileSyncUpdates } from "@/lib/agent-profile-legacy-sync";
-import type { AgentProfile } from "@/lib/agent-profile-storage";
+import { getLegacyProfileSyncUpdates } from "@/lib/agents/agent-profile-legacy-sync";
+import type { AgentProfile } from "@/lib/agents/agent-profile-storage";
 
 function profile(overrides: Partial<AgentProfile>): AgentProfile {
   return {

@@ -1,8 +1,8 @@
 "use client";
 
 import { ChartFilled, BotMessageSquare } from "@aliimam/icons";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useSharedRuns } from "@/lib/runs-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useSharedRuns } from "@/lib/runs/runs-store";
 
 interface RunAgent {
   id: string;

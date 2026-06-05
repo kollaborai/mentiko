@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getDecision, updateDecision, deleteDecision } from "@/lib/decision-storage";
-import { getWorkspacePath } from "@/lib/workspace-params";
-import { getJob } from "@/lib/job-store";
+import { getDecision, updateDecision, deleteDecision } from "@/lib/decisions/decision-storage";
+import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
+import { getJob } from "@/lib/runs/job-store";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

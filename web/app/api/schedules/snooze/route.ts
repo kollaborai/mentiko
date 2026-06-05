@@ -5,9 +5,9 @@ import { promises as fs } from "fs";
 import { join } from "path";
 import { orgPath } from "@/lib/config";
 import type { SnoozeState } from "@/lib/types";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getSchedule } from "@/lib/schedule-storage";
+import { getSchedule } from "@/lib/schedules/schedule-storage";
 
 export const dynamic = "force-dynamic";
 

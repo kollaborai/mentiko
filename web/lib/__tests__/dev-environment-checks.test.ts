@@ -7,7 +7,7 @@ import {
   renderDoctorReport,
   summarizeChecks,
   upsertEnvContent,
-} from "../dev-environment-checks";
+} from "../system/dev-environment-checks";
 
 describe("dev environment checks", () => {
   it("accepts the current supported Node major version", () => {

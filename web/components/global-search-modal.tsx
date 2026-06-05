@@ -30,8 +30,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/settings-nav";
-import { getPillNavShineGradient, usePillNavPreferences } from "@/lib/pill-nav-preferences";
+import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/ui/settings-nav";
+import { getPillNavShineGradient, usePillNavPreferences } from "@/lib/ui/pill-nav-preferences";
 import { useGlobalSearch, type SearchFilter, type SearchResult } from "@/hooks/use-global-search";
 import {
   useStartPageData,

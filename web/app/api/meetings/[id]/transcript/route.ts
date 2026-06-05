@@ -10,10 +10,10 @@ import { NextRequest } from "next/server";
 import { join } from "path";
 import { readdirSync, readFileSync } from "fs";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest, NotFound } from "@/lib/api-errors";
-import { resolvePeerOutputDir } from "@/lib/link-run-runtime";
+import { resolvePeerOutputDir } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
 

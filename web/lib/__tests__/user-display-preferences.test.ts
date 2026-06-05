@@ -4,7 +4,7 @@ import {
   applyUserDisplayPreferences,
   getFloatingPanelSurfaceMixes,
   getUserDisplayPreferencesInitScript,
-} from "../user-display-preferences";
+} from "../ui/user-display-preferences";
 
 describe("user display preferences", () => {
   beforeEach(() => {

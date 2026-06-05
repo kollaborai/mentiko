@@ -1,6 +1,6 @@
-import { getAuth } from "@/lib/auth-server";
+import { getAuth } from "@/lib/auth/auth-server";
 import { NextRequest, NextResponse } from "next/server";
-import { rateLimiters } from "@/lib/security";
+import { rateLimiters } from "@/lib/auth/security";
 
 export const dynamic = "force-dynamic";
 

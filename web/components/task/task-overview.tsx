@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { mapPriority } from "@/lib/task-transforms";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { mapPriority } from "@/lib/tasks/task-transforms";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
 import { EyeSlashFilled as EyeOff, EyeFilled as Eye, RowHorizontalFilled as Rows3, Link2Filled as Link2 } from "@aliimam/icons";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
-import type { TaskPriority } from "@/lib/task-types";
+import type { TaskPriority } from "@/lib/tasks/task-types";
 
 interface ApiNode {
   id: string;

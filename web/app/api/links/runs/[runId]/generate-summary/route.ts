@@ -3,18 +3,18 @@ import { readFileSync, readdirSync, existsSync, createReadStream, statSync } fro
 import { basename, join } from "path";
 import { createInterface } from "readline";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { checkRunAccess } from "@/lib/run-acl";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { resolveLinkRunPaths, resolvePeerOutputDir, validateLinkRunId } from "@/lib/link-run-runtime";
-import { getTemplate } from "@/lib/generation-template-storage";
-import { resolveTemplate } from "@/lib/template-resolver";
-import { createJob } from "@/lib/job-store";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
-import { resolveLogDir } from "@/lib/session-log-resolver";
-import { startGenerationChainRun } from "@/lib/generation-chain-dispatch";
+import { resolveLinkRunPaths, resolvePeerOutputDir, validateLinkRunId } from "@/lib/links/link-run-runtime";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
+import { createJob } from "@/lib/runs/job-store";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { resolveLogDir } from "@/lib/runs/session-log-resolver";
+import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 
 export const dynamic = "force-dynamic";
 

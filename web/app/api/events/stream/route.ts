@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { watch, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 export const dynamic = "force-dynamic";
 

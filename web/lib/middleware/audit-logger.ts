@@ -3,7 +3,7 @@
  * non-blocking, graceful degradation if audit service unavailable.
  */
 
-import type { OrgRole } from "../org-types";
+import type { OrgRole } from "../orgs/org-types";
 
 export interface GuestEnforcementAuditEvent {
   timestamp: string;

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import type { AnchorHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { TaskDetailHeader } from "../task-detail-header";
-import type { Task } from "@/lib/task-types";
+import type { Task } from "@/lib/tasks/task-types";
 
 jest.mock("@aliimam/icons", () => ({
   ArrowLeftFilled: ({ className }: { className?: string }) => (
@@ -64,11 +64,11 @@ jest.mock("next/link", () => ({
   ),
 }));
 
-jest.mock("@/lib/copy-to-clipboard", () => ({
+jest.mock("@/lib/ui/copy-to-clipboard", () => ({
   copyToClipboard: jest.fn(),
 }));
 
-jest.mock("@/lib/task-transforms", () => ({
+jest.mock("@/lib/tasks/task-transforms", () => ({
   timeAgo: () => "1d ago",
 }));
 

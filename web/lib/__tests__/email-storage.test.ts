@@ -45,8 +45,8 @@ import {
   loadInboxes,
   saveInboxes,
   claimEmail,
-} from "../email-storage";
-import type { EmailInbox } from "../email-types";
+} from "../email/email-storage";
+import type { EmailInbox } from "../email/email-types";
 
 const testOrgId = "default";
 

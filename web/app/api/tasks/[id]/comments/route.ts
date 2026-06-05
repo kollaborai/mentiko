@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/api-auth";
+import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskGetComments, taskAddComment } from "@/lib/task-store";
-import { validateTaskId } from "@/lib/task-store";
+import { taskGetComments, taskAddComment } from "@/lib/tasks/task-store";
+import { validateTaskId } from "@/lib/tasks/task-store";
 import { BadRequest } from "@/lib/api-errors";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { apiSuccess } from "@/lib/api-response";

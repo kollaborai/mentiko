@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useEditorStore } from "@/lib/editor-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import { FileTree } from "./file-tree";
 import { SplitContainer } from "./split-container";
 import { QuickOpen } from "./quick-open";

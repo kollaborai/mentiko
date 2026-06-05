@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
-import { PLATFORM_EVENTS, getEventDomains } from "@/lib/platform-events";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { PLATFORM_EVENTS, getEventDomains } from "@/lib/system/platform-events";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

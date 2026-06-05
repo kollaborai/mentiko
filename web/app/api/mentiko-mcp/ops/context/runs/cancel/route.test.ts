@@ -14,7 +14,7 @@ jest.mock("next/server", () => {
   return { NextResponse: MockNextResponse };
 });
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-1",
     sessionId: "session-1",
@@ -36,15 +36,15 @@ jest.mock("@/lib/config", () => ({
   ),
 }));
 
-jest.mock("@/lib/pty-client", () => ({
+jest.mock("@/lib/pty/pty-client", () => ({
   pty: { remove: jest.fn() },
 }));
 
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskMergeMeta: jest.fn(),
 }));
 
-jest.mock("@/lib/system-logger", () => ({
+jest.mock("@/lib/system/system-logger", () => ({
   writeLog: jest.fn(),
 }));
 

@@ -21,23 +21,23 @@ jest.mock("fs/promises", () => ({
   readFile: jest.fn(),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn(),
 }));
 
-jest.mock("@/lib/session-token", () => ({
+jest.mock("@/lib/auth/session-token", () => ({
   mintSessionToken: jest.fn(),
 }));
 
 import { readFile } from "fs/promises";
 import { POST } from "./route";
-import { checkAuth } from "@/lib/api-auth";
-import { getSessionUser } from "@/lib/auth-bridge";
-import { mintSessionToken } from "@/lib/session-token";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { mintSessionToken } from "@/lib/auth/session-token";
 
 function makePostRequest(body: Record<string, unknown>) {
   return {

@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getDecision, updateDecision } from "@/lib/decision-storage";
-import { getWorkspacePath } from "@/lib/workspace-params";
-import type { GuidedFlow, TradeoffAnswer } from "@/lib/decision-types";
+import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
+import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
+import type { GuidedFlow, TradeoffAnswer } from "@/lib/decisions/decision-types";
 import { Unauthorized, NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

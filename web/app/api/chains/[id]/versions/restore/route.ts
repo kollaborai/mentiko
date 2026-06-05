@@ -4,9 +4,9 @@ import { join } from "path";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { incrementPatch } from "@/lib/version-utils";
+import { incrementPatch } from "@/lib/system/version-utils";
 
 export const dynamic = "force-dynamic";
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CloseCircleFilled as X, MagicStarFilled as Sparkles, ArrowLeftFilled as ArrowLeft, RotateFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface GeneratedTask {
   title: string;

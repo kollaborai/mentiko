@@ -2,9 +2,9 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getSecretByName } from "@/lib/secrets-store";
+import { getSecretByName } from "@/lib/secrets/secrets-store";
 
 export const dynamic = "force-dynamic";
 

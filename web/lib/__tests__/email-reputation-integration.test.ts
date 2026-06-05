@@ -28,7 +28,7 @@ jest.mock("../config", () => ({
 }));
 
 // mock dependencies that reputation.ts imports
-jest.mock("../auth-server", () => ({
+jest.mock("../auth/auth-server", () => ({
   getDb: jest.fn(() => {
     const testDir = join(tmpdir(), "test-email-reputation-integration");
     mkdirSync(testDir, { recursive: true });
@@ -36,7 +36,7 @@ jest.mock("../auth-server", () => ({
   }),
 }));
 
-jest.mock("../org-storage", () => {
+jest.mock("../orgs/org-storage", () => {
   const orgs = new Map<string, Record<string, unknown>>();
 
   return {
@@ -47,7 +47,7 @@ jest.mock("../org-storage", () => {
   };
 });
 
-jest.mock("../email-storage", () => ({
+jest.mock("../email/email-storage", () => ({
   appendAuditLog: jest.fn(async () => {}),
   loadOutboundQueue: jest.fn(async () => [
     { id: "queue-1", status: "pending" },
@@ -67,7 +67,7 @@ import {
   canSend,
   getSuspensionStatus,
   THRESHOLDS,
-} from "@/lib/email-reputation";
+} from "@/lib/email/email-reputation";
 
 // test helpers
 const testNamespace = "test-reputation-ns";
@@ -423,7 +423,7 @@ describe("evaluate returns correct status based on thresholds", () => {
 
 describe("applySuspension cancels pending queue entries", () => {
 
-  const emailStorage = jest.requireMock("../email-storage") as {
+  const emailStorage = jest.requireMock("../email/email-storage") as {
     loadOutboundQueue: jest.Mock;
     updateOutboundEntry: jest.Mock;
     appendAuditLog: jest.Mock;
@@ -453,7 +453,7 @@ describe("applySuspension cancels pending queue entries", () => {
   });
 
   it("updates org config with suspended status", async () => {
-    const { saveOrg, loadOrg } = jest.requireMock("../org-storage") as {
+    const { saveOrg, loadOrg } = jest.requireMock("../orgs/org-storage") as {
       saveOrg: jest.Mock;
       loadOrg: jest.Mock;
     };
@@ -622,7 +622,7 @@ describe("getSuspensionStatus", () => {
 
   it("returns suspended=true when org has suspension", async () => {
     await initSchemaOnly();
-    const { saveOrg } = jest.requireMock("../org-storage") as {
+    const { saveOrg } = jest.requireMock("../orgs/org-storage") as {
       saveOrg: jest.Mock;
     };
 
@@ -647,7 +647,7 @@ describe("getSuspensionStatus", () => {
 
   it("returns suspended=false when org not suspended", async () => {
     await initSchemaOnly();
-    const { saveOrg } = jest.requireMock("../org-storage") as {
+    const { saveOrg } = jest.requireMock("../orgs/org-storage") as {
       saveOrg: jest.Mock;
     };
 
@@ -675,7 +675,7 @@ describe("getSuspensionStatus", () => {
 
   it("returns null when org has no settings", async () => {
     await initSchemaOnly();
-    const { saveOrg } = jest.requireMock("../org-storage") as {
+    const { saveOrg } = jest.requireMock("../orgs/org-storage") as {
       saveOrg: jest.Mock;
     };
 

@@ -1,4 +1,4 @@
-import { sortTaskTreeNodes, sortTasksByDependencyOrder } from "../task-ordering";
+import { sortTaskTreeNodes, sortTasksByDependencyOrder } from "../tasks/task-ordering";
 
 describe("sortTasksByDependencyOrder", () => {
   const task = (id: string, priority = 1) => ({

@@ -5,7 +5,7 @@ import {
   PILL_NAV_PRESET_COLOR_SCHEMES,
   getPillNavShineGradient,
   usePillNavPreferences,
-} from "../pill-nav-preferences";
+} from "../ui/pill-nav-preferences";
 
 describe("pill nav preferences", () => {
   it("uses grey tones as the default shine preset before rainbow", () => {

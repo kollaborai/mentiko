@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { clearTokenCache, respondToPermission } from "@/lib/kollabor-engine-client";
+import { clearTokenCache, respondToPermission } from "@/lib/ai-engine/kollabor-engine-client";
 
 describe("kollabor-engine-client", () => {
   let originalFetch: typeof fetch;

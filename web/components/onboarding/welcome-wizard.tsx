@@ -7,8 +7,8 @@ import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
 import { CliSetupStep } from "@/components/onboarding/steps/cli-setup-step";
 import { ProjectSetupStep } from "@/components/onboarding/steps/project-setup-step";
 import { DoneStep } from "@/components/onboarding/steps/done-step";
-import { getBundleProviderForTool } from "@/lib/agent-provider-catalog";
-import { getOnboardingStateKey, getOnboardingStepKey } from "@/lib/onboarding-storage";
+import { getBundleProviderForTool } from "@/lib/agents/agent-provider-catalog";
+import { getOnboardingStateKey, getOnboardingStepKey } from "@/lib/system/onboarding-storage";
 
 type Step = "welcome" | "cli-setup" | "project-setup" | "done";
 

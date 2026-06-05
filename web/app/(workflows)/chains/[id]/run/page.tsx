@@ -16,10 +16,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEventStream } from "@/hooks/use-event-stream";
 import { useRunNotifications } from "@/hooks/use-notifications-listener";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useAgentProfiles } from "@/lib/use-agent-profiles";
-import { resolveRunAgentProfileId } from "@/lib/run-agent-profile";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
+import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import type { AgentProfile } from "@/lib/types";
 import {
   ArrowLeftFilled,

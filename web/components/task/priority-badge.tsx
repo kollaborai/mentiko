@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
-import { priorityBgColor } from "@/lib/task-transforms";
-import type { TaskPriority } from "@/lib/task-types";
+import { priorityBgColor } from "@/lib/tasks/task-transforms";
+import type { TaskPriority } from "@/lib/tasks/task-types";
 
 interface PriorityBadgeProps {
   priority: TaskPriority;

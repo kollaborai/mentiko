@@ -6,7 +6,7 @@ import {
   matchesScheduleGlob,
   scanFileTriggerDirectory,
   type FileTriggerState,
-} from "../schedule-file-triggers";
+} from "../schedules/schedule-file-triggers";
 import type { Schedule } from "../types";
 
 describe("schedule-file-triggers", () => {

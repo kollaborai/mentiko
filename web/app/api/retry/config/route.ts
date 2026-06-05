@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   getChainRetryConfig,
   saveChainRetryConfig,
   deleteChainRetryConfig,
-} from "@/lib/retry-storage";
-import type { ChainRetryConfig } from "@/lib/retry-types";
+} from "@/lib/runs/retry-storage";
+import type { ChainRetryConfig } from "@/lib/runs/retry-types";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
 

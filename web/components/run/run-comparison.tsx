@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +14,8 @@ import {
   DocumentDownloadFilled as Download,
   CloseCircleFilled as X,
 } from "@aliimam/icons";
-import { exportComparisonPDF, exportComparisonJSON } from "@/lib/export-comparison";
-import { unwrapApiData } from "@/lib/api-client";
+import { exportComparisonPDF, exportComparisonJSON } from "@/lib/system/export-comparison";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface RunData {
   id: string;

@@ -31,7 +31,7 @@ jest.mock("@/lib/config", () => ({
   ),
 }));
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     userId: "user-test",
     sessionId: "session-test",

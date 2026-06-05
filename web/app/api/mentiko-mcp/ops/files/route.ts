@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
-import { resolveAndValidate, getWorkspaceAllowedRoots } from "@/lib/path-validation";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
+import { resolveAndValidate, getWorkspaceAllowedRoots } from "@/lib/system/path-validation";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 
 /**
  * /api/mentiko-mcp/ops/files

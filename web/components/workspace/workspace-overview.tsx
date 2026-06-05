@@ -15,8 +15,8 @@ import {
   FlashFilled as Zap,
 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { useSharedRuns } from "@/lib/runs-store";
-import type { Workspace } from "@/lib/workspace-storage";
+import { useSharedRuns } from "@/lib/runs/runs-store";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 interface RecentRun {
   id: string;

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AgentDetailPanel, type AgentDetail } from '../agent-detail-panel'
 
-jest.mock('@/lib/workspace-context', () => ({
+jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
     workspacePath: '/tmp/test',

@@ -9,7 +9,7 @@ describe("kollabor bar font settings", () => {
       FONT_SCALE_MAX,
       FONT_SCALE_MIN,
       useKollaborBarStore,
-    } = await import("../kollabor-bar-store");
+    } = await import("../ui/kollabor-bar-store");
 
     expect(useKollaborBarStore.getState().fontScale).toBe(1);
 
@@ -25,13 +25,13 @@ describe("kollabor bar font settings", () => {
   it("hydrates the agent font scale from local storage", async () => {
     localStorage.setItem("mentiko-kollabor-font-scale", "1.25");
 
-    const { useKollaborBarStore } = await import("../kollabor-bar-store");
+    const { useKollaborBarStore } = await import("../ui/kollabor-bar-store");
 
     expect(useKollaborBarStore.getState().fontScale).toBe(1.25);
   });
 
   it("loads and persists side docking for the floating bar", async () => {
-    const { useKollaborBarStore } = await import("../kollabor-bar-store");
+    const { useKollaborBarStore } = await import("../ui/kollabor-bar-store");
 
     expect(useKollaborBarStore.getState().dock).toEqual({ edge: "bottom", offset: 50 });
 
@@ -47,18 +47,18 @@ describe("kollabor bar font settings", () => {
   it("hydrates a saved side dock and ignores corrupted dock storage", async () => {
     localStorage.setItem("mentiko-kollabor-dock", JSON.stringify({ edge: "right", offset: 91 }));
 
-    let mod = await import("../kollabor-bar-store");
+    let mod = await import("../ui/kollabor-bar-store");
     expect(mod.useKollaborBarStore.getState().dock).toEqual({ edge: "right", offset: 90 });
 
     jest.resetModules();
     localStorage.setItem("mentiko-kollabor-dock", "{nope");
 
-    mod = await import("../kollabor-bar-store");
+    mod = await import("../ui/kollabor-bar-store");
     expect(mod.useKollaborBarStore.getState().dock).toEqual({ edge: "bottom", offset: 50 });
   });
 
   it("maps dragged screen points to side dock positions inside the edge reach", async () => {
-    const { getKollaborBarDockForPoint } = await import("../kollabor-bar-store");
+    const { getKollaborBarDockForPoint } = await import("../ui/kollabor-bar-store");
 
     expect(getKollaborBarDockForPoint(240, 500, 1440, 1000)).toEqual({
       edge: "left",
@@ -82,7 +82,7 @@ describe("kollabor bar font settings", () => {
       { id: "a", role: "assistant", content: "user a", timestamp: 2 },
     ]));
 
-    const { setKollaborBarStorageScope, useKollaborBarStore } = await import("../kollabor-bar-store");
+    const { setKollaborBarStorageScope, useKollaborBarStore } = await import("../ui/kollabor-bar-store");
 
     expect(useKollaborBarStore.getState().messages).toEqual([]);
 

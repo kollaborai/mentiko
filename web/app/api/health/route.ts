@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { existsSync, readdirSync, statfsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
-import { ping as redisPing, redisConfigured } from "@/lib/redis";
+import { ping as redisPing, redisConfigured } from "@/lib/system/redis";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +48,7 @@ async function checkPtyDaemon(): Promise<{ status: "pass" | "fail" | "warn"; mes
   }
 
   try {
-    const { pty } = await import("@/lib/pty-client");
+    const { pty } = await import("@/lib/pty/pty-client");
     const daemonStatus = await pty.status();
     if (daemonStatus) {
       return {
@@ -103,7 +103,7 @@ async function checkActiveSessions(): Promise<{
   }
 
   try {
-    const { pty } = await import("@/lib/pty-client");
+    const { pty } = await import("@/lib/pty/pty-client");
     const sessions = await pty.list();
     const alive = sessions.filter((s: { alive: boolean }) => s.alive).length;
 
@@ -142,7 +142,7 @@ async function checkDatabase(): Promise<{ status: "pass" | "fail" | "warn"; mess
 
   // SQLite — use getDb() which is now async
   try {
-    const { getDb } = await import("@/lib/auth-server");
+    const { getDb } = await import("@/lib/auth/auth-server");
     const db = await getDb();
     if (!db) return { status: "warn", message: "sqlite not initialized" };
     db.prepare("SELECT 1").get();
@@ -154,7 +154,7 @@ async function checkDatabase(): Promise<{ status: "pass" | "fail" | "warn"; mess
 
 async function checkAuth(): Promise<{ status: "pass" | "fail" | "warn"; message: string }> {
   try {
-    const { getAuth } = await import("@/lib/auth-server");
+    const { getAuth } = await import("@/lib/auth/auth-server");
     const auth = await getAuth();
     if (!auth) return { status: "fail", message: "auth failed to initialize (check startup logs)" };
     return { status: "pass", message: "auth initialized" };
@@ -261,7 +261,7 @@ async function checkAuditQueue(): Promise<{ status: "pass" | "fail" | "warn"; me
     return { status: "warn", message: "audit queue not initialized (redis unavailable)" };
   }
 
-  const { getAuditQueue } = await import("@/lib/audit-queue");
+  const { getAuditQueue } = await import("@/lib/api/audit-queue");
   const auditQueue = await getAuditQueue();
   if (!auditQueue) {
     return { status: "warn", message: "audit queue not initialized (redis unavailable)" };

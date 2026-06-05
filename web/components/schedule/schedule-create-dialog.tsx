@@ -15,11 +15,11 @@ import {
   ArrowLeftFilled as ArrowLeft,
   ArrowRightFilled as ArrowRight,
 } from "@aliimam/icons";
-import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedule-utils";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { useSharedChains } from "@/lib/chains-store";
-import { useWorkspace } from "@/lib/workspace-context";
+import { CRON_PRESETS, getTimezones, isValidCron, isValidTimezone, getCronDescription } from "@/lib/schedules/schedule-utils";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { useSharedChains } from "@/lib/chains/chains-store";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import {
   buildScheduleCreateRequest,
   getScheduleTargetSummary,

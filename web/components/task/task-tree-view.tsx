@@ -1,15 +1,15 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
-import { mapPriority } from "@/lib/task-transforms";
-import { sortTaskTreeNodes } from "@/lib/task-ordering";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
+import { mapPriority } from "@/lib/tasks/task-transforms";
+import { sortTaskTreeNodes } from "@/lib/tasks/task-ordering";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
-import type { TaskPriority } from "@/lib/task-types";
+import type { TaskPriority } from "@/lib/tasks/task-types";
 import {
   ArrowDown1Filled,
   ArrowRight1Filled,

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { unwrapApiData } from "@/lib/api-client";
+import { unwrapApiData } from "@/lib/api/api-client";
 import {
   FolderFilled,
   FolderOpenFilled,
@@ -11,7 +11,7 @@ import {
   AddFilled,
   FolderAddFilled,
 } from "@aliimam/icons";
-import { useEditorStore } from "@/lib/editor-store";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { FileTypeIcon } from "./quick-open";
 

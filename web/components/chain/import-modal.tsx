@@ -11,12 +11,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import {
   ChainImportPreview,
   ChainImportFormat,
   generateChainId,
-} from "@/lib/chain-export";
+} from "@/lib/chains/chain-export";
 import {
   TickCircleFilled as CheckCircle2,
   CloseCircleFilled as XCircle,
@@ -28,7 +28,7 @@ import {
   TickCircleFilled as Check,
   SettingsFilled as Settings,
 } from "@aliimam/icons";
-import { CLI_TOOLS } from "@/lib/agent-provider-catalog";
+import { CLI_TOOLS } from "@/lib/agents/agent-provider-catalog";
 
 // ─── Customization Modal ─────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ import {
   type ConversationMessage,
 } from "@/components/conversation/message-renderer";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { RefreshFilled as RefreshCw, ArrowDown2Filled as ArrowDown, Wrench } from "@aliimam/icons";
 
 const SCROLL_THRESHOLD = 100;

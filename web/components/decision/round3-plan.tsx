@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { TickCircleFilled, RefreshFilled } from "@aliimam/icons";
 import { Abstract90Shapes } from "@aliimam/vectors";
 import { GradientDots } from "@/components/ui/gradient-dots";
-import type { ExecutionPlan } from "@/lib/decision-types";
+import type { ExecutionPlan } from "@/lib/decisions/decision-types";
 import { PlanTaskTree } from "@/components/guided-flow/plan-task-tree";
 
 interface Round3PlanProps {

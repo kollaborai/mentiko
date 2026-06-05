@@ -1,6 +1,6 @@
 "use client";
 
-import { useEditorStore } from "@/lib/editor-store";
+import { useEditorStore } from "@/lib/ui/editor-store";
 
 export function EditorConfigPanel() {
   const config = useEditorStore((s) => s.editorConfig);

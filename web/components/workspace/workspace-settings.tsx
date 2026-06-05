@@ -18,11 +18,11 @@ import {
   RotateFilled as Loader2,
   MagicStarFilled as FlaskConical,
 } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { getApiErrorMessage } from "@/lib/api-client";
-import { getMissingAgentProfileId } from "@/lib/chain-profile-settings";
-import type { Workspace, WorkspaceExecution } from "@/lib/workspace-storage";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { getApiErrorMessage } from "@/lib/api/api-client";
+import { getMissingAgentProfileId } from "@/lib/chains/chain-profile-settings";
+import type { Workspace, WorkspaceExecution } from "@/lib/workspaces/workspace-storage";
 import { isTaskProviderType, TASK_PROVIDER_META } from "@/lib/task-provider/types";
 import type { TaskProviderType } from "@/lib/task-provider/types";
 

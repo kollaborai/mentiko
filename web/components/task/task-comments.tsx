@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { SendFilled as Send } from "@aliimam/icons";
-import { timeAgo } from "@/lib/task-transforms";
-import type { TaskComment } from "@/lib/task-types";
+import { timeAgo } from "@/lib/tasks/task-transforms";
+import type { TaskComment } from "@/lib/tasks/task-types";
 
 interface TaskCommentsProps {
   taskId: string;

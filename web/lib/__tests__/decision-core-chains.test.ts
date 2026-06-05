@@ -27,7 +27,7 @@ describe("decision core chains", () => {
   });
 
   test("installs the decision core chains idempotently", async () => {
-    const { ensureDecisionCoreChains, DECISION_CORE_CHAIN_IDS } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains, DECISION_CORE_CHAIN_IDS } = await import("../decisions/decision-core-chains");
 
     const first = ensureDecisionCoreChains("default", "default");
     const second = ensureDecisionCoreChains("default", "default");
@@ -54,7 +54,7 @@ describe("decision core chains", () => {
   });
 
   test("preserves any existing profile override when upgrading old core chains", async () => {
-    const { ensureDecisionCoreChains } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains } = await import("../decisions/decision-core-chains");
     const chainDir = join(root, "namespaces", "default", "chains", "decision-research");
     mkdirSync(chainDir, { recursive: true });
     const chainPath = join(chainDir, "chain.json");
@@ -80,7 +80,7 @@ describe("decision core chains", () => {
   });
 
   test("preserves explicit profile overrides when upgrading core chains", async () => {
-    const { ensureDecisionCoreChains } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains } = await import("../decisions/decision-core-chains");
     const chainDir = join(root, "namespaces", "default", "chains", "decision-research");
     mkdirSync(chainDir, { recursive: true });
     const chainPath = join(chainDir, "chain.json");
@@ -106,7 +106,7 @@ describe("decision core chains", () => {
   });
 
   test("does not rewrite current core chains just because a user changed the profile", async () => {
-    const { ensureDecisionCoreChains } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains } = await import("../decisions/decision-core-chains");
     ensureDecisionCoreChains("default", "default");
     const chainPath = join(root, "namespaces", "default", "chains", "decision-research", "chain.json");
     const customizedChain = JSON.parse(readFileSync(chainPath, "utf8"));
@@ -121,7 +121,7 @@ describe("decision core chains", () => {
   });
 
   test("updates a core chain profile without replacing user edits", async () => {
-    const { ensureDecisionCoreChains, updateDecisionCoreChainProfile } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains, updateDecisionCoreChainProfile } = await import("../decisions/decision-core-chains");
     ensureDecisionCoreChains("default", "default");
     const chainPath = join(root, "namespaces", "default", "chains", "decision-research", "chain.json");
     const customizedChain = JSON.parse(readFileSync(chainPath, "utf8"));
@@ -136,7 +136,7 @@ describe("decision core chains", () => {
   });
 
   test("restores a core chain back to factory defaults", async () => {
-    const { ensureDecisionCoreChains, restoreDecisionCoreChain } = await import("../decision-core-chains");
+    const { ensureDecisionCoreChains, restoreDecisionCoreChain } = await import("../decisions/decision-core-chains");
     ensureDecisionCoreChains("default", "default");
     const chainPath = join(root, "namespaces", "default", "chains", "decision-research", "chain.json");
     const customizedChain = JSON.parse(readFileSync(chainPath, "utf8"));

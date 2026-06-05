@@ -5,7 +5,7 @@ import {
   addScheduledApplication,
   listScheduledApplicationsFromFile,
   resolveScheduledApplicationRun,
-} from "../scheduled-application-storage";
+} from "../schedules/scheduled-application-storage";
 
 describe("scheduled-application-storage", () => {
   let dir: string;

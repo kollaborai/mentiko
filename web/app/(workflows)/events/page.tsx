@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
-import { useSharedChains } from "@/lib/chains-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { useSharedChains } from "@/lib/chains/chains-store";
 import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TimeAgo } from "@/components/shared/time-ago";
-import type { PlatformEventDefinition } from "@/lib/platform-events";
+import type { PlatformEventDefinition } from "@/lib/system/platform-events";
 import { EmptyState } from "@/components/empty-state";
 import { EventTriggerGenerateDialog } from "@/components/events/event-trigger-generate-dialog";
 

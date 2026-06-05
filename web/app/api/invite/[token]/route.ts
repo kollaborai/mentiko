@@ -2,10 +2,10 @@ import { NextRequest } from "next/server";
 import { NotFound, Gone, Unauthorized, Forbidden, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { loadInvites, loadOrg, loadMembers, saveMembers, saveInvites } from "@/lib/org-storage";
-import { getSessionUser } from "@/lib/auth-bridge";
-import type { OrgMember } from "@/lib/org-storage";
-import type { OrgRole } from "@/lib/org-types";
+import { loadInvites, loadOrg, loadMembers, saveMembers, saveInvites } from "@/lib/orgs/org-storage";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import type { OrgMember } from "@/lib/orgs/org-storage";
+import type { OrgRole } from "@/lib/orgs/org-types";
 
 export const dynamic = "force-dynamic";
 

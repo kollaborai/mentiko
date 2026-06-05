@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";

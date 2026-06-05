@@ -3,7 +3,7 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import { analytics, useUserFlow } from "@/lib/analytics";
+import { analytics, useUserFlow } from "@/lib/system/analytics";
 
 // track events with loading states
 export function useTrackEvent() {

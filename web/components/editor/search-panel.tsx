@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useEditorStore } from "@/lib/editor-store";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import { SearchNormalFilled } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 

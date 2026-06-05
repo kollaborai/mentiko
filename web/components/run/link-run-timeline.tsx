@@ -8,8 +8,8 @@ import {
   MessageList,
   type ConversationMessage,
 } from "@/components/conversation/message-renderer";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
 import { ArrowLeftFilled } from "@aliimam/icons";
 import {

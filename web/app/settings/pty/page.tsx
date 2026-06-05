@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
 import { RefreshFilled, CommandSquareFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, RotateLeftFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";

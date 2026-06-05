@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { CloseCircleFilled as X, MagicStarFilled as Sparkles, ArrowLeftFilled as ArrowLeft } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Markdown } from "@/components/ui/markdown";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 interface GeneratedArtifact {
   id: string;

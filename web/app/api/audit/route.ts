@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
-import { execAuditLog, execAuditQuery } from "@/lib/audit-exec";
-import { requirePermission } from "@/lib/rbac-auth";
+import { execAuditLog, execAuditQuery } from "@/lib/api/audit-exec";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 
 export const dynamic = "force-dynamic";
 

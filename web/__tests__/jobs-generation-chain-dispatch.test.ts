@@ -5,20 +5,20 @@
 export {};
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
 const mockCreateJob = jest.fn().mockReturnValue({ id: "job-1", status: "pending" });
 const mockListJobs = jest.fn().mockReturnValue([]);
 const mockCleanupOldJobs = jest.fn();
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
   listJobs: (...args: unknown[]) => mockListJobs(...args),
   cleanupOldJobs: (...args: unknown[]) => mockCleanupOldJobs(...args),
 }));
 
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn().mockResolvedValue({ id: "user-1" }),
 }));
 
@@ -38,7 +38,7 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: (_namespaceId: string, _orgId: string, key: string) => ({
     content:
       key === "chain_recommendation"
@@ -47,7 +47,7 @@ jest.mock("@/lib/generation-template-storage", () => ({
   }),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (template: string, vars: Record<string, string>) => {
     let out = template;
     for (const [k, v] of Object.entries(vars)) out = out.replace(`{{${k}}}`, v || "");
@@ -59,7 +59,7 @@ jest.mock("@/lib/schema-loader", () => ({
   getChainSchema: () => '{"type":"object"}',
 }));
 
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: jest.fn().mockReturnValue(null),
   taskUpdate: jest.fn(),
 }));
@@ -69,15 +69,15 @@ const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
   chainId: "core-chain",
   status: "started",
 });
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn().mockReturnValue("/repo/ws"),
 }));
 
-jest.mock("@/lib/job-runner-launch", () => ({
+jest.mock("@/lib/runs/job-runner-launch", () => ({
   resolveJobWorkspaceCwd: jest.fn().mockReturnValue(undefined),
 }));
 

@@ -13,7 +13,7 @@ import {
   taskGetActivity,
   validateTaskId,
   closeAll,
-} from "../task-store";
+} from "../tasks/task-store";
 
 jest.mock("../config", () => ({
   __esModule: true,

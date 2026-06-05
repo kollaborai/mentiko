@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { AddFilled, MinusFilled, Refresh2Filled, ClockFilled } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { useEditorStore } from "@/lib/editor-store";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import type { GitStatusResult, GitLogEntry, GitFileStatus } from "@/app/api/git/route";
 
 // ── status badge ────────────────────────────────────────────────────────────

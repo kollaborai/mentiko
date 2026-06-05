@@ -3,7 +3,7 @@ import { access, cp as copyDir, mkdir, readdir, readFile, writeFile } from "fs/p
 import { homedir } from "os";
 import { join } from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { codePath } from "@/lib/config";
 import { getKollabMentikoMcpServerEnv } from "@/lib/kollabor-mcp-server-env";
 

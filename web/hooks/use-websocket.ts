@@ -7,7 +7,7 @@ import {
   type StreamEventType,
   type WebSocketOptions,
   type ConnectionState,
-} from "@/lib/websocket";
+} from "@/lib/pty/websocket";
 
 export interface UseWebSocketReturn {
   connected: boolean;

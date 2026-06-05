@@ -11,8 +11,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { unwrapApiData, getApiErrorMessage } from "@/lib/api-client"
-import type { EmailInbox } from "@/lib/email-types"
+import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client"
+import type { EmailInbox } from "@/lib/email/email-types"
 
 export interface CreateInboxDialogProps {
   open: boolean

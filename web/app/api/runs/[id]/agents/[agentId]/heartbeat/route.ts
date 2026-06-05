@@ -16,11 +16,11 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { checkRunAccess } from "@/lib/run-acl";
-import { resolveLinkRunsDir } from "@/lib/link-run-runtime";
-import { hasInternalAuth } from "@/lib/internal-api-auth";
+import { checkRunAccess } from "@/lib/auth/run-acl";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { Unauthorized, NotFound, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

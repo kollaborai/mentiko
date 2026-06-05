@@ -12,8 +12,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { PeopleFilled, LinkFilled, RouteSquareFilled, MessageFilled, PlayFilled as Play, Eye, RefreshFilled as RefreshCw } from "@aliimam/icons";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { unwrapApiData } from "@/lib/api-client";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 import { PageBanner } from "@/components/ui/page-banner";
 
 interface PeerInfo {

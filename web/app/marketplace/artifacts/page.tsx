@@ -9,8 +9,8 @@ import { MarketplaceCard } from "@/components/ui/marketplace-card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchNormalFilled, FilterFilled, TickCircleFilled, DocumentDownloadFilled, EyeFilled, BoxFilled, ShopFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useDebounce } from "@/lib/performance";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useDebounce } from "@/lib/system/performance";
 
 const TAG_VISIBLE_LIMIT = 12;
 

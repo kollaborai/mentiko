@@ -20,7 +20,7 @@ import {
   clampFloatingPanelTransparency,
   type UserAccentColorPreference,
   type UserFontSizePreference,
-} from "@/lib/user-display-preferences";
+} from "@/lib/ui/user-display-preferences";
 
 type Theme = "dark" | "light" | "system";
 

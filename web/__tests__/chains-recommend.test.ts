@@ -11,7 +11,7 @@ import { POST } from "@/app/api/chains/recommend/route";
 // ---- mocks ----------------------------------------------------------------
 
 const mockCheckAuth = jest.fn().mockResolvedValue(true);
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: (...args: unknown[]) => mockCheckAuth(...args),
 }));
 
@@ -23,7 +23,7 @@ jest.mock("@/lib/namespace-config", () => ({
 }));
 
 const mockSessionUser = jest.fn().mockReturnValue({ id: "user-1" });
-jest.mock("@/lib/auth-bridge", () => ({
+jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: (...args: unknown[]) => mockSessionUser(...args),
 }));
 
@@ -32,11 +32,11 @@ jest.mock("@/lib/schema-loader", () => ({
 }));
 
 const mockTemplate = { content: "USER: {{USER_PROMPT}}\nAGENTS: {{AGENT_CATALOG}}\nPROFILES: {{PROFILE_CATALOG}}\nWS: {{WORKSPACE_CONTEXT}}" };
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: () => mockTemplate,
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: (_t: string, vars: Record<string, string>) => {
     let result = _t;
     for (const [k, v] of Object.entries(vars)) {
@@ -48,7 +48,7 @@ jest.mock("@/lib/template-resolver", () => ({
 
 const mockCreateJob = jest.fn().mockReturnValue({ id: "job-123", status: "running" });
 const mockDeleteJob = jest.fn().mockReturnValue(true);
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
   deleteJob: (...args: unknown[]) => mockDeleteJob(...args),
 }));
@@ -58,22 +58,22 @@ const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
   chainId: "chain-generation",
   status: "started",
 });
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
 const mockAgentCatalog = "AGENT_CATALOG_DATA";
-jest.mock("@/lib/agent-catalog", () => ({
+jest.mock("@/lib/agents/agent-catalog", () => ({
   buildAgentCatalog: () => mockAgentCatalog,
 }));
 
 const mockProfileCatalog = "PROFILE_CATALOG_DATA";
-jest.mock("@/lib/profile-catalog", () => ({
+jest.mock("@/lib/agents/profile-catalog", () => ({
   buildProfileCatalog: () => mockProfileCatalog,
 }));
 
 const mockResolveWorkspace = jest.fn().mockReturnValue("/ws/path");
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: (...args: unknown[]) => mockResolveWorkspace(...args),
 }));
 
@@ -91,7 +91,7 @@ jest.mock("@/lib/api-errors", () => ({
 
 const mockTaskGet = jest.fn().mockReturnValue(null);
 const mockTaskUpdate = jest.fn();
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));

@@ -37,11 +37,11 @@ jest.mock("next/server", () => ({
   },
 }));
 
-jest.mock("@/lib/rbac-auth", () => ({
+jest.mock("@/lib/auth/rbac-auth", () => ({
   requirePermission: jest.fn(),
 }));
 
-jest.mock("@/lib/email-storage", () => ({
+jest.mock("@/lib/email/email-storage", () => ({
   enqueueOutbound: jest.fn(),
   updateOutboundEntry: jest.fn(),
   moveOutboundEntry: jest.fn(),
@@ -51,7 +51,7 @@ jest.mock("@/lib/email-storage", () => ({
   SEND_QUOTA_PER_DAY: 1000,
 }));
 
-jest.mock("@/lib/org-storage", () => ({
+jest.mock("@/lib/orgs/org-storage", () => ({
   loadOrg: jest.fn(() => Promise.resolve({ id: "default", name: "Default", settings: {} })),
 }));
 
@@ -61,8 +61,8 @@ jest.mock("@/lib/namespace-config", () => ({
 }));
 
 import { POST } from "./route";
-import { requirePermission } from "@/lib/rbac-auth";
-import { enqueueOutbound, getSendCount } from "@/lib/email-storage";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { enqueueOutbound, getSendCount } from "@/lib/email/email-storage";
 
 describe("POST /api/email/send", () => {
   const originalEnv = process.env;

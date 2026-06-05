@@ -16,7 +16,7 @@ import { POST } from "@/app/api/mentiko-mcp/ops/tasks/generate/route";
 
 const mockTaskCreate = jest.fn();
 const mockTaskAddDep = jest.fn();
-jest.mock("@/lib/task-store", () => ({
+jest.mock("@/lib/tasks/task-store", () => ({
   _getDb: jest.fn().mockReturnValue({
     transaction: (fn: () => unknown) => fn,
     prepare: jest.fn().mockReturnValue({
@@ -29,7 +29,7 @@ jest.mock("@/lib/task-store", () => ({
 
 const mockCreateJob = jest.fn();
 const mockGetJob = jest.fn();
-jest.mock("@/lib/job-store", () => ({
+jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => mockCreateJob(...args),
   getJob: (...args: unknown[]) => mockGetJob(...args),
 }));
@@ -39,11 +39,11 @@ const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
   chainId: "task-generation",
   status: "started",
 });
-jest.mock("@/lib/generation-chain-dispatch", () => ({
+jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/mentiko-mcp-ops-auth", () => ({
+jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
   requireOpsAuth: jest.fn().mockResolvedValue({
     namespaceId: "default",
     orgId: "default",
@@ -57,21 +57,21 @@ jest.mock("@/lib/schema-loader", () => ({
   getTaskSchema: jest.fn().mockReturnValue("{}"),
 }));
 
-jest.mock("@/lib/generation-template-storage", () => ({
+jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: jest.fn().mockReturnValue({ content: "{{USER_PROMPT}}" }),
 }));
 
-jest.mock("@/lib/template-resolver", () => ({
+jest.mock("@/lib/system/template-resolver", () => ({
   resolveTemplate: jest.fn().mockImplementation((tpl: string, vars: Record<string, string>) =>
     vars.USER_PROMPT ?? tpl,
   ),
 }));
 
-jest.mock("@/lib/child-env", () => ({
+jest.mock("@/lib/runs/child-env", () => ({
   buildChildEnv: jest.fn().mockImplementation((extra: object) => ({ ...process.env, ...extra })),
 }));
 
-jest.mock("@/lib/workspace-auth", () => ({
+jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath),
 }));
 

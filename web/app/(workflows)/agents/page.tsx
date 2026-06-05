@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { useWorkspace } from "@/lib/workspace-context";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useSearchParams } from "next/navigation";
 import { Bot, BotMessageSquare, AddFilled as Plus, MagicStarFilled as Sparkles, ImportFilled as Download, CpuFilled as CpuFilledIcon, LinkFilled, BoxFilled, RouteSquareFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -23,7 +23,7 @@ import { SkillImportDialog } from "@/components/agent/skill-import-dialog";
 import { EmptyState } from "@/components/empty-state";
 import type { RegistryAgent } from "@/app/api/agents/registry/route";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import type { ArtifactTemplate } from "@/lib/artifact-template-storage";
+import type { ArtifactTemplate } from "@/lib/system/artifact-template-storage";
 import { cn } from "@/lib/utils";
 
 const AGENT_CATEGORIES = [

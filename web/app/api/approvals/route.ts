@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   listApprovalRequests,
   cleanupExpiredRequests,
   createApprovalRequest,
-} from "@/lib/approval-storage";
-import type { ApprovalStatus, ApprovalRequest } from "@/lib/approval-types";
+} from "@/lib/system/approval-storage";
+import type { ApprovalStatus, ApprovalRequest } from "@/lib/system/approval-types";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

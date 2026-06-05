@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { taskCreate, taskList, taskClose } from "@/lib/task-store";
-import { requireOpsAuth, requireOpsPermission } from "@/lib/mentiko-mcp-ops-auth";
-import { resolveAuthorizedWorkspacePath } from "@/lib/workspace-auth";
+import { taskCreate, taskList, taskClose } from "@/lib/tasks/task-store";
+import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 /**
  * /api/mentiko-mcp/ops/tasks

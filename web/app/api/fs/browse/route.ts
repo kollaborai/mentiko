@@ -3,8 +3,8 @@ import { readdirSync, statSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { config } from "@/lib/config";
-import { checkAuth } from "@/lib/api-auth";
-import { resolveAndValidate, getAllowedRoots } from "@/lib/path-validation";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 

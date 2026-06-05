@@ -1,4 +1,4 @@
-import { FLOATING_SURFACE_Z } from "../floating-surface-z";
+import { FLOATING_SURFACE_Z } from "../ui/floating-surface-z";
 
 describe("FLOATING_SURFACE_Z", () => {
   it("keeps floating app panels below tools, nav, and kollab", () => {

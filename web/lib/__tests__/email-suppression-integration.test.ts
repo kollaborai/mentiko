@@ -37,7 +37,7 @@ import {
   filterSuppressed,
   getSalt,
   type SuppressionReason,
-} from "@/lib/email-suppression";
+} from "@/lib/email/email-suppression";
 
 // test helpers
 const testNamespace = "test-suppression-ns";

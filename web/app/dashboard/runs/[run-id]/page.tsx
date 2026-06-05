@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useNamespaceFetch } from "@/lib/use-namespace-fetch";
-import { copyToClipboard } from "@/lib/copy-to-clipboard";
+import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { useParams, useRouter } from "next/navigation";
 import { useRunNotifications, notifyAgentEvent } from "@/hooks/use-notifications-listener";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

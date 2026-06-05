@@ -2,15 +2,15 @@ import { NextRequest } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { requirePermission } from "@/lib/rbac-auth";
-import { checkRunAccess } from "@/lib/run-acl";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { checkRunAccess } from "@/lib/auth/run-acl";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { findDefaultProfile } from "@/lib/agent-profile-storage";
-import { buildChildEnv } from "@/lib/child-env";
-import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/link-run-runtime";
-import { hasInternalAuth } from "@/lib/internal-api-auth";
-import { LINK_ESCALATION_FALLBACK_MODEL } from "@/lib/agent-provider-catalog";
+import { findDefaultProfile } from "@/lib/agents/agent-profile-storage";
+import { buildChildEnv } from "@/lib/runs/child-env";
+import { resolveLinkRunPaths, validateLinkRunId } from "@/lib/links/link-run-runtime";
+import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
+import { LINK_ESCALATION_FALLBACK_MODEL } from "@/lib/agents/agent-provider-catalog";
 
 export const dynamic = "force-dynamic";
 

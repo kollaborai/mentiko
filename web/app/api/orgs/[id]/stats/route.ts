@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { loadOrg, orgMatchesId } from "@/lib/org-storage";
+import { loadOrg, orgMatchesId } from "@/lib/orgs/org-storage";
 import { nsPath } from "@/lib/config";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -57,7 +57,7 @@ export const GET = withErrorHandling(
     // count tasks (from native sqlite task store)
     let taskCount = 0;
     try {
-      const { taskList } = await import("@/lib/task-store");
+      const { taskList } = await import("@/lib/tasks/task-store");
       const tasks = taskList(id, { status: "all" }, undefined, namespaceId);
       taskCount = tasks.length;
     } catch {

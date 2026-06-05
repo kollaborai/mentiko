@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CloseCircleFilled as X, Link2Filled as Link2 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import { useSharedChains } from "@/lib/chains-store";
+import { useSharedChains } from "@/lib/chains/chains-store";
 
 interface Chain {
   id: string;

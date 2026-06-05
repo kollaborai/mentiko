@@ -18,7 +18,7 @@ import {
   GalleryFilled as ImageIcon,
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
-import type { ArtifactType } from "@/lib/artifact-template-storage";
+import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,

@@ -4,8 +4,8 @@ import { Link2Filled, PlayFilled, ArrowUpFilled, ArrowDownFilled, TickSquareFill
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
-import { timeAgo } from "@/lib/task-transforms";
-import type { Task } from "@/lib/task-types";
+import { timeAgo } from "@/lib/tasks/task-transforms";
+import type { Task } from "@/lib/tasks/task-types";
 import { WorkflowSidebarItem } from "@/components/ui/workflow-sidebar";
 
 const MAX_AUTO_RUN_RETRIES = 3;

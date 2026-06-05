@@ -26,11 +26,11 @@ import {
   saveTokenUsage,
   computeTokenCost,
   type TokenUsageRecord,
-} from "@/lib/token-store";
+} from "@/lib/system/token-store";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { hasInternalAuth } from "@/lib/internal-api-auth";
+import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 
 export const dynamic = "force-dynamic";
 

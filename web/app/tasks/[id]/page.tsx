@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { taskDetailHref } from "@/lib/task-routes";
+import { taskDetailHref } from "@/lib/tasks/task-routes";
 
 type TaskDetailRedirectPageProps = {
   params: Promise<{ id: string }>;

@@ -9,14 +9,14 @@ import {
   RouteSquareFilled,
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
-import { FLOATING_SURFACE_Z } from "@/lib/floating-surface-z";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/panel-mode-background";
 import {
   OPEN_FLOATING_APP_PANEL_EVENT,
   getFloatingPanelSrc,
   isFloatingPanelRoute,
   type FloatingAppPanelRequest,
-} from "@/lib/floating-app-panel-routing";
+} from "@/lib/ui/floating-app-panel-routing";
 
 interface PanelGeometry {
   x: number;

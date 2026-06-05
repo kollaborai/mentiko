@@ -1,11 +1,11 @@
 import type { NextRequest } from "next/server";
 import { GET, POST } from "../route";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { createOrg, listOrgs } from "@/lib/org-storage";
-import { ensureNamespaceDirs } from "@/lib/auth-server";
+import { createOrg, listOrgs } from "@/lib/orgs/org-storage";
+import { ensureNamespaceDirs } from "@/lib/auth/auth-server";
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
@@ -13,12 +13,12 @@ jest.mock("@/lib/namespace-config", () => ({
   getNamespaceIdFromRequest: jest.fn(),
 }));
 
-jest.mock("@/lib/org-storage", () => ({
+jest.mock("@/lib/orgs/org-storage", () => ({
   createOrg: jest.fn(),
   listOrgs: jest.fn(),
 }));
 
-jest.mock("@/lib/auth-server", () => ({
+jest.mock("@/lib/auth/auth-server", () => ({
   ensureNamespaceDirs: jest.fn(),
 }));
 

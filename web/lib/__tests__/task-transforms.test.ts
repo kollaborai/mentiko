@@ -10,8 +10,8 @@ import {
   typeBgColor,
   groupByEpic,
   timeAgo,
-} from "../task-transforms";
-import type { TaskRecord, EpicStatus, GraphOutput } from "../task-types";
+} from "../tasks/task-transforms";
+import type { TaskRecord, EpicStatus, GraphOutput } from "../tasks/task-types";
 
 describe("mapPriority", () => {
   it("maps 0 to high", () => expect(mapPriority(0)).toBe("high"));

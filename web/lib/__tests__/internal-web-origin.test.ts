@@ -1,4 +1,4 @@
-import { internalApiUrl, resolveInternalWebOrigin } from "@/lib/internal-web-origin";
+import { internalApiUrl, resolveInternalWebOrigin } from "@/lib/auth/internal-web-origin";
 
 describe("internal web origin", () => {
   const previous = {

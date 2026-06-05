@@ -4,13 +4,13 @@ import WorkspacesPage from "./page";
 const mockFetchWithNamespace = jest.fn();
 const mockRefetchWorkspaceNav = jest.fn();
 
-jest.mock("@/lib/use-namespace-fetch", () => ({
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
   useNamespaceFetch: () => ({
     fetchWithNamespace: mockFetchWithNamespace,
   }),
 }));
 
-jest.mock("@/lib/workspace-context", () => ({
+jest.mock("@/lib/ui-context/workspace-context", () => ({
   useWorkspace: () => ({
     refetch: mockRefetchWorkspaceNav,
   }),

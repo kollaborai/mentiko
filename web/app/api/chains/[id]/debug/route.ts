@@ -4,8 +4,8 @@ import { join } from "path";
 import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/api-auth";
-import { pty } from "@/lib/pty-client";
+import { checkAuth } from "@/lib/auth/api-auth";
+import { pty } from "@/lib/pty/pty-client";
 
 export const dynamic = "force-dynamic";
 

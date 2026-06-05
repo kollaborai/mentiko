@@ -2,12 +2,12 @@
  * @jest-environment node
  */
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/auth/api-auth", () => ({
   checkAuth: jest.fn(),
 }));
 
 import { GET } from "./route";
-import { checkAuth } from "@/lib/api-auth";
+import { checkAuth } from "@/lib/auth/api-auth";
 
 describe("GET /api/system/storage-scope", () => {
   beforeEach(() => {

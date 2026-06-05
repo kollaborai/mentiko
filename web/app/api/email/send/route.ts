@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { requirePermission } from "@/lib/rbac-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import type { SendEmailOptions, OutboundQueueEntry } from "@/lib/email-types";
-import type { BounceType } from "@/lib/email-types";
+import type { SendEmailOptions, OutboundQueueEntry } from "@/lib/email/email-types";
+import type { BounceType } from "@/lib/email/email-types";
 import {
   enqueueOutbound,
   updateOutboundEntry,
@@ -11,8 +11,8 @@ import {
   incrementSendCount,
   appendAuditLog,
   SEND_QUOTA_PER_DAY as DEFAULT_SEND_QUOTA_PER_DAY,
-} from "@/lib/email-storage";
-import { loadOrg } from "@/lib/org-storage";
+} from "@/lib/email/email-storage";
+import { loadOrg } from "@/lib/orgs/org-storage";
 import { orgPath } from "@/lib/config";
 import {
   BadRequest,
@@ -91,7 +91,7 @@ async function createUnsubscribeToken(
   orgId: string,
   outboundId?: string
 ): Promise<string> {
-  const { generateUnsubscribeToken: genToken } = await import("@/lib/unsubscribe-token");
+  const { generateUnsubscribeToken: genToken } = await import("@/lib/auth/unsubscribe-token");
   return genToken(email, namespaceId, orgId, outboundId);
 }
 

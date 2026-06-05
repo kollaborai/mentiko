@@ -61,7 +61,7 @@ jest.mock('@/components/ui/select', () => ({
   SelectValue: () => <div>Value</div>,
 }))
 
-jest.mock('@/lib/schedule-utils', () => ({
+jest.mock('@/lib/schedules/schedule-utils', () => ({
   CRON_PRESETS: [
     { expression: '0 * * * *', label: 'Hourly', description: 'Run every hour' },
     { expression: '0 0 * * *', label: 'Daily', description: 'Run at midnight' },

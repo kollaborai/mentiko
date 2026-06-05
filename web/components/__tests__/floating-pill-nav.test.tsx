@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { FloatingPillNav } from '../floating-pill-nav'
-import { usePillNavPreferences } from '@/lib/pill-nav-preferences'
+import { usePillNavPreferences } from '@/lib/ui/pill-nav-preferences'
 
 // ─── mocks ──────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ jest.mock('next/link', () => ({
   ),
 }))
 
-jest.mock('@/lib/workspace-context', () => ({
+jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
     workspacePath: '/tmp/test',
