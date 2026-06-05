@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "./run-completion";
