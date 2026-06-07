@@ -1,14 +1,14 @@
-import { DashboardStats } from "@/components/dashboard-stats";
-import { DashboardMode } from "@/components/dashboard-mode";
-import { DashboardBanner } from "@/components/dashboard-banner";
-import { ActiveChains } from "@/components/active-chains";
-import { ActivityFeed } from "@/components/activity-feed";
-import { QuickActions } from "@/components/quick-actions";
-import { GettingStarted } from "@/components/getting-started";
-import { RecentRuns } from "@/components/recent-runs";
-import { PendingDecisions } from "@/components/pending-decisions";
-import { RunsChart, TopAgents } from "@/components/dashboard-metrics";
-import { UpdatesWidget } from "@/components/updates-widget";
+import { DashboardStats } from "@/components/dashboard/dashboard-stats";
+import { DashboardMode } from "@/components/dashboard/dashboard-mode";
+import { DashboardBanner } from "@/components/dashboard/dashboard-banner";
+import { ActiveChains } from "@/components/dashboard/active-chains";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { QuickActions } from "@/components/dashboard/quick-actions";
+import { GettingStarted } from "@/components/dashboard/getting-started";
+import { RecentRuns } from "@/components/dashboard/recent-runs";
+import { PendingDecisions } from "@/components/dashboard/pending-decisions";
+import { RunsChart, TopAgents } from "@/components/dashboard/dashboard-metrics";
+import { UpdatesWidget } from "@/components/dashboard/updates-widget";
 
 export default async function DashboardPage() {
 

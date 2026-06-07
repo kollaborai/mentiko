@@ -11,7 +11,7 @@ import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useSharedRuns } from "@/lib/runs/runs-store";
 import { useSharedChains } from "@/lib/chains/chains-store";
 import { useSharedAgents } from "@/lib/agents/agents-store";
-import { SystemStatusWidget } from "@/components/system-status-widget";
+import { SystemStatusWidget } from "@/components/dashboard/system-status-widget";
 
 interface StatCardProps {
   icon: React.ReactNode;

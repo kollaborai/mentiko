@@ -265,7 +265,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "dashboard-stats",
         name: "DashboardStats",
-        path: "@/components/dashboard-stats",
+        path: "@/components/dashboard/dashboard-stats",
         status: "approved",
         source: "shared-app",
         description: "Stat cards grid showing chain, run, and agent counts with polling indicator.",
@@ -274,7 +274,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "active-chains",
         name: "ActiveChains",
-        path: "@/components/active-chains",
+        path: "@/components/dashboard/active-chains",
         status: "approved",
         source: "shared-app",
         description: "Live list of recent runs with status badges, goals, and relative timestamps.",
@@ -283,7 +283,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "recent-runs",
         name: "RecentRuns",
-        path: "@/components/recent-runs",
+        path: "@/components/dashboard/recent-runs",
         status: "approved",
         source: "shared-app",
         description: "Compact list of 5 most recent runs with status icons and cost display.",
@@ -292,7 +292,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "activity-feed",
         name: "ActivityFeed",
-        path: "@/components/activity-feed",
+        path: "@/components/dashboard/activity-feed",
         status: "approved",
         source: "shared-app",
         description: "Blended feed of events and runs with polling, status badges, and timestamps.",
@@ -301,7 +301,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "quick-actions",
         name: "QuickActions",
-        path: "@/components/quick-actions",
+        path: "@/components/dashboard/quick-actions",
         status: "approved",
         source: "shared-app",
         description: "Action button grid with 8 shortcuts and emergency stop.",
@@ -310,7 +310,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "runs-chart",
         name: "RunsChart / TopAgents",
-        path: "@/components/dashboard-metrics",
+        path: "@/components/dashboard/dashboard-metrics",
         status: "approved",
         source: "shared-app",
         description: "Bar charts for 7-day run history and top 5 agents by usage.",
@@ -319,7 +319,7 @@ export const UI_LIBRARY_GROUPS: UiLibraryGroup[] = [
       {
         id: "updates-widget",
         name: "UpdatesWidget",
-        path: "@/components/updates-widget",
+        path: "@/components/dashboard/updates-widget",
         status: "approved",
         source: "shared-app",
         description: "Changelog preview showing 3 most recent releases.",

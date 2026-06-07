@@ -50,7 +50,7 @@ jest.mock('@aliimam/icons', () => {
   }
 })
 
-jest.mock('@/components/system-status-widget', () => ({
+jest.mock('@/components/dashboard/system-status-widget', () => ({
   SystemStatusWidget: () => <div data-testid="system-status">status widget</div>,
 }))
 

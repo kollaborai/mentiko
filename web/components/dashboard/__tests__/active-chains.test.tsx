@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react'
 import { ActiveChains } from '../active-chains'
-import type { Status } from '../status-badge'
+import type { Status } from '@/components/status-badge'
 import { renderWithNamespace } from '@/lib/test-utils'
 
 interface StatusBadgeMockProps {
