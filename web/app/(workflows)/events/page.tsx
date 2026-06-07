@@ -33,7 +33,7 @@ import {
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TimeAgo } from "@/components/shared/time-ago";
 import type { PlatformEventDefinition } from "@/lib/system/platform-events";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { EventTriggerGenerateDialog } from "@/components/events/event-trigger-generate-dialog";
 
 interface EventTrigger {

@@ -20,7 +20,7 @@ import { AgentRegistryDetail } from "@/components/agent/agent-registry-detail";
 import { AgentGenerateDialog } from "@/components/agent/agent-generate-dialog";
 import { AgentCreateDialog } from "@/components/agent/agent-create-dialog";
 import { SkillImportDialog } from "@/components/agent/skill-import-dialog";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import type { RegistryAgent } from "@/app/api/agents/registry/route";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import type { ArtifactTemplate } from "@/lib/system/artifact-template-storage";

@@ -17,7 +17,7 @@ import {
   WorkflowSidebarSegmentedControl,
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { ScheduleHistory, ScheduleCreateDialog, ScheduleGenerateDialog } from "@/components/schedule";
 import { SnoozeButton, CountdownTimer, UnSnoozeButton } from "@/components/schedule/snooze";

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/workflow-sidebar";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 
 type FilterCategory = "all" | "chain" | "agent" | "task" | "decision" | "webhook" | "event";
 

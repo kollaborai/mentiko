@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react'
 import { ActiveChains } from '../active-chains'
-import type { Status } from '@/components/status-badge'
+import type { Status } from '@/components/common/status-badge'
 import { renderWithNamespace } from '@/lib/test-utils'
 
 interface StatusBadgeMockProps {
@@ -38,13 +38,13 @@ jest.mock('@/lib/pty/websocket', () => ({
   }),
 }))
 
-jest.mock('@/components/status-badge', () => ({
+jest.mock('@/components/common/status-badge', () => ({
   StatusBadge: ({ status }: StatusBadgeMockProps) => (
     <span data-testid={`status-badge-${status}`}>{status}</span>
   ),
 }))
 
-jest.mock('@/components/live-indicator', () => ({
+jest.mock('@/components/common/live-indicator', () => ({
   LiveIndicator: ({ connected, size }: LiveIndicatorMockProps) => (
     <div data-testid="live-indicator" data-connected={connected} data-size={size}>
       {connected ? 'live' : 'offline'}

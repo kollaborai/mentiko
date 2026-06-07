@@ -20,7 +20,7 @@ import {
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarItem,

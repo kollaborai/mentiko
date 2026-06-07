@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { ArrowLeftFilled, TrendUpFilled, TrendDownFilled, ArrowDown2Filled as ChevronDown, MinusFilled as Minus } from "@aliimam/icons";

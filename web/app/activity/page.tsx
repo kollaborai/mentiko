@@ -13,7 +13,7 @@ import {
   SendFilled,
 } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarItem,

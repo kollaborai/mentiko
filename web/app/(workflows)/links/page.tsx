@@ -11,11 +11,11 @@ import {
   Edit2Filled, MagicStarFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge } from "@/components/common/status-badge";
 import { LinkFilled, BotMessageSquare, RouteSquareFilled } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,

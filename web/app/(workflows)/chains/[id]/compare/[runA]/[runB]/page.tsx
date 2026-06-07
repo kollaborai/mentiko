@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { ArrowLeftFilled, ArrowRightFilled, ClockFilled as Clock, ArrowSwapFilled as ArrowUpDown, Star1Filled as DollarSign, FlashFilled as Zap, DocumentTextFilled as FileText, AddFilled as Plus, MinusFilled as Minus, DocumentDownloadFilled as Download } from "@aliimam/icons";
 import { exportComparisonJSON, exportComparisonPDF } from "@/lib/system/export-comparison";
 

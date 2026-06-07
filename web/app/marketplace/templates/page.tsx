@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import Link from "next/link";
 import { Star1Filled, DocumentDownloadFilled, FilterFilled, SearchNormalFilled, CategoryFilled, ShopFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { TemplateGridSkeleton } from "@/components/skeletons";
+import { TemplateGridSkeleton } from "@/components/common/skeletons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useDebounce } from "@/lib/system/performance";
 import { getApiErrorMessage } from "@/lib/api/api-client";

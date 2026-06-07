@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { VisualChainEditorReactFlow as ChainFlowPreview } from "@/components/chain";
 import { AgentProfileBadge } from "@/components/agent/agent-status-panel";
-import { StatusBadge } from "@/components/status-badge";
+import { StatusBadge } from "@/components/common/status-badge";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
@@ -39,11 +39,11 @@ import {
 } from "@/lib/chains/chain-export";
 import { ChainImportInputModal, ChainImportPreviewModal } from "@/components/chain";
 import { ChainCustomizationModal, type ChainCustomization } from "@/components/chain/import-modal";
-import { ChainListSkeleton } from "@/components/skeletons";
+import { ChainListSkeleton } from "@/components/common/skeletons";
 import dynamic from "next/dynamic";
 const NewChainPanel = dynamic(() => import("@/app/(workflows)/chains/new/page"), { ssr: false });
 const EditChainPanel = dynamic(() => import("@/app/(workflows)/chains/[id]/edit/edit-chain-component").then(m => ({ default: m.EditChainPage })), { ssr: false });
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { RunComparison } from "@/components/run/run-comparison";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import {

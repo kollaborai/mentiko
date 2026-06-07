@@ -18,7 +18,7 @@ import { toTask, groupByEpic, priorityOrder } from "@/lib/tasks/task-transforms"
 import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
 import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import {

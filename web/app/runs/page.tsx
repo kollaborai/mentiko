@@ -23,7 +23,7 @@ import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { buildRunsListQuery } from "./runs-query";
 import { useSharedChains } from "@/lib/chains/chains-store";
 import { isSystemChainRecord, isSystemChainRun } from "@/lib/chains/system-chain";

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { WorkflowAgent } from "@/components/ui/workflow-card";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import {
   DropdownMenu,
   DropdownMenuContent,

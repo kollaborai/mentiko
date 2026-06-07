@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { AgentStatusPanel, type AgentStatusDetail } from "@/components/agent/agent-status-panel";
 import { PerformanceTab } from "@/components/run/performance-tab";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";

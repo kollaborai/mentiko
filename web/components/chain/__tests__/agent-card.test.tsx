@@ -64,7 +64,7 @@ jest.mock('@/components/ui/textarea', () => ({
   ),
 }))
 
-jest.mock('@/components/status-badge', () => ({
+jest.mock('@/components/common/status-badge', () => ({
   StatusBadge: ({ status }: {
     status: string
     _size?: 'sm' | 'md' | 'lg'

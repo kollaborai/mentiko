@@ -13,7 +13,7 @@ import {
   WorkflowSidebarItem,
   WorkflowSidebarResizeHandle,
 } from "@/components/ui/workflow-sidebar";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import {
   Setting2Filled,
   ProfileCircleFilled,

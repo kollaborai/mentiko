@@ -25,7 +25,7 @@ interface LiveIndicatorMockProps {
   showText?: boolean
 }
 
-jest.mock('@/components/live-indicator', () => ({
+jest.mock('@/components/common/live-indicator', () => ({
   LiveIndicator: ({ connected, size }: LiveIndicatorMockProps) => (
     <div data-testid="live-indicator" data-connected={connected} data-size={size}>
       {connected ? 'live' : 'offline'}

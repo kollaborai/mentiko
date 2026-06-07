@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TimeAgo } from "@/components/shared/time-ago";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { WebhookGenerateDialog } from "@/components/webhooks/webhook-generate-dialog";
 
 interface InboundWebhook {

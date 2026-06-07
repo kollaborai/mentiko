@@ -8,7 +8,7 @@ import { PageBanner } from "@/components/ui/page-banner";
 import { ArtifactTemplateEditor } from "@/components/settings/artifact-template-editor";
 import { ArtifactGenerateDialog } from "@/components/artifact/artifact-generate-dialog";
 import { ArtifactCreateDialog } from "@/components/agent/artifact-create-dialog";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import type { ArtifactType } from "@/lib/system/artifact-template-storage";
 
 interface ArtifactTemplate {

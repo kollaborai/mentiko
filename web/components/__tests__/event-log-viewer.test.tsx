@@ -22,7 +22,7 @@ jest.mock('@/components/ui/button', () => ({
   ),
 }))
 
-jest.mock('@/components/live-indicator', () => ({
+jest.mock('@/components/common/live-indicator', () => ({
   LiveIndicator: ({ connected }: {
     connected: boolean
     _size?: 'sm' | 'md'

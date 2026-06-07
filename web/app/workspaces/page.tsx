@@ -19,7 +19,7 @@ import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import type { Workspace } from "@/lib/workspaces/workspace-storage";
 import { PageBanner } from "@/components/ui/page-banner";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { WorkspaceDetailPanel } from "@/components/workspace/workspace-detail-panel";
 import {
   WorkflowSidebarFilters,

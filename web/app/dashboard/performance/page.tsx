@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { TrendUpFilled, ChartFilled, ChartFilled as BarChart3, RefreshFilled, ClockFilled as Clock, TickCircleFilled as CheckCircle, Star1Filled as Coins } from "@aliimam/icons";
 import { BotMessageSquare as Bot } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 
 interface TokenCounts {

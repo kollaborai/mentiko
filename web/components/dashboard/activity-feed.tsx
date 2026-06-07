@@ -4,7 +4,7 @@ import { useState, useEffect, memo, useCallback } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { MessageSquareFilled as MessageSquare, PlayFilled as Play, TickCircleFilled as CheckCircle2, InfoCircleFilled as AlertCircle, ActivityFilled as Activity, RecordCircleFilled as Circle, CloseCircleFilled as X, StopFilled as Square } from "@aliimam/icons";
-import { ActivityItemSkeleton } from "@/components/skeletons";
+import { ActivityItemSkeleton } from "@/components/common/skeletons";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";

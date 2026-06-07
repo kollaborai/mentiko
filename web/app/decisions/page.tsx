@@ -7,7 +7,7 @@ import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/empty-state";
+import { EmptyState } from "@/components/common/empty-state";
 import { DecisionDetail } from "@/components/decision/decision-detail";
 import { IntakeDialog } from "@/components/decision/intake-dialog";
 import { Button } from "@/components/ui/button";

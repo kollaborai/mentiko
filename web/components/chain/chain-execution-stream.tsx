@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWebSocket } from "@/hooks/use-websocket";
-import { LiveIndicator } from "@/components/live-indicator";
+import { LiveIndicator } from "@/components/common/live-indicator";
 import {
   PlayFilled as Play,
   TickCircleFilled as CheckCircle2,

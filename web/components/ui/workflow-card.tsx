@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils"
-import { StatusBadge, type Status } from "@/components/status-badge"
+import { StatusBadge, type Status } from "@/components/common/status-badge"
 import { ClockFilled as Clock, FlashFilled as Zap, CommandSquareFilled as Terminal, PeopleFilled as Users } from "@aliimam/icons"
 import { TimeAgo } from "@/components/shared/time-ago"
 import type { ReactNode } from "react"

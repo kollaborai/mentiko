@@ -1,6 +1,6 @@
 "use client";
 
-import { StatusBadge, type Status } from "@/components/status-badge";
+import { StatusBadge, type Status } from "@/components/common/status-badge";
 import Link from "next/link";
 import { PlayFilled as Play, ClockFilled as Clock, TickCircleFilled as CheckCircle2, CloseCircleFilled as XCircle, ActivityFilled as Activity, LinkFilled } from "@aliimam/icons";
 import type { Run as BaseRun } from "@/lib/types";
