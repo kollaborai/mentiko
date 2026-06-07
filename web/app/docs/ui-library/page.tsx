@@ -130,7 +130,7 @@ export default function UiLibraryPage() {
           <div className="rounded-md bg-muted p-3">
             <div className="text-[10px] uppercase tracking-[0.16em] text-foreground/40">Doc Charms</div>
             <p className="mt-2 text-sm text-muted-foreground">
-              Link to docs pages. Always light blue (#60a5fa). Use topic identity icon.
+              Link to docs pages. Always amber (#f59e0b). Use topic identity icon.
             </p>
           </div>
           <div className="rounded-md bg-muted p-3">
