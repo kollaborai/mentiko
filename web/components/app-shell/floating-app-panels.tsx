@@ -10,7 +10,7 @@ import {
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
 import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
-import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/panel-mode-background";
+import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/app-shell/panel-mode-background";
 import {
   OPEN_FLOATING_APP_PANEL_EVENT,
   getFloatingPanelSrc,

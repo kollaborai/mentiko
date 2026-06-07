@@ -103,15 +103,15 @@ jest.mock('@aliimam/icons', () => {
   }
 })
 
-jest.mock('@/components/notifications-panel', () => ({
+jest.mock('@/components/app-shell/notifications-panel', () => ({
   NotificationsPanel: () => <div data-testid="notifications-panel" />,
 }))
 
-jest.mock('@/components/sessions-indicator', () => ({
+jest.mock('@/components/app-shell/sessions-indicator', () => ({
   SessionsIndicator: () => <div data-testid="sessions-indicator" />,
 }))
 
-jest.mock('@/components/nav-namespace-selector', () => ({
+jest.mock('@/components/app-shell/nav-namespace-selector', () => ({
   NavNamespaceSelector: () => <div data-testid="nav-namespace-selector" />,
 }))
 

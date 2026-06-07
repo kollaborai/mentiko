@@ -27,9 +27,9 @@ import {
   setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
 } from "@/lib/ai-engine/kollabor-engine-client";
-import { KollaborPermissionPrompt } from "@/components/kollabor-permission-prompt";
-import { KollaborAskPrompt } from "@/components/kollabor-ask-prompt";
-import { KollaborModeChoicePrompt } from "@/components/kollabor-mode-choice-prompt";
+import { KollaborPermissionPrompt } from "@/components/app-shell/kollabor-permission-prompt";
+import { KollaborAskPrompt } from "@/components/app-shell/kollabor-ask-prompt";
+import { KollaborModeChoicePrompt } from "@/components/app-shell/kollabor-mode-choice-prompt";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import {
   MCPBarClient,
@@ -39,7 +39,7 @@ import {
   replyToTool,
 } from "@/lib/ai-engine/mentiko-mcp-bar-client";
 import type { UIEffect } from "@/lib/ai-engine/mentiko-mcp-inbox";
-import { showToast } from "@/components/notifications-panel";
+import { showToast } from "@/components/app-shell/notifications-panel";
 import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

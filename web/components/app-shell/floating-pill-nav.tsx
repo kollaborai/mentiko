@@ -15,9 +15,9 @@ import {
 } from "@aliimam/icons";
 import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
-import { NotificationsPanel } from "@/components/notifications-panel";
-import { SessionsIndicator } from "@/components/sessions-indicator";
-import { NavNamespaceSelector } from "@/components/nav-namespace-selector";
+import { NotificationsPanel } from "@/components/app-shell/notifications-panel";
+import { SessionsIndicator } from "@/components/app-shell/sessions-indicator";
+import { NavNamespaceSelector } from "@/components/app-shell/nav-namespace-selector";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useEditorStore } from "@/lib/ui/editor-store";
 import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";

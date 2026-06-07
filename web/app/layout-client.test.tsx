@@ -27,7 +27,7 @@ jest.mock("next-themes", () => ({
   ThemeProvider: MockThemeProvider,
 }));
 
-jest.mock("@/components/must-change-password-gate", () => ({
+jest.mock("@/components/app-shell/must-change-password-gate", () => ({
   MustChangePasswordGate: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="session-gate">{children}</div>
   ),
@@ -45,7 +45,7 @@ jest.mock("@/lib/ui-context/user-context", () => ({
   UserProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-jest.mock("@/components/notifications-panel", () => ({
+jest.mock("@/components/app-shell/notifications-panel", () => ({
   ToastContainer: () => null,
 }));
 
@@ -53,7 +53,7 @@ jest.mock("@/hooks/use-notifications-listener", () => ({
   useNotificationsListener: jest.fn(),
 }));
 
-jest.mock("@/components/offline-indicator", () => ({
+jest.mock("@/components/app-shell/offline-indicator", () => ({
   OfflineIndicator: () => null,
   OnlineStatusBanner: () => null,
 }));
@@ -70,11 +70,11 @@ jest.mock("@/lib/notifications/notification-preferences", () => ({
   useNotificationPreferences: () => ({ init: jest.fn() }),
 }));
 
-jest.mock("@/components/global-search-modal", () => ({
+jest.mock("@/components/app-shell/global-search-modal", () => ({
   GlobalSearchModal: () => null,
 }));
 
-jest.mock("@/components/keyboard-shortcuts-modal", () => ({
+jest.mock("@/components/app-shell/keyboard-shortcuts-modal", () => ({
   KeyboardShortcutsModal: () => null,
 }));
 
@@ -82,11 +82,11 @@ jest.mock("@/components/floating-terminal-panel", () => ({
   FloatingTerminalPanel: () => null,
 }));
 
-jest.mock("@/components/floating-pill-nav", () => ({
+jest.mock("@/components/app-shell/floating-pill-nav", () => ({
   FloatingPillNav: () => null,
 }));
 
-jest.mock("@/components/floating-app-panels", () => ({
+jest.mock("@/components/app-shell/floating-app-panels", () => ({
   FloatingAppPanels: () => null,
 }));
 
@@ -98,7 +98,7 @@ jest.mock("@/components/onboarding/floating-welcome-panel", () => ({
   FloatingWelcomePanel: () => null,
 }));
 
-jest.mock("@/components/floating-kollabor-bar", () => ({
+jest.mock("@/components/app-shell/floating-kollabor-bar", () => ({
   FloatingKollaborBar: () => null,
 }));
 

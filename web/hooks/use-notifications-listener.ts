@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { useNotificationActions } from "@/lib/notifications/notifications-store";
-import { showToast } from "@/components/notifications-panel";
+import { showToast } from "@/components/app-shell/notifications-panel";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";

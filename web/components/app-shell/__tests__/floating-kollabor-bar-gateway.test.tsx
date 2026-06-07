@@ -97,11 +97,11 @@ jest.mock("@/lib/ui-context/user-context", () => ({
   useUser: () => mockUserState,
 }));
 
-jest.mock("@/components/kollabor-permission-prompt", () => ({
+jest.mock("@/components/app-shell/kollabor-permission-prompt", () => ({
   KollaborPermissionPrompt: () => null,
 }));
 
-jest.mock("@/components/kollabor-ask-prompt", () => ({
+jest.mock("@/components/app-shell/kollabor-ask-prompt", () => ({
   KollaborAskPrompt: () => null,
 }));
 
@@ -109,7 +109,7 @@ jest.mock("@/components/ui/wave-spinner", () => ({
   WaveSpinner: () => null,
 }));
 
-jest.mock("@/components/notifications-panel", () => ({
+jest.mock("@/components/app-shell/notifications-panel", () => ({
   showToast: jest.fn(),
 }));
 
