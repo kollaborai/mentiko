@@ -154,11 +154,13 @@ mentiko seed`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Profile API</h2>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
-          <div><code className="text-foreground/70">GET /api/config-profiles</code> - list all profiles (optional ?type= filter)</div>
-          <div><code className="text-foreground/70">POST /api/config-profiles</code> - create new profile</div>
-          <div><code className="text-foreground/70">{"GET /api/config-profiles/{type}/{name}"}</code> - get single profile</div>
-          <div><code className="text-foreground/70">{"PUT /api/config-profiles/{type}/{name}"}</code> - update profile</div>
-          <div><code className="text-foreground/70">{"DELETE /api/config-profiles/{type}/{name}"}</code> - delete profile</div>
+          <div><code className="text-foreground/70">GET /api/agent-profiles</code> - list all profiles</div>
+          <div><code className="text-foreground/70">POST /api/agent-profiles</code> - create new profile</div>
+          <div><code className="text-foreground/70">{"GET /api/agent-profiles/[id]"}</code> - get single profile</div>
+          <div><code className="text-foreground/70">{"PATCH /api/agent-profiles/[id]"}</code> - update profile</div>
+          <div><code className="text-foreground/70">{"DELETE /api/agent-profiles/[id]"}</code> - delete profile</div>
+          <div><code className="text-foreground/70">POST /api/agent-profiles/[id]/set-default</code> - set as default</div>
+          <div><code className="text-foreground/70">POST /api/agent-profiles/[id]/set-advisor-default</code> - set as advisor default</div>
         </div>
       </section>
 
