@@ -75,8 +75,8 @@ cd web && npm run dev`}
 5. agent role match`}
             </div>
             <p className="text-xs text-foreground/60 mt-2">
-              check conversations/page.tsx:120-140 for the matching logic. select the conversation
-              you want to target before typing.
+              check <code className="text-foreground/70">/api/conversations/[id]/steer</code> for the
+              matching logic. select the conversation you want to target before typing.
             </p>
           </div>
         </section>
@@ -84,15 +84,16 @@ cd web && npm run dev`}
         {/* hydration errors */}
         <section className="space-y-3">
           <div>
-            <h2 className="text-sm font-medium text-foreground mb-1">Hydration Errors on Theme Toggle</h2>
+            <h2 className="text-sm font-medium text-foreground mb-1">Hydration Errors on Client State</h2>
             <p className="text-xs text-foreground/60 leading-relaxed">
-              react hydration mismatch when toggling dark mode. ssr rendered different html than client.
+              react hydration mismatch when SSR renders different HTML than the client after mount.
             </p>
           </div>
           <div className="bg-card rounded-md p-3">
             <div className="text-[11px] font-mono text-foreground/70 mb-2">solution</div>
             <p className="text-xs text-foreground/60 mb-2">
-              theme-toggle.tsx must check mounted state before rendering:
+              components that depend on browser-only state should wait until mounted before rendering
+              stateful UI:
             </p>
             <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
 {`const [mounted, setMounted] = useState(false)
@@ -120,7 +121,8 @@ if (!mounted) return null
             <div className="bg-card rounded-md p-3">
               <div className="text-[11px] font-mono text-foreground/70 mb-1">check events directory</div>
               <p className="text-xs text-foreground/60">
-                namespaces/{'{namespace_id}'}/events/ - should contain event json files as chain progresses
+                namespaces/{'{namespace_id}'}/projects/{'{project_id}'}/events/ - should contain .event files
+                as chain progresses. default project collapses into the org root.
               </p>
             </div>
             <div className="bg-card rounded-md p-3">
@@ -133,7 +135,8 @@ if (!mounted) return null
             <div className="bg-card rounded-md p-3">
               <div className="text-[11px] font-mono text-foreground/70 mb-1">check agent state</div>
               <p className="text-xs text-foreground/60">
-                namespaces/{'{namespace_id}'}/state/ - contains current state of all agents
+                namespaces/{'{namespace_id}'}/projects/{'{project_id}'}/state/ - contains runtime state.
+                default project collapses into the org root.
               </p>
             </div>
           </div>
@@ -149,12 +152,11 @@ if (!mounted) return null
           </div>
           <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
 {`# resolution order
-1. namespaces/{namespace_id}/agents/{name}/agent.json  (namespace-scoped)
-2. agents/{name}/agent.json                    (shared/marketplace)
+1. {AGENTS_DIR}/{ref}/agent.json
+2. {AGENTS_DIR}/{ref}.json
 
 # verify agent exists
-ls namespaces/default/agents/
-ls agents/
+ls ~/.mentiko/namespaces/default/agents/
 
 # check $ref syntax matches agent name exactly
 # case-sensitive, no file extension`}
