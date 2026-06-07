@@ -29,8 +29,9 @@ export default function ChainsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Chain Format</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Chains live at <code className="text-foreground/70 bg-muted px-1 rounded">namespaces/{"{namespace_id}"}/chains/{"{name}"}/chain.json</code>.
-          Here&apos;s the full structure:
+          Chains are org-scoped. In the default org they live at <code className="text-foreground/70 bg-muted px-1 rounded">~/.mentiko/namespaces/{"{namespace_id}"}/chains/{"{chain_id}"}/chain.json</code>;
+          non-default orgs use <code className="text-foreground/70 bg-muted px-1 rounded">orgs/{"{org_id}"}/chains/{"{chain_id}"}/chain.json</code> under the namespace.
+          Here&apos;s the core structure:
         </p>
         <CodeBlock>{`{
   "name": "my-chain",
@@ -79,7 +80,7 @@ export default function ChainsDocPage() {
             <div><code className="text-foreground/70">retry</code> - optional retry config (max_retries, backoff: fixed|exponential|linear, initial_delay, max_delay, backoff_multiplier)</div>
             <div><code className="text-foreground/70">on_error</code> - optional agent ID to route to on failure</div>
             <div><code className="text-foreground/70">on_timeout</code> - optional agent ID to route to on timeout</div>
-            <div><code className="text-foreground/70">wait_for_events</code> - optional fan-in: wait for multiple events before starting</div>
+            <div><code className="text-foreground/70">wait_for_events</code> - optional fan-in object: events, wait_for (all|any|quorum), quorum, timeout</div>
             <div><code className="text-foreground/70">artifacts</code> - optional artifact declarations (produces/consumes)</div>
           </div>
         </div>
@@ -88,7 +89,7 @@ export default function ChainsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Event Flow</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Events are files written to <code className="text-foreground/70 bg-muted px-1 rounded">namespaces/{"{id}"}/events/</code>.
+          Events are project-scoped files written under the resolved project root, for example <code className="text-foreground/70 bg-muted px-1 rounded">~/.mentiko/namespaces/{"{id}"}/events/</code> for the default project.
           When an agent completes, it writes an event file. The event trigger monitors
           this directory and launches agents whose triggers match.
         </p>
@@ -101,7 +102,8 @@ export default function ChainsDocPage() {
                         emits: "chain-complete"`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
           Multiple agents can trigger on the same event for parallel execution.
-          An agent can also trigger on multiple events (all must fire before it starts).
+          Multiple entries in <code className="text-foreground/70">triggers</code> are treated as any-of matches; use
+          <code className="text-foreground/70"> wait_for_events</code> or branch fan-in when an agent must wait for several events.
         </p>
       </section>
 
@@ -185,7 +187,7 @@ export default function ChainsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">$ref Syntax</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Instead of defining agents inline, reference standalone agents from the registry:
+          Instead of defining agents inline, reference standalone agents from the org registry or marketplace cache:
         </p>
         <CodeBlock>{`"agents": [
   { "$ref": "researcher" },
@@ -198,7 +200,8 @@ export default function ChainsDocPage() {
   }
 ]`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          You can mix $ref and inline agents. Override fields are merged on top
+          You can mix $ref and inline agents. Web APIs resolve refs from org agents first, then marketplace agents;
+          the shell runner resolves refs from the configured <code className="text-foreground/70">AGENTS_DIR</code>. Override fields are merged on top
           of the loaded agent definition.
         </p>
       </section>
