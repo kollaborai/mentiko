@@ -63,7 +63,8 @@ POST /api/links/runs/{runId}/stop        # stop all link sessions`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Terminal and Agent View</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Each run is wired to terminal sessions and workspace context. If a run stalls, use escalate/stop first, then reply routes to recover context.
+          Each run is wired to terminal sessions and workspace context. If a run stalls, use escalate
+          to record the handoff, then reply to recover context. Use stop only when the link run should terminate.
         </p>
         <CodeBlock>{`# open a link run in terminal mode
 runId=run-...
