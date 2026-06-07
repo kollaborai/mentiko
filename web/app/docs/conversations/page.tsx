@@ -41,8 +41,9 @@ export default function ConversationsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Message Format</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Conversations store messages in JSONL format. Each message has a role and
-          content, with optional tool calls and results.
+          Mentiko reads provider JSONL logs and normalizes message summaries for the UI.
+          The raw shape depends on the CLI provider, so code should tolerate both
+          top-level message fields and nested payload/message records.
         </p>
         <CodeBlock>{`// message format
 {
@@ -70,8 +71,12 @@ export default function ConversationsDocPage() {
           Each conversation runs in a PTY session managed by pty-manager. Sessions
           are isolated and can be listed, read, and destroyed.
         </p>
-        <CodeBlock>{`// session naming
-conv-{agent}-{timestamp}     // e.g. conv-claude-1678900000
+        <CodeBlock>{`// chain session naming
+{project}-{sessionPrefixOrAgentId}-{runIdOrTimestamp}
+monitor-{sessionName}
+
+// resumed conversation naming
+{slug} or resume-{conversationIdPrefix}
 
 // pty-manager commands
 ./bin/p list                  # list active sessions
@@ -100,16 +105,15 @@ conv-{agent}-{timestamp}     // e.g. conv-claude-1678900000
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Conversation Storage</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Conversations are stored in the workspace-scoped conversations directory:
+          Conversations are read from provider log directories, not a Mentiko-owned
+          conversations folder. The directory is resolved from the CLI provider and
+          current workspace path.
         </p>
         <CodeBlock>{`// storage path
-namespaces/{id}/projects/{encoded-cwd}/conversations/{agent}/{conversationId}/
-# default project collapses: namespaces/{id}/conversations/{agent}/{conversationId}/
+claude-code / kollab: {provider_log_path}/{encoded-cwd}/*.jsonl
+codex:              {provider_log_path}/*.jsonl
 
-// files in conversation directory
-messages.jsonl    # message history
-metadata.json     # title, agent, timestamps
-state.json        # session state (if active)`}</CodeBlock>
+// the exact base path comes from provider bundles or AgentProfile.log_path`}</CodeBlock>
       </section>
 
       <section className="mb-6">
@@ -142,20 +146,15 @@ state.json        # session state (if active)`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Linked Conversations</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Conversations can be linked to runs, chains, or tasks. The link appears
-          in the conversation metadata and is shown in the UI.
+          Run detail pages infer conversation links by scanning provider JSONL logs
+          for the run id and agent id, and by reading captured run artifacts.
         </p>
         <CodeBlock>{`// linked conversation metadata
 {
-  "id": "conv-abc123",
-  "agent": "claude",
-  "title": "Fix authentication bug",
-  "linkedTo": {
-    "type": "run",
-    "id": "run-xyz789"
-  },
-  "messageCount": 15,
-  "lastModified": "2026-03-16T10:30:00Z"
+  "runId": "run-xyz789",
+  "agentId": "researcher",
+  "artifact": "{agentId}-conversations.json",
+  "fallback": "/api/conversations/find-by-agent?runId=...&agentId=..."
 }`}</CodeBlock>
       </section>
       </div>
