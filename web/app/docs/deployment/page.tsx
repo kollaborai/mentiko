@@ -39,16 +39,18 @@ npx tsc --noEmit`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Build Path and Images</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Production images must be built for linux/amd64 and include the standalone Next.js output,
+          Production images are built for linux/amd64 and linux/arm64 and include the standalone Next.js output,
           platform scripts, process manager, and runtime health checks.
         </p>
-        <CodeBlock>{`# verify the image architecture before rollout
-docker image inspect ghcr.io/<org>/<image>:<sha> --format '{{.Architecture}}'
+        <CodeBlock>{`# inspect the promoted multi-arch manifest before rollout
+docker buildx imagetools inspect ghcr.io/kollaborai/mentiko:<sha>
 
 # expected:
-amd64`}</CodeBlock>
+linux/amd64
+linux/arm64`}</CodeBlock>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60">
-          Image should be tagged with the git SHA (not just latest) and smoke-tested before pushing.
+          The workflow pushes run-scoped per-arch staging tags first, smoke-tests those images, then promotes
+          multi-arch <code className="text-foreground/70">:&lt;sha&gt;</code>, <code className="text-foreground/70">:&lt;version&gt;</code>, and <code className="text-foreground/70">:latest</code> tags after smoke passes on tag releases.
         </div>
       </section>
 
