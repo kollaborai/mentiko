@@ -39,15 +39,16 @@ export default function EmailDocPage() {
   "chainId": "chain-abc123",
   "enabled": true,
   "allowAttachments": false,
-  "source": "custom|haraka|resend|postmark|sendgrid",
-  "secretVersion": 1
+  "secretVersion": 1,
+  "sendgridPublicKey": "-----BEGIN PUBLIC KEY-----..."
 }
 
 // Supported sources:
+// source is selected per inbound request via body.source or ?source=
 // - custom: generic Bearer token (derived HMAC secret)
 // - haraka: shared HARAKA_API_KEY or derived per-inbox HMAC secret
-// - resend: Svix signature verification (X-Svix-Signature)
-// - postmark: HMAC-SHA256 signature (X-Postmark-Signature)
+// - resend: X-Svix-Signature compared to base64 HMAC of JSON.stringify(body)
+// - postmark: X-Postmark-Signature compared to the derived secret
 // - sendgrid: ECDSA-SHA256 (P-256) signature verification`}</CodeBlock>
       </section>
 
@@ -65,16 +66,16 @@ Authorization: Bearer {deriveInboundSecret(namespaceId, secretVersion)}
 // custom source: per-inbox derived secret only
 Authorization: Bearer {deriveInboundSecret(namespaceId, secretVersion)}
 
-// Resend webhook signature
-X-Svix-Signature: {hmac_sha256(secret, body)}
+// Resend webhook signature (current implementation)
+X-Svix-Signature: {base64_hmac_sha256(secret, JSON.stringify(body))}
 
-// Postmark webhook signature
-X-Postmark-Signature: {hmac_sha256(secret, body)}
+// Postmark webhook signature (current implementation)
+X-Postmark-Signature: {deriveInboundSecret(namespaceId, secretVersion)}
 `}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           The derived HMAC secret is computed from the namespace ID and secret version.
-          When secretVersion is incremented, the previous version&apos;s secret is accepted for 24 hours
-          to allow graceful rotation without dropped webhooks.
+          When secretVersion is incremented, the previous version&apos;s secret is also accepted
+          while the inbox version is greater than 1; the current verifier does not enforce a timestamp window.
         </p>
         <p className="text-xs text-foreground/60 leading-relaxed">
           Auth failures are rate-limited: 5 failures within 5 minutes triggers a 1-hour block per IP.
@@ -149,8 +150,10 @@ Authorization: Bearer <token>:v{version}:{namespaceId}:{hmac_signature}
           <div>Export suppression list for external tools</div>
         </div>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          Suppressions are stored per-org at <code className="text-foreground/70 bg-muted px-1 rounded">emails/config/suppressions.json</code>.
-          Each org maintains its own list.
+          Suppression storage is split today: outbound send checks legacy
+          <code className="text-foreground/70 bg-muted px-1 rounded"> emails/config/suppressions.json</code>,
+          bounce handling writes <code className="text-foreground/70 bg-muted px-1 rounded">emails/suppressions/*.json</code>,
+          and the suppression management API uses <code className="text-foreground/70 bg-muted px-1 rounded">email-suppressions.db</code>.
         </p>
       </section>
 
@@ -164,7 +167,7 @@ Authorization: Bearer <token>:v{version}:{namespaceId}:{hmac_signature}
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Quota exceeded → 429 response with quota details</div>
           <div>Quota resets at the start of each day</div>
-          <div>Zero quota = unlimited</div>
+          <div>Zero quota currently blocks sends; set a positive quota for enabled sending</div>
         </div>
       </section>
 
@@ -175,18 +178,25 @@ Authorization: Bearer <token>:v{version}:{namespaceId}:{hmac_signature}
         </p>
         <CodeBlock>{`// storage paths (default org)
 namespaces/{id}/emails/
-  inbound/{emailId}.json           // received emails
-  outbound/{emailId}.json          // sent emails (outbound queue entries)
-  config/suppressions.json         // suppressed addresses
+  config/inboxes.json              // inbox definitions
+  {folder}/unread/{emailId}.json   // received email
+  {folder}/processing/{emailId}.json
+  {folder}/processed/{emailId}.json
+  {folder}/failed/{emailId}.json
+  outbound-queue/{sendId}.json     // queued outbound entries
+  outbound-sent/{sendId}.json
+  outbound-failed/{sendId}.json
 
 // outbound queue entry
 {
   "id": "send-abc123",
-  "to": ["user@example.com"],
-  "from": "noreply@example.com",
-  "subject": "Your report is ready",
-  "type": "transactional",
-  "status": "queued|sent|failed",
+  "payload": {
+    "to": ["user@example.com"],
+    "from": "noreply@example.com",
+    "subject": "Your report is ready",
+    "type": "transactional"
+  },
+  "status": "pending|sending|sent|failed|cancelled_suspended",
   "createdAt": "2026-03-16T10:30:00Z"
 }`}</CodeBlock>
       </section>
