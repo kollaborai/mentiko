@@ -47,7 +47,7 @@ export default function TasksDocPage() {
         </p>
         <CodeBlock>{`// add dependency via API
 POST /api/tasks/deps
-{ "taskId": "task-A", "dependsOn": "task-B" }
+{ "from": "task-A", "to": "task-B" }
 
 // view dependencies on a task
 GET /api/tasks/task-A   # includes dependencies[] and dependents[]
@@ -162,8 +162,8 @@ chainBinding: {
             <div><code className="text-foreground/70">assignee</code> - who should work on it</div>
             <div><code className="text-foreground/70">createdBy</code> - who created it</div>
             <div><code className="text-foreground/70">labels</code> - freeform tags</div>
-            <div><code className="text-foreground/70">estimate</code> - time estimate (hours)</div>
-            <div><code className="text-foreground/70">dueAt</code> - deadline</div>
+            <div><code className="text-foreground/70">estimated_minutes</code> - stored estimate in minutes; UI maps it to estimate</div>
+            <div><code className="text-foreground/70">due_at</code> - stored deadline; UI maps it to dueDate</div>
             <div><code className="text-foreground/70">chainBinding</code> - chain association</div>
           </div>
         </div>
@@ -176,7 +176,7 @@ chainBinding: {
         </p>
         <CodeBlock>{`GET  /api/tasks?status=open     # list open tasks
 GET  /api/tasks/:id             # task details with deps
-POST /api/tasks                 # create new task
+POST /api/tasks/create          # create new task
 PATCH /api/tasks/:id            # update task fields
 POST /api/tasks/:id/close       # mark complete
 POST /api/tasks/deps            # add dependency`}</CodeBlock>
