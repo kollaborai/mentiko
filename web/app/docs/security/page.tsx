@@ -44,8 +44,8 @@ export default function SecurityDocPage() {
           <div><code className="text-foreground/70">httpOnly: true</code> - no JavaScript access</div>
           <div><code className="text-foreground/70">secure: true</code> - HTTPS only (production)</div>
           <div><code className="text-foreground/70">sameSite: strict</code> - no cross-site requests</div>
-          <div><code className="text-foreground/70">CSRF token</code> - 32-byte random hex, 24h max age</div>
-          <div>Cookie name: <code className="text-foreground/70">__Secure-better-auth.session_token</code></div>
+          <div><code className="text-foreground/70">CSRF token</code> - token cookie is issued; double-submit validation is deferred</div>
+          <div>Cookie names: <code className="text-foreground/70">__Secure-better-auth.session_token</code> over HTTPS and <code className="text-foreground/70">better-auth.session_token</code> locally</div>
         </div>
       </section>
 
@@ -144,13 +144,13 @@ export default function SecurityDocPage() {
           Always active. Set DISABLE_RATE_LIMITING=true to bypass.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
-          <div><code className="text-foreground/70">auth</code> - 100 requests per 15 minutes</div>
-          <div><code className="text-foreground/70">api</code> - 100 requests per minute</div>
-          <div><code className="text-foreground/70">webhook</code> - 20 requests per minute</div>
-          <div><code className="text-foreground/70">public</code> - 1000 requests per minute</div>
+          <div><code className="text-foreground/70">user</code> - 300 requests per minute</div>
+          <div><code className="text-foreground/70">tenant</code> - 1500 requests per minute</div>
+          <div><code className="text-foreground/70">burst</code> - 100 requests per 10 seconds</div>
+          <div>Streaming, auth, health, and high-frequency read polling routes opt out</div>
         </div>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          Response headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
+          Rate-limit responses use HTTP 429 with <code className="text-foreground/70 bg-muted px-1 rounded">Retry-After</code>.
         </p>
       </section>
 
