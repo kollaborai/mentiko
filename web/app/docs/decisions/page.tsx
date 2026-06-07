@@ -47,9 +47,10 @@ export default function DecisionsDocPage() {
         <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60 mb-3">
           <div><span className="text-foreground/70">intake</span> - initial creation, gathering context</div>
           <div><span className="text-foreground/70">researching</span> - AI analyzing the problem</div>
+          <div><span className="text-foreground/70">briefed</span> - research brief is ready for review</div>
           <div><span className="text-foreground/70">pending</span> - awaiting your approval</div>
-          <div><span className="text-foreground/70">approved</span> - decision made, creating tasks</div>
-          <div><span className="text-foreground/70">in_progress</span> - executing the plan</div>
+          <div><span className="text-foreground/70">approved</span> - decision resolved and task(s) created</div>
+          <div><span className="text-foreground/70">in_progress</span> - legacy status; task execution state lives on the created tasks</div>
           <div><span className="text-foreground/70">done</span> - completed, retrospective written</div>
           <div><span className="text-foreground/70">skipped</span> - cancelled or no longer relevant</div>
         </div>
@@ -102,30 +103,38 @@ export default function DecisionsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Guided Flow: Round 3 (Plan)</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          AI creates an execution plan for the selected option. The plan includes tasks,
-          dependencies, and time estimates.
+          AI creates an execution plan for the selected option. The plan includes a
+          summary, tasks, subtasks, phases, priorities, and dependencies.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
-          <div>Tasks array with title, description, assignee</div>
+          <div>Tasks array with id, title, description, subtasks, assignee, priority, phase</div>
           <div>Dependencies between tasks (DAG)</div>
-          <div>Total effort estimate</div>
           <div>Approve to create epic + subtasks in the native task store</div>
         </div>
         <CodeBlock>{`// plan format
 {
   tasks: [
     {
+      id: "extract-user-service",
       title: "Extract user service",
       description: "Move user logic to separate module",
+      subtasks: ["Move user queries", "Add tests"],
       assignee: "marco",
-      dependencies: []
+      priority: 2,
+      phase: 1
     },
     {
+      id: "migrate-database-calls",
       title: "Migrate database calls",
       description: "Update all DB calls to use service",
+      subtasks: ["Replace direct imports", "Run integration tests"],
       assignee: "marco",
-      dependencies: ["extract-user-service"]
+      priority: 2,
+      phase: 2
     }
+  ],
+  dependencies: [
+    { from: "migrate-database-calls", to: "extract-user-service" }
   ]
 }`}</CodeBlock>
       </section>
@@ -152,7 +161,7 @@ export default function DecisionsDocPage() {
           <div>With plan: creates epic + subtasks with dependencies</div>
           <div>Without plan: creates single task from description</div>
           <div>Tasks link back to decision via metadata</div>
-          <div>Decision status changes to &quot;in_progress&quot;</div>
+          <div>Decision status changes to &quot;approved&quot;</div>
         </div>
       </section>
 
