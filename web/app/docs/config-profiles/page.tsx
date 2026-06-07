@@ -14,7 +14,7 @@ export default function ConfigProfilesDocPage() {
     <div>
       <PageBanner
         title="CLI Reference"
-        subtitle="CLI commands, config profiles, and environment variables for mentiko."
+        subtitle="CLI commands, agent execution profiles, and environment variables for mentiko."
         icon={Setting2Filled}
         sectionColor="#f59e0b"
         actions={[
@@ -61,69 +61,71 @@ mentiko seed`}</CodeBlock>
       </section>
 
       <section className="mb-6">
-        <h2 className="text-sm font-medium mb-2">Config Profiles</h2>
+        <h2 className="text-sm font-medium mb-2">Agent Execution Profiles</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Named configuration profiles for reuse across chains and agents. 5 types available.
-          Stored at <code className="text-foreground/70 bg-muted px-1 rounded">{"namespaces/{id}/config-profiles/{type}/{name}.json"}</code>.
+          Agent profiles own the CLI, model, args, env, logging, and auth behavior used by runs.
+          They are org-scoped and stored at <code className="text-foreground/70 bg-muted px-1 rounded">{"~/.mentiko/namespaces/{id}/agent-profiles/{profile-id}.json"}</code>
+          for the default org, or under <code className="text-foreground/70 bg-muted px-1 rounded">{"orgs/{orgId}/agent-profiles/"}</code> for non-default orgs.
         </p>
         <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60 mb-3">
-          <div><code className="text-foreground/70">execution</code> - CLI, monitor, max_rounds, on_complete, session_prefix</div>
-          <div><code className="text-foreground/70">model</code> - CLI binary, model name, CLI args</div>
-          <div><code className="text-foreground/70">workspace</code> - local/ssh/docker type, path, connection config</div>
-          <div><code className="text-foreground/70">retry</code> - max_retries, backoff strategy, delay intervals</div>
-          <div><code className="text-foreground/70">gateway</code> - custom API endpoint, env vars for auth tokens</div>
+          <div><code className="text-foreground/70">cli</code> - executable such as claude, codex, kollab, opencode, or a custom binary</div>
+          <div><code className="text-foreground/70">model</code> / <code className="text-foreground/70">relay_model</code> - model selection passed to the CLI or gateway</div>
+          <div><code className="text-foreground/70">pipe_flag</code>, <code className="text-foreground/70">permission_flag</code>, <code className="text-foreground/70">extra_args</code> - execution flags</div>
+          <div><code className="text-foreground/70">env</code> - environment values, including <code className="text-foreground/70">{"{secret:NAME}"}</code> references</div>
+          <div><code className="text-foreground/70">isDefault</code> / <code className="text-foreground/70">isAdvisorDefault</code> - default profile selectors</div>
         </div>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Profile Resolution Order</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          When multiple profiles are defined, values resolve in this priority:
+          When a run chooses an agent profile, values resolve in this priority:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
-          <div>1. Inline agent field (highest priority)</div>
-          <div>2. Agent profile assigned to the agent</div>
-          <div>3. Chain-level profile</div>
-          <div>4. System defaults (lowest priority)</div>
+          <div>1. Explicit profile selected for the run</div>
+          <div>2. Chain <code className="text-foreground/70">default_agent_profile</code></div>
+          <div>3. Workspace <code className="text-foreground/70">default_agent_profile</code></div>
+          <div>4. Org default profile, then the first available profile</div>
         </div>
       </section>
 
       <section className="mb-6">
-        <h2 className="text-sm font-medium mb-2">Execution Profile Example</h2>
+        <h2 className="text-sm font-medium mb-2">Agent Profile Example</h2>
         <CodeBlock>{`{
-  "id": "fast-dev-01",
-  "name": "fast-dev",
-  "type": "execution",
-  "description": "Quick iteration with low round limits",
-  "data": {
-    "cli": "claude",
-    "cli_args": [],
-    "monitor": true,
-    "monitor_interval": 30,
-    "max_rounds": 2,
-    "on_complete": "stop",
-    "session_prefix": "chain-"
-  }
+  "id": "codex-default",
+  "name": "Codex Default",
+  "description": "Default Codex profile for agent runs",
+  "isDefault": true,
+  "isAdvisorDefault": false,
+  "cli": "codex",
+  "model": "gpt-5",
+  "pipe_flag": "",
+  "permission_flag": "",
+  "extra_args": [],
+  "env": {
+    "OPENAI_API_KEY": "{secret:OPENAI_API_KEY}"
+  },
+  "createdAt": "2026-06-01T00:00:00.000Z",
+  "updatedAt": "2026-06-01T00:00:00.000Z"
 }`}</CodeBlock>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Gateway Profile Example</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Route agents through a custom API gateway. Env vars use{" "}
+          Route agents through a custom CLI or gateway by setting the profile&apos;s CLI fields. Env vars use{" "}
           <code className="text-foreground/70 bg-muted px-1 rounded">{"{secret:NAME}"}</code> refs
           for encrypted values.
         </p>
         <CodeBlock>{`{
-  "name": "custom-gateway",
-  "type": "gateway",
-  "data": {
-    "cli": "claude",
-    "cli_args": ["--api", "custom-endpoint"],
-    "env": {
-      "ANTHROPIC_API_KEY": "{secret:anthropic-key}",
-      "ANTHROPIC_BASE_URL": "https://custom-gateway.example.com"
-    }
+  "id": "custom-gateway",
+  "name": "Custom Gateway",
+  "isDefault": false,
+  "cli": "claude",
+  "extra_args": ["--api", "custom-endpoint"],
+  "env": {
+    "ANTHROPIC_API_KEY": "{secret:anthropic-key}",
+    "ANTHROPIC_BASE_URL": "https://custom-gateway.example.com"
   }
 }`}</CodeBlock>
       </section>
@@ -131,21 +133,15 @@ mentiko seed`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Chain Integration</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Reference profiles in chain.json at chain level or per-agent:
+          Reference a default agent profile at chain level, then override per agent only when needed:
         </p>
         <CodeBlock>{`{
   "name": "my-chain",
-  "profiles": {
-    "execution": "fast-dev",
-    "model": "opus4",
-    "workspace": "local-project"
-  },
+  "default_agent_profile": "codex-default",
   "agents": [
     {
       "id": "agent-1",
-      "profiles": {
-        "model": "sonnet4"
-      }
+      "agent_profile": "custom-gateway"
     }
   ]
 }`}</CodeBlock>
@@ -159,8 +155,11 @@ mentiko seed`}</CodeBlock>
           <div><code className="text-foreground/70">{"GET /api/agent-profiles/[id]"}</code> - get single profile</div>
           <div><code className="text-foreground/70">{"PATCH /api/agent-profiles/[id]"}</code> - update profile</div>
           <div><code className="text-foreground/70">{"DELETE /api/agent-profiles/[id]"}</code> - delete profile</div>
-          <div><code className="text-foreground/70">POST /api/agent-profiles/[id]/set-default</code> - set as default</div>
-          <div><code className="text-foreground/70">POST /api/agent-profiles/[id]/set-advisor-default</code> - set as advisor default</div>
+          <div><code className="text-foreground/70">GET /api/agent-profiles/[id]/resolved-env</code> - resolve secret refs for a profile</div>
+          <div><code className="text-foreground/70">POST /api/agent-profiles/[id]/test</code> - run a quick CLI version check</div>
+          <div><code className="text-foreground/70">GET /api/agent-profiles/bundles</code> - list installable provider bundles</div>
+          <div><code className="text-foreground/70">POST /api/agent-profiles/install-bundle</code> - install or sync a provider bundle</div>
+          <div>Set defaults with <code className="text-foreground/70">PATCH /api/agent-profiles/[id]</code> using <code className="text-foreground/70">isDefault</code> or <code className="text-foreground/70">isAdvisorDefault</code>.</div>
         </div>
       </section>
 
@@ -206,8 +205,9 @@ mentiko seed`}</CodeBlock>
         <h2 className="text-sm font-medium mb-2">Validation Rules</h2>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Profile name: alphanumeric + dashes, max 64 chars</div>
-          <div>Type: must be execution, model, workspace, retry, or gateway</div>
-          <div>Names used as filenames: no slashes, dots, or spaces</div>
+          <div>Name: required, max 128 chars</div>
+          <div>CLI: required</div>
+          <div>Env keys: uppercase alphanumeric with underscores</div>
         </div>
       </section>
       </div>
