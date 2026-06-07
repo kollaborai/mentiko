@@ -42,7 +42,7 @@ export default function AuditDocPage() {
           API surface for log lookup and export:
         </p>
         <CodeBlock>{`GET /api/audit
-  type     = chain_start | chain_complete | auth | ... (default: all)
+  type     = all | auth (default: all)
   user     = exact user match
   chain    = chain name
   runId    = run id
