@@ -42,22 +42,26 @@ export default function WorkspacesDocPage() {
         <CodeBlock>{`{
   "id": "workspace_123",
   "name": "Production Server",
-  "type": "ssh",
-  "ssh": {
-    "host": "prod.example.com",
-    "user": "deploy",
-    "path": "/app/chains",
-    "port": 22,
-    "key": "~/.ssh/id_ed25519"
+  "path": "/app/chains",
+  "execution": {
+    "type": "ssh",
+    "ssh": {
+      "host": "prod.example.com",
+      "user": "deploy",
+      "path": "/app/chains",
+      "port": 22,
+      "key": "~/.ssh/id_ed25519"
+    }
   },
-  "config": {
+  "model": {
     "cli": "claude",
-    "model": "sonnet",
-    "maxAgents": 10,
-    "maxRounds": 50,
-    "defaultBranch": "main"
+    "model": "sonnet"
   },
-  "autoRun": "enabled"
+  "max_agents": 10,
+  "max_rounds": 50,
+  "default_branch": "main",
+  "default_agent_profile": "codex-default",
+  "auto_run": "enabled"
 }`}</CodeBlock>
       </section>
 
@@ -76,13 +80,13 @@ export default function WorkspacesDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Task Provider Integration</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Workspaces can connect to task providers for tracking. When enabled,
-          chain runs automatically link to their originating tasks.
+          Workspaces can connect to task providers through get, set, and ping
+          routes. Task/run linking is handled by task and run metadata flows.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Connected at workspace creation or settings</div>
+          <div>Configured in workspace settings via <code className="text-foreground/70">/api/workspaces/{'{id}'}/task-provider</code></div>
           <div>Stores connection timestamp and status</div>
-          <div>Auto-links runs to tasks on chain completion</div>
+          <div>Supports ping checks for configured providers</div>
           <div>Skips if the provider is unavailable (graceful fallback)</div>
         </div>
       </section>
@@ -107,12 +111,10 @@ export default function WorkspacesDocPage() {
           before each agent launch and never appear in output logs.
         </p>
         <CodeBlock>{`{
-  "config": {
-    "env": {
-      "API_KEY": "secret-value",
-      "DEPLOY_ENV": "production",
-      "LOG_LEVEL": "info"
-    }
+  "env": {
+    "API_KEY": "secret-value",
+    "DEPLOY_ENV": "production",
+    "LOG_LEVEL": "info"
   }
 }`}</CodeBlock>
       </section>
@@ -120,12 +122,13 @@ export default function WorkspacesDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Default Workspace</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          The <code className="text-foreground/70 bg-muted px-1 rounded">local</code> workspace always exists and represents
-          the current machine. It&apos;s used when no specific workspace is selected.
+          Workspaces are stored in <code className="text-foreground/70 bg-muted px-1 rounded">workspaces.json</code>.
+          The UI auto-selects the first accessible workspace when one exists, but
+          there is no guaranteed hardcoded local workspace.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Cannot be deleted</div>
-          <div>Path defaults to current working directory</div>
+          <div>Accessible workspaces are filtered by membership</div>
+          <div>Local workspaces validate an existing writable path on create</div>
           <div>Configurable like any other workspace</div>
         </div>
       </section>
