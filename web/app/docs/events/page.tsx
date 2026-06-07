@@ -60,7 +60,7 @@ export default function EventsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Event Storage and Format</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Events are stored in the configured events directory. The system reads
+          Events are stored in the configured project events directory. The API reads
           files ending in .event, .json, or .md and parses them line-by-line.
         </p>
         <CodeBlock>{`# Example event file (line-based format)
@@ -71,10 +71,10 @@ processed: false
 data: runId=run-abc123 status=success
 
 # Event file storage
-namespaces/{id}/events/
-  ├── chain-complete--1747498200.event
-  ├── agent-error--1747498245.event
-  └── webhook-triggered--1747498280.json
+{MENTIKO_PROJECT_ROOT}/events/
+  ├── run-123-system-chain-complete.event
+  ├── run-123-agent-a-agent-error.event
+  └── webhook-webhook-triggered.event
 
 # Event structure (parsed from file)
 {
@@ -117,9 +117,17 @@ namespaces/{id}/events/
 ./bin/mentiko emit custom_event "manual trigger"
 
 # API: trigger a chain via webhook
-POST /api/webhooks/{webhookId}
+POST /api/webhooks/{id}/receive
 {
   "event": "deploy_requested",
+  "data": { "branch": "main" }
+}
+
+# API: emit an event file directly
+POST /api/events/emit
+{
+  "event": "deploy_requested",
+  "source": "external",
   "data": { "branch": "main" }
 }`}</CodeBlock>
       </section>
@@ -127,13 +135,13 @@ POST /api/webhooks/{webhookId}
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Event Log Viewer</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          The /events page shows all system events with filtering and search:
+          The /events page includes an event log viewer and event-trigger management:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Filter by event name or source agent</div>
-          <div>View event payload and metadata</div>
-          <div>Replay events for debugging</div>
-          <div>Export event log as JSON or CSV</div>
+          <div>Event log viewer polls <code className="text-foreground/70">/api/events</code> and shows file-backed events</div>
+          <div>Event rows can expand to show payload and metadata</div>
+          <div>Trigger management supports search, enabled/disabled filters, create, edit, and delete</div>
+          <div>Event replay and JSON/CSV export are not implemented in the current viewer</div>
         </div>
       </section>
 
