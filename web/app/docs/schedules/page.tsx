@@ -38,7 +38,7 @@ export default function SchedulesDocPage() {
   "cron": "0 2 * * *",
   "timezone": "America/Los_Angeles",
   "enabled": true,
-  "status": "active",
+  "status": "enabled",
   "retryCount": 0,
   "runCount": 0,
   "snoozedUntil": null,
@@ -71,8 +71,9 @@ POST   /api/schedules                              # create schedule (body inclu
 PATCH  /api/schedules                              # update schedule (id in body)
 PUT    /api/schedules                              # toggle enabled (id in body)
 DELETE /api/schedules?id={id}&action=delete        # delete schedule
-DELETE /api/schedules?id={id}&action=snooze&duration={ms}  # snooze
+DELETE /api/schedules?id={id}&action=snooze&duration=2h    # snooze
 DELETE /api/schedules?id={id}&action=unsnooze      # clear snooze
+POST   /api/schedules/snooze                       # body: scheduleId + duration
 
 // trigger now (immediate one-off run)
 POST   /api/schedules   { "chainId": "..." }       # no cron = trigger now`}</CodeBlock>
@@ -85,6 +86,8 @@ POST   /api/schedules   { "chainId": "..." }       # no cron = trigger now`}</Co
           don&apos;t fire until the snooze expires or is cleared.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
+          <div>Status values: enabled, disabled, snoozed, paused</div>
+          <div>Duration strings: <code className="text-foreground/70">30min</code>, <code className="text-foreground/70">2h</code>, <code className="text-foreground/70">1d</code>, or <code className="text-foreground/70">1w</code></div>
           <div>Snooze: sets snoozedUntil, stored as <code className="text-foreground/70">SCHEDULES_DIR/{"{scheduleId}"}/.snooze</code></div>
           <div>Unsnooze: removes .snooze file, re-enables firing</div>
           <div>Snooze auto-expires when snoozedUntil is in the past</div>
@@ -115,13 +118,14 @@ POST   /api/schedules   { "chainId": "..." }       # no cron = trigger now`}</Co
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Timezone Handling</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Schedules respect the specified timezone. Cron expressions are evaluated
-          in the schedule&apos;s timezone, not the server timezone.
+          Schedules store and display the specified timezone. The next-run helper
+          accepts a timezone, but the active scheduler path currently relies on
+          the cron calculation available to the server runtime.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Default: user&apos;s profile timezone</div>
           <div>IANA format: America/Los_Angeles, Europe/London, etc.</div>
-          <div>DST transitions handled automatically</div>
+          <div>Validate schedule timing with <code className="text-foreground/70">POST /api/schedules/next</code> before relying on DST-sensitive runs</div>
         </div>
       </section>
 
