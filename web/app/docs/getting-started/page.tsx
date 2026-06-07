@@ -57,14 +57,14 @@ npm run dev`}</CodeBlock>
         <h2 className="text-sm font-medium mb-2">Create Your First Chain</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           A chain is a JSON file that defines a pipeline of agents connected by events.
-          Create a file at <code className="text-foreground/70 bg-muted px-1 rounded">namespaces/default/chains/my-first-chain/chain.json</code>:
+          Create a file at <code className="text-foreground/70 bg-muted px-1 rounded">~/.mentiko/namespaces/default/chains/my-first-chain/chain.json</code>:
         </p>
         <CodeBlock>{`{
   "name": "my-first-chain",
   "description": "A simple two-agent research chain",
-  "version": "1.0",
+  "version": "1.0.0",
+  "default_agent_profile": "codex-default",
   "config": {
-    "cli": "claude",
     "monitor": true,
     "max_rounds": 50
   },
@@ -74,7 +74,7 @@ npm run dev`}</CodeBlock>
       "name": "Researcher",
       "role": "researcher",
       "prompt": "Research the topic and produce findings. {TASK}",
-      "triggers": ["chain_start"],
+      "triggers": ["manual-start"],
       "emits": "research_complete"
     },
     {
@@ -88,15 +88,15 @@ npm run dev`}</CodeBlock>
   ]
 }`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          The researcher starts on <code className="text-foreground/70 bg-muted px-1 rounded">chain_start</code>,
+          The researcher starts on <code className="text-foreground/70 bg-muted px-1 rounded">manual-start</code>,
           emits <code className="text-foreground/70 bg-muted px-1 rounded">research_complete</code>,
-          which triggers the writer. Events flow through files in the namespace&apos;s events directory.
+          which triggers the writer. Events flow through files in the active project&apos;s events directory.
         </p>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Run It</h2>
-        <CodeBlock>{`./bin/mentiko run my-first-chain`}</CodeBlock>
+        <CodeBlock>{`./bin/mentiko run ~/.mentiko/namespaces/default/chains/my-first-chain/chain.json`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
           This launches each agent in its own pty session via pty-manager. The chain runner monitors events
           and triggers agents as their conditions are met.
