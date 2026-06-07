@@ -36,7 +36,7 @@ export default function ChainsDocPage() {
         <CodeBlock>{`{
   "name": "my-chain",
   "description": "What this chain does",
-  "version": "1.0",
+  "version": "1.0.0",
   "config": {
     "monitor": true,
     "max_rounds": 3,
