@@ -32,7 +32,7 @@ export default function EnvironmentDocPage() {
           <div><code className="text-foreground/70">MENTIKO_CODE_ROOT</code> - code checkout root for binaries and scripts</div>
           <div><code className="text-foreground/70">NAMESPACE_ID</code> - namespace namespace-id</div>
           <div><code className="text-foreground/70">ORG_ID</code> - org identifier</div>
-          <div><code className="text-foreground/70">DATABASE_URL</code> - optional postgres, sqlite fallback uses <code>~/.mentiko/data/auth.db</code></div>
+          <div><code className="text-foreground/70">DATABASE_URL</code> - SQLite file URL/path for better-sqlite3; default <code>file:{"{MENTIKO_GLOBAL_ROOT}"}/data/auth.db</code></div>
         </div>
       </section>
 
