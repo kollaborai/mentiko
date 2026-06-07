@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { EmergencyMode } from "@/components/emergency-mode";
+import { EmergencyMode } from "@/components/dashboard/emergency-mode";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";

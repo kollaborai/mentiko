@@ -21,7 +21,7 @@ import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import type { AgentProfile, AgentProfileProvider } from "@/lib/types";
 import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
-import { AgentProfileWizard } from "@/components/agent-profile-wizard";
+import { AgentProfileWizard } from "@/components/agent/agent-profile-wizard";
 import {
   DEFAULT_MARKETPLACE_AGENT_MODEL,
   PROVIDER_CREDENTIALS,

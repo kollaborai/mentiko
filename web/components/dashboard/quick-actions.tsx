@@ -15,7 +15,7 @@ import {
 } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
-import { EventLogViewer } from "@/components/event-log-viewer";
+import { EventLogViewer } from "@/components/events/event-log-viewer";
 
 type IconComponent = React.ComponentType<{ className?: string }>;
 
