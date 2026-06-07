@@ -31,7 +31,7 @@ export default function ArtifactsDocPage() {
           <div><code className="text-foreground/70">diff.patch</code> - git diff of files changed by agent</div>
           <div><code className="text-foreground/70">files-changed.json</code> - list of modified, added, deleted files</div>
           <div><code className="text-foreground/70">conversations.json</code> - LLM conversation with tool calls</div>
-          <div><code className="text-foreground/70">output.txt</code> - raw agent output (head + tail for large files)</div>
+          <div><code className="text-foreground/70">output.txt</code> - raw agent output (captured in full)</div>
           <div><code className="text-foreground/70">events.json</code> - events fired during agent execution</div>
         </div>
       </section>
@@ -41,28 +41,33 @@ export default function ArtifactsDocPage() {
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           Artifacts are stored per-run, per-agent in the artifacts directory:
         </p>
-        <CodeBlock>{`namespaces/{id}/projects/{cwd}/runs/
+        <CodeBlock>{`namespaces/{id}/[projects/{projectId}/]runs/
   └── run_456/
-      └── agents/
-          └── builder/
-              ├── diff.patch
-              ├── files-changed.json
-              ├── conversations.json
-              ├── output.txt
-              └── events.json`}</CodeBlock>
+      └── artifacts/
+          ├── builder-diff.patch
+          ├── builder-files-changed.json
+          ├── builder-conversations.json
+          ├── builder-output.txt
+          └── builder-events.json`}</CodeBlock>
+        <p className="text-xs text-foreground/60 leading-relaxed mt-2">
+          Default org/project collapse into namespace root
+        </p>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Files-Changed Format</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          JSON file listing all filesystem changes:
+          JSON file listing all filesystem changes using git status codes:
         </p>
-        <CodeBlock>{`{
-  "modified": ["src/app.tsx", "src/utils.ts"],
-  "added": ["src/components/NewFeature.tsx"],
-  "deleted": ["src/legacy/OldCode.ts"],
-  "timestamp": "2026-03-16T10:30:00Z"
-}`}</CodeBlock>
+        <CodeBlock>{`[
+  { "status": "M", "file": "src/app.tsx" },
+  { "status": "M", "file": "src/utils.ts" },
+  { "status": "A", "file": "src/components/NewFeature.tsx" },
+  { "status": "D", "file": "src/legacy/OldCode.ts" }
+]`}</CodeBlock>
+        <p className="text-xs text-foreground/60 leading-relaxed mt-2">
+          Uses git status codes (M=modified, A=added, D=deleted)
+        </p>
       </section>
 
       <section className="mb-6">
@@ -75,7 +80,7 @@ export default function ArtifactsDocPage() {
   "name": "test-report",
   "description": "Standard test execution report",
   "template": {
-    "testSuite": "{{suite_name}}",
+    "testSuite": "{{SUBJECT}}",
     "passed": {{passed_count}},
     "failed": {{failed_count}},
     "coverage": "{{coverage_percent}}%",
@@ -99,11 +104,11 @@ export default function ArtifactsDocPage() {
   "name": "Test Runner",
   "artifacts": {
     "produces": [
-      { "$ref": "artifact:test-report" },
-      { "$ref": "artifact:coverage-report" }
+      { "id": "test-report", "type": "markdown" },
+      { "id": "coverage-report", "type": "json" }
     ],
     "consumes": [
-      { "$ref": "artifact:source-code" }
+      { "id": "source-code", "type": "typescript" }
     ]
   }
 }`}</CodeBlock>
@@ -131,23 +136,19 @@ export default function ArtifactsDocPage() {
         <CodeBlock>{`# UI: run detail panel > agents tab > agent row
 # Expands to show all artifacts with download buttons
 
-# API: get specific artifact
-GET /api/runs/{id}/agents/{agentId}/artifacts/{type}
-
-# API: get all agent artifacts
+# API: get all agent artifacts (includes artifact data)
 GET /api/runs/{id}/agents/{agentId}/activity`}</CodeBlock>
       </section>
 
       <section className="mb-6">
-        <h2 className="text-sm font-medium mb-2">Output Truncation</h2>
+        <h2 className="text-sm font-medium mb-2">Output Capture</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Large output files are truncated to head + tail:
+          How output files are captured and stored:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>First 100 lines + last 50 lines</div>
-          <div>Truncation marker in middle</div>
+          <div>output.txt captured in full</div>
+          <div>Summary JSON shows tail-80 for brevity</div>
           <div>Full file available for download</div>
-          <div>Configurable line limits per workspace</div>
         </div>
       </section>
       </div>

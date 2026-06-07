@@ -109,6 +109,9 @@ export default function AgentsDocPage() {
           Agents can declare what they produce and consume. Artifacts are named outputs that
           flow between agents in a chain. Use them for structured handoff of results.
         </p>
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2 text-xs text-amber-200 mb-3">
+          <strong>Note:</strong> Artifacts tracking exists but produces/consumes declarations are not used for inter-agent handoff yet. This is schema-only currently.
+        </div>
         <CodeBlock>{`"artifacts": {
   "produces": [
     {
@@ -132,10 +135,11 @@ export default function AgentsDocPage() {
 }
 
 // artifact types: markdown, json, code, patch, csv, text, image
-// file naming: {agentId}-{artifactId}.{ext}`}</CodeBlock>
+// file naming: {agentId}-diff.patch, {agentId}-output.txt`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          Artifact types: markdown, json, code, patch, csv, text, image. Filenames follow the pattern
-          <code className="text-foreground/70 bg-muted px-1 rounded">{"{agentId}.{artifactId}.{ext}"}</code>.
+          Artifact types: markdown, json, code, patch, csv, text, image. Filenames follow patterns
+          like <code className="text-foreground/70 bg-muted px-1 rounded">{"{agentId}-diff.patch"}</code> or
+          <code className="text-foreground/70 bg-muted px-1 rounded">{"{agentId}-output.txt"}</code>.
         </p>
       </section>
 
@@ -145,6 +149,9 @@ export default function AgentsDocPage() {
           Use <code className="text-foreground/70 bg-muted px-1 rounded">wait_for_events</code> to make an agent wait for multiple upstream events
           before starting. Useful for joining parallel branches or aggregating results.
         </p>
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-2 text-xs text-amber-200 mb-3">
+          <strong>Note:</strong> wait_for_events is declared in the agent schema but not yet implemented in bash execution.
+        </div>
         <CodeBlock>{`// wait for all events (default)
 "wait_for_events": {
   "events": ["research-done", "code-done", "tests-done"],
@@ -204,7 +211,7 @@ export default function AgentsDocPage() {
             <div><code className="text-foreground/70">description</code> - what the agent does</div>
             <div><code className="text-foreground/70">role</code> - freeform role label (e.g. researcher, writer, reviewer)</div>
             <div><code className="text-foreground/70">version</code> - semantic version</div>
-            <div><code className="text-foreground/70">spec</code> - path to external .md spec file with instructions</div>
+            <div><code className="text-foreground/70">spec</code> - path to external .md spec file with instructions (implementation is inconsistent; spec files use YAML frontmatter, not JSON field)</div>
             <div><code className="text-foreground/70">prompt</code> - inline instructions (used if no spec file)</div>
             <div><code className="text-foreground/70">triggers</code> - events that start this agent (use hyphens: research-request)</div>
             <div><code className="text-foreground/70">emits</code> - event produced on completion (use hyphens: research-complete)</div>
@@ -212,7 +219,7 @@ export default function AgentsDocPage() {
             <div><code className="text-foreground/70">tools</code> - tool list override</div>
             <div><code className="text-foreground/70">agent_profile</code> - profile ID defining LLM model and tools config</div>
             <div><code className="text-foreground/70">session_prefix</code> - prefix for the PTY session name</div>
-            <div><code className="text-foreground/70">monitor</code> - enable watchdog monitor session (boolean)</div>
+            <div><code className="text-foreground/70">monitor</code> - watchdog monitor session (boolean, but watchdog runs globally regardless of per-agent flag - field is read but not controlling)</div>
             <div><code className="text-foreground/70">monitor_interval</code> - watchdog check interval in seconds</div>
             <div><code className="text-foreground/70">timeout</code> - max execution time in seconds (0 = no timeout)</div>
             <div><code className="text-foreground/70">retry</code> - retry config (max_retries, backoff: fixed|exponential|linear, initial_delay, max_delay, backoff_multiplier)</div>
@@ -220,7 +227,7 @@ export default function AgentsDocPage() {
             <div><code className="text-foreground/70">on_timeout</code> - agent ID to route to on timeout</div>
             <div><code className="text-foreground/70">wait_for_events</code> - fan-in config: wait for multiple events (all|any|quorum) before starting</div>
             <div><code className="text-foreground/70">context</code> - workspace path and read_first files</div>
-            <div><code className="text-foreground/70">authorities</code> - what the agent can do vs needs approval for</div>
+            <div><code className="text-foreground/70">authorities</code> - displayed to agents in instructions, not runtime-enforced (advisory only)</div>
             <div><code className="text-foreground/70">artifacts</code> - artifact declarations (produces/consumes)</div>
             <div><code className="text-foreground/70">tags</code> - searchable tags for marketplace</div>
             <div><code className="text-foreground/70">category</code> - marketplace category (development, research, content, etc.)</div>

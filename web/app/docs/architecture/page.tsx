@@ -17,12 +17,13 @@ const layers = [
   {
     icon: CommandSquareFilled,
     name: "Orchestration Layer",
-    description: "bash scripts that coordinate chain execution",
+    description: "bash scripts + Node.js modules that coordinate chain execution",
     items: [
       { label: "chain-runner.sh", desc: "main orchestrator, reads chain.json, spawns agents" },
       { label: "launch-agent.sh", desc: "creates pty session, invokes ai cli" },
       { label: "complete-agent.sh", desc: "marks agent complete, writes completion event" },
       { label: "event-trigger.sh", desc: "monitors events, triggers agents on match" },
+      { label: ".mjs files", desc: "job-runner.mjs, pty-manager.mjs, chain-generator.mjs" },
     ],
   },
   {
@@ -31,8 +32,11 @@ const layers = [
     description: "ai agents running in isolated pty sessions",
     items: [
       { label: "claude code", desc: "anthropic claude via cli, tool use, file editing" },
-      { label: "codex", desc: "openai models via api" },
-      { label: "kollabor", desc: "custom agent framework" },
+      { label: "codex", desc: "OpenAI CLI tool with session paths" },
+      { label: "kollab", desc: "custom agent framework" },
+      { label: "glm", desc: "OpenAI-compatible CLI tool" },
+      { label: "antigravity", desc: "OpenAI-compatible CLI tool" },
+      { label: "opencode", desc: "OpenAI-compatible CLI tool" },
       { label: "aider", desc: "ai pair programming tool" },
     ],
   },
@@ -68,8 +72,10 @@ namespaces/acme-corp/
 │   └── engineering/      # org root
 │       ├── chains/       # org: chain definitions
 │       ├── agents/       # org: agent definitions
-│       ├── agent-profiles/   # org: agent profiles
-│       ├── config-profiles/  # org: config profiles
+│       ├── links/        # org: agent collaboration links
+│       ├── emails/       # org: email routes (inbound/outbound)
+│       ├── secrets/      # org: encrypted api keys
+│       ├── profiles/     # org: agent-profiles and config-profiles
 │       ├── templates/    # org: chain templates
 │       ├── webhooks/     # org: webhook configs
 │       └── projects/

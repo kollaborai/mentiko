@@ -29,11 +29,12 @@ export default function ActivityDocPage() {
         <h2 className="text-sm font-medium mb-2">Event Sources</h2>
         <div className="bg-card rounded-md p-3 space-y-2 text-xs text-foreground/60 mb-3">
           <div><code className="text-foreground/70">chain</code> - chain lifecycle events (start, complete, fail)</div>
-          <div><code className="text-foreground/70">agent</code> - agent execution events (launch, heartbeat, done)</div>
-          <div><code className="text-foreground/70">schedule</code> - scheduler events (trigger, miss, disable)</div>
-          <div><code className="text-foreground/70">system</code> - platform events (auth, billing, org changes)</div>
-          <div><code className="text-foreground/70">webhook</code> - incoming webhook triggers</div>
+          <div><code className="text-foreground/70">agent</code> - agent execution events (launch, complete)</div>
+          <div><code className="text-foreground/70">system</code> - schedule triggers, errors, and other platform events</div>
         </div>
+        <p className="text-xs text-foreground/40 italic">
+          Note: schedule and webhook events are grouped under the system filter.
+        </p>
       </section>
 
       <section className="mb-6">
@@ -43,32 +44,20 @@ export default function ActivityDocPage() {
         </p>
         <CodeBlock>{`{
   "id": "act_789",
+  "type": "chain_completed",
+  "title": "Chain completed: deploy-pipeline",
+  "message": "Successfully finished execution",
   "timestamp": "2026-03-16T10:30:00Z",
-  "source": "chain",
-  "type": "chain_complete",
-  "message": "Deploy pipeline completed",
   "metadata": {
-    "chainId": "deploy-pipeline",
     "runId": "run_456",
-    "duration": 45,
-    "agentCount": 3,
-    "workspaceId": "local"
+    "chainId": "deploy-pipeline",
+    "chainName": "deploy-pipeline",
+    "status": "completed"
   }
 }`}</CodeBlock>
-      </section>
-
-      <section className="mb-6">
-        <h2 className="text-sm font-medium mb-2">Time Buckets</h2>
-        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Activity is grouped into time buckets for easier navigation:
+        <p className="text-xs text-foreground/40 italic mt-2">
+          Agent events include <code>agentId</code> and <code>agentName</code> in metadata.
         </p>
-        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Now - last 5 minutes</div>
-          <div>Today - earlier today</div>
-          <div>Yesterday - yesterday&apos;s activity</div>
-          <div>This week - last 7 days</div>
-          <div>Older - everything else</div>
-        </div>
       </section>
 
       <section className="mb-6">
@@ -77,39 +66,46 @@ export default function ActivityDocPage() {
           Narrow down activity to find what matters:
         </p>
         <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60">
-          <div>Filter by source - chains, agents, schedules, system</div>
-          <div>Filter by type - complete, failed, started, etc.</div>
-          <div>Search text - matches message, chain ID, agent name</div>
-          <div>Date range picker - custom time window</div>
+          <div>Filter by source - All, Chains, Agents, System</div>
+          <div>Text search - search in page UI (not persisted)</div>
         </div>
+        <p className="text-xs text-foreground/40 italic mt-2">
+          Events are sorted by timestamp (newest first). Limited to the most recent 100 events.
+        </p>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Activity Persistence</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Activity logs are stored in the project-scoped events directory:
+          Activity data is read from multiple project-level sources:
         </p>
-        <CodeBlock>{`namespaces/{id}/projects/{cwd}/events/
-  ├── 2026-03-16.jsonl     # daily log files
-  ├── 2026-03-15.jsonl
-  └── ...`}</CodeBlock>
-        <p className="text-xs text-foreground/60 leading-relaxed">
-          Events are appended as JSONL for efficient streaming and rotation.
-          Retention is configurable per workspace.
+        <CodeBlock>{`namespaces/{id}/[projects/{projectId}/]
+  ├── runs/
+  │   └── run-*/
+  │       └── run.json          # chain execution records
+  ├── state/
+  │   └── *.state               # agent state files
+  └── events/
+      ├── *.event                # event files
+      └── *.md                   # markdown events`}</CodeBlock>
+        <p className="text-xs text-foreground/40 italic mt-2">
+          Default org/project collapse into the namespace root (no nesting).
         </p>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Real-Time Updates</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          The activity feed connects via WebSocket to receive live updates as
-          events occur. No refresh needed - new activity appears instantly.
+          The activity feed updates automatically via polling:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>WebSocket connection for live streaming</div>
-          <div>Auto-reconnect on connection loss</div>
-          <div>Optimistic UI updates for instant feedback</div>
+          <div>5-second polling interval</div>
+          <div>Auto-refresh on filter change</div>
+          <div>Manual refresh via page banner action</div>
         </div>
+        <p className="text-xs text-foreground/40 italic mt-2">
+          SSE/WebSocket support is reserved for future implementation.
+        </p>
       </section>
       </div>
     </div>
