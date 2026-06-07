@@ -102,7 +102,8 @@ AUDIT_REMOTE_ACCESS_KEY=<access-key>
 AUDIT_REMOTE_SECRET_KEY=<secret-key>`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           <code className="text-foreground/70">{`{NAMESPACE_ID}`}</code> is substituted at runtime.
-          AWS S3 can leave the endpoint blank (the SDK resolves it per region).
+          The shipper uses rclone&apos;s inline S3 backend with <code className="text-foreground/70">--s3-provider=Other</code>;
+          set <code className="text-foreground/70">AUDIT_S3_ENDPOINT</code> for S3-compatible providers that require a custom endpoint.
         </p>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           3. Verify entries land remotely once a container is running:
@@ -125,7 +126,8 @@ AUDIT_REMOTE_SECRET_KEY=<secret-key>`}</CodeBlock>
         <CodeBlock>{`~/.mentiko/namespaces/{namespace-id}/audit/ship.log
 ~/.mentiko/namespaces/{namespace-id}/audit/ship-failures.log`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          When remote upload fails, check <code className="text-foreground/70">ship-failures.log</code> first for retry details.
+          When remote upload fails, check <code className="text-foreground/70">ship.log</code> for the warning emitted by the background shipper
+          and <code className="text-foreground/70"> ship-failures.log</code> for the durable JSON failure record.
         </p>
       </section>
 
