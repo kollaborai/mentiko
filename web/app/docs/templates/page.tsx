@@ -61,13 +61,13 @@ export default function TemplatesDocsPage() {
           </p>
           <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
 {`# visit marketplace
-/web/templates
+/marketplace/templates
 
 # filter by category
 research, coding, testing, deployment, automation
 
-# install adds to your namespace
-namespaces/{namespace_id}/templates/{template-name}/`}
+# use/install copies the template chain into your namespace
+namespaces/{namespace_id}/chains/{chain-id}/chain.json`}
           </div>
         </section>
 
@@ -75,13 +75,21 @@ namespaces/{namespace_id}/templates/{template-name}/`}
         <section>
           <h2 className="text-sm font-medium text-foreground mb-2">Creating Your Own Template</h2>
           <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-            templates live in templates/{'{name}'}/ with two required files:
+            saved org templates live in templates/{'{slug}'}/ with a template manifest
+            and a compatible chain copy:
           </p>
           <div className="space-y-2">
             <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
 {`templates/my-workflow/
-├── chain.json      # chain definition
-└── README.md       # documentation`}
+├── template.json   # template metadata
+├── chain.json      # chain definition copied for compatibility
+└── README.md       # optional documentation`}
+            </div>
+            <div className="bg-card rounded-md p-3">
+              <div className="text-[11px] font-mono text-foreground/70 mb-2">template.json</div>
+              <p className="text-xs text-foreground/60">
+                template metadata created by POST /api/templates from an existing chain.
+              </p>
             </div>
             <div className="bg-card rounded-md p-3">
               <div className="text-[11px] font-mono text-foreground/70 mb-2">chain.json</div>
@@ -120,21 +128,22 @@ namespaces/{namespace_id}/templates/{template-name}/`}
           </p>
         </section>
 
-        {/* cli usage */}
+        {/* api usage */}
         <section>
-          <h2 className="text-sm font-medium text-foreground mb-2">Using Templates from CLI</h2>
+          <h2 className="text-sm font-medium text-foreground mb-2">Using Templates from API</h2>
           <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
-{`# run a template directly
-./bin/mentiko run --template my-template
+{`# list available examples, built-ins, saved templates, and marketplace chains
+GET /api/templates/list
 
-# list available templates
-./bin/mentiko template list
+# save a chain as an org template
+POST /api/templates
 
-# create a chain from template
-./bin/mentiko template clone my-template my-chain
+# read template chain/readme
+GET /api/templates/{id}/chain
+GET /api/templates/{id}/readme
 
-# run the cloned chain
-./bin/mentiko run my-chain`}
+# use a template by copying its chain into namespace chains
+POST /api/templates/{id}/use`}
           </div>
         </section>
 
