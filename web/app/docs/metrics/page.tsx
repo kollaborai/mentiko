@@ -28,49 +28,35 @@ export default function MetricsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Collected Metrics</h2>
         <div className="bg-card rounded-md p-3 space-y-2 text-xs text-foreground/60 mb-3">
-          <div><code className="text-foreground/70">chain_duration</code> - total chain execution time</div>
-          <div><code className="text-foreground/70">agent_duration</code> - per-agent execution time</div>
-          <div><code className="text-foreground/70">agent_rounds</code> - number of LLM turns per agent</div>
-          <div><code className="text-foreground/70">token_usage</code> - tokens consumed per agent</div>
-          <div><code className="text-foreground/70">success_rate</code> - chain completion percentage</div>
-          <div><code className="text-foreground/70">error_rate</code> - failure types and frequency</div>
+          <div><code className="text-foreground/70">runs.total</code> - total runs found under the active project</div>
+          <div><code className="text-foreground/70">runs.by_status</code> - run counts by current status</div>
+          <div><code className="text-foreground/70">runs.by_chain</code> - run counts grouped by chain id/name</div>
+          <div><code className="text-foreground/70">runs.avg_duration_ms</code> - completed-run duration average</div>
+          <div><code className="text-foreground/70">agents.by_status</code> - agent status counts from run records</div>
+          <div><code className="text-foreground/70">webhooks</code> - delivery totals and success rate</div>
+          <div><code className="text-foreground/70">tokens.total_7d</code> - recent token counters when present</div>
+          <div><code className="text-foreground/70">execution_times</code> - timer metrics from the shell metrics store</div>
         </div>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Metric Format</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Metrics are stored per chain run in the metrics directory:
+          The metrics API derives run totals from run records and merges optional shell metrics from
+          <code className="text-foreground/70 bg-muted px-1 rounded ml-1">~/.mentiko-metrics</code>:
         </p>
-        <CodeBlock>{`namespaces/{id}/projects/{cwd}/metrics/
-  └── deploy-pipeline--2026-03-16.json
+        <CodeBlock>{`~/.mentiko-metrics/
+├── counters.json
+├── gauges.json
+├── timers.json
+└── webhooks.json
 
 {
-  "chainId": "deploy-pipeline",
-  "runId": "run_456",
-  "timestamp": "2026-03-16T10:30:00Z",
-  "totalDuration": 45.2,
-  "agents": [
-    {
-      "agentId": "builder",
-      "duration": 12.5,
-      "rounds": 8,
-      "tokens": {
-        "input": 4500,
-        "output": 1200
-      }
-    },
-    {
-      "agentId": "tester",
-      "duration": 25.1,
-      "rounds": 15,
-      "tokens": {
-        "input": 8200,
-        "output": 3400
-      }
-    }
-  ],
-  "success": true
+  "runs": { "total": 42, "by_status": { "completed": 30 }, "success_rate": 71.4 },
+  "agents": { "total": 96, "by_status": { "complete": 61 } },
+  "webhooks": { "total": 12, "delivered": 10, "failed": 2, "pending": 0 },
+  "tokens": { "total_7d": 0, "input_7d": 0, "output_7d": 0 },
+  "execution_times": { "chain.run": { "count": 3, "avg_ms": 1200 } }
 }`}</CodeBlock>
       </section>
 
@@ -94,23 +80,23 @@ export default function MetricsDocPage() {
           Visualize metrics over time with customizable charts:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Duration trend - chain execution times over days/weeks</div>
-          <div>Token usage - input/output tokens by date</div>
-          <div>Agent breakdown - time spent per agent type</div>
-          <div>Error distribution - failure types by frequency</div>
+          <div>Runs by chain - top chains by run count</div>
+          <div>Status distribution - run counts by status</div>
+          <div>Webhook success - delivered, failed, and pending deliveries</div>
+          <div>Recent run panels - duration, agents, and live run summaries</div>
         </div>
       </section>
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Metric Retention</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Metrics are stored indefinitely but aggregated for performance:
+          Current metrics are computed from retained run records plus the optional shell metrics
+          files. There is no daily, weekly, or monthly rollup job in the app:
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Raw data - per-run metrics (unlimited)</div>
-          <div>Daily aggregates - stats rolled up per day</div>
-          <div>Weekly aggregates - stats rolled up per week</div>
-          <div>Monthly aggregates - long-term trends</div>
+          <div>Run records - used for totals, durations, status, and agent counts</div>
+          <div>Shell metrics - counters, gauges, timers, and webhook summaries</div>
+          <div>Endpoint timings - in-memory API timing stats until reset or process restart</div>
         </div>
       </section>
 
@@ -119,14 +105,16 @@ export default function MetricsDocPage() {
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           Query metrics programmatically for custom dashboards:
         </p>
-        <CodeBlock>{`# Get metrics for a specific chain
-GET /api/chains/{id}/metrics?from=2026-03-01&to=2026-03-31
+        <CodeBlock>{`# Get workspace metrics as JSON
+GET /api/metrics
 
-# Get aggregated workspace metrics
-GET /api/metrics?workspaceId={id}&aggregate=daily
+# Get Prometheus output
+GET /api/metrics?format=prometheus
 
-# Get agent performance stats
-GET /api/agents/{id}/metrics?runs=50`}</CodeBlock>
+# Get API endpoint timing stats
+GET /api/metrics/endpoints?view=all&min_calls=5
+GET /api/metrics/endpoints?view=slow
+GET /api/metrics/endpoints?view=sub`}</CodeBlock>
       </section>
 
       <section className="mb-6">
