@@ -28,23 +28,24 @@ export default function WebhooksDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Outbound Webhooks</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Outbound webhooks fire HTTP POST requests to external URLs when chain
-          events occur. Configure which events trigger the webhook and optionally
-          sign payloads with an HMAC secret.
+          Mentiko has three webhook paths: UI subscriptions for external source
+          events, legacy outbound configs with retry, and chain metadata webhooks
+          that fire on started/completed/failed lifecycle events.
         </p>
         <CodeBlock>{`// webhook payload (sent to your URL)
 POST https://your-endpoint.com/hook
 Content-Type: application/json
 
 {
-  "event": "chain_complete",
+  "event": "completed",
   "timestamp": "2026-04-14T10:30:00Z",
-  "data": {
-    "chainId": "my-chain",
-    "runId": "run-xyz789",
-    "status": "complete",
-    "workspace": "my-workspace"
+  "chainId": "my-chain",
+  "runId": "run-xyz789",
+  "chain": {
+    "name": "My Chain",
+    "version": "1.0.0"
   },
+  "data": { "status": "complete" },
   "signature": "sha256=..."  // HMAC-SHA256 if secret configured
 }`}</CodeBlock>
       </section>
@@ -52,18 +53,13 @@ Content-Type: application/json
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Available Events</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Subscribe outbound webhooks to these chain events:
+          Event names depend on the webhook path:
         </p>
         <div className="bg-card rounded-md p-3 space-y-1 text-xs text-foreground/60 mb-3">
-          <div><span className="text-foreground/70">chain_started</span> - chain execution started</div>
-          <div><span className="text-foreground/70">chain_complete</span> - chain finished successfully</div>
-          <div><span className="text-foreground/70">chain_error</span> - chain failed or timed out</div>
-          <div><span className="text-foreground/70">agent_started</span> - agent launched</div>
-          <div><span className="text-foreground/70">agent_complete</span> - agent finished</div>
-          <div><span className="text-foreground/70">agent_error</span> - agent failed</div>
-          <div><span className="text-foreground/70">agent_timeout</span> - agent exceeded timeout</div>
-          <div><span className="text-foreground/70">webhook_triggered</span> - chain triggered via webhook</div>
-          <div><span className="text-foreground/70">schedule_triggered</span> - chain triggered by schedule</div>
+          <div><span className="text-foreground/70">UI subscriptions</span> - push, pull_request, pull_request_review, issues, issue_comment, deployment, deployment_status, release, star, fork, ping, custom</div>
+          <div><span className="text-foreground/70">Legacy config</span> - chain_complete, chain_failed, agent_error, run_started</div>
+          <div><span className="text-foreground/70">Chain metadata</span> - started, completed, failed</div>
+          <div><span className="text-foreground/70">Shell sender</span> - agent_started, agent_complete, agent_error, chain_started, chain_complete, chain_error</div>
         </div>
       </section>
 
@@ -99,7 +95,7 @@ POST /api/webhooks/inbound/{token}
 Content-Type: application/json
 
 // token format (shown at creation, never stored plaintext)
-mwh_0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p
+mwh_0a1b2c3d4e5f6789abcdef0123456789abcdef0123456789abcdef
 
 // example: trigger from curl
 curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
@@ -129,8 +125,9 @@ curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
           <div><span className="text-foreground/70">failed</span> - 4xx/5xx response or timeout</div>
         </div>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          Failed deliveries are retried up to 3 times with exponential backoff.
-          After final failure, the delivery is marked as failed.
+          Retry tracking applies to the legacy chain config path sent by
+          <code className="text-foreground/70 bg-muted px-1 rounded ml-1">lib/webhook-sender.sh</code>.
+          Chain metadata webhooks are fire-and-forget.
         </p>
       </section>
 
@@ -141,7 +138,8 @@ curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
           sample payload to the configured URL and see the response status immediately.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
-          <div>Sends sample payload to configured URL</div>
+          <div>UI subscriptions test with <code className="text-foreground/70">POST /api/webhooks/{'{id}'}</code></div>
+          <div>Legacy <code className="text-foreground/70">/api/webhooks/config/{'{id}'}</code> supports GET and DELETE only</div>
           <div>Shows response status code and message</div>
           <div>Useful for debugging endpoint issues before going live</div>
         </div>
@@ -165,12 +163,14 @@ curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Storage</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          Webhooks are stored at the org level as JSON files:
+          Webhooks are stored at the org level, but each path uses different files:
         </p>
         <CodeBlock>{`// storage paths (default org collapses to namespace root)
-namespaces/{id}/webhooks.json            // outbound configs
-namespaces/{id}/inbound-webhooks.json    // inbound configs
-namespaces/{id}/webhook-deliveries/      // delivery history`}</CodeBlock>
+namespaces/{id}/webhooks/subscriptions.json          // UI subscriptions
+namespaces/{id}/webhooks/events.jsonl                // UI event log
+namespaces/{id}/inbound-webhooks.json                // inbound token configs
+namespaces/{id}/mentiko-webhooks.json                // legacy outbound configs
+namespaces/{id}/mentiko-webhook-deliveries.jsonl     // legacy delivery log`}</CodeBlock>
       </section>
 
       <section className="mb-6">
@@ -178,18 +178,25 @@ namespaces/{id}/webhook-deliveries/      // delivery history`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           Manage webhooks via API:
         </p>
-        <CodeBlock>{`// Outbound
+        <CodeBlock>{`// UI subscriptions
+GET    /api/webhooks                     # list subscriptions
+POST   /api/webhooks                     # create subscription
+GET    /api/webhooks/{id}                # read subscription
+PATCH  /api/webhooks/{id}                # update subscription
+DELETE /api/webhooks/{id}                # delete subscription
+POST   /api/webhooks/{id}                # test subscription
+POST   /api/webhooks/{id}/receive        # receive external event
+
+// Legacy outbound config
 GET    /api/webhooks/config              # list outbound webhooks
 POST   /api/webhooks/config              # create outbound webhook
 PUT    /api/webhooks/config              # update outbound webhook
+GET    /api/webhooks/config/{id}         # read outbound webhook
 DELETE /api/webhooks/config/{id}         # delete outbound webhook
-POST   /api/webhooks/config/{id}/test    # test fire
 
 // Inbound
 GET    /api/webhooks/inbound/config      # list inbound endpoints
 POST   /api/webhooks/inbound/config      # create inbound endpoint
-PATCH  /api/webhooks/inbound/config/{id} # update (regenerate token)
-DELETE /api/webhooks/inbound/config/{id} # delete inbound endpoint
 
 // Receive (no auth — token IS the auth)
 POST   /api/webhooks/inbound/{token}     # trigger chain
