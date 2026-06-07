@@ -28,12 +28,14 @@ export default function NotificationsDocPage() {
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Notification Types</h2>
         <div className="bg-card rounded-md p-3 space-y-2 text-xs text-foreground/60 mb-3">
+          <div><code className="text-foreground/70">chain_started</code> - chain run started</div>
           <div><code className="text-foreground/70">chain_complete</code> - chain finished successfully</div>
           <div><code className="text-foreground/70">chain_failed</code> - chain errored or stopped</div>
-          <div><code className="text-foreground/70">agent_timeout</code> - agent exceeded timeout limit</div>
-          <div><code className="text-foreground/70">schedule_missed</code> - scheduled run failed to start</div>
+          <div><code className="text-foreground/70">agent_complete</code> - agent finished successfully</div>
           <div><code className="text-foreground/70">agent_error</code> - agent returned error status</div>
-          <div><code className="text-foreground/70">resource_warning</code> - system resource alerts</div>
+          <div><code className="text-foreground/70">job_started</code>, <code className="text-foreground/70">job_complete</code>, <code className="text-foreground/70">job_failed</code> - background job updates</div>
+          <div><code className="text-foreground/70">webhook_delivered</code>, <code className="text-foreground/70">webhook_failed</code> - webhook delivery updates</div>
+          <div><code className="text-foreground/70">info</code>, <code className="text-foreground/70">warning</code>, <code className="text-foreground/70">error</code> - general system notices</div>
         </div>
       </section>
 
@@ -48,11 +50,19 @@ export default function NotificationsDocPage() {
   "title": "Chain completed",
   "message": "Deploy pipeline finished successfully",
   "read": false,
-  "createdAt": "2026-03-16T10:30:00Z",
+  "timestamp": "2026-03-16T10:30:00Z",
   "metadata": {
+    "agentId": "writer",
     "chainId": "deploy-pipeline",
     "runId": "run_456",
-    "duration": 45
+    "jobId": "job_123",
+    "jobType": "task_run_summary",
+    "webhookUrl": "https://example.com/hook",
+    "httpCode": 200,
+    "decisionId": "decision_abc",
+    "actionUrl": "/runs/run_456",
+    "actionLabel": "Open run",
+    "error": "optional error details"
   }
 }`}</CodeBlock>
       </section>
@@ -62,8 +72,8 @@ export default function NotificationsDocPage() {
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Mark read - single notification (click or swipe)</div>
           <div>Mark all read - bulk action in notification center</div>
-          <div>Clear all - removes all read notifications</div>
-          <div>Auto-clear - notifications older than 30 days</div>
+          <div>Clear all - removes every notification, read or unread</div>
+          <div>Retention - newest 200 notifications are kept when new ones are created</div>
         </div>
       </section>
 
