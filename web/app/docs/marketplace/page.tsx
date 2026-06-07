@@ -40,7 +40,7 @@ export default function MarketplaceDocPage() {
 
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Where It Lives on Disk</h2>
-        <CodeBlock>{`~/.mentiko/namespaces/{namespace-id}/marketplace/
+        <CodeBlock>{`~/.mentiko/marketplace/
 ├── templates/        # community template packages
 ├── chains/           # community chain packages
 ├── agents/           # standalone agent packages
@@ -59,8 +59,9 @@ export default function MarketplaceDocPage() {
         <CodeBlock>{`POST /api/marketplace/sync     # set url / force clone
 POST /api/marketplace/refresh  # immediate refresh
 GET  /api/marketplace/chains
-GET  /api/marketplace/agents
-GET  /api/marketplace/artifacts`}</CodeBlock>
+GET  /api/agents/marketplace
+GET  /api/marketplace/artifacts
+GET  /api/marketplace/plugins`}</CodeBlock>
       </section>
 
       <section className="mb-6">
