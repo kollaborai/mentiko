@@ -181,10 +181,8 @@ namespaces/{id}/mentiko-webhook-deliveries.jsonl     // legacy delivery log`}</C
         <CodeBlock>{`// UI subscriptions
 GET    /api/webhooks                     # list subscriptions
 POST   /api/webhooks                     # create subscription
-GET    /api/webhooks/{id}                # read subscription
-PATCH  /api/webhooks/{id}                # update subscription
-DELETE /api/webhooks/{id}                # delete subscription
 POST   /api/webhooks/{id}                # test subscription
+DELETE /api/webhooks/{id}                # delete subscription
 POST   /api/webhooks/{id}/receive        # receive external event
 
 // Legacy outbound config
@@ -197,6 +195,8 @@ DELETE /api/webhooks/config/{id}         # delete outbound webhook
 // Inbound
 GET    /api/webhooks/inbound/config      # list inbound endpoints
 POST   /api/webhooks/inbound/config      # create inbound endpoint
+PATCH  /api/webhooks/inbound/config/{id} # update or regenerate token
+DELETE /api/webhooks/inbound/config/{id} # delete inbound endpoint
 
 // Receive (no auth — token IS the auth)
 POST   /api/webhooks/inbound/{token}     # trigger chain

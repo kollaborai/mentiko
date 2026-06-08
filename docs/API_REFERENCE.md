@@ -658,17 +658,19 @@ Response:
 
 | Method | Path | Purpose | Data Source | Auth | Used? | Screen/Component | Notes |
 |--------|------|---------|-------------|------|-------|------------------|-------|
-| GET | `/api/webhooks` | List webhook subscriptions (filter: chainId) | File: webhooks.json | view_chains | Yes | webhook-manager | |
-| POST | `/api/webhooks` | Create webhook subscription | File: webhooks.json | manage_chains | Yes | webhook-manager | |
+| GET | `/api/webhooks` | List webhook subscriptions (filter: chainId) | File: webhooks/subscriptions.json | view_chains | Yes | webhook-manager | |
+| POST | `/api/webhooks` | Create webhook subscription | File: webhooks/subscriptions.json | manage_chains | Yes | webhook-manager | |
 | GET | `/api/webhooks/status` | Legacy: webhook delivery status | File: ~/.mentiko_webhooks/*.json | None | Yes | use-notifications-listener | |
-| GET | `/api/webhooks/logs` | List webhook event logs | File: webhook-events.jsonl | view_chains | Yes | webhook-manager | |
-| GET/POST/DELETE | `/api/webhooks/{id}` | Get/test/delete webhook | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | view/manage | Yes | webhook-manager | |
+| GET | `/api/webhooks/logs` | List webhook event logs | File: webhooks/events.jsonl | view_chains | Yes | webhook-manager | |
+| POST/DELETE | `/api/webhooks/{id}` | Test/delete webhook subscription | Files: webhooks/subscriptions.json, webhooks/events.jsonl | manage_chains | Yes | webhook-manager | |
 | POST | `/api/webhooks/{id}/receive` | Receive incoming webhook (GitHub, GitLab, Slack) | File: events/*.event | signature | No | (server-side only) | |
-| GET/POST | `/api/webhooks/github` | GitHub webhook info / handler | Files: webhooks.json, events/*.event | HMAC signature | No | (server-side only) | |
-| GET/POST/DELETE/PATCH | `/api/webhooks/inbound/config` | Manage inbound webhook configs (token-based) | File: inbound-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
+| GET/POST | `/api/webhooks/github` | GitHub webhook info / handler | Files: webhooks/subscriptions.json, events/*.event | HMAC signature | No | (server-side only) | |
+| GET/POST | `/api/webhooks/inbound/config` | List/create inbound webhook configs (token-based) | File: inbound-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
+| PATCH/DELETE | `/api/webhooks/inbound/config/{id}` | Update, regenerate token, or delete inbound webhook config | File: inbound-webhooks.json | manage_chains | Yes | webhooks page, webhook-generate-dialog | |
 | POST | `/api/webhooks/inbound/{token}` | Execute inbound webhook via token | Files: inbound-webhooks.json; Chains API | token | No | (external services only) | |
 | POST | `/api/webhooks/generate` | AI-generate webhook config (inbound/outbound) | External: Anthropic API (via cliPipe) | checkAuth | Yes | webhook-generate-dialog | |
-| GET/POST/PUT/DELETE | `/api/webhooks/config` | Manage legacy mentiko webhooks | File: mentiko-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
+| GET/POST/PUT | `/api/webhooks/config` | List/create/update legacy mentiko webhooks | File: mentiko-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
+| GET/DELETE | `/api/webhooks/config/{id}` | Read/delete legacy mentiko webhook | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | view/manage | Yes | webhooks page, webhook-generate-dialog | |
 | POST | `/api/webhooks/stripe` | Handle Stripe webhook events (subscription lifecycle) | Files: subscription.json, stripe-events.jsonl; External: Stripe | Stripe secret | No | (server-side only) | |
 
 ---

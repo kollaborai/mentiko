@@ -88,7 +88,7 @@ POST   /api/schedules   { "chainId": "..." }       # no cron = trigger now`}</Co
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Status values: enabled, disabled, snoozed, paused</div>
           <div>Duration strings: <code className="text-foreground/70">30min</code>, <code className="text-foreground/70">2h</code>, <code className="text-foreground/70">1d</code>, or <code className="text-foreground/70">1w</code></div>
-          <div>Snooze: sets snoozedUntil, stored as <code className="text-foreground/70">SCHEDULES_DIR/{"{scheduleId}"}/.snooze</code></div>
+          <div>Snooze: sets snoozedUntil, stored under the org schedules directory at <code className="text-foreground/70">schedules/{"{scheduleId}"}/.snooze</code></div>
           <div>Unsnooze: removes .snooze file, re-enables firing</div>
           <div>Snooze auto-expires when snoozedUntil is in the past</div>
           <div>UI shows snooze status with visual indicator</div>
@@ -155,8 +155,9 @@ namespaces/{id}/schedules.json
 // explicit org
 namespaces/{id}/orgs/{orgId}/schedules.json
 
-// snooze state (per-schedule, under SCHEDULES_DIR)
-{SCHEDULES_DIR}/{scheduleId}/.snooze`}</CodeBlock>
+// snooze state (per-schedule, under the org schedules directory)
+namespaces/{id}/schedules/{scheduleId}/.snooze
+namespaces/{id}/orgs/{orgId}/schedules/{scheduleId}/.snooze`}</CodeBlock>
       </section>
 
       <section className="mb-6">
