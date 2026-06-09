@@ -1,5 +1,6 @@
 import { createHmac } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "fs";
+import { isIP } from "net";
 import path from "path";
 import { orgPath } from "@/lib/config";
 import { encrypt, decrypt } from "@/lib/secrets/secrets-store";
@@ -95,10 +96,39 @@ function normalizeUrl(value: unknown): string | undefined {
   try {
     const url = new URL(value.trim());
     if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (isBlockedWebhookHost(url.hostname)) return undefined;
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+function isBlockedWebhookHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) {
+    const [a, b] = host.split(".").map((part) => Number(part));
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (ipVersion === 6) {
+    return (
+      host === "::" ||
+      host === "::1" ||
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe80:")
+    );
+  }
+  return false;
 }
 
 export function normalizeOutboundEvent(event: string): OutboundWebhookEvent | null {
@@ -223,10 +253,14 @@ export function updateOutboundWebhook(
   const idx = configs.findIndex((config) => config.id === id);
   if (idx === -1) return null;
   const current = configs[idx];
+  const normalizedUrl = input.url !== undefined ? normalizeUrl(input.url) : undefined;
+  if (input.url !== undefined && !normalizedUrl) {
+    throw new Error("valid url required");
+  }
   const next: OutboundWebhookConfig = {
     ...current,
     ...(input.name !== undefined && typeof input.name === "string" ? { name: input.name.trim() } : {}),
-    ...(input.url !== undefined ? { url: normalizeUrl(input.url) || current.url } : {}),
+    ...(normalizedUrl ? { url: normalizedUrl } : {}),
     ...(input.events !== undefined ? { events: normalizeEvents(input.events) } : {}),
     ...(input.active !== undefined ? { active: Boolean(input.active) } : {}),
     ...(input.headers !== undefined ? { headers: normalizeHeaders(input.headers) } : {}),

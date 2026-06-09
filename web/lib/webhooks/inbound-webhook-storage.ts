@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
 import { createHash, randomBytes } from "crypto";
+import type { OrgRole } from "../orgs/org-types";
 
 const FILE_NAME = "inbound-webhooks.json";
 const TRIGGERS_FILE_NAME = "inbound-webhook-triggers.json";
@@ -34,6 +35,7 @@ export interface InboundWebhook {
   chainId?: string;
   scheduleId?: string;
   createdBy?: string;
+  createdByRole?: OrgRole;
   runDefaults?: InboundWebhookRunDefaults;
   allowedOverrides?: InboundWebhookAllowedOverrides;
   active: boolean;
@@ -47,6 +49,7 @@ export interface CreateInboundWebhookInput {
   chainId?: string;
   scheduleId?: string;
   createdBy?: string;
+  createdByRole?: OrgRole;
   runDefaults?: InboundWebhookRunDefaults;
   allowedOverrides?: InboundWebhookAllowedOverrides;
 }
@@ -224,6 +227,7 @@ export function createInboundWebhook(
     chainId: input.chainId || undefined,
     scheduleId: input.scheduleId || undefined,
     createdBy: input.createdBy || undefined,
+    createdByRole: input.createdByRole,
     runDefaults: normalizeRunDefaults(input.runDefaults),
     allowedOverrides: normalizeAllowedOverrides(input.allowedOverrides),
     active: true,

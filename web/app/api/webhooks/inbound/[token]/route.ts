@@ -6,11 +6,12 @@ import {
   updateInboundTrigger,
 } from "@/lib/webhooks/inbound-webhook-storage";
 import { writeLog } from "@/lib/system/system-logger";
-import { Unauthorized, InternalServerError } from "@/lib/api-errors";
+import { Unauthorized, Forbidden, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 import { mintSessionToken } from "@/lib/auth/session-token";
 import { startChainRun } from "@/lib/runs/chain-run-service";
+import { isOrgRole } from "@/lib/orgs/org-types";
 import {
   buildInboundRunBody,
   loadChainForInboundWebhook,
@@ -18,6 +19,13 @@ import {
 } from "@/lib/webhooks/webhook-runtime";
 
 export const dynamic = "force-dynamic";
+
+function getWebhookActor(hook: { createdBy?: string; createdByRole?: unknown }) {
+  if (!hook.createdBy || !isOrgRole(hook.createdByRole)) {
+    throw new Forbidden("inbound webhook creator is missing or invalid");
+  }
+  return { userId: hook.createdBy, role: hook.createdByRole };
+}
 
 // No auth required — token IS the auth
 export const POST = withErrorHandling(async (
@@ -60,13 +68,14 @@ export const POST = withErrorHandling(async (
   // trigger chain or schedule
   if (hook.chainId) {
     try {
+      const actor = getWebhookActor(hook);
       const chain = loadChainForInboundWebhook(namespaceId, orgId, hook.chainId);
       const runToken = await mintSessionToken({
-        sub: hook.createdBy || "service-user",
+        sub: actor.userId,
         jti: `inbound-webhook-${trigger.id}`,
         ns: namespaceId,
         org: orgId,
-        role: "owner",
+        role: actor.role,
         scopes: ["ops:*"],
       });
       const runHeaders = new Headers(request.headers);
@@ -113,21 +122,18 @@ export const POST = withErrorHandling(async (
 
   if (hook.scheduleId) {
     try {
-      const scheduleToken = await mintSessionToken({
-        sub: hook.createdBy || "service-user",
-        jti: `inbound-webhook-${trigger.id}`,
-        ns: namespaceId,
-        org: orgId,
-        role: "owner",
-        scopes: ["ops:*"],
-      });
+      getWebhookActor(hook);
+      const secret = process.env.BETTER_AUTH_SECRET;
+      if (!secret) {
+        throw new InternalServerError("BETTER_AUTH_SECRET is required to trigger webhook schedules");
+      }
       const trigRes = await fetch(internalApiUrl("/api/schedules/run", request.url), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-namespace-id": namespaceId,
           "x-org-id": orgId,
-          authorization: `Bearer ${scheduleToken}`,
+          authorization: `Bearer ${secret}`,
         },
         body: JSON.stringify({ id: hook.scheduleId, triggeredBy: "inbound-webhook", payload }),
       });

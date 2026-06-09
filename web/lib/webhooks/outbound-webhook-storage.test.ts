@@ -40,6 +40,28 @@ describe("outbound webhook runtime storage", () => {
     expect(JSON.stringify(client)).not.toContain(config.secretEncrypted);
   });
 
+  it("rejects loopback and private outbound targets", async () => {
+    const storage = await import("./outbound-webhook-storage");
+    const base = {
+      name: "ops",
+      events: ["started"],
+      active: true,
+    };
+
+    expect(() => storage.createOutboundWebhook("ns", "org", {
+      ...base,
+      url: "http://127.0.0.1:3000/hook",
+    })).toThrow(/url/i);
+    expect(() => storage.createOutboundWebhook("ns", "org", {
+      ...base,
+      url: "http://10.0.0.5/hook",
+    })).toThrow(/url/i);
+    expect(() => storage.createOutboundWebhook("ns", "org", {
+      ...base,
+      url: "http://169.254.169.254/latest/meta-data",
+    })).toThrow(/url/i);
+  });
+
   it("sends outbound webhook deliveries and records delivery status", async () => {
     const storage = await import("./outbound-webhook-storage");
     const runtime = await import("./webhook-utils");

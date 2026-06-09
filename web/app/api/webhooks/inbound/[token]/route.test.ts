@@ -43,6 +43,7 @@ describe("POST /api/webhooks/inbound/[token]", () => {
       name: "deploy hook",
       chainId: "deploy-chain",
       createdBy: "user-1",
+      createdByRole: "member",
       runDefaults: {
         goal: "Deploy {{payload.ref}}",
         workspaceId: "mentiko",
@@ -110,6 +111,7 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mintSessionToken).toHaveBeenCalledWith(expect.objectContaining({
       sub: "user-1",
+      role: "member",
       ns: "ns",
       org: "org",
       scopes: ["ops:*"],
@@ -130,5 +132,70 @@ describe("POST /api/webhooks/inbound/[token]", () => {
       runId: "run-123",
     }));
     expect(recordUsage).toHaveBeenCalledWith("ns", "org", "hook-1");
+  });
+
+  it("fails closed when a webhook has no persisted creator actor", async () => {
+    findWebhookByToken.mockReturnValue({
+      id: "hook-1",
+      name: "legacy hook",
+      chainId: "deploy-chain",
+    });
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(json.error.message).toMatch(/creator/i);
+    expect(mintSessionToken).not.toHaveBeenCalled();
+    expect(startChainRun).not.toHaveBeenCalled();
+    expect(updateInboundTrigger).toHaveBeenCalledWith("ns", "org", "trig-1", expect.objectContaining({
+      status: "failed",
+    }));
+  });
+
+  it("uses internal service auth when triggering a saved schedule", async () => {
+    process.env.BETTER_AUTH_SECRET = "internal-secret";
+    findWebhookByToken.mockReturnValue({
+      id: "hook-1",
+      name: "daily hook",
+      scheduleId: "sched-1",
+      createdBy: "user-1",
+      createdByRole: "member",
+    });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { runId: "run-sched-1" } }),
+    });
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.runId).toBe("run-sched-1");
+    expect(mintSessionToken).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining("/api/schedules/run"), expect.objectContaining({
+      headers: expect.objectContaining({
+        authorization: "Bearer internal-secret",
+      }),
+    }));
   });
 });

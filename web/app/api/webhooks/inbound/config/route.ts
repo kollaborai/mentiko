@@ -39,6 +39,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     chainId: chainId || undefined,
     scheduleId: scheduleId || undefined,
     createdBy: user?.id,
+    createdByRole: user?.role,
     runDefaults,
     allowedOverrides,
   });
