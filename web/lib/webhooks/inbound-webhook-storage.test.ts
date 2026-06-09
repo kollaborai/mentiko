@@ -1,4 +1,4 @@
-import { mkdtempSync } from "fs";
+import { mkdtempSync, existsSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -87,5 +87,49 @@ describe("inbound webhook storage", () => {
 
     expect(byStatusToken?.status).toBe("started");
     expect(byStatusToken?.runId).toBe("run-123");
+  });
+
+  it("writes the trigger ledger append-only and reconstructs latest state", async () => {
+    const storage = await import("./inbound-webhook-storage");
+    const { trigger } = storage.createInboundTrigger("led", "org", {
+      webhookId: "hook-1",
+      chainId: "c",
+      status: "accepted",
+    });
+    storage.updateInboundTrigger("led", "org", trigger.id, { status: "started", runId: "run-1" });
+    storage.updateInboundTrigger("led", "org", trigger.id, { status: "failed", error: "boom" });
+
+    // ledger is JSONL and append-only: one line per write (create + 2 updates)
+    const jsonlPath = path.join(rootDir, "led", "org", "inbound-webhook-triggers.jsonl");
+    expect(existsSync(jsonlPath)).toBe(true);
+    const lines = readFileSync(jsonlPath, "utf-8").trim().split("\n").filter(Boolean);
+    expect(lines.length).toBe(3);
+
+    // reconstructed state folds to the latest snapshot, and keeps the first
+    // acceptedAt/startedAt timestamps across updates
+    const latest = storage.getInboundTriggerById("led", "org", trigger.id);
+    expect(latest?.status).toBe("failed");
+    expect(latest?.runId).toBe("run-1");
+    expect(latest?.error).toBe("boom");
+    expect(latest?.startedAt).toBeTruthy();
+    expect(storage.listInboundTriggers("led", "org")).toHaveLength(1);
+  });
+
+  it("dedupes idempotency keys per webhook and ignores unknown keys", async () => {
+    const storage = await import("./inbound-webhook-storage");
+    storage.recordInboundIdempotency("idem", "org", {
+      webhookId: "hook-1",
+      idempotencyKey: "delivery-42",
+      triggerId: "trig-1",
+      runId: "run-9",
+    });
+
+    const hit = storage.findInboundIdempotency("idem", "org", "hook-1", "delivery-42");
+    expect(hit?.triggerId).toBe("trig-1");
+    expect(hit?.runId).toBe("run-9");
+
+    // different key, or same key under a different webhook, is not a match
+    expect(storage.findInboundIdempotency("idem", "org", "hook-1", "delivery-99")).toBeNull();
+    expect(storage.findInboundIdempotency("idem", "org", "hook-2", "delivery-42")).toBeNull();
   });
 });

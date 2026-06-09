@@ -57,11 +57,14 @@ type MentikoEventType =
   | "run_started" | "run_complete" | "run_failed"
   | "schedule_triggered";
 
+type OutboundScope = { type: "all" } | { type: "chains"; chainIds: string[] };
+
 interface WebhookConfig {
   id: string;
   name: string;
   url: string;
   events: MentikoEventType[];
+  scope?: OutboundScope;
   secret?: string;
   hasSecret?: boolean;
   active: boolean;
@@ -196,6 +199,8 @@ export default function WebhooksPage() {
   const [formName, setFormName] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formEvents, setFormEvents] = useState<MentikoEventType[]>([]);
+  const [formScopeType, setFormScopeType] = useState<"all" | "chains">("all");
+  const [formScopeChains, setFormScopeChains] = useState("");
   const [formSecret, setFormSecret] = useState("");
   const [formActive, setFormActive] = useState(true);
   const [formError, setFormError] = useState("");
@@ -317,6 +322,9 @@ export default function WebhooksPage() {
           name: formName,
           url: formUrl,
           events: formEvents,
+          scope: formScopeType === "chains"
+            ? { type: "chains", chainIds: formScopeChains.split(",").map((s) => s.trim()).filter(Boolean) }
+            : { type: "all" },
           secret: formSecret || undefined,
           active: formActive,
         }),
@@ -403,6 +411,8 @@ export default function WebhooksPage() {
     setFormName("");
     setFormUrl("");
     setFormEvents([]);
+    setFormScopeType("all");
+    setFormScopeChains("");
     setFormSecret("");
     setFormActive(true);
     setFormError("");
@@ -1004,6 +1014,30 @@ export default function WebhooksPage() {
                   </div>
                 </div>
 
+                <div className="bg-card rounded-md p-3 space-y-2">
+                  <label className="text-xs text-foreground/50">Scope</label>
+                  <select
+                    value={formScopeType}
+                    onChange={(e) => setFormScopeType(e.target.value as "all" | "chains")}
+                    className="w-full bg-muted rounded px-2 py-1.5 text-sm focus:outline-none"
+                  >
+                    <option value="all">All chains</option>
+                    <option value="chains">Selected chains</option>
+                  </select>
+                  {formScopeType === "chains" && (
+                    <input
+                      type="text"
+                      placeholder="chain ids, comma-separated"
+                      value={formScopeChains}
+                      onChange={(e) => setFormScopeChains(e.target.value)}
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  )}
+                  <p className="text-[11px] text-foreground/40">
+                    Fires for all chains, or only the chain ids you list.
+                  </p>
+                </div>
+
                 <div className="bg-card rounded-md p-3 space-y-1">
                   <label className="text-xs text-foreground/50">Secret (Optional, HMAC signing)</label>
                   <input
@@ -1137,6 +1171,15 @@ export default function WebhooksPage() {
                       </label>
                     ))}
                   </div>
+                </div>
+
+                <div className="bg-card rounded-md p-3">
+                  <label className="text-xs text-foreground/50">Scope</label>
+                  <p className="text-sm mt-1">
+                    {!selected.scope || selected.scope.type === "all"
+                      ? "All chains"
+                      : `Chains: ${selected.scope.chainIds.join(", ")}`}
+                  </p>
                 </div>
 
                 <div className="bg-card rounded-md p-3">

@@ -37,6 +37,18 @@ function lookupPath(value: unknown, path: string): unknown {
   return current;
 }
 
+/**
+ * Read a scalar value out of a webhook payload by dotted path (e.g.
+ * "delivery.id"). Returns a string only for scalar leaves; objects/arrays
+ * and missing paths yield undefined. Used to derive idempotency keys.
+ */
+export function readWebhookPayloadValue(payload: unknown, path: string): string | undefined {
+  const value = lookupPath(payload, path);
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
 function stringifyTemplateValue(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;

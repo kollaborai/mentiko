@@ -22,11 +22,20 @@ export type OutboundWebhookEvent =
 
 export type OutboundDeliveryStatus = "delivered" | "failed" | "pending";
 
+// Scope controls which chains an org-level outbound webhook fires for.
+// Default is all chains; "chains" restricts to an explicit chain-id allowlist.
+export type OutboundWebhookScope =
+  | { type: "all" }
+  | { type: "chains"; chainIds: string[] };
+
+const ALL_CHAINS_SCOPE: OutboundWebhookScope = { type: "all" };
+
 export interface OutboundWebhookConfig {
   id: string;
   name: string;
   url: string;
   events: OutboundWebhookEvent[];
+  scope?: OutboundWebhookScope;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -40,6 +49,7 @@ export interface OutboundWebhookClientConfig {
   name: string;
   url: string;
   events: OutboundWebhookEvent[];
+  scope: OutboundWebhookScope;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -135,6 +145,40 @@ function normalizeHeaders(value: unknown): Record<string, string> | undefined {
   return Object.keys(headers).length ? headers : undefined;
 }
 
+function normalizeScope(value: unknown): OutboundWebhookScope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return ALL_CHAINS_SCOPE;
+  const input = value as Record<string, unknown>;
+  if (input.type !== "chains") return ALL_CHAINS_SCOPE;
+  const chainIds = Array.isArray(input.chainIds)
+    ? Array.from(new Set(input.chainIds
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .map((id) => id.slice(0, 200))))
+        .slice(0, 200)
+    : [];
+  // Keep an explicit "chains" scope even when empty so it fails CLOSED (fires
+  // for nothing) rather than silently widening to all chains. Callers validate
+  // and reject an empty selection so the misconfiguration surfaces to the user.
+  return { type: "chains", chainIds };
+}
+
+function assertValidScope(scope: OutboundWebhookScope): void {
+  if (scope.type === "chains" && scope.chainIds.length === 0) {
+    throw new Error("selected-chains scope requires at least one chain id");
+  }
+}
+
+export function resolveOutboundScope(config: OutboundWebhookConfig): OutboundWebhookScope {
+  return config.scope ?? ALL_CHAINS_SCOPE;
+}
+
+export function outboundWebhookFiresForChain(config: OutboundWebhookConfig, chainId?: string): boolean {
+  const scope = resolveOutboundScope(config);
+  if (scope.type === "all") return true;
+  return Boolean(chainId) && scope.chainIds.includes(chainId as string);
+}
+
 function normalizeStoredConfig(config: OutboundWebhookConfig): OutboundWebhookConfig {
   if (config.secret && !config.secretEncrypted) {
     const { secret, ...rest } = config;
@@ -159,6 +203,7 @@ export function toOutboundClientConfig(
   const { secret, secretEncrypted, ...safe } = normalizeStoredConfig(config);
   return {
     ...safe,
+    scope: resolveOutboundScope(config),
     hasSecret: Boolean(secretEncrypted || secret),
     ...(recentDeliveries ? { recentDeliveries } : {}),
   };
@@ -171,6 +216,7 @@ export function createOutboundWebhook(
     name: unknown;
     url: unknown;
     events: unknown;
+    scope?: unknown;
     secret?: unknown;
     active?: unknown;
     headers?: unknown;
@@ -182,12 +228,15 @@ export function createOutboundWebhook(
   if (!name || !url || events.length === 0) {
     throw new Error("name, url, and events required");
   }
+  const scope = normalizeScope(input.scope);
+  assertValidScope(scope);
   const now = new Date().toISOString();
   const config: OutboundWebhookConfig = {
     id: crypto.randomUUID(),
     name,
     url,
     events,
+    scope,
     active: input.active !== false,
     createdAt: now,
     updatedAt: now,
@@ -208,6 +257,7 @@ export function updateOutboundWebhook(
     name: unknown;
     url: unknown;
     events: unknown;
+    scope: unknown;
     secret: unknown;
     active: unknown;
     headers: unknown;
@@ -221,11 +271,15 @@ export function updateOutboundWebhook(
   if (input.url !== undefined && !normalizedUrl) {
     throw new Error("valid url required");
   }
+  if (input.scope !== undefined) {
+    assertValidScope(normalizeScope(input.scope));
+  }
   const next: OutboundWebhookConfig = {
     ...current,
     ...(input.name !== undefined && typeof input.name === "string" ? { name: input.name.trim() } : {}),
     ...(normalizedUrl ? { url: normalizedUrl } : {}),
     ...(input.events !== undefined ? { events: normalizeEvents(input.events) } : {}),
+    ...(input.scope !== undefined ? { scope: normalizeScope(input.scope) } : {}),
     ...(input.active !== undefined ? { active: Boolean(input.active) } : {}),
     ...(input.headers !== undefined ? { headers: normalizeHeaders(input.headers) } : {}),
     ...(typeof input.secret === "string" && input.secret ? { secretEncrypted: encrypt(input.secret) } : {}),
@@ -253,11 +307,14 @@ export function getOutboundWebhookSecret(config: OutboundWebhookConfig): string 
 export function listOutboundWebhooksForEvent(
   namespaceId: string,
   orgId: string,
-  event: string
+  event: string,
+  chainId?: string
 ): OutboundWebhookConfig[] {
   const aliases = eventAliases(event);
   return listOutboundWebhooks(namespaceId, orgId).filter((config) =>
-    config.active && config.events.some((candidate) => aliases.includes(candidate))
+    config.active &&
+    config.events.some((candidate) => aliases.includes(candidate)) &&
+    outboundWebhookFiresForChain(config, chainId)
   );
 }
 

@@ -4,9 +4,13 @@ const findWebhookByToken = jest.fn();
 const recordUsage = jest.fn();
 const createInboundTrigger = jest.fn();
 const updateInboundTrigger = jest.fn();
+const findInboundIdempotency = jest.fn();
+const recordInboundIdempotency = jest.fn();
+const getInboundTriggerById = jest.fn();
 const loadChainForInboundWebhook = jest.fn();
 const buildInboundRunBody = jest.fn();
 const normalizeWebhookHeaders = jest.fn();
+const readWebhookPayloadValue = jest.fn();
 const loadMembers = jest.fn();
 
 jest.mock("@/lib/runs/chain-run-service", () => ({
@@ -22,12 +26,16 @@ jest.mock("@/lib/webhooks/inbound-webhook-storage", () => ({
   recordUsage: (...args: unknown[]) => recordUsage(...args),
   createInboundTrigger: (...args: unknown[]) => createInboundTrigger(...args),
   updateInboundTrigger: (...args: unknown[]) => updateInboundTrigger(...args),
+  findInboundIdempotency: (...args: unknown[]) => findInboundIdempotency(...args),
+  recordInboundIdempotency: (...args: unknown[]) => recordInboundIdempotency(...args),
+  getInboundTriggerById: (...args: unknown[]) => getInboundTriggerById(...args),
 }));
 
 jest.mock("@/lib/webhooks/webhook-runtime", () => ({
   loadChainForInboundWebhook: (...args: unknown[]) => loadChainForInboundWebhook(...args),
   buildInboundRunBody: (...args: unknown[]) => buildInboundRunBody(...args),
   normalizeWebhookHeaders: (...args: unknown[]) => normalizeWebhookHeaders(...args),
+  readWebhookPayloadValue: (...args: unknown[]) => readWebhookPayloadValue(...args),
 }));
 
 jest.mock("@/lib/orgs/org-storage", () => ({
@@ -85,6 +93,8 @@ describe("POST /api/webhooks/inbound/[token]", () => {
       },
     });
     loadMembers.mockResolvedValue([]);
+    findInboundIdempotency.mockReturnValue(null);
+    getInboundTriggerById.mockReturnValue(null);
     mintSessionToken.mockResolvedValue("signed-session-token");
     startChainRun.mockResolvedValue({
       runId: "run-123",
@@ -226,6 +236,64 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     expect(json.error.message).toMatch(/no longer/i);
     expect(mintSessionToken).not.toHaveBeenCalled();
     expect(startChainRun).not.toHaveBeenCalled();
+  });
+
+  it("records an idempotency key from the Idempotency-Key header on first delivery", async () => {
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "evt-1" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(findInboundIdempotency).toHaveBeenCalledWith("ns", "org", "hook-1", "evt-1");
+    expect(startChainRun).toHaveBeenCalled();
+    expect(recordInboundIdempotency).toHaveBeenCalledWith("ns", "org", expect.objectContaining({
+      webhookId: "hook-1",
+      idempotencyKey: "evt-1",
+      triggerId: "trig-1",
+      runId: "run-123",
+    }));
+  });
+
+  it("returns the original run for a duplicate idempotency key without re-running", async () => {
+    findInboundIdempotency.mockReturnValue({
+      webhookId: "hook-1",
+      idempotencyKey: "evt-1",
+      triggerId: "trig-1",
+      runId: "run-123",
+    });
+    getInboundTriggerById.mockReturnValue({ id: "trig-1", status: "started", runId: "run-123" });
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "evt-1" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data).toEqual({
+      ok: true,
+      idempotent: true,
+      runId: "run-123",
+      triggerId: "trig-1",
+      status: "started",
+      statusUrl: "/api/webhooks/inbound/triggers/trig-1",
+    });
+    expect(createInboundTrigger).not.toHaveBeenCalled();
+    expect(startChainRun).not.toHaveBeenCalled();
+    expect(recordInboundIdempotency).not.toHaveBeenCalled();
   });
 
   it("uses internal service auth when triggering a saved schedule", async () => {

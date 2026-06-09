@@ -119,6 +119,14 @@ curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
           run defaults for goal, workspace, profile, executor, and payload mode
           when creating the inbound endpoint.
         </p>
+        <p className="text-xs text-foreground/60 leading-relaxed">
+          <span className="text-foreground/70">Idempotency:</span> send an{" "}
+          <code className="text-foreground/70">Idempotency-Key</code> header (or set an
+          idempotency key path like <code className="text-foreground/70">delivery.id</code> on
+          the endpoint to read it from the payload). A repeated key returns the original
+          trigger and run instead of starting a duplicate — retries after a failed start
+          still re-run. Requests without a key behave exactly as before.
+        </p>
       </section>
 
       <section className="mb-6">
@@ -135,6 +143,11 @@ curl -X POST https://your-mentiko.com/api/webhooks/inbound/mwh_... \\
         <p className="text-xs text-foreground/60 leading-relaxed">
           Delivery records are stored in the org-level delivery log and shown in
           the Webhooks detail panel.
+        </p>
+        <p className="text-xs text-foreground/60 leading-relaxed mt-3">
+          <span className="text-foreground/70">Scope:</span> outbound webhooks fire for all
+          chains by default, or you can scope one to a selected list of chain ids when
+          creating it. Only chain events from a chain in the list will deliver.
         </p>
       </section>
 
