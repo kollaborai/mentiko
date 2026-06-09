@@ -1,9 +1,9 @@
 # api route auth coverage (as of 2026-06-01)
 
 ## summary
-- total routes: 323
-- authenticated: 307   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
-- public-by-design: 16
+- total routes: 325
+- authenticated: 308   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
 
@@ -319,6 +319,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - webhooks/generate/route.ts
 - webhooks/[id]/route.ts
 - webhooks/config/[id]/route.ts
+- webhooks/config/[id]/test/route.ts
 - webhooks/config/route.ts
 - webhooks/inbound/config/route.ts
 - webhooks/inbound/config/[id]/route.ts
@@ -345,6 +346,7 @@ Routes intentionally public with explicit security justifications:
 - webhooks/[id]/receive/route.ts — generic webhook receiver; authenticated via HMAC signature
 - webhooks/github/route.ts — GitHub webhook receiver; authenticated via GitHub signature verification
 - webhooks/inbound/[token]/route.ts — inbound webhook receiver; authenticated with signed token in URL
+- webhooks/inbound/triggers/[triggerId]/route.ts — inbound webhook trigger status lookup; authenticated with status token in query/header
 - version/route.ts — version info for health checks and monitoring
 - marketplace/artifacts/[id]/route.ts — public marketplace artifact templates (no user data, read-only listing)
 - marketplace/artifacts/route.ts — public marketplace artifacts listing (no user data)
