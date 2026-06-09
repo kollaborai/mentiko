@@ -5,7 +5,9 @@ const recordUsage = jest.fn();
 const createInboundTrigger = jest.fn();
 const updateInboundTrigger = jest.fn();
 const findInboundIdempotency = jest.fn();
-const recordInboundIdempotency = jest.fn();
+const claimInboundIdempotency = jest.fn();
+const finalizeInboundIdempotency = jest.fn();
+const releaseInboundIdempotencyClaim = jest.fn();
 const getInboundTriggerById = jest.fn();
 const loadChainForInboundWebhook = jest.fn();
 const buildInboundRunBody = jest.fn();
@@ -27,7 +29,9 @@ jest.mock("@/lib/webhooks/inbound-webhook-storage", () => ({
   createInboundTrigger: (...args: unknown[]) => createInboundTrigger(...args),
   updateInboundTrigger: (...args: unknown[]) => updateInboundTrigger(...args),
   findInboundIdempotency: (...args: unknown[]) => findInboundIdempotency(...args),
-  recordInboundIdempotency: (...args: unknown[]) => recordInboundIdempotency(...args),
+  claimInboundIdempotency: (...args: unknown[]) => claimInboundIdempotency(...args),
+  finalizeInboundIdempotency: (...args: unknown[]) => finalizeInboundIdempotency(...args),
+  releaseInboundIdempotencyClaim: (...args: unknown[]) => releaseInboundIdempotencyClaim(...args),
   getInboundTriggerById: (...args: unknown[]) => getInboundTriggerById(...args),
 }));
 
@@ -94,6 +98,22 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     });
     loadMembers.mockResolvedValue([]);
     findInboundIdempotency.mockReturnValue(null);
+    claimInboundIdempotency.mockImplementation((_namespaceId, _orgId, input) => ({
+      claimed: true,
+      record: {
+        webhookId: input.webhookId,
+        idempotencyKey: input.idempotencyKey,
+        triggerId: input.triggerId,
+        createdAt: "2026-06-09T00:00:00.000Z",
+      },
+    }));
+    finalizeInboundIdempotency.mockImplementation((_namespaceId, _orgId, input) => ({
+      webhookId: input.webhookId,
+      idempotencyKey: input.idempotencyKey,
+      triggerId: input.triggerId,
+      ...(input.runId ? { runId: input.runId } : {}),
+      createdAt: "2026-06-09T00:00:01.000Z",
+    }));
     getInboundTriggerById.mockReturnValue(null);
     mintSessionToken.mockResolvedValue("signed-session-token");
     startChainRun.mockResolvedValue({
@@ -253,7 +273,11 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     expect(response.status).toBe(200);
     expect(findInboundIdempotency).toHaveBeenCalledWith("ns", "org", "hook-1", "evt-1");
     expect(startChainRun).toHaveBeenCalled();
-    expect(recordInboundIdempotency).toHaveBeenCalledWith("ns", "org", expect.objectContaining({
+    expect(claimInboundIdempotency).toHaveBeenCalledWith("ns", "org", expect.objectContaining({
+      webhookId: "hook-1",
+      idempotencyKey: "evt-1",
+    }));
+    expect(finalizeInboundIdempotency).toHaveBeenCalledWith("ns", "org", expect.objectContaining({
       webhookId: "hook-1",
       idempotencyKey: "evt-1",
       triggerId: "trig-1",
@@ -293,7 +317,73 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     });
     expect(createInboundTrigger).not.toHaveBeenCalled();
     expect(startChainRun).not.toHaveBeenCalled();
-    expect(recordInboundIdempotency).not.toHaveBeenCalled();
+    expect(claimInboundIdempotency).not.toHaveBeenCalled();
+    expect(finalizeInboundIdempotency).not.toHaveBeenCalled();
+  });
+
+  it("returns the winning trigger when another delivery claimed the idempotency key first", async () => {
+    claimInboundIdempotency.mockReturnValueOnce({
+      claimed: false,
+      record: {
+        webhookId: "hook-1",
+        idempotencyKey: "evt-1",
+        triggerId: "trig-winning",
+        createdAt: "2026-06-09T00:00:00.000Z",
+      },
+    });
+    getInboundTriggerById.mockReturnValue({ id: "trig-winning", status: "accepted" });
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "evt-1" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data).toEqual(expect.objectContaining({
+      idempotent: true,
+      triggerId: "trig-winning",
+      status: "accepted",
+    }));
+    expect(createInboundTrigger).not.toHaveBeenCalled();
+    expect(startChainRun).not.toHaveBeenCalled();
+    expect(finalizeInboundIdempotency).not.toHaveBeenCalled();
+  });
+
+  it("keeps the idempotency claim when finalization fails after a run starts", async () => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    finalizeInboundIdempotency.mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "evt-1" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(startChainRun).toHaveBeenCalledTimes(1);
+    expect(updateInboundTrigger).toHaveBeenCalledWith("ns", "org", "trig-1", expect.objectContaining({
+      status: "started",
+      runId: "run-123",
+    }));
+    expect(updateInboundTrigger).not.toHaveBeenCalledWith("ns", "org", "trig-1", expect.objectContaining({
+      status: "failed",
+    }));
+    expect(releaseInboundIdempotencyClaim).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("uses internal service auth when triggering a saved schedule", async () => {
@@ -314,7 +404,7 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     const { POST } = await import("./route");
     const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "idempotency-key": "sched-delivery" },
       body: JSON.stringify({ ref: "refs/heads/main" }),
     });
 
@@ -334,6 +424,12 @@ describe("POST /api/webhooks/inbound/[token]", () => {
         authorization: "Bearer internal-secret",
       }),
       body: expect.stringContaining("signed-session-token"),
+    }));
+    expect(finalizeInboundIdempotency).toHaveBeenCalledWith("ns", "org", expect.objectContaining({
+      webhookId: "hook-1",
+      idempotencyKey: "sched-delivery",
+      triggerId: "trig-1",
+      runId: "run-sched-1",
     }));
   });
 });

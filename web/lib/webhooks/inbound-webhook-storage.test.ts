@@ -132,4 +132,35 @@ describe("inbound webhook storage", () => {
     expect(storage.findInboundIdempotency("idem", "org", "hook-1", "delivery-99")).toBeNull();
     expect(storage.findInboundIdempotency("idem", "org", "hook-2", "delivery-42")).toBeNull();
   });
+
+  it("claims idempotency keys before a run starts and finalizes the same claim", async () => {
+    const storage = await import("./inbound-webhook-storage");
+
+    const first = storage.claimInboundIdempotency("claim", "org", {
+      webhookId: "hook-1",
+      idempotencyKey: "delivery-42",
+      triggerId: "trig-1",
+    });
+    const second = storage.claimInboundIdempotency("claim", "org", {
+      webhookId: "hook-1",
+      idempotencyKey: "delivery-42",
+      triggerId: "trig-2",
+    });
+
+    expect(first.claimed).toBe(true);
+    expect(first.record.triggerId).toBe("trig-1");
+    expect(second.claimed).toBe(false);
+    expect(second.record.triggerId).toBe("trig-1");
+    expect(storage.findInboundIdempotency("claim", "org", "hook-1", "delivery-42")?.triggerId).toBe("trig-1");
+
+    const finalized = storage.finalizeInboundIdempotency("claim", "org", {
+      webhookId: "hook-1",
+      idempotencyKey: "delivery-42",
+      triggerId: "trig-1",
+      runId: "run-1",
+    });
+
+    expect(finalized.runId).toBe("run-1");
+    expect(storage.findInboundIdempotency("claim", "org", "hook-1", "delivery-42")?.runId).toBe("run-1");
+  });
 });

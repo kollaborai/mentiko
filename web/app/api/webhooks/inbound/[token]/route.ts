@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import {
+  claimInboundIdempotency,
   createInboundTrigger,
+  finalizeInboundIdempotency,
   findInboundIdempotency,
   findWebhookByToken,
   getInboundTriggerById,
-  recordInboundIdempotency,
   recordUsage,
+  releaseInboundIdempotencyClaim,
   updateInboundTrigger,
   type InboundWebhook,
 } from "@/lib/webhooks/inbound-webhook-storage";
@@ -63,6 +65,23 @@ async function getWebhookActor(namespaceId: string, hook: { createdBy?: string; 
   return { userId: hook.createdBy, role: hook.createdByRole };
 }
 
+function duplicateIdempotencyResponse(
+  namespaceId: string,
+  orgId: string,
+  triggerId: string,
+  runId?: string,
+) {
+  const prior = getInboundTriggerById(namespaceId, orgId, triggerId);
+  return apiSuccess({
+    ok: true,
+    idempotent: true,
+    runId: runId ?? prior?.runId,
+    triggerId,
+    status: prior?.status ?? "accepted",
+    statusUrl: `/api/webhooks/inbound/triggers/${triggerId}`,
+  });
+}
+
 // No auth required — token IS the auth
 export const POST = withErrorHandling(async (
   request: NextRequest,
@@ -97,19 +116,26 @@ export const POST = withErrorHandling(async (
   if (idempotencyKey) {
     const existing = findInboundIdempotency(namespaceId, orgId, hook.id, idempotencyKey);
     if (existing) {
-      const prior = getInboundTriggerById(namespaceId, orgId, existing.triggerId);
-      return apiSuccess({
-        ok: true,
-        idempotent: true,
-        runId: existing.runId ?? prior?.runId,
-        triggerId: existing.triggerId,
-        status: prior?.status ?? "accepted",
-        statusUrl: `/api/webhooks/inbound/triggers/${existing.triggerId}`,
-      });
+      return duplicateIdempotencyResponse(namespaceId, orgId, existing.triggerId, existing.runId);
     }
   }
 
+  const triggerId = crypto.randomUUID();
+  let idempotencyClaimed = false;
+  if (idempotencyKey) {
+    const claim = claimInboundIdempotency(namespaceId, orgId, {
+      webhookId: hook.id,
+      idempotencyKey,
+      triggerId,
+    });
+    if (!claim.claimed) {
+      return duplicateIdempotencyResponse(namespaceId, orgId, claim.record.triggerId, claim.record.runId);
+    }
+    idempotencyClaimed = true;
+  }
+
   const { trigger, statusToken } = createInboundTrigger(namespaceId, orgId, {
+    id: triggerId,
     webhookId: hook.id,
     chainId: hook.chainId,
     scheduleId: hook.scheduleId,
@@ -122,6 +148,7 @@ export const POST = withErrorHandling(async (
 
   // trigger chain or schedule
   if (hook.chainId) {
+    let runStarted = false;
     try {
       const actor = await getWebhookActor(namespaceId, hook);
       const chain = loadChainForInboundWebhook(namespaceId, orgId, hook.chainId);
@@ -158,8 +185,9 @@ export const POST = withErrorHandling(async (
         status: "started",
         runId: runData.runId,
       });
+      runStarted = true;
       if (idempotencyKey) {
-        recordInboundIdempotency(namespaceId, orgId, {
+        finalizeInboundIdempotency(namespaceId, orgId, {
           webhookId: hook.id,
           idempotencyKey,
           triggerId: trigger.id,
@@ -175,15 +203,21 @@ export const POST = withErrorHandling(async (
         statusUrl: `/api/webhooks/inbound/triggers/${trigger.id}`,
       });
     } catch (error) {
-      updateInboundTrigger(namespaceId, orgId, trigger.id, {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!runStarted) {
+        updateInboundTrigger(namespaceId, orgId, trigger.id, {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (idempotencyKey && idempotencyClaimed) {
+          releaseInboundIdempotencyClaim(namespaceId, orgId, hook.id, idempotencyKey);
+        }
+      }
       throw error;
     }
   }
 
   if (hook.scheduleId) {
+    let runStarted = false;
     try {
       const actor = await getWebhookActor(namespaceId, hook);
       const secret = process.env.BETTER_AUTH_SECRET;
@@ -222,8 +256,9 @@ export const POST = withErrorHandling(async (
         status: "started",
         ...(runId ? { runId } : {}),
       });
+      runStarted = true;
       if (idempotencyKey) {
-        recordInboundIdempotency(namespaceId, orgId, {
+        finalizeInboundIdempotency(namespaceId, orgId, {
           webhookId: hook.id,
           idempotencyKey,
           triggerId: trigger.id,
@@ -239,10 +274,15 @@ export const POST = withErrorHandling(async (
         statusUrl: `/api/webhooks/inbound/triggers/${trigger.id}`,
       });
     } catch (error) {
-      updateInboundTrigger(namespaceId, orgId, trigger.id, {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!runStarted) {
+        updateInboundTrigger(namespaceId, orgId, trigger.id, {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (idempotencyKey && idempotencyClaimed) {
+          releaseInboundIdempotencyClaim(namespaceId, orgId, hook.id, idempotencyKey);
+        }
+      }
       throw error;
     }
   }
@@ -251,5 +291,8 @@ export const POST = withErrorHandling(async (
     status: "failed",
     error: "no chain or schedule configured",
   });
+  if (idempotencyKey && idempotencyClaimed) {
+    releaseInboundIdempotencyClaim(namespaceId, orgId, hook.id, idempotencyKey);
+  }
   throw new InternalServerError("no chain or schedule configured");
 });

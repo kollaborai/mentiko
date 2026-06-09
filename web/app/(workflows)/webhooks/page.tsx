@@ -360,6 +360,9 @@ export default function WebhooksPage() {
           name: selected.name,
           url: selected.url,
           events: selected.events,
+          scope: selected.scope?.type === "chains"
+            ? { type: "chains", chainIds: selected.scope.chainIds }
+            : { type: "all" },
           secret: selected.secret,
           active: selected.active,
         }),
@@ -1173,12 +1176,44 @@ export default function WebhooksPage() {
                   </div>
                 </div>
 
-                <div className="bg-card rounded-md p-3">
-                  <label className="text-xs text-foreground/50">Scope</label>
-                  <p className="text-sm mt-1">
-                    {!selected.scope || selected.scope.type === "all"
-                      ? "All chains"
-                      : `Chains: ${selected.scope.chainIds.join(", ")}`}
+                <div className="bg-card rounded-md p-3 space-y-2">
+                  <label htmlFor="outbound-scope" className="text-xs text-foreground/50">Scope</label>
+                  <select
+                    id="outbound-scope"
+                    aria-label="Scope"
+                    value={selected.scope?.type || "all"}
+                    onChange={(e) => setSelected({
+                      ...selected,
+                      scope: e.target.value === "chains"
+                        ? {
+                          type: "chains",
+                          chainIds: selected.scope?.type === "chains" ? selected.scope.chainIds : [],
+                        }
+                        : { type: "all" },
+                    })}
+                    className="w-full bg-muted rounded px-2 py-1.5 text-sm focus:outline-none"
+                  >
+                    <option value="all">All chains</option>
+                    <option value="chains">Selected chains</option>
+                  </select>
+                  {selected.scope?.type === "chains" && (
+                    <input
+                      type="text"
+                      aria-label="Selected chain ids"
+                      placeholder="chain ids, comma-separated"
+                      value={selected.scope.chainIds.join(", ")}
+                      onChange={(e) => setSelected({
+                        ...selected,
+                        scope: {
+                          type: "chains",
+                          chainIds: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                        },
+                      })}
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  )}
+                  <p className="text-[11px] text-foreground/40">
+                    Fires for all chains, or only the chain ids you list.
                   </p>
                 </div>
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs";
+import { closeSync, existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, openSync, unlinkSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
 import { createHash, randomBytes } from "crypto";
@@ -11,11 +11,13 @@ const FILE_NAME = "inbound-webhooks.json";
 const TRIGGERS_FILE_NAME = "inbound-webhook-triggers.jsonl";
 const LEGACY_TRIGGERS_FILE_NAME = "inbound-webhook-triggers.json";
 const IDEMPOTENCY_FILE_NAME = "inbound-webhook-idempotency.jsonl";
+const IDEMPOTENCY_CLAIMS_DIR = "inbound-webhook-idempotency-claims";
 // Retention/compaction bounds so the append-only logs stay bounded.
 const MAX_RETAINED_TRIGGERS = 500;
 const TRIGGER_COMPACT_THRESHOLD = 2000;
 const MAX_IDEMPOTENCY_RECORDS = 2000;
 const IDEMPOTENCY_COMPACT_THRESHOLD = 4000;
+const IDEMPOTENCY_CLAIM_TTL_MS = 30 * 60 * 1000;
 
 export type InboundWebhookPayloadMode = "context" | "metadata" | "both";
 export type InboundTriggerStatus = "accepted" | "started" | "failed";
@@ -86,6 +88,7 @@ export interface InboundWebhookTrigger {
 }
 
 export interface CreateInboundTriggerInput {
+  id?: string;
   webhookId: string;
   chainId?: string;
   scheduleId?: string;
@@ -100,6 +103,11 @@ export interface InboundIdempotencyRecord {
   triggerId: string;
   runId?: string;
   createdAt: string;
+}
+
+export interface InboundIdempotencyClaimResult {
+  claimed: boolean;
+  record: InboundIdempotencyRecord;
 }
 
 function getFilePath(namespaceId: string, orgId: string): string {
@@ -308,6 +316,43 @@ function getIdempotencyFilePath(namespaceId: string, orgId: string): string {
   return orgPath(namespaceId, orgId, IDEMPOTENCY_FILE_NAME);
 }
 
+function getIdempotencyClaimsDir(namespaceId: string, orgId: string): string {
+  return orgPath(namespaceId, orgId, IDEMPOTENCY_CLAIMS_DIR);
+}
+
+function getIdempotencyClaimPath(
+  namespaceId: string,
+  orgId: string,
+  webhookId: string,
+  idempotencyKey: string
+): string {
+  const keyHash = createHash("sha256").update(`${webhookId}\n${idempotencyKey}`).digest("hex");
+  return path.join(getIdempotencyClaimsDir(namespaceId, orgId), `${keyHash}.json`);
+}
+
+function readIdempotencyClaimFile(filePath: string): InboundIdempotencyRecord | null {
+  if (!existsSync(filePath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+    return parsed && typeof parsed === "object" ? parsed as InboundIdempotencyRecord : null;
+  } catch {
+    return null;
+  }
+}
+
+function isStaleIdempotencyClaim(record: InboundIdempotencyRecord): boolean {
+  const createdAt = Date.parse(record.createdAt);
+  return Number.isFinite(createdAt) && Date.now() - createdAt > IDEMPOTENCY_CLAIM_TTL_MS;
+}
+
+function removeFileIfExists(filePath: string): void {
+  try {
+    unlinkSync(filePath);
+  } catch {
+    // another process may already have released the claim
+  }
+}
+
 // Fold the append-only trigger ledger into the latest snapshot per trigger id.
 // Falls back to the legacy `.json` array file when the JSONL ledger is absent.
 function foldTriggerSnapshots(namespaceId: string, orgId: string): Map<string, InboundWebhookTrigger> {
@@ -356,7 +401,7 @@ export function createInboundTrigger(
   const { statusToken, statusTokenHash, statusTokenPreview } = generateStatusToken();
   const now = new Date().toISOString();
   const trigger: InboundWebhookTrigger = {
-    id: crypto.randomUUID(),
+    id: input.id || crypto.randomUUID(),
     webhookId: input.webhookId,
     chainId: input.chainId,
     scheduleId: input.scheduleId,
@@ -426,7 +471,19 @@ export function findInboundIdempotency(
       found = record; // last write wins
     }
   }
-  return found;
+  if (found) return found;
+
+  const claimPath = getIdempotencyClaimPath(namespaceId, orgId, webhookId, idempotencyKey);
+  const claim = readIdempotencyClaimFile(claimPath);
+  if (!claim || claim.webhookId !== webhookId || claim.idempotencyKey !== idempotencyKey) {
+    removeFileIfExists(claimPath);
+    return null;
+  }
+  if (isStaleIdempotencyClaim(claim)) {
+    removeFileIfExists(claimPath);
+    return null;
+  }
+  return claim;
 }
 
 function compactInboundIdempotency(namespaceId: string, orgId: string): void {
@@ -443,7 +500,47 @@ function compactInboundIdempotency(namespaceId: string, orgId: string): void {
   rewriteJsonlRecords(getIdempotencyFilePath(namespaceId, orgId), retained);
 }
 
-export function recordInboundIdempotency(
+export function claimInboundIdempotency(
+  namespaceId: string,
+  orgId: string,
+  input: { webhookId: string; idempotencyKey: string; triggerId: string }
+): InboundIdempotencyClaimResult {
+  const existing = findInboundIdempotency(namespaceId, orgId, input.webhookId, input.idempotencyKey);
+  if (existing) return { claimed: false, record: existing };
+
+  const record: InboundIdempotencyRecord = {
+    webhookId: input.webhookId,
+    idempotencyKey: input.idempotencyKey,
+    triggerId: input.triggerId,
+    createdAt: new Date().toISOString(),
+  };
+  const filePath = getIdempotencyClaimPath(namespaceId, orgId, input.webhookId, input.idempotencyKey);
+  ensureParentDir(filePath);
+  try {
+    const fd = openSync(filePath, "wx");
+    try {
+      writeFileSync(fd, JSON.stringify(record));
+    } finally {
+      closeSync(fd);
+    }
+    return { claimed: true, record };
+  } catch {
+    const claimed = findInboundIdempotency(namespaceId, orgId, input.webhookId, input.idempotencyKey);
+    if (claimed) return { claimed: false, record: claimed };
+    throw new Error("failed to claim idempotency key");
+  }
+}
+
+export function releaseInboundIdempotencyClaim(
+  namespaceId: string,
+  orgId: string,
+  webhookId: string,
+  idempotencyKey: string
+): void {
+  removeFileIfExists(getIdempotencyClaimPath(namespaceId, orgId, webhookId, idempotencyKey));
+}
+
+export function finalizeInboundIdempotency(
   namespaceId: string,
   orgId: string,
   input: { webhookId: string; idempotencyKey: string; triggerId: string; runId?: string }
@@ -460,5 +557,14 @@ export function recordInboundIdempotency(
   if (countJsonlLines(filePath) > IDEMPOTENCY_COMPACT_THRESHOLD) {
     compactInboundIdempotency(namespaceId, orgId);
   }
+  releaseInboundIdempotencyClaim(namespaceId, orgId, input.webhookId, input.idempotencyKey);
   return record;
+}
+
+export function recordInboundIdempotency(
+  namespaceId: string,
+  orgId: string,
+  input: { webhookId: string; idempotencyKey: string; triggerId: string; runId?: string }
+): InboundIdempotencyRecord {
+  return finalizeInboundIdempotency(namespaceId, orgId, input);
 }
