@@ -18,6 +18,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const body = await request.json();
   const { name, cwd, workspaceId } = body;
+  const terminalCwd = typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
 
   if (!name || typeof name !== "string") {
     throw new BadRequest("name is required", { field: "name" });
@@ -113,7 +114,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   // spawn new session
   const result = await pty.spawn(name, spawnCmd, spawnArgs, {
-    cwd: cwd || undefined,
+    cwd: terminalCwd,
     env: {
       ...safeEnv,
       // mentiko path resolution (needed by bin/ and lib/ scripts)
@@ -122,6 +123,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       MENTIKO_PROJECT_ROOT: config.projectRoot,
       MENTIKO_ORG_ROOT: config.orgRoot,
       MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
+      ...(terminalCwd ? { MENTIKO_WORKSPACE_PATH: terminalCwd } : {}),
       NAMESPACE_ID: namespaceId,
       ORG_ID: orgId,
       // agent profile env (default profile or workspace-assigned profile)

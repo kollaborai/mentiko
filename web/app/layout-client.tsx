@@ -25,6 +25,7 @@ import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
 import { MustChangePasswordGate } from "@/components/app-shell/must-change-password-gate";
 import { getFloatingPanelSrc, isFloatingPanelRoute, isFloatingPanelSurface } from "@/lib/ui/floating-app-panel-routing";
 import { usePillNavPreferences } from "@/lib/ui/pill-nav-preferences";
+import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { applyStoredUserDisplayPreferences } from "@/lib/ui/user-display-preferences";
 
 // pages that render standalone (no nav, no sidebar, no providers)
@@ -79,6 +80,14 @@ function NotificationsInit() {
 
 function PillNavPreferencesInit() {
   const hydrate = usePillNavPreferences((state) => state.hydrate);
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
+  return null;
+}
+
+function TerminalPreferencesInit() {
+  const hydrate = useTerminalPreferences((state) => state.hydrate);
   useEffect(() => {
     hydrate();
   }, [hydrate]);
@@ -328,6 +337,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
     <>
       <NotificationsInit />
       <PillNavPreferencesInit />
+      <TerminalPreferencesInit />
       <WorkspaceProvider>
         <UserProvider>
           <Suspense fallback={null}>

@@ -3,8 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { RefreshFilled, CommandSquareFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, RotateLeftFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
+import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { cn } from "@/lib/utils";
 
 interface PtySession {
@@ -222,6 +224,10 @@ function OutputViewer({ name, onClose }: OutputViewerProps) {
 
 export default function PtySessionsPage() {
   const { fetchWithNamespace } = useNamespaceFetch();
+  const {
+    prefs: terminalPrefs,
+    setAutoCdFloatingTerminalToWorkspace,
+  } = useTerminalPreferences();
   const [sessions, setSessions] = useState<PtySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
@@ -307,48 +313,63 @@ export default function PtySessionsPage() {
         ]}
       />
       <div className="px-4 py-3 max-w-4xl mx-auto">
-
-      <div className="rounded-md overflow-hidden bg-card">
-        {loading ? (
-          <>
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-          </>
-        ) : sessions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <CommandSquareFilled className="h-8 w-8 text-foreground/20 mb-3" />
-            <p className="text-sm text-foreground/40">No PTY sessions found.</p>
-            <p className="text-xs text-foreground/25 mt-1">
-              PTY manager may not be running.
-            </p>
-          </div>
-        ) : (
-          sessions.map((session) => (
-            <div key={session.name}>
-              <SessionRow
-                session={session}
-                expanded={expandedOutput === session.name}
-                onToggleOutput={() =>
-                  setExpandedOutput((prev) =>
-                    prev === session.name ? null : session.name
-                  )
-                }
-                onKill={() => handleKill(session.name)}
-                onRestart={() => handleRestart(session.name)}
-                killing={!!killing[session.name]}
-                restarting={!!restarting[session.name]}
-              />
-              {expandedOutput === session.name && (
-                <OutputViewer
-                  name={session.name}
-                  onClose={() => setExpandedOutput(null)}
-                />
-              )}
+        <div className="mb-4 rounded-md bg-card p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold">Floating Terminal</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Automatically cd floating terminal sessions to the active workspace when attaching or reopening.
+              </p>
             </div>
-          ))
-        )}
-      </div>
+            <Switch
+              checked={terminalPrefs.autoCdFloatingTerminalToWorkspace}
+              onCheckedChange={setAutoCdFloatingTerminalToWorkspace}
+              aria-label="Auto-cd floating terminal to active workspace"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-md overflow-hidden bg-card">
+          {loading ? (
+            <>
+              <SkeletonRow />
+              <SkeletonRow />
+              <SkeletonRow />
+            </>
+          ) : sessions.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <CommandSquareFilled className="h-8 w-8 text-foreground/20 mb-3" />
+              <p className="text-sm text-foreground/40">No PTY sessions found.</p>
+              <p className="text-xs text-foreground/25 mt-1">
+                PTY manager may not be running.
+              </p>
+            </div>
+          ) : (
+            sessions.map((session) => (
+              <div key={session.name}>
+                <SessionRow
+                  session={session}
+                  expanded={expandedOutput === session.name}
+                  onToggleOutput={() =>
+                    setExpandedOutput((prev) =>
+                      prev === session.name ? null : session.name
+                    )
+                  }
+                  onKill={() => handleKill(session.name)}
+                  onRestart={() => handleRestart(session.name)}
+                  killing={!!killing[session.name]}
+                  restarting={!!restarting[session.name]}
+                />
+                {expandedOutput === session.name && (
+                  <OutputViewer
+                    name={session.name}
+                    onClose={() => setExpandedOutput(null)}
+                  />
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

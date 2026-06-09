@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { usePillNavPreferences, getPillNavShineGradient } from "@/lib/ui/pill-nav-preferences";
+import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 
@@ -73,6 +74,14 @@ const MIN_W = 400;
 const MIN_H = 280;
 const MOBILE_BREAKPOINT = 640;
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function isFloatingTerminalSession(sessionName: string): boolean {
+  return sessionName.startsWith("term-");
+}
+
 function loadGeo(): PanelGeometry {
   if (typeof window === "undefined") return DEFAULT_GEO;
   try {
@@ -86,7 +95,7 @@ function saveGeo(geo: PanelGeometry) {
 }
 
 export function FloatingTerminalPanel() {
-  const { workspacePath, workspaceId } = useWorkspace();
+  const { workspacePath, workspaceId, workspaceReady, refetch: refetchWorkspaces } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<PtySession[]>([]);
   const [activeSession, setActiveSession] = useState<string | null>(null);
@@ -99,6 +108,7 @@ export function FloatingTerminalPanel() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [copiedSession, setCopiedSession] = useState<string | null>(null);
   const { prefs: pillPrefs } = usePillNavPreferences();
+  const { prefs: terminalPrefs } = useTerminalPreferences();
   const shineColors = getPillNavShineGradient(pillPrefs);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -135,6 +145,40 @@ export function FloatingTerminalPanel() {
       // pty-manager not running
     }
   }, []);
+
+  const resolveWorkspacePathForSpawn = useCallback(async () => {
+    const currentPath = workspacePath.trim();
+    if (currentPath) return currentPath;
+    if (!workspaceId || workspaceReady) return "";
+
+    try {
+      const loadedWorkspaces = await refetchWorkspaces();
+      return loadedWorkspaces.find((workspace) => workspace.id === workspaceId)?.path?.trim() ?? "";
+    } catch {
+      return "";
+    }
+  }, [refetchWorkspaces, workspaceId, workspacePath, workspaceReady]);
+
+  const ensureSessionCwd = useCallback(async (sessionName: string) => {
+    const targetPath = workspacePath.trim();
+    if (
+      !terminalPrefs.autoCdFloatingTerminalToWorkspace ||
+      !targetPath ||
+      !isFloatingTerminalSession(sessionName)
+    ) {
+      return;
+    }
+
+    try {
+      await fetch(`/api/pty/sessions/${encodeURIComponent(sessionName)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `cd ${shellQuote(targetPath)}\r` }),
+      });
+    } catch {
+      // attaching should not fail just because the pty daemon is unavailable
+    }
+  }, [terminalPrefs.autoCdFloatingTerminalToWorkspace, workspacePath]);
 
   useEffect(() => {
     const handleToggle = () => setOpen((v) => !v);
@@ -195,14 +239,24 @@ export function FloatingTerminalPanel() {
     }
   }, [activeSession, sessions]);
 
+  useEffect(() => {
+    if (!open || !activeSession) return;
+    void ensureSessionCwd(activeSession);
+  }, [activeSession, ensureSessionCwd, open, terminalKey]);
+
   const spawnNew = useCallback(async () => {
     setSpawning(true);
     try {
       const name = `term-${Date.now()}`;
+      const resolvedWorkspacePath = await resolveWorkspacePathForSpawn();
       const res = await fetch("/api/terminal/spawn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd: workspacePath || undefined, workspaceId: workspaceId || undefined }),
+        body: JSON.stringify({
+          name,
+          cwd: resolvedWorkspacePath || undefined,
+          workspaceId: workspaceId || undefined,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -214,7 +268,7 @@ export function FloatingTerminalPanel() {
     } finally {
       setSpawning(false);
     }
-  }, [fetchSessions, fetchWsUrl, workspacePath, workspaceId]);
+  }, [fetchSessions, fetchWsUrl, resolveWorkspacePathForSpawn, workspaceId]);
 
   const attachSession = async (name: string) => {
     await fetchWsUrl(); // fresh single-use token per connection
