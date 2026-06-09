@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-06-01)
 
 ## summary
-- total routes: 325
-- authenticated: 308   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 326
+- authenticated: 309   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -239,6 +239,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - prometheus/route.ts
 - pty/sessions/[name]/restart/route.ts
 - pty/sessions/[name]/route.ts
+- pty/sessions/[name]/send/route.ts
 - pty/sessions/route.ts
 - retry/circuit/route.ts
 - retry/config/route.ts
