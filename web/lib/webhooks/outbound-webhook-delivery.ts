@@ -22,13 +22,20 @@ interface OutboundWebhookResponse {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-const safeLookup: LookupFunction = (hostname, options, callback) => {
+function resolvedAddressesContainBlockedTarget(address: unknown): boolean {
+  const addresses = Array.isArray(address)
+    ? address.map((entry) => typeof entry?.address === "string" ? entry.address : undefined)
+    : [typeof address === "string" ? address : undefined];
+  return addresses.some((entry) => entry !== undefined && isBlockedOutboundAddress(entry));
+}
+
+export const safeOutboundWebhookLookup: LookupFunction = (hostname, options, callback) => {
   dnsLookup(hostname, options, (error, address, family) => {
     if (error) {
       callback(error, address, family);
       return;
     }
-    if (typeof address === "string" && isBlockedOutboundAddress(address)) {
+    if (resolvedAddressesContainBlockedTarget(address)) {
       callback(new Error("private outbound webhook target blocked"), address, family);
       return;
     }
@@ -50,7 +57,7 @@ export async function postOutboundWebhook(
     const req = transport(url, {
       method: request.method,
       headers: request.headers,
-      lookup: safeLookup,
+      lookup: safeOutboundWebhookLookup,
     }, (res) => {
       res.on("end", () => {
         if (isRedirectStatus(res.statusCode)) {

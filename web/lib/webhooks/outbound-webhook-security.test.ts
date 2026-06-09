@@ -6,6 +6,14 @@ describe("outbound webhook security", () => {
     expect(security.normalizeOutboundWebhookUrl("http://[::ffff:169.254.169.254]/")).toBeUndefined();
   });
 
+  it("rejects IPv4-compatible IPv6 and the full link-local range", async () => {
+    const security = await import("./outbound-webhook-security");
+
+    expect(security.normalizeOutboundWebhookUrl("http://[::7f00:1]/")).toBeUndefined();
+    expect(security.normalizeOutboundWebhookUrl("http://[fe90::1]/")).toBeUndefined();
+    expect(security.normalizeOutboundWebhookUrl("http://[febf::1]/")).toBeUndefined();
+  });
+
   it("rejects hostnames that resolve to private addresses", async () => {
     const security = await import("./outbound-webhook-security");
 

@@ -28,9 +28,10 @@ export function isBlockedOutboundAddress(address: string): boolean {
     return (
       host === "::" ||
       host === "::1" ||
+      /^::[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(host) ||
       host.startsWith("fc") ||
       host.startsWith("fd") ||
-      host.startsWith("fe80:")
+      /^fe[89ab][0-9a-f]?:/i.test(host)
     );
   }
   return false;
