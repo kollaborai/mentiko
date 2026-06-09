@@ -51,6 +51,11 @@ interface GeneratedOutbound {
 interface GeneratedInbound {
   name: string;
   chainId: string;
+  goal?: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  agentProfileId?: string;
+  executor?: string;
   explanation?: string;
 }
 
@@ -58,7 +63,7 @@ interface WebhookGenerateDialogProps {
   open: boolean;
   webhookType: "outbound" | "inbound";
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (created?: { webhook?: { id: string }; token?: string }) => void;
   workspacePath?: string;
 }
 
@@ -97,6 +102,11 @@ export function WebhookGenerateDialog({
   // inbound fields
   const [inName, setInName] = useState("");
   const [inChainId, setInChainId] = useState("");
+  const [inGoal, setInGoal] = useState("");
+  const [inWorkspaceId, setInWorkspaceId] = useState("");
+  const [inWorkspacePath, setInWorkspacePath] = useState(workspacePath || "");
+  const [inAgentProfileId, setInAgentProfileId] = useState("");
+  const [inExecutor, setInExecutor] = useState("");
   const [inExplanation, setInExplanation] = useState("");
 
   const isOutbound = webhookType === "outbound";
@@ -135,6 +145,11 @@ export function WebhookGenerateDialog({
             const g = w as GeneratedInbound;
             setInName(g.name || "");
             setInChainId(g.chainId || "");
+            setInGoal(g.goal || "");
+            setInWorkspaceId(g.workspaceId || "");
+            setInWorkspacePath(g.workspacePath || workspacePath || "");
+            setInAgentProfileId(g.agentProfileId || "");
+            setInExecutor(g.executor || "");
             setInExplanation(g.explanation || "");
           }
           setStep("review");
@@ -181,10 +196,31 @@ export function WebhookGenerateDialog({
         const res = await fetchWithNamespace("/api/webhooks/inbound/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: inName, chainId: inChainId }),
+          body: JSON.stringify({
+            name: inName,
+            chainId: inChainId,
+            runDefaults: {
+              goal: inGoal || undefined,
+              workspaceId: inWorkspaceId || undefined,
+              workspacePath: inWorkspacePath || undefined,
+              agentProfileId: inAgentProfileId || undefined,
+              executor: inExecutor || undefined,
+              payloadMode: "both",
+            },
+            allowedOverrides: {
+              goal: false,
+              workspace: false,
+              profile: false,
+              executor: false,
+              metadata: true,
+            },
+          }),
         });
         const raw = await res.json();
         if (!res.ok) throw new Error(getApiErrorMessage(raw, "Failed to create webhook"));
+        onCreated(raw.data || raw);
+        handleClose();
+        return;
       }
 
       onCreated();
@@ -201,7 +237,7 @@ export function WebhookGenerateDialog({
     setPrompt("");
     setError("");
     setOutName(""); setOutUrl(""); setOutEvents([]); setOutExplanation("");
-    setInName(""); setInChainId(""); setInExplanation("");
+    setInName(""); setInChainId(""); setInGoal(""); setInWorkspaceId(""); setInWorkspacePath(workspacePath || ""); setInAgentProfileId(""); setInExecutor(""); setInExplanation("");
     onClose();
   };
 
@@ -363,6 +399,58 @@ export function WebhookGenerateDialog({
                   placeholder="chain-id or chain name"
                   className="h-9 text-sm bg-muted"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Goal</Label>
+                <Textarea
+                  value={inGoal}
+                  onChange={(e) => setInGoal(e.target.value)}
+                  placeholder="What should this webhook-triggered run accomplish?"
+                  className="min-h-[88px] text-sm bg-muted resize-y"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Workspace ID</Label>
+                  <Input
+                    value={inWorkspaceId}
+                    onChange={(e) => setInWorkspaceId(e.target.value)}
+                    placeholder="workspace id"
+                    className="h-9 text-sm bg-muted font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Profile ID</Label>
+                  <Input
+                    value={inAgentProfileId}
+                    onChange={(e) => setInAgentProfileId(e.target.value)}
+                    placeholder="profile id"
+                    className="h-9 text-sm bg-muted font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Workspace Path</Label>
+                  <Input
+                    value={inWorkspacePath}
+                    onChange={(e) => setInWorkspacePath(e.target.value)}
+                    placeholder="/app/namespaces/..."
+                    className="h-9 text-sm bg-muted font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Executor</Label>
+                  <Input
+                    value={inExecutor}
+                    onChange={(e) => setInExecutor(e.target.value)}
+                    placeholder="kollab, codex, claude"
+                    className="h-9 text-sm bg-muted font-mono"
+                  />
+                </div>
               </div>
             </div>
 

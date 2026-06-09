@@ -667,10 +667,12 @@ Response:
 | GET/POST | `/api/webhooks/github` | GitHub webhook info / handler | Files: webhooks/subscriptions.json, events/*.event | HMAC signature | No | (server-side only) | |
 | GET/POST | `/api/webhooks/inbound/config` | List/create inbound webhook configs (token-based) | File: inbound-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
 | PATCH/DELETE | `/api/webhooks/inbound/config/{id}` | Update, regenerate token, or delete inbound webhook config | File: inbound-webhooks.json | manage_chains | Yes | webhooks page, webhook-generate-dialog | |
-| POST | `/api/webhooks/inbound/{token}` | Execute inbound webhook via token | Files: inbound-webhooks.json; Chains API | token | No | (external services only) | |
+| POST | `/api/webhooks/inbound/{token}` | Execute inbound webhook via token | Files: inbound-webhooks.json, inbound-webhook-triggers.json; chain run service | token | No | (external services only) | Returns runId, triggerId, statusToken, statusUrl |
+| GET | `/api/webhooks/inbound/triggers/{triggerId}` | Check inbound trigger and current run status | Files: inbound-webhook-triggers.json, runs/{runId}/run.json | status token | No | (external services only) | token query param or x-webhook-status-token header required |
 | POST | `/api/webhooks/generate` | AI-generate webhook config (inbound/outbound) | External: Anthropic API (via cliPipe) | checkAuth | Yes | webhook-generate-dialog | |
-| GET/POST/PUT | `/api/webhooks/config` | List/create/update legacy mentiko webhooks | File: mentiko-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | |
-| GET/DELETE | `/api/webhooks/config/{id}` | Read/delete legacy mentiko webhook | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | view/manage | Yes | webhooks page, webhook-generate-dialog | |
+| GET/POST/PUT | `/api/webhooks/config` | List/create/update outbound runtime webhooks | File: mentiko-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | Secrets encrypted at rest and masked in responses |
+| GET/POST/DELETE | `/api/webhooks/config/{id}` | Read/test/delete outbound runtime webhook | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | view/manage | Yes | webhooks page, webhook-generate-dialog | POST sends test delivery |
+| POST | `/api/webhooks/config/{id}/test` | Send outbound runtime webhook test delivery | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | manage_chains | Yes | webhooks page | Compatibility path used by detail panel |
 | POST | `/api/webhooks/stripe` | Handle Stripe webhook events (subscription lifecycle) | Files: subscription.json, stripe-events.jsonl; External: Stripe | Stripe secret | No | (server-side only) | |
 
 ---
