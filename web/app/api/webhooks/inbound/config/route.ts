@@ -2,12 +2,12 @@ import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
+  createInboundWebhook,
   listInboundWebhooks,
-  saveInboundWebhooks,
-  generateToken,
 } from "@/lib/webhooks/inbound-webhook-storage";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (perm) return perm;
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
-  const { name, chainId, scheduleId } = await request.json();
+  const { name, chainId, scheduleId, runDefaults, allowedOverrides } = await request.json();
 
   if (!name) {
     throw new BadRequest("name required", { field: "name" });
@@ -33,23 +33,17 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("chainId or scheduleId required", { field: ["chainId", "scheduleId"] });
   }
 
-  const { token, tokenHash, tokenPreview } = generateToken();
-  const hook = {
-    id: crypto.randomUUID(),
+  const user = await getSessionUser(request);
+  const { webhook, token } = createInboundWebhook(namespaceId, orgId, {
     name,
-    tokenHash,
-    tokenPreview,
     chainId: chainId || undefined,
     scheduleId: scheduleId || undefined,
-    active: true,
-    createdAt: new Date().toISOString(),
-    useCount: 0,
-  };
-
-  const hooks = listInboundWebhooks(namespaceId, orgId);
-  hooks.push(hook);
-  saveInboundWebhooks(namespaceId, orgId, hooks);
+    createdBy: user?.id,
+    createdByRole: user?.role,
+    runDefaults,
+    allowedOverrides,
+  });
 
   // return the raw token ONCE — never stored
-  return apiSuccess({ webhook: hook, token }, undefined, 201);
+  return apiSuccess({ webhook, token }, undefined, 201);
 });

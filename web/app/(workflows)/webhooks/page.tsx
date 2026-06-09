@@ -30,6 +30,21 @@ interface InboundWebhook {
   tokenPreview: string;
   chainId?: string;
   scheduleId?: string;
+  runDefaults?: {
+    goal?: string;
+    workspaceId?: string;
+    workspacePath?: string;
+    agentProfileId?: string;
+    executor?: string;
+    payloadMode?: "context" | "metadata" | "both";
+  };
+  allowedOverrides?: {
+    goal?: boolean;
+    workspace?: boolean;
+    profile?: boolean;
+    executor?: boolean;
+    metadata?: boolean;
+  };
   active: boolean;
   createdAt: string;
   lastUsedAt?: string;
@@ -48,6 +63,7 @@ interface WebhookConfig {
   url: string;
   events: MentikoEventType[];
   secret?: string;
+  hasSecret?: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -159,7 +175,16 @@ export default function WebhooksPage() {
   const [inboundWebhooks, setInboundWebhooks] = useState<InboundWebhook[]>([]);
   const [inboundLoading, setInboundLoading] = useState(false);
   const [showNewToken, setShowNewToken] = useState<{ id: string; token: string } | null>(null);
-  const [inboundForm, setInboundForm] = useState<{ name: string; chainId: string; scheduleId: string } | null>(null);
+  const [inboundForm, setInboundForm] = useState<{
+    name: string;
+    chainId: string;
+    scheduleId: string;
+    goal: string;
+    workspaceId: string;
+    workspacePath: string;
+    agentProfileId: string;
+    executor: string;
+  } | null>(null);
   const [inboundSaving, setInboundSaving] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [generateDialog, setGenerateDialog] = useState<"outbound" | "inbound" | null>(null);
@@ -182,9 +207,10 @@ export default function WebhooksPage() {
     fetchWithNamespace("/api/webhooks/config")
       .then((r) => r.json())
       .then((d) => {
-        setWebhooks(d.webhooks || []);
-        if (d.webhooks?.length) {
-          setSelected((s) => s ?? d.webhooks[0]);
+        const nextWebhooks = d.data?.webhooks || d.webhooks || [];
+        setWebhooks(nextWebhooks);
+        if (nextWebhooks.length) {
+          setSelected((s) => s ?? nextWebhooks[0]);
         }
       })
       .catch(() => setWebhooks([]))
@@ -195,7 +221,7 @@ export default function WebhooksPage() {
     setInboundLoading(true);
     fetchWithNamespace("/api/webhooks/inbound/config")
       .then((r) => r.json())
-      .then((d) => setInboundWebhooks(d.webhooks || []))
+      .then((d) => setInboundWebhooks(d.data?.webhooks || d.webhooks || []))
       .catch(() => {})
       .finally(() => setInboundLoading(false));
   };
@@ -215,12 +241,28 @@ export default function WebhooksPage() {
           name: inboundForm.name,
           chainId: inboundForm.chainId || undefined,
           scheduleId: inboundForm.scheduleId || undefined,
+          runDefaults: {
+            goal: inboundForm.goal || undefined,
+            workspaceId: inboundForm.workspaceId || undefined,
+            workspacePath: inboundForm.workspacePath || undefined,
+            agentProfileId: inboundForm.agentProfileId || undefined,
+            executor: inboundForm.executor || undefined,
+            payloadMode: "both",
+          },
+          allowedOverrides: {
+            goal: false,
+            workspace: false,
+            profile: false,
+            executor: false,
+            metadata: true,
+          },
         }),
       });
       const data = await res.json();
       if (!res.ok) return;
-      setInboundWebhooks((prev) => [...prev, data.webhook]);
-      setShowNewToken({ id: data.webhook.id, token: data.token });
+      const created = data.data || data;
+      setInboundWebhooks((prev) => [...prev, created.webhook]);
+      setShowNewToken({ id: created.webhook.id, token: created.token });
       setInboundForm(null);
     } finally {
       setInboundSaving(false);
@@ -242,8 +284,9 @@ export default function WebhooksPage() {
       body: JSON.stringify({ regenerate: true }),
     });
     const data = await res.json();
-    setInboundWebhooks((prev) => prev.map((h) => h.id === id ? data.webhook : h));
-    setShowNewToken({ id, token: data.token });
+    const updated = data.data || data;
+    setInboundWebhooks((prev) => prev.map((h) => h.id === id ? updated.webhook : h));
+    setShowNewToken({ id, token: updated.token });
   };
 
   const copyToClipboardWithFeedback = (text: string, id: string) => {
@@ -282,7 +325,7 @@ export default function WebhooksPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(getApiErrorMessage(data, "Failed to save webhook"));
 
-      const newWebhook = data.webhook;
+      const newWebhook = (data.data || data).webhook;
       setWebhooks((prev) => [...prev, newWebhook]);
       setSelected(newWebhook);
       setShowForm(false);
@@ -317,7 +360,7 @@ export default function WebhooksPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(getApiErrorMessage(data, "Failed to update webhook"));
 
-      const updated = data.webhook;
+      const updated = (data.data || data).webhook;
       setWebhooks((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
       setSelected(updated);
     } catch (err) {
@@ -384,8 +427,9 @@ export default function WebhooksPage() {
         method: "POST",
       });
       const data = await res.json();
+      const result = data.data || data;
       if (res.ok) {
-        setTestResult({ ok: true, message: data.message || `Delivered (${data.httpCode || 200})` });
+        setTestResult({ ok: true, message: result.message || `Delivered (${result.httpCode || 200})` });
       } else {
         setTestResult({ ok: false, message: getApiErrorMessage(data, "Test delivery failed") });
       }
@@ -459,7 +503,7 @@ export default function WebhooksPage() {
                 onChange={setInboundSearchQuery}
                 placeholder="Search inbound..."
               />
-              <Button size="sm" variant="default" className="shrink-0" onClick={() => setInboundForm({ name: "", chainId: "", scheduleId: "" })} disabled={!!inboundForm} title="New inbound endpoint">
+              <Button size="sm" variant="default" className="shrink-0" onClick={() => setInboundForm({ name: "", chainId: "", scheduleId: "", goal: "", workspaceId: "", workspacePath, agentProfileId: "", executor: "" })} disabled={!!inboundForm} title="New inbound endpoint">
                 <AddFilled className="h-3 w-3" />
               </Button>
               <Button size="sm" variant="default" className="shrink-0" onClick={() => setGenerateDialog("inbound")} title="Generate with AI">
@@ -483,7 +527,7 @@ export default function WebhooksPage() {
                 icon={<Webhook className="h-8 w-8" />}
                 title="No inbound endpoints"
                 description="Create inbound webhooks to let external services trigger your chains via HTTP"
-                action={{ label: "New Endpoint", onClick: () => setInboundForm({ name: "", chainId: "", scheduleId: "" }) }}
+                action={{ label: "New Endpoint", onClick: () => setInboundForm({ name: "", chainId: "", scheduleId: "", goal: "", workspaceId: "", workspacePath, agentProfileId: "", executor: "" }) }}
               />
             ) : (
               <div className="p-2 space-y-1">
@@ -608,6 +652,59 @@ export default function WebhooksPage() {
                     className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
                   />
                 </div>
+                <div className="bg-card rounded-md p-3 space-y-1">
+                  <label className="text-xs text-foreground/50">Goal (optional)</label>
+                  <textarea
+                    value={inboundForm.goal}
+                    onChange={(e) => setInboundForm({ ...inboundForm, goal: e.target.value })}
+                    placeholder="What should this webhook-triggered run accomplish?"
+                    className="w-full min-h-[88px] resize-y bg-muted rounded px-2 py-1.5 text-sm focus:outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="bg-card rounded-md p-3 space-y-1">
+                    <label className="text-xs text-foreground/50">Workspace ID</label>
+                    <input
+                      type="text"
+                      value={inboundForm.workspaceId}
+                      onChange={(e) => setInboundForm({ ...inboundForm, workspaceId: e.target.value })}
+                      placeholder="workspace id"
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  </div>
+                  <div className="bg-card rounded-md p-3 space-y-1">
+                    <label className="text-xs text-foreground/50">Profile ID</label>
+                    <input
+                      type="text"
+                      value={inboundForm.agentProfileId}
+                      onChange={(e) => setInboundForm({ ...inboundForm, agentProfileId: e.target.value })}
+                      placeholder="agent profile id"
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="bg-card rounded-md p-3 space-y-1">
+                    <label className="text-xs text-foreground/50">Workspace Path</label>
+                    <input
+                      type="text"
+                      value={inboundForm.workspacePath}
+                      onChange={(e) => setInboundForm({ ...inboundForm, workspacePath: e.target.value })}
+                      placeholder="/app/namespaces/.../workspace/..."
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  </div>
+                  <div className="bg-card rounded-md p-3 space-y-1">
+                    <label className="text-xs text-foreground/50">Executor</label>
+                    <input
+                      type="text"
+                      value={inboundForm.executor}
+                      onChange={(e) => setInboundForm({ ...inboundForm, executor: e.target.value })}
+                      placeholder="kollab, codex, claude"
+                      className="w-full bg-muted rounded px-2 py-1.5 text-sm font-mono focus:outline-none"
+                    />
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => setInboundForm(null)} disabled={inboundSaving}>
                     Cancel
@@ -690,6 +787,44 @@ export default function WebhooksPage() {
                   <div className="bg-card rounded-md p-3">
                     <label className="text-xs text-foreground/50">Schedule ID</label>
                     <p className="text-sm font-mono mt-1">{selectedInbound.scheduleId}</p>
+                  </div>
+                )}
+
+                {selectedInbound.runDefaults?.goal && (
+                  <div className="bg-card rounded-md p-3">
+                    <label className="text-xs text-foreground/50">Goal</label>
+                    <p className="text-sm text-foreground/70 mt-1 whitespace-pre-wrap">
+                      {selectedInbound.runDefaults.goal}
+                    </p>
+                  </div>
+                )}
+
+                {(selectedInbound.runDefaults?.workspaceId || selectedInbound.runDefaults?.workspacePath || selectedInbound.runDefaults?.agentProfileId || selectedInbound.runDefaults?.executor) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {selectedInbound.runDefaults.workspaceId && (
+                      <div className="bg-card rounded-md p-3">
+                        <label className="text-xs text-foreground/50">Workspace ID</label>
+                        <p className="text-sm font-mono mt-1 truncate">{selectedInbound.runDefaults.workspaceId}</p>
+                      </div>
+                    )}
+                    {selectedInbound.runDefaults.agentProfileId && (
+                      <div className="bg-card rounded-md p-3">
+                        <label className="text-xs text-foreground/50">Profile ID</label>
+                        <p className="text-sm font-mono mt-1 truncate">{selectedInbound.runDefaults.agentProfileId}</p>
+                      </div>
+                    )}
+                    {selectedInbound.runDefaults.workspacePath && (
+                      <div className="bg-card rounded-md p-3">
+                        <label className="text-xs text-foreground/50">Workspace Path</label>
+                        <p className="text-sm font-mono mt-1 truncate">{selectedInbound.runDefaults.workspacePath}</p>
+                      </div>
+                    )}
+                    {selectedInbound.runDefaults.executor && (
+                      <div className="bg-card rounded-md p-3">
+                        <label className="text-xs text-foreground/50">Executor</label>
+                        <p className="text-sm font-mono mt-1 truncate">{selectedInbound.runDefaults.executor}</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1067,13 +1202,16 @@ export default function WebhooksPage() {
           webhookType={generateDialog}
           onClose={() => setGenerateDialog(null)}
           workspacePath={workspacePath}
-          onCreated={() => {
+          onCreated={(created) => {
             if (generateDialog === "inbound") {
+              if (created?.webhook?.id && created.token) {
+                setShowNewToken({ id: created.webhook.id, token: created.token });
+              }
               loadInbound();
             } else {
               fetchWithNamespace("/api/webhooks/config")
                 .then((r) => r.json())
-                .then((d) => setWebhooks(d.webhooks || []))
+                .then((d) => setWebhooks(d.data?.webhooks || d.webhooks || []))
                 .catch(() => {});
             }
           }}

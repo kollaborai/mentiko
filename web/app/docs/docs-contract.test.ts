@@ -18,11 +18,15 @@ describe("docs contract", () => {
     expect(page).not.toContain("PATCH  /api/webhooks/{id}");
     expect(page).toContain("POST   /api/webhooks/{id}                # test subscription");
     expect(page).toContain("DELETE /api/webhooks/{id}                # delete subscription");
+    expect(page).toContain("POST   /api/webhooks/config/{id}/test    # send test delivery");
     expect(page).toContain("PATCH  /api/webhooks/inbound/config/{id} # update or regenerate token");
     expect(page).toContain("DELETE /api/webhooks/inbound/config/{id} # delete inbound endpoint");
+    expect(page).toContain("GET    /api/webhooks/inbound/triggers/{id}?token=mws_...");
 
     expect(apiReference).not.toContain("GET/POST/DELETE | `/api/webhooks/{id}`");
     expect(apiReference).toContain("| POST/DELETE | `/api/webhooks/{id}` | Test/delete webhook subscription |");
+    expect(apiReference).toContain("| GET/POST/DELETE | `/api/webhooks/config/{id}` | Read/test/delete outbound runtime webhook |");
+    expect(apiReference).toContain("| GET | `/api/webhooks/inbound/triggers/{triggerId}` | Check inbound trigger and current run status |");
     expect(apiReference).toContain("| PATCH/DELETE | `/api/webhooks/inbound/config/{id}` | Update, regenerate token, or delete inbound webhook config |");
   });
 

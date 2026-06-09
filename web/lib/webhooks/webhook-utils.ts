@@ -6,6 +6,14 @@
 import { readFileSync, existsSync, writeFileSync } from "fs";
 import { join } from "path";
 import { orgPath } from "../config";
+import {
+  appendOutboundDelivery,
+  getOutboundWebhookSecret,
+  listOutboundWebhooksForEvent,
+  signOutboundPayload,
+  type OutboundWebhookConfig,
+} from "@/lib/webhooks/outbound-webhook-storage";
+import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
 
 export type WebhookEvent = "started" | "completed" | "failed";
 
@@ -124,12 +132,13 @@ export async function fireWebhooks(
     return;
   }
 
-  const webhooks = chain.metadata?.webhooks || [];
-  const matchingWebhooks = webhooks.filter(
+  const chainWebhooks = chain.metadata?.webhooks || [];
+  const matchingChainWebhooks = chainWebhooks.filter(
     (w: ChainWebhook) => w.enabled && w.events.includes(event)
   );
+  const matchingOrgWebhooks = listOutboundWebhooksForEvent(namespaceId, orgId, event);
 
-  if (matchingWebhooks.length === 0) {
+  if (matchingChainWebhooks.length === 0 && matchingOrgWebhooks.length === 0) {
     return; // no webhooks to fire
   }
 
@@ -147,8 +156,13 @@ export async function fireWebhooks(
   };
 
   // fire all webhooks in parallel, don't wait
-  matchingWebhooks.forEach((webhook: ChainWebhook) => {
+  matchingChainWebhooks.forEach((webhook: ChainWebhook) => {
     fireSingleWebhook(webhook, payload).catch((err) => {
+      console.error(`[webhook] failed to fire ${webhook.url}:`, err);
+    });
+  });
+  matchingOrgWebhooks.forEach((webhook) => {
+    fireOutboundWebhook(namespaceId, orgId, webhook, payload).catch((err) => {
       console.error(`[webhook] failed to fire ${webhook.url}:`, err);
     });
   });
@@ -183,15 +197,15 @@ async function fireSingleWebhook(
   }
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await postOutboundWebhook(webhook.url, {
       method: "POST",
       headers,
       body,
-      signal: AbortSignal.timeout(10000), // 10s timeout
+      timeoutMs: 10_000,
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`HTTP ${response.statusCode}`);
     }
 
     console.log(`[webhook] delivered ${payload.event} to ${webhook.url}`);
@@ -201,5 +215,62 @@ async function fireSingleWebhook(
       error instanceof Error ? error.message : String(error)
     );
     throw error;
+  }
+}
+
+export async function fireOutboundWebhook(
+  namespaceId: string,
+  orgId: string,
+  webhook: OutboundWebhookConfig,
+  payload: WebhookPayload
+): Promise<{ ok: boolean; httpCode?: number; error?: string }> {
+  const body = JSON.stringify(payload);
+  const secret = getOutboundWebhookSecret(webhook);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Webhook-Event": payload.event,
+    "X-Webhook-Chain": payload.chainId,
+    "X-Webhook-Timestamp": payload.timestamp,
+    "User-Agent": "mentiko/1.0",
+    ...webhook.headers,
+  };
+  if (secret) {
+    headers["X-Webhook-Signature"] = signOutboundPayload(secret, body);
+  }
+
+  const deliveryBase = {
+    id: crypto.randomUUID(),
+    webhookId: webhook.id,
+    event: payload.event,
+    chainId: payload.chainId,
+    runId: payload.runId,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    const response = await postOutboundWebhook(webhook.url, {
+      method: "POST",
+      headers,
+      body,
+      timeoutMs: 10_000,
+    });
+    const ok = response.statusCode >= 200 && response.statusCode < 300;
+    appendOutboundDelivery(namespaceId, orgId, {
+      ...deliveryBase,
+      status: ok ? "delivered" : "failed",
+      httpCode: response.statusCode,
+      ...(ok ? {} : { error: `HTTP ${response.statusCode}` }),
+    });
+    return ok
+      ? { ok: true, httpCode: response.statusCode }
+      : { ok: false, httpCode: response.statusCode, error: `HTTP ${response.statusCode}` };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    appendOutboundDelivery(namespaceId, orgId, {
+      ...deliveryBase,
+      status: "failed",
+      error: message,
+    });
+    return { ok: false, error: message };
   }
 }
