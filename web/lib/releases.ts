@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.37",
+    date: "June 9, 2026",
+    title: "Webhook and Terminal Reliability",
+    description:
+      "Webhook triggers now handle source retries more safely, outbound webhooks can be scoped and edited for selected chains, and inbound trigger status lookups are easier to poll. Floating terminal sessions can also follow the active workspace when opened or attached.",
+    category: "improvement",
+    docsHref: "/webhooks",
+  },
+  {
     version: "v0.3.36",
     date: "June 5, 2026",
     title: "Task Outcome Dashboard",
