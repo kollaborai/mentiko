@@ -24,7 +24,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (perm) return perm;
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
-  const { name, chainId, scheduleId, runDefaults, allowedOverrides } = await request.json();
+  const { name, chainId, scheduleId, runDefaults, allowedOverrides, idempotencyKeyPath } = await request.json();
 
   if (!name) {
     throw new BadRequest("name required", { field: "name" });
@@ -42,6 +42,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     createdByRole: user?.role,
     runDefaults,
     allowedOverrides,
+    idempotencyKeyPath,
   });
 
   // return the raw token ONCE — never stored

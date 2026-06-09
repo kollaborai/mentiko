@@ -65,6 +65,10 @@ export const PATCH = withErrorHandling(async (
   if (body.scheduleId !== undefined) hooks[idx] = { ...hooks[idx], scheduleId: body.scheduleId || undefined };
   if (body.runDefaults !== undefined) hooks[idx] = { ...hooks[idx], runDefaults: normalizeInboundRunDefaults(body.runDefaults) };
   if (body.allowedOverrides !== undefined) hooks[idx] = { ...hooks[idx], allowedOverrides: normalizeInboundAllowedOverrides(body.allowedOverrides) };
+  if (body.idempotencyKeyPath !== undefined) {
+    const path = typeof body.idempotencyKeyPath === "string" ? body.idempotencyKeyPath.trim().slice(0, 200) : "";
+    hooks[idx] = { ...hooks[idx], idempotencyKeyPath: path || undefined };
+  }
   if (!hooks[idx].chainId && !hooks[idx].scheduleId) {
     throw new BadRequest("chainId or scheduleId required", { field: ["chainId", "scheduleId"] });
   }

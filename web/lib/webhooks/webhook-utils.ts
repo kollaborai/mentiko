@@ -136,7 +136,7 @@ export async function fireWebhooks(
   const matchingChainWebhooks = chainWebhooks.filter(
     (w: ChainWebhook) => w.enabled && w.events.includes(event)
   );
-  const matchingOrgWebhooks = listOutboundWebhooksForEvent(namespaceId, orgId, event);
+  const matchingOrgWebhooks = listOutboundWebhooksForEvent(namespaceId, orgId, event, chainId);
 
   if (matchingChainWebhooks.length === 0 && matchingOrgWebhooks.length === 0) {
     return; // no webhooks to fire

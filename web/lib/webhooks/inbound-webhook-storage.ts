@@ -1,11 +1,21 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
 import { createHash, randomBytes } from "crypto";
 import type { OrgRole } from "../orgs/org-types";
 
 const FILE_NAME = "inbound-webhooks.json";
-const TRIGGERS_FILE_NAME = "inbound-webhook-triggers.json";
+// Trigger ledger is append-only JSONL (one full snapshot per write); the
+// latest state per trigger id is reconstructed by folding. The legacy
+// `.json` array file is still read as a fallback during migration.
+const TRIGGERS_FILE_NAME = "inbound-webhook-triggers.jsonl";
+const LEGACY_TRIGGERS_FILE_NAME = "inbound-webhook-triggers.json";
+const IDEMPOTENCY_FILE_NAME = "inbound-webhook-idempotency.jsonl";
+// Retention/compaction bounds so the append-only logs stay bounded.
+const MAX_RETAINED_TRIGGERS = 500;
+const TRIGGER_COMPACT_THRESHOLD = 2000;
+const MAX_IDEMPOTENCY_RECORDS = 2000;
+const IDEMPOTENCY_COMPACT_THRESHOLD = 4000;
 
 export type InboundWebhookPayloadMode = "context" | "metadata" | "both";
 export type InboundTriggerStatus = "accepted" | "started" | "failed";
@@ -38,6 +48,9 @@ export interface InboundWebhook {
   createdByRole?: OrgRole;
   runDefaults?: InboundWebhookRunDefaults;
   allowedOverrides?: InboundWebhookAllowedOverrides;
+  // Optional payload path (e.g. "delivery.id" or "head_commit.id") used to
+  // derive an idempotency key when the request has no Idempotency-Key header.
+  idempotencyKeyPath?: string;
   active: boolean;
   createdAt: string;
   lastUsedAt?: string;
@@ -52,6 +65,7 @@ export interface CreateInboundWebhookInput {
   createdByRole?: OrgRole;
   runDefaults?: InboundWebhookRunDefaults;
   allowedOverrides?: InboundWebhookAllowedOverrides;
+  idempotencyKeyPath?: string;
 }
 
 export interface InboundWebhookTrigger {
@@ -80,6 +94,14 @@ export interface CreateInboundTriggerInput {
   headers?: Record<string, string>;
 }
 
+export interface InboundIdempotencyRecord {
+  webhookId: string;
+  idempotencyKey: string;
+  triggerId: string;
+  runId?: string;
+  createdAt: string;
+}
+
 function getFilePath(namespaceId: string, orgId: string): string {
   return orgPath(namespaceId, orgId, FILE_NAME);
 }
@@ -106,6 +128,38 @@ function readJsonArray<T>(filePath: string): T[] {
 function saveJsonArray<T>(filePath: string, rows: T[]): void {
   ensureParentDir(filePath);
   writeFileSync(filePath, JSON.stringify(rows, null, 2));
+}
+
+// --- append-only JSONL helpers (used by the trigger ledger + idempotency log) ---
+
+function readJsonlRecords<T>(filePath: string): T[] {
+  if (!existsSync(filePath)) return [];
+  const out: T[] = [];
+  for (const line of readFileSync(filePath, "utf-8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      out.push(JSON.parse(trimmed) as T);
+    } catch {
+      // skip malformed rows
+    }
+  }
+  return out;
+}
+
+function appendJsonlRecord<T>(filePath: string, record: T): void {
+  ensureParentDir(filePath);
+  appendFileSync(filePath, `${JSON.stringify(record)}\n`);
+}
+
+function rewriteJsonlRecords<T>(filePath: string, records: T[]): void {
+  ensureParentDir(filePath);
+  writeFileSync(filePath, records.map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""));
+}
+
+function countJsonlLines(filePath: string): number {
+  if (!existsSync(filePath)) return 0;
+  return readFileSync(filePath, "utf-8").split("\n").filter((line) => line.trim()).length;
 }
 
 function generateStatusToken(): { statusToken: string; statusTokenHash: string; statusTokenPreview: string } {
@@ -230,6 +284,7 @@ export function createInboundWebhook(
     createdByRole: input.createdByRole,
     runDefaults: normalizeRunDefaults(input.runDefaults),
     allowedOverrides: normalizeAllowedOverrides(input.allowedOverrides),
+    idempotencyKeyPath: sanitizeString(input.idempotencyKeyPath, 200),
     active: true,
     createdAt: new Date().toISOString(),
     useCount: 0,
@@ -249,12 +304,48 @@ export function recordUsage(namespaceId: string, orgId: string, id: string): voi
   saveInboundWebhooks(namespaceId, orgId, hooks);
 }
 
-export function listInboundTriggers(namespaceId: string, orgId: string): InboundWebhookTrigger[] {
-  return readJsonArray<InboundWebhookTrigger>(getTriggersFilePath(namespaceId, orgId));
+function getIdempotencyFilePath(namespaceId: string, orgId: string): string {
+  return orgPath(namespaceId, orgId, IDEMPOTENCY_FILE_NAME);
 }
 
+// Fold the append-only trigger ledger into the latest snapshot per trigger id.
+// Falls back to the legacy `.json` array file when the JSONL ledger is absent.
+function foldTriggerSnapshots(namespaceId: string, orgId: string): Map<string, InboundWebhookTrigger> {
+  const map = new Map<string, InboundWebhookTrigger>();
+  const filePath = getTriggersFilePath(namespaceId, orgId);
+  const source = existsSync(filePath)
+    ? readJsonlRecords<InboundWebhookTrigger>(filePath)
+    : readJsonArray<InboundWebhookTrigger>(orgPath(namespaceId, orgId, LEGACY_TRIGGERS_FILE_NAME));
+  for (const snapshot of source) {
+    if (snapshot && typeof snapshot.id === "string") map.set(snapshot.id, snapshot);
+  }
+  return map;
+}
+
+function compactInboundTriggers(namespaceId: string, orgId: string): void {
+  const retained = Array.from(foldTriggerSnapshots(namespaceId, orgId).values())
+    .sort((a, b) => (a.acceptedAt < b.acceptedAt ? 1 : a.acceptedAt > b.acceptedAt ? -1 : 0))
+    .slice(0, MAX_RETAINED_TRIGGERS)
+    .reverse();
+  rewriteJsonlRecords(getTriggersFilePath(namespaceId, orgId), retained);
+}
+
+function appendTriggerSnapshot(namespaceId: string, orgId: string, trigger: InboundWebhookTrigger): void {
+  const filePath = getTriggersFilePath(namespaceId, orgId);
+  appendJsonlRecord(filePath, trigger);
+  if (countJsonlLines(filePath) > TRIGGER_COMPACT_THRESHOLD) {
+    compactInboundTriggers(namespaceId, orgId);
+  }
+}
+
+export function listInboundTriggers(namespaceId: string, orgId: string): InboundWebhookTrigger[] {
+  return Array.from(foldTriggerSnapshots(namespaceId, orgId).values())
+    .sort((a, b) => (a.acceptedAt < b.acceptedAt ? -1 : a.acceptedAt > b.acceptedAt ? 1 : 0));
+}
+
+// Compaction primitive: rewrite the ledger as one snapshot line per trigger.
 export function saveInboundTriggers(namespaceId: string, orgId: string, triggers: InboundWebhookTrigger[]): void {
-  saveJsonArray(getTriggersFilePath(namespaceId, orgId), triggers);
+  rewriteJsonlRecords(getTriggersFilePath(namespaceId, orgId), triggers);
 }
 
 export function createInboundTrigger(
@@ -278,9 +369,7 @@ export function createInboundTrigger(
     payloadPreview: previewJson(input.payload),
     headersPreview: normalizeHeaders(input.headers),
   };
-  const triggers = listInboundTriggers(namespaceId, orgId);
-  triggers.push(trigger);
-  saveInboundTriggers(namespaceId, orgId, triggers);
+  appendTriggerSnapshot(namespaceId, orgId, trigger);
   return { trigger, statusToken };
 }
 
@@ -290,20 +379,26 @@ export function updateInboundTrigger(
   triggerId: string,
   updates: Partial<Pick<InboundWebhookTrigger, "status" | "runId" | "error">>
 ): InboundWebhookTrigger | null {
-  const triggers = listInboundTriggers(namespaceId, orgId);
-  const idx = triggers.findIndex((trigger) => trigger.id === triggerId);
-  if (idx === -1) return null;
+  const current = foldTriggerSnapshots(namespaceId, orgId).get(triggerId);
+  if (!current) return null;
 
   const now = new Date().toISOString();
   const next: InboundWebhookTrigger = {
-    ...triggers[idx],
+    ...current,
     ...updates,
-    ...(updates.status === "started" ? { startedAt: triggers[idx].startedAt || now } : {}),
-    ...(updates.status === "failed" ? { failedAt: triggers[idx].failedAt || now } : {}),
+    ...(updates.status === "started" ? { startedAt: current.startedAt || now } : {}),
+    ...(updates.status === "failed" ? { failedAt: current.failedAt || now } : {}),
   };
-  triggers[idx] = next;
-  saveInboundTriggers(namespaceId, orgId, triggers);
+  appendTriggerSnapshot(namespaceId, orgId, next);
   return next;
+}
+
+export function getInboundTriggerById(
+  namespaceId: string,
+  orgId: string,
+  triggerId: string
+): InboundWebhookTrigger | null {
+  return foldTriggerSnapshots(namespaceId, orgId).get(triggerId) ?? null;
 }
 
 export function findInboundTriggerByStatusToken(
@@ -313,7 +408,57 @@ export function findInboundTriggerByStatusToken(
   statusToken: string
 ): InboundWebhookTrigger | null {
   const hash = hashToken(statusToken);
-  return listInboundTriggers(namespaceId, orgId).find(
-    (trigger) => trigger.id === triggerId && trigger.statusTokenHash === hash
-  ) ?? null;
+  const trigger = foldTriggerSnapshots(namespaceId, orgId).get(triggerId);
+  return trigger && trigger.statusTokenHash === hash ? trigger : null;
+}
+
+// --- inbound idempotency (dedupe repeated source deliveries) ---
+
+export function findInboundIdempotency(
+  namespaceId: string,
+  orgId: string,
+  webhookId: string,
+  idempotencyKey: string
+): InboundIdempotencyRecord | null {
+  let found: InboundIdempotencyRecord | null = null;
+  for (const record of readJsonlRecords<InboundIdempotencyRecord>(getIdempotencyFilePath(namespaceId, orgId))) {
+    if (record && record.webhookId === webhookId && record.idempotencyKey === idempotencyKey) {
+      found = record; // last write wins
+    }
+  }
+  return found;
+}
+
+function compactInboundIdempotency(namespaceId: string, orgId: string): void {
+  const map = new Map<string, InboundIdempotencyRecord>();
+  for (const record of readJsonlRecords<InboundIdempotencyRecord>(getIdempotencyFilePath(namespaceId, orgId))) {
+    if (record && record.webhookId && record.idempotencyKey) {
+      map.set(`${record.webhookId}::${record.idempotencyKey}`, record);
+    }
+  }
+  const retained = Array.from(map.values())
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+    .slice(0, MAX_IDEMPOTENCY_RECORDS)
+    .reverse();
+  rewriteJsonlRecords(getIdempotencyFilePath(namespaceId, orgId), retained);
+}
+
+export function recordInboundIdempotency(
+  namespaceId: string,
+  orgId: string,
+  input: { webhookId: string; idempotencyKey: string; triggerId: string; runId?: string }
+): InboundIdempotencyRecord {
+  const record: InboundIdempotencyRecord = {
+    webhookId: input.webhookId,
+    idempotencyKey: input.idempotencyKey,
+    triggerId: input.triggerId,
+    ...(input.runId ? { runId: input.runId } : {}),
+    createdAt: new Date().toISOString(),
+  };
+  const filePath = getIdempotencyFilePath(namespaceId, orgId);
+  appendJsonlRecord(filePath, record);
+  if (countJsonlLines(filePath) > IDEMPOTENCY_COMPACT_THRESHOLD) {
+    compactInboundIdempotency(namespaceId, orgId);
+  }
+  return record;
 }

@@ -1,9 +1,13 @@
 import { NextRequest } from "next/server";
 import {
   createInboundTrigger,
+  findInboundIdempotency,
   findWebhookByToken,
+  getInboundTriggerById,
+  recordInboundIdempotency,
   recordUsage,
   updateInboundTrigger,
+  type InboundWebhook,
 } from "@/lib/webhooks/inbound-webhook-storage";
 import { writeLog } from "@/lib/system/system-logger";
 import { Unauthorized, Forbidden, InternalServerError } from "@/lib/api-errors";
@@ -17,9 +21,27 @@ import {
   buildInboundRunBody,
   loadChainForInboundWebhook,
   normalizeWebhookHeaders,
+  readWebhookPayloadValue,
 } from "@/lib/webhooks/webhook-runtime";
 
 export const dynamic = "force-dynamic";
+
+// Idempotency key comes from a standard header, or a configured payload path
+// (e.g. "delivery.id"). Hooks/requests without a key keep prior behavior.
+function extractIdempotencyKey(
+  request: NextRequest,
+  hook: InboundWebhook,
+  payload: unknown,
+): string | undefined {
+  const headerKey =
+    request.headers.get("idempotency-key") || request.headers.get("x-idempotency-key");
+  let raw = headerKey || undefined;
+  if (!raw && hook.idempotencyKeyPath) {
+    raw = readWebhookPayloadValue(payload, hook.idempotencyKeyPath);
+  }
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed.slice(0, 200) : undefined;
+}
 
 async function getWebhookActor(namespaceId: string, hook: { createdBy?: string; createdByRole?: unknown }) {
   if (!hook.createdBy) {
@@ -68,6 +90,25 @@ export const POST = withErrorHandling(async (
     ? payload as Record<string, unknown>
     : {};
   const headers = normalizeWebhookHeaders(request.headers);
+
+  // idempotency: if this delivery carries a key we've already processed, return
+  // the original trigger/run instead of starting a duplicate run.
+  const idempotencyKey = extractIdempotencyKey(request, hook, payload);
+  if (idempotencyKey) {
+    const existing = findInboundIdempotency(namespaceId, orgId, hook.id, idempotencyKey);
+    if (existing) {
+      const prior = getInboundTriggerById(namespaceId, orgId, existing.triggerId);
+      return apiSuccess({
+        ok: true,
+        idempotent: true,
+        runId: existing.runId ?? prior?.runId,
+        triggerId: existing.triggerId,
+        status: prior?.status ?? "accepted",
+        statusUrl: `/api/webhooks/inbound/triggers/${existing.triggerId}`,
+      });
+    }
+  }
+
   const { trigger, statusToken } = createInboundTrigger(namespaceId, orgId, {
     webhookId: hook.id,
     chainId: hook.chainId,
@@ -117,6 +158,14 @@ export const POST = withErrorHandling(async (
         status: "started",
         runId: runData.runId,
       });
+      if (idempotencyKey) {
+        recordInboundIdempotency(namespaceId, orgId, {
+          webhookId: hook.id,
+          idempotencyKey,
+          triggerId: trigger.id,
+          runId: runData.runId,
+        });
+      }
       recordUsage(namespaceId, orgId, hook.id);
       return apiSuccess({
         ok: true,
@@ -173,6 +222,14 @@ export const POST = withErrorHandling(async (
         status: "started",
         ...(runId ? { runId } : {}),
       });
+      if (idempotencyKey) {
+        recordInboundIdempotency(namespaceId, orgId, {
+          webhookId: hook.id,
+          idempotencyKey,
+          triggerId: trigger.id,
+          ...(runId ? { runId } : {}),
+        });
+      }
       recordUsage(namespaceId, orgId, hook.id);
       return apiSuccess({
         ok: true,

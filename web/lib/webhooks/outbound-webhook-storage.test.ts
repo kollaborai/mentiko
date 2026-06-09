@@ -104,4 +104,49 @@ describe("outbound webhook runtime storage", () => {
       runId: "run-1",
     }));
   });
+
+  it("scopes outbound webhooks to selected chains and defaults to all chains", async () => {
+    const storage = await import("./outbound-webhook-storage");
+
+    const scoped = storage.createOutboundWebhook("scope", "org", {
+      name: "deploy-only",
+      url: "https://example.com/deploy",
+      events: ["completed"],
+      scope: { type: "chains", chainIds: ["deploy", "deploy"] },
+      active: true,
+    });
+    const all = storage.createOutboundWebhook("scope", "org", {
+      name: "everything",
+      url: "https://example.com/all",
+      events: ["completed"],
+      active: true,
+    });
+
+    // scoped config normalizes + dedupes chainIds; default is all-chains
+    expect(scoped.scope).toEqual({ type: "chains", chainIds: ["deploy"] });
+    expect(all.scope).toEqual({ type: "all" });
+    expect(storage.toOutboundClientConfig(scoped).scope).toEqual({ type: "chains", chainIds: ["deploy"] });
+
+    // event filter honors the chain scope
+    const forDeploy = storage.listOutboundWebhooksForEvent("scope", "org", "completed", "deploy").map((c) => c.id);
+    expect(forDeploy).toEqual(expect.arrayContaining([scoped.id, all.id]));
+
+    const forOther = storage.listOutboundWebhooksForEvent("scope", "org", "completed", "other").map((c) => c.id);
+    expect(forOther).toContain(all.id);
+    expect(forOther).not.toContain(scoped.id);
+
+    // an empty selected-chains list is rejected (fail closed), not silently
+    // widened to all chains
+    expect(() => storage.createOutboundWebhook("scope", "org", {
+      name: "empty-scope",
+      url: "https://example.com/empty",
+      events: ["completed"],
+      scope: { type: "chains", chainIds: [] },
+      active: true,
+    })).toThrow(/chain id/i);
+
+    // a chains-scoped webhook fires for nothing when asked about no/other chain
+    const noChainMatch = storage.listOutboundWebhooksForEvent("scope", "org", "completed").map((c) => c.id);
+    expect(noChainMatch).not.toContain(scoped.id);
+  });
 });
