@@ -7,6 +7,7 @@ const updateInboundTrigger = jest.fn();
 const loadChainForInboundWebhook = jest.fn();
 const buildInboundRunBody = jest.fn();
 const normalizeWebhookHeaders = jest.fn();
+const loadMembers = jest.fn();
 
 jest.mock("@/lib/runs/chain-run-service", () => ({
   startChainRun: (...args: unknown[]) => startChainRun(...args),
@@ -27,6 +28,10 @@ jest.mock("@/lib/webhooks/webhook-runtime", () => ({
   loadChainForInboundWebhook: (...args: unknown[]) => loadChainForInboundWebhook(...args),
   buildInboundRunBody: (...args: unknown[]) => buildInboundRunBody(...args),
   normalizeWebhookHeaders: (...args: unknown[]) => normalizeWebhookHeaders(...args),
+}));
+
+jest.mock("@/lib/orgs/org-storage", () => ({
+  loadMembers: (...args: unknown[]) => loadMembers(...args),
 }));
 
 jest.mock("@/lib/system/system-logger", () => ({
@@ -79,12 +84,43 @@ describe("POST /api/webhooks/inbound/[token]", () => {
         inboundTriggerId: "trig-1",
       },
     });
+    loadMembers.mockResolvedValue([]);
     mintSessionToken.mockResolvedValue("signed-session-token");
     startChainRun.mockResolvedValue({
       runId: "run-123",
       chainId: "deploy-chain",
       status: "started",
     });
+  });
+
+  it("uses the creator's live org role when membership is available", async () => {
+    findWebhookByToken.mockReturnValue({
+      id: "hook-1",
+      name: "deploy hook",
+      chainId: "deploy-chain",
+      createdBy: "user-1",
+      createdByRole: "owner",
+    });
+    loadMembers.mockResolvedValue([
+      { userId: "user-1", role: "member" },
+    ]);
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mintSessionToken).toHaveBeenCalledWith(expect.objectContaining({
+      sub: "user-1",
+      role: "member",
+    }));
   });
 
   it("starts the saved chain directly and returns a status lookup token", async () => {
@@ -162,6 +198,36 @@ describe("POST /api/webhooks/inbound/[token]", () => {
     }));
   });
 
+  it("fails closed when the creator is no longer an org member", async () => {
+    findWebhookByToken.mockReturnValue({
+      id: "hook-1",
+      name: "removed creator hook",
+      chainId: "deploy-chain",
+      createdBy: "user-1",
+      createdByRole: "owner",
+    });
+    loadMembers.mockResolvedValue([
+      { userId: "user-2", role: "member" },
+    ]);
+
+    const { POST } = await import("./route");
+    const request = new Request("https://marco.mentiko.com/api/webhooks/inbound/mwh_token?ns=ns&org=org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "refs/heads/main" }),
+    });
+
+    const response = await POST(request as never, {
+      params: Promise.resolve({ token: "mwh_token" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(json.error.message).toMatch(/no longer/i);
+    expect(mintSessionToken).not.toHaveBeenCalled();
+    expect(startChainRun).not.toHaveBeenCalled();
+  });
+
   it("uses internal service auth when triggering a saved schedule", async () => {
     process.env.BETTER_AUTH_SECRET = "internal-secret";
     findWebhookByToken.mockReturnValue({
@@ -191,11 +257,15 @@ describe("POST /api/webhooks/inbound/[token]", () => {
 
     expect(response.status).toBe(200);
     expect(json.data.runId).toBe("run-sched-1");
-    expect(mintSessionToken).not.toHaveBeenCalled();
+    expect(mintSessionToken).toHaveBeenCalledWith(expect.objectContaining({
+      sub: "user-1",
+      role: "member",
+    }));
     expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining("/api/schedules/run"), expect.objectContaining({
       headers: expect.objectContaining({
         authorization: "Bearer internal-secret",
       }),
+      body: expect.stringContaining("signed-session-token"),
     }));
   });
 });

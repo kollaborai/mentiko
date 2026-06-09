@@ -3,20 +3,23 @@ import { tmpdir } from "os";
 import path from "path";
 
 const rootDir = mkdtempSync(path.join(tmpdir(), "mentiko-outbound-webhooks-"));
+const postOutboundWebhook = jest.fn();
 
 jest.mock("@/lib/config", () => ({
   orgPath: (namespaceId: string, orgId: string, ...segments: string[]) =>
     path.join(rootDir, namespaceId, orgId, ...segments),
 }));
 
+jest.mock("./outbound-webhook-delivery", () => ({
+  postOutboundWebhook: (...args: unknown[]) => postOutboundWebhook(...args),
+}));
+
 describe("outbound webhook runtime storage", () => {
   beforeEach(() => {
     jest.resetModules();
+    postOutboundWebhook.mockReset();
+    postOutboundWebhook.mockResolvedValue({ statusCode: 202 });
     process.env.BETTER_AUTH_SECRET = "test-secret-for-outbound-webhooks";
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 202,
-    });
   });
 
   it("encrypts signing secrets and returns safe client configs", async () => {
@@ -60,6 +63,10 @@ describe("outbound webhook runtime storage", () => {
       ...base,
       url: "http://169.254.169.254/latest/meta-data",
     })).toThrow(/url/i);
+    expect(() => storage.createOutboundWebhook("ns", "org", {
+      ...base,
+      url: "http://[::ffff:127.0.0.1]/hook",
+    })).toThrow(/url/i);
   });
 
   it("sends outbound webhook deliveries and records delivery status", async () => {
@@ -82,7 +89,7 @@ describe("outbound webhook runtime storage", () => {
     });
 
     expect(result).toEqual({ ok: true, httpCode: 202 });
-    expect(global.fetch).toHaveBeenCalledWith("https://example.com/hook", expect.objectContaining({
+    expect(postOutboundWebhook).toHaveBeenCalledWith("https://example.com/hook", expect.objectContaining({
       method: "POST",
       headers: expect.objectContaining({
         "X-Webhook-Signature": expect.stringMatching(/^sha256=/),

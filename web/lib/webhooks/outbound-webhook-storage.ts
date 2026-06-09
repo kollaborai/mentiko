@@ -1,9 +1,9 @@
 import { createHmac } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "fs";
-import { isIP } from "net";
 import path from "path";
 import { orgPath } from "@/lib/config";
 import { encrypt, decrypt } from "@/lib/secrets/secrets-store";
+import { normalizeOutboundWebhookUrl } from "./outbound-webhook-security";
 
 export type OutboundWebhookEvent =
   | "started"
@@ -92,43 +92,7 @@ function saveJsonArray<T>(filePath: string, rows: T[]): void {
 }
 
 function normalizeUrl(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  try {
-    const url = new URL(value.trim());
-    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
-    if (isBlockedWebhookHost(url.hostname)) return undefined;
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-function isBlockedWebhookHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-
-  const ipVersion = isIP(host);
-  if (ipVersion === 4) {
-    const [a, b] = host.split(".").map((part) => Number(part));
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
-  }
-  if (ipVersion === 6) {
-    return (
-      host === "::" ||
-      host === "::1" ||
-      host.startsWith("fc") ||
-      host.startsWith("fd") ||
-      host.startsWith("fe80:")
-    );
-  }
-  return false;
+  return normalizeOutboundWebhookUrl(value);
 }
 
 export function normalizeOutboundEvent(event: string): OutboundWebhookEvent | null {

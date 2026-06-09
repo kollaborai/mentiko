@@ -14,6 +14,9 @@ import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "@/lib/sch
 import { mintSessionToken } from "@/lib/auth/session-token";
 import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "@/lib/schedules/scheduled-application-storage";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { startChainRun } from "@/lib/runs/chain-run-service";
+import { timingSafeEqual } from "@/lib/auth/security";
+import type { Chain } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -28,36 +31,56 @@ async function executeChainRun(
   req: NextRequest,
   namespaceId: string,
   orgId: string,
-  chain: unknown,
+  chain: Chain,
   chainId: string,
   goal: string,
   workspacePath: string,
   workspaceId?: string,
   taskId?: string,
+  runAsSessionToken?: string,
 ): Promise<{ ok: boolean; data: Record<string, unknown>; status: number }> {
-  const runUrl = internalApiUrl("/api/chains/run", req.url);
+  const runHeaders = new Headers(req.headers);
+  runHeaders.set("content-type", "application/json");
+  runHeaders.set("x-namespace-id", namespaceId);
+  runHeaders.set("x-org-id", orgId);
+  if (runAsSessionToken) {
+    runHeaders.set("authorization", `Bearer ${runAsSessionToken}`);
+  }
 
-  const runRes = await fetch(runUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-namespace-id": namespaceId,
-      "x-org-id": orgId,
-      ...(req.headers.get("authorization") ? { authorization: req.headers.get("authorization")! } : {}),
-      ...(req.headers.get("cookie") ? { cookie: req.headers.get("cookie")! } : {}),
-    },
-    body: JSON.stringify({
-      chain,
-      chainId,
-      userPrompt: goal,
-      workspacePath,
-      ...(workspaceId ? { workspaceId } : {}),
-      ...(taskId ? { taskId } : {}),
-    }),
-  });
+  try {
+    const result = await startChainRun({
+      request: new Request(req.url, {
+        method: "POST",
+        headers: runHeaders,
+      }),
+      namespaceId,
+      orgId,
+      body: {
+        chain,
+        chainId,
+        userPrompt: goal,
+        workspacePath,
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(taskId ? { taskId } : {}),
+      },
+    });
+    return { ok: true, data: result as unknown as Record<string, unknown>, status: 200 };
+  } catch (error) {
+    return {
+      ok: false,
+      data: { error: error instanceof Error ? error.message : String(error) },
+      status: typeof (error as { statusCode?: unknown }).statusCode === "number"
+        ? (error as { statusCode: number }).statusCode
+        : 500,
+    };
+  }
+}
 
-  const data = await runRes.json();
-  return { ok: runRes.ok, data, status: runRes.status };
+function isTrustedInternalRequest(req: NextRequest): boolean {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  const auth = req.headers.get("authorization");
+  if (!secret || !auth?.startsWith("Bearer ")) return false;
+  return timingSafeEqual(auth.slice(7), secret);
 }
 
 // POST /api/schedules/run - trigger immediate run of a schedule (with retry)
@@ -72,6 +95,9 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   const orgId = await getOrgIdFromRequest(req);
   const body = await req.json();
   const { id, triggeredBy = "manual" } = body;
+  const runAsSessionToken = isTrustedInternalRequest(req) && typeof body.runAsSessionToken === "string"
+    ? body.runAsSessionToken
+    : undefined;
 
   if (!id) {
     throw new BadRequest("schedule id required", { field: "id" });
@@ -112,7 +138,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     throw new NotFound("Chain", target.chainId);
   }
 
-  let chain;
+  let chain: Chain;
   try {
     chain = JSON.parse(readFileSync(chainPath, "utf-8"));
   } catch {
@@ -158,7 +184,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
       const { ok, data, status } = await executeChainRun(
         req, namespaceId, orgId, chain,
         target.chainId, target.goal || schedule.goal || "",
-        workspace.path, schedule.workspaceId, taskId,
+        workspace.path, schedule.workspaceId, taskId, runAsSessionToken,
       );
 
       if (ok) {

@@ -13,6 +13,7 @@ import {
   signOutboundPayload,
   type OutboundWebhookConfig,
 } from "@/lib/webhooks/outbound-webhook-storage";
+import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
 
 export type WebhookEvent = "started" | "completed" | "failed";
 
@@ -196,15 +197,15 @@ async function fireSingleWebhook(
   }
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await postOutboundWebhook(webhook.url, {
       method: "POST",
       headers,
       body,
-      signal: AbortSignal.timeout(10000), // 10s timeout
+      timeoutMs: 10_000,
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`HTTP ${response.statusCode}`);
     }
 
     console.log(`[webhook] delivered ${payload.event} to ${webhook.url}`);
@@ -247,22 +248,22 @@ export async function fireOutboundWebhook(
   };
 
   try {
-    const response = await fetch(webhook.url, {
+    const response = await postOutboundWebhook(webhook.url, {
       method: "POST",
       headers,
       body,
-      signal: AbortSignal.timeout(10000),
+      timeoutMs: 10_000,
     });
-    const ok = response.ok;
+    const ok = response.statusCode >= 200 && response.statusCode < 300;
     appendOutboundDelivery(namespaceId, orgId, {
       ...deliveryBase,
       status: ok ? "delivered" : "failed",
-      httpCode: response.status,
-      ...(ok ? {} : { error: `HTTP ${response.status}` }),
+      httpCode: response.statusCode,
+      ...(ok ? {} : { error: `HTTP ${response.statusCode}` }),
     });
     return ok
-      ? { ok: true, httpCode: response.status }
-      : { ok: false, httpCode: response.status, error: `HTTP ${response.status}` };
+      ? { ok: true, httpCode: response.statusCode }
+      : { ok: false, httpCode: response.statusCode, error: `HTTP ${response.statusCode}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendOutboundDelivery(namespaceId, orgId, {
