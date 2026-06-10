@@ -1,5 +1,6 @@
 import { execSync, execFileSync } from "child_process";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized, Forbidden } from "@/lib/api-errors";
@@ -143,6 +144,15 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const { action, workspacePath } = body;
   if (!workspacePath) {
     return apiSuccess({ error: "workspacePath required" }, undefined, 400);
+  }
+
+  // mutating git actions are member+ (block guests); reads stay auth-only
+  const GIT_WRITE_ACTIONS = new Set([
+    "stage", "unstage", "stage_all", "unstage_all", "commit", "push",
+  ]);
+  if (GIT_WRITE_ACTIONS.has(action)) {
+    const permError = await requirePermission(request, "manage_chains");
+    if (permError) return permError;
   }
 
   // workspacePath becomes the cwd for every git command below — constrain it

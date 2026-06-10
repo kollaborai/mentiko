@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
 import { getWorkspace } from "@/lib/workspaces/workspace-storage";
 import { getProfile, findDefaultProfile } from "@/lib/agents/agent-profile-storage";
@@ -13,6 +14,10 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
+  // spawning a secret-injected terminal is member+ (blocks guests)
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
+
   const sessionUser = await getSessionUser(request);
   if (!sessionUser) {
     throw new Unauthorized();

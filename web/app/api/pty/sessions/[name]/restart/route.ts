@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join } from "path";
-import { Unauthorized, BadRequest, InternalServerError } from "@/lib/api-errors";
+import { BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import config from "@/lib/config";
 import { buildChildEnv } from "@/lib/runs/child-env";
 
@@ -21,9 +21,9 @@ const SINGLETON_COMMANDS: Record<string, string> = {
 
 export const POST = withErrorHandling(
   async (request: NextRequest, context: { params: Promise<{ name: string }> }) => {
-    if (!(await checkAuth(request))) {
-      throw new Unauthorized();
-    }
+    // restarting system singletons (watchdog/chain-watcher) is member+
+    const permError = await requirePermission(request, "manage_chains");
+    if (permError) return permError;
 
     const { name } = await context.params;
 
