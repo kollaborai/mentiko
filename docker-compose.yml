@@ -45,7 +45,20 @@ services:
       WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
       # admin bootstrap (comma-separated emails that get admin role on first login)
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      # AI provider keys are managed in the secrets vault UI (/settings/secrets)
+      # org scoping (namespace is set above; org defaults to "default")
+      ORG_ID: ${ORG_ID:-default}
+      # marketplace source (optional; defaults to the public github repo)
+      MARKETPLACE_URL: ${MARKETPLACE_URL:-}
+      # AI provider keys are managed in the secrets vault UI (/settings/secrets).
+      # Included-AI gateway (optional): powers the in-app engine / floating-bar
+      # agent. Stays OFF unless MENTIKO_AI_GATEWAY_ENABLED=true AND a URL + token
+      # are set. These are forwarded to the child agent processes (see
+      # web/lib/process-manager-env.ts), so they must live on the container env.
+      MENTIKO_AI_GATEWAY_ENABLED: ${MENTIKO_AI_GATEWAY_ENABLED:-}
+      MENTIKO_AI_GATEWAY_URL: ${MENTIKO_AI_GATEWAY_URL:-}
+      MENTIKO_AI_GATEWAY_TOKEN: ${MENTIKO_AI_GATEWAY_TOKEN:-}
+      MENTIKO_AI_GATEWAY_TOKEN_ID: ${MENTIKO_AI_GATEWAY_TOKEN_ID:-}
+      MENTIKO_AI_GATEWAY_ALLOWED_ORIGIN: ${MENTIKO_AI_GATEWAY_ALLOWED_ORIGIN:-}
       # OAuth providers (optional)
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
