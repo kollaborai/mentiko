@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { listSecrets, createSecret, deleteSecret, updateSecret, findProfilesUsingSecret, getSecretsStatus } from "@/lib/secrets/secrets-store";
 import { Unauthorized, BadRequest, NotFound, Conflict } from "@/lib/api-errors";
@@ -29,9 +30,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
 // POST /api/secrets
 export const POST = withErrorHandling(async (request: NextRequest) => {
-  if (!(await checkAuth(request))) {
-    throw new Unauthorized("Authentication required");
-  }
+  // creating/updating org secrets (API keys / credentials) is owner-level,
+  // matching the secrets:write gate on /api/mentiko-mcp/ops/secrets.
+  const authError = await requirePermission(request, "manage_org");
+  if (authError) return authError;
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();
@@ -58,9 +60,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
 // DELETE /api/secrets?id=<id>
 export const DELETE = withErrorHandling(async (request: NextRequest) => {
-  if (!(await checkAuth(request))) {
-    throw new Unauthorized("Authentication required");
-  }
+  // deleting org secrets is owner-level
+  const authError = await requirePermission(request, "manage_org");
+  if (authError) return authError;
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const id = new URL(request.url).searchParams.get("id");
