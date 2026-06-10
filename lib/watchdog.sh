@@ -290,18 +290,30 @@ check_run() {
         fi
         set -e
 
-        # update run.json: mark stopped, cancel pending agents
-        jq '
-            .status = "stopped" |
-            .completed = (now | todate) |
-            .agents |= map(
-                if .status == "running" and (.session == "" or .session == null) then .status = "cancelled"
-                elif .status == "running" then .status = "stopped"
-                elif .status == "pending" then .status = "cancelled"
-                else .
-                end
-            )
-        ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+        # update run.json: mark stopped, cancel pending agents.
+        # bug #7: the watchdog is one of THREE independent run.json writers (the
+        # others are the bash completion helpers in run-lib.sh and the web heartbeat
+        # route). This rewrite now goes through run-lib's shared mkdir-lock so it
+        # cannot lost-update a concurrent agent-status or heartbeat write. The jq
+        # filter is unchanged — it lives in run-lib's watchdog-stop-run helper
+        # (which watchdog.sh sources at the top). Fallback keeps the watchdog robust
+        # if run-lib failed to source: an unlocked terminal write is still better
+        # than leaving a stalled run stuck "running" forever.
+        if declare -f watchdog-stop-run >/dev/null 2>&1; then
+            watchdog-stop-run "$run_id" || true
+        else
+            jq '
+                .status = "stopped" |
+                .completed = (now | todate) |
+                .agents |= map(
+                    if .status == "running" and (.session == "" or .session == null) then .status = "cancelled"
+                    elif .status == "running" then .status = "stopped"
+                    elif .status == "pending" then .status = "cancelled"
+                    else .
+                    end
+                )
+            ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+        fi
 
         # emit run-stalled event
         # NOTE: this is a SYSTEM event (observed by hooks/notifications), not an agent

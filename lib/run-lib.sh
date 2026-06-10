@@ -35,6 +35,133 @@ _sys_log() {
         "http://localhost:${WEB_PORT:-3000}/api/system/logs" >/dev/null 2>&1 &
 }
 
+# ===================================================================
+# run.json single-writer lock (mkdir-based, portable)
+# ===================================================================
+#
+# THE PROBLEM (bug #7): three independent processes read-modify-write the same
+# run.json — the bash completion/monitor handlers (via the helpers below), the
+# watchdog (watchdog.sh), and the web heartbeat route (TS). Each write is atomic
+# in isolation (jq -> tmp -> mv, so a READER never sees a half-written file), but
+# there is no mutual exclusion ACROSS writers. That is a classic lost-update: an
+# agent-status write can be silently clobbered by a concurrent watchdog rewrite or
+# heartbeat write because both read the same base, then both rename their own full
+# rewrite over the top — the second mv wins and the first writer's change is gone.
+# Group C made this worse-exposed by launching multiple concurrent detached
+# chain-runner workers that all touch run.json.
+#
+# THE FIX: serialize the FULL read-modify-write of run.json behind one lock taken
+# adjacent to the file (${run_file}.lock/ with a pid file). Every mutation helper
+# in this file routes its RMW through _with_run_lock. watchdog.sh sources this file
+# and calls watchdog_locked_terminal_rewrite (same lock). The TS heartbeat route
+# replicates this exact protocol (web/lib/runs/run-json-lock.ts) so a node writer
+# and a bash writer mutually exclude on the same lock dir.
+#
+# INVARIANT — READS STAY LOCK-FREE. Writers always tmp+rename (atomic on POSIX), so
+# any reader (get-run, list-runs, the reconciler, every web GET, jq elsewhere) sees
+# either the pre- or post-write file, never a partial one. The lock exists ONLY to
+# prevent writer-vs-writer lost updates; it is never needed to read.
+#
+# Why mkdir and not flock(1): flock is absent on macOS (the engine ships to linux,
+# but the test suite must pass on a developer mac too) and is used nowhere else in
+# this repo. mkdir(2) is atomic on POSIX filesystems — exactly one caller wins the
+# create when the dir is absent — and behaves identically under bash 3.2 (macOS)
+# and bash 5.x (CI/linux). This mirrors group B's fan-group lock in routing-lib.sh
+# byte-for-byte in spirit; we deliberately do NOT source routing-lib.sh here (it
+# drags in the whole fan-group machinery), so these are sibling helpers.
+#
+# Stale-lock strategy (matches B): the winner writes its pid into <lock>/pid. A
+# caller that loses the mkdir breaks the lock only if the holder is provably gone —
+# the pid is dead (kill -0 fails) OR the lock dir is older than RUN_LOCK_STALE_SECS
+# (guards a crashed holder, and a recycled-but-live pid number). Breaking re-races
+# safely: rmdir then re-attempt the atomic mkdir, so two breakers cannot both win.
+#
+# Timeout policy (never hang the engine): on bounded-wait expiry the caller logs
+# loudly and PROCEEDS with the write anyway (degraded, last-writer-wins — exactly
+# today's status quo) rather than dropping the write or crashing. A dropped status
+# write is strictly worse than a raced one: the reconciler can repair a raced
+# terminal status, but it cannot resurrect a write that never happened.
+
+RUN_LOCK_STALE_SECS="${RUN_LOCK_STALE_SECS:-120}"   # a held run.json lock older than this is treated as crashed
+RUN_LOCK_WAIT_SECS="${RUN_LOCK_WAIT_SECS:-30}"      # max time (in ~50ms ticks) to spin waiting for the lock
+
+# _run_lock_age <lock_dir> -> echoes age in seconds (0 if unknown / fresh)
+_run_lock_age() {
+    local lock_dir="$1" mtime now
+    # portable mtime: GNU stat, then BSD stat; fall back to 0 (treat as fresh).
+    mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    if [[ "$mtime" -gt 0 ]]; then echo $(( now - mtime )); else echo 0; fi
+}
+
+# _run_lock_acquire <lock_dir> -> 0 on success, 1 on timeout.
+# Spins on an atomic mkdir; breaks a provably-stale lock (dead pid or aged out).
+_run_lock_acquire() {
+    local lock_dir="$1"
+    local waited=0
+    while true; do
+        if mkdir "$lock_dir" 2>/dev/null; then
+            echo "$$" > "$lock_dir/pid" 2>/dev/null || true
+            return 0
+        fi
+        # could not acquire — decide whether the current holder is dead/stale.
+        local holder age
+        holder="$(cat "$lock_dir/pid" 2>/dev/null || echo "")"
+        age="$(_run_lock_age "$lock_dir")"
+        if { [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; } \
+           || [[ "$age" -ge "$RUN_LOCK_STALE_SECS" ]]; then
+            # holder is gone (or lock aged out). break it, then retry the mkdir.
+            # rmdir is atomic; if another breaker already removed+recreated it,
+            # our rmdir simply fails and we loop back into mkdir contention.
+            rm -f "$lock_dir/pid" 2>/dev/null || true
+            rmdir "$lock_dir" 2>/dev/null || true
+            continue
+        fi
+        # holder alive and lock fresh — back off briefly and retry.
+        if [[ "$waited" -ge "$RUN_LOCK_WAIT_SECS" ]]; then
+            return 1
+        fi
+        sleep 0.05 2>/dev/null || sleep 1
+        waited=$((waited + 1))
+    done
+}
+
+# _run_lock_release <lock_dir>
+_run_lock_release() {
+    local lock_dir="$1"
+    rm -f "$lock_dir/pid" 2>/dev/null || true
+    rmdir "$lock_dir" 2>/dev/null || true
+}
+
+# _with_run_lock <run_file> <fn> [args...]
+#
+# THE single entrypoint every run.json mutation routes through. Acquires the lock
+# adjacent to <run_file>, invokes <fn> "$run_file" args... (which performs the full
+# read-modify-write via jq -> tmp -> mv), then releases the lock on EVERY path.
+#
+# Robust under `set -e` (this file runs `set -euo pipefail`): we capture <fn>'s exit
+# status without letting a non-zero rc abort the script before we release, so a
+# failing mutation can never leak a held lock. On acquire timeout we log loudly and
+# run <fn> anyway (degraded last-writer-wins) — see the timeout-policy note above.
+_with_run_lock() {
+    local run_file="$1"; shift
+    local lock_dir="${run_file}.lock"
+    local rc=0
+
+    if _run_lock_acquire "$lock_dir"; then
+        "$@" "$run_file"
+        rc=$?
+        _run_lock_release "$lock_dir"
+    else
+        _sys_log "warn" "run-lib" "run.json lock timeout; proceeding unlocked (degraded)" \
+            "file: $run_file (held > ${RUN_LOCK_WAIT_SECS} ticks; last-writer-wins this write)"
+        echo "  run-lib: WARNING could not acquire run.json lock for $run_file (timed out) — writing UNLOCKED (degraded)" >&2
+        "$@" "$run_file"
+        rc=$?
+    fi
+    return $rc
+}
+
 # -------------------------------------------------------------------
 # create-run: create a new run object
 # -------------------------------------------------------------------
@@ -109,23 +236,31 @@ update-run-status() {
         return 1
     fi
 
+    # full read-modify-write serialized behind the run.json lock.
+    _with_run_lock "$run_file" _rmw_update_run_status "$status" "$status_message"
+}
+
+# _rmw_update_run_status <status> <status_message> <run_file>
+# (internal — only called via _with_run_lock, which appends <run_file> as last arg)
+_rmw_update_run_status() {
+    local status="$1" status_message="$2" run_file="$3"
+
     local completed_at
     completed_at="$(date -Iseconds)"
 
-    local updated=$(jq --arg st "$status" --arg completed "$completed_at" '
+    # write via tmp+rename so readers never observe a partial file.
+    jq --arg st "$status" --arg completed "$completed_at" '
         .status = $st |
         if $st != "running" and (.completed // null) == null then
             .completed = $completed
         else
             .
         end
-    ' "$run_file")
-
-    echo "$updated" > "$run_file"
+    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
 
     if [[ -n "$status_message" ]]; then
-        jq --arg msg "$status_message" '.status_message = $msg' "$run_file" > "$run_file.tmp"
-        mv "$run_file.tmp" "$run_file"
+        jq --arg msg "$status_message" '.status_message = $msg' "$run_file" > "$run_file.tmp" \
+            && mv "$run_file.tmp" "$run_file"
     fi
 }
 
@@ -145,6 +280,14 @@ add-run-session() {
         return 1
     fi
 
+    _with_run_lock "$run_file" _rmw_add_run_session "$session_name" "$agent_id" "$agent_name"
+}
+
+# _rmw_add_run_session <session-name> <agent-id> <agent-name> <run_file>
+# (internal — only called via _with_run_lock)
+_rmw_add_run_session() {
+    local session_name="$1" agent_id="$2" agent_name="$3" run_file="$4"
+
     local ts
     ts=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
     jq --arg sess "$session_name" --arg aid "$agent_id" --arg ts "$ts" --arg name "$agent_name" '
@@ -159,8 +302,7 @@ add-run-session() {
         else
             .agents += [{id: $aid, name: (if $name != "" then $name else $aid end), session: $sess, status: "running", started: $ts}]
         end
-    ' "$run_file" > "$run_file.tmp"
-    mv "$run_file.tmp" "$run_file"
+    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
 }
 
 # -------------------------------------------------------------------
@@ -178,6 +320,14 @@ update-run-agent() {
         return 1
     fi
 
+    _with_run_lock "$run_file" _rmw_update_run_agent "$agent_id" "$status"
+}
+
+# _rmw_update_run_agent <agent-id> <status> <run_file>
+# (internal — only called via _with_run_lock)
+_rmw_update_run_agent() {
+    local agent_id="$1" status="$2" run_file="$3"
+
     local ts
     ts=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
     jq --arg aid "$agent_id" --arg st "$status" --arg ts "$ts" '
@@ -188,8 +338,7 @@ update-run-agent() {
             else .
             end
         )
-    ' "$run_file" > "$run_file.tmp"
-    mv "$run_file.tmp" "$run_file"
+    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
 }
 
 # -------------------------------------------------------------------
@@ -499,6 +648,17 @@ write-run-summary-artifact() {
     summary_json=$(build-run-summary-json "$run_id")
     echo "$summary_json" > "$summary_artifact"
 
+    # persist .summary + .artifacts onto run.json under the shared lock so this
+    # rewrite can't clobber a concurrent agent-status / heartbeat / watchdog write.
+    _with_run_lock "$run_file" _rmw_write_run_summary "$summary_json" "$summary_artifact"
+
+    echo "$summary_json"
+}
+
+# _rmw_write_run_summary <summary_json> <summary_artifact_path> <run_file>
+# (internal — only called via _with_run_lock)
+_rmw_write_run_summary() {
+    local summary_json="$1" summary_artifact="$2" run_file="$3"
     jq --argjson summary "$summary_json" \
        --arg path "$summary_artifact" \
        '.summary = $summary |
@@ -506,8 +666,6 @@ write-run-summary-artifact() {
             | map(select(.type != "run-summary"))
             + [{"type":"run-summary","path":$path,"timestamp":(now | todateiso8601)}])' \
        "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
-
-    echo "$summary_json"
 }
 
 # -------------------------------------------------------------------
@@ -685,6 +843,40 @@ Artifacts: $artifacts_count files"
     fi
 }
 
+# -------------------------------------------------------------------
+# watchdog-stop-run: mark a stalled run stopped + reconcile its agents
+# -------------------------------------------------------------------
+# args: <run-id>
+# The watchdog (watchdog.sh) is the THIRD independent run.json writer. It sources
+# this file, so it calls this helper to perform its terminal rewrite under the SAME
+# lock the bash completion helpers use — closing the watchdog-vs-completion lost
+# update. The jq filter is identical to watchdog.sh's previous inline rewrite; the
+# only change is that it now runs inside _with_run_lock. Reads stay lock-free.
+watchdog-stop-run() {
+    local run_id="$1"
+    local run_file="$RUNS_DIR/$run_id/run.json"
+
+    [[ -f "$run_file" ]] || return 1
+
+    _with_run_lock "$run_file" _rmw_watchdog_stop_run
+}
+
+# _rmw_watchdog_stop_run <run_file>  (internal — only called via _with_run_lock)
+_rmw_watchdog_stop_run() {
+    local run_file="$1"
+    jq '
+        .status = "stopped" |
+        .completed = (now | todate) |
+        .agents |= map(
+            if .status == "running" and (.session == "" or .session == null) then .status = "cancelled"
+            elif .status == "running" then .status = "stopped"
+            elif .status == "pending" then .status = "cancelled"
+            else .
+            end
+        )
+    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+}
+
 # export functions
 export -f create-run
 export -f update-run-status
@@ -697,3 +889,16 @@ export -f cleanup-old-runs
 export -f build-run-summary-json
 export -f write-run-summary-artifact
 export -f update-task-from-run
+export -f watchdog-stop-run
+# run.json lock primitive + the internal locked read-modify-write bodies.
+# exported so background detached completion/fan-out subshells (group C launches
+# several) and watchdog reach them after sourcing this file. mirrors routing-lib.sh.
+export -f _run_lock_age
+export -f _run_lock_acquire
+export -f _run_lock_release
+export -f _with_run_lock
+export -f _rmw_update_run_status
+export -f _rmw_add_run_session
+export -f _rmw_update_run_agent
+export -f _rmw_write_run_summary
+export -f _rmw_watchdog_stop_run

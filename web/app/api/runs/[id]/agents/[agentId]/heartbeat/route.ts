@@ -14,7 +14,7 @@
  */
 
 import { NextRequest } from "next/server";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -23,6 +23,7 @@ import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { Unauthorized, NotFound, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -68,45 +69,58 @@ export const POST = withErrorHandling(async (
     ? body.status
     : undefined;
 
-  const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-
-  // reject heartbeats for stopped/completed runs
-  // orphan heartbeat loops from dead chain-runners keep firing and
-  // overwrite agent statuses that the reconciler already fixed
-  if (run.status !== "running" && run.status !== "pending") {
-    throw new Conflict(`run is ${run.status}`, { rejected: true, reason: `run is ${run.status}` });
-  }
-
-  // update the agent's heartbeat in the agents array
-  if (Array.isArray(run.agents)) {
-    const agentIdx = run.agents.findIndex(
-      (a: { id: string }) => a.id === agentId
-    );
-    if (agentIdx === -1) {
-      // agent not in run yet — create a minimal entry
-      run.agents.push({
-        id: agentId,
-        status: safeStatus || "running",
-        session: "",
-        lastHeartbeat: now,
-        ...(safeMessage ? { lastMessage: safeMessage } : {}),
-        ...(body.round != null ? { round: body.round } : {}),
-      });
-    } else {
-      run.agents[agentIdx].lastHeartbeat = now;
-      if (safeStatus) run.agents[agentIdx].status = safeStatus;
-      if (safeMessage) run.agents[agentIdx].lastMessage = safeMessage;
-      if (body.round != null) run.agents[agentIdx].round = body.round;
+  // bug #7: the heartbeat route is one of THREE independent run.json writers (the
+  // others are the bash completion helpers in lib/run-lib.sh and the watchdog). The
+  // full read-modify-write below runs under the shared mkdir lock so a concurrent
+  // agent-status or watchdog write cannot lost-update this heartbeat (and vice
+  // versa). The run.json read MUST happen inside the lock so we mutate the latest
+  // committed state; the write is atomic (temp+rename) so readers never see a partial
+  // file. A `Conflict` thrown inside the locked section still releases the lock
+  // (withRunJsonLock releases in finally).
+  withRunJsonLock(runJsonPath, () => {
+    if (!existsSync(runJsonPath)) {
+      throw new NotFound("Run", runId);
     }
-  }
+    const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
 
-  if (safeStatus === "blocked") {
-    run.status = "blocked";
-    run.blockedAt = run.blockedAt || now;
-    if (safeMessage) run.blockedReason = safeMessage;
-  }
+    // reject heartbeats for stopped/completed runs
+    // orphan heartbeat loops from dead chain-runners keep firing and
+    // overwrite agent statuses that the reconciler already fixed
+    if (run.status !== "running" && run.status !== "pending") {
+      throw new Conflict(`run is ${run.status}`, { rejected: true, reason: `run is ${run.status}` });
+    }
 
-  writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
+    // update the agent's heartbeat in the agents array
+    if (Array.isArray(run.agents)) {
+      const agentIdx = run.agents.findIndex(
+        (a: { id: string }) => a.id === agentId
+      );
+      if (agentIdx === -1) {
+        // agent not in run yet — create a minimal entry
+        run.agents.push({
+          id: agentId,
+          status: safeStatus || "running",
+          session: "",
+          lastHeartbeat: now,
+          ...(safeMessage ? { lastMessage: safeMessage } : {}),
+          ...(body.round != null ? { round: body.round } : {}),
+        });
+      } else {
+        run.agents[agentIdx].lastHeartbeat = now;
+        if (safeStatus) run.agents[agentIdx].status = safeStatus;
+        if (safeMessage) run.agents[agentIdx].lastMessage = safeMessage;
+        if (body.round != null) run.agents[agentIdx].round = body.round;
+      }
+    }
+
+    if (safeStatus === "blocked") {
+      run.status = "blocked";
+      run.blockedAt = run.blockedAt || now;
+      if (safeMessage) run.blockedReason = safeMessage;
+    }
+
+    writeRunJsonAtomic(runJsonPath, run);
+  });
 
   return apiSuccess({
     ok: true,
