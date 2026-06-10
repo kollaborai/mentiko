@@ -1,8 +1,8 @@
-import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
-import { NotFound, Unauthorized } from "@/lib/api-errors";
+import { NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -28,9 +28,12 @@ export const GET = withErrorHandling(
     req: Request,
     context: { params: Promise<{ id: string }> }
   ) => {
-    if (!(await checkAuth(req))) {
-      throw new Unauthorized();
-    }
+    // This returns FULLY DECRYPTED secret values, so gate it at manage_org
+    // (owner) — matching the secrets:write gate on /api/mentiko-mcp/ops/secrets.
+    // namespace/org below are session-derived (getNamespaceFromSession), so a
+    // caller can only ever resolve profiles within their own active org.
+    const authError = await requirePermission(req, "manage_org");
+    if (authError) return authError;
 
     const { id } = await context.params;
     const namespaceId = await getNamespaceIdFromRequest(req);
