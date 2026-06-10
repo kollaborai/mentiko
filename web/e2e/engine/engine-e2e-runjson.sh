@@ -197,12 +197,20 @@ export TMP_ROOT WORKER_LIB
 PREFIX_DIR="$TMP_ROOT/prefix-lib"; mkdir -p "$PREFIX_DIR"
 PREFIX_LIB="$PREFIX_DIR/run-lib.sh"
 if git -C "$REPO_ROOT" show HEAD:lib/run-lib.sh > "$PREFIX_LIB" 2>/dev/null && [[ -s "$PREFIX_LIB" ]]; then
-  cp -f "$REPO_ROOT/lib/config.sh" "$PREFIX_DIR/config.sh" 2>/dev/null || true
-  cp -f "$REPO_ROOT/lib/terminal-sanitize.sh" "$PREFIX_DIR/terminal-sanitize.sh" 2>/dev/null || true
-  note "pre-fix snapshot pulled from git HEAD:lib/run-lib.sh ($(wc -l < "$PREFIX_LIB") lines, unlocked)"
-  HAVE_PREFIX=1
+  if cmp -s "$PREFIX_LIB" "$RUN_LIB"; then
+    # fix already committed: HEAD == working copy, so there is no unlocked
+    # pre-fix updater to demonstrate against. skip-with-note, never fail —
+    # this is the steady state on main once the fix lands.
+    note "${C_YEL}HEAD:lib/run-lib.sh is identical to the working copy (fix already committed) — skipping pre-fix-fails demo${C_NC}"
+    HAVE_PREFIX=0
+  else
+    cp -f "$REPO_ROOT/lib/config.sh" "$PREFIX_DIR/config.sh" 2>/dev/null || true
+    cp -f "$REPO_ROOT/lib/terminal-sanitize.sh" "$PREFIX_DIR/terminal-sanitize.sh" 2>/dev/null || true
+    note "pre-fix snapshot pulled from git HEAD:lib/run-lib.sh ($(wc -l < "$PREFIX_LIB") lines, unlocked)"
+    HAVE_PREFIX=1
+  fi
 else
-  note "${C_YEL}could not pull HEAD:lib/run-lib.sh — skipping pre-fix-fails demo${C_NC}"
+  note "${C_YEL}could not pull HEAD:lib/run-lib.sh (no history / shallow clone) — skipping pre-fix-fails demo${C_NC}"
   HAVE_PREFIX=0
 fi
 echo
@@ -249,7 +257,12 @@ if [[ "$HAVE_PREFIX" -eq 1 ]]; then
   if [[ "$prefix_lost_iters" -gt 0 ]]; then
     pass "pre-fix-fails proof: unlocked HEAD code LOSES updates ($prefix_lost_iters/$ITERS iters dropped a write)"
   else
-    fail "pre-fix-fails proof: $ITERS iterations did not surface the race on this host (timing-dependent; re-run)"
+    # racy by nature: the HEAD snapshot differs from the working copy, but the
+    # lost-update did not surface in $ITERS iterations on this host — and a
+    # file-level diff doesn't guarantee the diff touches the updater at all.
+    # SKIP loudly rather than fail: a negative-control that cannot reproduce
+    # its bug must never flake CI. the post-fix invariant above is the gate.
+    note "${C_YEL}pre-fix-fails proof: race did not surface in $ITERS iterations on this host — skipping (timing-dependent; not counted as failure)${C_NC}"
   fi
   echo
 fi

@@ -363,9 +363,20 @@ retry-calculate-delay() {
             delay="$initial_delay"
             ;;
         exponential)
-            # initial_delay * (multiplier ^ attempt). bc emits a float (e.g.
-            # "12.50") which $(( )) cannot parse — truncate to an integer below.
-            delay=$(echo "$initial_delay * ($multiplier ^ $attempt)" | bc 2>/dev/null || echo "$initial_delay")
+            # initial_delay * (multiplier ^ attempt), truncated toward zero.
+            # awk, NOT bc: the tenant/base images ship awk (mawk) but no bc,
+            # and the old bc pipeline's `|| echo` fallback silently collapsed
+            # exponential backoff to a constant initial_delay wherever bc was
+            # absent (i.e. in production). awk is already a hard dependency of
+            # the engine (chain-runner.sh, retry-utils.sh, et al). multiplier
+            # may be fractional ("1.5"), so this stays float math; int()
+            # truncation matches the old bc+strip behavior (7.5->7, 11.25->11,
+            # 12.207->12). clamping to max_delay happens here as a float
+            # compare so a huge multiplier^attempt can never overflow the
+            # integer printf (the final integer cap below is then a no-op).
+            delay=$(awk -v base="$initial_delay" -v mult="$multiplier" -v att="$attempt" -v cap="$max_delay" \
+                'BEGIN { d = base * (mult ^ att); if (d > cap) d = cap; printf "%d\n", int(d) }' \
+                </dev/null 2>/dev/null) || delay="$initial_delay"
             ;;
         linear)
             delay=$((initial_delay * (attempt + 1)))
@@ -375,8 +386,9 @@ retry-calculate-delay() {
             ;;
     esac
 
-    # integer-truncate: bc (exponential) can return a float like "12.50" or even
-    # ".5"; strip any fractional part so $(( )) below never aborts the script.
+    # defense-in-depth: the exponential branch already emits an integer, but
+    # keep the float-strip + regex guard so a stray fractional/garbage value
+    # (e.g. "12.50" or ".5") can never abort the $(( )) below.
     delay="${delay%.*}"          # drop ".50" -> "12"  /  ".5" -> ""
     [[ -z "$delay" || ! "$delay" =~ ^[0-9]+$ ]] && delay="$initial_delay"
 
