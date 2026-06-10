@@ -5,8 +5,9 @@ import { createInterface } from "readline";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty, listSessionNames } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { claudeProjectPath, config } from "@/lib/config";
-import { BadRequest, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { buildChildEnv } from "@/lib/runs/child-env";
 
@@ -118,6 +119,13 @@ export const POST = withErrorHandling(async (
   }
 
   const { id } = await context.params;
+
+  // id is used both as a jsonl filename and (below) as a claude --resume arg.
+  // constrain it so it can't traverse paths or carry shell metacharacters.
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) {
+    throw new BadRequest("invalid conversation id", { field: "id" });
+  }
+
   const body = await request.json();
   const { message, cwd } = body;
 
@@ -132,7 +140,18 @@ export const POST = withErrorHandling(async (
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
 
-  const projectCwd = cwd || process.cwd();
+  // cwd becomes the spawn working dir — constrain it to an allowed root.
+  let projectCwd = process.cwd();
+  if (cwd !== undefined && cwd !== null && cwd !== "") {
+    if (typeof cwd !== "string") {
+      throw new BadRequest("cwd must be a string", { field: "cwd" });
+    }
+    const validatedCwd = resolveAndValidate(cwd, await getAllowedRoots(request));
+    if (!validatedCwd) {
+      throw new Forbidden("cwd is outside the allowed roots");
+    }
+    projectCwd = validatedCwd;
+  }
   const jsonlDir = claudeProjectPath(projectCwd);
   const jsonlPath = join(jsonlDir, `${id}.jsonl`);
 
@@ -167,8 +186,10 @@ export const POST = withErrorHandling(async (
     if (exists) {
       matched = safeName;
     } else {
-      // spawn session with claude --resume
-      await pty.spawn(safeName, "env", ["-u", "CLAUDECODE", "sh", "-c", `cd "${projectCwd}" && claude --resume "${id}"`], {
+      // spawn claude --resume directly (no `sh -c`): the working directory is
+      // set via the spawn cwd option and id is passed as a discrete argv entry,
+      // so neither projectCwd nor id is ever interpolated into a shell string.
+      await pty.spawn(safeName, "env", ["-u", "CLAUDECODE", "claude", "--resume", id], {
         cwd: projectCwd,
         env: buildChildEnv({
           MENTIKO_GLOBAL_ROOT: config.globalRoot,

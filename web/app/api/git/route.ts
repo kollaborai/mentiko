@@ -1,7 +1,8 @@
 import { execSync, execFileSync } from "child_process";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { Unauthorized } from "@/lib/api-errors";
+import { Unauthorized, Forbidden } from "@/lib/api-errors";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,16 @@ function run(cmd: string, cwd: string): string {
 // mutation: throws on non-zero exit (caller must catch)
 function exec(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8", timeout: 10000 }).trim();
+}
+
+// read-only, array form: swallows errors, returns "" on failure.
+// no shell — args (incl. caller-supplied paths) can never be interpreted.
+function runArgs(args: string[], cwd: string): string {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf-8", timeout: 10000 }).trim();
+  } catch {
+    return "";
+  }
 }
 
 function parseStatus(cwd: string): GitStatusResult {
@@ -134,8 +145,21 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     return apiSuccess({ error: "workspacePath required" }, undefined, 400);
   }
 
-  // resolve git root from workspacePath
-  const gitRoot = run("git rev-parse --show-toplevel", workspacePath) || workspacePath;
+  // workspacePath becomes the cwd for every git command below — constrain it
+  // to a root the caller is allowed to touch, or any authed user could run git
+  // against arbitrary host repositories.
+  const allowedRoots = await getAllowedRoots(request);
+  const validatedWorkspace = resolveAndValidate(workspacePath, allowedRoots);
+  if (!validatedWorkspace) {
+    throw new Forbidden("workspacePath is outside the allowed roots");
+  }
+
+  // resolve git root from the validated workspace, then re-validate it —
+  // `show-toplevel` can walk up out of a workspace subdirectory.
+  const gitRoot = run("git rev-parse --show-toplevel", validatedWorkspace) || validatedWorkspace;
+  if (!resolveAndValidate(gitRoot, allowedRoots)) {
+    throw new Forbidden("git root is outside the allowed roots");
+  }
 
   switch (action) {
     case "status":
@@ -225,7 +249,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
         const args = body.staged
           ? ["diff", "--cached", "--", diffPath]
           : ["diff", "--", diffPath];
-        const diff = run(`git ${args.join(" ")}`, gitRoot);
+        const diff = runArgs(args, gitRoot);
         return apiSuccess({ diff });
       } catch {
         return apiSuccess({ diff: "" });
