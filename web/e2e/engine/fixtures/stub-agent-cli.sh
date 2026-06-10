@@ -40,12 +40,33 @@
 #                              status "failed" so the completion quality-gate fails the run.
 #   crash                    — exit non-zero immediately, before instructions, like a
 #                              CLI that dies on startup (drives the fast failure path).
+#   mid-run-crash            — start cleanly (PASSES the startup liveness check by
+#                              blocking on stdin), then on the instruction line print a
+#                              little work and exit NON-ZERO without ever emitting its
+#                              event or AGENT_COMPLETE — a CLI that dies mid-task. Drives
+#                              the monitor's dead-process-without-event FAILURE path.
+#   quiet-slow               — start cleanly, then sit SILENT (no new output, so the
+#                              monitor's md5 hash is stable and stale-count climbs) for
+#                              STUB_QUIET_SECONDS, THEN complete normally. Proves a
+#                              quiet-but-working agent is NOT force-completed early.
+#   chatty                   — emit event + AGENT_COMPLETE, then FLOOD hundreds of extra
+#                              lines so AGENT_COMPLETE scrolls past the monitor's tail
+#                              capture window. Proves completion is still detected
+#                              (via the latched event-file signal).
+#
+# Extra env knobs (defaults keep the stub fast + hang-proof):
+#   STUB_QUIET_SECONDS     quiet-slow silent duration (default 8)
+#   STUB_CHATTY_LINES      chatty post-complete flood line count (default 400)
+#   STUB_MIDCRASH_SECONDS  mid-run-crash: seconds alive before dying (default 6)
 #
 # This file is a TEST FIXTURE. It is never shipped and never executed in production.
 
 set -u
 
 STUB_MODE="${STUB_MODE:-complete}"
+STUB_QUIET_SECONDS="${STUB_QUIET_SECONDS:-8}"
+STUB_CHATTY_LINES="${STUB_CHATTY_LINES:-400}"
+STUB_MIDCRASH_SECONDS="${STUB_MIDCRASH_SECONDS:-6}"
 
 log() { printf '[stub:%s] %s\n' "${MENTIKO_AGENT_ID:-?}" "$*"; }
 
@@ -57,6 +78,14 @@ if [[ "$STUB_MODE" == "crash" ]]; then
   echo "ERROR: stub intentional startup failure" >&2
   exit 7
 fi
+
+# mid-run-crash: handled INSIDE the REPL below (do_mid_run_crash), NOT as an early
+# exit. It must survive the engine's startup liveness check (chain-runner.sh
+# session_has_active_command) AND actually receive the instruction line, THEN die
+# non-zero without emitting its event or AGENT_COMPLETE — so it is the MONITOR's
+# dead-process detection (monitor-chain-agent -> monitor-agent-died) that catches
+# it, not the pre-instruction startup check. An early time-based exit raced the
+# startup check and was caught there instead, never exercising the monitor path.
 
 # collect upstream output markers written by earlier agents in this run.
 # proves cross-step output propagation when present.
@@ -117,6 +146,32 @@ JSON
   echo "NEXT:"
   echo "- none"
   echo "AGENT_COMPLETE"
+
+  # chatty mode: AFTER printing AGENT_COMPLETE and emitting the event, flood the
+  # terminal so the marker scrolls far past the monitor's tail capture window.
+  # The monitor must still detect completion via the latched event-file signal.
+  if [[ "$STUB_MODE" == "chatty" ]]; then
+    local i
+    for (( i=0; i<STUB_CHATTY_LINES; i++ )); do
+      echo "chatty-noise line ${i} lorem ipsum dolor sit amet consectetur ${MENTIKO_AGENT_ID}"
+    done
+  fi
+}
+
+# do_mid_run_crash: called from the REPL once the instruction line has been
+# received (so startup liveness already passed). Prints a little work, stays alive
+# briefly as a real foreground process — long enough for the monitor's first
+# poll(s) to observe a live CLI and ARM its dead-process detector — then exits
+# NON-ZERO WITHOUT emitting its event or printing AGENT_COMPLETE. The monitor's
+# "agent CLI no longer running" branch (monitor-agent-died) must then record
+# FAILURE, never fabricate success. Bounded sleep guarantees no hang.
+do_mid_run_crash() {
+  log "received task; working ${STUB_MIDCRASH_SECONDS}s then dying mid-task (no event, no AGENT_COMPLETE)" >&2
+  echo "thinking about the task..."
+  echo "starting step 1 of 3"
+  sleep "$STUB_MIDCRASH_SECONDS"
+  echo "ERROR: stub intentional mid-run failure" >&2
+  exit 9
 }
 
 log "stub REPL ready (mode=$STUB_MODE); waiting for instructions"
@@ -132,9 +187,26 @@ while true; do
     # The instruction pointer (build-instruction-pointer) names the agent id and
     # the words "Mentiko"/"instructions". Trigger on any of those.
     if [[ "$line" == *"${MENTIKO_AGENT_ID}"* || "$line" == *nstruction* || "$line" == *Mentiko* ]]; then
-      do_work_and_complete
-      sleep 2   # let the monitor capture the marker before the process exits
-      exit 0
+      case "$STUB_MODE" in
+        mid-run-crash)
+          do_mid_run_crash   # works briefly post-instruction, then exits non-zero
+          ;;
+        quiet-slow)
+          # sit silent so the monitor's last-20-lines md5 stays stable and the
+          # stale counter climbs, THEN complete normally. The test sets a high
+          # MENTIKO_MONITOR_MAX_STALE so this completes before max-stale fires.
+          log "going quiet for ${STUB_QUIET_SECONDS}s (no output) then completing" >&2
+          sleep "$STUB_QUIET_SECONDS"
+          do_work_and_complete
+          sleep 2
+          exit 0
+          ;;
+        *)
+          do_work_and_complete
+          sleep 2   # let the monitor capture the marker before the process exits
+          exit 0
+          ;;
+      esac
     fi
   else
     # read timed out (no input this cycle). Fall back to completing once the

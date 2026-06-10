@@ -25,6 +25,14 @@ fi
 # configurable: monitor check interval
 MENTIKO_MONITOR_INTERVAL="${MENTIKO_MONITOR_INTERVAL:-60}"
 
+# configurable monitor timing knobs (env-tunable so tests can run fast).
+# defaults preserve historical behavior.
+#   MENTIKO_MONITOR_MAX_STALE   - stale cycles before an alive-but-quiet agent is
+#                                 surfaced as blocked (see monitor-agent-stalled).
+#   MENTIKO_MONITOR_MARKER_TAIL - how many tail lines agent-complete-marker-seen scans.
+DEFAULT_MAX_STALE_COUNT="${MENTIKO_MONITOR_MAX_STALE:-${DEFAULT_MAX_STALE_COUNT:-5}}"
+MENTIKO_MONITOR_MARKER_TAIL="${MENTIKO_MONITOR_MARKER_TAIL:-100}"
+
 # namespace config
 NAMESPACE_ID="${NAMESPACE_ID:-default}"
 
@@ -245,12 +253,303 @@ FBEOF
 
 agent-complete-marker-seen() {
     local session_name="$1"
-    local tail_lines="${2:-100}"
+    local tail_lines="${2:-${MENTIKO_MONITOR_MARKER_TAIL:-100}}"
 
     transport_capture "$session_name" "$tail_lines" 2>/dev/null |
         strip-terminal-control |
         sed -E 's/^[[:space:]]*[^[:alnum:]_[:space:]]+[[:space:]]*/ /' |
         grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
+}
+
+# -------------------------------------------------------------------
+# agent-completion-latched: authoritative "agent is done" signal.
+#
+# Completion comes from durable signals, never from re-scanning a fixed
+# tail window each poll (a chatty agent scrolls AGENT_COMPLETE past the
+# capture window — finding #4). Two authoritative signals, OR-latched:
+#
+#   1. AGENT_COMPLETE seen at least once. The marker is sticky: once a poll
+#      observes it we touch a latch file so later polls still count it even
+#      after the line scrolls off. (We do NOT re-derive completion from the
+#      live tail alone.)
+#   2. The agent's declared `emits` event file exists for THIS run
+#      (monitor_completion_event_file) — durable proof the agent produced
+#      its handoff, independent of terminal scrollback entirely.
+#
+# Either one latches completion. Caller passes the latch file path.
+# -------------------------------------------------------------------
+agent-completion-latched() {
+    local session_name="$1"
+    local latch_file="$2"
+    local chain_file="${3:-}"
+    local events_dir="${4:-${EVENTS_DIR:-}}"
+    local agent_id="${5:-${MENTIKO_AGENT_ID:-}}"
+    local tail_lines="${6:-${MENTIKO_MONITOR_MARKER_TAIL:-100}}"
+
+    # already latched on a prior poll
+    if [[ -n "$latch_file" && -f "$latch_file" ]]; then
+        return 0
+    fi
+
+    # signal 1: AGENT_COMPLETE marker on its own line in the recent tail
+    if agent-complete-marker-seen "$session_name" "$tail_lines"; then
+        [[ -n "$latch_file" ]] && : > "$latch_file" 2>/dev/null || true
+        return 0
+    fi
+
+    # signal 2: the agent's declared emits event file exists for this run.
+    # This is authoritative even if the marker never appears in the capture
+    # window (chatty agent) — the durable event file proves handoff.
+    if [[ -n "$chain_file" && -f "$chain_file" ]] && declare -f monitor_completion_event_file >/dev/null; then
+        local ev=""
+        ev="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id" 2>/dev/null || true)"
+        if [[ -z "$ev" && -n "$chain_file" ]]; then
+            ev="$(monitor_completion_event_file "$session_name" "$chain_file" "$(dirname "$chain_file")/events" "$agent_id" 2>/dev/null || true)"
+        fi
+        if [[ -n "$ev" ]]; then
+            [[ -n "$latch_file" ]] && : > "$latch_file" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# -------------------------------------------------------------------
+# monitor failure/stall surfacing (findings #1 + #2, agent-functions side)
+#
+# CORE PRINCIPLE: stale != complete, and dead != succeeded. The monitor must
+# NEVER emit the agent's declared success event on a stall or a dead process,
+# and must NEVER run the success completion path for those cases. It records a
+# non-success status and emits a DIAGNOSTIC event so the run is visibly
+# stuck/failed (so on_error handling can engage) instead of falsely complete.
+#
+# These mirror chain-runner.sh's startup-path semantics:
+#   dead process w/o event  -> run+agent status FAILED  (cf. mark_run_agent_failed, :1874)
+#                              diagnostic event: agent-error
+#   alive but quiescent      -> run+agent status BLOCKED (cf. mark_run_agent_blocked, :1865)
+#                              diagnostic event: agent-timeout
+# and the watchdog's run-stalled surfacing pattern (lib/watchdog.sh:312-322):
+# a system/diagnostic event with structured fields, NOT a faked handoff.
+#
+# DIAGNOSTIC EVENT SHAPE (consumed by hooks/notifications/log, never by the
+# completion matcher — source is "monitor", not the agent id, so it can never
+# satisfy reconciler's source.includes(agentId) test):
+#   event:   agent-timeout | agent-error   (both canonical, in the schema enum)
+#   source:  monitor
+#   run_id:  <run id>
+#   agent:   <agent id>
+#   reason:  <human-readable reason>
+#   [stale_count: N]   (agent-timeout only)
+#   processed: false
+#   filename: ${ts}-${run_id}-${agent_id}-${event}.event   (own scheme, like
+#             watchdog's ${ts}-run-stalled.event — NOT the canonical
+#             ${run_id}-${source}-${event}.event handoff naming)
+#
+# >>> GROUP C ALIGNMENT NOTE <<<
+# chain-runner-complete.sh's fallback (currently fabricates the agent's SUCCESS
+# event on a dead process) should be brought into line with the above: on a
+# process that exited WITHOUT its declared emits event, write run+agent status
+# FAILED and an agent-error diagnostic (source: <its own>, NOT the agent's emits
+# name) instead of fabricating success. The monitor (this file) no longer hands a
+# dead-without-event agent to the completion handler at all (see
+# monitor-agent-died), so complete.sh's fabrication is now only reachable via its
+# own independent code paths.
+# -------------------------------------------------------------------
+
+# _monitor_agent_process_gone: reliable "the agent CLI is no longer running".
+#
+# The PTY pane process is a persistent interactive shell; the agent CLI runs as a
+# CHILD command inside it (chain-runner.sh launches `bash agent-start-script` ->
+# the CLI). So `ps -p <pane_pid>` checks the SHELL, not the CLI — a CLI that
+# exits/crashes leaves the shell alive at an idle prompt and `ps -p` never sees
+# it. The reliable signal (same one chain-runner's startup check uses,
+# session_has_active_command at :754) is whether the pane has an ACTIVE CHILD
+# COMMAND: `pgrep -P <pane_pid>`. Non-empty while the CLI runs, empty once it has
+# exited and the shell is idle.
+#
+# To avoid false positives we (1) "arm" only after the CLI has been seen running
+# at least once (so we never declare death before the CLI even started), and
+# (2) debounce a no-child reading with a short re-check (transient fork gaps).
+# args: <session_name> <armed_file>   -> returns 0 if the agent CLI is gone.
+_monitor_agent_process_gone() {
+    local session_name="$1"
+    local armed_file="$2"
+
+    local pane_pid
+    pane_pid="$(transport_pid "$session_name" 2>/dev/null || true)"
+    [[ -n "$pane_pid" ]] || return 1   # can't tell -> not gone
+
+    if command -v pgrep >/dev/null 2>&1; then
+        if pgrep -P "$pane_pid" >/dev/null 2>&1; then
+            # CLI (a child command) is running -> arm + alive
+            [[ -n "$armed_file" ]] && : > "$armed_file" 2>/dev/null || true
+            return 1
+        fi
+        # no active child. Only meaningful once the CLI was seen running.
+        [[ -n "$armed_file" && -f "$armed_file" ]] || return 1
+        # debounce: re-check after a beat to avoid a transient fork gap.
+        sleep 1
+        if pgrep -P "$pane_pid" >/dev/null 2>&1; then
+            return 1
+        fi
+        return 0   # armed + no child twice = the agent CLI exited
+    fi
+
+    # pgrep unavailable: fall back to the (coarser) pane-process liveness check.
+    ps -p "$pane_pid" >/dev/null 2>&1 && return 1 || return 0
+}
+
+# lazily make run-lib status helpers available to the monitor. agent-functions.sh
+# does not source run-lib.sh directly; in the live engine event-trigger.sh pulls
+# it in, but be defensive for standalone/test sourcing.
+_monitor_ensure_run_helpers() {
+    if declare -f update-run-agent >/dev/null && declare -f update-run-status >/dev/null; then
+        return 0
+    fi
+    local d
+    d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # run-lib.sh asserts `set -euo pipefail` at its top level; sourcing it would
+    # re-arm errexit/nounset in this monitor shell and abort the handler that
+    # called us. Snapshot the current shell options, source, then restore — so
+    # the monitor keeps its relaxed semantics regardless of run-lib's prelude.
+    local _saved_set_opts
+    _saved_set_opts="$(set +o)"
+    source "$d/run-lib.sh" 2>/dev/null || true
+    eval "$_saved_set_opts" 2>/dev/null || true
+    declare -f update-run-agent >/dev/null
+}
+
+# resolve the agent id this monitored session belongs to.
+_monitor_resolve_agent_id() {
+    local session_name="$1"
+    local chain_file="${2:-}"
+    if [[ -n "${MENTIKO_AGENT_ID:-}" ]]; then
+        printf '%s' "$MENTIKO_AGENT_ID"
+        return 0
+    fi
+    if declare -f monitor_agent_id_for_session >/dev/null; then
+        monitor_agent_id_for_session "$session_name" "$chain_file" 2>/dev/null || true
+    fi
+}
+
+# write a diagnostic (non-handoff) event. Like the watchdog's run-stalled event,
+# this keeps its OWN timestamped filename and structured fields rather than the
+# canonical ${run_id}-${source}-${event}.event handoff naming, so it can never be
+# mistaken for an agent's declared completion event by the completion matcher.
+_monitor_emit_diagnostic_event() {
+    local event_name="$1"   # agent-stalled | agent-error
+    local agent_id="$2"
+    local reason="$3"
+    local extra="${4:-}"    # optional extra "key: value" lines
+
+    local events_dir="${EVENTS_DIR:-${MENTIKO_PROJECT_ROOT:-${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}}/events}"
+    mkdir -p "$events_dir" 2>/dev/null || true
+    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
+    local ts
+    ts="$(date -u +"%Y%m%dT%H%M%S")"
+    local safe_agent="${agent_id//[^A-Za-z0-9._-]/_}"
+    [[ -z "$safe_agent" ]] && safe_agent="unknown"
+    local event_file="$events_dir/${ts}-${run_id:+${run_id}-}${safe_agent}-${event_name}.event"
+
+    {
+        printf 'event: %s\n' "$event_name"
+        printf 'source: monitor\n'
+        printf 'run_id: %s\n' "$run_id"
+        printf 'agent: %s\n' "$agent_id"
+        printf 'timestamp: %s\n' "$(date -Iseconds)"
+        printf 'reason: %s\n' "$reason"
+        [[ -n "$extra" ]] && printf '%s\n' "$extra"
+        printf 'processed: false\n'
+    } > "$event_file" 2>/dev/null || true
+    echo "  diagnostic event written: $(basename "$event_file")"
+}
+
+# monitor-agent-stalled: an alive agent went quiescent past the stale budget.
+# Surface as BLOCKED (needs intervention) — NOT complete, NOT failed. The process
+# is still alive and the md5 heuristic is known-blind to spinner redraws, so a
+# stall verdict is uncertain; blocked lets the watchdog/reconciler/human take over
+# while ensuring nothing routes forward as success.
+monitor-agent-stalled() {
+    local session_name="$1"
+    local chain_file="${2:-}"
+    local stale_count="${3:-0}"
+    local reason="${4:-monitor: agent output quiescent past max stale count ($stale_count)}"
+
+    local agent_id
+    agent_id="$(_monitor_resolve_agent_id "$session_name" "$chain_file")"
+    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
+
+    echo "$(date '+%H:%M:%S') - agent stalled (blocked): $reason"
+
+    _monitor_ensure_run_helpers || true
+    if [[ -n "$run_id" ]]; then
+        if [[ -n "$agent_id" ]] && declare -f update-run-agent >/dev/null; then
+            update-run-agent "$run_id" "$agent_id" "blocked" 2>/dev/null || true
+        fi
+        if declare -f update-run-status >/dev/null; then
+            update-run-status "$run_id" "blocked" "$reason" 2>/dev/null || true
+        fi
+    fi
+
+    # agent-timeout is the canonical lifecycle name for "agent did not finish in
+    # its time budget" (in the schema enum + event contract). Output-quiescence
+    # past max-stale is exactly that. source:monitor (not the agent id) guarantees
+    # the completion matcher can never mistake this for a success handoff.
+    _monitor_emit_diagnostic_event "agent-timeout" "${agent_id:-unknown}" "$reason" \
+        "stale_count: $stale_count"
+}
+
+# monitor-agent-died: the agent process is gone. If a genuine completion event
+# already exists for this run, the agent finished and the process simply exited —
+# complete normally. Otherwise the process died WITHOUT producing its handoff:
+# that is a FAILURE, never a fabricated success. Record failure + diagnostic and
+# do NOT run the success completion path.
+# Returns 0 if it handled a real completion (caller should still break),
+# returns 1 if it recorded a failure (caller should break without completing).
+monitor-agent-died() {
+    local session_name="$1"
+    local chain_file="${2:-}"
+    local reason="${3:-monitor: agent process exited before producing its completion event}"
+
+    local agent_id
+    agent_id="$(_monitor_resolve_agent_id "$session_name" "$chain_file")"
+    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
+    local events_dir="${EVENTS_DIR:-}"
+
+    # Did the agent already emit its declared completion event for this run?
+    local completion_event=""
+    if [[ -n "$chain_file" && -f "$chain_file" ]] && declare -f monitor_completion_event_file >/dev/null; then
+        completion_event="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id" 2>/dev/null || true)"
+        if [[ -z "$completion_event" && -n "$chain_file" ]]; then
+            completion_event="$(monitor_completion_event_file "$session_name" "$chain_file" "$(dirname "$chain_file")/events" "$agent_id" 2>/dev/null || true)"
+        fi
+    fi
+
+    if [[ -n "$completion_event" ]]; then
+        # genuine completion: the agent produced its handoff, then its process
+        # exited. Run the normal completion handler (NOT a fabrication).
+        echo "  process gone but completion event exists ($(basename "$completion_event")); completing normally"
+        if [[ -n "$chain_file" && -f "$chain_file" ]]; then
+            launch-chain-runner-complete "$session_name" "$chain_file"
+        fi
+        return 0
+    fi
+
+    # dead without event = failure. Do NOT fabricate the success event; do NOT
+    # run the completion handler.
+    echo "  process gone with NO completion event: $reason"
+    _monitor_ensure_run_helpers || true
+    if [[ -n "$run_id" ]]; then
+        if [[ -n "$agent_id" ]] && declare -f update-run-agent >/dev/null; then
+            update-run-agent "$run_id" "$agent_id" "failed" 2>/dev/null || true
+        fi
+        if declare -f update-run-status >/dev/null; then
+            update-run-status "$run_id" "failed" "$reason" 2>/dev/null || true
+        fi
+    fi
+    _monitor_emit_diagnostic_event "agent-error" "${agent_id:-unknown}" "$reason"
+    return 1
 }
 
 launch-chain-runner-complete() {
@@ -318,11 +617,20 @@ launch-chain-runner-complete() {
 # trigger completion handler on AGENT_COMPLETE
 # -------------------------------------------------------------------
 monitor-with-ai() {
+    # See monitor-chain-agent: the live monitor inherits a leaked
+    # `set -euo pipefail` (via event-trigger.sh -> run-lib.sh). Relax it so this
+    # long-lived poll loop — full of intentionally-non-zero probes and optional
+    # vars — is not aborted mid-flight, which would strand the run as "running".
+    set +e +u +o pipefail 2>/dev/null || true
+
     local session_name="$1"
     local check_interval="${2:-$MENTIKO_MONITOR_INTERVAL}"
     local agent_context="${3:-}"
     local max_stale_count="${4:-${DEFAULT_MAX_STALE_COUNT:-5}}"
     local advisor_stale_threshold="${MENTIKO_ADVISOR_STALE_COUNT:-3}"
+    # legacy spec-driven path has no chain.json, but CHAIN_FILE may be exported;
+    # if present it lets the failure/completion helpers consult the event file.
+    local chain_file="${CHAIN_FILE:-}"
     local state_dir="$HOME/.mentiko_monitor"
     local state_file="$state_dir/${session_name}_state"
     local stale_count_file="$state_dir/${session_name}_stale"
@@ -357,37 +665,35 @@ monitor-with-ai() {
             break
         fi
 
-        # check process liveness (detect dead CLI process)
-        local pane_pid=$(transport_pid "$session_name" 2>/dev/null)
-        if [[ -n "$pane_pid" ]]; then
-            # check if the process is still running
-            if ! ps -p "$pane_pid" >/dev/null 2>&1; then
-                echo "  process $pane_pid inside session '$session_name' is dead. forcing completion..."
-                local project_root
-                project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                sleep 3
-                ensure-event-file "$session_name" "$agent_context" "$project_root"
-                local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
-                if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
-                    nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                    disown $!
-                    echo "  complete-agent.sh launched (pid: $!, disowned)"
-                fi
-                rm -f "$state_file" "$stale_count_file"
-                break
-            fi
+        # check agent-CLI liveness (detect a CLI that exited/crashed).
+        # dead != succeeded: if the CLI is gone without its completion event,
+        # this is a FAILURE, not a fabricated success (finding #2).
+        if _monitor_agent_process_gone "$session_name" "$state_dir/${session_name}_armed"; then
+            echo "  agent CLI in session '$session_name' is no longer running."
+            sleep 3
+            # monitor-agent-died completes normally IFF a real event exists,
+            # otherwise records failure + diagnostic (never fabricates success).
+            monitor-agent-died "$session_name" "$chain_file" || true
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed"
+            break
         fi
 
-        # check for completion signal. The marker must be on its own line so
-        # prose like "output AGENT_COMPLETE" in the prompt is ignored.
-        if agent-complete-marker-seen "$session_name" 100; then
+        # check for completion signal. Completion is latched from authoritative
+        # signals (AGENT_COMPLETE sighting OR the agent's emitted event file), so
+        # a chatty agent that scrolls the marker off-screen still completes
+        # (finding #4). The marker must be on its own line so prose like
+        # "output AGENT_COMPLETE" in the prompt is ignored.
+        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file"; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             echo "  triggering completion handler..."
 
             local project_root
             project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
 
-            # ensure event file exists before chain continues
+            # ensure event file exists before chain continues. This fallback is
+            # legitimate HERE: the agent SIGNALLED completion (marker/event), so
+            # writing its declared emits event is recording a real success, not
+            # fabricating one.
             sleep 3
             ensure-event-file "$session_name" "$agent_context" "$project_root"
 
@@ -399,10 +705,15 @@ monitor-with-ai() {
             else
                 echo "  complete-agent.sh not found at: $runtime_dir"
             fi
-            rm -f "$state_file" "$stale_count_file"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
             break
         fi
 
+        # md5 of the last 20 lines is a QUIESCENCE trigger for nudges/diagnostics
+        # ONLY — never a completion signal. KNOWN BLINDNESS: a CLI that repaints a
+        # spinner/status line keeps the hash changing so a genuinely hung agent can
+        # read as "active"; conversely a quiet-but-working agent reads as stale.
+        # Because of that unreliability, max-stale never completes — it surfaces.
         local new_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
         local old_state=""
         [[ -f "$state_file" ]] && old_state=$(cat "$state_file")
@@ -412,20 +723,13 @@ monitor-with-ai() {
             stale_count=$((stale_count + 1))
             echo "$stale_count" > "$stale_count_file"
 
-            # check if max stale count reached (stuck agent)
+            # max stale reached: stale != complete. The agent is alive but quiet;
+            # surface it as BLOCKED (intervention) — do NOT emit its success event
+            # and do NOT run the completion path (finding #1).
             if [[ $stale_count -ge $max_stale_count ]]; then
-                echo "$(date '+%H:%M:%S') - max stale count ($max_stale_count) reached. forcing completion..."
-                local project_root
-                project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                sleep 3
-                ensure-event-file "$session_name" "$agent_context" "$project_root"
-                local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
-                if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
-                    nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                    disown $!
-                    echo "  complete-agent.sh launched (pid: $!, disowned)"
-                fi
-                rm -f "$state_file" "$stale_count_file"
+                monitor-agent-stalled "$session_name" "$chain_file" "$stale_count" \
+                    "monitor: agent output quiescent for ${stale_count} stale cycles (max ${max_stale_count})"
+                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
                 break
             fi
 
@@ -468,10 +772,21 @@ monitor-with-ai() {
 # supports local, ssh, and docker workspaces
 # -------------------------------------------------------------------
 monitor-chain-agent() {
+    # The monitor runs as a long-lived poll loop with many commands that
+    # legitimately return non-zero (liveness probes that say "alive", completion
+    # checks that say "not yet", grep -q misses) and reads optional vars. In the
+    # live engine the monitor script sources event-trigger.sh -> run-lib.sh, whose
+    # top-level `set -euo pipefail` LEAKS into this shell (proven: monitor flags
+    # are "ehuB"). Under errexit/nounset a single such non-zero/unset would abort
+    # the whole monitor, stranding the run as "running". Relax those inherited
+    # flags here so the loop has the forgiving semantics it was written for. (No
+    # effect when sourced standalone without strict mode.)
+    set +e +u +o pipefail 2>/dev/null || true
+
     local session_name="$1"
     local check_interval="${2:-5}"
     local agent_context="${3:-}"
-    local chain_file="${4:-$CHAIN_FILE}"
+    local chain_file="${4:-${CHAIN_FILE:-}}"
     local workspace_type="${WORKSPACE_TYPE:-local}"
     local max_stale_count="${5:-${DEFAULT_MAX_STALE_COUNT:-5}}"
     local advisor_stale_threshold="${MENTIKO_ADVISOR_STALE_COUNT:-3}"
@@ -509,19 +824,19 @@ monitor-chain-agent() {
             break
         fi
 
-        # check process liveness (detect dead CLI process)
-        # skip for remote workspaces (process check not supported remotely)
+        # check agent-CLI liveness (detect a CLI that exited/crashed).
+        # skip for remote workspaces (process check not supported remotely).
+        # dead != succeeded: monitor-agent-died completes normally ONLY if the
+        # agent's real completion event already exists; otherwise it records
+        # failure + a diagnostic event and does NOT hand off to the completion
+        # handler (which would otherwise fabricate a success — finding #2).
         if [[ "$workspace_type" == "local" ]]; then
-            local pane_pid=$(transport_pid "$session_name" 2>/dev/null)
-            if [[ -n "$pane_pid" ]]; then
-                if ! ps -p "$pane_pid" >/dev/null 2>&1; then
-                    echo "  process $pane_pid inside session '$session_name' is dead. forcing completion..."
-                    if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                        launch-chain-runner-complete "$session_name" "$chain_file"
-                    fi
-                    rm -f "$state_file" "$stale_count_file"
-                    break
-                fi
+            if _monitor_agent_process_gone "$session_name" "$state_dir/${session_name}_armed"; then
+                echo "  agent CLI in session '$session_name' is no longer running."
+                monitor-agent-died "$session_name" "$chain_file" \
+                    "monitor: agent CLI process exited before producing its completion event" || true
+                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed"
+                break
             fi
         fi
 
@@ -545,27 +860,26 @@ monitor-chain-agent() {
         # -----------------------------------------------------------
         # COMPLETION DETECTION PROTOCOL:
         #
-        # 1. hash last 20 lines to detect activity
-        # 2. hash changed = agent working, do nothing
-        # 3. hash stable = agent idle at prompt
-        #    → check last 20 lines for AGENT_COMPLETE
-        #    → if found: trigger handoff
-        #    → if not found: agent stalled, send nudge via pty
+        # Completion is LATCHED from authoritative signals, not re-scraped from a
+        # fixed tail window each poll:
+        #   - AGENT_COMPLETE seen at least once (sticky latch), OR
+        #   - the agent's declared emits event file exists for this run.
+        # A chatty agent that scrolls AGENT_COMPLETE past the capture window still
+        # completes via the event-file signal (finding #4).
         #
-        # NEVER grep the full buffer - the agent's prompt contains
-        # "AGENT_COMPLETE" as instruction text. grepping 100+ lines
-        # matches the instruction before the agent finishes.
-        # only check last ~20 lines AFTER idle detected.
-        #
-        # claude doesn't exit on context exhaustion - it idles at
-        # the prompt. p alive is always true. hash comparison is
-        # the only reliable signal for "agent stopped working".
+        # The md5 hash of the last 20 lines is ONLY an activity/quiescence trigger
+        # for nudges; it is NEVER a completion signal and never force-completes.
+        # KNOWN BLINDNESS: spinner/status-line redraws keep the hash changing, so a
+        # hung agent can read "active"; a quiet-but-working agent reads "stale".
+        # claude doesn't exit on context exhaustion — it idles at the prompt, so
+        # process liveness alone is not enough either; the latch above is the
+        # authoritative "done" signal.
         # -----------------------------------------------------------
 
-        # Check the marker before classifying output as "active". Some CLIs
-        # repaint status lines after the agent's final text, so waiting for a
-        # stable hash can miss the completion window and send a stale nudge.
-        if agent-complete-marker-seen "$session_name" 100; then
+        # Check completion before classifying output as "active". Some CLIs repaint
+        # status lines after the agent's final text, so waiting for a stable hash
+        # can miss the completion window and send a stale nudge.
+        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             sleep 3
 
@@ -589,7 +903,7 @@ monitor-chain-agent() {
                     disown $!
                 fi
             fi
-            rm -f "$state_file" "$stale_count_file"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
             break
         fi
 
@@ -633,10 +947,10 @@ monitor-chain-agent() {
             continue
         fi
 
-        # hash stable → agent is idle. check recent output for a completion
-        # marker on its own line. The prompt contains AGENT_COMPLETE too, so
-        # this intentionally avoids substring matches.
-        if agent-complete-marker-seen "$session_name" 100; then
+        # hash stable → agent is idle. Use the latched completion signal (marker
+        # sighting OR emitted event file); the prompt contains AGENT_COMPLETE too,
+        # so the marker check intentionally avoids substring matches.
+        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             sleep 3
 
@@ -660,7 +974,7 @@ monitor-chain-agent() {
                     disown $!
                 fi
             fi
-            rm -f "$state_file" "$stale_count_file"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
             break
         fi
 
@@ -669,9 +983,16 @@ monitor-chain-agent() {
         stale_count=$((stale_count + 1))
         echo "$stale_count" > "$stale_count_file"
 
-        # check if max stale count reached (stuck agent)
+        # max stale reached: stale != complete. The agent is alive but quiescent.
+        # Surface it as BLOCKED (intervention) and stop monitoring — do NOT emit
+        # its success event and do NOT run the completion handler (finding #1).
+        # If a completion event already exists, this is the chatty/slow-final case
+        # handled by the latch above, so reaching here means no event yet.
         if [[ $stale_count -ge $max_stale_count ]]; then
-            echo "$(date '+%H:%M:%S') - max stale count ($max_stale_count) reached. waiting for AGENT_COMPLETE..."
+            monitor-agent-stalled "$session_name" "$chain_file" "$stale_count" \
+                "monitor: agent output quiescent for ${stale_count} stale cycles (max ${max_stale_count}); no AGENT_COMPLETE and no completion event"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+            break
         fi
 
         if declare -f monitor_should_ask_advisor >/dev/null && ! monitor_should_ask_advisor "$stale_count" "$advisor_stale_threshold"; then
@@ -722,6 +1043,10 @@ export -f new-agent-session
 export -f new-agent-from-spec
 export -f peek-session
 export -f ensure-event-file
+export -f agent-complete-marker-seen
+export -f agent-completion-latched
+export -f monitor-agent-stalled
+export -f monitor-agent-died
 export -f launch-chain-runner-complete
 export -f monitor-with-ai
 export -f monitor-chain-agent
