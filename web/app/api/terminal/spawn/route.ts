@@ -5,8 +5,9 @@ import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-
 import { getWorkspace } from "@/lib/workspaces/workspace-storage";
 import { getProfile, findDefaultProfile } from "@/lib/agents/agent-profile-storage";
 import { recordSessionOwner } from "@/lib/pty/session-owners";
+import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import config from "@/lib/config";
-import { BadRequest, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const body = await request.json();
   const { name, cwd, workspaceId } = body;
-  const terminalCwd = typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
+  const rawCwd = typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
 
   if (!name || typeof name !== "string") {
     throw new BadRequest("name is required", { field: "name" });
@@ -32,6 +33,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
+
+  // the cwd becomes the working directory of a shell that gets vault + workspace
+  // secrets injected — constrain it to a root the caller is allowed to reach,
+  // otherwise a user could root a secret-bearing shell anywhere on the host.
+  let terminalCwd: string | undefined = undefined;
+  if (rawCwd) {
+    const validated = resolveAndValidate(rawCwd, await getAllowedRoots(request));
+    if (!validated) {
+      throw new Forbidden("cwd is outside the allowed roots");
+    }
+    terminalCwd = validated;
+  }
 
   const { pty } = await import("@/lib/pty/pty-client");
 
