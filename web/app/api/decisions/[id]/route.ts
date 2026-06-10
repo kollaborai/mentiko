@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { applyDecisionRunResult } from "@/lib/decisions/decision-run-results";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,30 @@ export const GET = withErrorHandling(async (
       } else {
         try {
           const run = JSON.parse(readFileSync(runPath, "utf8"));
-          isStale = run.status === "failed" || run.status === "cancelled" || run.status === "stopped";
+          if (run.status === "completed" || run.status === "complete") {
+            const resultPath = join(resolveLinkRunsDir(nsId, orgId), decision.researchRunId, "artifacts", "decision-result.json");
+            if (existsSync(resultPath)) {
+              try {
+                const result = JSON.parse(readFileSync(resultPath, "utf8"));
+                const updated = await applyDecisionRunResult({
+                  namespaceId: nsId,
+                  orgId,
+                  decisionId: id,
+                  phase: "research",
+                  result,
+                  runId: decision.researchRunId,
+                  workspacePath,
+                });
+                return apiSuccess({ decision: updated });
+              } catch {
+                isStale = true;
+              }
+            } else {
+              isStale = true;
+            }
+          } else {
+            isStale = run.status === "failed" || run.status === "cancelled" || run.status === "stopped";
+          }
         } catch {
           isStale = true;
         }

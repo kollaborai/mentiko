@@ -35,7 +35,28 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   const guidedFlow = decision.guidedFlow as GuidedFlow | undefined;
   if (!guidedFlow) {
-    throw new BadRequest("No guided flow in decision");
+    return NextResponse.json({
+      decision: {
+        id: decision.id,
+        topic: decision.prompt || decision.title || "",
+        status: decision.status,
+        mode: decision.mode || "classic",
+        round1Status: "not_applicable",
+        round2Status: "not_applicable",
+        round3Status: "not_applicable",
+        pendingQuestions: [],
+        options: (decision.options || []).map((o) => ({
+          id: o.id,
+          name: o.name,
+          description: o.description,
+          effort: o.effort,
+          risk: o.risk,
+        })),
+        selectedOptionId: null,
+        recommendation: decision.recommendation || null,
+        plan: null,
+      },
+    });
   }
 
   // pendingQuestions: only unanswered ones (filter against round1.answers)
