@@ -357,6 +357,118 @@ event_file_matches_current_run() {
     return 1
 }
 
+# write a DIAGNOSTIC (non-handoff) event for a failure surfaced by this handler.
+# Mirrors the monitor's _monitor_emit_diagnostic_event shape EXACTLY (same fields,
+# same timestamped ${ts}-${run_id}-${agent}-${event}.event filename scheme) except
+# source is "chain-runner-complete" (this component) rather than "monitor". Because
+# source is never the agent id, the completion matcher's source.includes(agentId)
+# test can never read this as a success handoff. The event name (agent-error /
+# agent-timeout) is canonical (schema enum + contract canonical list), never the
+# agent's declared emits name — so this can never be mistaken for a fabricated
+# success. See group A's spec in lib/agent-functions.sh (monitor failure surfacing).
+emit_completion_diagnostic_event() {
+    local event_name="$1"   # agent-error | agent-timeout
+    local agent_id="$2"
+    local reason="$3"
+    local extra="${4:-}"    # optional extra "key: value" lines
+
+    local diag_run_id="${RUN_ID:-}"
+    local ts
+    ts="$(date -u +"%Y%m%dT%H%M%S")"
+    local safe_agent="${agent_id//[^A-Za-z0-9._-]/_}"
+    [[ -z "$safe_agent" ]] && safe_agent="unknown"
+    local event_file="$EVENTS_DIR/${ts}-${diag_run_id:+${diag_run_id}-}${safe_agent}-${event_name}.event"
+
+    {
+        printf 'event: %s\n' "$event_name"
+        printf 'source: chain-runner-complete\n'
+        printf 'run_id: %s\n' "$diag_run_id"
+        printf 'agent: %s\n' "$agent_id"
+        printf 'timestamp: %s\n' "$(date -Iseconds)"
+        printf 'reason: %s\n' "$reason"
+        [[ -n "$extra" ]] && printf '%s\n' "$extra"
+        printf 'processed: false\n'
+    } > "$event_file" 2>/dev/null || true
+    echo "  diagnostic event written: $(basename "$event_file")"
+}
+
+# fail_completion_no_event: the agent's process reached this completion handler
+# (it printed AGENT_COMPLETE / its monitor latched) but it NEVER wrote its
+# declared emits event. dead/quiescent-without-event = FAILURE, never a fabricated
+# success (finding #2). We record run+agent FAILED, emit an agent-error diagnostic
+# (source: chain-runner-complete, NOT the emits name), clean up the agent's
+# sessions, account for it in any fan-group, and stop — we do NOT advance the chain
+# on a handoff that never happened. This runs UNDER set -euo pipefail + the ERR
+# trap, so every step is guarded.
+fail_completion_no_event() {
+    local reason="${1:-agent reached completion handler without writing its declared emits event ($EXPECTED_EVENT)}"
+
+    echo ""
+    echo "  no completion event from $CURRENT_AGENT_ID; declared emits '$EXPECTED_EVENT' was never written."
+    echo "  treating as FAILURE (not fabricating the success event)."
+    _sys_log "error" "chain-runner-complete" "run ${RUN_ID:-unknown} agent ${CURRENT_AGENT_ID} completed WITHOUT its emits event; recording failure (no fabrication)" \
+        "expected: ${EXPECTED_EVENT:-none}, session: ${SESSION_NAME:-unknown}"
+
+    # tear down the agent's sessions (we are short-circuiting before phase 4).
+    local _mon="monitor-${SESSION_NAME}"
+    if transport_session_exists "$_mon" 2>/dev/null; then
+        transport_kill_session "$_mon" 2>/dev/null || true
+        echo "  removed monitor: $_mon"
+    fi
+    if transport_session_exists "$SESSION_NAME" 2>/dev/null; then
+        transport_kill_session "$SESSION_NAME" 2>/dev/null || true
+        echo "  removed agent: $SESSION_NAME"
+    fi
+
+    # record a failed state file for this agent (mirrors phase 4's state write).
+    local _state_id
+    _state_id="$(run-scoped-state-id "$SESSION_PREFIX" "${RUN_ID:-}" 2>/dev/null || echo "$SESSION_PREFIX")"
+    cat > "$STATE_DIR/${_state_id}.state" <<SEOF
+status: failed
+session: $SESSION_NAME
+agent_id: $CURRENT_AGENT_ID
+completed: $(date -Iseconds)
+event: none
+chain: $CHAIN_NAME
+reason: $reason
+SEOF
+
+    # run + agent status -> failed; propagate to the linked task.
+    if [[ -n "${RUN_ID:-}" ]]; then
+        update-run-agent "$RUN_ID" "$CURRENT_AGENT_ID" "failed" 2>/dev/null || true
+        update-run-status "$RUN_ID" "failed" "$reason" 2>/dev/null || true
+        update-task-from-run "$RUN_ID" "failed" 2>/dev/null || true
+        echo "  run status updated: failed"
+    fi
+
+    # emit the canonical agent-error diagnostic (never the emits name).
+    emit_completion_diagnostic_event "agent-error" "$CURRENT_AGENT_ID" "$reason"
+
+    # if this agent is a fan-out member, account for it as FAILED in the group so
+    # the fan-in's failure/on_error logic engages instead of hanging on a missing
+    # completion. The routing-lib call is self-locking + idempotent.
+    if [[ -n "${AGENT_FAN_GROUP_ID:-}" && -n "${AGENT_FAN_GROUP_AGENT_ID:-}" ]] \
+       && declare -f fan-group-agent-complete >/dev/null; then
+        echo "  marking fan-group member FAILED: ${AGENT_FAN_GROUP_AGENT_ID} in ${AGENT_FAN_GROUP_ID}"
+        fan-group-agent-complete "$AGENT_FAN_GROUP_ID" "$AGENT_FAN_GROUP_AGENT_ID" "failed" 2>/dev/null || true
+    fi
+
+    # circuit breaker + notifications (best-effort; never block the failure path).
+    if declare -f record_failure &>/dev/null; then
+        record_failure "${CHAIN_NAME:-unknown}" "$CURRENT_AGENT_ID" 5 300 2>/dev/null || true
+    fi
+    if declare -f dispatch-agent-failed &>/dev/null; then
+        dispatch-agent-failed "$CHAIN_NAME" "${RUN_ID:-}" "$CURRENT_AGENT_ID" "$reason" 2>/dev/null || true
+    fi
+    if declare -f fire-chain-webhooks &>/dev/null; then
+        fire-chain-webhooks "failed" "$CHAIN_FILE" "$CHAIN_NAME" "${RUN_ID:-}" 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "  chain-runner-complete done (no-event failure)."
+    exit 0
+}
+
 for event_file in "$EVENTS_DIR"/*; do
     [[ -f "$event_file" ]] || continue
     [[ -d "$event_file" ]] && continue
@@ -388,27 +500,23 @@ for event_file in "$EVENTS_DIR"/*; do
     fi
 done
 
-# fallback: if no event found, use expected event from chain.json
+# NO event file found for this agent's run. The agent reached the completion
+# handler (its monitor latched on AGENT_COMPLETE) but never wrote its declared
+# emits event. This previously FABRICATED the success event
+# (event: ${EXPECTED_EVENT}, source: ${SESSION_PREFIX}, a -fallback.event file) and
+# advanced the chain as if the agent had succeeded — the data-loss bug where a
+# failure is reported as a success and on_error never fires (finding #2).
+#
+# Aligned with group A's monitor semantics (dead/quiescent WITHOUT the declared
+# emits event = FAILURE): we record run+agent FAILED and emit an agent-error
+# DIAGNOSTIC (source: chain-runner-complete, NOT the emits name), then stop. We do
+# NOT synthesize the handoff that never happened.
+#
+# (The empty-EXPECTED_EVENT case — an agent that declares no emits at all — is left
+# to flow through to the terminal "no event / chain stops" handling below, exactly
+# as before; only the fabricate-the-declared-emits path is replaced.)
 if [[ -z "$TRIGGERED_EVENT_NAME" && -n "$EXPECTED_EVENT" ]]; then
-    echo "  no event file found. using expected event from chain.json: $EXPECTED_EVENT"
-    TRIGGERED_EVENT_NAME="$EXPECTED_EVENT"
-
-    # write the fallback event
-    if [[ -n "${RUN_ID:-}" ]]; then
-        fallback_file="$EVENTS_DIR/${RUN_ID}-${SESSION_PREFIX}-${EXPECTED_EVENT}-fallback.event"
-    else
-        fallback_file="$EVENTS_DIR/${SESSION_PREFIX}-${EXPECTED_EVENT}-fallback.event"
-    fi
-    cat > "$fallback_file" <<FBEOF
-event: ${EXPECTED_EVENT}
-source: ${SESSION_PREFIX}
-run_id: ${RUN_ID:-}
-timestamp: $(date -Iseconds)
-data: fallback (chain.json expected event, agent did not write event file)
-processed: false
-FBEOF
-    TRIGGERED_EVENT="$fallback_file"
-    echo "  fallback event written"
+    fail_completion_no_event "agent $CURRENT_AGENT_ID finished without writing its declared emits event '$EXPECTED_EVENT'"
 fi
 
 # Capture the completion event's `data:` field NOW, before phase 5 archives the file.
@@ -492,7 +600,15 @@ if [[ -n "$TRIGGERED_EVENT" ]]; then
     echo "  event marked processed: $TRIGGERED_EVENT_NAME"
 fi
 
-archive-all-events
+# Archive ONLY the events this completion owns: its own triggered event plus
+# events whose run_id+source identify them as belonging to THIS run AND THIS
+# agent. A global sweep here would archive parallel siblings' not-yet-processed
+# completion events (fan-out) or other concurrent runs' events, stranding them
+# (finding #6: archive-global-race). CURRENT_AGENT_ID is the owner key; the
+# scoped matcher also accepts the session-prefix superstring form events are
+# sometimes emitted under, and TRIGGERED_EVENT is force-archived as the
+# explicitly-owned file.
+archive-run-events "${RUN_ID:-}" "$CURRENT_AGENT_ID" "${TRIGGERED_EVENT:-}"
 
 # determine current round for debug
 CURRENT_ROUND=1
@@ -598,14 +714,21 @@ if [[ -n "$RUN_ID" ]]; then
             [[ "$_seen_paths" == *"|${_try_path}|"* ]] && continue
             _seen_paths="${_seen_paths}|${_try_path}|"
 
+            # NEVER let log-dir resolution abort the completion handler. This runs
+            # under `set -euo pipefail` with an ERR trap; a non-zero return from
+            # resolve_log_dir (e.g. an unrecognized CLI with no log_path) would
+            # otherwise crash mid-finalize and strand the run at "running". An
+            # unresolvable log dir just means no transcript capture for this CLI.
             _log_dir=""
             if [[ -n "$_agent_profile_file" && -f "$_agent_profile_file" ]]; then
-                _log_dir=$(resolve_log_dir "$_agent_profile_file" "$_try_path")
+                _log_dir=$(resolve_log_dir "$_agent_profile_file" "$_try_path") || _log_dir=""
             else
-                _log_dir=$(resolve_log_dir "claude" "$_try_path")
+                _log_dir=$(resolve_log_dir "claude" "$_try_path") || _log_dir=""
             fi
 
-            if [[ -d "$_log_dir" && "$_start_epoch" -gt 0 ]]; then
+            # empty _log_dir is handled here: an empty string fails `-d`, so we
+            # simply skip conversation capture for this path (degraded, not fatal).
+            if [[ -n "$_log_dir" && -d "$_log_dir" && "$_start_epoch" -gt 0 ]]; then
                 _cli="claude"
                 [[ -n "$_agent_profile_file" && -f "$_agent_profile_file" ]] && _cli=$(jq -r '.cli // "claude"' "$_agent_profile_file" 2>/dev/null)
                 CONV_PATHS=$(find_conversation_files "$_log_dir" "$_start_epoch" "$_cli" || true)
@@ -726,9 +849,17 @@ if [[ -n "$RUN_ID" ]]; then
 
 fi
 
-# record performance: agent completed
+# record performance: agent completed.
+# NEVER let perf accounting abort the completion handler. This runs under
+# `set -euo pipefail` + the ERR trap; perf-end-agent returns non-zero when the
+# run's performance.json is absent (e.g. the agent was launched by a path that
+# did not perf-start it, or under a redirected metrics root) — an unguarded
+# non-zero here crashed the handler mid-finalize and stranded the run at
+# "running" (the same crash-under-set-e class as finding #8, and it silently
+# blocked the fan-out launch below from ever running). The adjacent profiler
+# calls are already guarded the same way; perf accounting is best-effort too.
 if [[ -n "$RUN_ID" ]]; then
-    perf-end-agent "$RUN_ID" "$CURRENT_AGENT_ID" "complete"
+    perf-end-agent "$RUN_ID" "$CURRENT_AGENT_ID" "complete" 2>/dev/null || true
 fi
 
 # profiler: final snapshot and end tracking
@@ -741,6 +872,41 @@ profiler-end "$SESSION_NAME" "completed" 2>/dev/null || true
 _sys_log "info" "chain-runner-complete" "run ${RUN_ID:-unknown} phase 5a: fan-group check"
 FAN_GROUP_ID="${AGENT_FAN_GROUP_ID:-}"
 FAN_GROUP_AGENT_ID="${AGENT_FAN_GROUP_AGENT_ID:-}"
+
+# Fallback fan-group membership resolution. AGENT_FAN_GROUP_ID is exported when a
+# fan-out agent is launched, but it does NOT always survive into THIS completion
+# handler's environment: the handler frequently runs in a fresh pty-manager
+# session (launch-chain-runner-complete) spawned by the pty daemon with an
+# explicit env allow-list that does not include the fan-group vars. Without this
+# fallback the member never calls fan-group-agent-complete, the counter never
+# increments, and the fan-in never fires (run hangs). So if the env var is
+# missing, recover membership from the durable fan-group STATE files (written by
+# the fan-out launcher above): a still-running group for THIS run whose
+# fan_out_agents list contains THIS agent id.
+if [[ -z "$FAN_GROUP_ID" && -d "$STATE_DIR/fan-groups" ]]; then
+    for _fg_state in "$STATE_DIR/fan-groups"/*.state; do
+        [[ -f "$_fg_state" ]] || continue
+        _fg_run=$(grep -m1 '^run_id:' "$_fg_state" 2>/dev/null | sed 's/^run_id:[[:space:]]*//' | tr -d '[:space:]')
+        # scope to this run when we know it (other runs' groups must be ignored).
+        if [[ -n "${RUN_ID:-}" && -n "$_fg_run" && "$_fg_run" != "$RUN_ID" ]]; then
+            continue
+        fi
+        _fg_members=$(grep -m1 '^fan_out_agents:' "$_fg_state" 2>/dev/null | sed 's/^fan_out_agents:[[:space:]]*//')
+        # whole-word match of CURRENT_AGENT_ID within the space-separated member list
+        case " $_fg_members " in
+            *" $CURRENT_AGENT_ID "*)
+                _fg_status=$(grep -m1 '^status:' "$_fg_state" 2>/dev/null | sed 's/^status:[[:space:]]*//' | tr -d '[:space:]')
+                # only adopt a group that has not already finished its fan-in claim.
+                if [[ "$_fg_status" == "running" ]]; then
+                    FAN_GROUP_ID="$(basename "$_fg_state" .state)"
+                    FAN_GROUP_AGENT_ID="$CURRENT_AGENT_ID"
+                    echo "  fan-group membership recovered from state (env var was not propagated): $FAN_GROUP_ID"
+                    break
+                fi
+                ;;
+        esac
+    done
+fi
 
 if [[ -n "$FAN_GROUP_ID" ]]; then
     echo "  agent is part of fan-group: $FAN_GROUP_ID"
@@ -1422,8 +1588,16 @@ if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
         [[ -n "$FAN_IN_TARGET" ]] && echo "  fan-in target: $FAN_IN_TARGET (wait_for: $WAIT_FOR)"
         [[ -n "$ON_ERROR" ]] && echo "  on_error: $ON_ERROR"
 
-        # convert json array to bash array (fixes BUG 1)
-        readarray -t NEXT_AGENT_IDS_ARR <<< "$(echo "$NEXT_AGENTS_JSON" | jq -r '.[]')"
+        # convert json array to bash array (fixes BUG 1).
+        # portable read loop instead of `readarray`/`mapfile`: this handler can be
+        # re-exec'd under macOS /bin/bash 3.2 (its `#!/bin/bash` shebang), where
+        # `readarray` does NOT exist — an unguarded readarray there is "command not
+        # found" and, under set -e, crashes the handler before the fan-out launches.
+        # The loop is bash-3.2-safe and equivalent for a JSON array of agent ids.
+        NEXT_AGENT_IDS_ARR=()
+        while IFS= read -r _fan_id; do
+            [[ -n "$_fan_id" ]] && NEXT_AGENT_IDS_ARR+=("$_fan_id")
+        done <<< "$(echo "$NEXT_AGENTS_JSON" | jq -r '.[]')"
 
         for id in "${NEXT_AGENT_IDS_ARR[@]}"; do
             name=$(jq -r --arg id "$id" '.agents[] | select(.id == $id) | .name' "$CHAIN_FILE")
@@ -1450,30 +1624,57 @@ if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
             echo ""
             echo "  launching fan-out agents in parallel (round $ROUND)..."
 
-            # create fan-group state using routing-lib.sh (fixes BUG 2)
+            # create fan-group state using routing-lib.sh (fixes BUG 2).
+            # NOTE: the routing-lib function is hyphenated (fan-group-create); an
+            # underscore call (fan_group_create) is NOT a defined function and no
+            # alias exists, so it died here under set -e and the fan-OUT launch
+            # path never created its group state (finding #15).
             fan_group_id="${TRIGGERED_EVENT_NAME}-$(date +%Y%m%d-%H%M%S)-$$"
             fan_out_agents_str="${NEXT_AGENT_IDS_ARR[*]}"
-            fan_group_create "$fan_group_id" "$TRIGGERED_EVENT_NAME" "$fan_out_agents_str" "$FAN_IN_TARGET" "$WAIT_FOR" "$QUORUM" "$ON_ERROR"
+            fan-group-create "$fan_group_id" "$TRIGGERED_EVENT_NAME" "$fan_out_agents_str" "$FAN_IN_TARGET" "$WAIT_FOR" "$QUORUM" "$ON_ERROR"
 
             # add chain_file to fan-group state for later trigger
             group_state_file="$STATE_DIR/fan-groups/${fan_group_id}.state"
             echo "chain_file: $CHAIN_FILE" >> "$group_state_file"
             echo "run_id: ${RUN_ID:-}" >> "$group_state_file"
 
-            # launch each agent in background (detached - no wait)
+            # launch each fan-out agent DETACHED so it survives this completion
+            # handler exiting. This handler frequently runs inside its own PTY
+            # session (launch-chain-runner-complete) that pty-manager tears down the
+            # instant the foreground command returns; a bare `( … ) &` child is in
+            # that session's process group and is SIGHUP'd before chain-runner.sh can
+            # spawn the worker's own PTY — so the workers never started, the fan-in
+            # never fired, and the run hung (this is why fan-out never completed even
+            # after the #15 name fix). nohup + disown + a redirected log mirrors the
+            # chain-chaining launch already used below for the same reason.
             for agent_id_single in "${NEXT_AGENT_IDS_ARR[@]}"; do
                 agent_name_single=$(jq -r --arg id "$agent_id_single" '.agents[] | select(.id == $id) | .name' "$CHAIN_FILE")
                 echo "  launching: $agent_name_single ($agent_id_single)"
 
-                # launch in detached background - completion tracked via events
-                (
-                    export MENTIKO_RUN_ID="${RUN_ID:-}"
-                    export AGENT_FAN_GROUP_ID="$fan_group_id"
-                    export AGENT_FAN_GROUP_AGENT_ID="$agent_id_single"
-                    MENTIKO_RUN_ID="${RUN_ID:-}" RUN_ID="${RUN_ID:-}" \
-                        bash "$SCRIPT_DIR/chain-runner.sh" "$CHAIN_FILE" $WORKSPACE_FLAG $TASK_FLAG --start "$agent_id_single"
-                ) &
+                _fanout_log="/tmp/mentiko-fanout-${fan_group_id}-${agent_id_single}.log"
+                if [[ -n "${RUN_ID:-}" && -d "$RUNS_DIR_BASE/${RUN_ID}" ]]; then
+                    _fanout_log="$RUNS_DIR_BASE/${RUN_ID}/fanout-${agent_id_single}.log"
+                fi
+
+                MENTIKO_RUN_ID="${RUN_ID:-}" RUN_ID="${RUN_ID:-}" \
+                AGENT_FAN_GROUP_ID="$fan_group_id" \
+                AGENT_FAN_GROUP_AGENT_ID="$agent_id_single" \
+                    nohup bash "$SCRIPT_DIR/chain-runner.sh" "$CHAIN_FILE" $WORKSPACE_FLAG $TASK_FLAG --start "$agent_id_single" \
+                    > "$_fanout_log" 2>&1 &
+                disown $! 2>/dev/null || true
+                # brief stagger between launches: two chain-runner instances racing
+                # to register their session in the shared run.json at the same instant
+                # can lose one to the run.json write race, so only one fan-out agent
+                # would actually start. A small gap lets each register before the next.
+                sleep 1
             done
+
+            # let the detached fan-out agents establish their OWN pty sessions before
+            # this completion handler returns and pty-manager tears down ITS session
+            # (and, with it, anything still in this process group that has not yet
+            # re-parented). Without this settle the last-launched agent could be
+            # reaped mid-startup, leaving the fan-in waiting forever.
+            sleep 3
 
             echo ""
             echo "  fan-out agents launched. completion will be tracked via events."
@@ -1492,8 +1693,14 @@ if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
         echo "  $NEXT_AGENT_COUNT agent(s) triggered by: $TRIGGERED_EVENT_NAME"
         echo "  launching in parallel..."
 
-        # convert json array to bash array (fixes array consistency issue)
-        readarray -t NEXT_AGENT_IDS_ARR <<< "$(echo "$NEXT_AGENTS_JSON" | jq -r '.[]')"
+        # convert json array to bash array (fixes array consistency issue).
+        # portable read loop instead of `readarray` for macOS /bin/bash 3.2 (see the
+        # fan-out site above): readarray is absent there and would crash the handler
+        # under set -e before the parallel launch.
+        NEXT_AGENT_IDS_ARR=()
+        while IFS= read -r _par_id; do
+            [[ -n "$_par_id" ]] && NEXT_AGENT_IDS_ARR+=("$_par_id")
+        done <<< "$(echo "$NEXT_AGENTS_JSON" | jq -r '.[]')"
 
         for id in "${NEXT_AGENT_IDS_ARR[@]}"; do
             name=$(jq -r --arg id "$id" '.agents[] | select(.id == $id) | .name' "$CHAIN_FILE")

@@ -156,10 +156,14 @@ if [[ -n "$TRIGGERED_EVENT" ]]; then
 fi
 
 # -------------------------------------------------------------------
-# 5. archive ALL events to prevent stale pickup
+# 5. archive THIS agent's events to prevent stale pickup
 # -------------------------------------------------------------------
-
-archive-all-events
+# Scope to this completion's run + source only. A global sweep would archive
+# parallel siblings' (and other concurrent runs') not-yet-processed completion
+# events, stranding them (finding #6: archive-global-race). SESSION_PREFIX is
+# this agent's owner key (the scoped matcher also accepts the superstring forms
+# events are emitted under); the run id comes from the inherited env.
+archive-run-events "${MENTIKO_RUN_ID:-${RUN_ID:-}}" "$SESSION_PREFIX" "${TRIGGERED_EVENT:-}"
 
 # -------------------------------------------------------------------
 # 6. find next agent to launch

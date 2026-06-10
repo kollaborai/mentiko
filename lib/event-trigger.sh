@@ -142,24 +142,161 @@ mark-processed() {
 }
 
 # -------------------------------------------------------------------
-# archive-all-events: move all events to archive dir
-# called between chain steps to prevent stale event pickup
+# _event-field: read a single "key: value" field from an event file.
+# Splits on the FIRST colon, exactly like the consumer parsers
+# (web/lib/runs/run-reconciler.ts parseEventRecord, indexOf(":")) so a value
+# that itself contains colons (URLs, ISO timestamps in data:) never corrupts
+# the field we extract. Case-insensitive on the key. Echoes the trimmed value
+# (empty if absent). This is the field-read primitive the scoped archive below
+# relies on instead of parsing the filename.
 # -------------------------------------------------------------------
-archive-all-events() {
+_event-field() {
+    local file="$1" field="$2"
+    [[ -f "$file" ]] || { printf ''; return 0; }
+    # grep the first matching "key:" line (anchored, case-insensitive), then
+    # strip everything up to and including the first colon, then trim spaces.
+    grep -im1 "^${field}:" "$file" 2>/dev/null \
+        | sed "s/^[^:]*:[[:space:]]*//" \
+        | sed 's/[[:space:]]*$//' \
+        | head -1
+}
+
+# -------------------------------------------------------------------
+# _event-belongs-to: decide whether an event file is OWNED by the completion
+# identified by <run_id> + <source> (the agent's source/session prefix), and
+# may therefore be archived by it. Returns 0 (owned) / 1 (not owned).
+#
+# WHY FIELD-READ, NOT FILENAME-PARSE: the canonical name is
+#   ${run_id}-${source}-${event}.event
+# but run_id ("run-1700000000"), source ("route-coverage"), and event
+# ("agent-complete") all legitimately contain hyphens, so splitting the
+# filename on "-" is ambiguous and unreliable. The diagnostic scheme
+# (${ts}-${run_id}-${agent_id}-${event}.event) is different again. BOTH schemes
+# carry the authoritative run_id:/source: (and agent:) FIELDS inside the file,
+# parsed the same way every consumer parses them — so we key off the fields.
+#
+# OWNERSHIP RULE (scoped to THIS completion, never a sibling):
+#   1. run_id must match. A file whose run_id field differs belongs to another
+#      run and MUST survive (cross-run isolation). A file with NO run_id is
+#      treated as run-agnostic and judged on source alone (covers manual/CLI
+#      events and the run-less fallback name).
+#   2. source must be THIS agent. We accept an exact match OR the superstring
+#      relationship the completion matcher itself uses
+#      (run-reconciler source.includes(agentId)): the file's source contains
+#      our source, or our source contains the file's source (session prefixes
+#      like "researcher-7f3a" vs agent id "researcher"). Diagnostic events use
+#      `source: monitor`/`source: chain-runner-complete` but ALSO carry
+#      `agent: <id>`; we additionally match on that agent field so a diagnostic
+#      for THIS agent is archived while a sibling's is not.
+#   A file with neither a readable source nor agent field falls back to a
+#   filename containment check against our source (last resort).
+# -------------------------------------------------------------------
+_event-belongs-to() {
+    local file="$1" run_id="$2" src="$3"
+    [[ -f "$file" ]] || return 1
+    [[ -n "$src" ]] || return 1   # without an owner identity we never claim it
+
+    local f_run f_src f_agent
+    f_run="$(_event-field "$file" run_id)"
+    f_src="$(_event-field "$file" source)"
+    f_agent="$(_event-field "$file" agent)"
+
+    # run scoping: a populated, mismatched run_id means a DIFFERENT run -> not ours.
+    if [[ -n "$run_id" && -n "$f_run" && "$f_run" != "$run_id" ]]; then
+        return 1
+    fi
+
+    # source/agent scoping (superstring both ways, mirroring the matcher).
+    local candidate
+    for candidate in "$f_src" "$f_agent"; do
+        [[ -z "$candidate" ]] && continue
+        if [[ "$candidate" == "$src" ]] \
+           || [[ "$candidate" == *"$src"* ]] \
+           || [[ "$src" == *"$candidate"* ]]; then
+            return 0
+        fi
+    done
+
+    # last resort: neither source nor agent field readable. Match on filename
+    # containment of our source (the file at least names this agent).
+    if [[ -z "$f_src" && -z "$f_agent" ]]; then
+        case "$(basename "$file")" in
+            *"$src"*) return 0 ;;
+        esac
+    fi
+
+    return 1
+}
+
+# -------------------------------------------------------------------
+# archive-run-events: archive ONLY the events this completion owns —
+# its own triggered/processed event plus events whose run_id+source identify
+# them as belonging to THIS run AND THIS agent. Sibling agents' events and
+# other runs' events are left untouched (finding #6: archive-global-race).
+#
+# usage: archive-run-events <run_id> <source> [triggered_event_file]
+#   <run_id>                this completion's run id (may be empty for CLI use)
+#   <source>                this agent's source / session prefix (the owner key)
+#   [triggered_event_file]  the specific event this completion processed; it is
+#                           always archived even if its fields are unreadable,
+#                           because the caller proved it owns it.
+# -------------------------------------------------------------------
+archive-run-events() {
+    local run_id="$1"
+    local src="$2"
+    local triggered="${3:-}"
+
     local archive_dir="$EVENTS_DIR/archive"
     mkdir -p "$archive_dir"
     local archived=0
+    local survived=0
 
+    # 1. the explicitly-owned triggered event: always archive it.
+    if [[ -n "$triggered" && -f "$triggered" ]]; then
+        if mv "$triggered" "$archive_dir/" 2>/dev/null; then
+            archived=$((archived + 1))
+        fi
+    fi
+
+    # 2. every other event in the shared dir: archive only if it belongs to this
+    #    run+agent; otherwise leave it for its own owner (sibling / other run).
+    local event_file
     for event_file in "$EVENTS_DIR"/*; do
         [[ -f "$event_file" ]] || continue
         [[ -d "$event_file" ]] && continue
-        mv "$event_file" "$archive_dir/" 2>/dev/null
-        archived=$((archived + 1))
+        if _event-belongs-to "$event_file" "$run_id" "$src"; then
+            if mv "$event_file" "$archive_dir/" 2>/dev/null; then
+                archived=$((archived + 1))
+            fi
+        else
+            survived=$((survived + 1))
+        fi
     done
 
     if [[ $archived -gt 0 ]]; then
-        echo "  archived $archived event(s) to events/archive/"
+        echo "  archived $archived event(s) for run '${run_id:-<none>}' source '${src:-<none>}' to events/archive/ ($survived left for other owners)"
     fi
+}
+
+# -------------------------------------------------------------------
+# archive-all-events: BACK-COMPAT shim. Historically this moved EVERY file in
+# the shared $EVENTS_DIR to archive on each completion — under parallel agents
+# (fan-out) or concurrent runs the first completer archived sibling/other-run
+# completion events that were never processed, so those siblings hung or fell
+# into the (post-#2 failing) fallback (finding #6).
+#
+# It is now SCOPED: with arguments it delegates to archive-run-events (the
+# correct, owned-only behavior). With NO arguments it scopes to the ambient
+# run/source from the environment, never to a true global sweep — the global
+# wipe is the bug and is not restored. (Stale archived files are pruned
+# separately by clean-events, the explicitly-invoked broom; we do not add a new
+# one here.)
+# -------------------------------------------------------------------
+archive-all-events() {
+    local run_id="${1:-${MENTIKO_RUN_ID:-${RUN_ID:-}}}"
+    local src="${2:-${MENTIKO_AGENT_SOURCE:-${SESSION_PREFIX:-${MENTIKO_AGENT_ID:-}}}}"
+    local triggered="${3:-}"
+    archive-run-events "$run_id" "$src" "$triggered"
 }
 
 # -------------------------------------------------------------------
@@ -176,6 +313,9 @@ export -f emit-event
 export -f event-filename-component
 export -f list-events
 export -f mark-processed
+export -f _event-field
+export -f _event-belongs-to
+export -f archive-run-events
 export -f archive-all-events
 export -f clean-events
 

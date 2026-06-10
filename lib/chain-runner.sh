@@ -1976,11 +1976,35 @@ SEOF
         local _hb_agent_id="$agent_id"
         local _hb_state_file="$STATE_DIR/${state_id}.state"
         local _hb_session_name="$session_name"
+        # parent runner PID — if the runner dies without writing a terminal state,
+        # the loop must not outlive it (see exit conditions below).
+        local _hb_parent_pid="$$"
+        # absolute deadline (epoch seconds). generous default of 24h; tunable so a
+        # leaked loop can never run forever even if every other exit check is bypassed.
+        local _hb_max_lifetime="${MENTIKO_HEARTBEAT_MAX_LIFETIME:-86400}"
+        local _hb_deadline=$(( $(date +%s) + _hb_max_lifetime ))
+        # break after this many CONSECUTIVE connection failures (curl couldn't reach
+        # the web API at all — distinct from an authoritative 4xx "stop" response).
+        local _hb_max_failures="${MENTIKO_HEARTBEAT_MAX_FAILURES:-5}"
 
-        # heartbeat loop: runs in background, exits when state file status != running
+        # heartbeat loop: runs in background. Exits when ANY of:
+        #   - state file says the agent is no longer running (or is gone)
+        #   - the parent runner process has exited (orphan guard — kill -0)
+        #   - the absolute deadline has passed (hard cap)
+        #   - N consecutive connection failures (web API unreachable)
+        #   - the server returns a 4xx (run deleted/completed/auth error)
+        #   - a blocked terminal prompt is detected
         (
+            local _hb_fails=0
             while true; do
                 sleep 60
+
+                # orphan guard: if the runner that spawned us is gone, stop.
+                kill -0 "$_hb_parent_pid" 2>/dev/null || break
+
+                # hard cap: never outlive the absolute deadline.
+                [[ "$(date +%s)" -ge "$_hb_deadline" ]] && break
+
                 # stop if state file says agent is done
                 if [[ -f "$_hb_state_file" ]]; then
                     local _cur_status
@@ -2003,14 +2027,24 @@ SEOF
                     break
                 fi
 
-                # POST heartbeat — break on any 4xx (run deleted, completed, auth error)
+                # POST heartbeat. curl emits the HTTP status, or "000" if it could
+                # not connect at all (network down, web server gone).
                 local _hb_status
                 _hb_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$_hb_url" \
                     -H "Content-Type: application/json" \
                     ${_hb_secret:+-H "Authorization: Bearer $_hb_secret"} \
                     -d '{"status":"running"}' \
-                    --max-time 5 2>/dev/null || echo "0")
+                    --max-time 5 2>/dev/null || echo "000")
+                # break on any 4xx (authoritative: run deleted, completed, auth error)
                 [[ "$_hb_status" =~ ^4 ]] && break
+                # count consecutive connection failures; bail if the API stays
+                # unreachable (a dead web server should not keep this loop alive).
+                if [[ "$_hb_status" == "000" ]]; then
+                    _hb_fails=$(( _hb_fails + 1 ))
+                    [[ "$_hb_fails" -ge "$_hb_max_failures" ]] && break
+                else
+                    _hb_fails=0
+                fi
             done
         ) &
         disown $! 2>/dev/null || true

@@ -25,7 +25,9 @@
         "webhook-triggered",
         "schedule-triggered",
         "fan-in-complete",
-        "fan-out-complete"
+        "fan-out-complete",
+        "run-stalled",
+        "task-status-updated"
       ]
     },
     "source": {

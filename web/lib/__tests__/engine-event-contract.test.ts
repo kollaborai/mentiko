@@ -437,14 +437,17 @@ EOF`,
 
 // ===========================================================================
 // PRODUCER PATH 5 — the two fallback writers (agent-functions.sh +
-// chain-runner-complete.sh). These fire when an agent completes but did NOT
-// write an event file. They use inline heredocs with `-fallback.event` naming
-// and source: ${SESSION_PREFIX}. The matcher must still accept them.
+// chain-runner-complete.sh). agent-functions.sh keeps the legitimate
+// ensure-event-file fallback writer (`-fallback.event` naming, source:
+// ${SESSION_PREFIX}) for paths where the agent genuinely signalled completion.
+// chain-runner-complete.sh no longer fabricates success on no-event completion
+// (triage finding #2): it emits an agent-error DIAGNOSTIC instead, with
+// source: chain-runner-complete so the matcher can never read it as a handoff.
 // ===========================================================================
 
-describe("producer: chain-runner-complete.sh fallback event writer (inline)", () => {
+describe("producer: fallback + diagnostic event writers (inline)", () => {
   it("emits a canonical fallback event the matcher recovers from", () => {
-    // mirrors lib/chain-runner-complete.sh:402 heredoc
+    // mirrors lib/agent-functions.sh ensure-event-file heredoc shape
     const { eventsDir } = runEmitter(
       `EXPECTED_EVENT="agent-complete"
        SESSION_PREFIX="researcher"
@@ -468,15 +471,19 @@ FBEOF`,
     expect(parsed.source).toBe("researcher");
   });
 
-  it("both fallback writers still emit the canonical fields (source-shape guard)", () => {
+  it("fallback writer (agent-functions) and diagnostic writer (complete.sh) keep canonical shapes", () => {
     const completeSrc = readFileSync(COMPLETE_SH, "utf8");
     const agentFnSrc = readFileSync(AGENT_FUNCTIONS_SH, "utf8");
-    for (const src of [completeSrc, agentFnSrc]) {
-      expect(src).toContain("event: ${");
-      expect(src).toContain("source: ${");
-      expect(src).toContain("processed: false");
-      expect(src).toContain("-fallback.event");
-    }
+    // agent-functions.sh: the legitimate fallback writer survives (ensure-event-file)
+    expect(agentFnSrc).toContain("event: ${");
+    expect(agentFnSrc).toContain("source: ${");
+    expect(agentFnSrc).toContain("processed: false");
+    expect(agentFnSrc).toContain("-fallback.event");
+    // chain-runner-complete.sh: no success fabrication — agent-error diagnostic
+    // with a fixed non-agent source, so source.includes(agentId) never matches
+    expect(completeSrc).toContain('emit_completion_diagnostic_event "agent-error"');
+    expect(completeSrc).toContain("source: chain-runner-complete");
+    expect(completeSrc).toContain("processed: false");
   });
 });
 
@@ -608,18 +615,28 @@ describe("consumer contract: event-log API + SSE stream parsers agree with the r
 });
 
 // ===========================================================================
-// FLAGGED MISMATCH — see report. The SSE stream has a dead fast-path that keys
-// on `event.event === "chain_complete"` (underscore), but the producer emits
-// `chain-complete` (hyphen). We PIN the canonical hyphen form and document that
-// the consumer's underscore branch can never fire from real engine output.
-//
-// This is a CONSUMER bug (dead code), not a producer one, and is low blast
-// radius (the stream's run.json status poll independently emits chain_complete).
-// Kept GREEN: the test asserts the canonical truth, not the broken expectation.
+// FIXED (#13) — SSE stream chain-complete fast-path now matches real output.
+// The stream's events-watcher fast-path previously keyed on
+// `event.event === "chain_complete"` (underscore), but the producer emits
+// `chain-complete` (hyphen) — so the branch was dead. It was changed to match
+// the canonical hyphen form (web/app/api/events/stream/route.ts). The outbound
+// SSE message `type` stays "chain_complete" because the client listens for that
+// event name (web/hooks/use-event-stream.ts:103). This test now asserts the
+// FIXED contract: the producer's hyphen form is exactly what the consumer
+// fast-path matches, and the matcher is keyed on the hyphen (not underscore).
 // ===========================================================================
 
-describe("FLAGGED: SSE stream chain_complete fast-path is dead against real output", () => {
-  it("producer emits hyphenated chain-complete; stream's underscore branch never matches", () => {
+/**
+ * Faithful copy of the events-watcher fast-path predicate in
+ * web/app/api/events/stream/route.ts after the #13 fix. It compares the parsed
+ * file's `event` field against the canonical hyphen form.
+ */
+function streamFastPathFires(parsed: { event?: string }): boolean {
+  return parsed.event === "chain-complete";
+}
+
+describe("FIXED #13: SSE stream chain-complete fast-path matches real producer output", () => {
+  it("producer emits hyphenated chain-complete and the stream fast-path now fires on it", () => {
     const { eventsDir } = runEmitter(
       `source ${q(EVENT_TRIGGER_SH)} >/dev/null 2>&1
        emit-event "chain-complete" "content-pipeline" "run_id=run-x" >/dev/null 2>&1`,
@@ -631,35 +648,47 @@ describe("FLAGGED: SSE stream chain_complete fast-path is dead against real outp
 
     // canonical: the producer emits the HYPHEN form
     expect(parsed.event).toBe("chain-complete");
-
-    // the consumer's dead branch (events/stream/route.ts: `event.event === "chain_complete"`)
-    // would require the UNDERSCORE form, which the producer never emits:
     expect(parsed.event).not.toBe("chain_complete");
+
+    // the consumer's fast-path now matches that hyphen form (was a dead
+    // underscore branch before the #13 fix):
+    expect(streamFastPathFires(parsed)).toBe(true);
+    // and it would NOT have fired on the old underscore expectation:
+    expect(streamFastPathFires({ event: "chain_complete" })).toBe(false);
   });
 });
 
 // ===========================================================================
-// FLAGGED MISMATCH — event.schema.json drift. The static JSON schema's `type`
-// enum is the INTENDED contract but is stale: the producer emits `run-stalled`
-// and `task-status-updated`, neither of which is in the enum. The live consumer
-// parsers do NOT enforce the enum (they accept any event string), so this is a
-// stale-doc / schema-drift finding, not a runtime break. We pin the divergence
-// so the schema either gets updated or the gap stays visible.
+// FIXED (#14) — event.schema.json enum now matches the live producer. The
+// static JSON schema's `type` enum was stale: the producer emits `run-stalled`
+// (lib/watchdog.sh) and `task-status-updated` (lib/run-lib.sh), neither of which
+// was in the enum. Both names were added to lib/schemas/event.schema.json. The
+// live consumer parsers do NOT enforce the enum (they accept any event string),
+// so this was a stale-doc finding, not a runtime break — but the schema is now
+// the accurate contract. This test asserts the gap is closed.
 // ===========================================================================
 
-describe("FLAGGED: event.schema.json enum is stale vs the live producer", () => {
+describe("FIXED #14: event.schema.json enum covers run-stalled and task-status-updated", () => {
   const schema = JSON.parse(
     readFileSync(join(LIB, "schemas", "event.schema.json"), "utf8"),
   ) as { properties: { type: { enum: string[] } } };
   const schemaEnum = schema.properties.type.enum;
 
-  it("documents that run-stalled and task-status-updated are emitted but absent from the schema enum", () => {
-    // these ARE produced (proven behaviorally elsewhere in this file)
-    expect(schemaEnum).not.toContain("run-stalled");
-    expect(schemaEnum).not.toContain("task-status-updated");
-    // while the core lifecycle names ARE present
+  it("the schema enum now includes the system event types the producer emits", () => {
+    // these ARE produced (proven behaviorally elsewhere in this file) and are
+    // now declared in the schema enum:
+    expect(schemaEnum).toContain("run-stalled");
+    expect(schemaEnum).toContain("task-status-updated");
+    // and the core lifecycle names are still present
     expect(schemaEnum).toContain("chain-complete");
     expect(schemaEnum).toContain("agent-complete");
+  });
+
+  it("every CANONICAL_EVENT_TYPE this contract pins is present in the schema enum", () => {
+    // the canonical list and the schema enum must not drift apart again.
+    for (const t of CANONICAL_EVENT_TYPES) {
+      expect(schemaEnum).toContain(t);
+    }
   });
 });
 

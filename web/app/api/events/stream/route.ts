@@ -174,7 +174,11 @@ interface EventFile {
 
         current.lastEvents.add(filename);
 
-        if (event.event === "chain_complete") {
+        // The bash producer writes the canonical HYPHEN form (`chain-complete`)
+        // into the .event file (see lib/event-trigger.sh emit-event). Match that.
+        // The outbound SSE message `type` stays "chain_complete" (underscore)
+        // because the client listens for that event name (web/hooks/use-event-stream.ts).
+        if (event.event === "chain-complete") {
           sendEvent(current.controller, {
             type: "chain_complete",
             data: event,

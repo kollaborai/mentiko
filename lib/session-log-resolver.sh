@@ -47,7 +47,17 @@ encode_cwd_slug() {
 # resolve_log_dir: get the directory containing session log files
 #   arg 1: profile JSON file path OR bare cli name (e.g. "claude")
 #   arg 2: working directory (for cwd slug encoding)
-#   returns: absolute path to log directory
+#   returns: absolute path to log directory on stdout, exit 0.
+#
+#   When the CLI is not in the recognized set (claude/codex/opencode/kollab*/agy)
+#   and the profile sets no explicit log_path, there is no known conversation-log
+#   location. That is a DEGRADED-CAPTURE condition (we just can't harvest JSONL
+#   transcripts for that CLI), NOT a fatal error — so we return 0 with EMPTY
+#   stdout rather than a non-zero status. A non-zero return propagated up through
+#   `set -e` callers (notably chain-runner-complete.sh's completion handler) and
+#   stuck the whole run at "running" forever. Every caller already guards the
+#   result with `[[ -d "$log_dir" ]]` or `[[ -z "$log_dir" ]]`, so empty output
+#   is handled correctly downstream; none depend on the non-zero status.
 # -----------------------------------------------------------------------
 resolve_log_dir() {
     local profile_or_cli="$1"
@@ -67,7 +77,8 @@ resolve_log_dir() {
         log_path=$(_default_log_path "$cli")
     fi
 
-    [[ -z "$log_path" ]] && return 1
+    # unknown CLI with no explicit log_path: emit nothing, succeed (degraded capture)
+    [[ -z "$log_path" ]] && return 0
 
     log_path="${log_path/#\~/$HOME}"
     log_path="${log_path%/}"
