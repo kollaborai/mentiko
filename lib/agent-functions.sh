@@ -368,9 +368,23 @@ agent-completion-latched() {
 # COMMAND: `pgrep -P <pane_pid>`. Non-empty while the CLI runs, empty once it has
 # exited and the shell is idle.
 #
-# To avoid false positives we (1) "arm" only after the CLI has been seen running
-# at least once (so we never declare death before the CLI even started), and
-# (2) debounce a no-child reading with a short re-check (transient fork gaps).
+# To avoid false positives we (1) "arm" once the CLI has been seen running at
+# least once (the fast path), and (2) debounce a no-child reading with a short
+# re-check (transient fork gaps).
+#
+# NEVER-ARMED GRACE (containerized-runtime fix): arming must not be a
+# precondition the agent's death can starve. On slow runtimes (the shipped
+# tenant container: session spawn + monitor bootstrap take many seconds) a CLI
+# can die BEFORE the monitor's first observation; requiring a live-child
+# sighting then meant death was undetectable forever and the run stranded at
+# "running". The honest semantics: a process that died before the monitor ever
+# saw it alive is still a dead process. So when never armed, count consecutive
+# no-child observations; after MENTIKO_MONITOR_NEVER_ARMED_GRACE of them
+# (default 5) with the debounce still empty, report gone. The caller
+# (monitor-agent-died) checks for a genuine completion event FIRST, so a
+# fast-but-successful agent completes normally — only "process gone + no
+# event" becomes a failure. A quiet-but-ALIVE agent always has a pane child,
+# arms on the first tick, and is never touched by the grace path.
 # args: <session_name> <armed_file>   -> returns 0 if the agent CLI is gone.
 _monitor_agent_process_gone() {
     local session_name="$1"
@@ -381,19 +395,41 @@ _monitor_agent_process_gone() {
     [[ -n "$pane_pid" ]] || return 1   # can't tell -> not gone
 
     if command -v pgrep >/dev/null 2>&1; then
+        local grace_file=""
+        [[ -n "$armed_file" ]] && grace_file="${armed_file}_grace"
         if pgrep -P "$pane_pid" >/dev/null 2>&1; then
             # CLI (a child command) is running -> arm + alive
             [[ -n "$armed_file" ]] && : > "$armed_file" 2>/dev/null || true
+            [[ -n "$grace_file" ]] && rm -f "$grace_file" 2>/dev/null
             return 1
         fi
-        # no active child. Only meaningful once the CLI was seen running.
-        [[ -n "$armed_file" && -f "$armed_file" ]] || return 1
+        if [[ -z "$armed_file" || ! -f "$armed_file" ]]; then
+            # NEVER ARMED: the monitor has not yet seen the CLI alive. Do not
+            # treat that as "not gone" forever — a CLI that died before our
+            # first observation is still dead (see header). Count consecutive
+            # no-child observations; only after the grace expires do we fall
+            # through to the debounced gone-check below.
+            [[ -n "$grace_file" ]] || return 1   # nowhere to count -> stay conservative
+            local _grace=0
+            [[ -f "$grace_file" ]] && _grace="$(cat "$grace_file" 2>/dev/null || echo 0)"
+            [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=0
+            _grace=$(( _grace + 1 ))
+            echo "$_grace" > "$grace_file" 2>/dev/null || true
+            local _grace_max="${MENTIKO_MONITOR_NEVER_ARMED_GRACE:-5}"
+            [[ "$_grace_max" =~ ^[0-9]+$ && "$_grace_max" -gt 0 ]] || _grace_max=5
+            if (( _grace < _grace_max )); then
+                return 1
+            fi
+        fi
         # debounce: re-check after a beat to avoid a transient fork gap.
         sleep 1
         if pgrep -P "$pane_pid" >/dev/null 2>&1; then
+            # the CLI showed up during the debounce: arm and reset the grace.
+            [[ -n "$armed_file" ]] && : > "$armed_file" 2>/dev/null || true
+            [[ -n "$grace_file" ]] && rm -f "$grace_file" 2>/dev/null
             return 1
         fi
-        return 0   # armed + no child twice = the agent CLI exited
+        return 0   # no child twice (armed, or never-armed grace expired) = gone
     fi
 
     # pgrep unavailable: fall back to the (coarser) pane-process liveness check.
@@ -674,7 +710,7 @@ monitor-with-ai() {
             # monitor-agent-died completes normally IFF a real event exists,
             # otherwise records failure + diagnostic (never fabricates success).
             monitor-agent-died "$session_name" "$chain_file" || true
-            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed" "$state_dir/${session_name}_armed_grace"
             break
         fi
 
@@ -835,7 +871,7 @@ monitor-chain-agent() {
                 echo "  agent CLI in session '$session_name' is no longer running."
                 monitor-agent-died "$session_name" "$chain_file" \
                     "monitor: agent CLI process exited before producing its completion event" || true
-                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed"
+                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed" "$state_dir/${session_name}_armed_grace"
                 break
             fi
         fi
