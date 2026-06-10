@@ -82,13 +82,52 @@ jobs:
       - name: validate release version
         run: node scripts/validate-platform-release-version.mjs
 
+  # RELEASE GATE: hermetic end-to-end proof of the execution engine (the product).
+  # Runs `./bin/mentiko run` against the REAL bash orchestration engine (chain-runner
+  # + monitor + chain-runner-complete) with a deterministic stub agent CLI — zero model
+  # provider, zero API keys, no network beyond localhost — and asserts terminal SUCCESS
+  # for a passing chain and terminal FAILED (not hung) for failing chains, with events
+  # streamed and step output propagated. See web/e2e/engine/engine-e2e.sh.
+  #
+  # It runs INSIDE the mentiko-base image so it uses the exact runtime the platform
+  # ships (bash 5.x, jq, git, node 22, and pty-mgr — the PTY session manager the engine
+  # spawns agents through). That keeps the job lean (no per-runner tool provisioning)
+  # AND faithful (same pty-mgr/bash the tenants run). build-js depends on this job, so a
+  # broken engine blocks the image build, push, smoke, and the control-plane release
+  # bridge — nothing ships if the engine can't run a chain end to end.
+  engine-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: log in to ghcr (to pull mentiko-base)
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: run engine e2e inside mentiko-base
+        env:
+          BASE_TAG: ${{ inputs.base_tag || 'latest' }}
+        run: |
+          set -euo pipefail
+          # Mount the checked-out repo into the base image (which already has bash 5.x,
+          # jq, git, node, and /usr/local/bin/pty-mgr) and run the harness. The harness
+          # uses a throwaway temp data root (MENTIKO_GLOBAL_ROOT) and a uniquely-named
+          # PTY daemon, so it never pollutes anything. --init reaps the PTY processes.
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e.sh
+
   # phase 4: run next.js webpack build ONCE on amd64 and share the
   # standalone output with both per-arch jobs as a workflow artifact.
   # the bundle is pure javascript (next-bundled native deps get
   # reinstalled per-arch in the runtime stage). saves the ~4 min of
   # webpack work on the arm64 job which otherwise duplicates this.
   build-js:
-    needs: validate-release-version
+    needs: [validate-release-version, engine-e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
