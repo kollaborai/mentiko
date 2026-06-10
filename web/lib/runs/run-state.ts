@@ -1,6 +1,25 @@
-// shared state file reader for run API routes
-// state files are written by agents during execution and provide
-// real-time status that's more accurate than run.json
+// -------------------------------------------------------------------
+// run-state.ts — Shared state file reader for run API routes.
+// -------------------------------------------------------------------
+// State files are written by agents during execution and provide
+// real-time status that's more accurate than run.json. The engine
+// updates .state files immediately on agent lifecycle events, while
+// run.json is written less frequently for durability.
+//
+// WHY state files exist: run.json is updated only at agent start/completion
+// to minimize disk writes during active execution. .state files provide
+// live status between those checkpoints.
+//
+// PHANTOM AGENTS: Branch termination values like "stop" create fake agent
+// entries in run.json. These are NOT real agents and must be filtered from
+// UI displays and state calculations.
+//
+// TERMINAL STATUS OVERRIDE: When run.json shows a terminal status
+// (stopped/cancelled/complete/error), that's the FINAL word. Stale state
+// files from crashed runs must NOT override terminal statuses back to
+// "running". This prevents displaying incorrect live status for runs
+// that already ended.
+// -------------------------------------------------------------------
 
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
