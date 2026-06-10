@@ -27,7 +27,7 @@ describe("sendEmail", () => {
   it("reads authenticated SMTP env at send time", async () => {
     const { sendEmail } = await import("../email/email");
 
-    process.env.SMTP_HOST = "74.207.252.96";
+    process.env.SMTP_HOST = "192.0.2.1";
     process.env.SMTP_PORT = "587";
     process.env.SMTP_USER = "mk-user";
     process.env.SMTP_PASS = "secret";
@@ -41,7 +41,7 @@ describe("sendEmail", () => {
     })).resolves.toBe(true);
 
     expect(mockCreateTransport).toHaveBeenCalledWith({
-      host: "74.207.252.96",
+      host: "192.0.2.1",
       port: 587,
       secure: false,
       auth: { user: "mk-user", pass: "secret" },
@@ -55,7 +55,7 @@ describe("sendEmail", () => {
   it("supports unauthenticated relay mode for tenant-hosted email", async () => {
     const { sendEmail } = await import("../email/email");
 
-    process.env.SMTP_HOST = "74.207.252.96";
+    process.env.SMTP_HOST = "192.0.2.1";
     process.env.SMTP_PORT = "587";
     process.env.SMTP_FROM = "mentiko-help@marco.mentiko.com";
 
@@ -67,7 +67,7 @@ describe("sendEmail", () => {
     });
 
     expect(mockCreateTransport).toHaveBeenCalledWith({
-      host: "74.207.252.96",
+      host: "192.0.2.1",
       port: 587,
       secure: false,
     });
@@ -76,7 +76,7 @@ describe("sendEmail", () => {
   it("allows transactional callers to override the from address", async () => {
     const { sendEmail } = await import("../email/email");
 
-    process.env.SMTP_HOST = "74.207.252.96";
+    process.env.SMTP_HOST = "192.0.2.1";
     process.env.SMTP_PORT = "587";
     process.env.SMTP_FROM = "noreply@marco.mentiko.com";
 

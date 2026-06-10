@@ -103,3 +103,6 @@ package-lock.json
 # enterprise edition
 enterprise/
 web/lib/job-store.ts.bak
+
+# internal ops knowledge base — never in the public tree
+.kdex/

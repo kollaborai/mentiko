@@ -1,7 +1,0 @@
-{
-  "type": "module",
-  "scripts": {
-    "serve": "node server.mjs",
-    "start": "node server.mjs"
-  }
-}
