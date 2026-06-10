@@ -1,3 +1,23 @@
+// -------------------------------------------------------------------
+// chain-run-service.ts — Start a mentiko chain run (spawn mentiko CLI).
+// -------------------------------------------------------------------
+// This service validates input, creates the run directory, writes
+// chain.json + run.json, and spawns the mentiko CLI in a detached
+// background process.
+//
+// SECURITY: Path validation prevents directory traversal. Run ID regex
+// prevents path injection in directory names. All CLI arguments are
+// shell-escaped.
+//
+// CONCURRENT LIMIT: Checks max_concurrent_runs system setting and
+// blocks new runs when the limit is reached to prevent resource
+// exhaustion.
+//
+// DETACHED SPAWN: The mentiko process runs detached so it survives
+// the API request lifecycle. Output streams to output.log in the run
+// directory.
+// -------------------------------------------------------------------
+
 import { spawn } from "child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
@@ -26,6 +46,9 @@ import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
+// Executor short names -> MENTIKO_CLI values. Allows specifying which CLI to
+// use (claude, codex, aider, kollab) via UI or API. Maps aliases (cc, kl)
+// to canonical names.
 const EXECUTOR_MAP: Record<string, string> = {
   claude: "claude",
   codex: "codex",

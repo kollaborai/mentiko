@@ -1,17 +1,17 @@
-/**
- * mentiko-mcp-inbox.ts — Per-session in-memory inbox for UI effects.
- *
- * Both the effects buffer and the results store are keyed by sessionId.
- * Effects route to the specific browser session that initiated the agent turn.
- * Results (permission prompt replies) are session-scoped so session A cannot
- * consume session B's answers.
- *
- * Buffer eviction: sessions not drained in 10 min are evicted on every
- * popEffects call.
- *
- * State is pinned to globalThis so it survives Next.js HMR/route reloads
- * in dev and route-handler isolation in prod.
- */
+// -------------------------------------------------------------------
+// mentiko-mcp-inbox.ts — Per-session in-memory inbox for UI effects.
+// -------------------------------------------------------------------
+// Both the effects buffer and the results store are keyed by sessionId.
+// Effects route to the specific browser session that initiated the agent turn.
+// Results (permission prompt replies) are session-scoped so session A cannot
+// consume session B's answers.
+//
+// Buffer eviction: sessions not drained in 10 min are evicted on every
+// popEffects call.
+//
+// State is pinned to globalThis so it survives Next.js HMR/route reloads
+// in dev and route-handler isolation in prod.
+// -------------------------------------------------------------------
 
 export interface UIEffect {
   id: string;
@@ -46,6 +46,11 @@ const RESULT_TTL_MS = 5 * 60 * 1000;
 const CURRENT_PAGE_TTL_MS = 60 * 1000;
 
 const G = globalThis as unknown as { __mentikoMcpInbox?: InboxState };
+
+// -------------------------------------------------------------------
+// global state initialization — pinned to globalThis for HMR survival
+// -------------------------------------------------------------------
+
 function state(): InboxState {
   if (!G.__mentikoMcpInbox) {
     G.__mentikoMcpInbox = {
@@ -106,7 +111,9 @@ function effectKey(sessionId: string, effectId: string): string {
   return `${sessionId}:${effectId}`;
 }
 
-// ---- current page ----
+// -------------------------------------------------------------------
+// current page tracking — for route-aware UI effects
+// -------------------------------------------------------------------
 
 export function setCurrentPage(sessionId: string, page: CurrentPage): void {
   state().currentPages.set(sessionId, page);
@@ -123,7 +130,9 @@ export function getCurrentPage(sessionId: string): CurrentPage | null {
   return page;
 }
 
-// ---- effects ----
+// -------------------------------------------------------------------
+// effects buffer — per-session queue of UI effects
+// -------------------------------------------------------------------
 
 export function pushEffect(
   kind: string,
@@ -157,7 +166,9 @@ export function isEffectDelivered(sessionId: string, effectId: string): boolean 
   return state().deliveredEffects.has(effectKey(sessionId, effectId));
 }
 
-// ---- results (permission prompt replies, per-session) ----
+// -------------------------------------------------------------------
+// results store — permission prompt replies, per-session
+// -------------------------------------------------------------------
 
 export function storeResult(sessionId: string, toolId: string, result: unknown): void {
   const s = state();
@@ -183,7 +194,9 @@ export function consumeResult(sessionId: string, toolId: string): unknown | unde
   return r.value;
 }
 
-// ---- session cleanup ----
+// -------------------------------------------------------------------
+// session cleanup — evict all session data on logout/close
+// -------------------------------------------------------------------
 
 export function evictSession(sessionId: string): void {
   const s = state();

@@ -1,11 +1,25 @@
-/**
- * mentiko-mcp-ops-auth.ts
- *
- * Auth for /api/mentiko-mcp/ops/* endpoints.
- * All ops routes call requireOpsAuth() — JWT bearer token only.
- * MENTIKO_INBOX_KEY is NOT accepted here (it is retained only for
- * the signaling channel: dispatch/stream/reply).
- */
+// -------------------------------------------------------------------
+// mentiko-mcp-ops-auth.ts — Auth for /api/mentiko-mcp/ops/* endpoints.
+// -------------------------------------------------------------------
+// All ops routes (data plane operations: list/read/write artifacts, agents,
+// chains, etc.) call requireOpsAuth() — JWT bearer token only.
+//
+// SECURITY MODEL: ops endpoints are MUTATIVE and READ-ONLY access to
+// user data. We require a signed JWT (session token) because:
+//   1. JWTs are revocable (logout kills them)
+//   2. JWTs encode user identity + role for RBAC
+//   3. JWTs are short-lived (15 min expiry)
+//
+// MENTIKO_INBOX_KEY is NOT accepted here. The inbox key is a shared
+// secret used ONLY for the signaling channel (dispatch/stream/reply) to
+// allow the mentiko-mcp stdio subprocess to push UI effects to the browser
+// without requiring a JWT for every SSE message. Accepting it here would
+// weaken the security boundary — any subprocess with the inbox key could
+// perform arbitrary data operations.
+//
+// Permission checks: requireOpsPermission() enforces both scope-based
+// (ops:*, ops:read, etc.) and role-based (admin, member, etc.) access.
+// -------------------------------------------------------------------
 
 import { NextResponse } from "next/server";
 import { verifySessionToken } from "../auth/session-token";

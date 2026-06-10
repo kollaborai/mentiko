@@ -1,14 +1,14 @@
-/**
- * mentiko-mcp-bar-client.ts
- *
- * SSE subscriber for UI effects dispatched by the mentiko-mcp stdio
- * subprocess. Effects are session-scoped: the JWT from the engine session
- * create response is passed as ?sessionToken= so effects route only to
- * the tab that initiated the agent turn.
- *
- * Token expiry handling: on 401 from stream, calls the refresh-token
- * endpoint, updates sessionStorage, and reconnects.
- */
+// -------------------------------------------------------------------
+// mentiko-mcp-bar-client.ts — SSE subscriber for UI effects dispatched
+// by the mentiko-mcp stdio subprocess.
+// -------------------------------------------------------------------
+// Effects are session-scoped: the JWT from the engine session create
+// response is passed as ?sessionToken= so effects route only to the
+// tab that initiated the agent turn.
+//
+// Token expiry handling: on 401 from stream, calls the refresh-token
+// endpoint, updates sessionStorage, and reconnects.
+// -------------------------------------------------------------------
 
 import { UIEffect } from "./mentiko-mcp-inbox";
 
@@ -20,6 +20,11 @@ const SESSION_ID_KEY = "mentiko-kollabor-session-id-v2";
 const DEFAULT_STORAGE_SCOPE = "anonymous";
 
 let mcpBarStorageScope = DEFAULT_STORAGE_SCOPE;
+
+// -------------------------------------------------------------------
+// storage scoping — isolates keys per org/namespace to prevent cross-talk
+// in multi-tenant deployments.
+// -------------------------------------------------------------------
 
 function normalizeStorageScope(scope?: string | null): string {
   const value = typeof scope === "string" ? scope.trim() : "";
@@ -68,6 +73,10 @@ export function getStoredSessionId(): string | null {
     return null;
   }
 }
+
+// -------------------------------------------------------------------
+// MCPBarClient — SSE client for UI effects
+// -------------------------------------------------------------------
 
 export class MCPBarClient {
   private eventSource: EventSource | null = null;
@@ -150,7 +159,9 @@ export class MCPBarClient {
       } else {
         clearSessionToken();
         setTimeout(() => {
-          if (!this.closed) this.connect();
+          if (!this.closed) {
+            this.connect();
+          }
         }, 3000);
       }
     };
@@ -165,10 +176,12 @@ export class MCPBarClient {
   }
 }
 
-/**
- * POST the user's reply for a synchronous ask_* tool.
- * Auth: signed-in session cookie. sessionId from JWT or local storage fallback.
- */
+// -------------------------------------------------------------------
+// tool reply API — POST the user's reply for a synchronous ask_* tool
+// -------------------------------------------------------------------
+// Auth: signed-in session cookie. sessionId from JWT or local storage fallback.
+// -------------------------------------------------------------------
+
 export async function replyToTool(
   toolId: string,
   result: unknown,
