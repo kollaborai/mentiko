@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { randomBytes } from "crypto";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
@@ -63,7 +64,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("endpointUrl must be a string", { field: "endpointUrl" });
   }
 
-  // create subscription
+  // create subscription. always assign a secret — the receive endpoint
+  // authenticates every incoming request, so generate one when none is given.
+  const resolvedSecret =
+    typeof secret === "string" && secret.length > 0
+      ? secret
+      : randomBytes(32).toString("hex");
   const now = new Date().toISOString();
   const webhook: WebhookSubscription = {
     id: crypto.randomUUID(),
@@ -73,7 +79,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     createdAt: now,
     updatedAt: now,
     ...(endpointUrl && { endpointUrl }),
-    ...(secret && { secret }),
+    secret: resolvedSecret,
   };
 
   const webhooks = await loadWebhooks(namespaceId, orgId);
@@ -93,7 +99,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const { secret: _s, ...webhookSafe } = webhook;
   return apiSuccess(
-    { webhook: { ...webhookSafe, hasSecret: Boolean(webhook.secret) } },
+    // return the secret exactly once, at creation, so it can be configured on
+    // the sending side (github/gitlab/slack). it is never returned on GET.
+    { webhook: { ...webhookSafe, hasSecret: true, secret: resolvedSecret } },
     undefined,
     201
   );

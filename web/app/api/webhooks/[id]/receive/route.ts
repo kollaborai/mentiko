@@ -16,6 +16,7 @@ import { join } from "path";
 import { getWebhookById, logWebhookEvent } from "@/lib/webhooks/webhook-storage";
 import type { WebhookEvent, WebhookEventType, WebhookSource } from "@/lib/webhooks/webhook-types";
 import { nsPath } from "@/lib/config";
+import { timingSafeEqual } from "@/lib/auth/security";
 import { NotFound, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -60,21 +61,49 @@ function detectEventType(request: NextRequest, source: WebhookSource, payload: R
   return (GITHUB_EVENT_MAP[payloadType] ?? "custom") as WebhookEventType;
 }
 
-async function verifyGithubSignature(
-  request: NextRequest,
-  body: string,
-  secret: string
-): Promise<boolean> {
+// github + custom: HMAC-SHA256 of the raw body, x-hub-signature-256 header
+function verifyHmacSha256(request: NextRequest, body: string, secret: string): boolean {
   const sig = request.headers.get("x-hub-signature-256");
   if (!sig) return false;
   const expected = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
-  // constant-time comparison
-  if (sig.length !== expected.length) return false;
-  let result = 0;
-  for (let i = 0; i < sig.length; i++) {
-    result |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  return timingSafeEqual(sig, expected); // constant-time; length folded in
+}
+
+// gitlab: shared secret token sent verbatim in x-gitlab-token
+function verifyGitlabToken(request: NextRequest, secret: string): boolean {
+  const token = request.headers.get("x-gitlab-token");
+  if (!token) return false;
+  return timingSafeEqual(token, secret);
+}
+
+// slack: v0 signature over `v0:{ts}:{body}`, with a 5-minute replay window
+function verifySlackSignature(request: NextRequest, body: string, secret: string): boolean {
+  const sig = request.headers.get("x-slack-signature");
+  const ts = request.headers.get("x-slack-request-timestamp");
+  if (!sig || !ts) return false;
+  const tsNum = parseInt(ts, 10);
+  if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > 300) return false;
+  const expected = "v0=" + createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex");
+  return timingSafeEqual(sig, expected);
+}
+
+// dispatch verification by source; every source must present a valid signature
+function verifySignature(
+  request: NextRequest,
+  body: string,
+  secret: string,
+  source: WebhookSource
+): boolean {
+  switch (source) {
+    case "gitlab":
+      return verifyGitlabToken(request, secret);
+    case "slack":
+      return verifySlackSignature(request, body, secret);
+    case "github":
+    case "custom":
+    default:
+      return verifyHmacSha256(request, body, secret);
   }
-  return result === 0;
 }
 
 function matchesFilter(
@@ -161,15 +190,16 @@ export const POST = withErrorHandling(async (
     throw new Forbidden("Webhook disabled");
   }
 
-  // verify signature if secret is configured
-  if (subscription.secret) {
-    const source = detectSource(request);
-    if (source === "github" || source === "custom") {
-      const valid = await verifyGithubSignature(request, bodyText, subscription.secret);
-      if (!valid) {
-        throw new Unauthorized("Invalid signature");
-      }
-    }
+  // Every chain-triggering webhook must authenticate its sender. A webhook with
+  // no secret can be fired by anyone who learns the (UUID) receive URL, so
+  // reject those outright; with a secret, verify per source (github/custom HMAC,
+  // gitlab token, slack signature) — not just github/custom as before.
+  const source = detectSource(request);
+  if (!subscription.secret) {
+    throw new Unauthorized("This webhook has no secret configured; set one to receive events");
+  }
+  if (!verifySignature(request, bodyText, subscription.secret, source)) {
+    throw new Unauthorized("Invalid signature");
   }
 
   // parse payload
@@ -181,7 +211,6 @@ export const POST = withErrorHandling(async (
     payload = { raw: bodyText };
   }
 
-  const source = detectSource(request);
   const eventType = detectEventType(request, source, payload);
 
   // check if event matches subscription filter
