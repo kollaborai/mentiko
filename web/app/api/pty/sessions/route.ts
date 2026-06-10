@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { canAccessSession } from "@/lib/pty/session-owners";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,8 @@ export interface PtySession {
 }
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
-  if (!(await checkAuth(request))) {
+  const user = await getSessionUser(request);
+  if (!user) {
     throw new Unauthorized();
   }
 
@@ -25,7 +27,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const { pty } = await import("@/lib/pty/pty-client");
     const rawSessions = await pty.list();
 
-    const sessions: PtySession[] = rawSessions.map((s) => {
+    const sessions: PtySession[] = rawSessions
+      // hide sessions owned by another user (see lib/pty/session-owners.ts)
+      .filter((s) => canAccessSession(s.name, user.id))
+      .map((s) => {
       const dimMatch = s.terminalSize?.match(/^(\d+)x(\d+)$/);
       const cols = dimMatch ? parseInt(dimMatch[1], 10) : 80;
       const rows = dimMatch ? parseInt(dimMatch[2], 10) : 24;

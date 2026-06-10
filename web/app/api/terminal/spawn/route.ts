@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-store";
 import { getWorkspace } from "@/lib/workspaces/workspace-storage";
 import { getProfile, findDefaultProfile } from "@/lib/agents/agent-profile-storage";
+import { recordSessionOwner } from "@/lib/pty/session-owners";
 import config from "@/lib/config";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -133,6 +134,10 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       ...secretsEnv,
     },
   });
+
+  // record ownership so other users cannot attach to / capture / send input
+  // to this interactive session (see lib/pty/session-owners.ts).
+  recordSessionOwner(result.name, sessionUser.id);
 
   return apiSuccess({
     name: result.name,

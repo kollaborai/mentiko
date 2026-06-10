@@ -2,9 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, basename } from "path";
 import config from "@/lib/config";
-import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { canAccessSession } from "@/lib/pty/session-owners";
 import { apiSuccess, apiError } from "@/lib/api-response";
-import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Forbidden, NotFound, Unauthorized } from "@/lib/api-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  if (!(await checkAuth(request))) {
+  const user = await getSessionUser(request);
+  if (!user) {
     return apiError(new Unauthorized());
   }
   const { name } = await params;
@@ -37,6 +39,11 @@ export async function GET(
 
   if (!name) {
     return apiError(new BadRequest("session name required"));
+  }
+
+  // agent recordings are org-shared; owned interactive sessions are owner-only
+  if (!canAccessSession(name, user.id)) {
+    return apiError(new Forbidden("not your session"));
   }
 
   try {

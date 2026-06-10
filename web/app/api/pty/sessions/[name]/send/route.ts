@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
-import { BadRequest, InternalServerError, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Forbidden, InternalServerError, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { checkAuth } from "@/lib/auth/api-auth";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { canAccessSession } from "@/lib/pty/session-owners";
 
 export const dynamic = "force-dynamic";
 
@@ -15,12 +16,19 @@ function validateSessionName(name: string): string {
 
 export const POST = withErrorHandling(
   async (request: NextRequest, context: { params: Promise<{ name: string }> }) => {
-    if (!(await checkAuth(request))) {
+    const user = await getSessionUser(request);
+    if (!user) {
       throw new Unauthorized();
     }
 
     const { name } = await context.params;
     const sessionName = validateSessionName(name);
+
+    // sending keystrokes drives someone's live session — owner only
+    if (!canAccessSession(sessionName, user.id)) {
+      throw new Forbidden("not your session");
+    }
+
     const { text } = await request.json();
 
     if (!text || typeof text !== "string") {

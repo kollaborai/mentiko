@@ -34,6 +34,7 @@ import { createServer, IncomingMessage } from "http";
 import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "fs";
 import { createInitialCaptureState, formatInitialCaptureChunk } from "../lib/terminal-stream";
+import { canAccessSession } from "../lib/pty/session-owners";
 
 const WS_PORT = parseInt(process.env.WS_TERMINAL_PORT || "3099", 10);
 const PTY_MANAGER_DIR = process.env.PTY_MANAGER_DIR || join(homedir(), ".pty-manager");
@@ -398,6 +399,13 @@ function createBridge() {
           const sessionName = String(msg.session || "");
           if (!SESSION_NAME_RE.test(sessionName)) {
             ws.send(JSON.stringify({ type: "error", message: "invalid session name" }));
+            return;
+          }
+          // ownership gate: a session with a recorded owner may only be
+          // attached by that user. Un-owned (agent/legacy) sessions stay
+          // org-shared. See lib/pty/session-owners.ts.
+          if (!canAccessSession(sessionName, userId)) {
+            ws.send(JSON.stringify({ type: "error", message: "not your session" }));
             return;
           }
           const cols = typeof msg.cols === "number" ? msg.cols : undefined;
