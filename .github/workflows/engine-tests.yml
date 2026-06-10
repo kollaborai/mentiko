@@ -1,0 +1,124 @@
+# engine tests — fast feedback on every engine-touching push/PR.
+#
+# The release gate (build-platform.yml -> engine-e2e) runs the same suites,
+# but only when a release tag is pushed. This workflow runs them on every
+# push to main and every PR that touches the engine (bash orchestration in
+# lib/, the CLIs in bin/, the harnesses themselves, or the jest contract
+# files), so engine regressions surface at push time — not at tag time.
+#
+# Same execution model as the gate: everything runs INSIDE the
+# ghcr.io/kollaborai/mentiko-base image (the exact runtime the platform
+# ships — bash 5.x, jq, git, node 22, pty-mgr). The six bash suites are
+# hermetic: deterministic stub agent CLI, throwaway temp data root
+# (MENTIKO_GLOBAL_ROOT), uniquely-named PTY daemon, hard wall-clock
+# timeouts — zero model traffic, zero API keys. Steps run sequentially
+# and fail fast.
+
+name: engine tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'bin/**'
+      - 'web/e2e/engine/**'
+      - 'web/lib/__tests__/engine-event-contract.test.ts'
+      - 'web/lib/runs/run-json-lock.ts'
+      - 'web/lib/runs/run-json-lock.test.ts'
+      - '.github/workflows/engine-tests.yml'
+  pull_request:
+    paths:
+      - 'lib/**'
+      - 'bin/**'
+      - 'web/e2e/engine/**'
+      - 'web/lib/__tests__/engine-event-contract.test.ts'
+      - 'web/lib/runs/run-json-lock.ts'
+      - 'web/lib/runs/run-json-lock.test.ts'
+      - '.github/workflows/engine-tests.yml'
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: engine-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  engine-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_TAG: latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: log in to ghcr (to pull mentiko-base)
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Mount the checked-out repo into the base image (which already has bash 5.x,
+      # jq, git, node, and /usr/local/bin/pty-mgr) and run each harness in turn.
+      # --init reaps the PTY processes each suite spawns.
+      - name: engine e2e — lifecycle
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e.sh
+      - name: engine e2e — monitor loop
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e-monitor.sh
+      - name: engine e2e — routing + retry
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e-routing.sh
+      - name: engine e2e — standalones (resolver + heartbeat)
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e-standalone.sh
+      - name: engine e2e — event lifecycle
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e-events.sh
+      - name: engine e2e — run.json lock
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash web/e2e/engine/engine-e2e-runjson.sh
+      - name: engine contract tests (jest)
+        run: |
+          docker run --rm --init \
+            -v "$PWD:/opt/mentiko-src:rw" \
+            -w /opt/mentiko-src \
+            -e CI=true \
+            "${REGISTRY}/kollaborai/mentiko-base:${BASE_TAG}" \
+            bash -c "cd web && npm ci --no-audit --no-fund && npx jest engine-event-contract run-json-lock"
