@@ -19,6 +19,7 @@
 // -------------------------------------------------------------------
 
 import { spawn } from "child_process";
+import { randomBytes } from "crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
@@ -30,9 +31,9 @@ import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-
 import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage";
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
-import { readSystemSettings } from "@/lib/system/system-settings";
+import { resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import { taskMergeMeta, taskUpdate } from "@/lib/tasks/task-store";
-import { BadRequest, Conflict, Forbidden, RateLimitExceeded } from "@/lib/api-errors";
+import { BadRequest, Conflict, Forbidden } from "@/lib/api-errors";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
@@ -45,6 +46,17 @@ import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 
 const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
+
+// Collision-proof run id (engine bug #20). `run-${Date.now()}` alone is epoch-millis,
+// but two requests landing in the SAME millisecond would still mint the same id and
+// collide their run dirs. The random suffix removes within-millisecond collisions.
+// 4 bytes (32 bits) of randomness keeps collisions astronomically unlikely even under a
+// burst of many launches inside one millisecond. Mirrors the CLI scheme in
+// lib/run-lib.sh `_mint_run_id` (run-<millis>-<hex>) and stays within SAFE_RUN_ID_RE —
+// only [0-9a-f-] after the `run-` prefix (~26 chars total, well under the 120 cap).
+function mintRunId(): string {
+  return `run-${Date.now()}-${randomBytes(4).toString("hex")}`;
+}
 
 // Executor short names -> MENTIKO_CLI values. Allows specifying which CLI to
 // use (claude, codex, aider, kollab) via UI or API. Maps aliases (cc, kl)
@@ -313,40 +325,46 @@ export async function startChainRun({
 
   const runId = body.runId && typeof body.runId === "string"
     ? validateRunId(body.runId)
-    : `run-${Date.now()}`;
+    : mintRunId();
   const runDir = join(runsDir, runId);
   if (existsSync(runDir)) {
     throw new Conflict("Run already exists");
   }
 
-  const sysSettings = readSystemSettings();
-  if (sysSettings.max_concurrent_runs > 0) {
+  // Concurrency ceiling (phase-2 step 2) — ONE source of truth shared with the engine.
+  // resolveMaxConcurrentChains() prefers MENTIKO_MAX_CONCURRENT_CHAINS (the same env the
+  // bash engine reads) and falls back to the max_concurrent_runs system setting, so the
+  // web guard and the engine queue enforce the identical number. We DO NOT hard-reject
+  // at the cap (that was a silent-ish failure for the caller); instead we create the run
+  // QUEUED (status `pending` with a clear message) and let the spawned CLI's bounded,
+  // observable queue (lib/concurrency-cap.sh cap_acquire_chain_slot) admit it when a slot
+  // frees — or surface it terminally `blocked` on max-wait expiry. Same queue, both paths.
+  const maxConcurrentChains = resolveMaxConcurrentChains(namespaceId);
+  let queuedAtCap = false;
+  let activeCountAtAdmit = 0;
+  if (maxConcurrentChains > 0) {
     const runDirs = existsSync(runsDir)
       ? readdirSync(runsDir).filter((d) => SAFE_RUN_ID_RE.test(d))
       : [];
-    let activeCount = 0;
     for (const dir of runDirs) {
       const rjPath = join(runsDir, dir, "run.json");
       if (!existsSync(rjPath)) continue;
       try {
         const rj = JSON.parse(readFileSync(rjPath, "utf-8"));
-        if (rj.status === "running" || rj.status === "pending") activeCount++;
+        if (rj.status === "running" || rj.status === "pending") activeCountAtAdmit++;
       } catch { /* skip corrupt */ }
     }
-    if (activeCount >= sysSettings.max_concurrent_runs) {
+    if (activeCountAtAdmit >= maxConcurrentChains) {
+      queuedAtCap = true;
       createNotification(namespaceId, {
-        type: "warning",
-        title: "Chain run blocked: concurrent limit",
-        message: `${activeCount} chains already running (limit: ${sysSettings.max_concurrent_runs}). Try again later.`,
+        type: "info",
+        title: "Chain run queued: concurrent limit",
+        message: `${activeCountAtAdmit} chains already active (limit: ${maxConcurrentChains}). This run is queued and will start automatically when a slot frees.`,
         metadata: {
           chainId: callerChainId || validChainName.toLowerCase().replace(/\s+/g, "-"),
           runId,
         },
       });
-      throw new RateLimitExceeded(
-        `Concurrent run limit reached (${sysSettings.max_concurrent_runs} active). Try again later.`,
-        { activeCount, limit: sysSettings.max_concurrent_runs }
-      );
     }
   }
 
@@ -365,7 +383,13 @@ export async function startChainRun({
     chainId: callerChainId || validChainName.toLowerCase().replace(/\s+/g, "-"),
     goal: userPrompt || "",
     started: new Date().toISOString(),
-    status: "running",
+    // Queued at the cap -> `pending` (existing status vocabulary; the UI renders it
+    // neutral/"waiting") with a clear message. The spawned engine promotes it to
+    // `running` on admission. Otherwise it starts `running` as before.
+    status: queuedAtCap ? "pending" : "running",
+    ...(queuedAtCap
+      ? { status_message: `queued: waiting for a chain slot (${activeCountAtAdmit} active, limit ${maxConcurrentChains})` }
+      : {}),
     debug: debug || false,
     agents: runChain.agents?.map((a) => ({
       id: a.id,

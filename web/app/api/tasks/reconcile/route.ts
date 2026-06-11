@@ -33,6 +33,7 @@ interface ReconcileResult {
 function canCloseCompletedAutoRun(meta: Record<string, unknown>): boolean {
   return (
     meta.auto_run === true &&
+    !meta.generation_job_id &&
     meta.last_run_decision_required !== true &&
     meta.last_run_outcome === "complete"
   );

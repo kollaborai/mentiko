@@ -370,6 +370,43 @@ describe("GET /api/tasks/reconcile", () => {
     );
   });
 
+  it("does not close a completed analysis run while a generated chain is pending", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-analysis",
+      taskId: "TASK-044",
+      status: "completed",
+      chainId: "chain-recommendation",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Generate then run the chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-analysis",
+          last_run_status: "complete",
+          last_run_outcome: "complete",
+          last_run_decision_required: false,
+          generation_job_id: "job-generation",
+          generation_status: "complete",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 0,
+      results: [],
+    });
+    expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
   it("does not mark a young real run stopped before its first session launches", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",

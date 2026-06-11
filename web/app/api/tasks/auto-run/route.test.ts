@@ -31,6 +31,9 @@ jest.mock("@/lib/system/system-settings", () => ({
     auto_run_enabled: true,
     max_concurrent_runs: 10,
   }),
+  // phase-2 step 2: auto-run self-throttles against the same authoritative limit the
+  // run starter + engine use. With no env override it returns the system setting.
+  resolveMaxConcurrentChains: jest.fn().mockReturnValue(10),
 }));
 
 const mockIsTaskReady = jest.fn();
@@ -507,6 +510,9 @@ describe("POST /api/tasks/auto-run", () => {
       priority: 2,
       metadata: {
         auto_run: true,
+        last_run_id: "run-analysis",
+        last_run_status: "complete",
+        last_run_outcome: "complete",
         generation_job_id: "job-generation",
         generation_status: "running",
         workspace_path: "/repo",

@@ -43,6 +43,10 @@ handle_chain_runner_error() {
 trap 'handle_chain_runner_error "$LINENO"' ERR
 
 source "$SCRIPT_DIR/metrics.sh"
+# concurrency-cap.sh enforces the engine-level max-concurrency ceiling (phase-2 step 2;
+# inputs from load-drill-2026-06-10.md). Sourced after run-lib.sh (uses update-run-status
+# / _sys_log) and agent-functions.sh (uses transport_list_sessions / PTY_CMD).
+source "$SCRIPT_DIR/concurrency-cap.sh"
 source "$SCRIPT_DIR/performance.sh"
 source "$SCRIPT_DIR/profiler.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/error-handling.sh" 2>/dev/null || true
@@ -1698,6 +1702,14 @@ $rs_produces
         return 1
     fi
 
+    # concurrency cap (phase-2 step 2): secondary smoothing gate on ACTIVE AGENT
+    # SESSIONS — the unit that actually maps to RAM (real CLIs are 150-400MB RSS each;
+    # the 2GB cgroup fits ~2-3). Bounded, observable wait; on expiry it proceeds (the
+    # chain-slot cap above is the hard bound) rather than hang. Skipped for --dry-run.
+    if [[ "$DRY_RUN" != "true" ]] && declare -f cap_wait_for_agent_slot >/dev/null 2>&1; then
+        cap_wait_for_agent_slot "$RUN_ID" "$agent_name ($agent_id)" || true
+    fi
+
     # create session (all workspace types use local pty-manager)
     transport_new_session "$session_name"
 
@@ -2159,6 +2171,27 @@ export DEBUG_MODE
 export CHAIN_FILE
 export ARTIFACTS_DIR="${RUNS_DIR}/${RUN_ID}/artifacts"
 mkdir -p "$ARTIFACTS_DIR"
+
+# -------------------------------------------------------------------
+# concurrency cap (phase-2 step 2): QUEUE behind the chain-slot ceiling.
+# At the cap, this BLOCKS here (run marked `pending`/queued, observable in the UI)
+# until a slot frees or MENTIKO_CAP_MAX_WAIT_SECS elapses. create-run makes the run
+# `pending` (a run that hasn't launched an agent holds no slot); THIS gate is the sole
+# promoter to `running` on admission, which keeps the live slot count exact (a
+# not-yet-admitted run is never miscounted as a slot holder). On max-wait expiry the run
+# is marked terminal `blocked` and we exit cleanly WITHOUT launching — never a silent
+# failure, never a hang. Skipped for --dry-run. Disable entirely with MENTIKO_CAP_DISABLED=1.
+# -------------------------------------------------------------------
+if [[ "$DRY_RUN" != "true" ]] && declare -f cap_acquire_chain_slot >/dev/null 2>&1; then
+    if ! cap_acquire_chain_slot "$RUN_ID"; then
+        echo "  chain not started: concurrency cap (run $RUN_ID marked blocked)"
+        exit 0
+    fi
+elif [[ -n "${RUN_ID:-}" ]]; then
+    # cap gate not available (concurrency-cap.sh missing) or dry-run — promote the
+    # freshly-created `pending` run to `running` so it is never stranded pending.
+    update-run-status "$RUN_ID" "running" 2>/dev/null || true
+fi
 
 # -------------------------------------------------------------------
 # metrics: track run start

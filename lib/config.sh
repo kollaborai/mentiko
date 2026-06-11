@@ -159,6 +159,15 @@ MAX_CONCURRENT_AGENTS="${MAX_CONCURRENT_AGENTS:-10}"
 DEFAULT_MAX_ROUNDS="${DEFAULT_MAX_ROUNDS:-50}"
 
 # -------------------------------------------------------------------
+# concurrency ceiling (phase-2 step 2; defaults from load-drill-2026-06-10.md).
+# Enforced by lib/concurrency-cap.sh with QUEUE semantics. The control plane sets
+# these per hosting tier at provisioning (2GB shared = 4/3; 8GB dedicated ~= 12-16).
+# -------------------------------------------------------------------
+MENTIKO_MAX_CONCURRENT_CHAINS="${MENTIKO_MAX_CONCURRENT_CHAINS:-4}"   # max chains running at once
+MENTIKO_MAX_ACTIVE_AGENTS="${MENTIKO_MAX_ACTIVE_AGENTS:-3}"          # max alive agent PTY sessions
+MENTIKO_CAP_MAX_WAIT_SECS="${MENTIKO_CAP_MAX_WAIT_SECS:-300}"        # max queue wait before blocked
+
+# -------------------------------------------------------------------
 # exports
 # -------------------------------------------------------------------
 
@@ -191,6 +200,7 @@ export BIN_DIR LIB_DIR
 # defaults
 export DEFAULT_CLI DEFAULT_SESSION_PREFIX DEFAULT_PROJECT_ROOT
 export WEB_PORT MAX_CONCURRENT_AGENTS DEFAULT_MAX_ROUNDS
+export MENTIKO_MAX_CONCURRENT_CHAINS MENTIKO_MAX_ACTIVE_AGENTS MENTIKO_CAP_MAX_WAIT_SECS
 export PTY_DAEMON
 
 # -------------------------------------------------------------------

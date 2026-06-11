@@ -12,7 +12,7 @@ import {
   getNamespaceIdFromRequest,
   getOrgIdFromRequest,
 } from "@/lib/namespace-config";
-import { readSystemSettings } from "@/lib/system/system-settings";
+import { readSystemSettings, resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import {
   getAutoRunCandidates,
   isTaskReady,
@@ -61,11 +61,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const orgId = await getOrgIdFromRequest(request);
   const candidates = getAutoRunCandidates(orgId, undefined, namespaceId);
   const activeRuns = countActiveRuns(namespaceId);
+  const maxConcurrent = resolveMaxConcurrentChains(namespaceId);
   return apiSuccess({
     auto_run_enabled: true,
-    max_concurrent_runs: settings.max_concurrent_runs,
+    max_concurrent_runs: maxConcurrent,
     active_runs: activeRuns,
-    available_slots: Math.max(0, settings.max_concurrent_runs - activeRuns),
+    available_slots: Math.max(0, maxConcurrent - activeRuns),
     settings_url: "/settings/system",
     candidates: candidates.map((c) => ({
       taskId: c.taskId,
@@ -139,9 +140,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     return apiSuccess({ triggered: 0, results: [], reconciled: reconciledActiveRuns });
   }
 
-  // respect max_concurrent_runs -- only trigger up to available slots
+  // respect the concurrency ceiling -- only trigger up to available slots. Uses the
+  // SAME authoritative resolver as the run starter + engine (phase-2 step 2): the
+  // MENTIKO_MAX_CONCURRENT_CHAINS env (control-plane per-tier) when set, else the
+  // max_concurrent_runs system setting.
   const activeCount = countActiveRuns(namespaceId);
-  const maxConcurrent = settings.max_concurrent_runs;
+  const maxConcurrent = resolveMaxConcurrentChains(namespaceId);
   const availableSlots = Math.max(0, maxConcurrent - activeCount);
 
   if (availableSlots === 0) {
@@ -481,7 +485,8 @@ async function triggerAutoRun(
     };
   }
 
-  if (lastRunStatus && COMPLETED_RUN_STATUSES.has(lastRunStatus)) {
+  const pendingGenerationJobId = metadata.generation_job_id as string | undefined;
+  if (lastRunStatus && COMPLETED_RUN_STATUSES.has(lastRunStatus) && !pendingGenerationJobId) {
     return {
       triggered: false,
       taskId,
