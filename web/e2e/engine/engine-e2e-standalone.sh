@@ -86,10 +86,13 @@ if command -v pty-mgr >/dev/null 2>&1; then PTY_MGR_BIN="$(command -v pty-mgr)";
 elif [[ -x "$PTY_MGR_BIN_DEFAULT" ]]; then PTY_MGR_BIN="$PTY_MGR_BIN_DEFAULT"; fi
 
 cleanup() {
+  # sessions AND the daemon — a leaked daemon holds pty fds forever (pool is finite).
+  # TMP_ROOT kept on failure for forensics.
   if [[ -n "$PTY_MGR_BIN" ]]; then
     PTY_DAEMON="$PTY_DAEMON_NAME" "$PTY_MGR_BIN" kill all >/dev/null 2>&1 || true
+    PTY_DAEMON="$PTY_DAEMON_NAME" "$PTY_MGR_BIN" stop >/dev/null 2>&1 || true
   fi
-  rm -rf "$TMP_ROOT" 2>/dev/null || true
+  if [[ "${FAIL:-0}" -eq 0 ]]; then rm -rf "$TMP_ROOT" 2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
 

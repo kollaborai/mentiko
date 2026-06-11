@@ -76,10 +76,14 @@ if command -v pty-mgr >/dev/null 2>&1; then PTY_MGR_BIN="$(command -v pty-mgr)";
 elif [[ -x "$PTY_MGR_BIN_DEFAULT" ]]; then PTY_MGR_BIN="$PTY_MGR_BIN_DEFAULT"; fi
 
 cleanup() {
-  # tear down any PTY sessions on our private daemon; never touch other daemons.
+  # tear down sessions AND the private daemon (never other daemons) — a leaked
+  # daemon holds every dead session's pty fds forever; enough leaked runs exhaust
+  # the system pty pool. TMP_ROOT is kept on failure so engine logs survive.
   if [[ -n "$PTY_MGR_BIN" ]]; then
     PTY_DAEMON="$PTY_DAEMON_NAME" "$PTY_MGR_BIN" kill all >/dev/null 2>&1 || true
+    PTY_DAEMON="$PTY_DAEMON_NAME" "$PTY_MGR_BIN" stop >/dev/null 2>&1 || true
   fi
+  if [[ "${FAIL:-0}" -eq 0 ]]; then rm -rf "$TMP_ROOT" 2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
 
