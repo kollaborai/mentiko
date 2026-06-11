@@ -63,8 +63,14 @@ fi
 TRIGGERED_EVENT=""
 TRIGGERED_EVENT_NAME=""
 
-# derive session prefix: strip project name and YYYYMMDD-HHMM date suffix
-SESSION_PREFIX=$(echo "$SESSION_NAME" | sed "s/^${PROJECT_NAME}-//" | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
+# derive session prefix: strip project name + the run-id stamp (run-<millis>-<hex>, or
+# legacy run-<seconds>) + the YYYYMMDD-HHMM date-fallback suffix. Mirrors the primary
+# completion handler (chain-runner-complete.sh) so the collision-proof run-id (#20),
+# which adds a trailing "-<hex>", still resolves the agent prefix on this fallback path.
+SESSION_PREFIX=$(echo "$SESSION_NAME" \
+    | sed "s/^${PROJECT_NAME}-//" \
+    | sed -E 's/-run-[0-9]+(-[0-9a-zA-Z]+)?$//' \
+    | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
 
 echo "  session prefix: $SESSION_PREFIX"
 

@@ -197,8 +197,18 @@ echo "  ---"
 # 1. derive agent identity from session name
 # -------------------------------------------------------------------
 
-# strip project name prefix and run suffix (handles both YYYYMMDD-HHMM and run-TIMESTAMP formats)
-SESSION_PREFIX=$(echo "$SESSION_NAME" | sed "s/^${PROJECT_NAME}-//" | sed 's/-run-[0-9]*$//' | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
+# strip project name prefix and run suffix to recover the agent's session prefix.
+# Handles every run-id stamp shape the launcher (chain-runner.sh) appends as run_suffix:
+#   - run-<epoch_millis>-<hex>   (current, collision-proof scheme — bug #20 fix)
+#   - run-<epoch_seconds>        (legacy, pre-#20 — keep matching so in-flight/old runs work)
+#   - YYYYMMDD-HHMM              (date fallback when no RUN_ID was set)
+# The new scheme adds a trailing "-<hex>" after the digits, so the old anchored
+# 's/-run-[0-9]*$//' no longer matched and the agent lookup failed. The optional
+# '\(-[0-9a-zA-Z]*\)\{0,1\}' chomps that random suffix when present.
+SESSION_PREFIX=$(echo "$SESSION_NAME" \
+    | sed "s/^${PROJECT_NAME}-//" \
+    | sed -E 's/-run-[0-9]+(-[0-9a-zA-Z]+)?$//' \
+    | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
 
 echo "  session prefix: $SESSION_PREFIX"
 

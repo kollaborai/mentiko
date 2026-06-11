@@ -163,6 +163,48 @@ _with_run_lock() {
 }
 
 # -------------------------------------------------------------------
+# _mint_run_id: collision-proof run id (engine bug #20)
+# -------------------------------------------------------------------
+# The old scheme `run-$(date +%s)` was epoch-SECONDS: two chains started in the
+# same wall-clock second minted the SAME id, so their run dirs collided and one
+# run silently clobbered the other (proven by the 2026-06-10 load drill at N=4).
+#
+# New scheme: run-<epoch_millis>-<random hex>. Two properties make it safe:
+#   - millisecond resolution shrinks the same-instant window ~1000x, and
+#   - the random suffix removes collisions even WITHIN the same millisecond
+#     (two launches that race the clock still differ in the suffix).
+#
+# Portability: GNU `date +%s%3N` gives millis on linux (the tenant container),
+# but macOS/BSD `date` has no %N — there it yields a literal "3N", which we
+# detect (non-digit) and fall back to seconds + a millisecond-ish counter so the
+# dev box and CI on a mac still get a monotonic-enough, unique id. The random
+# suffix carries the uniqueness guarantee on BOTH platforms regardless.
+#
+# Format stays within SAFE_RUN_ID_RE (^run-[A-Za-z0-9_-]{1,120}$, the regex the
+# web service validates against): only [0-9a-f-] characters, ~30 chars total.
+# Event filenames (${run_id}-${source}-${event}.event) and run-dir names already
+# tolerate hyphens (run ids always contained one); parsers are field-based, not
+# positional on the id, so the extra "-<hex>" segment changes nothing downstream.
+_mint_run_id() {
+    local millis suffix
+    # epoch millis, portable. GNU: 13 digits. BSD/macOS: "<secs>3N" -> fall back.
+    millis="$(date +%s%3N 2>/dev/null)"
+    if ! [[ "$millis" =~ ^[0-9]+$ ]]; then
+        # macOS/BSD: no %N. Use seconds + a 3-digit pseudo-millis so two ids in the
+        # same second still differ in this segment before the random suffix even runs.
+        millis="$(date +%s)$(printf '%03d' "$(( (RANDOM % 1000) ))")"
+    fi
+    # 8 hex chars (32 bits) of randomness — keeps collisions astronomically unlikely even
+    # for many launches inside one millisecond. /dev/urandom when available (strongest),
+    # else two $RANDOM draws. Mirrors the web mint site (randomBytes(4) -> 8 hex).
+    suffix="$(head -c4 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-8)"
+    if [[ -z "$suffix" || ! "$suffix" =~ ^[0-9a-f]+$ ]]; then
+        suffix="$(printf '%04x%04x' "$(( RANDOM ))" "$(( RANDOM ))")"
+    fi
+    printf 'run-%s-%s\n' "$millis" "$suffix"
+}
+
+# -------------------------------------------------------------------
 # create-run: create a new run object
 # -------------------------------------------------------------------
 # args: <chain.json> <goal> [workspace_path] [task_id]
@@ -180,9 +222,20 @@ create-run() {
     fi
 
     local chain_name=$(jq -r '.name' "$chain_file")
-    local run_id="run-$(date +%s)"
-    local run_dir="$RUNS_DIR/$run_id"
-    local run_file="$run_dir/run.json"
+    # collision-proof run id (#20): epoch-millis + random suffix. Retry on the
+    # astronomically-rare event that the dir already exists (e.g. a re-run reusing
+    # a clock value) so create-run never silently writes into an existing run dir.
+    local run_id run_dir run_file attempt=0
+    while :; do
+        run_id="$(_mint_run_id)"
+        run_dir="$RUNS_DIR/$run_id"
+        if [[ ! -d "$run_dir" ]]; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        [[ "$attempt" -ge 5 ]] && break   # give up re-rolling; mkdir below will still write
+    done
+    run_file="$run_dir/run.json"
 
     mkdir -p "$run_dir"
 
@@ -203,6 +256,17 @@ create-run() {
         task_field="\"taskId\": $(printf '%s' "$task_id" | jq -Rs .),"
     fi
 
+    # A freshly-created run has NOT launched an agent yet, so it does not hold a
+    # concurrency slot. Create it `pending` (the queue/waiting state) — the chain-runner's
+    # cap gate (lib/concurrency-cap.sh cap_acquire_chain_slot) promotes it to `running`
+    # the instant it admits the run. This removes the create→gate window in which a
+    # not-yet-admitted run briefly showed `running` and was wrongly counted as a slot
+    # holder by concurrent launchers (which let the sampled concurrency momentarily
+    # exceed the cap). `pending` is existing vocabulary (UI renders it neutral/"waiting")
+    # and the watchdog ignores non-running runs, so this transient is inert. The gate
+    # runs unconditionally in chain-runner.sh right after create-run, so the promote is
+    # immediate for every real run. (The web path writes run.json directly and does not
+    # use create-run.)
     cat > "$run_file" <<RUNEOF
 {
   "id": "$run_id",
@@ -212,7 +276,7 @@ create-run() {
   ${task_field}
   "goal": $(echo "$goal" | jq -Rs .),
   "started": "$(date -Iseconds)",
-  "status": "running",
+  "status": "pending",
   "sessions": [],
   "agents": []
 }
@@ -878,6 +942,7 @@ _rmw_watchdog_stop_run() {
 }
 
 # export functions
+export -f _mint_run_id
 export -f create-run
 export -f update-run-status
 export -f add-run-session
