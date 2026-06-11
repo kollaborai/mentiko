@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.38",
+    date: "June 11, 2026",
+    title: "Concurrent Run Queue Reliability",
+    description:
+      "Chain runs now mint collision-proof IDs, concurrent launches are queued at the configured tier cap, metrics counter writes are serialized, and engine test suites clean up their PTY daemons so long-running validation stays stable.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.37",
     date: "June 9, 2026",
     title: "Webhook and Terminal Reliability",
