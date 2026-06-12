@@ -21,6 +21,7 @@ import {
   getNamespaceFromSession,
   getSessionUser,
 } from "../auth/auth-bridge";
+import { headersForCookieSession } from "../auth/session-cookie-headers";
 
 const mockGetAuth = getAuth as jest.Mock;
 
@@ -77,6 +78,23 @@ describe("auth-bridge", () => {
       expect(session).toEqual(mockSession);
     });
 
+    it("prefers the session cookie when a stale bearer header is also present", async () => {
+      const getSession = jest.fn().mockResolvedValue({
+        session: { id: "sess-1", activeOrganizationId: null },
+        user: { id: "user-1", email: "test@test.com", name: "Test" },
+      });
+      mockGetAuth.mockReturnValue({ api: { getSession } });
+
+      await getServerSession(makeRequest({
+        Authorization: "Bearer proxied",
+        Cookie: "__Secure-better-auth.session_token=signed-cookie",
+      }));
+
+      const passedHeaders = getSession.mock.calls[0][0].headers as Headers;
+      expect(passedHeaders.get("authorization")).toBeNull();
+      expect(passedHeaders.get("cookie")).toContain("__Secure-better-auth.session_token");
+    });
+
     it("returns null when getSession throws", async () => {
       mockGetAuth.mockReturnValue({
         api: { getSession: jest.fn().mockRejectedValue(new Error("fail")) },
@@ -84,6 +102,21 @@ describe("auth-bridge", () => {
 
       const session = await getServerSession(makeRequest());
       expect(session).toBeNull();
+    });
+  });
+
+  describe("headersForCookieSession", () => {
+    it("drops bearer auth only when a Better Auth session cookie is present", () => {
+      const cookieHeaders = headersForCookieSession(new Headers({
+        Authorization: "Bearer proxied",
+        Cookie: "__Secure-better-auth.session_token=signed-cookie",
+      }));
+      expect(cookieHeaders.get("authorization")).toBeNull();
+
+      const bearerHeaders = headersForCookieSession(new Headers({
+        Authorization: "Bearer service-token",
+      }));
+      expect(bearerHeaders.get("authorization")).toBe("Bearer service-token");
     });
   });
 

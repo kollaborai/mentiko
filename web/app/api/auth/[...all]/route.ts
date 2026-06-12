@@ -1,4 +1,5 @@
 import { getAuth } from "@/lib/auth/auth-server";
+import { requestForCookieSession } from "@/lib/auth/session-cookie-headers";
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimiters } from "@/lib/auth/security";
 
@@ -27,7 +28,7 @@ async function handleAuth(
   const handler = toNextJsHandler(auth);
 
   try {
-    const response = await handler[method](request);
+    const response = await handler[method](requestForCookieSession(request));
 
     // better-call returns empty 500 for unhandled errors.
     // intercept and add a generic message so the client gets JSON.

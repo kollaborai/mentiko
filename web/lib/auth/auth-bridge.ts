@@ -4,6 +4,7 @@
  */
 
 import { getAuth, getDb } from "./auth-server";
+import { headersForCookieSession } from "./session-cookie-headers";
 import { timingSafeEqual } from "./security";
 import type { OrgRole } from "../orgs/org-types";
 import config from "../config";
@@ -55,7 +56,7 @@ export async function getServerSession(request: Request) {
   if (!auth) return null;
   try {
     const session = await auth.api.getSession({
-      headers: request.headers,
+      headers: headersForCookieSession(request.headers),
     });
     return session;
   } catch {

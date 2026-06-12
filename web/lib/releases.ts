@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.39",
+    date: "June 11, 2026",
+    title: "Session and Update Reliability",
+    description:
+      "Signed-in sessions now keep working when workspace tools refresh their own bearer tokens, and the offline cache no longer serves stale app shells after a tenant update. This keeps protected workspace views, organization data, and agent controls aligned after upgrades.",
+    category: "fix",
+    docsHref: "/settings",
+  },
+  {
     version: "v0.3.38",
     date: "June 11, 2026",
     title: "Concurrent Run Queue Reliability",
