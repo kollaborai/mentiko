@@ -21,7 +21,10 @@ import {
   getNamespaceFromSession,
   getSessionUser,
 } from "../auth/auth-bridge";
-import { headersForCookieSession } from "../auth/session-cookie-headers";
+import {
+  headersForCookieSession,
+  requestForCookieSession,
+} from "../auth/session-cookie-headers";
 
 const mockGetAuth = getAuth as jest.Mock;
 
@@ -369,6 +372,142 @@ describe("auth-bridge", () => {
         namespaceId: "my-org",
         linuxUsername: undefined,
       });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Change 1 / Change 2 / Change 3 regression tests
+  // -----------------------------------------------------------------------
+
+  describe("requestForCookieSession", () => {
+    function makeRealRequest(url: string, headers: Record<string, string> = {}) {
+      const h = new Headers();
+      for (const [k, v] of Object.entries(headers)) h.set(k, v);
+      return new Request(url, { headers: h });
+    }
+
+    it("no-cookie / no-bearer → returns original request object", () => {
+      const req = makeRealRequest("http://localhost/api/test");
+      const result = requestForCookieSession(req);
+      expect(result).toBe(req);
+    });
+
+    it("no-cookie / bearer present → returns original request WITH Authorization intact", () => {
+      const req = makeRealRequest("http://localhost/api/test", {
+        Authorization: "Bearer service-jwt",
+      });
+      const result = requestForCookieSession(req);
+      // no cookie → no stripping → same object returned
+      expect(result).toBe(req);
+      expect(result.headers.get("authorization")).toBe("Bearer service-jwt");
+    });
+
+    it("cookie / no-bearer → returns original request object unchanged", () => {
+      const req = makeRealRequest("http://localhost/api/test", {
+        Cookie: "better-auth.session_token=abc123",
+      });
+      const result = requestForCookieSession(req);
+      expect(result).toBe(req);
+    });
+
+    it("cookie + bearer → returns NEW Request WITHOUT Authorization, cookie preserved", () => {
+      const req = makeRealRequest("http://localhost/api/test", {
+        Authorization: "Bearer proxied",
+        Cookie: "better-auth.session_token=abc123",
+      });
+      const result = requestForCookieSession(req);
+      expect(result).not.toBe(req);
+      expect(result.headers.get("authorization")).toBeNull();
+      expect(result.headers.get("cookie")).toContain("better-auth.session_token");
+    });
+
+    it("pure-bearer (no cookie) keeps Authorization through getServerSession header transform", async () => {
+      const getSession = jest.fn().mockResolvedValue(null);
+      mockGetAuth.mockReturnValue({ api: { getSession } });
+
+      await getServerSession(makeRequest({ Authorization: "Bearer real-service-token" }));
+
+      const passedHeaders = getSession.mock.calls[0][0].headers as Headers;
+      // No cookie → headersForCookieSession must NOT strip the bearer
+      expect(passedHeaders.get("authorization")).toBe("Bearer real-service-token");
+    });
+  });
+
+  describe("Change 3 — dash-variant cookie names", () => {
+    it("headersForCookieSession strips auth for dash-separator cookie name (__Secure-better-auth-session_token)", () => {
+      const result = headersForCookieSession(new Headers({
+        Authorization: "Bearer proxied",
+        Cookie: "__Secure-better-auth-session_token=tok123",
+      }));
+      expect(result.get("authorization")).toBeNull();
+    });
+
+    it("headersForCookieSession strips auth for dash-separator cookie name (better-auth-session_token)", () => {
+      const result = headersForCookieSession(new Headers({
+        Authorization: "Bearer proxied",
+        Cookie: "better-auth-session_token=tok456",
+      }));
+      expect(result.get("authorization")).toBeNull();
+    });
+
+    it("headersForCookieSession does NOT strip auth for unrelated cookie names", () => {
+      const result = headersForCookieSession(new Headers({
+        Authorization: "Bearer service-token",
+        Cookie: "some-other-cookie=value",
+      }));
+      expect(result.get("authorization")).toBe("Bearer service-token");
+    });
+  });
+
+  describe("Change 2 — getSessionUser/getNamespaceFromSession strip auth before org API calls", () => {
+    it("getNamespaceFromSession passes sanitized headers (no auth) to getFullOrganization when cookie+bearer present", async () => {
+      process.env.DATABASE_URL = "postgres://localhost/test";
+      const getFullOrganization = jest.fn().mockResolvedValue({ slug: "my-org" });
+      mockGetAuth.mockReturnValue({
+        api: {
+          getSession: jest.fn().mockResolvedValue({
+            session: { id: "sess-1", activeOrganizationId: "org-1" },
+            user: { id: "user-1" },
+          }),
+          getFullOrganization,
+        },
+      });
+
+      await getNamespaceFromSession(makeRequest({
+        Authorization: "Bearer proxied",
+        Cookie: "better-auth.session_token=tok",
+      }));
+
+      const passedHeaders = getFullOrganization.mock.calls[0][0].headers as Headers;
+      expect(passedHeaders.get("authorization")).toBeNull();
+      expect(passedHeaders.get("cookie")).toContain("better-auth.session_token");
+    });
+
+    it("getSessionUser passes sanitized headers to getActiveMember and getFullOrganization when cookie+bearer present", async () => {
+      process.env.DATABASE_URL = "postgres://localhost/test";
+      const getActiveMember = jest.fn().mockResolvedValue({ role: "member" });
+      const getFullOrganization = jest.fn().mockResolvedValue({ slug: "my-org" });
+      mockGetAuth.mockReturnValue({
+        api: {
+          getSession: jest.fn().mockResolvedValue({
+            session: { id: "sess-1", activeOrganizationId: "org-1" },
+            user: { id: "user-1", email: "u@test.com", name: "U" },
+          }),
+          getActiveMember,
+          getFullOrganization,
+        },
+      });
+
+      await getSessionUser(makeRequest({
+        Authorization: "Bearer proxied",
+        Cookie: "better-auth.session_token=tok",
+      }));
+
+      const memberHeaders = getActiveMember.mock.calls[0][0].headers as Headers;
+      expect(memberHeaders.get("authorization")).toBeNull();
+
+      const orgHeaders = getFullOrganization.mock.calls[0][0].headers as Headers;
+      expect(orgHeaders.get("authorization")).toBeNull();
     });
   });
 });

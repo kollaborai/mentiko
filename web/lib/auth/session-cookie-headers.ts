@@ -1,6 +1,14 @@
+// better-auth 1.6.15 getSessionCookie() (dist/cookies/index.mjs line ~203) accepts
+// both dot and dash separator variants:
+//   getCookie(`${prefix}.${name}`) || getCookie(`${prefix}-${name}`)
+// and getCookie itself tries __Secure-<name> before bare <name>.
+// All four resulting forms must be listed so headersForCookieSession strips
+// the Authorization header whichever variant the browser sends.
 const SESSION_COOKIE_NAMES = [
   "__Secure-better-auth.session_token",
   "better-auth.session_token",
+  "__Secure-better-auth-session_token",
+  "better-auth-session_token",
 ];
 
 function hasSessionCookie(cookieHeader: string | null): boolean {

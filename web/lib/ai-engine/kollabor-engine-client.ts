@@ -241,10 +241,14 @@ async function authFetch(
   init: RequestInit & { signal?: AbortSignal } = {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Response> {
-  const { token, baseUrl } = await fetchToken();
+  const { baseUrl } = await fetchToken();
   const { signal, cleanup } = combineSignals(init.signal, timeoutMs);
   const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${token}`);
+  // No Authorization header: all /api/kollabor/engine/* calls are same-origin
+  // requests authenticated by session cookie at the Next.js proxy. The proxy
+  // reads the real engine token server-side; the client placeholder ("proxied")
+  // must not be sent — it would trigger the cookie+bearer null-session bug in
+  // better-auth 1.6.15 for any user who also holds a session cookie.
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -572,10 +576,9 @@ export async function* sendMessage(
     retryable: false,
   });
 
-  let token: string;
   let baseUrl: string;
   try {
-    ({ token, baseUrl } = await fetchToken());
+    ({ baseUrl } = await fetchToken());
   } catch (e: unknown) {
     yield errorEvent(e instanceof Error ? e.message : String(e), "auth");
     return;
@@ -602,7 +605,8 @@ export async function* sendMessage(
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token}`,
+          // No Authorization header here — same-origin proxy uses session cookie.
+          // See authFetch() comment above for full rationale.
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },

@@ -117,7 +117,7 @@ export async function getNamespaceFromSession(request: Request): Promise<string>
 
   try {
     const org = await auth.api.getFullOrganization({
-      headers: request.headers,
+      headers: headersForCookieSession(request.headers),
       query: { organizationId: activeOrgId },
     });
     return org?.slug || config.namespaceId;
@@ -172,14 +172,14 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
   if (activeOrgId && auth) {
     try {
       const activeMember = await auth.api.getActiveMember({
-        headers: request.headers,
+        headers: headersForCookieSession(request.headers),
       });
       if (activeMember?.role) {
         role = activeMember.role as OrgRole;
       }
       // fetch slug alongside membership
       const org = await auth.api.getFullOrganization({
-        headers: request.headers,
+        headers: headersForCookieSession(request.headers),
         query: { organizationId: activeOrgId },
       });
       orgSlug = org?.slug;
