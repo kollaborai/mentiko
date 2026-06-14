@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { existsSync, readdirSync, statfsSync } from "fs";
+import { getHeapStatistics } from "v8";
 import { join } from "path";
 import config from "@/lib/config";
 import { ping as redisPing, redisConfigured } from "@/lib/system/redis";
@@ -182,12 +183,17 @@ function checkDiskSpace(mode: RuntimeMode): { status: "pass" | "warn" | "fail"; 
 
 function checkMemory(): { status: "pass" | "warn"; message: string; value?: number } {
   const heapUsed = process.memoryUsage().heapUsed;
-  const heapTotal = process.memoryUsage().heapTotal;
+  // Measure against heap_size_limit (V8's hard ceiling, ~= --max-old-space-size),
+  // NOT heapTotal. heapTotal is only the currently-committed heap, which V8 keeps
+  // close to heapUsed and grows lazily — so heapUsed/heapTotal sits at 85-98% under
+  // normal load and reported a false "degraded". Real pressure is heapUsed nearing
+  // the limit, which is what this now measures.
+  const heapLimit = getHeapStatistics().heap_size_limit;
   const usedMb = Math.round(heapUsed / 1024 / 1024);
-  const totalMb = Math.round(heapTotal / 1024 / 1024);
-  const usedPct = Math.round((heapUsed / heapTotal) * 100);
-  if (usedPct > 90) return { status: "warn", message: `heap high: ${usedMb}/${totalMb} MB (${usedPct}%)`, value: usedMb };
-  return { status: "pass", message: `heap ok: ${usedMb}/${totalMb} MB`, value: usedMb };
+  const limitMb = Math.round(heapLimit / 1024 / 1024);
+  const usedPct = Math.round((heapUsed / heapLimit) * 100);
+  if (usedPct > 90) return { status: "warn", message: `heap high: ${usedMb}/${limitMb} MB (${usedPct}%)`, value: usedMb };
+  return { status: "pass", message: `heap ok: ${usedMb}/${limitMb} MB (${usedPct}%)`, value: usedMb };
 }
 
 function checkMetrics(): {

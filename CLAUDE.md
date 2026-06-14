@@ -304,7 +304,7 @@ relationships: agents compose into chains, chains bind to tasks, tasks link to r
 - conversations sorted by lastModified (bucketed to hour) then messageCount
 - always test in dark mode
 - commit messages: no Claude attribution footer
-- NEVER decide version numbers unilaterally. always ask Marco what the next version should be before touching releases.ts or any version file. do not infer from commit size, conventional versioning, or feature scope. his project, his call. (note: MEMORY.md index is loaded each session but individual memory files are not — this rule lives here so it's always enforced)
+- VERSION BUMPS: Marco has STANDING approval to ship the next +0.0.1 patch — do NOT ask for routine releases. Take the latest stable vX.Y.Z (the git tag, web/package.json, and web/lib/releases.ts top entry all agree), increment the patch by one, bump those three plus web/package-lock.json to the same version, then tag. Only pause to ask if a minor/major bump is warranted (breaking change or major feature) or the next patch is genuinely ambiguous. (set 2026-06-13 per Marco: "go up one version like we have been doing, stop asking." MEMORY.md index loads each session but individual memory files do not — this rule lives here so it's always enforced.)
 - decision flow: guided mode (3 rounds) is default for new decisions, classic mode for legacy
 - decision generation templates: decision_research, decision_retrospective,
   decision_guided_questions, decision_guided_options, decision_guided_plan

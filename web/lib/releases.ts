@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (June 2026) ---
   {
+    version: "v0.3.40",
+    date: "June 13, 2026",
+    title: "Accurate Health Status",
+    description:
+      "Instance health no longer reports a false \"degraded\" state from how heap memory was measured. Health now compares memory usage against the engine's actual ceiling, so a normally-loaded instance shows healthy on the dashboard system status.",
+    category: "fix",
+    docsHref: "/settings/system",
+  },
+  {
     version: "v0.3.39",
     date: "June 11, 2026",
     title: "Session and Update Reliability",
