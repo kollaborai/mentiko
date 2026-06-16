@@ -44,6 +44,7 @@ import dynamic from "next/dynamic";
 const NewChainPanel = dynamic(() => import("@/app/(workflows)/chains/new/page"), { ssr: false });
 const EditChainPanel = dynamic(() => import("@/app/(workflows)/chains/[id]/edit/edit-chain-component").then(m => ({ default: m.EditChainPage })), { ssr: false });
 import { EmptyState } from "@/components/common/empty-state";
+import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
@@ -156,6 +157,7 @@ function ChainsPageContent() {
   const [selected, setSelected] = useState<Chain | null>(null);
   const [editing, setEditing] = useState(false);
   const [creatingNew, setCreatingNew] = useState(false);
+  const [seedingSample, setSeedingSample] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const deepLinkChainRef = useRef<{ id: string; edit: boolean } | null>(null);
   if (deepLinkChainRef.current === null) {
@@ -588,6 +590,18 @@ function ChainsPageContent() {
 
   const handleBackToList = () => {
     setMobileView("list");
+  };
+
+  // empty-state launchpad: seed a starter sample chain and open its run page,
+  // so a brand-new user with no chains has something runnable in one click.
+  const handleRunSample = async () => {
+    if (seedingSample) return;
+    setSeedingSample(true);
+    try {
+      await seedAndOpenSampleChain({ navigate: (route) => router.push(route) });
+    } finally {
+      setSeedingSample(false);
+    }
   };
 
   const systemChainCount = chains.filter(isSystemChainRecord).length;
@@ -1024,9 +1038,13 @@ function ChainsPageContent() {
                 <EmptyState
                   icon={<LinkFilled className="h-8 w-8" />}
                   title="No chains yet"
-                  description="Chains are agent pipelines that run in sequence. Create your first chain to get started."
-                  action={{ label: "Create chain", onClick: () => { setCreatingNew(true); setSelected(null); } }}
-                  secondaryAction={{ label: "Browse templates", href: "/marketplace/chains", variant: "outline" }}
+                  description="Chains are agent pipelines that run in sequence. Start with a ready-made sample, or build your own."
+                  action={{
+                    label: seedingSample ? "setting up..." : "run a sample chain",
+                    onClick: () => { void handleRunSample(); },
+                  }}
+                  secondaryAction={{ label: "create chain", onClick: () => { setCreatingNew(true); setSelected(null); }, variant: "outline" }}
+                  tertiaryAction={{ label: "browse templates", href: "/marketplace/chains" }}
                 />
               )
             ) : (

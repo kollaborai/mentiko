@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, Suspense, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 import type { WorkflowAgent } from "@/components/ui/workflow-card";
 import { RunDetailPanel } from "@/components/run/run-detail-panel";
 import {
@@ -109,8 +110,10 @@ function RunsPageContent() {
   const { fetchWithNamespace } = useNamespaceFetch();
   const { chains: chainSummaries } = useSharedChains();
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [runs, setRuns] = useState<Run[]>([]);
+  const [seedingSample, setSeedingSample] = useState(false);
   const [selected, setSelected] = useState<Run | null>(null);
   const selectedRef = useRef<Run | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
@@ -501,6 +504,18 @@ function RunsPageContent() {
     }
   };
 
+  // empty-state launchpad: seed a starter sample chain and open its run page so
+  // a brand-new user has something to actually run instead of a dead end.
+  const handleRunSample = async () => {
+    if (seedingSample) return;
+    setSeedingSample(true);
+    try {
+      await seedAndOpenSampleChain({ navigate: (route) => router.push(route) });
+    } finally {
+      setSeedingSample(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Banner */}
@@ -617,8 +632,12 @@ function RunsPageContent() {
                 <EmptyState
                   icon={<RouteSquareFilled className="h-8 w-8" />}
                   title="No runs yet"
-                  description="Run a chain to see results here. Each execution creates a tracked run."
-                  action={{ label: "Go to chains", href: "/chains" }}
+                  description="A run is one execution of a chain — its agents, live output, and result, tracked here. Start with a ready-made sample."
+                  action={{
+                    label: seedingSample ? "setting up..." : "run a sample chain",
+                    onClick: () => { void handleRunSample(); },
+                  }}
+                  secondaryAction={{ label: "go to chains", href: "/chains", variant: "outline" }}
                 />
               )
             ) : (

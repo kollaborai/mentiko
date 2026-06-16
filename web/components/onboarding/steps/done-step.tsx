@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   TickCircleFilled,
   ArrowRight2Filled,
@@ -9,8 +10,10 @@ import {
   SettingFilled,
   HomeFilled,
   InfoCircleFilled,
+  RotateFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
+import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 
 interface ConfiguredTool {
   tool: string;
@@ -81,31 +84,45 @@ interface ActionCard {
   title: string;
   description: string;
   route: string;
+  /** "sample" cards seed a starter chain before navigating instead of a plain route jump. */
+  kind?: "sample";
 }
 
 function ActionCardButton({
   card,
   index,
+  loading,
   onFinish,
+  onSampleAction,
 }: {
   card: ActionCard;
   index: number;
+  loading?: boolean;
   onFinish: (route: string) => void;
+  onSampleAction: () => void;
 }) {
   const Icon = card.icon;
+  const isSample = card.kind === "sample";
   return (
     <motion.button
       type="button"
+      disabled={loading}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.15 + index * 0.06 }}
-      onClick={() => onFinish(card.route)}
-      className="flex flex-col items-start gap-2 p-4 rounded-md bg-muted hover:bg-accent/50 transition-colors text-left group"
+      onClick={() => (isSample ? onSampleAction() : onFinish(card.route))}
+      className="flex flex-col items-start gap-2 p-4 rounded-md bg-muted hover:bg-accent/50 transition-colors text-left group disabled:opacity-60"
     >
-      <Icon className="h-5 w-5 text-foreground/40 group-hover:text-foreground/70 transition-colors" />
+      {loading ? (
+        <RotateFilled className="h-5 w-5 text-foreground/50 animate-spin" />
+      ) : (
+        <Icon className="h-5 w-5 text-foreground/40 group-hover:text-foreground/70 transition-colors" />
+      )}
       <div>
         <p className="text-xs font-medium">{card.title}</p>
-        <p className="text-[10px] text-foreground/40">{card.description}</p>
+        <p className="text-[10px] text-foreground/40">
+          {loading ? "setting up your sample chain..." : card.description}
+        </p>
       </div>
     </motion.button>
   );
@@ -133,8 +150,9 @@ const ACTIONS: ActionCard[] = [
   {
     icon: PlayFilled,
     title: "run a sample chain",
-    description: "try a template to see agents in action",
+    description: "try a ready-made chain to see agents in action",
     route: "/chains",
+    kind: "sample",
   },
   {
     icon: ShopFilled,
@@ -165,6 +183,21 @@ export function DoneStep({
 }: DoneStepProps) {
   const hasTools = configuredTools.length > 0;
   const hasWorkspace = !!workspaceName;
+  const [seedingSample, setSeedingSample] = useState(false);
+
+  // "run a sample chain" card: seed a starter chain, then finish onboarding onto
+  // its run page. onFinish handles the wizard cleanup + navigation (and is reused
+  // for the graceful /chains fallback if seeding fails), so the other cards are
+  // untouched.
+  const handleRunSample = async () => {
+    if (seedingSample) return;
+    setSeedingSample(true);
+    try {
+      await seedAndOpenSampleChain({ navigate: onFinish });
+    } finally {
+      setSeedingSample(false);
+    }
+  };
 
   // pick the right tip
   let tip: string;
@@ -260,7 +293,9 @@ export function DoneStep({
               key={card.route}
               card={card}
               index={i}
+              loading={card.kind === "sample" && seedingSample}
               onFinish={onFinish}
+              onSampleAction={() => { void handleRunSample(); }}
             />
           ))}
         </div>

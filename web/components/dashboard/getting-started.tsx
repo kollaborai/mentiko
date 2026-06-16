@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-import { TickCircleFilled, RecordCircleFilled, ArrowRight2Filled, ExportFilled, FolderOpenFilled } from "@aliimam/icons";
+import { TickCircleFilled, RecordCircleFilled, ArrowRight2Filled, ExportFilled, FolderOpenFilled, RotateFilled } from "@aliimam/icons";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { unwrapApiData } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";
 import { useSharedChains } from "@/lib/chains/chains-store";
 import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
+import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 
 interface Step {
   id: string;
@@ -24,6 +26,7 @@ const WORKSPACE_BANNER_KEY = "workspace-banner-dismissed";
 const CLI_AUTH_KEY = "cli-auth-confirmed";
 
 export function GettingStarted() {
+  const router = useRouter();
   const { workspaces, workspacePath } = useWorkspace();
   const { runs } = useSharedRuns({ workspacePath });
   const { chains } = useSharedChains();
@@ -33,6 +36,7 @@ export function GettingStarted() {
   const [cliAuthConfirmed, setCliAuthConfirmed] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [workspaceBannerDismissed, setWorkspaceBannerDismissed] = useState(false);
+  const [seedingSample, setSeedingSample] = useState(false);
 
   const hasChains = chains.length > 0;
   const hasRuns = runs.length > 0;
@@ -82,6 +86,23 @@ export function GettingStarted() {
 
   const openTerminal = () => {
     window.dispatchEvent(new CustomEvent("toggle-terminal-panel"));
+  };
+
+  // "run a chain": a user with no chains has nothing to run, so seed a starter
+  // sample and open its run page instead of dumping them on empty /runs. Users
+  // who already have chains keep the plain jump to their run history.
+  const handleRunChain = async () => {
+    if (hasChains) {
+      router.push("/runs");
+      return;
+    }
+    if (seedingSample) return;
+    setSeedingSample(true);
+    try {
+      await seedAndOpenSampleChain({ navigate: (route) => router.push(route) });
+    } finally {
+      setSeedingSample(false);
+    }
   };
 
   // Show workspace setup banner if no workspaces configured
@@ -160,8 +181,10 @@ export function GettingStarted() {
     {
       id: "run-chain",
       title: "Run a chain",
-      description: "Execute your first chain and see live agent output",
-      href: "/runs",
+      description: hasChains
+        ? "Execute your first chain and see live agent output"
+        : "Open a ready-made sample chain and watch it run",
+      onClick: () => { void handleRunChain(); },
       done: hasRuns,
     },
   ];
@@ -198,6 +221,7 @@ export function GettingStarted() {
 
       <div className="divide-y divide-muted/40">
         {steps.map((step) => {
+          const isSeeding = step.id === "run-chain" && seedingSample;
           const content = (
             <div className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors group">
               <div className="shrink-0">
@@ -211,15 +235,21 @@ export function GettingStarted() {
                 <p className={`text-xs font-medium ${step.done ? "line-through text-muted-foreground/40" : ""}`}>
                   {step.title}
                 </p>
-                <p className="text-[11px] text-muted-foreground truncate">{step.description}</p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {isSeeding ? "setting up a sample chain..." : step.description}
+                </p>
               </div>
-              <ArrowRight2Filled className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
+              {isSeeding ? (
+                <RotateFilled className="h-3.5 w-3.5 text-muted-foreground/50 animate-spin shrink-0" />
+              ) : (
+                <ArrowRight2Filled className="h-3.5 w-3.5 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors shrink-0" />
+              )}
             </div>
           );
 
           if (step.onClick) {
             return (
-              <button key={step.id} className="w-full text-left" onClick={step.onClick}>
+              <button key={step.id} className="w-full text-left" onClick={step.onClick} disabled={isSeeding}>
                 {content}
               </button>
             );

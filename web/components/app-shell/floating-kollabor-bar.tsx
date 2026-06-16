@@ -26,7 +26,13 @@ import {
   ping as enginePing,
   setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
+  type KollaborTurnContext,
 } from "@/lib/ai-engine/kollabor-engine-client";
+import { getRouteContext } from "@/lib/kollabor/route-context";
+import {
+  isOnboardingDismissed,
+  getOnboardingStepKey,
+} from "@/lib/system/onboarding-storage";
 import { KollaborPermissionPrompt } from "@/components/app-shell/kollabor-permission-prompt";
 import { KollaborAskPrompt } from "@/components/app-shell/kollabor-ask-prompt";
 import { KollaborModeChoicePrompt } from "@/components/app-shell/kollabor-mode-choice-prompt";
@@ -81,6 +87,117 @@ function applyFloatingBarStorageScope(scope: string): void {
   setKollaborBarStorageScope(scope);
   setKollaborEngineStorageScope(scope);
   setMcpBarStorageScope(scope);
+}
+
+/**
+ * Derive lightweight new-user signals for the assistant turn context, reusing
+ * the existing onboarding storage (same keys the dashboard onboarding uses).
+ * Heuristic: treat the user as "new" while onboarding hasn't been dismissed OR
+ * they have zero workspaces. Read at send time (not reactive) to avoid extra
+ * re-renders of the bar; falls back to "not new" if storage is unavailable.
+ */
+function deriveNewUserSignals(
+  userId: string | null | undefined,
+  workspacesCount: number,
+): { isNewUser: boolean; onboardingStep?: string } {
+  if (typeof window === "undefined") return { isNewUser: false };
+  try {
+    const dismissed = isOnboardingDismissed(window.localStorage, userId);
+    const isNewUser = !dismissed || workspacesCount === 0;
+    if (!isNewUser) return { isNewUser: false };
+    const step =
+      window.localStorage.getItem(getOnboardingStepKey(userId))?.trim() || undefined;
+    return { isNewUser: true, onboardingStep: step };
+  } catch {
+    return { isNewUser: false };
+  }
+}
+
+/** Assemble the per-turn context the assistant receives (screen + new-user). */
+function buildKollaborTurnContext(
+  pathname: string,
+  userId: string | null | undefined,
+  workspacesCount: number,
+): KollaborTurnContext {
+  const { routeLabel, routeHelp } = getRouteContext(pathname);
+  const { isNewUser, onboardingStep } = deriveNewUserSignals(userId, workspacesCount);
+  return {
+    pathname: pathname || "/",
+    routeLabel,
+    routeHelp,
+    isNewUser,
+    onboardingStep,
+  };
+}
+
+// ---- proactive per-screen hint (new users only) --------------------------
+// One dismissible suggestion per screen. Tapping it pre-fills the input (does
+// NOT auto-send a turn). Never shown again once dismissed; dismissal is
+// persisted in localStorage keyed by userId + the matched hint route so the
+// guardrails survive reloads. Only the main routes get a hint; everything else
+// gets none (no hint => nothing renders).
+
+const KOLLABOR_HINT_DISMISSED_KEY = "mentiko-kollabor-hint-dismissed";
+
+interface KollaborScreenHint {
+  /** Stable route key used for dismissal persistence (NOT the live pathname). */
+  routeKey: string;
+  /** Short prompt shown on the chip; tapping pre-fills the input with it. */
+  prompt: string;
+}
+
+/** Hints keyed by the same exact/prefix scheme as route-context. */
+function getScreenHint(pathname: string): KollaborScreenHint | null {
+  const path = (pathname || "/").split("?")[0].split("#")[0].replace(/(.)\/+$/, "$1");
+  if (path === "/") {
+    return { routeKey: "/", prompt: "What can I do here to get started?" };
+  }
+  if (path === "/chains" || path.startsWith("/chains/")) {
+    return { routeKey: "/chains", prompt: "How do I build my first chain?" };
+  }
+  if (path === "/runs" || path.startsWith("/runs/")) {
+    return { routeKey: "/runs", prompt: "What am I looking at on the runs screen?" };
+  }
+  if (path === "/code" || path.startsWith("/code/")) {
+    return { routeKey: "/code", prompt: "How does the code workspace work?" };
+  }
+  if (path === "/agents/marketplace" || path.startsWith("/agents/marketplace/")) {
+    return { routeKey: "/agents/marketplace", prompt: "How do I install an agent from here?" };
+  }
+  return null;
+}
+
+function isHintDismissed(
+  userId: string | null | undefined,
+  routeKey: string,
+): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(
+      `${KOLLABOR_HINT_DISMISSED_KEY}:${userId || "anonymous"}`,
+    );
+    if (!raw) return false;
+    const list = JSON.parse(raw) as unknown;
+    return Array.isArray(list) && list.includes(routeKey);
+  } catch {
+    return false;
+  }
+}
+
+function markHintDismissed(
+  userId: string | null | undefined,
+  routeKey: string,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const storageKey = `${KOLLABOR_HINT_DISMISSED_KEY}:${userId || "anonymous"}`;
+    const raw = window.localStorage.getItem(storageKey);
+    const list = raw ? (JSON.parse(raw) as unknown) : [];
+    const next = Array.isArray(list) ? [...new Set([...list, routeKey])] : [routeKey];
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {
+    // ignore — a failed persist just means the hint may reappear next reload
+  }
 }
 
 // suppress user-facing "engine offline" when the session store says we're
@@ -230,7 +347,10 @@ export function FloatingKollaborBar() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { setWorkspaceId } = useWorkspace();
+  const { setWorkspaceId, workspaces } = useWorkspace();
+  // Defensive: some test mocks of useWorkspace omit `workspaces`. Treat a
+  // missing list as empty so new-user signal derivation never throws.
+  const workspacesCount = workspaces?.length ?? 0;
   const { user, loading: userLoading } = useUser();
   const {
     expanded,
@@ -304,6 +424,8 @@ export function FloatingKollaborBar() {
     pointerX: number;
     pointerY: number;
   } | null>(null);
+  // proactive per-screen hint (new users only) — see helpers above
+  const [activeHint, setActiveHint] = useState<KollaborScreenHint | null>(null);
   const [codexAuthPromptOpen, setCodexAuthPromptOpen] = useState(false);
   const [codexAuthChecked, setCodexAuthChecked] = useState(false);
   const [codexAuthDecision, setCodexAuthDecision] = useState<null | "accept" | "decline">(null);
@@ -1045,6 +1167,44 @@ export function FloatingKollaborBar() {
     }).catch(() => {});
   }, [pathname, searchParams, sessionId]);
 
+  // Recompute the proactive per-screen hint when the route or new-user signals
+  // change. Show at most one hint, only for new users, only on screens that
+  // have one, and never one the user already dismissed. Cleared (no chip) the
+  // moment any guard fails — including once the user is no longer "new".
+  useEffect(() => {
+    if (userLoading) return;
+    const { isNewUser } = deriveNewUserSignals(user?.id, workspacesCount);
+    if (!isNewUser) {
+      setActiveHint(null);
+      return;
+    }
+    const hint = getScreenHint(pathname);
+    if (!hint || isHintDismissed(user?.id, hint.routeKey)) {
+      setActiveHint(null);
+      return;
+    }
+    setActiveHint(hint);
+  }, [pathname, user?.id, userLoading, workspacesCount]);
+
+  const dismissHint = useCallback(() => {
+    setActiveHint((current) => {
+      if (current) markHintDismissed(user?.id, current.routeKey);
+      return null;
+    });
+  }, [user?.id]);
+
+  // Tapping the hint pre-fills the input and opens the bar — it does NOT send a
+  // turn. The user stays in control of whether to actually ask. Dismiss after
+  // accepting so it doesn't linger.
+  const acceptHint = useCallback(() => {
+    const prompt = activeHint?.prompt;
+    if (!prompt) return;
+    dismissHint();
+    setInputValue(prompt);
+    setExpanded(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [activeHint, dismissHint, setInputValue, setExpanded]);
+
   useEffect(() => {
     if (!expanded) return;
     const el = transcriptRef.current;
@@ -1073,8 +1233,13 @@ export function FloatingKollaborBar() {
     pushMessage({ id: uid, role: "user", content, timestamp: Date.now() });
     sendingRef.current = true;
     startDraft();
+    // Tell the assistant where the user is and whether they're new, so it can
+    // give screen-aware, onboarding-aware help. Built fresh per turn from the
+    // live pathname + onboarding signals; the user's bubble still shows the
+    // plain text (the context only rides along to the engine).
+    const turnContext = buildKollaborTurnContext(pathname, user?.id, workspacesCount);
     try {
-      for await (const ev of engineSendMessage(sid, content)) {
+      for await (const ev of engineSendMessage(sid, content, turnContext)) {
         switch (ev.type) {
           case "token":
             if (ev.text) appendDraftText(ev.text);
@@ -1196,6 +1361,9 @@ export function FloatingKollaborBar() {
       pendingToolInstancesRef.current.clear();
     }
   }, [
+    pathname,
+    user?.id,
+    workspacesCount,
     pushMessage,
     setError,
     setSessionId,
@@ -1635,6 +1803,46 @@ export function FloatingKollaborBar() {
               className="flex h-6 w-6 items-center justify-center rounded-full border border-border/60 bg-background/80 text-muted-foreground hover:text-foreground hover:bg-background transition-colors shadow-sm backdrop-blur"
             >
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* proactive per-screen hint (new users only) — tappable suggestion that
+          pre-fills the input; never auto-sends a turn. Hidden while expanded,
+          dragging, disconnected, or when the codex prompt is showing. */}
+      <AnimatePresence initial={false}>
+        {activeHint && !expanded && connected && !dragging && !codexAuthPromptOpen && (
+          <motion.div
+            key={`kollabor-hint-${activeHint.routeKey}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="pointer-events-auto flex items-center gap-1.5 self-center rounded-full border border-border/70 bg-background/95 py-1 pl-3 pr-1 shadow-lg backdrop-blur"
+          >
+            <button
+              type="button"
+              onClick={acceptHint}
+              className="flex items-center gap-1.5 text-[11px] leading-none text-foreground/85 hover:text-foreground"
+              title="ask Kollabor"
+            >
+              <span
+                aria-hidden="true"
+                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+              />
+              <span className="truncate max-w-[230px]">{activeHint.prompt}</span>
+            </button>
+            <button
+              type="button"
+              onClick={dismissHint}
+              aria-label="dismiss hint"
+              title="dismiss"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>

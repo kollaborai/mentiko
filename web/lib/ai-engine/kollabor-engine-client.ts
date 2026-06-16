@@ -137,6 +137,50 @@ export interface Credentials {
   [k: string]: unknown;
 }
 
+/**
+ * Optional per-turn context describing where the user is and who they are.
+ * Threaded into sendMessage() so the model can give screen-aware, new-user-aware
+ * help. Entirely optional — omitting it sends the turn exactly as before.
+ */
+export interface KollaborTurnContext {
+  /** Raw pathname the user is on, e.g. "/runs/abc123". */
+  pathname: string;
+  /** Short human label for the screen, e.g. "Runs". */
+  routeLabel: string;
+  /** One-clause description of what the screen is for. */
+  routeHelp: string;
+  /** True when the user appears to be new / still onboarding. */
+  isNewUser: boolean;
+  /** Stored onboarding step key, when one is known (only meaningful if isNewUser). */
+  onboardingStep?: string;
+}
+
+/**
+ * Build a compact, clearly-delimited context preamble to prepend to the user's
+ * turn content. This is how route/new-user context reaches the model: the
+ * engine treats `content` as the turn input, so the preamble rides along with
+ * it. Returns "" when no context is supplied (caller sends content untouched).
+ *
+ * Exported for unit testing; safe to call with undefined.
+ */
+export function buildTurnContextPreamble(context?: KollaborTurnContext): string {
+  if (!context) return "";
+  const lines: string[] = [];
+  lines.push(
+    `The user is currently on ${context.routeLabel} (${context.pathname}): ${context.routeHelp}.`,
+  );
+  if (context.isNewUser) {
+    lines.push(
+      context.onboardingStep
+        ? `They are a NEW user, on onboarding step "${context.onboardingStep}".`
+        : `They are a NEW user and may still be getting oriented.`,
+    );
+  }
+  // Wrapped in a labeled block so the model can distinguish this injected
+  // context from the user's actual words, and not echo the framing verbatim.
+  return `[context — not written by the user]\n${lines.join("\n")}\n[/context]\n\n`;
+}
+
 // Accepted by POST /sessions. All fields optional; `{}` is valid.
 export interface CreateSessionRequest {
   profile?: string;
@@ -560,10 +604,17 @@ export async function getOrCreateSession(
 /**
  * Send a message and yield SSE events until turn_complete or error. On fetch
  * or parse error, yields a synthetic { type: "error" } event and stops.
+ *
+ * `context` is optional and non-breaking: callers that pass only
+ * (sessionId, content) behave exactly as before. When supplied, a compact
+ * context preamble (screen + new-user signals) is prepended to the turn content
+ * so the model can give contextual help, and the structured context is also
+ * sent as a `turn_context` body field for any engine that learns to read it.
  */
 export async function* sendMessage(
   sessionId: string,
   content: string,
+  context?: KollaborTurnContext,
   signal?: AbortSignal,
 ): AsyncGenerator<EngineEvent, void, void> {
   const now = () => Date.now();
@@ -598,6 +649,15 @@ export async function* sendMessage(
     }
   }
 
+  // Prepend the context preamble to the turn content (the load-bearing path —
+  // the engine consumes `content` directly). Also pass the structured context
+  // as `turn_context` so a future engine version can read it without changing
+  // this client; engines that ignore the field are unaffected.
+  const preamble = buildTurnContextPreamble(context);
+  const turnContent = preamble ? `${preamble}${content}` : content;
+  const requestBody: Record<string, unknown> = { content: turnContent };
+  if (context) requestBody.turn_context = context;
+
   let res: Response;
   try {
     res = await fetch(
@@ -610,7 +670,7 @@ export async function* sendMessage(
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       },
     );

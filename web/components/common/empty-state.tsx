@@ -18,6 +18,8 @@ interface EmptyStateProps {
   description?: string;
   action?: EmptyStateAction;
   secondaryAction?: EmptyStateAction;
+  /** Optional third action (e.g. a launchpad shortcut). Rendered after the secondary. */
+  tertiaryAction?: EmptyStateAction;
   className?: string;
 }
 
@@ -27,6 +29,7 @@ export function EmptyState({
   description,
   action,
   secondaryAction,
+  tertiaryAction,
   className,
 }: EmptyStateProps) {
   return (
@@ -43,8 +46,8 @@ export function EmptyState({
       {description && (
         <p className="text-xs text-muted-foreground max-w-xs">{description}</p>
       )}
-      {(action || secondaryAction) && (
-        <div className="flex items-center gap-2 mt-1">
+      {(action || secondaryAction || tertiaryAction) && (
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
           {action && (
             action.href ? (
               <Link href={action.href}>
@@ -68,6 +71,19 @@ export function EmptyState({
             ) : (
               <Button size="sm" variant={secondaryAction.variant ?? "outline"} onClick={secondaryAction.onClick}>
                 {secondaryAction.label}
+              </Button>
+            )
+          )}
+          {tertiaryAction && (
+            tertiaryAction.href ? (
+              <Link href={tertiaryAction.href}>
+                <Button size="sm" variant={tertiaryAction.variant ?? "ghost"}>
+                  {tertiaryAction.label}
+                </Button>
+              </Link>
+            ) : (
+              <Button size="sm" variant={tertiaryAction.variant ?? "ghost"} onClick={tertiaryAction.onClick}>
+                {tertiaryAction.label}
               </Button>
             )
           )}
