@@ -3,8 +3,9 @@
  * comprehensive tests for encrypted secrets store
  */
 
-import { mkdirSync, rmSync } from "fs";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
+import { listProfiles } from "../agents/agent-profile-storage";
 
 // stable test dir — set once, reused by mock
 const TEST_BASE = `/tmp/test-secrets-store-${process.pid}`;
@@ -20,8 +21,6 @@ jest.mock("../config", () => ({
 jest.mock("../agents/agent-profile-storage", () => ({
   listProfiles: jest.fn(() => []),
 }));
-
-const { listProfiles } = require("../agents/agent-profile-storage");
 
 import {
   encrypt,
@@ -283,7 +282,9 @@ describe("secrets-store", () => {
     it("returns error when deleting non-existent secret", () => {
       const result = deleteSecret(testNamespace, testOrg, "non-existent");
       expect(result.ok).toBe(false);
-      expect((result as any).error).toBe("Secret not found");
+      if (!result.ok) {
+        expect(result.error).toBe("Secret not found");
+      }
     });
 
     it("prevents deletion when secret is in use", () => {
@@ -305,8 +306,10 @@ describe("secrets-store", () => {
 
       const result = deleteSecret(testNamespace, testOrg, secret.id);
       expect(result.ok).toBe(false);
-      expect((result as any).error).toContain("used in 1 profile");
-      expect((result as any).usages).toHaveLength(1);
+      if (!result.ok) {
+        expect(result.error).toContain("used in 1 profile");
+        expect(result.usages).toHaveLength(1);
+      }
     });
   });
 
@@ -343,7 +346,6 @@ describe("secrets-store", () => {
       });
 
       // manually create a corrupted file in the same dir the mock points to
-      const { writeFileSync } = require("fs");
       const dir = join(testDir, "orgs", testOrg, "secrets");
       writeFileSync(join(dir, "corrupted.json"), "{invalid json");
 
@@ -482,8 +484,6 @@ describe("secrets-store", () => {
 
   describe("file permissions", () => {
     it("creates secret files with 0600 permissions", () => {
-      const { statSync } = require("fs");
-
       const secret = createSecret(testNamespace, testOrg, {
         name: "test",
         envVar: "TEST",

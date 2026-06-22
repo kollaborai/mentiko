@@ -36,7 +36,6 @@ const DEFAULT_AUDIT_OPTIONS: Required<AuditLoggerOptions> = {
 const GLOBAL_KEY = "__mentiko_audit_logger__";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __mentiko_audit_logger__: ((event: unknown) => Promise<void>) | undefined;
 }
 

@@ -8,43 +8,34 @@ interface CountdownTimerProps {
   className?: string;
 }
 
+function calculateTimeLeft(expiryTime: number, now: number) {
+  const diff = expiryTime - now;
+
+  if (diff <= 0) {
+    return null;
+  }
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+  return { days, hours, minutes, seconds };
+}
+
 export function CountdownTimer({ snoozedUntil, className }: CountdownTimerProps) {
-  const [timeLeft, setTimeLeft] = useState<{
-    days: number;
-    hours: number;
-    minutes: number;
-    seconds: number;
-  } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const expiryTime = useMemo(() => new Date(snoozedUntil).getTime(), [snoozedUntil]);
+  const timeLeft = useMemo(() => calculateTimeLeft(expiryTime, now), [expiryTime, now]);
 
   useEffect(() => {
-    const calculateTimeLeft = () => {
-      const now = Date.now();
-      const diff = expiryTime - now;
-
-      if (diff <= 0) {
-        return null;
-      }
-
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      return { days, hours, minutes, seconds };
-    };
-
-    // Initial calculation
-    setTimeLeft(calculateTimeLeft());
-
-    // Update every second
     const interval = setInterval(() => {
-      setTimeLeft(calculateTimeLeft());
+      setNow(Date.now());
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [expiryTime]);
+  }, []);
 
   if (!timeLeft) {
     return null;

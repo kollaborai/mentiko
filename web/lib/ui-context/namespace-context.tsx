@@ -69,9 +69,6 @@ function AuthNamespaceProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const noopOrgHook = () => ({ data: null });
-
 function HookedNamespaceProvider({
   children,
   hooks,

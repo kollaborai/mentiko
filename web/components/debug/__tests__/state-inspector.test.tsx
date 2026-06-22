@@ -16,7 +16,7 @@ jest.mock('@/components/ui/badge', () => ({
 }))
 
 jest.mock('@/components/ui/button', () => ({
-  Button: ({ children, onClick, disabled, className, size, variant }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; className?: string; size?: string; variant?: string }) => (
+  Button: ({ children, onClick, disabled, className }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; className?: string; size?: string; variant?: string }) => (
     <button data-testid="button" onClick={onClick} disabled={disabled} className={className}>{children}</button>
   ),
 }))

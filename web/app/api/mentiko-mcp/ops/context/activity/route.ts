@@ -47,7 +47,7 @@ export async function GET(req: Request) {
   let recentChains: { id: string; name: string }[] = [];
   try {
     const allChains = getAllChains(chainsDir, "claude", undefined, namespaceId, orgId);
-    recentChains = allChains.slice(0, 5).map((c: any) => ({
+    recentChains = allChains.slice(0, 5).map((c) => ({
       id: c.id || c.name,
       name: c.name,
     }));

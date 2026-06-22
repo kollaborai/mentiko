@@ -77,7 +77,7 @@ export function useSharedRuns(options?: { workspacePath?: string; pollIntervalMs
         isOwner.current = false;
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // owner starts/restarts poll when fetchWithNamespace or workspacePath stabilizes
   useEffect(() => {
@@ -88,8 +88,7 @@ export function useSharedRuns(options?: { workspacePath?: string; pollIntervalMs
       doFetch(fetchWithNamespace, workspacePath);
     } else {
       // cache is fresh, just sync state
-      setRuns([...cachedRuns]);
-      setLoading(false);
+      queueMicrotask(notifyListeners);
     }
 
     // restart poll interval with current fetcher

@@ -48,7 +48,7 @@ jest.mock("@/lib/hooks/use-agent-profiles", () => ({
 
 jest.mock("next/link", () => ({
   __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
 }));
 
 const makeProfile = (overrides: Partial<AgentProfile> = {}): AgentProfile => ({

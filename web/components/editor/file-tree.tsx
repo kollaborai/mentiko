@@ -234,7 +234,7 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
         setFileLoading(node.path, false);
       }
     },
-    [activePaneId, activePane, openFile, setActiveFile, setFileLoading, toggleExpand]
+    [activePaneId, activePane, openFile, onFileSelect, setActiveFile, setFileLoading, toggleExpand]
   );
 
   const handleFileDoubleClick = useCallback(
@@ -373,7 +373,7 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
       refreshGitStatus();
     } catch {}
     setDeleteConfirm(null);
-  }, [deleteConfirm, fetchTree]);
+  }, [deleteConfirm, fetchTree, refreshGitStatus]);
 
   // focus filter input when opened
   useEffect(() => {

@@ -1066,7 +1066,6 @@ function ScheduleDetailPanel({
 // ---------------------------------------------------------------------------
 
 interface Chain { id: string; name: string }
-interface Workspace { id: string; name: string; path: string }
 
 function ScheduleEditForm({
   schedule,
@@ -1077,7 +1076,6 @@ function ScheduleEditForm({
   onSave: (updates: Record<string, unknown>) => void;
   onCancel: () => void;
 }) {
-  const { fetchWithNamespace } = useNamespaceFetch();
   const { chains: sharedChains } = useSharedChains();
   const chains: Chain[] = sharedChains.map((c) => ({ id: c.id, name: c.name }));
 

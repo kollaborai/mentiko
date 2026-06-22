@@ -114,6 +114,7 @@ export default function UpdatesPage() {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-foreground/60 hover:text-foreground transition-colors"
             >
+              {/* eslint-disable-next-line @next/next/no-img-element -- GitHub avatar is a tiny external badge; raw img avoids broad remote image config. */}
               <img
                 src="https://github.com/maarco.png"
                 alt="Marco Almazan"

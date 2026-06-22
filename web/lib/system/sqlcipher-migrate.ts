@@ -7,7 +7,7 @@
  * Key derived from resolveAppSecret("vault") (same as auth-server.ts).
  */
 
-import { existsSync, copyFileSync, unlinkSync } from "fs";
+import { existsSync, closeSync, copyFileSync, openSync, readSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { resolveAppSecret } from "../secrets/dev-secret";
@@ -20,8 +20,13 @@ function getDbPath(): string {
 function isEncrypted(dbPath: string): boolean {
   // SQLCipher databases start with a random salt — the SQLite header
   // magic "SQLite format 3\000" will NOT be present.
-  const { readFileSync } = require("fs");
-  const buf = readFileSync(dbPath, { length: 16 });
+  const fd = openSync(dbPath, "r");
+  const buf = Buffer.alloc(16);
+  try {
+    readSync(fd, buf, 0, buf.length, 0);
+  } finally {
+    closeSync(fd);
+  }
   return !buf.toString("utf8", 0, 6).startsWith("SQLite");
 }
 

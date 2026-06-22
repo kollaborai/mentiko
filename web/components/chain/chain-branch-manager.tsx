@@ -30,8 +30,6 @@ import {
   DangerFilled as AlertTriangle,
 } from "@aliimam/icons";
 import type { BranchComparison } from "@/hooks/use-chain-version-control";
-import { ChainDiffView } from "./chain-diff-view";
-import type { DiffResult, ChainDiff } from "./chain-diff-view";
 
 export interface GitBranchInfo {
   name: string;

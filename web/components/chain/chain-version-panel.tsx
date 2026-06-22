@@ -23,7 +23,7 @@ interface ChainVersionPanelProps {
   currentChainJson?: Record<string, unknown>;
 }
 
-export function ChainVersionPanel({ chainId, chainName, currentChainJson }: ChainVersionPanelProps) {
+export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPanelProps) {
   const vc = useChainVersionControl(chainId);
   const [expanded, setExpanded] = useState(false);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);

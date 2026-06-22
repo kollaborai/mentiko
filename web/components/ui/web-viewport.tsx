@@ -90,10 +90,6 @@ function BrowserChrome({
   const [urlInput, setUrlInput] = useState(state.url);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!editingUrl) setUrlInput(state.url);
-  }, [state.url, editingUrl]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     let url = urlInput.trim();

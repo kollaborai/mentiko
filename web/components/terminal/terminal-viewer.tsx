@@ -331,7 +331,7 @@ export function TerminalViewer({
         termRef.current = null;
       }
     };
-  }, [session, wsUrl, readOnly, updateStatus]);
+  }, [session, wsUrl, readOnly, updateStatus, onRefreshToken]);
 
   return (
     <div className={`absolute inset-0 ${className}`} data-status={status}>

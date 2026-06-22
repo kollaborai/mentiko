@@ -19,6 +19,7 @@ import {
 	TaskSquareFilled as Task01Icon,
 	VideoAddFilled as VideoReplayIcon,
 } from "@aliimam/icons";
+import type { ComponentType } from "react";
 
 export interface IconProps {
 	size?: number;
@@ -31,7 +32,7 @@ export interface IconProps {
 
 // Category-specific icons with colors
 export interface IconConfig {
-	icon: any;
+	icon: ComponentType<IconProps>;
 	bgColor: string;
 	iconColor: string;
 	isImage?: boolean;

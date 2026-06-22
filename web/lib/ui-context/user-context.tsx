@@ -118,9 +118,6 @@ function AuthUserProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const noopHook = () => ({ data: null, isPending: false, error: null, refetch: async () => {} });
-
 function HookedUserProvider({
   children,
   hooks,

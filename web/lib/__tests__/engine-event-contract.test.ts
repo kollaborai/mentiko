@@ -32,7 +32,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +62,13 @@ function makeEventsDir(): string {
   return events;
 }
 
+function makeExecEnv(env: Record<string, string>): NodeJS.ProcessEnv {
+  return {
+    NODE_ENV: process.env.NODE_ENV || "test",
+    ...env,
+  };
+}
+
 /**
  * Run a bash snippet with EVENTS_DIR redirected to a hermetic temp dir.
  * Returns the directory so the caller can read the emitted files back.
@@ -72,7 +79,7 @@ function runEmitter(
 ): { eventsDir: string; stdout: string } {
   const eventsDir = makeEventsDir();
   const stdout = execFileSync(ENGINE_BASH, ["-c", script], {
-    env: {
+    env: makeExecEnv({
       // minimal, hermetic env. HOME is redirected so config.sh's
       // $HOME/.mentiko fallback can never touch the real data root even if a
       // script ignores EVENTS_DIR.
@@ -80,7 +87,7 @@ function runEmitter(
       HOME: join(eventsDir, ".."),
       EVENTS_DIR: eventsDir,
       ...env,
-    },
+    }),
     encoding: "utf8",
   });
   return { eventsDir, stdout };
@@ -344,7 +351,7 @@ describe("producer: bin/mentiko emit (agent-facing CLI path)", () => {
   it("produces a byte-compatible canonical event, defaulting source to MENTIKO_AGENT_ID", () => {
     const eventsDir = makeEventsDir();
     execFileSync(MENTIKO_CLI, ["emit", "agent-complete"], {
-      env: {
+      env: makeExecEnv({
         PATH: process.env.PATH || "",
         HOME: join(eventsDir, ".."),
         EVENTS_DIR: eventsDir,
@@ -352,7 +359,7 @@ describe("producer: bin/mentiko emit (agent-facing CLI path)", () => {
         MENTIKO_AGENT_ID: "writer-agent",
         // keep it hermetic: config.sh roots must not touch the real ~/.mentiko
         MENTIKO_GLOBAL_ROOT: join(eventsDir, "..", "global"),
-      },
+      }),
       encoding: "utf8",
     });
 
@@ -369,12 +376,12 @@ describe("producer: bin/mentiko emit (agent-facing CLI path)", () => {
   it("refuses to emit a literal event named --help (agents probe the command)", () => {
     const eventsDir = makeEventsDir();
     const out = execFileSync(MENTIKO_CLI, ["emit", "--help"], {
-      env: {
+      env: makeExecEnv({
         PATH: process.env.PATH || "",
         HOME: join(eventsDir, ".."),
         EVENTS_DIR: eventsDir,
         MENTIKO_GLOBAL_ROOT: join(eventsDir, "..", "global"),
-      },
+      }),
       encoding: "utf8",
     });
     expect(out).toContain("usage: mentiko emit");

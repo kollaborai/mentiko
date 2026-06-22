@@ -19,6 +19,8 @@ jest.mock("better-auth/plugins/access", () => {
 
 import { ac, owner, admin, member, guest } from "../auth/auth-permissions";
 
+type PermissionStatements = Record<string, readonly string[]>;
+
 describe("auth-permissions", () => {
   describe("access control statement", () => {
     it("exports ac with newRole method", () => {
@@ -90,8 +92,8 @@ describe("auth-permissions", () => {
     });
 
     it("owner has superset of admin permissions", () => {
-      const adminStmts = admin.statements as Record<string, string[]>;
-      const ownerStmts = owner.statements as Record<string, string[]>;
+      const adminStmts = admin.statements as PermissionStatements;
+      const ownerStmts = owner.statements as PermissionStatements;
       for (const resource of Object.keys(adminStmts)) {
         for (const action of adminStmts[resource]) {
           expect(ownerStmts[resource]).toContain(action);

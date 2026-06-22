@@ -34,7 +34,13 @@ jest.mock('@/components/common/live-indicator', () => ({
 }))
 
 jest.mock('@aliimam/icons', () => {
-  const icon = (name: string) => ({ className }: { className?: string }) => <svg data-testid={`${name}-icon`} className={className} />
+  const icon = (name: string) => {
+    const MockIcon = ({ className }: { className?: string }) => (
+      <svg data-testid={`${name}-icon`} className={className} />
+    )
+    MockIcon.displayName = `${name}Icon`
+    return MockIcon
+  }
   return {
     ActivityFilled: icon('activity'),
     LinkFilled: icon('branch'),

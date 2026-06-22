@@ -158,19 +158,21 @@ function LinksPageContent() {
   }, [currentWorkspaceId, workspaces, selectedWorkspace, generateWorkspace]);
 
   // fetch recent runs when selected link changes
+  const selectedId = selected?.id;
+
   useEffect(() => {
-    if (!selected) {
+    if (!selectedId) {
       setRecentRuns([]);
       return;
     }
-    fetchWithNamespace(`/api/runs?type=link&linkId=${encodeURIComponent(selected.id)}&limit=5`)
+    fetchWithNamespace(`/api/runs?type=link&linkId=${encodeURIComponent(selectedId)}&limit=5`)
       .then((r) => r.json())
       .then((data) => {
         const runs = data?.data?.runs || data?.runs || [];
         setRecentRuns(runs);
       })
       .catch(() => setRecentRuns([]));
-  }, [selected?.id, fetchWithNamespace]);
+  }, [selectedId, fetchWithNamespace]);
 
   // fetch links list
   const fetchLinks = useCallback(async () => {

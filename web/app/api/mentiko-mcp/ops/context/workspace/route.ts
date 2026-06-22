@@ -33,7 +33,7 @@ export async function GET(req: Request) {
       id: ws.id,
       name: ws.name,
       path: ws.path,
-      type: (ws as any).type || "local",
+      type: ws.execution?.type || "local",
     },
     note: workspaces.length > 1
       ? `${workspaces.length} workspaces available; returning first. Use list_workspaces + select_workspace for full control.`

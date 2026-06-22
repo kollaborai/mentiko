@@ -19,7 +19,7 @@ conn.on('data', (d) => {
   conn.destroy();
 });
 
-conn.on('error', (e: any) => {
+conn.on('error', (e: NodeJS.ErrnoException) => {
   if (e.code === 'ENOENT' || e.code === 'ECONNREFUSED') {
     process.stderr.write('mentiko is not running\n');
   } else {

@@ -66,15 +66,14 @@ export function useSharedAgents(pollIntervalMs = 30000) {
         isOwner.current = false;
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isOwner.current) return;
     if (Date.now() - lastFetchedAt > 3000) {
       doFetch(fetchWithNamespace);
     } else {
-      setAgents([...cachedAgents]);
-      setLoading(false);
+      queueMicrotask(notifyListeners);
     }
     if (globalInterval) clearInterval(globalInterval);
     globalInterval = setInterval(() => doFetch(fetchWithNamespace), pollIntervalMs);

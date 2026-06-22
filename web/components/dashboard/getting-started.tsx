@@ -63,7 +63,6 @@ export function GettingStarted() {
     }
   }, []);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- standard hydration from localStorage + sync from props */
   useEffect(() => {
     if (typeof window !== "undefined") {
       setDismissed(!!localStorage.getItem(DISMISSED_KEY));
@@ -72,7 +71,6 @@ export function GettingStarted() {
     }
     setHasWorkspace(workspaces.length > 0);
   }, [workspaces.length]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleDismiss = () => {
     localStorage.setItem(DISMISSED_KEY, "1");

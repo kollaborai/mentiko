@@ -101,6 +101,8 @@ export function useSnoozeState(
     };
   }, [scheduleId, enabled, pollInterval, snoozeState, fetchSnoozeState]);
 
+  const hasSnoozeState = Boolean(snoozeState);
+
   // Refetch when snooze state changes to ensure polling starts/stops correctly
   useEffect(() => {
     if (snoozeState && enabled && scheduleId) {
@@ -124,7 +126,7 @@ export function useSnoozeState(
         intervalRef.current = null;
       }
     };
-  }, [!!snoozeState, enabled, scheduleId, pollInterval, fetchSnoozeState]);
+  }, [hasSnoozeState, snoozeState, enabled, scheduleId, pollInterval, fetchSnoozeState]);
 
   return {
     snoozeState,

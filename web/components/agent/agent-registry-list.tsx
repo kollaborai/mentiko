@@ -47,7 +47,7 @@ function truncateRole(role: string, max = 32): string {
   return role.slice(0, max - 1) + "\u2026";
 }
 
-function AgentRegistryList({
+export function AgentRegistryList({
   agents,
   selectedId,
   onSelect,

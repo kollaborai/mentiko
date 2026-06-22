@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { createReadStream, statSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import { createReadStream, writeFileSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -63,22 +63,6 @@ function extractConversationContent(entry: Record<string, unknown>): unknown {
 
   if (entry.content !== undefined) return entry.content;
   return "";
-}
-
-function extractConversationText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return (content as Array<Record<string, unknown>>)
-    .map((block) => {
-      if (!isRecord(block)) return "";
-      const type = typeof block.type === "string" ? block.type : "";
-      const text = typeof block.text === "string" ? block.text : "";
-      if (!text) return "";
-      if (type === "text" || type === "input_text" || type === "output_text") return text;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 function extractConversationRole(entry: Record<string, unknown>): "user" | "assistant" | "" {

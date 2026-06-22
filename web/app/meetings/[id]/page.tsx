@@ -7,7 +7,7 @@
  * chronologically by epoch. each message shows role, round, and text.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { CalendarFilled, PeopleFilled, RouteSquareFilled, FlashFilled } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -24,32 +24,70 @@ interface TranscriptEntry {
 export default function MeetingTranscriptPage() {
   const { id } = useParams<{ id: string }>();
   const { fetchWithNamespace } = useNamespaceFetch();
-  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [transcriptState, setTranscriptState] = useState<{
+    id: string;
+    entries: TranscriptEntry[];
+    loading: boolean;
+    error: string | null;
+  }>({
+    id,
+    entries: [],
+    loading: true,
+    error: null,
+  });
 
-  const fetchTranscript = useCallback(async () => {
-    try {
-      const res = await fetchWithNamespace(
-        `/api/meetings/${id}/transcript`
-      );
-      if (!res.ok) {
-        setError("failed to load transcript");
-        return;
-      }
-      const data = (await res.json()) as {
-        transcript: TranscriptEntry[];
-      };
-      setEntries(data.transcript || []);
-    } catch {
-      setError("failed to load transcript");
-    }
-    setLoading(false);
-  }, [fetchWithNamespace, id]);
+  const entries = transcriptState.id === id ? transcriptState.entries : [];
+  const loading = transcriptState.id !== id || transcriptState.loading;
+  const error = transcriptState.id === id ? transcriptState.error : null;
 
   useEffect(() => {
-    fetchTranscript();
-  }, [fetchTranscript]);
+    let cancelled = false;
+
+    async function fetchTranscript() {
+      try {
+        const res = await fetchWithNamespace(
+          `/api/meetings/${id}/transcript`
+        );
+        if (!res.ok) {
+          if (!cancelled) {
+            setTranscriptState({
+              id,
+              entries: [],
+              loading: false,
+              error: "failed to load transcript",
+            });
+          }
+          return;
+        }
+        const data = (await res.json()) as {
+          transcript: TranscriptEntry[];
+        };
+        if (!cancelled) {
+          setTranscriptState({
+            id,
+            entries: data.transcript || [],
+            loading: false,
+            error: null,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setTranscriptState({
+            id,
+            entries: [],
+            loading: false,
+            error: "failed to load transcript",
+          });
+        }
+      }
+    }
+
+    void fetchTranscript();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchWithNamespace, id]);
 
   // group entries by round for visual separation
   const rounds = entries.reduce<Map<number, TranscriptEntry[]>>(

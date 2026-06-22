@@ -29,10 +29,6 @@ interface EventsResponse {
   events: AgentEvent[];
 }
 
-interface RunsResponse {
-  runs: Run[];
-}
-
 type ActivityItem =
   | { type: "event"; data: AgentEvent }
   | { type: "run"; data: Run };
@@ -138,7 +134,7 @@ export const ActivityFeed = memo(function ActivityFeed({ className }: ActivityFe
     } finally {
       setLoading(false);
     }
-  }, [workspacePath, sharedRuns]);
+  }, [sharedRuns]);
 
   useEffect(() => {
     fetchActivity();

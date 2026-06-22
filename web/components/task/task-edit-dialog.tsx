@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { CloseCircleFilled as X, Link2Filled as Link2 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import type { Task } from "@/lib/tasks/task-types";
-import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useSharedChains } from "@/lib/chains/chains-store";
 
 interface Chain {
@@ -26,7 +25,6 @@ export function TaskEditDialog({
   onClose,
   onSave,
 }: TaskEditDialogProps) {
-  const { fetchWithNamespace } = useNamespaceFetch();
   const { chains: sharedChains, loading: loadingChains } = useSharedChains();
   const chains: Chain[] = sharedChains.map((c) => ({ id: c.id, name: c.name, description: c.description }));
   const [title, setTitle] = useState(task.title);

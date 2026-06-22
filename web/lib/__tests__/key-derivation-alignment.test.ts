@@ -15,11 +15,9 @@
  */
 
 import { execFileSync } from "child_process";
-import { join } from "path";
 import { encrypt, decrypt } from "../secrets/secrets-store";
 
 const TEST_SECRET = "test-alignment-secret-key-2026";
-const CODE_ROOT = join(__dirname, "..", "..", "..");
 
 // helper: run a node script that uses the CLI derivation and prints the keyId
 function runCliDerive(scriptPath: string, env: Record<string, string> = {}): string {

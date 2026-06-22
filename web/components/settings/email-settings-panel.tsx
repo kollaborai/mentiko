@@ -111,7 +111,7 @@ export function EmailSettingsPanel() {
     };
 
     fetchData();
-  }, []);
+  }, [fetchWithNamespace]);
 
   // clear rotated secret after 30s
   useEffect(() => {
