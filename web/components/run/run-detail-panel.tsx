@@ -301,6 +301,13 @@ function runOutcomeStatus(summary: RunSummary): Status {
   return "idle";
 }
 
+function canInteractWithAgentTerminal(agent?: RunAgent | null) {
+  return Boolean(
+    agent?.session &&
+    (agent.status === "running" || agent.status === "blocked" || agent.status === "startup_recovery")
+  );
+}
+
 function SummaryList({ label, items }: { label: string; items?: string[] }) {
   if (!items || items.length === 0) return null;
   return (
@@ -343,6 +350,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
   const [showToolResults, setShowToolResults] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [outputView, setOutputView] = useState<"conversation" | "terminal">("conversation");
+  const [terminalInputEnabled, setTerminalInputEnabled] = useState(false);
   const [agentActivity, setAgentActivity] = useState<Record<string, AgentActivity | null>>({});
   const [expandedDiffs, setExpandedDiffs] = useState<Set<string>>(new Set());
   const [costData, setCostData] = useState<RunCost | null>(null);
@@ -610,6 +618,17 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
       }
     }
   }, [selectedAgent, run, fetchAgentOutput]);
+
+  useEffect(() => {
+    if (!selectedAgent || !run) {
+      setTerminalInputEnabled(false);
+      return;
+    }
+    const agent = run.agents?.find((a) => a.id === selectedAgent);
+    if (!canInteractWithAgentTerminal(agent)) {
+      setTerminalInputEnabled(false);
+    }
+  }, [selectedAgent, run]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -1706,7 +1725,8 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                   const conversationId = agentConversations[selectedAgent];
                   const rawOutput = agentOutputs[agent?.session || ""] || "";
                   const hasConversation = conversationId && messages.length > 0;
-                  const agentAlive = agent?.status === "running";
+                  const canInteract = canInteractWithAgentTerminal(agent);
+                  const agentAlive = agent?.status === "running" || canInteract;
 
                   return (
                     <>
@@ -1741,6 +1761,17 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                               <Terminal className="mr-1 h-3 w-3" />Terminal
                             </Button>
                           )}
+                          {outputView === "terminal" && canInteract && (
+                            <Button
+                              variant={terminalInputEnabled ? "default" : "ghost"}
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setTerminalInputEnabled((enabled) => !enabled)}
+                            >
+                              <Terminal className="mr-1 h-3 w-3" />
+                              {terminalInputEnabled ? "Input on" : "Input off"}
+                            </Button>
+                          )}
                           {outputView === "conversation" && (
                             <>
                               {hasConversation && (
@@ -1761,7 +1792,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
                       <div className="flex-1 overflow-hidden relative">
                         {outputView === "terminal" && agent?.session ? (
-                          <TerminalPanel session={agent.session} sessionAlive={agentAlive} fallbackOutput={rawOutput} readOnly={true} />
+                          <TerminalPanel session={agent.session} sessionAlive={agentAlive} fallbackOutput={rawOutput} readOnly={!terminalInputEnabled} />
                         ) : hasConversation ? (
                           <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className="h-full overflow-y-auto px-4 py-2">
                             <div className="max-w-3xl mx-auto">

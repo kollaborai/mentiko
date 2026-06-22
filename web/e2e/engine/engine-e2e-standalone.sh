@@ -343,8 +343,8 @@ echo
 
 # ---------------------------------------------------------------------
 # #9 — heartbeat loop exit conditions. We extract the loop's decision logic into
-# a faithful copy with stubbed I/O (curl, transport_capture, detect_blocked,
-# mark_state_blocked) so it is fast and self-contained, then assert it terminates
+# a faithful copy with stubbed I/O (curl) so it is fast and self-contained,
+# then assert it terminates
 # promptly for (i) parent-gone and (ii) deadline-exceeded — the two leak cases.
 #
 # NOTE on the 60s real sleep: the production loop sleeps 60s per cycle, far too
@@ -360,9 +360,6 @@ cat > "$HB_HARNESS" <<'HBEOF'
 #!/usr/bin/env bash
 set -uo pipefail
 # stubs for the real loop's external calls (kept inert/benign for the test).
-transport_capture() { echo ""; }
-detect_blocked_terminal_prompt() { return 1; }   # never "blocked"
-mark_state_blocked() { :; }
 # curl stub: emits whatever HB_CURL_CODE says (default "000" = connection failure).
 curl() { printf '%s' "${HB_CURL_CODE:-000}"; }
 
@@ -390,12 +387,6 @@ while true; do
         [[ "$_cur_status" != "running" ]] && { echo "RESULT=STATE_DONE cycles=$_cycles"; break; }
     else
         echo "RESULT=NO_STATE cycles=$_cycles"; break
-    fi
-
-    _capture=$(transport_capture "$_hb_session_name" 120 2>/dev/null || true)
-    if _blocked_reason=$(detect_blocked_terminal_prompt "$_capture"); then
-        mark_state_blocked "$_hb_state_file" "$_blocked_reason"
-        echo "RESULT=BLOCKED cycles=$_cycles"; break
     fi
 
     _hb_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$_hb_url" --max-time 5 2>/dev/null || echo "000")

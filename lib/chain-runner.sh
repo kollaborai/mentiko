@@ -56,6 +56,8 @@ source "$SCRIPT_DIR/retry-utils.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/approval-gate.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/plugin-runner.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/ai-gateway-agent-env.sh"
+source "$SCRIPT_DIR/cli-readiness.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/advisor-recovery.sh" 2>/dev/null || true
 
 # Global run-id for this execution (from env var or new run)
 RUN_ID="${MENTIKO_RUN_ID:-${AGENT_CHAIN_RUN_ID:-${RUN_ID:-}}}"
@@ -737,24 +739,6 @@ $prior_summaries
 EOF
 }
 
-detect_blocked_terminal_prompt() {
-    local capture="$1"
-
-    if [[ "$capture" == *"WARNING: Claude Code running in Bypass Permissions mode"* ]] &&
-       [[ "$capture" == *"Yes, I accept"* ]]; then
-        echo "Claude Code is waiting for bypass-permissions acceptance"
-        return 0
-    fi
-
-    if [[ "$capture" == *"By proceeding, you accept all responsibility"* ]] &&
-       [[ "$capture" == *"Bypass Permissions mode"* ]]; then
-        echo "Claude Code is waiting for bypass-permissions acceptance"
-        return 0
-    fi
-
-    return 1
-}
-
 session_has_active_command() {
     local session_name="$1"
     command -v pgrep >/dev/null 2>&1 || return 0
@@ -764,6 +748,78 @@ session_has_active_command() {
     [[ -n "$session_pid" ]] || return 0
 
     pgrep -P "$session_pid" >/dev/null 2>&1
+}
+
+write_startup_recovery_artifacts() {
+    local agent_id="$1" profile_id="$2" profile_cli="$3" cwd="$4" cli_cmd="$5" state_file="$6" capture_file="$7" readiness_json="$8"
+
+    [[ -n "${RUN_ID:-}" ]] || return 0
+
+    local artifact_dir="$RUNS_DIR/${RUN_ID}/artifacts"
+    mkdir -p "$artifact_dir"
+    cp "$capture_file" "$artifact_dir/${agent_id}-startup-capture.txt" 2>/dev/null || true
+    printf '%s\n' "$readiness_json" > "$artifact_dir/${agent_id}-startup-readiness.json"
+
+    if declare -f advisor_recovery_prompt >/dev/null 2>&1; then
+        advisor_recovery_prompt \
+            --run-id "${RUN_ID:-}" \
+            --agent-id "$agent_id" \
+            --profile-id "$profile_id" \
+            --cli "$profile_cli" \
+            --cwd "$cwd" \
+            --command "$cli_cmd" \
+            --state-file "$state_file" \
+            --capture-file "$capture_file" \
+            > "$artifact_dir/${agent_id}-startup-recovery-prompt.txt" 2>/dev/null || true
+    fi
+}
+
+# wait_for_profile_readiness <session> <state_file> <agent_id> <profile_file> <profile_id> <cli> <cmd> <cwd>
+# Profile readiness is data-driven. It never writes CLI config, never pins a CLI,
+# and never auto-accepts a prompt. rc: 0 ready, 1 recoverable/blocked/unknown, 2 exited.
+wait_for_profile_readiness() {
+    local session="$1" state_file="$2" agent_id="$3" profile_file="${4:-}" profile_id="${5:-}" profile_cli="${6:-}" cli_cmd="${7:-}" cwd="${8:-}"
+    local timeout="${MENTIKO_CLI_READY_TIMEOUT:-90}"
+    local poll="${MENTIKO_CLI_READY_POLL:-2}"
+    local deadline=$(( $(date +%s) + timeout ))
+    local capture_file readiness_json readiness_status readiness_reason
+
+    while (( $(date +%s) < deadline )); do
+        if ! session_has_active_command "$session"; then
+            return 2
+        fi
+
+        capture_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-cli-readiness-${agent_id}.XXXXXX")"
+        transport_capture "$session" 120 > "$capture_file" 2>/dev/null || true
+        readiness_json="$(cli_readiness_check "$profile_file" "$capture_file" 2>/dev/null || cli_readiness_json "unknown" "readiness checker unavailable")"
+        readiness_status="$(printf '%s\n' "$readiness_json" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")"
+        readiness_reason="$(printf '%s\n' "$readiness_json" | jq -r '.reason // "startup state unresolved"' 2>/dev/null || echo "startup state unresolved")"
+
+        if [[ "$readiness_status" == "ready" ]]; then
+            rm -f "$capture_file"
+            return 0
+        fi
+
+        if [[ "$readiness_status" == "blocked" || "$readiness_status" == "recover" || "$readiness_status" == "retry" || "$readiness_status" == "unknown" ]]; then
+            write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
+            rm -f "$capture_file"
+            mark_state_blocked "$state_file" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
+            mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
+            return 1
+        fi
+
+        rm -f "$capture_file"
+        sleep "$poll"
+    done
+
+    capture_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-cli-readiness-${agent_id}.XXXXXX")"
+    transport_capture "$session" 120 > "$capture_file" 2>/dev/null || true
+    readiness_json="$(cli_readiness_json "unknown" "CLI readiness unresolved after ${timeout}s")"
+    write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
+    rm -f "$capture_file"
+    mark_state_blocked "$state_file" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
+    mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
+    return 1
 }
 
 instruction_submission_marker() {
@@ -1869,23 +1925,37 @@ SEOF
         sleep 3
     fi
 
-    local startup_capture
-    local startup_blocked_reason
-    startup_capture=$(transport_capture "$session_name" 120 2>/dev/null || true)
-    if startup_blocked_reason=$(detect_blocked_terminal_prompt "$startup_capture"); then
-        mark_state_blocked "$STATE_DIR/${state_id}.state" "$startup_blocked_reason"
-        mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "$startup_blocked_reason"
-        echo "  agent blocked: $startup_blocked_reason"
-        _sys_log "warn" "chain-runner" "agent blocked before instructions: $startup_blocked_reason" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
-        return 0
+    local profile_cli=""
+    if [[ "$use_legacy_cli" == "false" && -f "${profile_file:-}" ]]; then
+        profile_cli="$(jq -r '.cli // empty' "$profile_file" 2>/dev/null || true)"
+    else
+        profile_cli="$agent_cli"
     fi
 
-    if ! session_has_active_command "$session_name"; then
+    # readiness gate: profile-driven patterns decide when the CLI is ready,
+    # blocked, recoverable, retrying, or unknown. No version pinning, no config
+    # seeding, no hardcoded prompt acceptance.
+    local _ready_rc=0
+    wait_for_profile_readiness \
+        "$session_name" \
+        "$STATE_DIR/${state_id}.state" \
+        "$agent_id" \
+        "${profile_file:-}" \
+        "${profile_id:-legacy}" \
+        "$profile_cli" \
+        "$display_cmd" \
+        "$REMOTE_PROJECT_ROOT" \
+        || _ready_rc=$?
+    if [[ $_ready_rc -eq 2 ]]; then
         local startup_failed_reason="agent CLI exited before instructions were sent"
         mark_state_failed "$STATE_DIR/${state_id}.state" "$startup_failed_reason"
         mark_run_agent_failed "${RUN_ID:-}" "$agent_id" "$startup_failed_reason"
         echo "  agent startup failed: $startup_failed_reason"
         _sys_log "error" "chain-runner" "agent CLI exited before instructions" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
+        return 0
+    elif [[ $_ready_rc -ne 0 ]]; then
+        echo "  agent startup recovery needed (see run artifacts)"
+        _sys_log "warn" "chain-runner" "agent startup recovery needed before instructions" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
         return 0
     fi
 
@@ -2023,19 +2093,6 @@ SEOF
                     _cur_status=$(grep "^status:" "$_hb_state_file" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "")
                     [[ "$_cur_status" != "running" ]] && break
                 else
-                    break
-                fi
-
-                local _capture
-                local _blocked_reason
-                _capture=$(transport_capture "$_hb_session_name" 120 2>/dev/null || true)
-                if _blocked_reason=$(detect_blocked_terminal_prompt "$_capture"); then
-                    mark_state_blocked "$_hb_state_file" "$_blocked_reason"
-                    curl -s -o /dev/null -X POST "$_hb_url" \
-                        -H "Content-Type: application/json" \
-                        ${_hb_secret:+-H "Authorization: Bearer $_hb_secret"} \
-                        -d "{\"status\":\"blocked\",\"message\":\"$_blocked_reason\"}" \
-                        --max-time 5 2>/dev/null || true
                     break
                 fi
 

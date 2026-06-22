@@ -88,13 +88,17 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain('send-message "$session_name" "cd $(printf \'%q\' "$REMOTE_PROJECT_ROOT") && bash $(printf \'%q\' "$start_script")"');
   });
 
-  it("checks startup prompts before sending instructions to a launched CLI", () => {
-    const guard = 'if startup_blocked_reason=$(detect_blocked_terminal_prompt "$startup_capture"); then';
+  it("checks profile-driven readiness before sending instructions to a launched CLI", () => {
+    const guard = "wait_for_profile_readiness";
     const sendInstructions = 'send-message "$session_name" "$instruction_pointer"';
 
-    expect(chainRunner).toContain('startup_capture=$(transport_capture "$session_name" 120 2>/dev/null || true)');
+    expect(chainRunner).toContain('source "$SCRIPT_DIR/cli-readiness.sh"');
+    expect(chainRunner).toContain('source "$SCRIPT_DIR/advisor-recovery.sh"');
     expect(chainRunner).toContain(guard);
-    expect(chainRunner).toContain('mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "$startup_blocked_reason"');
+    expect(chainRunner).toContain("startup_recovery");
+    expect(chainRunner).toContain("write_startup_recovery_artifacts");
+    expect(chainRunner).not.toContain("cli-startup-prompts.sh");
+    expect(chainRunner).not.toContain("seed-agent-cli-config.sh");
     expect(chainRunner.indexOf(guard)).toBeGreaterThan(-1);
     expect(chainRunner.indexOf(sendInstructions)).toBeGreaterThan(-1);
     expect(chainRunner.indexOf(guard)).toBeLessThan(chainRunner.indexOf(sendInstructions));
