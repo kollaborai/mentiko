@@ -35,7 +35,7 @@ export interface Notification {
     jobId?: string;
     jobType?: string;
     error?: string;
-    decisionId?: string;
+    taskId?: string;
     actionUrl?: string;
     actionLabel?: string;
   };

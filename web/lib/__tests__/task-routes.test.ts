@@ -1,4 +1,4 @@
-import { normalizeTaskNavigationRoute, taskDetailHref } from "../tasks/task-routes";
+import { normalizeEmbeddedTaskSelectionSearch, normalizeTaskNavigationRoute, taskDetailHref } from "../tasks/task-routes";
 
 describe("task routes", () => {
   it("builds the split-pane task detail href", () => {
@@ -20,5 +20,21 @@ describe("task routes", () => {
 
   it("leaves non-task routes alone", () => {
     expect(normalizeTaskNavigationRoute("/runs/RUN-001")).toBe("/runs/RUN-001");
+  });
+
+  it("normalizes embedded decision open-task searches for non-decision tasks", () => {
+    expect(
+      normalizeEmbeddedTaskSelectionSearch(
+        "type=decision&task=DEC-001&view=tree",
+        "EPIC-009",
+        "epic",
+      ),
+    ).toBe("task=EPIC-009&view=tree");
+  });
+
+  it("keeps decision type when embedded selection opens a decision task", () => {
+    expect(
+      normalizeEmbeddedTaskSelectionSearch("task=EPIC-009&view=tree", "DEC-001", "decision"),
+    ).toBe("task=DEC-001&view=tree&type=decision");
   });
 });

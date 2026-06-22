@@ -160,7 +160,7 @@ export function TaskGenerateDialog({
         router.push(
           result.taskId
             ? `/tasks?type=decision&task=${encodeURIComponent(result.taskId)}`
-            : `/tasks?type=decision&decisionId=${encodeURIComponent(result.decisionId)}`,
+            : "/tasks?type=decision",
         );
         return;
       }

@@ -16,6 +16,7 @@ import { TaskTreeView } from "@/components/task/task-tree-view";
 import { toTask, groupByEpic, priorityOrder } from "@/lib/tasks/task-transforms";
 import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
 import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
+import { normalizeEmbeddedTaskSelectionSearch } from "@/lib/tasks/task-routes";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/common/empty-state";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -817,6 +818,47 @@ function TasksPageContent() {
     [tasks, handleSelect, wsParam, fetchWithNamespace]
   );
 
+  const handleOpenTask = useCallback(
+    async (taskId: string) => {
+      setSelectMode(false);
+      setSelectedTaskIds(new Set());
+      setShowGenerate(false);
+      setMobileView("detail");
+
+      const selectOpenedTask = async (task: Task) => {
+        const qs = normalizeEmbeddedTaskSelectionSearch(
+          window.location.search,
+          task.id,
+          task.type,
+        );
+        window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+        setFilterType(task.type === "decision" ? "decision" : "all");
+        setSelected(task);
+        setChildren([]);
+        setComments([]);
+        await loadDetail(task);
+      };
+
+      const localTask = tasks.find((task) => task.id === taskId);
+      if (localTask) {
+        await selectOpenedTask(localTask);
+        return;
+      }
+
+      const id = encodeURIComponent(taskId);
+      const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`);
+      if (!res.ok) return;
+
+      const raw = await res.json();
+      const data = unwrapApiData<{ issue?: TaskRecord }>(raw);
+      if (!data.issue) return;
+
+      const fetched = toTask(data.issue);
+      await selectOpenedTask(fetched);
+    },
+    [tasks, loadDetail, wsParam, fetchWithNamespace]
+  );
+
   const handleAddDep = useCallback(
     async (depTaskId: string) => {
       if (!selected) return;
@@ -889,21 +931,15 @@ function TasksPageContent() {
     />
   );
 
-  // auto-select task from ?task= or legacy ?decisionId= query param (once after initial load)
+  // auto-select task from ?task= query param (once after initial load)
   useEffect(() => {
     if (autoSelectDone.current) return;
     if (loading) return;
     const taskId = searchParams.get("task");
-    const decisionId = searchParams.get("decisionId");
-    if (!taskId && !decisionId) return;
+    if (!taskId) return;
     autoSelectDone.current = true;
-    if (taskId) {
-      handleSelectDep(taskId);
-      return;
-    }
-    const task = tasks.find((task) => task.metadata?.decision_id === decisionId);
-    if (task) handleSelect(task);
-  }, [loading, searchParams, tasks, handleSelectDep, handleSelect]);
+    handleOpenTask(taskId);
+  }, [loading, searchParams, handleOpenTask]);
 
   // reconcile stale task statuses once on mount
   const reconciledRef = useRef(false);
@@ -1001,6 +1037,7 @@ function TasksPageContent() {
                   onMetadataUpdate={handleMetadataUpdate}
                   onRefreshTask={refreshSelectedTask}
                   onDecisionUpdate={handleDecisionUpdate}
+                  onOpenTask={handleOpenTask}
                   onAddComment={handleAddComment}
                   isRunning={isRunning}
                   workspacePath={workspacePath}
@@ -1067,6 +1104,7 @@ function TasksPageContent() {
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
               onDecisionUpdate={handleDecisionUpdate}
+              onOpenTask={handleOpenTask}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}
@@ -1218,6 +1256,7 @@ function TasksPageContent() {
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
               onDecisionUpdate={handleDecisionUpdate}
+              onOpenTask={handleOpenTask}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}

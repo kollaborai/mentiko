@@ -98,7 +98,7 @@ export function TaskDetailHeader({
                 {task.chainBinding.chain_name || task.chainBinding.chain_id}
               </Link>
             )}
-            {typeof task.metadata?.decision_id === "string" && (
+            {task.type === "decision" && typeof task.metadata?.decision_id === "string" && (
               <a
                 href={`/tasks?type=decision&task=${encodeURIComponent(task.id)}`}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition-colors"
@@ -139,7 +139,7 @@ export function TaskDetailHeader({
             <Pencil className="h-3 w-3 mr-1" />
             Edit
           </Button>
-          {!task.metadata?.decision_id && (
+          {task.type !== "decision" && !task.metadata?.decision_id && (
             <Link
               href="/tasks?type=decision"
               className="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-md text-xs font-medium text-foreground/60 hover:text-foreground hover:bg-accent transition-colors max-[420px]:w-full"

@@ -578,6 +578,7 @@ function TaskCard({ id }: { id: string }) {
 interface DecisionData {
   decision?: {
     id?: string;
+    taskId?: string;
     title?: string;
     status?: string;
     options?: Array<{ id?: string; label?: string }>;
@@ -599,7 +600,7 @@ function DecisionCard({ id }: { id: string }) {
       color="#5b9ef5"
       title={d.title || id}
       subtitle={`${d.status || "unknown"} / ${optCount} option${optCount !== 1 ? "s" : ""}`}
-      href={`/tasks?type=decision&decisionId=${encodeURIComponent(id)}`}
+      href={d.taskId ? `/tasks?type=decision&task=${encodeURIComponent(d.taskId)}` : "/tasks?type=decision"}
     >
       {d.description && (
         <p className="text-xs text-foreground/50 mt-1.5 leading-relaxed line-clamp-2">

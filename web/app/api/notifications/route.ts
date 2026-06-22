@@ -27,7 +27,7 @@ export interface Notification {
     jobId?: string;
     jobType?: string;
     error?: string;
-    decisionId?: string;
+    taskId?: string;
     actionUrl?: string;
     actionLabel?: string;
   };
@@ -76,7 +76,7 @@ function resolveActionUrl(
 
   const runId = metadata?.runId;
   const jobType = metadata?.jobType;
-  const decisionId = metadata?.decisionId;
+  const taskId = metadata?.taskId;
 
   switch (type) {
     case "agent_complete":
@@ -99,7 +99,9 @@ function resolveActionUrl(
         jobType === "decision_retrospective" ||
         (jobType && jobType.startsWith("decision_guided"))
       ) {
-        const url = decisionId ? `/tasks?type=decision&decisionId=${decisionId}` : "/tasks?type=decision";
+        const url = taskId
+          ? `/tasks?type=decision&task=${encodeURIComponent(taskId)}`
+          : "/tasks?type=decision";
         return { actionUrl: url, actionLabel: "View Decision" };
       }
       if (jobType === "generate" || jobType === "recommend") {

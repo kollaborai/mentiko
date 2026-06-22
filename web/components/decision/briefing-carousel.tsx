@@ -21,6 +21,7 @@ interface BriefingCarouselProps {
   decision: Decision;
   onExit: () => void;
   onApprove?: (optionId: string) => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
 const WATERMARK_MAP: Record<string, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
@@ -317,7 +318,17 @@ function RecommendationCard({ decision }: { decision: Decision }) {
 }
 
 // card 5: THE ASK
-function AskCard({ decision, onApprove, onExit }: { decision: Decision; onApprove?: (id: string) => void; onExit?: () => void }) {
+function AskCard({
+  decision,
+  onApprove,
+  onExit,
+  onOpenTask,
+}: {
+  decision: Decision;
+  onApprove?: (id: string) => void;
+  onExit?: () => void;
+  onOpenTask?: (taskId: string) => void;
+}) {
   const rec = decision.recommendation;
   const option = decision.options.find((o) => o.id === rec?.choiceId);
   const isPending = decision.status === "pending";
@@ -369,12 +380,25 @@ function AskCard({ decision, onApprove, onExit }: { decision: Decision; onApprov
               This decision has been resolved.
             </p>
             {decision.resolution?.taskId && (
-              <a
-                href={`/tasks?task=${encodeURIComponent(decision.resolution.taskId)}`}
-                className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-blue-300 hover:underline"
-              >
-                View implementation task
-              </a>
+              onOpenTask ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const taskId = decision.resolution?.taskId;
+                    if (taskId) onOpenTask(taskId);
+                  }}
+                  className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-blue-300 hover:underline"
+                >
+                  View implementation task
+                </button>
+              ) : (
+                <a
+                  href={`/tasks?task=${encodeURIComponent(decision.resolution.taskId)}`}
+                  className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-blue-300 hover:underline"
+                >
+                  View implementation task
+                </a>
+              )
             )}
           </>
         ) : (
@@ -387,7 +411,7 @@ function AskCard({ decision, onApprove, onExit }: { decision: Decision; onApprov
   );
 }
 
-export function BriefingCarousel({ decision, onExit, onApprove }: BriefingCarouselProps) {
+export function BriefingCarousel({ decision, onExit, onApprove, onOpenTask }: BriefingCarouselProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const isBriefed = decision.status === "briefed";
@@ -404,7 +428,7 @@ export function BriefingCarousel({ decision, onExit, onApprove }: BriefingCarous
       { key: "options", content: <OptionsCard decision={decision} /> },
       { key: "recommendation", content: <RecommendationCard decision={decision} /> },
     ] : []),
-    { key: "ask", content: <AskCard decision={decision} onApprove={onApprove} onExit={onExit} /> },
+    { key: "ask", content: <AskCard decision={decision} onApprove={onApprove} onExit={onExit} onOpenTask={onOpenTask} /> },
   ];
 
   const goNext = useCallback(() => {

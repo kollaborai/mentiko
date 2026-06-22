@@ -10,6 +10,7 @@ import { unwrapApiData } from "@/lib/api/api-client";
 
 interface Decision {
   id: string;
+  taskId?: string;
   prompt: string;
   title?: string;
   status: string;
@@ -70,7 +71,10 @@ export function PendingDecisions({ className }: PendingDecisionsProps) {
       ) : (
         <div className="divide-y divide-muted/40">
           {decisions.slice(0, 5).map((d) => (
-            <Link key={d.id} href={`/tasks?type=decision&decisionId=${d.id}`}>
+            <Link
+              key={d.id}
+              href={d.taskId ? `/tasks?type=decision&task=${encodeURIComponent(d.taskId)}` : "/tasks?type=decision"}
+            >
               <div className="px-4 py-3 hover:bg-accent/40 transition-colors">
                 <p className="text-xs font-medium line-clamp-1">{d.title || d.prompt}</p>
                 {d.context?.problem && (

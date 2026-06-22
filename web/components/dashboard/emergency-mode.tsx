@@ -6,6 +6,7 @@ import type { Run } from "@/lib/types";
 
 interface DashboardDecision {
   id: string;
+  taskId?: string;
   title?: string;
   prompt?: string;
   createdAt?: string;
@@ -62,7 +63,9 @@ export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: Eme
       id: `decision-${decision.id}`,
       label: "decision",
       title: decisionTitle(decision),
-      href: `/tasks?type=decision&decisionId=${decision.id}`,
+      href: decision.taskId
+        ? `/tasks?type=decision&task=${encodeURIComponent(decision.taskId)}`
+        : "/tasks?type=decision",
       color: "text-amber-400",
     })),
   ].slice(0, 4);

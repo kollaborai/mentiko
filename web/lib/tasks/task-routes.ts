@@ -6,6 +6,23 @@ export function taskDetailHref(taskId: string, search?: string | URLSearchParams
   return `/tasks?${params.toString()}`;
 }
 
+export function normalizeEmbeddedTaskSelectionSearch(
+  search: string | URLSearchParams,
+  taskId: string,
+  taskType: string,
+): string {
+  const params = new URLSearchParams(search);
+  params.set("task", taskId);
+
+  if (taskType === "decision") {
+    params.set("type", "decision");
+  } else if (params.get("type") === "decision") {
+    params.delete("type");
+  }
+
+  return params.toString();
+}
+
 export function normalizeTaskNavigationRoute(route: string): string {
   if (!route) return route;
 

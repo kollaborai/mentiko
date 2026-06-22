@@ -132,4 +132,29 @@ describe("TaskDetailHeader", () => {
     expect(screen.getByRole("button", { name: /run/i }).parentElement).toBe(actionRow);
     expect(screen.getByRole("button", { name: /close/i }).parentElement).toBe(actionRow);
   });
+
+  it("does not show provenance-only child tasks as decision tasks", () => {
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          id: "TASK-092",
+          type: "task",
+          metadata: {
+            decision_id: "decision-1",
+            decision_plan_task_id: "task-1",
+          },
+          chainBinding: undefined,
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.queryByRole("link", { name: /decision/i })).not.toBeInTheDocument();
+  });
 });

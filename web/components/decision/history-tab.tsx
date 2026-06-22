@@ -15,9 +15,10 @@ import {
 interface HistoryTabProps {
   decision: Decision;
   retroLoading: boolean;
+  onOpenTask?: (taskId: string) => void;
 }
 
-export function HistoryTab({ decision, retroLoading }: HistoryTabProps) {
+export function HistoryTab({ decision, retroLoading, onOpenTask }: HistoryTabProps) {
   const isResolved =
     decision.status === "approved" ||
     decision.status === "in_progress" ||
@@ -53,13 +54,24 @@ export function HistoryTab({ decision, retroLoading }: HistoryTabProps) {
             </p>
           )}
           {implementationHref && (
-            <a
-              href={implementationHref}
-              className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-300 hover:underline"
-            >
-              <TaskSquareFilled className="h-3 w-3" style={{ color: "#5b9ef5" }} />
-              {decision.resolution.taskId}
-            </a>
+            onOpenTask && decision.resolution.taskId ? (
+              <button
+                type="button"
+                onClick={() => onOpenTask(decision.resolution!.taskId!)}
+                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-300 hover:underline"
+              >
+                <TaskSquareFilled className="h-3 w-3" style={{ color: "#5b9ef5" }} />
+                {decision.resolution.taskId}
+              </button>
+            ) : (
+              <a
+                href={implementationHref}
+                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-300 hover:underline"
+              >
+                <TaskSquareFilled className="h-3 w-3" style={{ color: "#5b9ef5" }} />
+                {decision.resolution.taskId}
+              </a>
+            )
           )}
         </div>
       )}

@@ -7,9 +7,20 @@ import { TaskDetail } from "../task-detail";
 import type { Task } from "@/lib/tasks/task-types";
 
 jest.mock("@/components/decision/decision-detail", () => ({
-  DecisionDetail: ({ decisionId, workspacePath }: { decisionId: string; workspacePath?: string }) => (
+  DecisionDetail: ({
+    decisionId,
+    workspacePath,
+    onOpenTask,
+  }: {
+    decisionId: string;
+    workspacePath?: string;
+    onOpenTask?: (taskId: string) => void;
+  }) => (
     <div data-testid="decision-detail">
       decision:{decisionId}:{workspacePath}
+      <button type="button" onClick={() => onOpenTask?.("EPIC-009")}>
+        open linked task
+      </button>
     </div>
   ),
 }));
@@ -94,5 +105,71 @@ describe("TaskDetail decision mapping", () => {
 
     expect(screen.getByTestId("decision-detail")).toHaveTextContent("decision:decision-1:/repo");
     expect(screen.queryByTestId("task-chain-section")).not.toBeInTheDocument();
+  });
+
+  it("renders generated child tasks normally even when they keep decision provenance", () => {
+    render(
+      <TaskDetail
+        task={{
+          ...baseTask,
+          id: "TASK-092",
+          title: "Initialize Next.js 16 project",
+          type: "task",
+          metadata: {
+            decision_id: "decision-1",
+            decision_plan_task_id: "task-1",
+          },
+        }}
+        subtasks={[]}
+        comments={[]}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onEdit={jest.fn()}
+        onSelectChild={jest.fn()}
+        onSelectDep={jest.fn()}
+        onAssignChain={jest.fn()}
+        onRemoveChain={jest.fn()}
+        onRunChain={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onAddComment={jest.fn()}
+        isRunning={false}
+        workspacePath="/repo"
+      />,
+    );
+
+    expect(screen.queryByTestId("decision-detail")).not.toBeInTheDocument();
+    expect(screen.getByTestId("task-chain-section")).toBeInTheDocument();
+  });
+
+  it("wires embedded decision open-task actions to local task selection", () => {
+    const onSelectDep = jest.fn();
+    const onOpenTask = jest.fn();
+    render(
+      <TaskDetail
+        task={baseTask}
+        subtasks={[]}
+        comments={[]}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onEdit={jest.fn()}
+        onSelectChild={jest.fn()}
+        onSelectDep={onSelectDep}
+        onAssignChain={jest.fn()}
+        onRemoveChain={jest.fn()}
+        onRunChain={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onOpenTask={onOpenTask}
+        onAddComment={jest.fn()}
+        isRunning={false}
+        workspacePath="/repo"
+      />,
+    );
+
+    screen.getByRole("button", { name: "open linked task" }).click();
+
+    expect(onOpenTask).toHaveBeenCalledWith("EPIC-009");
+    expect(onSelectDep).not.toHaveBeenCalled();
   });
 });

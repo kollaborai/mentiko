@@ -40,6 +40,7 @@ interface DecisionDetailProps {
   onBack?: () => void;
   onUpdate?: () => void;
   onDelete?: () => void;
+  onOpenTask?: (taskId: string) => void;
 }
 
 type DetailTab = "overview" | "options" | "context" | "history";
@@ -65,6 +66,7 @@ export function DecisionDetail({
   onBack,
   onUpdate,
   onDelete,
+  onOpenTask,
 }: DecisionDetailProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [decision, setDecisionRaw] = useState<Decision | null>(null);
@@ -572,8 +574,9 @@ export function DecisionDetail({
       (isResolved ? decision.resolution?.selectedOptionId : selectedOptionId ?? decision.recommendation?.choiceId)
   );
   const blastRadius = inferBlastRadius(decision);
-  const implementationHref = decision.resolution?.taskId
-    ? `/tasks?task=${encodeURIComponent(decision.resolution.taskId)}`
+  const implementationTaskId = decision.resolution?.taskId;
+  const implementationHref = implementationTaskId
+    ? `/tasks?task=${encodeURIComponent(implementationTaskId)}`
     : null;
   const linkedRuns = [
     { label: "research", runId: decision.researchRunId },
@@ -635,7 +638,13 @@ export function DecisionDetail({
                 size="sm"
                 variant="default"
                 className="h-7 text-xs"
-                onClick={() => window.location.assign(implementationHref)}
+                onClick={() => {
+                  if (implementationTaskId && onOpenTask) {
+                    onOpenTask(implementationTaskId);
+                    return;
+                  }
+                  window.location.assign(implementationHref);
+                }}
               >
                 <TaskSquareFilled className="h-3 w-3 mr-1" style={{ color: "#5b9ef5" }} />
                 Open task
@@ -773,7 +782,11 @@ export function DecisionDetail({
 
       {/* body - switches on viewMode */}
       {viewMode === "briefing" ? (
-        <BriefingCarousel decision={decision} onExit={() => setViewMode(decision.status === "briefed" ? "guided" : "dashboard")} />
+        <BriefingCarousel
+          decision={decision}
+          onExit={() => setViewMode(decision.status === "briefed" ? "guided" : "dashboard")}
+          onOpenTask={onOpenTask}
+        />
       ) : viewMode === "guided" ? (
         <div className="flex-1 overflow-y-auto">
           <GuidedFlowShell
@@ -842,6 +855,7 @@ export function DecisionDetail({
               <HistoryTab
                 decision={decision}
                 retroLoading={retroLoading}
+                onOpenTask={onOpenTask}
               />
             )}
           </div>

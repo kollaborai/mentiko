@@ -33,6 +33,7 @@ interface TaskDetailProps {
   onClearMetadata?: () => void;
   onRefreshTask?: () => Promise<void>;
   onDecisionUpdate?: () => Promise<void> | void;
+  onOpenTask?: (taskId: string) => void;
   onAddComment: (text: string) => Promise<void>;
   isRunning: boolean;
   workspacePath?: string;
@@ -90,6 +91,7 @@ export function TaskDetail({
   onClearMetadata,
   onRefreshTask,
   onDecisionUpdate,
+  onOpenTask,
   onAddComment,
   isRunning,
   workspacePath,
@@ -97,7 +99,7 @@ export function TaskDetail({
   onAddDep,
   depInfo,
 }: TaskDetailProps) {
-  const decisionId = typeof task.metadata?.decision_id === "string"
+  const decisionId = task.type === "decision" && typeof task.metadata?.decision_id === "string"
     ? task.metadata.decision_id
     : undefined;
 
@@ -109,6 +111,7 @@ export function TaskDetail({
         onBack={onBack}
         onUpdate={onDecisionUpdate ?? onRefreshTask}
         onDelete={onDecisionUpdate ?? onRefreshTask}
+        onOpenTask={onOpenTask ?? onSelectDep}
       />
     );
   }

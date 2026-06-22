@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 const staleDecisionLinkFiles = [
   "components/app-shell/global-search-modal.tsx",
@@ -63,20 +63,34 @@ describe("decision navigation", () => {
     expect(listItem).toContain("human decision gate");
   });
 
-  it("redirects the legacy decisions route before auth gating", () => {
+  it("does not keep the standalone decisions route alive", () => {
     const proxy = readFileSync("proxy.ts", "utf8");
 
-    expect(proxy).toContain('pathname === "/decisions"');
-    expect(proxy).toContain('url.pathname = "/tasks"');
-    expect(proxy).toContain('url.searchParams.set("type", "decision")');
-    expect(proxy).toContain('url.searchParams.set("decisionId", decisionId)');
+    expect(existsSync("app/decisions/page.tsx")).toBe(false);
+    expect(existsSync("app/decisions/page.test.tsx")).toBe(false);
+    expect(proxy).not.toContain('pathname === "/decisions"');
+    expect(proxy).not.toContain('url.pathname = "/tasks"');
   });
 
-  it("maps old decisionId links onto linked task rows in the task page", () => {
+  it("does not keep decisionId task-url compatibility paths", () => {
     const tasksPage = readFileSync("app/tasks/page.tsx", "utf8");
+    const taskGenerateDialog = readFileSync("components/task/task-generate-dialog.tsx", "utf8");
+    const emergencyMode = readFileSync("components/dashboard/emergency-mode.tsx", "utf8");
+    const pendingDecisions = readFileSync("components/dashboard/pending-decisions.tsx", "utf8");
+    const entityHoverCard = readFileSync("components/ui/entity-hover-card.tsx", "utf8");
+    const notificationsRoute = readFileSync("app/api/notifications/route.ts", "utf8");
 
-    expect(tasksPage).toContain('const decisionId = searchParams.get("decisionId")');
-    expect(tasksPage).toContain('task.metadata?.decision_id === decisionId');
+    for (const source of [
+      tasksPage,
+      taskGenerateDialog,
+      emergencyMode,
+      pendingDecisions,
+      entityHoverCard,
+      notificationsRoute,
+    ]) {
+      expect(source).not.toContain("decisionId=");
+      expect(source).not.toContain('searchParams.get("decisionId")');
+    }
     expect(tasksPage).toContain("onDecisionUpdate={handleDecisionUpdate}");
   });
 });
