@@ -2,10 +2,15 @@ import type { Decision } from "../decisions/decision-types";
 
 const getDecision = jest.fn();
 const updateDecision = jest.fn();
+const taskUpdate = jest.fn();
 
 jest.mock("../decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => getDecision(...args),
   updateDecision: (...args: unknown[]) => updateDecision(...args),
+}));
+
+jest.mock("../tasks/task-store", () => ({
+  taskUpdate: (...args: unknown[]) => taskUpdate(...args),
 }));
 
 const baseDecision: Decision = {
@@ -63,6 +68,35 @@ describe("applyDecisionRunResult", () => {
         activeJobId: undefined,
       }),
       undefined,
+    );
+  });
+
+  test("syncs the linked task row title when research refines the decision title", async () => {
+    getDecision.mockReturnValue({
+      ...baseDecision,
+      taskId: "DEC-001",
+      workspacePath: "/repo",
+    });
+    const { applyDecisionRunResult } = await import("../decisions/decision-run-results");
+
+    await applyDecisionRunResult({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "decision-1",
+      phase: "research",
+      result: {
+        title: "AI refined decision title",
+        priority: "p1",
+        category: "architecture",
+      },
+      workspacePath: "/repo",
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "DEC-001",
+      { title: "AI refined decision title" },
+      "default",
     );
   });
 

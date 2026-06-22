@@ -26,6 +26,7 @@ const deleteDecision = jest.fn();
 const getJob = jest.fn();
 const resolveLinkRunsDir = jest.fn();
 const applyDecisionRunResult = jest.fn();
+const taskUpdate = jest.fn();
 const existsSync = jest.fn();
 const readFileSync = jest.fn();
 
@@ -60,18 +61,23 @@ jest.mock("@/lib/decisions/decision-run-results", () => ({
   applyDecisionRunResult: (...args: unknown[]) => applyDecisionRunResult(...args),
 }));
 
+jest.mock("@/lib/tasks/task-store", () => ({
+  taskUpdate: (...args: unknown[]) => taskUpdate(...args),
+}));
+
 jest.mock("node:fs", () => ({
   existsSync: (...args: unknown[]) => existsSync(...args),
   readFileSync: (...args: unknown[]) => readFileSync(...args),
 }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
-function makeRequest(): Parameters<typeof GET>[0] {
+function makeRequest(body?: Record<string, unknown>): Parameters<typeof GET>[0] {
   return {
-    method: "GET",
+    method: body ? "PATCH" : "GET",
     url: "http://localhost:3000/api/decisions/decision-1",
     headers: new Headers(),
+    json: async () => body,
   } as unknown as Parameters<typeof GET>[0];
 }
 
@@ -140,5 +146,46 @@ describe("GET /api/decisions/[id]", () => {
         },
       },
     });
+  });
+});
+
+describe("PATCH /api/decisions/[id]", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    checkAuth.mockResolvedValue(true);
+    getNamespaceIdFromRequest.mockResolvedValue("default");
+    getOrgIdFromRequest.mockResolvedValue("default");
+    getWorkspacePath.mockReturnValue("/repo");
+    getDecision.mockReturnValue({
+      id: "decision-1",
+      taskId: "DEC-001",
+      title: "Old title",
+      prompt: "Old prompt",
+      status: "briefed",
+      options: [],
+    });
+    updateDecision.mockResolvedValue({
+      id: "decision-1",
+      taskId: "DEC-001",
+      title: "New title",
+      prompt: "Old prompt",
+      status: "briefed",
+      options: [],
+    });
+  });
+
+  test("syncs the linked task title when the decision title changes", async () => {
+    const res = await PATCH(
+      makeRequest({ title: "New title" }) as Parameters<typeof PATCH>[0],
+      { params: Promise.resolve({ id: "decision-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "DEC-001",
+      { title: "New title" },
+      "default",
+    );
   });
 });

@@ -12,6 +12,7 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
+import { taskUpdate } from "@/lib/tasks/task-store";
 
 export const dynamic = "force-dynamic";
 
@@ -69,9 +70,13 @@ export const POST = withErrorHandling(async (
     const parsed = job.result as Record<string, unknown>;
     const decision = getDecision(namespaceId, orgId, id, workspacePath);
     if (!decision) throw new NotFound("Decision", id);
+    const title = (parsed.title as string) || decision.prompt;
+    if (decision.taskId) {
+      taskUpdate(orgId, decision.taskId, { title }, namespaceId);
+    }
 
     const updated = await updateDecision(namespaceId, orgId, id, {
-      title: (parsed.title as string) || decision.prompt,
+      title,
       priority: parsed.priority as string,
       category: parsed.category as string,
       brief: parsed.brief as Decision["brief"],

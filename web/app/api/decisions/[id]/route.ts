@@ -10,6 +10,7 @@ import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { applyDecisionRunResult } from "@/lib/decisions/decision-run-results";
+import { taskUpdate } from "@/lib/tasks/task-store";
 
 export const dynamic = "force-dynamic";
 
@@ -108,8 +109,14 @@ export const PATCH = withErrorHandling(async (
   const orgId = await getOrgIdFromRequest(request);
   const workspacePath = getWorkspacePath(request);
   const body = await request.json();
+  const existing = typeof body.title === "string"
+    ? getDecision(nsId, orgId, id, workspacePath)
+    : null;
 
   const decision = await updateDecision(nsId, orgId, id, body, workspacePath);
+  if (existing?.taskId && typeof body.title === "string") {
+    taskUpdate(orgId, existing.taskId, { title: body.title }, nsId);
+  }
   return apiSuccess({ decision });
 });
 

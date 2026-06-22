@@ -1,4 +1,5 @@
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
+import { taskUpdate } from "@/lib/tasks/task-store";
 import type {
   Decision,
   ExecutionPlan,
@@ -62,8 +63,13 @@ export async function applyDecisionRunResult({
   const parsed = resultObject(result);
 
   if (phase === "research") {
+    const title = (parsed.title as string) || decision.prompt;
+    if (decision.taskId) {
+      taskUpdate(orgId, decision.taskId, { title }, namespaceId);
+    }
+
     return updateDecision(namespaceId, orgId, decisionId, {
-      title: (parsed.title as string) || decision.prompt,
+      title,
       priority: parsed.priority as string,
       category: parsed.category as string,
       brief: parsed.brief as Decision["brief"],
