@@ -293,6 +293,7 @@ export default function AgentProfilesPage() {
   const [editDisallowedTools, setEditDisallowedTools] = useState("");
   const [editEnv, setEditEnv] = useState<Record<string, string>>({});
   const [editPreExec, setEditPreExec] = useState("");
+  const [editReadiness, setEditReadiness] = useState("");
   const [editLogPath, setEditLogPath] = useState("");
   const [editLogFormat, setEditLogFormat] = useState("");
 
@@ -328,6 +329,20 @@ export default function AgentProfilesPage() {
 
   // helper: check if value is a secret reference
   const isSecretRef = (v: string) => /^\{secret:/.test(v);
+
+  const formatReadiness = (readiness: AgentProfile["readiness"]) =>
+    readiness ? JSON.stringify(readiness, null, 2) : "";
+
+  const parseReadiness = (): AgentProfile["readiness"] | undefined => {
+    const raw = editReadiness.trim();
+    if (!raw) return undefined;
+
+    const parsed = JSON.parse(raw) as AgentProfile["readiness"];
+    if (!parsed || typeof parsed.enabled !== "boolean") {
+      throw new Error("readiness JSON must include enabled as true or false");
+    }
+    return parsed;
+  };
 
   const handleTestConnection = async () => {
     if (!selected) return;
@@ -381,6 +396,7 @@ export default function AgentProfilesPage() {
     setEditDisallowedTools(p.disallowed_tools || "");
     setEditEnv(p.env || {});
     setEditPreExec(p.pre_exec || "");
+    setEditReadiness(formatReadiness(p.readiness));
     setEditLogPath(p.log_path || "");
     setEditLogFormat(p.log_format || "");
     setError("");
@@ -409,6 +425,7 @@ export default function AgentProfilesPage() {
     setEditDisallowedTools("");
     setEditEnv({});
     setEditPreExec("");
+    setEditReadiness("");
     setEditLogPath("");
     setEditLogFormat("");
     setError("");
@@ -423,6 +440,14 @@ export default function AgentProfilesPage() {
   const handleSave = async () => {
     if (!editName.trim() || !editCli.trim()) {
       setError("name and CLI binary are required");
+      return;
+    }
+
+    let readiness: AgentProfile["readiness"] | undefined;
+    try {
+      readiness = parseReadiness();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "readiness JSON is invalid");
       return;
     }
 
@@ -443,6 +468,7 @@ export default function AgentProfilesPage() {
         disallowed_tools: editDisallowedTools.trim() || undefined,
         env: Object.keys(editEnv).length ? editEnv : undefined,
         pre_exec: editPreExec.trim() || undefined,
+        readiness,
         log_path: editLogPath.trim() || undefined,
         log_format: editLogFormat.trim() || undefined,
       };
@@ -568,6 +594,7 @@ export default function AgentProfilesPage() {
         disallowed_tools: selected.disallowed_tools,
         env: selected.env,
         pre_exec: selected.pre_exec,
+        readiness: selected.readiness,
         log_path: selected.log_path,
         log_format: selected.log_format,
       }),
@@ -1039,6 +1066,20 @@ export default function AgentProfilesPage() {
                   onChange={(e) => setEditPreExec(e.target.value)}
                 />
                 <p className="mt-1 text-[10px] text-foreground/30">Use for: nvm use, source ~/.bashrc, export PATH=...</p>
+              </div>
+
+              {/* readiness */}
+              <div>
+                <SectionLabel>Readiness</SectionLabel>
+                <Textarea
+                  className="text-xs font-mono h-48 resize-y"
+                  placeholder={'{\n  "enabled": true,\n  "ready_patterns": [],\n  "blocked_patterns": [],\n  "recoverable_patterns": [],\n  "retry_patterns": []\n}'}
+                  value={editReadiness}
+                  onChange={(e) => setEditReadiness(e.target.value)}
+                />
+                <p className="mt-1 text-[10px] text-foreground/30">
+                  JSON policy used before Mentiko sends the task into the CLI session.
+                </p>
               </div>
 
               {/* logs */}

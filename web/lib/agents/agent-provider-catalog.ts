@@ -39,6 +39,7 @@ export interface BundleProfile {
   permission_flag?: string;
   extra_args?: string[];
   pre_exec?: string;
+  readiness?: AgentProfile["readiness"];
   description?: string;
   preferredAdvisorDefault?: boolean;
 }
@@ -192,6 +193,7 @@ export function bundleProfileToAgentProfile(
     extra_args: bundleProfile.extra_args ?? [],
     env: {},
     pre_exec: bundleProfile.pre_exec,
+    readiness: bundleProfile.readiness,
     log_path: bundle?.log_path,
     log_format: bundle?.log_format,
   };

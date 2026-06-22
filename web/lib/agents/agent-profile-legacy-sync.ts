@@ -19,6 +19,7 @@ const LEGACY_READ_SYNC_FIELDS = [
   "extra_args",
   "disallowed_tools",
   "pre_exec",
+  "readiness",
   "log_path",
   "log_format",
 ] as const satisfies readonly (keyof SyncCandidate)[];

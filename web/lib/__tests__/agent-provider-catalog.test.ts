@@ -3,6 +3,7 @@ import {
   COMMON_PRESETS,
   DEFAULT_MARKETPLACE_AGENT_MODEL,
   getAgentConfigOptionsForTool,
+  getAllBundleProfiles,
   getCliBinary,
   getCliTool,
   getDefaultAgentConfigIdForTool,
@@ -66,5 +67,22 @@ describe("agent provider catalog", () => {
     expect(getEngineProviderDefault("gemini")?.model).toBe("gemini-3.5-flash");
     expect(getEngineProviderDefault("openrouter")?.model).toBe("deepseek/deepseek-v4-flash");
     expect(DEFAULT_MARKETPLACE_AGENT_MODEL).toBe("claude-sonnet-4-6");
+  });
+
+  it("keeps codex profiles unpinned and profile-driven for startup recovery", () => {
+    const codexProfiles = getAllBundleProfiles().filter((profile) => profile.cli === "codex");
+
+    expect(codexProfiles.length).toBeGreaterThan(0);
+    for (const profile of codexProfiles) {
+      expect(profile.extra_args || []).not.toContain("--skip-git-repo-check");
+      expect(profile.readiness).toMatchObject({ enabled: true });
+      expect(profile.readiness?.blocked_patterns || []).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            value: "unexpected argument '--skip-git-repo-check'",
+          }),
+        ]),
+      );
+    }
   });
 });

@@ -5,6 +5,7 @@ import { listProfiles, createProfile, slugify, updateProfile } from "@/lib/agent
 import { getLegacyProfileSyncUpdates } from "@/lib/agents/agent-profile-legacy-sync";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import type { AgentProfile } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     disallowed_tools,
     env,
     pre_exec,
+    readiness,
     log_path,
     log_format,
   } = body as {
@@ -70,6 +72,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     disallowed_tools?: string;
     env?: Record<string, string>;
     pre_exec?: string;
+    readiness?: AgentProfile["readiness"];
     log_path?: string;
     log_format?: string;
   };
@@ -97,6 +100,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     disallowed_tools,
     env: env || {},
     pre_exec,
+    readiness,
     log_path,
     log_format,
   });

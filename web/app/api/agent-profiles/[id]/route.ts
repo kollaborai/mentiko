@@ -8,6 +8,7 @@ import {
 } from "@/lib/agents/agent-profile-storage";
 import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import type { AgentProfile } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -69,11 +70,12 @@ export const PATCH = withErrorHandling(
       permission_flag,
       extra_args,
       disallowed_tools,
-      env,
-      pre_exec,
-      log_path,
-      log_format,
-    } = body as {
+    env,
+    pre_exec,
+    readiness,
+    log_path,
+    log_format,
+  } = body as {
       name?: string;
       description?: string;
       isDefault?: boolean;
@@ -87,6 +89,7 @@ export const PATCH = withErrorHandling(
       disallowed_tools?: string;
       env?: Record<string, string | null>;
       pre_exec?: string;
+      readiness?: AgentProfile["readiness"];
       log_path?: string;
       log_format?: string;
     };
@@ -111,6 +114,7 @@ export const PATCH = withErrorHandling(
         )
         : undefined,
       pre_exec,
+      readiness,
       log_path,
       log_format,
     });

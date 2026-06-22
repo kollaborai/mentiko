@@ -185,7 +185,39 @@
           "model": "gpt-5.5",
           "pipe_flag": "exec",
           "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
-          "extra_args": ["--skip-git-repo-check"],
+          "readiness": {
+            "enabled": true,
+            "blocked_patterns": [
+              {
+                "name": "unsupported skip git repo check arg",
+                "type": "text",
+                "value": "unexpected argument '--skip-git-repo-check'",
+                "action": "block",
+                "risk": "low",
+                "enabled": true
+              }
+            ],
+            "retry_patterns": [
+              {
+                "name": "cli install or update in progress",
+                "type": "regex",
+                "value": "(installing|updating|downloading)",
+                "action": "retry",
+                "risk": "medium",
+                "enabled": true
+              }
+            ],
+            "recoverable_patterns": [
+              {
+                "name": "press enter to continue",
+                "type": "regex",
+                "value": "Press Enter to continue",
+                "action": "recover",
+                "risk": "low",
+                "enabled": true
+              }
+            ]
+          },
           "description": "Flagship model for complex coding and agentic work"
         },
         {
@@ -195,7 +227,39 @@
           "model": "gpt-5.4-mini",
           "pipe_flag": "exec",
           "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
-          "extra_args": ["--skip-git-repo-check"],
+          "readiness": {
+            "enabled": true,
+            "blocked_patterns": [
+              {
+                "name": "unsupported skip git repo check arg",
+                "type": "text",
+                "value": "unexpected argument '--skip-git-repo-check'",
+                "action": "block",
+                "risk": "low",
+                "enabled": true
+              }
+            ],
+            "retry_patterns": [
+              {
+                "name": "cli install or update in progress",
+                "type": "regex",
+                "value": "(installing|updating|downloading)",
+                "action": "retry",
+                "risk": "medium",
+                "enabled": true
+              }
+            ],
+            "recoverable_patterns": [
+              {
+                "name": "press enter to continue",
+                "type": "regex",
+                "value": "Press Enter to continue",
+                "action": "recover",
+                "risk": "low",
+                "enabled": true
+              }
+            ]
+          },
           "description": "Faster, lower-cost Codex profile for focused tasks"
         }
       ]
@@ -276,7 +340,39 @@
         "model": "gpt-5.4-mini",
         "pipe_flag": "exec",
         "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
-        "extra_args": ["--skip-git-repo-check"],
+        "readiness": {
+          "enabled": true,
+          "blocked_patterns": [
+            {
+              "name": "unsupported skip git repo check arg",
+              "type": "text",
+              "value": "unexpected argument '--skip-git-repo-check'",
+              "action": "block",
+              "risk": "low",
+              "enabled": true
+            }
+          ],
+          "retry_patterns": [
+            {
+              "name": "cli install or update in progress",
+              "type": "regex",
+              "value": "(installing|updating|downloading)",
+              "action": "retry",
+              "risk": "medium",
+              "enabled": true
+            }
+          ],
+          "recoverable_patterns": [
+            {
+              "name": "press enter to continue",
+              "type": "regex",
+              "value": "Press Enter to continue",
+              "action": "recover",
+              "risk": "low",
+              "enabled": true
+            }
+          ]
+        },
         "description": "Legacy Spark profile id synced to the current fast Codex model"
       }
     },

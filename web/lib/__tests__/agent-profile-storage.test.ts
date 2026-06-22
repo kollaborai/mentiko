@@ -101,4 +101,37 @@ describe("agent profile storage", () => {
     expect(profile?.isAdvisorDefault).toBe(true);
   });
 
+  test("stores readiness policy on agent profiles", async () => {
+    const {
+      createProfile,
+      getProfile,
+    } = await import("../agents/agent-profile-storage");
+
+    createProfile("default", "default", {
+      id: "codex-default",
+      name: "Codex Default",
+      isDefault: true,
+      isAdvisorDefault: false,
+      cli: "codex",
+      readiness: {
+        enabled: true,
+        blocked_patterns: [
+          {
+            name: "bad arg",
+            type: "text",
+            value: "unexpected argument '--skip-git-repo-check'",
+            action: "block",
+            risk: "low",
+            enabled: true,
+          },
+        ],
+      },
+    });
+
+    expect(getProfile("default", "default", "codex-default")?.readiness).toMatchObject({
+      enabled: true,
+      blocked_patterns: [expect.objectContaining({ action: "block" })],
+    });
+  });
+
 });

@@ -315,6 +315,39 @@ export function validateProfile(profile: AgentProfile): string | null {
     return "Pre-exec script must be at most 8192 characters";
   }
 
+  if (profile.readiness) {
+    if (typeof profile.readiness.enabled !== "boolean") {
+      return "Readiness enabled must be true or false";
+    }
+
+    const groups = [
+      profile.readiness.ready_patterns,
+      profile.readiness.blocked_patterns,
+      profile.readiness.recoverable_patterns,
+      profile.readiness.retry_patterns,
+    ].filter(Boolean);
+
+    for (const patterns of groups) {
+      if (!Array.isArray(patterns)) {
+        return "Readiness pattern groups must be arrays";
+      }
+      for (const pattern of patterns) {
+        if (!pattern.name || pattern.name.length > 128) {
+          return "Readiness pattern names are required and must be at most 128 characters";
+        }
+        if (!pattern.value || pattern.value.length > 512) {
+          return "Readiness pattern values are required and must be at most 512 characters";
+        }
+        if (pattern.type && pattern.type !== "text" && pattern.type !== "regex") {
+          return "Readiness pattern type must be text or regex";
+        }
+        if (pattern.risk && !["low", "medium", "high"].includes(pattern.risk)) {
+          return "Readiness pattern risk must be low, medium, or high";
+        }
+      }
+    }
+  }
+
   if (profile.env) {
     for (const [key, value] of Object.entries(profile.env)) {
       if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {

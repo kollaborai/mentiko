@@ -300,6 +300,23 @@ export type AgentProfileProvider =
   | "antigravity"
   | "custom";
 
+export interface AgentProfileReadinessPattern {
+  name: string;
+  type?: "text" | "regex";
+  value: string;
+  action?: "ready" | "block" | "recover" | "retry";
+  risk?: "low" | "medium" | "high";
+  enabled?: boolean;
+}
+
+export interface AgentProfileReadinessConfig {
+  enabled: boolean;
+  ready_patterns?: AgentProfileReadinessPattern[];
+  blocked_patterns?: AgentProfileReadinessPattern[];
+  recoverable_patterns?: AgentProfileReadinessPattern[];
+  retry_patterns?: AgentProfileReadinessPattern[];
+}
+
 export interface AgentProfile {
   id: string;
   name: string;
@@ -315,6 +332,7 @@ export interface AgentProfile {
   disallowed_tools?: string;
   env?: Record<string, string>;
   pre_exec?: string;
+  readiness?: AgentProfileReadinessConfig;
   log_path?: string;
   log_format?: string;
   createdAt: string;
