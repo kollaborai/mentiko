@@ -100,7 +100,7 @@ export function TaskDetailHeader({
             )}
             {typeof task.metadata?.decision_id === "string" && (
               <a
-                href={`/tasks?type=decision&decisionId=${encodeURIComponent(task.metadata.decision_id)}`}
+                href={`/tasks?type=decision&task=${encodeURIComponent(task.id)}`}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition-colors"
               >
                 <Link2 className="h-2.5 w-2.5" />

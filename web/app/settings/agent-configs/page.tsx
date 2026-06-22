@@ -14,11 +14,13 @@ import {
   AddFilled, TrashFilled, RefreshFilled, TickCircleFilled, DocumentDownloadFilled,
   CloseCircleFilled, InfoCircleFilled, CopyFilled, MagicStarFilled,
   EyeFilled, EyeSlashFilled, ExportFilled, MagicStarFilled as FlaskConicalFilled,
+  CommandSquareFilled,
 } from "@aliimam/icons";
 import { BotMessageSquare, ShieldTickFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleIcon } from "@aliimam/logos";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import type { AgentProfile, AgentProfileProvider } from "@/lib/types";
 import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import { AgentProfileWizard } from "@/components/agent/agent-profile-wizard";
@@ -253,6 +255,7 @@ function CliIcon({ cli, className }: { cli: string; className?: string }) {
 export default function AgentProfilesPage() {
   const { profiles, loading, refetch } = useAgentProfiles();
   const { fetchWithNamespace } = useNamespaceFetch();
+  const { workspaceId, workspacePath } = useWorkspace();
 
   const [selected, setSelected] = useState<AgentProfile | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -301,6 +304,8 @@ export default function AgentProfilesPage() {
   const [showCredential, setShowCredential] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [launchingTest, setLaunchingTest] = useState(false);
+  const [launchResult, setLaunchResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [secrets, setSecrets] = useState<Array<{ id: string; name: string }>>([]);
   const [credSecretDropdown, setCredSecretDropdown] = useState(false);
 
@@ -352,16 +357,46 @@ export default function AgentProfilesPage() {
       const res = await fetchWithNamespace(`/api/agent-profiles/${selected.id}/test`, {
         method: "POST",
       });
-      const data = await res.json();
+      const raw = await res.json();
+      const data = unwrapApiData<{ message?: string }>(raw);
       if (res.ok) {
         setTestResult({ ok: true, message: data.message || "Connection successful" });
       } else {
-        setTestResult({ ok: false, message: getApiErrorMessage(data, "Connection failed") });
+        setTestResult({ ok: false, message: getApiErrorMessage(raw, "Connection failed") });
       }
     } catch {
       setTestResult({ ok: false, message: "Request failed" });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleLaunchTestSession = async () => {
+    if (!selected) return;
+    setLaunchingTest(true);
+    setLaunchResult(null);
+    try {
+      const res = await fetchWithNamespace(`/api/agent-profiles/${selected.id}/test-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cwd: workspacePath || undefined,
+          workspaceId: workspaceId || undefined,
+        }),
+      });
+      const raw = await res.json();
+      const data = unwrapApiData<{ name?: string; message?: string }>(raw);
+      if (!res.ok || !data.name) {
+        setLaunchResult({ ok: false, message: getApiErrorMessage(raw, "Launch failed") });
+        return;
+      }
+
+      setLaunchResult({ ok: true, message: data.message || `Launched ${data.name}` });
+      window.dispatchEvent(new CustomEvent("open-terminal-session", { detail: { session: data.name } }));
+    } catch {
+      setLaunchResult({ ok: false, message: "Launch failed" });
+    } finally {
+      setLaunchingTest(false);
     }
   };
 
@@ -401,6 +436,7 @@ export default function AgentProfilesPage() {
     setEditLogFormat(p.log_format || "");
     setError("");
     setTestResult(null);
+    setLaunchResult(null);
     setShowCredential(false);
   };
 
@@ -466,7 +502,7 @@ export default function AgentProfilesPage() {
         permission_flag: editPermissionFlag.trim() || undefined,
         extra_args: editExtraArgs.trim() ? editExtraArgs.trim().split(/\s+/).filter(Boolean) : [],
         disallowed_tools: editDisallowedTools.trim() || undefined,
-        env: Object.keys(editEnv).length ? editEnv : undefined,
+        env: editEnv,
         pre_exec: editPreExec.trim() || undefined,
         readiness,
         log_path: editLogPath.trim() || undefined,
@@ -1117,16 +1153,34 @@ export default function AgentProfilesPage() {
                 </Button>
                 {error && <p className="text-xs text-red-400 ml-2">{error}</p>}
                 {!isNew && selected && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-xs text-foreground/50 hover:text-foreground ml-auto"
-                    onClick={handleCopy}
-                    title="Duplicate profile"
-                  >
-                    <CopyFilled className="h-3.5 w-3.5 mr-1" />
-                    Copy
-                  </Button>
+                  <div className="ml-auto flex items-center gap-2">
+                    {launchResult && (
+                      <span className={`text-[10px] ${launchResult.ok ? "text-green-400" : "text-red-400"}`}>
+                        {launchResult.message}
+                      </span>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs text-foreground/50 hover:text-foreground"
+                      onClick={handleLaunchTestSession}
+                      disabled={launchingTest}
+                      title="Launch this profile in a terminal"
+                    >
+                      <CommandSquareFilled className="h-3.5 w-3.5 mr-1" />
+                      {launchingTest ? "Launching..." : "Launch test"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs text-foreground/50 hover:text-foreground"
+                      onClick={handleCopy}
+                      title="Duplicate profile"
+                    >
+                      <CopyFilled className="h-3.5 w-3.5 mr-1" />
+                      Copy
+                    </Button>
+                  </div>
                 )}
                 <Button
                   size="sm"

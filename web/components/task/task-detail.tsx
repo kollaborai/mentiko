@@ -9,6 +9,7 @@ import { TaskComments } from "./task-comments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
 import { TaskRunStoryPanels } from "./task-run-story-panels";
+import { DecisionDetail } from "@/components/decision/decision-detail";
 import type { Task, TaskComment } from "@/lib/tasks/task-types";
 import { Markdown } from "@/components/ui/markdown";
 
@@ -31,6 +32,7 @@ interface TaskDetailProps {
   onMetadataUpdate?: (metadata: Record<string, unknown>) => void;
   onClearMetadata?: () => void;
   onRefreshTask?: () => Promise<void>;
+  onDecisionUpdate?: () => Promise<void> | void;
   onAddComment: (text: string) => Promise<void>;
   isRunning: boolean;
   workspacePath?: string;
@@ -87,6 +89,7 @@ export function TaskDetail({
   onMetadataUpdate,
   onClearMetadata,
   onRefreshTask,
+  onDecisionUpdate,
   onAddComment,
   isRunning,
   workspacePath,
@@ -94,6 +97,22 @@ export function TaskDetail({
   onAddDep,
   depInfo,
 }: TaskDetailProps) {
+  const decisionId = typeof task.metadata?.decision_id === "string"
+    ? task.metadata.decision_id
+    : undefined;
+
+  if (decisionId) {
+    return (
+      <DecisionDetail
+        decisionId={decisionId}
+        workspacePath={workspacePath}
+        onBack={onBack}
+        onUpdate={onDecisionUpdate ?? onRefreshTask}
+        onDelete={onDecisionUpdate ?? onRefreshTask}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <TaskDetailHeader

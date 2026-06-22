@@ -71,4 +71,12 @@ describe("decision navigation", () => {
     expect(proxy).toContain('url.searchParams.set("type", "decision")');
     expect(proxy).toContain('url.searchParams.set("decisionId", decisionId)');
   });
+
+  it("maps old decisionId links onto linked task rows in the task page", () => {
+    const tasksPage = readFileSync("app/tasks/page.tsx", "utf8");
+
+    expect(tasksPage).toContain('const decisionId = searchParams.get("decisionId")');
+    expect(tasksPage).toContain('task.metadata?.decision_id === decisionId');
+    expect(tasksPage).toContain("onDecisionUpdate={handleDecisionUpdate}");
+  });
 });

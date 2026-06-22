@@ -785,6 +785,15 @@ function TasksPageContent() {
     [fetchTasks, fetchEpics, fetchDepInfo, wsParam, fetchWithNamespace]
   );
 
+  const handleDecisionUpdate = useCallback(async () => {
+    await Promise.all([
+      fetchTasks(),
+      fetchEpics(),
+      fetchDepInfo(),
+      refreshSelectedTask(),
+    ]);
+  }, [fetchTasks, fetchEpics, fetchDepInfo, refreshSelectedTask]);
+
   const handleSelectDep = useCallback(
     async (taskId: string) => {
       // try local list first
@@ -880,15 +889,21 @@ function TasksPageContent() {
     />
   );
 
-  // auto-select task from ?task= query param (once after initial load)
+  // auto-select task from ?task= or legacy ?decisionId= query param (once after initial load)
   useEffect(() => {
     if (autoSelectDone.current) return;
     if (loading) return;
     const taskId = searchParams.get("task");
-    if (!taskId) return;
+    const decisionId = searchParams.get("decisionId");
+    if (!taskId && !decisionId) return;
     autoSelectDone.current = true;
-    handleSelectDep(taskId);
-  }, [loading, searchParams, handleSelectDep]);
+    if (taskId) {
+      handleSelectDep(taskId);
+      return;
+    }
+    const task = tasks.find((task) => task.metadata?.decision_id === decisionId);
+    if (task) handleSelect(task);
+  }, [loading, searchParams, tasks, handleSelectDep, handleSelect]);
 
   // reconcile stale task statuses once on mount
   const reconciledRef = useRef(false);
@@ -965,32 +980,33 @@ function TasksPageContent() {
               {showGenerate ? (
                 generatePanel
               ) : selected ? (
-              <TaskDetail
-                key={selected.id}
-                task={selected}
-                subtasks={children}
-                comments={comments}
-                depInfo={depInfo}
-                onBack={handleBack}
-                onClose={handleClose}
-                onReopen={handleReopen}
-                onEdit={() => setShowEdit(true)}
-                onSelectChild={handleSelect}
-                onSelectDep={handleSelectDep}
-                onAssignChain={handleAssignChain}
-                onRemoveChain={handleRemoveChain}
-                onRunChain={handleRunChain}
-                onToggleAutoRun={handleToggleAutoRun}
-                onResetAutoRunAttempts={handleResetAutoRunAttempts}
-                onClearMetadata={handleClearMetadata}
-                onMetadataUpdate={handleMetadataUpdate}
-                onRefreshTask={refreshSelectedTask}
-                onAddComment={handleAddComment}
-                isRunning={isRunning}
-                workspacePath={workspacePath}
-                allTasks={tasks}
-                onAddDep={handleAddDep}
-              />
+                <TaskDetail
+                  key={selected.id}
+                  task={selected}
+                  subtasks={children}
+                  comments={comments}
+                  depInfo={depInfo}
+                  onBack={handleBack}
+                  onClose={handleClose}
+                  onReopen={handleReopen}
+                  onEdit={() => setShowEdit(true)}
+                  onSelectChild={handleSelect}
+                  onSelectDep={handleSelectDep}
+                  onAssignChain={handleAssignChain}
+                  onRemoveChain={handleRemoveChain}
+                  onRunChain={handleRunChain}
+                  onToggleAutoRun={handleToggleAutoRun}
+                  onResetAutoRunAttempts={handleResetAutoRunAttempts}
+                  onClearMetadata={handleClearMetadata}
+                  onMetadataUpdate={handleMetadataUpdate}
+                  onRefreshTask={refreshSelectedTask}
+                  onDecisionUpdate={handleDecisionUpdate}
+                  onAddComment={handleAddComment}
+                  isRunning={isRunning}
+                  workspacePath={workspacePath}
+                  allTasks={tasks}
+                  onAddDep={handleAddDep}
+                />
               ) : null}
             </div>
           )}
@@ -1050,6 +1066,7 @@ function TasksPageContent() {
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
+              onDecisionUpdate={handleDecisionUpdate}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}
@@ -1200,6 +1217,7 @@ function TasksPageContent() {
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
+              onDecisionUpdate={handleDecisionUpdate}
               onAddComment={handleAddComment}
               isRunning={isRunning}
               workspacePath={workspacePath}
