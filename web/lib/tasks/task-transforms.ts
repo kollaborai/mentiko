@@ -292,6 +292,58 @@ export function groupByEpic(
   for (const e of epics) {
     epicMap.set(e.id, e);
   }
+
+  for (const task of tasks) {
+    if (task.type !== "epic" || epicMap.has(task.id)) continue;
+
+    const children = tasks.filter(
+      (candidate) =>
+        candidate.type !== "epic" &&
+        (candidate.parentId === task.id ||
+          candidate.id.startsWith(`${task.id}.`))
+    );
+
+    epicMap.set(task.id, {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      priority: task.rawPriority,
+      total_children: children.length,
+      closed_children: children.filter(
+        (child) => child.status === "closed" || child.completed
+      ).length,
+    });
+  }
+
+  const derivedParentIds = new Set(
+    tasks
+      .map((task) => task.parentId)
+      .filter((parentId): parentId is string => Boolean(parentId))
+      .filter((parentId) => parentId.toLowerCase().startsWith("epic"))
+      .filter((parentId) => !epicMap.has(parentId))
+  );
+  for (const parentId of derivedParentIds) {
+    const children = tasks.filter(
+      (candidate) => candidate.type !== "epic" && candidate.parentId === parentId
+    );
+    if (children.length === 0) continue;
+
+    epicMap.set(parentId, {
+      id: parentId,
+      title: parentId,
+      description: "",
+      status: children.every((child) => child.status === "closed" || child.completed)
+        ? "closed"
+        : "open",
+      priority: Math.min(...children.map((child) => child.rawPriority)),
+      total_children: children.length,
+      closed_children: children.filter(
+        (child) => child.status === "closed" || child.completed
+      ).length,
+    });
+  }
+
   const includedEpicIds = new Set<string>();
 
   const groups = new Map<string, Task[]>();

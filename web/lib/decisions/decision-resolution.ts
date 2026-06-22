@@ -1,5 +1,5 @@
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskCreate, taskUpdate } from "@/lib/tasks/task-store";
+import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 
@@ -136,6 +136,23 @@ export async function resolveDecisionToTasks({
   const hasPlan = plan && Array.isArray(plan.tasks) && plan.tasks.length > 0;
   const decisionTaskId = decision.taskId;
   const existingParentTaskId = decision.parentTaskId;
+  if (existingParentTaskId) {
+    const parentTask = taskGet(orgId, existingParentTaskId, namespaceId);
+    if (!parentTask) {
+      throw new BadRequest("Decision parent task not found", {
+        decisionId,
+        parentTaskId: existingParentTaskId,
+      });
+    }
+    if (taskWorkspaceId && parentTask.workspace_id !== taskWorkspaceId) {
+      throw new BadRequest("Decision parent task belongs to another workspace", {
+        decisionId,
+        parentTaskId: existingParentTaskId,
+        parentWorkspaceId: parentTask.workspace_id,
+        decisionWorkspaceId: taskWorkspaceId,
+      });
+    }
+  }
 
   let epicId: string;
   const allTaskIds: string[] = [];

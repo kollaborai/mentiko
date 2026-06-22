@@ -540,7 +540,8 @@ function TreeRow({
         </button>
 
         {/* task row - draggable */}
-        <div
+        <button
+          type="button"
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData("text/plain", node.id);
@@ -549,8 +550,6 @@ function TreeRow({
           }}
           onDragEnd={onDragEnd}
           onClick={() => onClick(node.id)}
-          role="button"
-          tabIndex={0}
           className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors cursor-grab min-w-0
             ${isClosed ? "opacity-35" : ""}
             ${isBlocked && !isSelected ? "opacity-60" : ""}
@@ -621,7 +620,7 @@ function TreeRow({
           <span className="text-[10px] font-mono text-foreground/15 shrink-0 hidden group-hover:inline">
             {shortId(node.id)}
           </span>
-        </div>
+        </button>
       </div>
 
       {/* task children (sub-tasks from hierarchy) */}

@@ -12,10 +12,12 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
 const mockTaskCreate = jest.fn();
 const mockTaskAddDep = jest.fn();
 const mockTaskUpdate = jest.fn();
+const mockTaskGet = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
+  taskGet: (...args: unknown[]) => mockTaskGet(...args),
 }));
 
 import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
@@ -100,6 +102,9 @@ describe("resolveDecisionToTasks", () => {
       .mockReturnValueOnce({ id: "EPIC-001" })
       .mockReturnValueOnce({ id: "TASK-001" })
       .mockReturnValueOnce({ id: "TASK-002" });
+    mockTaskGet.mockImplementation((_orgId, id) => (
+      id === "EPIC-008" ? { id, workspace_id: "/repo/app" } : null
+    ));
     mockUpdateDecision.mockImplementation(async (_ns, _org, _id, updates) => ({
       ...makeDecision(),
       ...updates,
@@ -255,5 +260,49 @@ describe("resolveDecisionToTasks", () => {
       expect.objectContaining({ status: "approved" }),
       "/repo/marketplace",
     );
+  });
+
+  it("rejects approval when the existing parent epic is gone", async () => {
+    mockGetDecision.mockReturnValue({
+      ...makeDecision(),
+      taskId: "DEC-001",
+      parentTaskId: "EPIC-404",
+    });
+    mockTaskGet.mockReturnValue(null);
+
+    await expect(resolveDecisionToTasks({
+      namespaceId: "mike",
+      orgId: "default",
+      decisionId: "decision-1",
+      selectedOptionId: "opt-a",
+      workspaceId: "/repo/app",
+      workspacePath: "/repo/app",
+      selectedBy: "user",
+    })).rejects.toThrow("Decision parent task not found");
+
+    expect(mockTaskCreate).not.toHaveBeenCalled();
+    expect(mockUpdateDecision).not.toHaveBeenCalled();
+  });
+
+  it("rejects approval when the existing parent epic is in another workspace", async () => {
+    mockGetDecision.mockReturnValue({
+      ...makeDecision(),
+      taskId: "DEC-001",
+      parentTaskId: "EPIC-008",
+    });
+    mockTaskGet.mockReturnValue({ id: "EPIC-008", workspace_id: "/repo/other" });
+
+    await expect(resolveDecisionToTasks({
+      namespaceId: "mike",
+      orgId: "default",
+      decisionId: "decision-1",
+      selectedOptionId: "opt-a",
+      workspaceId: "/repo/app",
+      workspacePath: "/repo/app",
+      selectedBy: "user",
+    })).rejects.toThrow("Decision parent task belongs to another workspace");
+
+    expect(mockTaskCreate).not.toHaveBeenCalled();
+    expect(mockUpdateDecision).not.toHaveBeenCalled();
   });
 });

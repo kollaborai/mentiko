@@ -483,6 +483,79 @@ describe("groupByEpic", () => {
     expect(groups[0].epic?.id).toBe("epic-1");
     expect(groups[0].tasks.map((task) => task.id)).toEqual(["t1"]);
   });
+
+  it("derives epic groups from task rows when the epic summary fetch is stale", () => {
+    const tasks = [
+      { id: "epic-1", type: "epic" as const, title: "Launch epic", rawPriority: 1 },
+      { id: "t1", parentId: "epic-1", type: "task" as const, title: "First task", rawPriority: 0 },
+      { id: "t2", parentId: "epic-1", type: "task" as const, title: "Second task", rawPriority: 2, status: "closed" as const, completed: true },
+    ].map(
+      (t) =>
+        ({
+          ...t,
+          description: "",
+          completed: t.completed ?? false,
+          status: t.status ?? ("open" as const),
+          priority: "medium" as const,
+          rawPriority: t.rawPriority,
+          owner: "",
+          assignee: "",
+          createdBy: "",
+          createdAt: "",
+          updatedAt: "",
+          labels: [],
+          dependencyCount: 0,
+          dependentCount: 0,
+          commentCount: 0,
+        })
+    );
+
+    const groups = groupByEpic(tasks, [], { includeEpics: true });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].epic).toMatchObject({
+      id: "epic-1",
+      title: "Launch epic",
+      total_children: 2,
+      closed_children: 1,
+    });
+    expect(groups[0].tasks.map((task) => task.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("derives epic groups from child parent ids when the epic row is filtered out", () => {
+    const tasks = [
+      { id: "t1", parentId: "EPIC-009", type: "task" as const, title: "First task", rawPriority: 0 },
+      { id: "t2", parentId: "EPIC-009", type: "task" as const, title: "Second task", rawPriority: 2, status: "closed" as const, completed: true },
+    ].map(
+      (t) =>
+        ({
+          ...t,
+          description: "",
+          completed: t.completed ?? false,
+          status: t.status ?? ("open" as const),
+          priority: "medium" as const,
+          rawPriority: t.rawPriority,
+          owner: "",
+          assignee: "",
+          createdBy: "",
+          createdAt: "",
+          updatedAt: "",
+          labels: [],
+          dependencyCount: 0,
+          dependentCount: 0,
+          commentCount: 0,
+        })
+    );
+
+    const groups = groupByEpic(tasks, []);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].epic).toMatchObject({
+      id: "EPIC-009",
+      title: "EPIC-009",
+      total_children: 2,
+      closed_children: 1,
+    });
+    expect(groups[0].tasks.map((task) => task.id)).toEqual(["t1", "t2"]);
+  });
 });
 
 describe("timeAgo", () => {
