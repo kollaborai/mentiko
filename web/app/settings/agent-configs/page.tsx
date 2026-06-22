@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,6 @@ import {
   AddFilled, TrashFilled, RefreshFilled, TickCircleFilled, DocumentDownloadFilled,
   CloseCircleFilled, InfoCircleFilled, CopyFilled, MagicStarFilled,
   EyeFilled, EyeSlashFilled, ExportFilled, MagicStarFilled as FlaskConicalFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { BotMessageSquare, ShieldTickFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -256,6 +256,7 @@ export default function AgentProfilesPage() {
   const { profiles, loading, refetch } = useAgentProfiles();
   const { fetchWithNamespace } = useNamespaceFetch();
   const { workspaceId, workspacePath } = useWorkspace();
+  const router = useRouter();
 
   const [selected, setSelected] = useState<AgentProfile | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -385,16 +386,16 @@ export default function AgentProfilesPage() {
         }),
       });
       const raw = await res.json();
-      const data = unwrapApiData<{ name?: string; message?: string }>(raw);
-      if (!res.ok || !data.name) {
-        setLaunchResult({ ok: false, message: getApiErrorMessage(raw, "Launch failed") });
+      const data = unwrapApiData<{ runId?: string; chainId?: string; message?: string }>(raw);
+      if (!res.ok || !data.runId) {
+        setLaunchResult({ ok: false, message: getApiErrorMessage(raw, "Readiness test failed") });
         return;
       }
 
-      setLaunchResult({ ok: true, message: data.message || `Launched ${data.name}` });
-      window.dispatchEvent(new CustomEvent("open-terminal-session", { detail: { session: data.name } }));
+      setLaunchResult({ ok: true, message: data.message || `Started readiness test ${data.runId}` });
+      router.push(`/runs/${encodeURIComponent(data.runId)}`);
     } catch {
-      setLaunchResult({ ok: false, message: "Launch failed" });
+      setLaunchResult({ ok: false, message: "Readiness test failed" });
     } finally {
       setLaunchingTest(false);
     }
@@ -1165,10 +1166,10 @@ export default function AgentProfilesPage() {
                       className="text-xs text-foreground/50 hover:text-foreground"
                       onClick={handleLaunchTestSession}
                       disabled={launchingTest}
-                      title="Launch this profile in a terminal"
+                      title="Run a real chain through this profile's readiness gate"
                     >
-                      <CommandSquareFilled className="h-3.5 w-3.5 mr-1" />
-                      {launchingTest ? "Launching..." : "Launch test"}
+                      <MagicStarFilled className="h-3.5 w-3.5 mr-1" />
+                      {launchingTest ? "Running..." : "Run readiness"}
                     </Button>
                     <Button
                       size="sm"

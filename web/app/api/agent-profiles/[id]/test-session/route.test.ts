@@ -46,22 +46,15 @@ jest.mock("@/lib/agents/agent-profile-storage", () => ({
   getProfilesDir: () => "/tmp/mentiko-global/namespaces/default/agent-profiles",
 }));
 
-const mockRecordSessionOwner = jest.fn();
-jest.mock("@/lib/pty/session-owners", () => ({
-  recordSessionOwner: (...args: unknown[]) => mockRecordSessionOwner(...args),
-}));
-
 const mockResolveAndValidate = jest.fn();
 jest.mock("@/lib/system/path-validation", () => ({
   getAllowedRoots: jest.fn(async () => ["/workspace"]),
   resolveAndValidate: (...args: unknown[]) => mockResolveAndValidate(...args),
 }));
 
-const mockPtySpawn = jest.fn();
-jest.mock("@/lib/pty/pty-client", () => ({
-  pty: {
-    spawn: (...args: unknown[]) => mockPtySpawn(...args),
-  },
+const mockStartChainRun = jest.fn();
+jest.mock("@/lib/runs/chain-run-service", () => ({
+  startChainRun: (...args: unknown[]) => mockStartChainRun(...args),
 }));
 
 import { POST } from "./route";
@@ -87,40 +80,59 @@ describe("POST /api/agent-profiles/[id]/test-session", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     mockResolveAndValidate.mockReturnValue("/workspace/project");
-    mockPtySpawn.mockResolvedValue({ name: "agent-test-kollab-1234567890", pid: 321 });
+    mockStartChainRun.mockResolvedValue({
+      runId: "run-readiness-1",
+      chainId: "agent-profile-readiness-test",
+      status: "started",
+    });
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  it("spawns the selected profile through the shared interactive profile builder", async () => {
+  it("starts a real readiness test chain with the selected profile", async () => {
     const response = await POST(
-      makeRequest({ cwd: "/workspace/project" }),
+      makeRequest({ cwd: "/workspace/project", workspaceId: "workspace-1" }),
       { params: Promise.resolve({ id: "kollab" }) },
     );
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.name).toBe("agent-test-kollab-1234567890");
-    expect(mockPtySpawn).toHaveBeenCalledWith(
-      "agent-test-kollab-1234567890",
-      "bash",
-      [
-        "-lc",
-        expect.stringContaining("build_profile_command '/tmp/mentiko-global/namespaces/default/agent-profiles/kollab.json' --interactive"),
-      ],
+    expect(body.data.runId).toBe("run-readiness-1");
+    expect(body.data.chainId).toBe("agent-profile-readiness-test");
+    expect(body.data.profileId).toBe("kollab");
+    expect(body.data.message).toBe("Started readiness test chain for Kollab");
+    expect(mockStartChainRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        cwd: "/workspace/project",
-        env: expect.objectContaining({
-          MENTIKO_CODE_ROOT: "/repo/mentiko",
-          NAMESPACE_ID: "default",
-          ORG_ID: "default",
-          MENTIKO_WORKSPACE_PATH: "/workspace/project",
+        request: expect.any(Request),
+        namespaceId: "default",
+        orgId: "default",
+        body: expect.objectContaining({
+          chainId: "agent-profile-readiness-test",
+          agentProfileId: "kollab",
+          workspacePath: "/workspace/project",
+          workspaceId: "workspace-1",
+          userPrompt: expect.stringContaining("real readiness test"),
+          metadata: expect.objectContaining({
+            source: "agent-profile-test-session",
+            profileId: "kollab",
+            profileName: "Kollab",
+          }),
         }),
       }),
     );
-    expect(mockRecordSessionOwner).toHaveBeenCalledWith("agent-test-kollab-1234567890", "user-1");
+    const runBody = mockStartChainRun.mock.calls[0][0].body;
+    expect(runBody.chain.default_agent_profile).toBe("kollab");
+    expect(runBody.chain.config.cli).toBe("kollab");
+    expect(runBody.chain.config.max_rounds).toBe(1);
+    expect(runBody.chain.agents).toEqual([
+      expect.objectContaining({
+        id: "readiness_probe",
+        agent_profile: "kollab",
+        prompt: expect.stringContaining("Readiness probe"),
+      }),
+    ]);
   });
 
   it("rejects cwd outside allowed roots", async () => {
@@ -134,6 +146,6 @@ describe("POST /api/agent-profiles/[id]/test-session", () => {
 
     expect(response.status).toBe(403);
     expect(body.error.message).toBe("cwd is outside the allowed roots");
-    expect(mockPtySpawn).not.toHaveBeenCalled();
+    expect(mockStartChainRun).not.toHaveBeenCalled();
   });
 });

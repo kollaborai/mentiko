@@ -1,25 +1,53 @@
 import { NextRequest } from "next/server";
-import path from "path";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { requirePermission } from "@/lib/auth/rbac-auth";
-import { getProfile, getProfilesDir } from "@/lib/agents/agent-profile-storage";
-import { recordSessionOwner } from "@/lib/pty/session-owners";
-import { buildChildEnv } from "@/lib/runs/child-env";
+import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
-import config, { nsPath, orgPath } from "@/lib/config";
-import { BadRequest, Forbidden, NotFound, Unauthorized } from "@/lib/api-errors";
+import { startChainRun } from "@/lib/runs/chain-run-service";
+import { Forbidden, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import type { AgentProfile, Chain } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+const READINESS_TEST_CHAIN_ID = "agent-profile-readiness-test";
 
-function buildSessionName(profileId: string): string {
-  const slug = profileId.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `agent-test-${(slug || "profile").slice(0, 40)}-${Date.now()}`;
+function buildReadinessTestChain(profile: AgentProfile): Chain {
+  return {
+    id: READINESS_TEST_CHAIN_ID,
+    name: `Readiness test: ${profile.name}`,
+    description: "Runs the selected agent profile through the real chain runner and readiness gate.",
+    version: "1.0.0",
+    default_agent_profile: profile.id,
+    config: {
+      cli: profile.cli,
+      cli_args: profile.extra_args,
+      monitor: true,
+      max_rounds: 1,
+      session_prefix: "profile-readiness",
+    },
+    agents: [
+      {
+        id: "readiness_probe",
+        name: "Readiness Probe",
+        role: "Verify the selected agent profile can start, pass readiness, and answer once.",
+        prompt: [
+          "Readiness probe for Mentiko agent profile.",
+          "Do not modify files or run long tasks.",
+          "Confirm that the session is ready and briefly identify the profile under test.",
+        ].join("\n"),
+        triggers: [],
+        emits: "readiness_test_complete",
+        timeout: 120,
+        agent_profile: profile.id,
+      },
+    ],
+    metadata: {
+      source: "agent-profile-test-session",
+      profileId: profile.id,
+    },
+  };
 }
 
 export const POST = withErrorHandling(
@@ -45,7 +73,7 @@ export const POST = withErrorHandling(
       throw new NotFound("Profile", profileId);
     }
 
-    let body: { cwd?: unknown } = {};
+    let body: { cwd?: unknown; workspaceId?: unknown } = {};
     try {
       body = await request.json();
     } catch {
@@ -62,46 +90,33 @@ export const POST = withErrorHandling(
       terminalCwd = validated;
     }
 
-    const profileFile = path.join(getProfilesDir(namespaceId, orgId), `${profile.id}.json`);
-    const helperFile = path.join(config.codeRoot, "lib", "agent-profile.sh");
-    const namespaceRoot = nsPath(namespaceId);
-    const orgRoot = orgPath(namespaceId, orgId);
-    const sessionName = buildSessionName(profile.id);
-
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9\-_]{0,99}$/.test(sessionName)) {
-      throw new BadRequest("invalid generated session name");
-    }
-
-    const launchScript = [
-      "set -e",
-      `source ${shellQuote(helperFile)}`,
-      `cmd=$(build_profile_command ${shellQuote(profileFile)} --interactive)`,
-      `printf '\\033]0;%s\\007' ${shellQuote(`test ${profile.name}`)}`,
-      "exec bash -lc \"$cmd\"",
-    ].join("\n");
-
-    const { pty } = await import("@/lib/pty/pty-client");
-    const result = await pty.spawn(sessionName, "bash", ["-lc", launchScript], {
-      cwd: terminalCwd || config.codeRoot,
-      env: buildChildEnv({
-        MENTIKO_GLOBAL_ROOT: config.globalRoot,
-        MENTIKO_CODE_ROOT: config.codeRoot,
-        MENTIKO_PROJECT_ROOT: namespaceRoot,
-        MENTIKO_ORG_ROOT: orgRoot,
-        MENTIKO_NAMESPACE_ROOT: namespaceRoot,
-        ...(terminalCwd ? { MENTIKO_WORKSPACE_PATH: terminalCwd } : {}),
-        NAMESPACE_ID: namespaceId,
-        ORG_ID: orgId,
-      }),
+    const workspaceId =
+      typeof body.workspaceId === "string" && body.workspaceId.trim()
+        ? body.workspaceId.trim()
+        : undefined;
+    const result = await startChainRun({
+      request,
+      namespaceId,
+      orgId,
+      body: {
+        chain: buildReadinessTestChain(profile),
+        chainId: READINESS_TEST_CHAIN_ID,
+        userPrompt: `Run a real readiness test for agent profile "${profile.name}" (${profile.id}).`,
+        ...(terminalCwd ? { workspacePath: terminalCwd } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+        agentProfileId: profile.id,
+        metadata: {
+          source: "agent-profile-test-session",
+          profileId: profile.id,
+          profileName: profile.name,
+        },
+      },
     });
 
-    recordSessionOwner(result.name, sessionUser.id);
-
     return apiSuccess({
-      name: result.name,
-      pid: result.pid,
+      ...result,
       profileId: profile.id,
-      message: `Launched ${profile.name}`,
+      message: `Started readiness test chain for ${profile.name}`,
     });
   }
 );
