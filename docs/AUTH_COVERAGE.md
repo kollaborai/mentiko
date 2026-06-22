@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-06-01)
 
 ## summary
-- total routes: 327
-- authenticated: 310   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 329
+- authenticated: 312   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -34,6 +34,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - agent-health/route.ts
 - agent-profiles/[id]/resolved-env/route.ts
 - agent-profiles/[id]/route.ts
+- agent-profiles/[id]/test-session/route.ts
 - agent-profiles/[id]/test/route.ts
 - agent-profiles/bundles/route.ts
 - agent-profiles/install-bundle/route.ts
@@ -236,6 +237,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - performance/route.ts
 - plugins/[id]/route.ts
 - plugins/route.ts
+- preview/[port]/[[...path]]/route.ts
 - profiles/route.ts
 - prometheus/route.ts
 - pty/sessions/[name]/restart/route.ts
