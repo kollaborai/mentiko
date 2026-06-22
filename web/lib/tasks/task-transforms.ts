@@ -254,6 +254,8 @@ export function typeLabel(t: string): string {
     epic: "EPIC",
     feature: "FEAT",
     task: "TASK",
+    decision: "DEC",
+    link: "LINK",
     bug: "BUG",
     chore: "CHORE",
   };
@@ -267,6 +269,10 @@ export function typeBgColor(t: string): string {
       return "bg-purple-500/15 text-purple-400";
     case "feature":
       return "bg-green-500/15 text-green-400";
+    case "decision":
+      return "bg-blue-500/15 text-blue-300";
+    case "link":
+      return "bg-cyan-500/15 text-cyan-300";
     case "bug":
       return "bg-red-500/15 text-red-400";
     case "chore":

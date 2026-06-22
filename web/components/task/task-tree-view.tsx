@@ -15,6 +15,7 @@ import {
   ArrowRight1Filled,
   ArrowDownFilled,
   ArrowUpFilled,
+  JudgeFilled,
 } from "@aliimam/icons";
 
 interface ApiNode {
@@ -347,6 +348,7 @@ function TreeRow({
   const { node, children, blocksIds, blockedByIds } = treeNode;
   const isClosed = node.status === "closed";
   const isEpic = node.type === "epic";
+  const isDecision = node.type === "decision";
   const hasChildren = children.length > 0;
   const isCollapsed = collapsed.has(node.id);
   const priority: TaskPriority = mapPriority(node.priority);
@@ -514,7 +516,8 @@ function TreeRow({
         }}
         className={`flex items-center group transition-colors
           ${isDragging ? "opacity-40" : ""}
-          ${isDropTarget ? "bg-blue-500/15" : ""}`}
+          ${isDropTarget ? "bg-blue-500/15" : ""}
+          ${isDecision ? "bg-blue-500/5" : ""}`}
         style={{ paddingLeft: 12 + depth * 16 }}
       >
         {/* expand/collapse for tasks with dep-children */}
@@ -551,7 +554,7 @@ function TreeRow({
           className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded-sm transition-colors cursor-grab min-w-0
             ${isClosed ? "opacity-35" : ""}
             ${isBlocked && !isSelected ? "opacity-60" : ""}
-            ${isSelected ? "bg-accent" : "hover:bg-accent"}`}
+            ${isSelected ? "bg-accent" : isDecision ? "hover:bg-blue-500/10" : "hover:bg-accent"}`}
         >
           {/* status dot */}
           <span
@@ -561,6 +564,15 @@ function TreeRow({
           {/* priority + type */}
           <PriorityBadge priority={priority} rawPriority={node.priority} />
           <TypeBadge type={node.type} />
+          {isDecision && (
+            <span
+              className="inline-flex items-center gap-1 rounded-sm bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300/75"
+              title="Human decision gate"
+            >
+              <JudgeFilled className="h-2.5 w-2.5" />
+              gate
+            </span>
+          )}
 
           {/* title */}
           <span

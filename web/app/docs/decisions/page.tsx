@@ -18,7 +18,7 @@ export default function DecisionsDocPage() {
         icon={JudgeFilled}
         sectionColor="#f59e0b"
         actions={[
-          { label: "Decisions", href: "/decisions", icon: JudgeFilled, iconColor: "#5b9ef5" },
+          { label: "Decision Tasks", href: "/tasks?type=decision", icon: JudgeFilled, iconColor: "#5b9ef5" },
           { label: "Tasks", href: "/tasks", icon: TaskSquareFilled, iconColor: "#5b9ef5" },
         ]}
       />

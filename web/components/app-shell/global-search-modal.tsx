@@ -152,7 +152,7 @@ const appSections: DrawerLink[] = [
   { label: "Runs", href: "/runs", description: "execution history and live output", icon: RouteSquareFilled, color: "#5b9ef5" },
   { label: "Tasks", href: "/tasks", description: "epics, features, bugs, and dependencies", icon: TaskSquareFilled, color: "#5b9ef5" },
   { label: "Agents", href: "/agents", description: "agent library and profiles", icon: BotMessageSquare, color: "#b07ee8" },
-  { label: "Decisions", href: "/decisions", description: "review recommendations and approvals", icon: JudgeFilled, color: "#5b9ef5" },
+  { label: "Decisions", href: "/tasks?type=decision", description: "review human decision tasks and approvals", icon: JudgeFilled, color: "#5b9ef5" },
   { label: "Workspaces", href: "/workspaces", description: "local, ssh, and docker targets", icon: MonitorFilled, color: "#f59e0b" },
   { label: "Marketplace", href: "/marketplace", description: "templates, plugins, and agents", icon: ShopFilled, color: "#5cb88a" },
 ];
@@ -365,7 +365,7 @@ function StartPageBriefing({ onNavigate }: { onNavigate: (url: string) => void }
   const quickActions: QuickAction[] = [
     { label: "New Chain", href: "/chains", icon: LinkFilled, color: "text-purple-400" },
     { label: "New Task", href: "/tasks", icon: TaskSquareFilled, color: "text-blue-400" },
-    { label: "Decisions", href: "/decisions", icon: JudgeFilled, color: "text-blue-400" },
+    { label: "Decisions", href: "/tasks?type=decision", icon: JudgeFilled, color: "text-blue-400" },
     { label: "Terminal", href: "/workspaces", icon: CommandSquareFilled, color: "text-foreground/50" },
     { label: "Generate", href: "/generation", icon: MagicStarFilled, color: "text-purple-400" },
   ];

@@ -99,7 +99,7 @@ function resolveActionUrl(
         jobType === "decision_retrospective" ||
         (jobType && jobType.startsWith("decision_guided"))
       ) {
-        const url = decisionId ? `/decisions?id=${decisionId}` : "/decisions";
+        const url = decisionId ? `/tasks?type=decision&decisionId=${decisionId}` : "/tasks?type=decision";
         return { actionUrl: url, actionLabel: "View Decision" };
       }
       if (jobType === "generate" || jobType === "recommend") {

@@ -80,7 +80,7 @@ const SECTION_PAGES: Record<SectionKey, PageEntry[]> = {
     { name: "Runs", route: "/runs", icon: RouteSquareFilled, iconName: "RouteSquareFilled" },
     { name: "Tasks", route: "/tasks", icon: TaskSquareFilled, iconName: "TaskSquareFilled" },
     { name: "Conversations", route: "/conversations", icon: MessageCircleFilled, iconName: "MessageCircleFilled" },
-    { name: "Decisions", route: "/decisions", icon: JudgeFilled, iconName: "JudgeFilled" },
+    { name: "Decisions", route: "/tasks?type=decision", icon: JudgeFilled, iconName: "JudgeFilled" },
     { name: "Activity", route: "/activity", icon: ActivityFilled, iconName: "ActivityFilled" },
     { name: "Schedules", route: "/schedules", icon: ClockFilled, iconName: "ClockFilled" },
   ],

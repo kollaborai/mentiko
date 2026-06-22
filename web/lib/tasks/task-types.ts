@@ -159,6 +159,8 @@ export type TaskFilterType =
   | "epic"
   | "feature"
   | "task"
+  | "decision"
+  | "link"
   | "bug"
   | "chore";
 export type TaskSortBy =

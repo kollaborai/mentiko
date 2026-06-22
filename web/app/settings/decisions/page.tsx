@@ -140,7 +140,7 @@ export default function DecisionSettingsPage() {
         icon={JudgeFilled}
         sectionColor="#5b9ef5"
         actions={[
-          { label: "Decisions", href: "/decisions", icon: JudgeFilled, iconColor: "#5b9ef5" },
+          { label: "Decision Tasks", href: "/tasks?type=decision", icon: JudgeFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: RouteSquareFilled, iconColor: "#5cb88a" },
         ]}
       />

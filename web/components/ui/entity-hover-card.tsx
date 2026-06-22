@@ -67,9 +67,9 @@ const ROUTE_META: Record<string, RouteMeta> = {
     icon: TaskSquareFilled,
     color: "#5b9ef5",
   },
-  "/decisions": {
+  "/tasks?type=decision": {
     title: "Decisions",
-    description: "AI-assisted decision framework. Research options, weigh tradeoffs, and generate execution plans.",
+    description: "Human decision tasks with workflow-backed research, tradeoffs, and execution plans.",
     icon: JudgeFilled,
     color: "#5b9ef5",
   },
@@ -325,25 +325,34 @@ function RouteCard({ href }: { href: string }) {
 
 function useLazyFetch<T>(url: string | null) {
   const { fetchWithNamespace } = useNamespaceFetch();
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fetched, setFetched] = useState(false);
+  const [result, setResult] = useState<{ url: string | null; data: T | null }>({
+    url: null,
+    data: null,
+  });
 
   useEffect(() => {
-    if (!url || fetched) return;
-    setLoading(true);
-    setFetched(true);
+    if (!url || result.url === url) return;
+    let cancelled = false;
+
     fetchWithNamespace(url)
       .then((r) => r.json())
       .then((raw) => {
         const d = unwrapApiData<T>(raw);
-        setData(d);
+        if (!cancelled) setResult({ url, data: d });
       })
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [url, fetched, fetchWithNamespace]);
+      .catch(() => {
+        if (!cancelled) setResult({ url, data: null });
+      });
 
-  return { data, loading };
+    return () => {
+      cancelled = true;
+    };
+  }, [url, result.url, fetchWithNamespace]);
+
+  return {
+    data: result.url === url ? result.data : null,
+    loading: Boolean(url) && result.url !== url,
+  };
 }
 
 function LoadingCard() {
@@ -456,6 +465,7 @@ function RunCard({ id }: { id: string }) {
   const { data, loading } = useLazyFetch<RunData>(
     `/api/runs/${encodeURIComponent(id)}`
   );
+  const [renderedAt] = useState(() => Date.now());
   if (loading) return <LoadingCard />;
   const run = data?.run;
   if (!run) return <p className="text-xs text-foreground/40">Run not found</p>;
@@ -472,7 +482,7 @@ function RunCard({ id }: { id: string }) {
   let duration = "";
   if (run.started) {
     const start = new Date(run.started).getTime();
-    const end = run.finished ? new Date(run.finished).getTime() : Date.now();
+    const end = run.finished ? new Date(run.finished).getTime() : renderedAt;
     const secs = Math.round((end - start) / 1000);
     if (secs < 60) duration = `${secs}s`;
     else if (secs < 3600) duration = `${Math.round(secs / 60)}m`;
@@ -589,7 +599,7 @@ function DecisionCard({ id }: { id: string }) {
       color="#5b9ef5"
       title={d.title || id}
       subtitle={`${d.status || "unknown"} / ${optCount} option${optCount !== 1 ? "s" : ""}`}
-      href={`/decisions?id=${encodeURIComponent(id)}`}
+      href={`/tasks?type=decision&decisionId=${encodeURIComponent(id)}`}
     >
       {d.description && (
         <p className="text-xs text-foreground/50 mt-1.5 leading-relaxed line-clamp-2">

@@ -38,6 +38,7 @@ function getTaskAccent(task: Task): string {
     return "bg-red-500";
   }
   if (task.chainBinding?.last_run_decision_required) return "bg-amber-400";
+  if (task.type === "decision") return task.completed ? "bg-emerald-500" : "bg-blue-400";
   if (task.completed) return "bg-emerald-500";
   switch (task.chainBinding?.last_run_status) {
     case "running":
@@ -81,7 +82,12 @@ export function TaskListItem({
       selected={!selectMode && selected}
       onClick={() => onSelect(task)}
       accentClassName={getTaskAccent(task)}
-      className={cn(isRunning && "animate-in fade-in duration-300")}
+      className={cn(
+        "rounded-md px-3 py-2.5",
+        task.type === "decision" && "bg-blue-500/5",
+        selected && task.type === "decision" && "bg-blue-500/10",
+        isRunning && "animate-in fade-in duration-300"
+      )}
     >
       <div className={cn("relative", selectMode ? "pl-10" : "pl-4")}>
         {selectMode && (
@@ -113,6 +119,12 @@ export function TaskListItem({
               {task.description}
             </p>
           ) : null}
+
+          {task.type === "decision" && (
+            <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-blue-300/60">
+              human decision gate
+            </p>
+          )}
 
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
             <TypeBadge type={task.type} />

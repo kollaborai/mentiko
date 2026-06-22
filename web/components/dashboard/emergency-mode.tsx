@@ -37,7 +37,7 @@ export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: Eme
     items.push({ label: "stalled run", count: stalledRuns.length, href: "/runs", color: "text-orange-400" });
   }
   if (pendingDecisions.length > 0) {
-    items.push({ label: "pending decision", count: pendingDecisions.length, href: "/decisions", color: "text-amber-400" });
+    items.push({ label: "pending decision", count: pendingDecisions.length, href: "/tasks?type=decision", color: "text-amber-400" });
   }
 
   if (items.length === 0) return null;
@@ -62,7 +62,7 @@ export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: Eme
       id: `decision-${decision.id}`,
       label: "decision",
       title: decisionTitle(decision),
-      href: `/decisions?decisionId=${decision.id}`,
+      href: `/tasks?type=decision&decisionId=${decision.id}`,
       color: "text-amber-400",
     })),
   ].slice(0, 4);

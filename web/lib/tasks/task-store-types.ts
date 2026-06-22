@@ -97,6 +97,8 @@ export const ISSUE_TYPE_PREFIX: Record<string, string> = {
   epic: "EPIC",
   feature: "FEAT",
   task: "TASK",
+  decision: "DEC",
+  link: "LINK",
   bug: "BUG",
   chore: "CHOR",
 };

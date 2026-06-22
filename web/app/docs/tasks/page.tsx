@@ -21,7 +21,7 @@ export default function TasksDocPage() {
           { label: "Tasks", href: "/tasks", icon: TaskSquareFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
-          { label: "Decisions", href: "/decisions", icon: JudgeFilled, iconColor: "#5b9ef5" },
+          { label: "Decisions", href: "/tasks?type=decision", icon: JudgeFilled, iconColor: "#5b9ef5" },
           { label: "System Settings", href: "/settings/system", icon: Setting2Filled, iconColor: "#a0927b" },
         ]}
       />

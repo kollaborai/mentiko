@@ -36,7 +36,7 @@ const NAV_STRUCTURE: NavCategory[] = [
     children: [
       { href: "/tasks", label: "Tasks" },
       { href: "/conversations", label: "Chat" },
-      { href: "/decisions", label: "Decisions" },
+      { href: "/tasks?type=decision", label: "Decisions" },
       { href: "/activity", label: "Activity" },
       { href: "/schedules", label: "Schedules" },
     ],

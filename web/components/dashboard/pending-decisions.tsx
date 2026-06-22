@@ -60,7 +60,7 @@ export function PendingDecisions({ className }: PendingDecisionsProps) {
           </div>
         </div>
         {decisions.length > 0 && (
-          <Link href="/decisions" className="text-[10px] text-muted-foreground hover:text-foreground">
+          <Link href="/tasks?type=decision" className="text-[10px] text-muted-foreground hover:text-foreground">
             view all
           </Link>
         )}
@@ -70,7 +70,7 @@ export function PendingDecisions({ className }: PendingDecisionsProps) {
       ) : (
         <div className="divide-y divide-muted/40">
           {decisions.slice(0, 5).map((d) => (
-            <Link key={d.id} href={`/decisions?decisionId=${d.id}`}>
+            <Link key={d.id} href={`/tasks?type=decision&decisionId=${d.id}`}>
               <div className="px-4 py-3 hover:bg-accent/40 transition-colors">
                 <p className="text-xs font-medium line-clamp-1">{d.title || d.prompt}</p>
                 {d.context?.problem && (

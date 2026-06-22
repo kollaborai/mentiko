@@ -11,9 +11,11 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
 
 const mockTaskCreate = jest.fn();
 const mockTaskAddDep = jest.fn();
+const mockTaskUpdate = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
+  taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));
 
 import { resolveDecisionToTasks } from "@/lib/decisions/decision-resolution";
@@ -102,6 +104,67 @@ describe("resolveDecisionToTasks", () => {
       ...makeDecision(),
       ...updates,
     }));
+  });
+
+  it("adds approved plan tasks to the existing epic and closes the decision task", async () => {
+    mockGetDecision.mockReturnValue({
+      ...makeDecision(),
+      taskId: "DEC-001",
+      parentTaskId: "EPIC-008",
+    });
+    mockTaskCreate
+      .mockReset()
+      .mockReturnValueOnce({ id: "TASK-010" })
+      .mockReturnValueOnce({ id: "TASK-011" });
+
+    const result = await resolveDecisionToTasks({
+      namespaceId: "mike",
+      orgId: "default",
+      decisionId: "decision-1",
+      selectedOptionId: "opt-a",
+      workspaceId: "/repo/app",
+      workspacePath: "/repo/app",
+      selectedBy: "user",
+    });
+
+    expect(mockTaskCreate).toHaveBeenCalledTimes(2);
+    expect(mockTaskCreate.mock.calls[0][1]).toEqual(expect.objectContaining({
+      parent_id: "EPIC-008",
+      issue_type: "task",
+      metadata: expect.objectContaining({
+        decision_id: "decision-1",
+        decision_task_id: "DEC-001",
+        decision_parent_task_id: "EPIC-008",
+      }),
+    }));
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "DEC-001",
+      expect.objectContaining({
+        status: "closed",
+        metadata: expect.objectContaining({
+          decision_id: "decision-1",
+          decision_status: "approved",
+          decision_selected_option_id: "opt-a",
+        }),
+      }),
+      "mike",
+    );
+    expect(mockUpdateDecision).toHaveBeenCalledWith(
+      "mike",
+      "default",
+      "decision-1",
+      expect.objectContaining({
+        status: "approved",
+        resolution: expect.objectContaining({
+          selectedOptionId: "opt-a",
+          taskId: "EPIC-008",
+          taskIds: ["DEC-001", "TASK-010", "TASK-011"],
+        }),
+      }),
+      "/repo/app",
+    );
+    expect(result.taskIds).toEqual(["DEC-001", "TASK-010", "TASK-011"]);
   });
 
   it("creates decision tasks in the request namespace", async () => {

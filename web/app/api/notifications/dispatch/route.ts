@@ -93,7 +93,7 @@ function eventToActionUrl(
       if (runId) return { actionUrl: `/runs?runId=${runId}`, actionLabel: "View Run" };
       return { actionUrl: "/runs", actionLabel: "View Runs" };
     case "approval-requested":
-      return { actionUrl: "/decisions", actionLabel: "View Decisions" };
+      return { actionUrl: "/tasks?type=decision", actionLabel: "View Decisions" };
     case "budget-threshold":
       return { actionUrl: "/settings", actionLabel: "View Settings" };
     default:

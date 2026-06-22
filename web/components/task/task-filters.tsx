@@ -1,6 +1,6 @@
 "use client";
 
-import { TickSquareFilled, SquareRounded, Trash2, TickCircleFilled, AddFilled, MagicStarFilled } from "@aliimam/icons";
+import { TickSquareFilled, SquareRounded, Trash2, TickCircleFilled, MagicStarFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import type {
   TaskFilterStatus,
@@ -29,7 +29,6 @@ interface TaskFiltersProps {
   selectedCount?: number;
   onBulkClose?: () => void;
   onBulkDelete?: () => void;
-  onCreate?: () => void;
   onGenerate?: () => void;
 }
 
@@ -46,6 +45,8 @@ const typeOptions: { value: TaskFilterType; label: string }[] = [
   { value: "epic", label: "Epic" },
   { value: "feature", label: "Feat" },
   { value: "task", label: "Task" },
+  { value: "decision", label: "Dec" },
+  { value: "link", label: "Link" },
   { value: "bug", label: "Bug" },
   { value: "chore", label: "Chore" },
 ];
@@ -73,24 +74,18 @@ export function TaskFilters({
   selectedCount = 0,
   onBulkClose,
   onBulkDelete,
-  onCreate,
   onGenerate,
 }: TaskFiltersProps) {
   return (
-    <WorkflowSidebarFilters>
+    <WorkflowSidebarFilters className="space-y-1.5 bg-muted/60 p-2.5">
       <div className="flex items-center gap-1.5">
         <WorkflowSidebarSearchInput
           value={searchQuery}
           onChange={onSearchChange}
           placeholder="Search tasks"
         />
-        {onCreate && (
-          <Button size="sm" variant="default" className="shrink-0" onClick={onCreate} title="New task">
-            <AddFilled className="h-3 w-3" />
-          </Button>
-        )}
         {onGenerate && (
-          <Button size="sm" variant="default" className="shrink-0" onClick={onGenerate} title="Generate task with AI">
+          <Button size="sm" variant="default" className="shrink-0" onClick={onGenerate} title="Create or generate task">
             <MagicStarFilled className="h-3 w-3" />
           </Button>
         )}
@@ -134,17 +129,23 @@ export function TaskFilters({
               </Button>
             </>
           )}
-          <select
-            value={sortBy}
-            onChange={(e) => onSortChange(e.target.value as TaskSortBy)}
-            className="h-7 rounded-lg bg-card px-2 text-[10px] text-muted-foreground outline-none"
-          >
+          <div className="flex items-center gap-1 rounded-md bg-card p-0.5">
             {sortOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={sortBy === opt.value}
+                onClick={() => onSortChange(opt.value)}
+                className={
+                  sortBy === opt.value
+                    ? "h-6 rounded-sm bg-foreground px-2 text-[10px] text-background"
+                    : "h-6 rounded-sm px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                }
+              >
                 {opt.label}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
         </div>
       </div>
     </WorkflowSidebarFilters>

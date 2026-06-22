@@ -331,6 +331,13 @@ describe('FloatingPillNav', () => {
       expect(getLinkByHref('/tasks')).toBeInTheDocument()
     })
 
+    it('does not show decisions as a separate workspace nav item', () => {
+      mockPathname = '/tasks'
+      render(<FloatingPillNav />)
+      expect(document.querySelector('a[href="/decisions"]')).not.toBeInTheDocument()
+      expect(document.querySelector('a[href="/tasks?type=decision"]')).not.toBeInTheDocument()
+    })
+
     it('activates workflows category for /chains', () => {
       mockPathname = '/chains'
       render(<FloatingPillNav />)

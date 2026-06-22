@@ -7,7 +7,7 @@ import { mapPriority } from "@/lib/tasks/task-transforms";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
-import { EyeSlashFilled as EyeOff, EyeFilled as Eye, RowHorizontalFilled as Rows3, Link2Filled as Link2 } from "@aliimam/icons";
+import { EyeSlashFilled as EyeOff, EyeFilled as Eye, RowHorizontalFilled as Rows3, Link2Filled as Link2, JudgeFilled } from "@aliimam/icons";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
 import type { TaskPriority } from "@/lib/tasks/task-types";
@@ -475,6 +475,7 @@ function TaskCard({
   const priority: TaskPriority = mapPriority(task.priority);
   const totalDeps = blockedBy.length + blocks.length;
   const isReady = blockedBy.length === 0 && task.status !== "closed";
+  const isDecision = task.type === "decision";
 
   return (
     <button
@@ -483,7 +484,9 @@ function TaskCard({
         "w-full text-left px-2.5 py-2 rounded-sm transition-colors cursor-pointer",
         isSelected
           ? "bg-accent ring-1 ring-foreground/20"
-          : "bg-muted hover:bg-accent",
+          : isDecision
+            ? "bg-blue-500/5 hover:bg-blue-500/10"
+            : "bg-muted hover:bg-accent",
         isReady && !isSelected && "ring-1 ring-green-400/20"
       )}
     >
@@ -499,6 +502,12 @@ function TaskCard({
               <div className="flex items-center gap-1.5 flex-wrap">
                 <TypeBadge type={task.type} />
                 <PriorityBadge priority={priority} rawPriority={task.priority} />
+                {isDecision && (
+                  <span className="inline-flex items-center gap-1 rounded-sm bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300/75">
+                    <JudgeFilled className="h-2.5 w-2.5" />
+                    gate
+                  </span>
+                )}
                 {task.chainBinding && (
                   <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-accent text-foreground/70">
                     <Link2 className="h-2.5 w-2.5" />
@@ -545,6 +554,12 @@ function TaskCard({
           {compact && (
             <div className="flex items-center gap-1">
               <PriorityBadge priority={priority} rawPriority={task.priority} />
+              {isDecision && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] text-blue-300/70">
+                  <JudgeFilled className="h-2 w-2" />
+                  gate
+                </span>
+              )}
               {task.chainBinding && (
                 <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-mono bg-accent text-foreground/70">
                   <Link2 className="h-2 w-2" />

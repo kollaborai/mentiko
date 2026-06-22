@@ -100,7 +100,7 @@ export function TaskDetailHeader({
             )}
             {typeof task.metadata?.decision_id === "string" && (
               <a
-                href={`/decisions?id=${encodeURIComponent(task.metadata.decision_id)}`}
+                href={`/tasks?type=decision&decisionId=${encodeURIComponent(task.metadata.decision_id)}`}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition-colors"
               >
                 <Link2 className="h-2.5 w-2.5" />
@@ -141,7 +141,7 @@ export function TaskDetailHeader({
           </Button>
           {!task.metadata?.decision_id && (
             <Link
-              href={`/decisions?new=1`}
+              href="/tasks?type=decision"
               className="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-md text-xs font-medium text-foreground/60 hover:text-foreground hover:bg-accent transition-colors max-[420px]:w-full"
               title="Send to decision flow"
             >

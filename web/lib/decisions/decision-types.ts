@@ -203,6 +203,10 @@ export interface Decision {
   retroRunId?: string;
   guidedFlow?: GuidedFlow;
   mode?: DecisionMode;
+  /** Task row that represents this decision in the task tree. */
+  taskId?: string;
+  /** Existing epic/task that should receive approved follow-up tasks. */
+  parentTaskId?: string;
   /** workspace path that scopes this decision (undefined = legacy namespace-level) */
   workspacePath?: string;
 }

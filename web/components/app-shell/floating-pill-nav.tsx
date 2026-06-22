@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import {
   RouteSquareFilled, ShopFilled, Setting2Filled,
-  TaskSquareFilled, MessageCircleFilled, JudgeFilled,
+  TaskSquareFilled, MessageCircleFilled,
   BotMessageSquare, BoxFilled, MagicStarFilled,
   CategoryFilled, Element3Filled, ComponentFilled, ActivityFilled, PeopleFilled, DocumentTextFilled, LockFilled,
   GripHorizontal,
@@ -77,7 +77,6 @@ const CATEGORIES: NavCategory[] = [
     children: [
       { href: "/tasks", label: "Tasks", icon: <TaskSquareFilled className="h-4 w-4" /> },
       { href: "/conversations", label: "Chat", icon: <MessageCircleFilled className="h-4 w-4" /> },
-      { href: "/decisions", label: "Decisions", icon: <JudgeFilled className="h-4 w-4" /> },
       { href: "/activity", label: "Activity", icon: <ActivityFilled className="h-4 w-4" /> },
       { href: "/schedules", label: "Schedules", icon: <ClockFilled className="h-4 w-4" /> },
     ],
@@ -390,7 +389,7 @@ function getActiveCategory(pathname: string): string | null {
     if (pathname === cat.href || pathname.startsWith(cat.href + "/")) return cat.key;
   }
   // fallback for routes not directly in category hrefs
-  if (["/runs", "/tasks", "/decisions", "/conversations", "/activity", "/code"].some(p => pathname.startsWith(p))) return "workspace";
+  if (["/runs", "/tasks", "/conversations", "/activity", "/code"].some(p => pathname.startsWith(p))) return "workspace";
   if (["/updates", "/docs"].some(p => pathname.startsWith(p))) return "home";
   if (["/chains", "/agents", "/artifacts", "/generation", "/schedules", "/email", "/webhooks"].some(p => pathname.startsWith(p))) return "workflows";
   if (pathname.startsWith("/marketplace")) return "marketplace";

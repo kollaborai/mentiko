@@ -1,5 +1,5 @@
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
-import { taskAddDep, taskCreate } from "@/lib/tasks/task-store";
+import { taskAddDep, taskCreate, taskUpdate } from "@/lib/tasks/task-store";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 
@@ -134,11 +134,63 @@ export async function resolveDecisionToTasks({
   const notesParts = buildNotesParts(decision, selectedOptionId);
   const plan = decision.guidedFlow?.round3?.plan as ExecutionPlan | undefined;
   const hasPlan = plan && Array.isArray(plan.tasks) && plan.tasks.length > 0;
+  const decisionTaskId = decision.taskId;
+  const existingParentTaskId = decision.parentTaskId;
 
   let epicId: string;
   const allTaskIds: string[] = [];
+  if (decisionTaskId) {
+    allTaskIds.push(decisionTaskId);
+  }
 
-  if (hasPlan) {
+  if (hasPlan && existingParentTaskId) {
+    epicId = existingParentTaskId;
+    const taskIdMap: Record<string, string> = {};
+    for (const [index, planTask] of plan.tasks.entries()) {
+      const subtask = taskCreate(
+        orgId,
+        {
+          workspace_id: taskWorkspaceId,
+          title: planTask.title,
+          description: [
+            planTask.description,
+            planTask.subtasks?.length
+              ? `\nSubtasks:\n${planTask.subtasks.map((subtaskText) => `- ${subtaskText}`).join("\n")}`
+              : "",
+          ].filter(Boolean).join("\n"),
+          issue_type: "task",
+          priority: planTask.priority ?? priorityToNumber(decision.priority),
+          parent_id: existingParentTaskId,
+          metadata: {
+            decision_id: decisionId,
+            decision_task_id: decisionTaskId,
+            decision_parent_task_id: existingParentTaskId,
+            decision_selected_option_id: selectedOptionId,
+            decision_plan_task_id: planTask.id,
+            decision_plan_order: index,
+            decision_plan_phase: planTask.phase,
+          },
+        },
+        namespaceId,
+      );
+      taskIdMap[planTask.id] = subtask.id;
+      allTaskIds.push(subtask.id);
+    }
+
+    if (plan.dependencies?.length) {
+      for (const dep of plan.dependencies) {
+        const fromId = taskIdMap[dep.from];
+        const toId = taskIdMap[dep.to];
+        if (fromId && toId) {
+          try {
+            taskAddDep(orgId, toId, fromId, namespaceId, taskWorkspaceId);
+          } catch (error) {
+            console.warn(`Failed to add dep ${toId} -> ${fromId}:`, error);
+          }
+        }
+      }
+    }
+  } else if (hasPlan) {
     const epic = taskCreate(
       orgId,
       {
@@ -213,16 +265,36 @@ export async function resolveDecisionToTasks({
         description: descriptionParts.join("\n"),
         issue_type: "task",
         priority: priorityToNumber(decision.priority),
+        parent_id: existingParentTaskId,
         notes: notesParts.length > 0 ? notesParts.join("\n") : undefined,
         metadata: {
           decision_id: decisionId,
+          decision_task_id: decisionTaskId,
+          decision_parent_task_id: existingParentTaskId,
           decision_selected_option_id: selectedOptionId,
         },
       },
       namespaceId,
     );
-    epicId = task.id;
-    allTaskIds.push(epicId);
+    epicId = existingParentTaskId ?? task.id;
+    allTaskIds.push(task.id);
+  }
+
+  if (decisionTaskId) {
+    taskUpdate(
+      orgId,
+      decisionTaskId,
+      {
+        status: "closed",
+        metadata: {
+          decision_id: decisionId,
+          decision_status: "approved",
+          decision_selected_option_id: selectedOptionId,
+          ...(existingParentTaskId ? { decision_parent_task_id: existingParentTaskId } : {}),
+        },
+      },
+      namespaceId,
+    );
   }
 
   const updated = await updateDecision(

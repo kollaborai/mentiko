@@ -7,7 +7,6 @@ const FLOATING_PANEL_ROUTE_PREFIXES = [
   "/runs",
   "/tasks",
   "/conversations",
-  "/decisions",
   "/activity",
   "/schedules",
   "/chains",
@@ -21,6 +20,7 @@ const FLOATING_PANEL_ROUTE_PREFIXES = [
   "/marketplace",
   "/settings",
   "/workspaces",
+  "/preview",
 ];
 
 export interface FloatingAppPanelRequest {

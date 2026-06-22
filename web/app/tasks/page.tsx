@@ -2,14 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { TaskSquareFilled, RouteSquareFilled, LinkFilled, JudgeFilled } from "@aliimam/icons";
+import { TaskSquareFilled, RouteSquareFilled, LinkFilled } from "@aliimam/icons";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { PageBanner } from "@/components/ui/page-banner";
 import { TaskFilters } from "@/components/task/task-filters";
 import { TaskListItem } from "@/components/task/task-list-item";
 import { EpicGroupHeader } from "@/components/task/epic-group-header";
 import { TaskDetail } from "@/components/task/task-detail";
-import { TaskCreateDialog } from "@/components/task/task-create-dialog";
 import { TaskGenerateDialog } from "@/components/task/task-generate-dialog";
 import { TaskEditDialog } from "@/components/task/task-edit-dialog";
 import { TaskOverview } from "@/components/task/task-overview";
@@ -60,9 +59,9 @@ function TasksPageContent() {
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
   const [collapsedEpics, setCollapsedEpics] = useState<Set<string>>(new Set());
   const [showGenerate, setShowGenerate] = useState(false);
+  const [generateMode, setGenerateMode] = useState<"task" | "decision" | "manual">("task");
   const [showEdit, setShowEdit] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "tree" | "overview">(
     (searchParams.get("view") as "list" | "tree" | "overview") || "list"
@@ -90,7 +89,12 @@ function TasksPageContent() {
     if (createTriggered.current) return;
     if (searchParams.get("create") === "true") {
       createTriggered.current = true;
-      setShowCreate(true);
+      setGenerateMode("manual");
+      setShowGenerate(true);
+      setSelected(null);
+      setChildren([]);
+      setComments([]);
+      setMobileView("detail");
       // clear the param from URL
       const url = new URL(window.location.href);
       url.searchParams.delete("create");
@@ -334,6 +338,7 @@ function TasksPageContent() {
       setSelected(task);
       setChildren([]);
       setComments([]);
+      setShowGenerate(false);
       setMobileView("detail");
       loadDetail(task);
     },
@@ -853,6 +858,28 @@ function TasksPageContent() {
 
   const isRunning = selected?.chainBinding?.last_run_status === "running";
 
+  const handleOpenGenerate = useCallback((mode: "task" | "decision" | "manual") => {
+    setGenerateMode(mode);
+    setShowGenerate(true);
+    setSelected(null);
+    setChildren([]);
+    setComments([]);
+    setMobileView("detail");
+  }, []);
+
+  const generatePanel = (
+    <TaskGenerateDialog
+      open={showGenerate}
+      onClose={() => { setShowGenerate(false); }}
+      onCreate={handleCreate}
+      onRefresh={() => { fetchTasks(); fetchEpics(); fetchDepInfo(); }}
+      parentEpics={epics.map((e) => ({ id: e.id, title: e.title }))}
+      workspacePath={workspacePath}
+      initialMode={generateMode}
+      presentation="panel"
+    />
+  );
+
   // auto-select task from ?task= query param (once after initial load)
   useEffect(() => {
     if (autoSelectDone.current) return;
@@ -893,7 +920,6 @@ function TasksPageContent() {
         actions={[
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
-          { label: "Decisions", href: "/decisions", icon: JudgeFilled, iconColor: "#5b9ef5" },
         ]}
         docs={[
           { label: "Tasks Guide", href: "/docs/tasks", icon: TaskSquareFilled },
@@ -934,8 +960,11 @@ function TasksPageContent() {
             selectedTaskId={selected?.id}
           />
           {/* slide-in detail panel */}
-          {selected && (
+          {(selected || showGenerate) && (
             <div className="w-1/2 shrink-0 border-l border-foreground/10 overflow-auto flex flex-col">
+              {showGenerate ? (
+                generatePanel
+              ) : selected ? (
               <TaskDetail
                 key={selected.id}
                 task={selected}
@@ -962,6 +991,7 @@ function TasksPageContent() {
                 allTasks={tasks}
                 onAddDep={handleAddDep}
               />
+              ) : null}
             </div>
           )}
         </div>
@@ -992,9 +1022,13 @@ function TasksPageContent() {
           } flex-1 flex-col overflow-hidden md:flex`}
         >
           {!selected ? (
+            showGenerate ? (
+              generatePanel
+            ) : (
             <div className="flex items-center justify-center h-full text-xs text-foreground/30">
               Select a task
             </div>
+            )
           ) : (
             <TaskDetail
               key={selected.id}
@@ -1051,8 +1085,7 @@ function TasksPageContent() {
             selectedCount={selectedTaskIds.size}
             onBulkClose={() => handleBulkAction("close")}
             onBulkDelete={() => handleBulkAction("delete")}
-            onCreate={() => setShowCreate(true)}
-            onGenerate={() => setShowGenerate(true)}
+            onGenerate={() => handleOpenGenerate("task")}
           />
 
           <div className="flex-1 overflow-y-auto">
@@ -1070,8 +1103,15 @@ function TasksPageContent() {
                   icon={<TaskSquareFilled className="h-8 w-8" />}
                   title="No tasks yet"
                   description="Tasks track your work and can be linked to chains for automated execution."
-                  action={{ label: "Create task", onClick: () => setShowCreate(true) }}
-                  secondaryAction={{ label: "Generate with AI", onClick: () => setShowGenerate(true), variant: "outline" }}
+                  action={{
+                    label: "Create task",
+                    onClick: () => handleOpenGenerate("manual"),
+                  }}
+                  secondaryAction={{
+                    label: "Generate with AI",
+                    onClick: () => handleOpenGenerate("task"),
+                    variant: "outline",
+                  }}
                 />
               )
             ) : (
@@ -1132,9 +1172,13 @@ function TasksPageContent() {
           } flex-1 flex-col overflow-hidden md:flex`}
         >
           {!selected ? (
+            showGenerate ? (
+              generatePanel
+            ) : (
             <div className="flex items-center justify-center h-full text-xs text-foreground/30">
               Select a task
             </div>
+            )
           ) : (
             <TaskDetail
               key={selected.id}
@@ -1164,24 +1208,6 @@ function TasksPageContent() {
         </div>
         </div>
       )}
-
-      {/* create dialog */}
-      <TaskCreateDialog
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        onCreate={handleCreate}
-        parentEpics={epics.map((e) => ({ id: e.id, title: e.title }))}
-      />
-
-      {/* generate dialog */}
-      <TaskGenerateDialog
-        open={showGenerate}
-        onClose={() => { setShowGenerate(false); }}
-        onCreate={handleCreate}
-        onRefresh={() => { fetchTasks(); fetchEpics(); fetchDepInfo(); }}
-        parentEpics={epics.map((e) => ({ id: e.id, title: e.title }))}
-        workspacePath={workspacePath}
-      />
 
       {/* edit dialog */}
       {selected && (

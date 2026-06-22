@@ -11,6 +11,8 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
+import { shouldRouteTaskPromptToDecision } from "@/lib/tasks/task-decision-routing";
+import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +24,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new Unauthorized();
   }
 
-  const { prompt, workspacePath, parentId, autoRun } = await request.json();
+  const { prompt, workspacePath, parentId, autoRun, sendToDecisionIfWarranted, mode } = await request.json();
 
   if (!prompt || typeof prompt !== "string") {
     throw new BadRequest("prompt is required", { field: "prompt" });
@@ -33,6 +35,30 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getSessionUser(request);
   const userId = session?.id;
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, userId);
+
+  if (mode === "decision" || (
+    sendToDecisionIfWarranted === true &&
+    shouldRouteTaskPromptToDecision(prompt)
+  )) {
+    const { decision, task } = await createTaskDecision({
+      namespaceId,
+      orgId,
+      prompt,
+      source: mode === "decision" ? "task-generate-decision" : "task-generate",
+      workspacePath: authorizedWorkspacePath,
+      parentTaskId: typeof parentId === "string" && parentId.trim()
+        ? parentId.trim()
+        : undefined,
+    });
+
+    return apiSuccess({
+      routedTo: "decision",
+      decisionId: decision.id,
+      taskId: task.id,
+      decision,
+      task,
+    }, undefined, 201);
+  }
 
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT: These tasks are for the project in "${authorizedWorkspacePath}". Tailor task descriptions and scope to this specific codebase.\n`

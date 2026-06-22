@@ -136,6 +136,22 @@ export async function proxy(request: NextRequest) {
     response.headers.set(key, value);
   }
 
+  if (pathname === "/decisions") {
+    const url = request.nextUrl.clone();
+    const decisionId = url.searchParams.get("decisionId") || url.searchParams.get("id");
+    url.pathname = "/tasks";
+    url.searchParams.set("type", "decision");
+    url.searchParams.delete("id");
+    if (decisionId) {
+      url.searchParams.set("decisionId", decisionId);
+    }
+    const redirectResponse = NextResponse.redirect(url);
+    for (const [key, value] of Object.entries(securityHeaders)) {
+      redirectResponse.headers.set(key, value);
+    }
+    return redirectResponse;
+  }
+
   if (isFloatingPanelFrameRequest(pathname, request.nextUrl.searchParams)) {
     applyFloatingPanelFrameHeaders(response.headers);
   }
