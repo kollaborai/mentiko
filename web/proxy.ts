@@ -140,9 +140,11 @@ export async function proxy(request: NextRequest) {
     applyFloatingPanelFrameHeaders(response.headers);
   }
 
-  // web-proxy responses must be frameable -- the route handler sets its own
-  // X-Frame-Options: SAMEORIGIN. remove the middleware's DENY so the iframe works.
-  if (pathname.startsWith("/api/system/web-proxy")) {
+  // web-proxy + preview responses must be frameable -- both route handlers set
+  // their own X-Frame-Options: SAMEORIGIN. remove the middleware's DENY so the
+  // iframe works. returning here also bypasses rate limiting, which the preview
+  // proxy needs (it fires one request per asset on every page load/refresh).
+  if (pathname.startsWith("/api/system/web-proxy") || pathname.startsWith("/api/preview/")) {
     response.headers.delete("x-frame-options");
     response.headers.delete("content-security-policy");
     return response;

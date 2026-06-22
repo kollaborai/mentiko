@@ -34,6 +34,8 @@ const l = "#a1a1aa";
 const d = "#3f3f46";
 const bg = "transparent";
 
+const LOGIN_HALFTONE_PATTERN: CSSProperties = { opacity: 1 };
+
 const PATTERNS: CSSProperties[] = [
   // crosshatch
   {
@@ -59,11 +61,8 @@ const PATTERNS: CSSProperties[] = [
     background: `repeating-linear-gradient(45deg, ${l}, ${l} 7.5px, transparent 7.5px, transparent 37.5px)`,
     opacity: 0.05,
   },
-  // sunburst
-  {
-    background: `repeating-conic-gradient(${p} 0deg 10deg, transparent 10deg 20deg)`,
-    opacity: 0.06,
-  },
+  // login halftone
+  LOGIN_HALFTONE_PATTERN,
   // grid fine
   {
     backgroundImage: `linear-gradient(${p} 2px, transparent 2px), linear-gradient(90deg, ${p} 2px, transparent 2px), linear-gradient(${p} 1px, transparent 1px), linear-gradient(90deg, ${p} 1px, transparent 1px)`,
@@ -192,6 +191,7 @@ export function PageBanner({
   const router = useRouter();
   const hash = hashString(title);
   const pattern = PATTERNS[hash % PATTERNS.length];
+  const isLoginHalftone = pattern === LOGIN_HALFTONE_PATTERN;
 
   // if icon provided, use it as watermark; otherwise fall back to abstract vectors
   const isCustomIcon = !!icon;
@@ -201,14 +201,30 @@ export function PageBanner({
     <div className="shrink-0 px-4 pt-4 pb-3">
       <div className="relative rounded-xl bg-transparent overflow-hidden p-6">
         {/* pattern background - fades to transparent from center to right */}
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            ...pattern,
-            mask: "linear-gradient(to right, black 50%, transparent 100%)",
-            WebkitMask: "linear-gradient(to right, black 50%, transparent 100%)",
-          }}
-        />
+        {isLoginHalftone ? (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div className="absolute inset-0 auth-background-core opacity-55" />
+            <div className="absolute left-[38%] -top-[65%] h-[190%] w-[46%] auth-halftone auth-halftone-teal opacity-75" />
+            <div className="absolute -bottom-[86%] -right-[8%] h-[175%] w-[52%] auth-halftone auth-halftone-ember opacity-72" />
+            <div className="absolute inset-0 auth-background-vignette opacity-80" />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(to right, rgb(0 0 0 / 0.72) 0 31%, transparent 46%), radial-gradient(ellipse at 55% 58%, rgb(0 0 0 / 0.88) 0 20%, transparent 50%)",
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              ...pattern,
+              mask: "linear-gradient(to right, black 50%, transparent 100%)",
+              WebkitMask: "linear-gradient(to right, black 50%, transparent 100%)",
+            }}
+          />
+        )}
 
         {/* watermark - right side, large and pushed to edge */}
         <div
