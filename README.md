@@ -128,13 +128,20 @@ docker run -d \
   ghcr.io/kollaborai/mentiko:latest
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+Then open [http://localhost:3000/signup](http://localhost:3000/signup) and
+create the first account. On a fresh install, the first email/password signup
+becomes the workspace owner and platform admin for that Mentiko instance. After
+that, use [http://localhost:3000/login](http://localhost:3000/login) with the
+same email and password. Passwords must be at least 12 characters.
 
 - Port `3000` is the web UI.
 - Port `3099` is the terminal websocket bridge (in-app terminals need this).
 - Data persists in the `mentiko-data` docker volume — back this up.
 - `BETTER_AUTH_SECRET` signs sessions. Keep it stable across restarts; if
   you lose it, all sessions are invalidated.
+- Public signup automatically closes after the first account unless you set
+  `MENTIKO_DISABLE_PUBLIC_SIGNUP=false`. Additional users should join through
+  organization invites.
 
 For a stable secret across restarts:
 

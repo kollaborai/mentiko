@@ -8,7 +8,7 @@
  *   - /api/system/codex-token is NOT fetched when gatewayEnabled=true
  */
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 let mockUserState: {
   user: { id: string } | null;
@@ -130,7 +130,12 @@ async function flushAll() {
 }
 
 import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
-import { setKollaborEngineStorageScope } from "@/lib/ai-engine/kollabor-engine-client";
+import {
+  clearKollaborEngineStoredSession,
+  getOrCreateSession,
+  sendMessage,
+  setKollaborEngineStorageScope,
+} from "@/lib/ai-engine/kollabor-engine-client";
 import {
   FloatingKollaborBar,
   nextKollaborBarScaleFromWheel,
@@ -319,5 +324,109 @@ describe("FloatingKollaborBar — gateway mode", () => {
     // codex-token only gets fetched if SHOULD_OFFER_CODEX_INLINE_AUTH=true (currently false).
     // assert the gateway probe ran and codex prompt was not surfaced as a side effect.
     expect(calls.some((u) => u.includes("/api/system/ai-gateway"))).toBe(true);
+  });
+
+  it("retries the user turn once when the stored engine session is stale", async () => {
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/system/ai-gateway")) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { gatewayEnabled: true, mentikoProfileActive: true },
+            requestId: "req_test",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/api/system/storage-scope")) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { storageScope: "install:test" },
+            requestId: "req_test",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    jest.mocked(getOrCreateSession)
+      .mockResolvedValueOnce({ sessionId: "sid-1", sessionToken: "tok-1" })
+      .mockResolvedValueOnce({ sessionId: "sid-2", sessionToken: "tok-2" });
+    jest.mocked(sendMessage)
+      .mockImplementationOnce(async function* () {
+        yield {
+          type: "error",
+          session_id: "sid-1",
+          ts: 1,
+          code: "http_error",
+          message: "HTTP 404 — Session not found",
+          retryable: false,
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        yield {
+          type: "token",
+          session_id: "sid-2",
+          ts: 2,
+          text: "back online",
+        };
+        yield {
+          type: "turn_complete",
+          session_id: "sid-2",
+          ts: 3,
+          input_tokens: 1,
+          output_tokens: 2,
+          tool_calls: 0,
+          stop_reason: "end_turn",
+        };
+      });
+
+    useKollaborBarStore.setState({ yoloPromptSeen: true });
+    render(<FloatingKollaborBar />);
+    await flushAll();
+
+    act(() => {
+      useKollaborBarStore.setState({
+        connected: true,
+        sessionId: "sid-1",
+        yoloPromptSeen: true,
+        inputValue: "hello?",
+      });
+    });
+    const input = screen.getByPlaceholderText("message");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await flushAll();
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    expect(clearKollaborEngineStoredSession).toHaveBeenCalled();
+    expect(getOrCreateSession).toHaveBeenCalledTimes(2);
+    expect(getOrCreateSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        agent: "mentiko",
+        mcp_servers: ["mentiko"],
+        metadata: expect.objectContaining({ source: "floating-kollabor-bar" }),
+      }),
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      "sid-1",
+      "hello?",
+      expect.any(Object),
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      "sid-2",
+      "hello?",
+      expect.any(Object),
+    );
+    expect(
+      useKollaborBarStore.getState().messages.some((message) =>
+        message.content.includes("back online"),
+      ),
+    ).toBe(true);
   });
 });

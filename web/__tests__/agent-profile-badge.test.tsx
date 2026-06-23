@@ -26,7 +26,7 @@ jest.mock("@/components/ui/copy-button", () => ({
   CopyButton: () => null,
 }));
 
-jest.mock("@/components/status-badge", () => ({
+jest.mock("@/components/common/status-badge", () => ({
   StatusBadge: () => null,
 }));
 

@@ -698,6 +698,7 @@ export async function* sendMessage(
   const reader = res.body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  let sawTerminalEvent = false;
 
   try {
     while (true) {
@@ -739,6 +740,7 @@ export async function* sendMessage(
         if (isEngineEvent(parsed)) {
           yield parsed;
           if (parsed.type === "turn_complete") {
+            sawTerminalEvent = true;
             // drain complete; stop reading
             try {
               await reader.cancel();
@@ -747,8 +749,17 @@ export async function* sendMessage(
             }
             return;
           }
+          if (parsed.type === "error") {
+            sawTerminalEvent = true;
+          }
         }
       }
+    }
+    if (!sawTerminalEvent) {
+      yield errorEvent(
+        "message stream closed before turn_complete",
+        "stream_closed",
+      );
     }
   } catch (e: unknown) {
     const reason =

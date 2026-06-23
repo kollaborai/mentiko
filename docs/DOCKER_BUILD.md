@@ -158,6 +158,11 @@ docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
   ghcr.io/kollaborai/mentiko:latest
 ```
 
+Open `http://localhost:3000/signup` and create the first account. On a fresh
+install, the first email/password signup becomes the workspace owner and
+platform admin. After that, sign in at `http://localhost:3000/login` with the
+same email and password. Passwords must be at least 12 characters.
+
 **Build from source locally:**
 
 ```
@@ -166,6 +171,9 @@ docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
   -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
   mentiko:local
 ```
+
+Use the same first-account flow: open `http://localhost:3000/signup`, create the
+initial owner/admin account, then use `/login` for later sessions.
 
 Both should produce a working platform image. If the build fails or
 behavior changes between hosts, that's a regression — file an issue.

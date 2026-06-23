@@ -1,6 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { DashboardStats } from '../dashboard-stats'
 
+let mockRuns: Array<{ id?: string; status: string; started?: string }>
+let mockChains: Array<{ id?: string; name?: string; agentCount?: number } | null>
+let mockAgents: Array<{ id?: string }>
+let mockLoading: boolean
+
 jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
@@ -60,12 +65,33 @@ jest.mock('@/components/dashboard/system-status-widget', () => ({
   SystemStatusWidget: () => <div data-testid="system-status">status widget</div>,
 }))
 
+jest.mock('@/lib/runs/runs-store', () => ({
+  useSharedRuns: () => ({ runs: mockRuns ?? [], loading: mockLoading ?? false }),
+}))
+
+jest.mock('@/lib/chains/chains-store', () => ({
+  useSharedChains: () => ({ chains: mockChains ?? [], loading: mockLoading ?? false }),
+}))
+
+jest.mock('@/lib/agents/agents-store', () => ({
+  useSharedAgents: () => ({ agents: mockAgents ?? [], loading: mockLoading ?? false }),
+}))
+
 // Mock fetch
 global.fetch = jest.fn()
 
 describe('DashboardStats', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockLoading = false
+    mockChains = Array(5).fill({ id: 'c', name: 'chain', agentCount: 3 })
+    mockRuns = [
+      { id: '1', status: 'running', started: new Date().toISOString() },
+      { id: '2', status: 'running', started: new Date().toISOString() },
+      { id: '3', status: 'completed', started: new Date().toISOString() },
+      { id: '4', status: 'failed', started: new Date().toISOString() },
+    ]
+    mockAgents = Array(3).fill({ id: 'a' })
     ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
       if (url.includes('/api/chains')) {
         return Promise.resolve({
@@ -115,6 +141,7 @@ describe('DashboardStats', () => {
     })
 
     it('shows loading state initially', () => {
+      mockLoading = true
       render(<DashboardStats />)
       expect(screen.getAllByText(/\.\.\./i).length).toBeGreaterThan(0)
     })
@@ -169,13 +196,12 @@ describe('DashboardStats', () => {
       })
     })
 
-    it('fetches data from correct endpoints', async () => {
+    it('reads data from shared stores', async () => {
       render(<DashboardStats />)
 
       await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith('/api/chains/list')
-        expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/runs?limit=100'))
-        expect(global.fetch).toHaveBeenCalledWith('/api/agents')
+        expect(screen.getByText('5')).toBeInTheDocument()
+        expect(screen.getAllByText('3').length).toBeGreaterThan(0)
       })
     })
   })
@@ -215,6 +241,9 @@ describe('DashboardStats', () => {
 
   describe('edge cases', () => {
     it('handles empty runs array', async () => {
+      mockChains = []
+      mockRuns = []
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({
@@ -248,6 +277,9 @@ describe('DashboardStats', () => {
     })
 
     it('handles fetch error gracefully', async () => {
+      mockChains = []
+      mockRuns = []
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockRejectedValue(new Error('Network error'))
 
       render(<DashboardStats />)
@@ -259,6 +291,9 @@ describe('DashboardStats', () => {
     })
 
     it('handles partial data responses', async () => {
+      mockChains = []
+      mockRuns = []
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({ ok: false, json: async () => ({}) })
@@ -277,6 +312,9 @@ describe('DashboardStats', () => {
     })
 
     it('handles zero for all stats', async () => {
+      mockChains = []
+      mockRuns = []
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation(() =>
         Promise.resolve({
           ok: true,
@@ -293,6 +331,9 @@ describe('DashboardStats', () => {
     })
 
     it('handles very large numbers', async () => {
+      mockChains = Array(1000).fill(null)
+      mockRuns = Array(500).fill({ status: 'completed' })
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({
@@ -353,6 +394,13 @@ describe('DashboardStats', () => {
 
   describe('run status calculation', () => {
     it('correctly counts running status', async () => {
+      mockChains = []
+      mockRuns = [
+        { id: '1', status: 'running' },
+        { id: '2', status: 'running' },
+        { id: '3', status: 'running' },
+      ]
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({
@@ -389,6 +437,13 @@ describe('DashboardStats', () => {
     })
 
     it('correctly counts pending status as running', async () => {
+      mockChains = []
+      mockRuns = [
+        { id: '1', status: 'running' },
+        { id: '2', status: 'pending' },
+        { id: '3', status: 'completed' },
+      ]
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({
@@ -427,6 +482,13 @@ describe('DashboardStats', () => {
     })
 
     it('correctly counts completed status', async () => {
+      mockChains = []
+      mockRuns = [
+        { id: '1', status: 'completed' },
+        { id: '2', status: 'completed' },
+        { id: '3', status: 'failed' },
+      ]
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({
@@ -464,6 +526,13 @@ describe('DashboardStats', () => {
     })
 
     it('correctly counts failed status', async () => {
+      mockChains = []
+      mockRuns = [
+        { id: '1', status: 'failed' },
+        { id: '2', status: 'failed' },
+        { id: '3', status: 'completed' },
+      ]
+      mockAgents = []
       ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
         if (url.includes('/api/chains')) {
           return Promise.resolve({

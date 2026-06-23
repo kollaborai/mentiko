@@ -20,6 +20,15 @@ interface LinkMockProps {
   [key: string]: unknown
 }
 
+let mockRuns: Array<{
+  id: string
+  chain: string
+  status: Status
+  started: string
+  goal?: string
+}>
+let mockLoading: boolean
+
 jest.mock('@/lib/ui-context/workspace-context', () => ({
   useWorkspace: () => ({
     workspaceId: 'test-ws',
@@ -57,16 +66,15 @@ jest.mock('next/link', () => ({
   default: ({ children, href, ...props }: LinkMockProps) => <a href={href} {...props}>{children}</a>,
 }))
 
-// Mock fetch
-global.fetch = jest.fn()
+jest.mock('@/lib/runs/runs-store', () => ({
+  useSharedRuns: () => ({ runs: mockRuns ?? [], loading: mockLoading ?? false }),
+}))
 
 describe('ActiveChains', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    ;(global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => ({ runs: [] }),
-    })
+    mockRuns = []
+    mockLoading = false
   })
 
   describe('rendering', () => {
@@ -76,6 +84,7 @@ describe('ActiveChains', () => {
     })
 
     it('shows loading state initially', () => {
+      mockLoading = true
       renderWithNamespace(<ActiveChains />)
       expect(screen.getByText(/loading/i)).toBeInTheDocument()
     })
@@ -88,7 +97,7 @@ describe('ActiveChains', () => {
     })
 
     it('displays running count in header', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'test-chain',
@@ -102,10 +111,6 @@ describe('ActiveChains', () => {
           started: new Date().toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -116,7 +121,7 @@ describe('ActiveChains', () => {
 
   describe('run list display', () => {
     it('displays runs when they exist', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'my-test-chain',
@@ -125,10 +130,6 @@ describe('ActiveChains', () => {
           goal: 'Test the chain',
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -138,7 +139,7 @@ describe('ActiveChains', () => {
     })
 
     it('shows status badge for each run', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'test-chain',
@@ -146,10 +147,6 @@ describe('ActiveChains', () => {
           started: new Date().toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -158,7 +155,7 @@ describe('ActiveChains', () => {
     })
 
     it('displays relative time for runs', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'test-chain',
@@ -166,10 +163,6 @@ describe('ActiveChains', () => {
           started: new Date(Date.now() - 60000).toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -180,7 +173,7 @@ describe('ActiveChains', () => {
 
   describe('interaction', () => {
     it('links to run detail pages', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-123',
           chain: 'test-chain',
@@ -188,10 +181,6 @@ describe('ActiveChains', () => {
           started: new Date().toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -209,7 +198,7 @@ describe('ActiveChains', () => {
 
   describe('edge cases', () => {
     it('handles run with no goal', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'test-chain',
@@ -217,10 +206,6 @@ describe('ActiveChains', () => {
           started: new Date().toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -229,7 +214,7 @@ describe('ActiveChains', () => {
     })
 
     it('handles fetch error gracefully', async () => {
-      ;(global.fetch as jest.Mock).mockRejectedValue(new Error('Network error'))
+      mockRuns = []
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -238,16 +223,12 @@ describe('ActiveChains', () => {
     })
 
     it('limits display to 6 runs', async () => {
-      const mockRuns = Array.from({ length: 10 }, (_, i) => ({
+      mockRuns = Array.from({ length: 10 }, (_, i) => ({
         id: `run-${i}`,
         chain: `chain-${i}`,
         status: 'running' as const,
         started: new Date().toISOString(),
       }))
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {
@@ -259,7 +240,7 @@ describe('ActiveChains', () => {
     })
 
     it('displays different status icons', async () => {
-      const mockRuns = [
+      mockRuns = [
         {
           id: 'run-1',
           chain: 'running-chain',
@@ -279,10 +260,6 @@ describe('ActiveChains', () => {
           started: new Date().toISOString(),
         },
       ]
-      ;(global.fetch as jest.Mock).mockResolvedValue({
-        ok: true,
-        json: async () => ({ runs: mockRuns }),
-      })
 
       renderWithNamespace(<ActiveChains />)
       await waitFor(() => {

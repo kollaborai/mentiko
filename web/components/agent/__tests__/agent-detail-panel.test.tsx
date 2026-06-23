@@ -16,6 +16,10 @@ jest.mock('@/components/agent/agent-avatar', () => ({
   AgentAvatar: ({ seed }: { seed: string }) => <div data-testid="agent-avatar">{seed}</div>,
 }))
 
+jest.mock('@/components/ui/markdown', () => ({
+  Markdown: ({ content }: { content: string }) => <div>{content}</div>,
+}))
+
 // Mock the UI components
 jest.mock('@/components/ui/card', () => ({
   Card: ({ children, className }: { children: React.ReactNode; className?: string }) => (
@@ -35,23 +39,17 @@ jest.mock('@/components/ui/button', () => ({
   ),
 }))
 
-// Mock lucide-react icons (component still uses some from lucide)
-jest.mock('lucide-react', () => ({
-  Bot: () => <span data-testid="bot-icon" />,
-  Clock: () => <span data-testid="clock-icon" />,
-  RotateCw: () => <span data-testid="rotate-icon" />,
-  FileText: () => <span data-testid="file-icon" />,
-  Shield: () => <span data-testid="shield-icon" />,
-  FolderOpen: () => <span data-testid="folder-icon" />,
-  MessageSquare: () => <span data-testid="message-icon" />,
-  Copy: () => <span data-testid="copy-icon" />,
-  Check: () => <span data-testid="check-icon" />,
-}))
-
-// Mock @aliimam/icons (chevrons migrated here, plus icons used by child components)
+// Mock @aliimam/icons used by the panel and child components.
 jest.mock('@aliimam/icons', () => ({
   ArrowDown1Filled: () => <span data-testid="chevron-down" />,
   ArrowRight1Filled: () => <span data-testid="chevron-right" />,
+  BotMessageSquare: () => <span data-testid="bot-icon" />,
+  ClockFilled: () => <span data-testid="clock-icon" />,
+  RotateRightFilled: () => <span data-testid="rotate-icon" />,
+  DocumentTextFilled: () => <span data-testid="file-icon" />,
+  ShieldTickFilled: () => <span data-testid="shield-icon" />,
+  FolderOpenFilled: () => <span data-testid="folder-icon" />,
+  MessageSquareFilled: () => <span data-testid="message-icon" />,
   CopyFilled: () => <span data-testid="copy-icon" />,
   TickCircleFilled: () => <span data-testid="check-icon" />,
 }))

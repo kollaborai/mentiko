@@ -27,6 +27,7 @@ import {
   setKollaborEngineStorageScope,
   clearKollaborEngineStoredSession,
   type KollaborTurnContext,
+  type CreateSessionRequest,
 } from "@/lib/ai-engine/kollabor-engine-client";
 import { getRouteContext } from "@/lib/kollabor/route-context";
 import {
@@ -399,6 +400,7 @@ export function FloatingKollaborBar() {
   // message stashed while the first-run mode choice is pending
   const pendingFirstMessageRef = useRef<string | null>(null);
   const bootRef = useRef<(() => Promise<void>) | null>(null);
+  const sessionRequestRef = useRef<CreateSessionRequest | null>(null);
   const routerRef = useRef(router);
   const mcpClientRef = useRef<MCPBarClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -1060,6 +1062,7 @@ export function FloatingKollaborBar() {
           };
         }
 
+        sessionRequestRef.current = sessionRequest;
         const { sessionId: sid, sessionToken } = await getOrCreateSession(sessionRequest);
         if (cancelled) return;
         // Keep SSE auth aligned with this engine session. If no fresh token
@@ -1239,8 +1242,14 @@ export function FloatingKollaborBar() {
     // plain text (the context only rides along to the engine).
     const turnContext = buildKollaborTurnContext(pathname, user?.id, workspacesCount);
     try {
-      for await (const ev of engineSendMessage(sid, content, turnContext)) {
-        switch (ev.type) {
+      let activeSessionId = sid;
+      let retriedSession = false;
+      let shouldRetry = false;
+
+      do {
+        shouldRetry = false;
+        for await (const ev of engineSendMessage(activeSessionId, content, turnContext)) {
+          switch (ev.type) {
           case "token":
             if (ev.text) appendDraftText(ev.text);
             break;
@@ -1304,7 +1313,7 @@ export function FloatingKollaborBar() {
             // YOLO mode: auto-approve without prompting. Read live state so a
             // mid-turn /yolo toggle takes effect on the very next tool call.
             if (useKollaborBarStore.getState().yoloMode) {
-              void engineRespondToPermission(sid, ev.tool_id, "approve").catch(
+              void engineRespondToPermission(activeSessionId, ev.tool_id, "approve").catch(
                 () => {},
               );
             } else {
@@ -1337,10 +1346,12 @@ export function FloatingKollaborBar() {
               setConnected(false);
               setConnecting(false);
               finishDraft();
-              setTimeout(() => {
-                const state = useKollaborBarStore.getState();
-                if (!state.connected && !state.connecting && bootRef.current) void bootRef.current();
-              }, 1000);
+              if (!retriedSession) {
+                retriedSession = true;
+                shouldRetry = true;
+              } else {
+                setError(String(msg));
+              }
             } else {
               setError(String(msg));
               finishDraft();
@@ -1349,11 +1360,27 @@ export function FloatingKollaborBar() {
           }
           default:
             break;
+          }
+          if (shouldRetry) break;
         }
-      }
+        if (shouldRetry) {
+          setConnecting(true);
+          pendingToolInstancesRef.current.clear();
+          const { sessionId: nextSessionId, sessionToken } = await getOrCreateSession(
+            sessionRequestRef.current ?? {},
+          );
+          syncSessionToken(sessionToken);
+          activeSessionId = nextSessionId;
+          setSessionId(nextSessionId);
+          setConnected(true);
+          setConnecting(false);
+          startDraft();
+        }
+      } while (shouldRetry);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(`send failed: ${msg}`);
+      setConnecting(false);
       finishDraft();
       pendingToolInstancesRef.current.clear();
     } finally {

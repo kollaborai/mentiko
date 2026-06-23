@@ -3,6 +3,18 @@
  */
 
 describe("chain run task provenance", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.doMock("@/lib/auth/session-token", () => ({
+      mintSessionToken: jest.fn(),
+      verifySessionToken: jest.fn(),
+    }));
+  });
+
+  afterEach(() => {
+    jest.dontMock("@/lib/auth/session-token");
+  });
+
   test("assigned task chain runs are execution runs", async () => {
     const { shouldRecordTaskExecutionRun } = await import("../runs/chain-run-service");
 

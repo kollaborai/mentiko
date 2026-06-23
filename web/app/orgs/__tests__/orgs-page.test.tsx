@@ -6,6 +6,7 @@ const push = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  usePathname: () => "/orgs",
 }));
 
 jest.mock("@/components/ui/page-banner", () => ({

@@ -18,6 +18,7 @@ jest.mock("@aliimam/icons", () => {
     CloseCircleFilled: Icon,
     CloudConnectionFilled: Icon,
     MagicStarFilled: Icon,
+    FlashFilled: Icon,
     RefreshFilled: Icon,
     Setting2Filled: Icon,
     ShieldTickFilled: Icon,
