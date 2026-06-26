@@ -1,7 +1,7 @@
 import { planCompletionPhases } from "@/lib/runner-v2/phase-plan";
 
 describe("runner-v2 completion phase plan", () => {
-  it("stops before generation import and routing when quality gate fails", () => {
+  it("plans event-artifact handling before stopping when quality gate fails", () => {
     const plan = planCompletionPhases({
       quality: {
         agent: { id: "qa-reviewer" },
@@ -16,7 +16,7 @@ describe("runner-v2 completion phase plan", () => {
     });
 
     expect(plan.terminal).toBe(true);
-    expect(plan.steps.map((step) => step.type)).toEqual(["quality-gate"]);
+    expect(plan.steps.map((step) => step.type)).toEqual(["quality-gate", "event-artifact"]);
   });
 
   it("runs generation import after quality gates and before routing", () => {

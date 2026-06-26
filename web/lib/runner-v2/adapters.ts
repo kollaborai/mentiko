@@ -3,6 +3,7 @@ import { basename, dirname, join } from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import config from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
+import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import type { TypedExecutorEffect, TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
@@ -23,6 +24,7 @@ export type AdapterOperation =
   | { type: "session-policy"; policy: string; sessions?: string[] }
   | { type: "next-chain"; chainName: string; parentRunId: string }
   | { type: "retry-state"; action: string; agentId: string }
+  | { type: "event-artifact"; runId: string; status: string; executionId?: string; artifactPath?: string }
   | ({ type: "generation-import" } & GenerationImportPlan)
   | { type: "circuit-breaker"; action: string; chainName: string; agentId: string; threshold: number; timeout: number }
   | { type: "rollback"; action: string; agentId: string; startSha?: string };
@@ -76,6 +78,8 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
 
   if (effect.type === "event-side-effects") {
     applyEventSideEffects(effect.plan.markProcessed, effect.plan.archiveOwned, context);
+  } else if (effect.type === "event-artifact") {
+    runQualityGateEventArtifact(effect.plan);
   } else if (effect.type === "fan-group-create") {
     writeFanGroup(context.stateDir, effect.group);
   } else if (effect.type === "generation-import") {
@@ -487,6 +491,13 @@ function plannedOperations(effect: TypedExecutorEffect): AdapterOperation[] {
   }
   if (effect.type === "generation-import") {
     return [{ type: "generation-import", ...effect.plan }];
+  }
+  if (effect.type === "event-artifact") {
+    return [{
+      type: "event-artifact",
+      runId: effect.plan.runId,
+      status: "planned",
+    }];
   }
   return [];
 }

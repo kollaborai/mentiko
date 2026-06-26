@@ -1,4 +1,5 @@
 import type { CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
+import type { RunQualityGateEventArtifactInput } from "@/lib/event-artifacts/event-artifact-runner";
 import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { planCompletionEventSideEffects, type EventSideEffectPlan } from "@/lib/runner-v2/event-side-effects";
 import { createFanGroupState, type FanGroupCompletionPlan, type FanGroupState } from "@/lib/runner-v2/fan-group";
@@ -9,6 +10,7 @@ import { planTerminalCompletion, type TerminalCompletionInput, type TerminalComp
 
 export type TypedExecutorEffect =
   | { type: "event-side-effects"; plan: EventSideEffectPlan }
+  | { type: "event-artifact"; plan: RunQualityGateEventArtifactInput }
   | { type: "generation-import"; plan: GenerationImportPlan }
   | { type: "fan-group-create"; group: FanGroupState }
   | { type: "retry"; plan: RetryNoEventPlan }

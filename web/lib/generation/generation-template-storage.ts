@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
 
-export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "link_summary" | "task_run_summary";
+export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "failure_triage" | "link_summary" | "task_run_summary";
 
 export interface GenerationTemplate {
   id: GenerationTemplateId | `custom_${string}`;
@@ -1685,6 +1685,35 @@ Output ONLY valid JSON matching this schema:
 
 Raw JSON only. No backticks, no explanation, nothing but the JSON object.`;
 
+export const DEFAULT_FAILURE_TRIAGE_TEMPLATE = `You are a Mentiko quality-gate triage agent. Convert a failed run event into a small, reviewable task plan.
+
+EVENT PAYLOAD:
+{{EVENT_PAYLOAD}}
+
+OUTPUT REQUIREMENTS:
+1. Return only valid JSON.
+2. Match the generated-tasks/v1 shape:
+{
+  "title": "Fix quality gate failure for ...",
+  "description": "What failed and why.",
+  "type": "bug",
+  "priority": 1,
+  "labels": ["quality-gate", "triage"],
+  "acceptance_criteria": ["..."],
+  "subtasks": [
+    {
+      "title": "Concrete repair action",
+      "description": "Evidence and scope.",
+      "type": "bug",
+      "priority": 1,
+      "acceptance_criteria": "How to prove it is fixed."
+    }
+  ]
+}
+3. Create at most 3 subtasks.
+4. Preserve the original failure evidence. Do not claim the run succeeded.
+5. Do not start chains, create tasks, or call APIs. The runner will store this as a draft artifact for human review.`;
+
 export function getDefaultTemplates(): GenerationTemplate[] {
   const now = new Date().toISOString();
   return [
@@ -1782,6 +1811,12 @@ export function getDefaultTemplates(): GenerationTemplate[] {
       id: "artifact_generation",
       label: "Artifact Generation",
       content: DEFAULT_ARTIFACT_TEMPLATE,
+      updatedAt: now,
+    },
+    {
+      id: "failure_triage",
+      label: "Failure Triage",
+      content: DEFAULT_FAILURE_TRIAGE_TEMPLATE,
       updatedAt: now,
     },
     {

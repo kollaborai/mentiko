@@ -200,6 +200,47 @@ describe("runner-v2 adapters", () => {
     }));
   });
 
+  it("applies event artifact effects under the run artifacts dir", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const artifactsDir = join(dir, "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const result = applyTypedExecutorPlan({
+      action: "fail",
+      effects: [{
+        type: "event-artifact",
+        plan: {
+          namespaceId: "default",
+          orgId: "default",
+          runId: "run-123",
+          runArtifactsDir: artifactsDir,
+          payload: {
+            event: { name: "quality_gate.failed", source: "runner-v2", timestamp: "2026-06-26T00:00:00.000Z" },
+            namespace: { id: "default" },
+            org: { id: "default" },
+            run: { id: "run-123", status: "failed", artifactsDir },
+            task: { id: "FEAT-1", title: "Fix API", status: "in_progress" },
+            qualityGate: { status: "failed", reason: "tests failed", findings: [], risks: [], nextActions: [] },
+            evidence: { changedFiles: [], liveSessions: [], artifacts: [] },
+          },
+        },
+      }],
+      launches: [],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+    });
+
+    expect(result.effectsApplied).toEqual(["event-artifact"]);
+    expect(result.operations).toEqual([expect.objectContaining({
+      type: "event-artifact",
+      runId: "run-123",
+      status: "planned",
+    })]);
+    expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(true);
+  });
+
   it("records terminal side-effect operations while applying run status", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);

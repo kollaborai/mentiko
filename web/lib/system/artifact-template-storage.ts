@@ -820,6 +820,29 @@ _What questions remain unanswered? What would require further research?_
 _Research by {{AGENT}} on {{DATE}}_
 `;
 
+const DEFAULT_GENERATED_TASKS = `{
+  "title": "{{TITLE}}",
+  "description": "{{DESCRIPTION}}",
+  "type": "bug",
+  "priority": 1,
+  "labels": ["quality-gate", "triage"],
+  "acceptance_criteria": [
+    "Failure evidence is reviewed.",
+    "Root cause is fixed.",
+    "Verification passes."
+  ],
+  "subtasks": [
+    {
+      "title": "{{ACTION_TITLE}}",
+      "description": "{{ACTION_DESCRIPTION}}",
+      "type": "task",
+      "priority": 1,
+      "acceptance_criteria": "Action is complete and verified."
+    }
+  ]
+}
+`;
+
 function getDefaultTemplates(): ArtifactTemplate[] {
   const now = new Date().toISOString();
   return [
@@ -845,6 +868,14 @@ function getDefaultTemplates(): ArtifactTemplate[] {
       type: "markdown",
       description: "Agent completion handoff note",
       content: DEFAULT_TASK_SUMMARY,
+      updatedAt: now,
+    },
+    {
+      id: "generated_tasks",
+      name: "Generated Tasks",
+      type: "json",
+      description: "generated-tasks/v1 artifact for draft task imports",
+      content: DEFAULT_GENERATED_TASKS,
       updatedAt: now,
     },
     {

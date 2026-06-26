@@ -31,7 +31,7 @@ export function resolveTemplate(
 export const KNOWN_VARIABLES: Array<{
   name: string;
   description: string;
-  usedIn: ("chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "link_summary" | "task_run_summary")[];
+  usedIn: ("chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "failure_triage" | "link_summary" | "task_run_summary")[];
 }> = [
   {
     name: "SCHEMA",
@@ -46,7 +46,12 @@ export const KNOWN_VARIABLES: Array<{
   {
     name: "WORKSPACE_CONTEXT",
     description: "Workspace path and project-specific context for AI generation",
-    usedIn: ["chain_generation", "agent_generation", "task_generation", "chain_recommendation", "link_generation", "decision_research", "decision_steering", "link_summary", "task_run_summary"],
+    usedIn: ["chain_generation", "agent_generation", "task_generation", "chain_recommendation", "link_generation", "decision_research", "decision_steering", "artifact_generation", "link_summary", "task_run_summary"],
+  },
+  {
+    name: "EVENT_PAYLOAD",
+    description: "Normalized platform event payload for event-driven artifact generation",
+    usedIn: ["failure_triage"],
   },
   {
     name: "AGENT_CATALOG",

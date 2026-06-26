@@ -16,6 +16,7 @@ export type PlatformEventDomain =
   | "chain"
   | "agent"
   | "run"
+  | "quality_gate"
   | "schedule"
   | "webhook"
   | "task"
@@ -36,6 +37,7 @@ export type PlatformEventName =
   | "run.created"
   | "run.completed"
   | "run.stopped"
+  | "quality_gate.failed"
   // scheduling
   | "schedule.triggered"
   | "schedule.missed"
@@ -130,6 +132,30 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
       { name: "stoppedBy", type: "string?", description: "Who or what stopped the chain" },
     ],
     example: { chainId: "long-analysis", runId: "run_abc", stoppedBy: "user" },
+  },
+  {
+    name: "quality_gate.failed",
+    domain: "quality_gate",
+    description: "A run quality gate failed and produced a triage artifact opportunity.",
+    emitters: ["chain-runner-complete.sh", "runner-v2"],
+    consumers: ["event artifact mapper", "plugins", "outbound webhooks", "notifications"],
+    payload: [
+      { name: "runId", type: "string", description: "Run that failed the quality gate" },
+      { name: "namespaceId", type: "string", description: "Namespace scope" },
+      { name: "orgId", type: "string", description: "Org scope" },
+      { name: "taskId", type: "string?", description: "Associated task, when known" },
+      { name: "agentId", type: "string?", description: "Agent that produced the failed gate" },
+      { name: "reason", type: "string", description: "Machine-readable gate failure reason" },
+      { name: "artifactPath", type: "string?", description: "Quality-gate artifact path under the run artifacts dir" },
+    ],
+    example: {
+      runId: "run_abc123",
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "FEAT-021",
+      agentId: "validator",
+      reason: "quality gate agent summary status is partial",
+    },
   },
 
   // ── agent lifecycle ─────────────────────────────────────────────────

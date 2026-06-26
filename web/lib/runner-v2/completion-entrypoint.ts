@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
-import { readRunJson, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import { readRunJson, updateRunAgent, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 
 export interface RunnerV2CompletionEntrypointInput {
@@ -50,6 +52,46 @@ export function runRunnerV2CompletionEntrypoint(
   const eventSnapshots = snapshotEvents(events);
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
   const maxRounds = numberValue(chain.config?.max_rounds);
+  const qualityGate = maybeHandleQualityGateFailure({
+    run,
+    runDir,
+    runJsonPath,
+    agent,
+    chain,
+    namespaceId: env.NAMESPACE_ID || "default",
+    orgId: env.ORG_ID || "default",
+    now: input.now,
+    dryRun: input.dryRun,
+  });
+  if (qualityGate) {
+    if (input.dryRun) {
+      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    }
+    return {
+      status: "handled",
+      runId,
+      agentId: agent.id,
+      decision: "quality-gate-failed",
+      plan: {
+        action: "fail",
+        launches: [],
+        effects: [],
+      },
+      adapter: {
+        effectsApplied: ["event-artifact", "run-terminal"],
+        operations: [{
+          type: "event-artifact",
+          runId,
+          status: qualityGate.status,
+          executionId: qualityGate.executionId,
+          artifactPath: qualityGate.artifactPath,
+        }],
+        launchesStarted: [],
+      },
+      runJsonPath,
+      eventsDir,
+    };
+  }
 
   try {
     const pipeline = runCompletionPipeline({
@@ -135,6 +177,82 @@ export function runRunnerV2CompletionEntrypoint(
   }
 }
 
+function maybeHandleQualityGateFailure(input: {
+  run: RunRecord;
+  runDir: string;
+  runJsonPath: string;
+  agent: ChainAgent;
+  chain: ChainFile;
+  namespaceId: string;
+  orgId: string;
+  now?: Date;
+  dryRun?: boolean;
+}) {
+  const artifactsDir = join(input.runDir, "artifacts");
+  const summaryPath = join(artifactsDir, `${input.agent.id}-summary.json`);
+  const summary = readJsonObject(summaryPath) as AgentSummary | undefined;
+  const result = evaluateQualityGate({
+    agent: {
+      id: input.agent.id,
+      name: input.agent.name,
+      role: stringValue((input.agent as unknown as Record<string, unknown>).role),
+    },
+    summary,
+  });
+  if (result.passed) return null;
+
+  const artifact: { status: string; executionId?: string; artifactPath?: string } = !input.dryRun ? runQualityGateEventArtifact({
+    namespaceId: input.namespaceId,
+    orgId: input.orgId,
+    runId: input.run.id,
+    runArtifactsDir: artifactsDir,
+    now: input.now,
+    payload: {
+      event: {
+        name: "quality_gate.failed",
+        source: "runner-v2",
+        timestamp: (input.now || new Date()).toISOString(),
+      },
+      namespace: { id: input.namespaceId },
+      org: { id: input.orgId },
+      run: {
+        id: input.run.id,
+        chainId: input.chain.id,
+        chainName: input.chain.name,
+        status: "failed",
+        artifactsDir,
+      },
+      ...(input.run.taskId ? {
+        task: {
+          id: input.run.taskId,
+          title: input.run.taskId,
+          status: "failed",
+        },
+      } : {}),
+      qualityGate: {
+        status: summary?.status?.toLowerCase() === "partial" ? "partial" : "failed",
+        agentId: input.agent.id,
+        reason: result.reason,
+        summaryPath: existsSync(summaryPath) ? summaryPath : undefined,
+        findings: boundedStringArray((summary as Record<string, unknown> | undefined)?.findings),
+        risks: boundedStringArray((summary as Record<string, unknown> | undefined)?.risks),
+        nextActions: boundedStringArray((summary as Record<string, unknown> | undefined)?.nextActions),
+      },
+      evidence: {
+        changedFiles: [],
+        liveSessions: [],
+        artifacts: existsSync(summaryPath) ? [summaryPath] : [],
+      },
+    },
+  }) : { status: "planned" as const };
+
+  if (!input.dryRun) {
+    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now);
+    updateRunStatus(input.runJsonPath, "failed", result.reason, input.now);
+  }
+  return artifact;
+}
+
 function generationImportPlan(
   run: RunRecord,
   runDir: string,
@@ -217,6 +335,24 @@ function resolveRunDir(env: NodeJS.ProcessEnv | Record<string, string | undefine
 
 function resolveEventsDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, chainPath: string): string {
   return env.EVENTS_DIR || join(dirname(chainPath), "events");
+}
+
+function readJsonObject(path: string): Record<string, unknown> | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return objectValue(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function boundedStringArray(value: unknown, limit = 10): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    .map((item) => item.trim())
+    .slice(0, limit);
 }
 
 function resolveStateDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, runDir: string): string {

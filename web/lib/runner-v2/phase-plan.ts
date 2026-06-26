@@ -4,6 +4,7 @@ import { planTerminalCompletion, type TerminalCompletionInput, type TerminalComp
 
 export type CompletionPhaseStep =
   | { type: "quality-gate"; result: QualityGateResult }
+  | { type: "event-artifact"; event: "quality_gate.failed"; result: QualityGateResult }
   | { type: "generation-import"; jobId: string; generationKind: string }
   | { type: "generation-failed"; jobId: string; generationKind: string; reason: string }
   | { type: "route"; decision: RoutingDecision }
@@ -29,6 +30,7 @@ export function planCompletionPhases(input: CompletionPhasePlanInput): Completio
   const quality = evaluateQualityGate(input.quality);
   const steps: CompletionPhaseStep[] = [{ type: "quality-gate", result: quality }];
   if (!quality.passed) {
+    steps.push({ type: "event-artifact", event: "quality_gate.failed", result: quality });
     return { steps, terminal: true };
   }
 

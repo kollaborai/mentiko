@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -121,6 +121,72 @@ describe("runner-v2 completion entrypoint", () => {
       dryRun: true,
     })).not.toThrow();
     expect(readRunJson(runJsonPath).agents[0]).toMatchObject({ id: "a", status: "running" });
+  });
+
+  it("creates event-artifact triage when a quality gate summary fails", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [
+        { id: "validator", name: "Validator", emits: "validated" },
+        { id: "deployer", name: "Deployer", triggers: ["validated"] },
+      ],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      taskId: "FEAT-1",
+      status: "running",
+      agents: [{ id: "validator", name: "Validator", session: "validator-run-123", status: "running" }],
+      sessions: ["validator-run-123"],
+    }));
+    writeJson(join(artifactsDir, "validator-summary.json"), {
+      status: "failed",
+      findings: ["tests failed"],
+      risks: ["regression"],
+      nextActions: ["repair tests"],
+    });
+    writeFileSync(join(eventsDir, "run-123-validator-validated.event"), [
+      "event: validated",
+      "source: validator-run-123",
+      "run_id: run-123",
+      "timestamp: 2026-06-26T00:00:00.000Z",
+      "processed: false",
+      "",
+    ].join("\n"));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "validator-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result.decision).toBe("quality-gate-failed");
+    expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(true);
+    expect(existsSync(join(artifactsDir, "draft-child-tasks.json"))).toBe(true);
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "failed",
+      status_message: "agent summary status is failed",
+    });
   });
 
   it("handles core generation completion without an emitted event when a payload exists", () => {

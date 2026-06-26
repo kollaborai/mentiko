@@ -128,6 +128,7 @@ fi
 if [[ -n "${RUN_ID:-}" ]]; then
     RUN_DIR="$RUNS_DIR_BASE/$RUN_ID"
     ARTIFACTS_DIR="$RUN_DIR/artifacts"
+    RUNS_DIR="$RUNS_DIR_BASE"
 fi
 
 # build flags for chain-runner.sh re-invocation
@@ -1037,6 +1038,25 @@ quality_gate_fail_chain() {
                 details: $details,
                 timestamp: $timestamp
             }' > "$gate_artifact" 2>/dev/null || true
+    fi
+
+    if [[ -n "$gate_artifacts_dir" && -n "${RUN_ID:-}" ]]; then
+        _event_artifact_helper="$SCRIPT_DIR/../web/scripts/event-artifact-quality-gate.cjs"
+        if [[ -x "$_event_artifact_helper" || -f "$_event_artifact_helper" ]]; then
+            _event_artifact_output=$(ARTIFACTS_DIR="$gate_artifacts_dir" \
+                MENTIKO_RUN_ID="$RUN_ID" \
+                RUN_ID="$RUN_ID" \
+                MENTIKO_RUN_JSON="${RUN_DIR:-$RUNS_DIR_BASE/$RUN_ID}/run.json" \
+                MENTIKO_AGENT_ID="${CURRENT_AGENT_ID:-unknown}" \
+                MENTIKO_QUALITY_GATE_ARTIFACT="$gate_artifact" \
+                MENTIKO_QUALITY_GATE_REASON="$reason" \
+                MENTIKO_QUALITY_GATE_DETAILS="$details" \
+                NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+                ORG_ID="${ORG_ID:-default}" \
+                node "$_event_artifact_helper" 2>&1) \
+                && echo "  event artifact: $_event_artifact_output" \
+                || echo "  event artifact: failed: $_event_artifact_output"
+        fi
     fi
 
     if [[ -n "${RUN_ID:-}" ]]; then
