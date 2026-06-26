@@ -89,10 +89,11 @@ run-plugins() {
             continue
         fi
 
-        # build config env vars from plugin.config
-        local config_env=""
+        # build config env vars from plugin.config (as an ARRAY of name=value, never a
+        # string that gets eval'd — see the safe export below).
+        local -a config_env=()
         while IFS="=" read -r key val; do
-            [[ -n "$key" ]] && config_env="PLUGIN_${key^^}=${val} $config_env"
+            [[ -n "$key" ]] && config_env+=("PLUGIN_${key^^}=${val}")
         done < <(echo "$plugin" | jq -r '.config // {} | to_entries[] | "\(.key)=\(.value)"' 2>/dev/null)
 
         # run the plugin script (non-blocking, fire-and-forget)
@@ -104,8 +105,10 @@ run-plugins() {
             export PLUGIN_EVENT_JSON="$event_json"
             export PLUGIN_DATA_JSON="$data_json"
             export NAMESPACE_ID="$ns_id"
-            # inject plugin config as env vars
-            eval "export $config_env" 2>/dev/null || true
+            # inject plugin config as env vars. SECURITY: export array name=value pairs
+            # directly — this never re-evaluates the (tenant/marketplace-authored) values,
+            # so a value like "x; rm -rf ~" is a literal string, not a command.
+            [[ ${#config_env[@]} -gt 0 ]] && export "${config_env[@]}" 2>/dev/null || true
             bash "$script_path"
         ) 2>/dev/null &
 

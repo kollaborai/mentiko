@@ -118,32 +118,37 @@ STATEEOF
         local success=false
 
         while [[ $attempt -le $max_attempts ]]; do
-            # build curl command
-            local curl_cmd="curl -s -X POST '$url' \
-                -H 'Content-Type: application/json' \
-                -H 'X-Webhook-Event: $event_type' \
-                -H 'X-Webhook-Id: $event_id' \
-                -H 'X-Webhook-Timestamp: $timestamp' \
-                -H 'User-Agent: mentiko/1.0' \
-                --max-time 10 \
-                --retry 0 \
-                -d '$payload'"
+            # SECURITY: build the curl invocation as an ARGUMENT ARRAY, never a shell
+            # string passed to eval. $url / $payload / header values are webhook-authored;
+            # eval would let a single quote or $(...) in any of them execute commands.
+            # As array args they are inert data handed straight to curl.
+            local -a curl_cmd=(
+                curl -s -X POST "$url"
+                -H "Content-Type: application/json"
+                -H "X-Webhook-Event: $event_type"
+                -H "X-Webhook-Id: $event_id"
+                -H "X-Webhook-Timestamp: $timestamp"
+                -H "User-Agent: mentiko/1.0"
+                --max-time 10
+                --retry 0
+                -d "$payload"
+            )
 
             # add signature if secret provided
             if [[ -n "$secret" ]]; then
                 local signature=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$secret" | awk '{print $2}')
-                curl_cmd="${curl_cmd} -H 'X-Webhook-Signature: sha256=$signature'"
+                curl_cmd+=( -H "X-Webhook-Signature: sha256=$signature" )
             fi
 
             # add custom headers
             while IFS='=' read -r key value; do
-                [[ -n "$key" ]] && curl_cmd="$curl_cmd -H '$key: $value'"
+                [[ -n "$key" ]] && curl_cmd+=( -H "$key: $value" )
             done < <(echo "$headers" | jq -r 'to_entries[] | "\(.key)=\(.value)"' 2>/dev/null)
 
             # send webhook
             local response
             local http_code
-            response=$(eval "$curl_cmd -w '\n%{http_code}'" 2>/dev/null)
+            response=$("${curl_cmd[@]}" -w '\n%{http_code}' 2>/dev/null)
             http_code=$(echo "$response" | tail -1)
             response=$(echo "$response" | head -n -1)
 
