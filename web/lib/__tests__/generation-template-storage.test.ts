@@ -1,8 +1,18 @@
 import {
+  DEFAULT_CHAIN_TEMPLATE,
   DEFAULT_RECOMMEND_TEMPLATE,
   DEFAULT_TASK_TEMPLATE,
   DEFAULT_TASK_RUN_SUMMARY_TEMPLATE,
 } from "@/lib/generation/generation-template-storage";
+
+describe("DEFAULT_CHAIN_TEMPLATE", () => {
+  it("pins branch fan-out to real emitted events and real agent ids", () => {
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("BRANCH FAN-OUT / FAN-IN pattern");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("branches MUST be keyed by that exact emitted event");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("NEVER invent a branch key that no agent emits");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("NEVER put a fan_in agent id that differs from the real agent id");
+  });
+});
 
 describe("DEFAULT_TASK_TEMPLATE", () => {
   it("keeps the example acceptance criteria aligned with Given/When/Then instructions", () => {

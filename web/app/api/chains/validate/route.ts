@@ -162,11 +162,46 @@ function validateAgentTriggers(agents: Array<{id: string; name: string; emits?: 
 
 function validateEventFlow(
   agents: Array<{id: string; name: string; emits?: string; triggers?: string[]}>,
-  branches: Record<string, string | string[] | {fan_out?: string[]}>
+  branches: Record<string, string | string[] | {fan_out?: string[]; fan_in?: string; default?: string; on_error?: string; conditions?: Array<{then?: string}>}>
 ): { errors: ValidationError[]; warnings: ValidationError[] } {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
   const agentIds = new Set(agents.map((a) => a.id));
+  const emittedEvents = new Set(agents.map((a) => a.emits).filter(Boolean));
+
+  for (const [eventName, target] of Object.entries(branches || {})) {
+    if (!emittedEvents.has(eventName)) {
+      errors.push({
+        code: "DEAD_BRANCH_EVENT",
+        message: `Branch key "${eventName}" does not match any agent's emitted event, so it will never run`,
+        fixable: true,
+        fixAction: `Rename the branch key to the event emitted by the upstream agent`,
+      });
+    }
+
+    const targets: string[] = typeof target === "string"
+      ? [target]
+      : Array.isArray(target)
+      ? target
+      : [
+          ...(target.fan_out || []),
+          target.fan_in,
+          target.default,
+          target.on_error,
+          ...(target.conditions || []).map((condition) => condition.then),
+        ].filter((value): value is string => typeof value === "string");
+
+    for (const t of targets) {
+      if (!agentIds.has(t)) {
+        errors.push({
+          code: "INVALID_TARGET",
+          message: `Branch for event "${eventName}" targets non-existent agent "${t}"`,
+          fixable: true,
+          fixAction: `Remove "${t}" from branch or create an agent with id "${t}"`,
+        });
+      }
+    }
+  }
 
   // Check each emitted event has a consumer or is marked terminal
   for (const agent of agents) {
@@ -195,7 +230,13 @@ function validateEventFlow(
         ? [target]
         : Array.isArray(target)
         ? target
-        : target.fan_out || [];
+        : [
+            ...(target.fan_out || []),
+            target.fan_in,
+            target.default,
+            target.on_error,
+            ...(target.conditions || []).map((condition) => condition.then),
+          ].filter((value): value is string => typeof value === "string");
 
       for (const t of targets) {
         if (!agentIds.has(t)) {

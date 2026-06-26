@@ -179,6 +179,8 @@ export function rewriteChainInlineToRef(
 ): Record<string, unknown> {
   const clone = JSON.parse(JSON.stringify(chainJson)) as Record<string, unknown>;
 
+  rewriteBranchAgentIds(clone, agentIdMap);
+
   if (!Array.isArray(clone.agents)) return clone;
 
   clone.agents = (clone.agents as Record<string, unknown>[]).map((entry) => {
@@ -210,6 +212,60 @@ export function rewriteChainInlineToRef(
   });
 
   return clone;
+}
+
+function rewriteAgentId(value: unknown, agentIdMap: Map<string, string>): unknown {
+  return typeof value === "string" && agentIdMap.has(value) ? agentIdMap.get(value) : value;
+}
+
+export function rewriteBranchAgentIds(
+  chainJson: Record<string, unknown>,
+  agentIdMap: Map<string, string>
+): Record<string, unknown> {
+  const branches = chainJson.branches;
+  if (!branches || typeof branches !== "object" || Array.isArray(branches)) {
+    return chainJson;
+  }
+
+  for (const [eventName, target] of Object.entries(branches as Record<string, unknown>)) {
+    if (typeof target === "string") {
+      (branches as Record<string, unknown>)[eventName] = rewriteAgentId(target, agentIdMap);
+      continue;
+    }
+
+    if (Array.isArray(target)) {
+      (branches as Record<string, unknown>)[eventName] = target.map((item) => rewriteAgentId(item, agentIdMap));
+      continue;
+    }
+
+    if (!target || typeof target !== "object") continue;
+    const branch = target as Record<string, unknown>;
+
+    if (Array.isArray(branch.fan_out)) {
+      branch.fan_out = branch.fan_out.map((item) => rewriteAgentId(item, agentIdMap));
+    }
+    if (typeof branch.fan_in === "string") {
+      branch.fan_in = rewriteAgentId(branch.fan_in, agentIdMap);
+    }
+    if (typeof branch.default === "string") {
+      branch.default = rewriteAgentId(branch.default, agentIdMap);
+    }
+    if (typeof branch.on_error === "string") {
+      branch.on_error = rewriteAgentId(branch.on_error, agentIdMap);
+    }
+    if (Array.isArray(branch.conditions)) {
+      branch.conditions = branch.conditions.map((condition) => {
+        if (!condition || typeof condition !== "object" || Array.isArray(condition)) return condition;
+        const next = { ...(condition as Record<string, unknown>) };
+        if (typeof next.then === "string") {
+          next.then = rewriteAgentId(next.then, agentIdMap);
+        }
+        return next;
+      });
+    }
+  }
+
+  return chainJson;
 }
 
 /**

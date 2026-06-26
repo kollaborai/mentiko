@@ -71,6 +71,22 @@ CHAIN DESIGN PRINCIPLES:
    agent-B triggers on "analysis-start", emits "b-complete"  ← parallel!
    aggregator triggers on ["a-complete", "b-complete"]
 
+   BRANCH FAN-OUT / FAN-IN pattern (parallel work with durable join tracking):
+   orchestrator emits "analysis-start"
+   branches MUST be keyed by that exact emitted event:
+   "branches": {
+     "analysis-start": {
+       "fan_out": ["agent-A", "agent-B"],
+       "fan_in": "aggregator",
+       "wait_for": "all"
+     }
+   }
+   agent-A and agent-B should trigger on "analysis-start".
+   aggregator should not also be wired as a serial next step; the fan_in launches it.
+   NEVER invent a branch key that no agent emits.
+   NEVER put a fan_in agent id that differs from the real agent id.
+   If you use branches fan_out, do not also serially chain the fan_out agents through each other.
+
    PIPELINE pattern (linear stages, each feeds next):
    fetcher → parser → analyzer → formatter → notifier
    Each stage emits a specific event with data for the next stage

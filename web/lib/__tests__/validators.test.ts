@@ -79,4 +79,40 @@ describe("validateChain", () => {
       "agents[0].on_timeout: must be a string",
     ]));
   });
+
+  it("rejects branch fan-out keys and targets that cannot run", () => {
+    const chain = {
+      ...chainWithTimeout(0),
+      agents: [
+        {
+          id: "architect",
+          name: "Architect",
+          triggers: ["chain_start"],
+          emits: "agent-0-complete",
+        },
+        {
+          id: "branch-worker",
+          name: "Branch Worker",
+          triggers: ["agent-0-complete"],
+          emits: "branch-complete",
+        },
+      ],
+      branches: {
+        "made-up-event": {
+          fan_out: ["branch-worker", "missing-worker"],
+          fan_in: "missing-validator",
+          wait_for: "all",
+        },
+      },
+    };
+
+    const result = validateChain(chain);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      "branches.made-up-event: must match an event emitted by an agent",
+      "branches.made-up-event: targets missing agent id: missing-worker",
+      "branches.made-up-event: targets missing agent id: missing-validator",
+    ]));
+  });
 });

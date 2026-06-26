@@ -87,6 +87,65 @@ function validateRetryConfig(value: unknown, field: string, errors: string[]): v
   }
 }
 
+function collectBranchTargets(target: unknown): string[] {
+  if (typeof target === "string") return [target];
+  if (Array.isArray(target)) return target.filter((item): item is string => typeof item === "string");
+  if (!target || typeof target !== "object") return [];
+
+  const branch = target as Record<string, unknown>;
+  const targets: string[] = [];
+  if (Array.isArray(branch.fan_out)) {
+    targets.push(...branch.fan_out.filter((item): item is string => typeof item === "string"));
+  }
+  if (typeof branch.fan_in === "string") targets.push(branch.fan_in);
+  if (typeof branch.default === "string") targets.push(branch.default);
+  if (typeof branch.on_error === "string") targets.push(branch.on_error);
+  if (Array.isArray(branch.conditions)) {
+    for (const condition of branch.conditions) {
+      if (condition && typeof condition === "object" && !Array.isArray(condition)) {
+        const thenTarget = (condition as Record<string, unknown>).then;
+        if (typeof thenTarget === "string") targets.push(thenTarget);
+      }
+    }
+  }
+  return targets;
+}
+
+function validateChainBranches(
+  branches: unknown,
+  agents: Array<Record<string, unknown>>,
+  errors: string[]
+): void {
+  if (branches === undefined) return;
+  if (!branches || typeof branches !== "object" || Array.isArray(branches)) {
+    collect(errors, "branches", "must be an object");
+    return;
+  }
+
+  const agentIds = new Set(
+    agents
+      .map((agent) => (typeof agent.id === "string" ? agent.id : typeof agent.$ref === "string" ? agent.$ref : ""))
+      .filter(Boolean)
+  );
+  const emittedEvents = new Set(
+    agents
+      .map((agent) => (typeof agent.emits === "string" ? agent.emits : ""))
+      .filter(Boolean)
+  );
+
+  for (const [eventName, target] of Object.entries(branches as Record<string, unknown>)) {
+    if (emittedEvents.size > 0 && !emittedEvents.has(eventName)) {
+      collect(errors, `branches.${eventName}`, "must match an event emitted by an agent");
+    }
+
+    for (const targetId of collectBranchTargets(target)) {
+      if (!agentIds.has(targetId)) {
+        collect(errors, `branches.${eventName}`, `targets missing agent id: ${targetId}`);
+      }
+    }
+  }
+}
+
 // helper: check url format
 function isValidUrl(url: string): boolean {
   try {
@@ -304,6 +363,8 @@ export function validateChain(chain: unknown): ValidationResult {
         ids.add(agent.id);
       }
     });
+
+    validateChainBranches(c.branches, c.agents as Array<Record<string, unknown>>, errors);
   }
 
   return { valid: errors.length === 0, errors };
