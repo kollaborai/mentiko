@@ -111,7 +111,7 @@ todo:
       - missing generation job with valid run artifact recovers.
       - missing generation job without artifact increments retry as today.
 
-  ☐ add runner-v2 switch-readiness blockers for these gaps
+  ☑ add runner-v2 switch-readiness blockers for these gaps
     files:
       - web/lib/runner-v2/switch-readiness.ts
       - web/lib/runner-v2/switch-readiness.test.ts
@@ -130,4 +130,13 @@ verify:
   ☑ run npm test -- runner-v2 targeted set
   ☑ run node tests/node/generation-salvage.test.mjs
   ☑ run targeted auto-run tests
-  ☐ replay a no-emit core generation run in dry-run runner-v2 mode
+  ☑ replay a no-emit core generation run in dry-run runner-v2 mode
+  ☑ check switch-readiness report
+  ☑ audit saved/generated chains for dead branch fan_out wiring
+
+remaining:
+  ☐ runtime verify a fresh generated fan_out chain launches a fan-group in
+    parallel instead of serial handoff.
+  ☐ decide whether to migrate existing dirty saved chains. audit found 38
+    chain/run chain.json files under ~/.mentiko/namespaces/default with branch
+    keys no agent emits or branch targets that no saved agent id/ref matches.

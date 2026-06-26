@@ -115,4 +115,23 @@ describe("validateChain", () => {
       "branches.made-up-event: targets missing agent id: missing-validator",
     ]));
   });
+
+  it("allows stop as an explicit terminal branch target", () => {
+    const chain = {
+      ...chainWithTimeout(0),
+      agents: [
+        {
+          id: "validator",
+          name: "Validator",
+          triggers: ["chain_start"],
+          emits: "tests-complete",
+        },
+      ],
+      branches: {
+        "tests-complete": "stop",
+      },
+    };
+
+    expect(validateChain(chain).valid).toBe(true);
+  });
 });

@@ -30,6 +30,9 @@ jest.mock("fs", () => ({
     || path.endsWith("completion-entrypoint.ts")
     || path.endsWith("complete-cli.ts")
     || path.endsWith("agent-bootstrap-plan.ts")
+    || path.endsWith("adapters.ts")
+    || path.endsWith("completion-runner.ts")
+    || path.endsWith("executor.ts")
     || path.endsWith("bootstrap-executor.ts")
     || path.endsWith("controller.ts")
     || path.endsWith("agent-functions.sh")
@@ -82,8 +85,23 @@ jest.mock("fs", () => ({
     if (path.endsWith("controller.ts")) {
       return "import { startRunnerV2Bootstrap } from '@/lib/runner-v2/bootstrap-executor'; startRunnerV2Bootstrap(context);";
     }
+    if (path.endsWith("completion-entrypoint.ts")) {
+      return "const generation = generationImportPlan(run, runDir, env);";
+    }
+    if (path.endsWith("adapters.ts")) {
+      return "function applyGenerationImport() { return true; }";
+    }
+    if (path.endsWith("completion-runner.ts")) {
+      return 'return { action: "generation-terminal" };';
+    }
+    if (path.endsWith("agent-bootstrap-plan.ts")) {
+      return "Core generation handoff uses generation-result.json.";
+    }
     if (path.endsWith("bootstrap-executor.ts")) {
       return "export async function executeLocalBootstrap() { await executor.spawn('name'); await waitForBootstrapReadiness(); await startMonitorSession(); }";
+    }
+    if (path.endsWith("executor.ts")) {
+      return 'case "generation-import": return effect;';
     }
     return JSON.stringify({
       schema_version: "runner-contract/v1",
@@ -91,6 +109,11 @@ jest.mock("fs", () => ({
       default_runner: "shell",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
       completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "off", scope: "completion" },
+      generation_completion_contract: {
+        no_emit_salvage: "typed completion imports generation payload before failing no-emit generation completion",
+        import_effect: "typed executor includes generation-import",
+        prompt_policy: "core generation prompts do not require mandatory emit",
+      },
       entrypoints: {
         completion_reentry: { v2: "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled" },
       },
@@ -110,6 +133,12 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "external-dispatcher", status: "pass" }),
       expect.objectContaining({ id: "completion-typed-bridge", status: "pass" }),
       expect.objectContaining({ id: "completion-shell-flag-gate", status: "pass" }),
+      expect.objectContaining({ id: "generation-completion-contract", status: "pass" }),
+      expect.objectContaining({ id: "generation-import-entrypoint", status: "pass" }),
+      expect.objectContaining({ id: "generation-import-effect", status: "pass" }),
+      expect.objectContaining({ id: "generation-import-adapter", status: "pass" }),
+      expect.objectContaining({ id: "generation-no-emit-salvage", status: "pass" }),
+      expect.objectContaining({ id: "core-generation-emit-prompt", status: "pass" }),
       expect.objectContaining({ id: "agent-bootstrap-planner", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-executor", status: "pass" }),
       expect.objectContaining({ id: "completion-runtime-compile", status: "pass" }),

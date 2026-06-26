@@ -192,7 +192,7 @@ function validateEventFlow(
         ].filter((value): value is string => typeof value === "string");
 
     for (const t of targets) {
-      if (!agentIds.has(t)) {
+      if (t !== "stop" && !agentIds.has(t)) {
         errors.push({
           code: "INVALID_TARGET",
           message: `Branch for event "${eventName}" targets non-existent agent "${t}"`,
@@ -239,7 +239,7 @@ function validateEventFlow(
           ].filter((value): value is string => typeof value === "string");
 
       for (const t of targets) {
-        if (!agentIds.has(t)) {
+        if (t !== "stop" && !agentIds.has(t)) {
           errors.push({
             code: "INVALID_TARGET",
             message: `Branch for event "${agent.emits}" targets non-existent agent "${t}"`,

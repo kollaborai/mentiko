@@ -111,6 +111,10 @@ function collectBranchTargets(target: unknown): string[] {
   return targets;
 }
 
+function isTerminalBranchTarget(target: string): boolean {
+  return target === "stop";
+}
+
 function validateChainBranches(
   branches: unknown,
   agents: Array<Record<string, unknown>>,
@@ -139,7 +143,7 @@ function validateChainBranches(
     }
 
     for (const targetId of collectBranchTargets(target)) {
-      if (!agentIds.has(targetId)) {
+      if (!isTerminalBranchTarget(targetId) && !agentIds.has(targetId)) {
         collect(errors, `branches.${eventName}`, `targets missing agent id: ${targetId}`);
       }
     }

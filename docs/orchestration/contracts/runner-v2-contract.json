@@ -50,6 +50,12 @@
       "source_of_truth": "body fields before filename fallback"
     }
   },
+  "generation_completion_contract": {
+    "core_generation_handoff": "generation-result.json is authoritative; mentiko emit is optional for core generation chains",
+    "no_emit_salvage": "typed completion must import a compatible generation payload before failing a core generation agent that reached completion without its declared event",
+    "import_effect": "typed completion executor must include a generation-import effect that invokes the existing mentiko generation import path",
+    "prompt_policy": "core generation bootstrap instructions must not require mentiko emit as a mandatory final step"
+  },
   "monitor_contract": {
     "completion": "OR-latched explicit AGENT_COMPLETE line or declared emits event match",
     "stale": "stale/idle only drives advisor nudges or diagnostics",

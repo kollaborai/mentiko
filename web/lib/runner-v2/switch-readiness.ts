@@ -46,6 +46,16 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
         ? undefined
         : "completion flag contract missing",
     });
+    checks.push({
+      id: "generation-completion-contract",
+      status: hasGenerationCompletionContract(contract) ? "pass" : "fail",
+      evidence: hasGenerationCompletionContract(contract)
+        ? "contract defines generation_completion_contract.no_emit_salvage/import_effect/prompt_policy"
+        : "contract missing generation_completion_contract coverage for no-emit generation salvage",
+      blocker: hasGenerationCompletionContract(contract)
+        ? undefined
+        : "runner-v2 contract must cover no-emit generation salvage before switch readiness",
+    });
   } catch (error) {
     checks.push({
       id: "contract-load",
@@ -88,6 +98,31 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     'MENTIKO_RUNNER_V2_MODE: "typed-plan"',
     "initial runner-v2 launch is still shell-compat",
   ));
+  checks.push(sourceContainsCheck(
+    "generation-import-entrypoint",
+    join(config.codeRoot, "web/lib/runner-v2/completion-entrypoint.ts"),
+    "generationImportPlan(run, runDir, env)",
+    "typed completion entrypoint does not wire generation import planning",
+  ));
+  checks.push(sourceContainsCheck(
+    "generation-import-effect",
+    join(config.codeRoot, "web/lib/runner-v2/executor.ts"),
+    '"generation-import"',
+    "typed completion executor does not include generation-import effect",
+  ));
+  checks.push(sourceContainsCheck(
+    "generation-import-adapter",
+    join(config.codeRoot, "web/lib/runner-v2/adapters.ts"),
+    "applyGenerationImport",
+    "typed completion adapter does not execute generation import",
+  ));
+  checks.push(sourceContainsCheck(
+    "generation-no-emit-salvage",
+    join(config.codeRoot, "web/lib/runner-v2/completion-runner.ts"),
+    "generation-terminal",
+    "typed completion does not salvage no-emit core generation runs",
+  ));
+  checks.push(coreGenerationEmitPromptCheck(join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts")));
   checks.push(typedBootstrapExecutionCheck({
     controllerPath: join(config.codeRoot, "web/lib/runner-v2/controller.ts"),
     executorPath: join(config.codeRoot, "web/lib/runner-v2/bootstrap-executor.ts"),
@@ -105,6 +140,16 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     checks,
     blockers,
   };
+}
+
+function hasGenerationCompletionContract(contract: unknown): boolean {
+  if (!contract || typeof contract !== "object") return false;
+  const generation = (contract as { generation_completion_contract?: unknown }).generation_completion_contract;
+  if (!generation || typeof generation !== "object") return false;
+  const fields = generation as Record<string, unknown>;
+  return typeof fields.no_emit_salvage === "string"
+    && typeof fields.import_effect === "string"
+    && typeof fields.prompt_policy === "string";
 }
 
 function watchedProofCheck(path: string): SwitchReadinessCheck {
@@ -161,6 +206,33 @@ function sourceContainsCheck(id: string, path: string, needle: string, blocker: 
     status: found ? "pass" : "fail",
     evidence: found ? `${path} contains ${needle}` : `${path} missing ${needle}`,
     blocker: found ? undefined : blocker,
+  };
+}
+
+function coreGenerationEmitPromptCheck(path: string): SwitchReadinessCheck {
+  if (!existsSync(path)) {
+    return {
+      id: "core-generation-emit-prompt",
+      status: "fail",
+      evidence: `${path} missing`,
+      blocker: "core generation bootstrap planner missing",
+    };
+  }
+  const source = readFileSync(path, "utf8");
+  const hasCoreGenerationPolicy = source.includes("coreGenerationChain")
+    || source.includes("Core generation handoff")
+    || source.includes("generation-result.json");
+  const hasMandatoryEmit = source.includes("run mentiko emit")
+    || source.includes("must run mentiko emit")
+    || source.includes("signal completion by running");
+  const passed = hasCoreGenerationPolicy || !hasMandatoryEmit;
+  return {
+    id: "core-generation-emit-prompt",
+    status: passed ? "pass" : "fail",
+    evidence: passed
+      ? "core generation bootstrap does not require mandatory mentiko emit"
+      : "bootstrap source still contains mandatory mentiko emit wording without core generation exception",
+    blocker: passed ? undefined : "core generation prompts must not require mandatory emit before switch",
   };
 }
 
