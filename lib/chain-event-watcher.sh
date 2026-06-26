@@ -80,7 +80,7 @@ load_chain_triggers() {
         local chain_triggers
         chain_triggers=$(jq -r --arg cname "$chain_name" --arg cpath "$chain_file" '
             .config.event_triggers // [] |
-            map(. + {chain_name: $cname, chain_path: $cpath})
+            map(select(.enabled != false) + {chain_name: $cname, chain_path: $cpath})
         ' "$chain_file" 2>/dev/null || echo "[]")
 
         if [[ "$chain_triggers" != "[]" && -n "$chain_triggers" ]]; then
@@ -93,6 +93,28 @@ load_chain_triggers() {
 
 # -------------------------------------------------------------------
 # match_trigger: check if an event matches a trigger config
+# safe_trigger_condition <condition> <data>
+# Evaluate a CHAIN-AUTHORED trigger condition without allowing arbitrary code execution.
+# The condition is meant to be a simple bash [[ ]] comparison that may reference $data
+# (the event data). We hard-REJECT anything that could break out of the test or run
+# commands — command substitution $(...) / backticks, command chaining ; | &, the test
+# brackets [[ ]] (breakout), process substitution <( >(, and newlines — then evaluate
+# only the remaining simple comparison. Fail-closed: a rejected or malformed condition
+# does NOT match. (Previously this was a bare `eval "[[ $condition ]]"` — i.e. arbitrary
+# shell from any chain/marketplace definition, a code-execution hole.)
+# returns: 0 = matched, 1 = did not match OR rejected as unsafe.
+safe_trigger_condition() {
+    local condition="$1" data="$2"
+    [[ -z "$condition" ]] && return 0   # empty condition = always matches (legacy behavior)
+    case "$condition" in
+        *'$('*|*'`'*|*';'*|*'|'*|*'&'*|*']]'*|*'[['*|*'<('*|*'>('*|*$'\n'*)
+            log "SECURITY: rejected unsafe trigger condition (possible injection): ${condition}"
+            return 1
+            ;;
+    esac
+    eval "[[ $condition ]]" 2>/dev/null
+}
+
 # args: event_name source_chain event_data trigger_json
 # returns 0 (match) or 1 (no match)
 # -------------------------------------------------------------------
@@ -118,12 +140,10 @@ match_trigger() {
     local condition
     condition=$(echo "$trigger" | jq -r '.condition // ""')
     if [[ -n "$condition" ]]; then
-        # export event data fields for condition evaluation
-        local data="$event_data"
-        # simple evaluation: condition can reference $data or check strings
-        if ! eval "[[ $condition ]]" 2>/dev/null; then
-            return 1
-        fi
+        # SECURITY: never eval a chain-authored condition directly. safe_trigger_condition
+        # rejects injection (command/process substitution, chaining, [[ ]] breakout) and
+        # evaluates only a simple comparison on $data. Fail-closed: rejected => no match.
+        safe_trigger_condition "$condition" "$event_data" || return 1
     fi
 
     return 0
