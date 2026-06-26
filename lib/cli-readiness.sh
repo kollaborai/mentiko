@@ -67,6 +67,15 @@ cli_readiness_check() {
     local enabled
     enabled=$(jq -r '.readiness.enabled // false' "$profile_file" 2>/dev/null || echo "false")
     if [[ "$enabled" != "true" ]]; then
+        # Fail-closed (opt-in via MENTIKO_READINESS_FAIL_CLOSED=1): a profile with no
+        # readiness policy declares NO positive ready signal, so unattended chain
+        # execution must NOT treat it as ready and inject task instructions. Default
+        # (flag unset) preserves the legacy permissive behavior so existing tenants
+        # don't break — roll out per profile by adding ready_patterns, then the flag.
+        if [[ "${MENTIKO_READINESS_FAIL_CLOSED:-0}" == "1" ]]; then
+            cli_readiness_json "no_ready_signal" "readiness not enabled (fail-closed)"
+            return 0
+        fi
         cli_readiness_json "ready" "readiness disabled"
         return 0
     fi
@@ -91,6 +100,14 @@ cli_readiness_check() {
     local ready_count
     ready_count=$(jq -r '(.readiness.ready_patterns // []) | length' "$profile_file" 2>/dev/null || echo "0")
     if [[ "${ready_count:-0}" -eq 0 ]]; then
+        # Enabled but no positive ready pattern (e.g. the codex profile today): under
+        # fail-closed this is also "no ready signal" — there is nothing that can ever
+        # prove readiness, so don't inject. Default preserves the legacy permissive
+        # behavior; add ready_patterns to roll this profile onto the strict path.
+        if [[ "${MENTIKO_READINESS_FAIL_CLOSED:-0}" == "1" ]]; then
+            cli_readiness_json "no_ready_signal" "readiness enabled but no ready_patterns configured (fail-closed)"
+            return 0
+        fi
         cli_readiness_json "ready" "no ready patterns configured"
         return 0
     fi

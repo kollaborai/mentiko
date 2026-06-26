@@ -53,11 +53,26 @@
 #                              lines so AGENT_COMPLETE scrolls past the monitor's tail
 #                              capture window. Proves completion is still detected
 #                              (via the latched event-file signal).
+#   limbo                    — simulate a process that is ALIVE but is NOT a ready
+#                              agent: a bare shell left after the CLI failed to
+#                              launch, or a CLI parked on an auth/trust prompt. It
+#                              prints NO ready banner (no positive readiness
+#                              evidence), stays alive blocking on stdin (so it
+#                              passes the engine's any-child liveness check), and
+#                              RECORDS every line the engine types at it to
+#                              $STUB_STDIN_LOG — but NEVER recognises an
+#                              instruction, NEVER emits its event, NEVER prints
+#                              AGENT_COMPLETE, and has NO auto-complete fallback.
+#                              Proves the Stage-0 property: the engine must type
+#                              NOTHING (no task pointer, no stale nudge) into a
+#                              session that never produced positive readiness.
 #
 # Extra env knobs (defaults keep the stub fast + hang-proof):
 #   STUB_QUIET_SECONDS     quiet-slow silent duration (default 8)
 #   STUB_CHATTY_LINES      chatty post-complete flood line count (default 400)
 #   STUB_MIDCRASH_SECONDS  mid-run-crash: seconds alive before dying (default 6)
+#   STUB_LIMBO_SECONDS     limbo: seconds alive (recording stdin) before exit (default 35)
+#   STUB_STDIN_LOG         limbo: file the stub appends every received stdin line to
 #
 # This file is a TEST FIXTURE. It is never shipped and never executed in production.
 
@@ -67,6 +82,8 @@ STUB_MODE="${STUB_MODE:-complete}"
 STUB_QUIET_SECONDS="${STUB_QUIET_SECONDS:-8}"
 STUB_CHATTY_LINES="${STUB_CHATTY_LINES:-400}"
 STUB_MIDCRASH_SECONDS="${STUB_MIDCRASH_SECONDS:-6}"
+STUB_LIMBO_SECONDS="${STUB_LIMBO_SECONDS:-35}"
+STUB_RECOVER_SECONDS="${STUB_RECOVER_SECONDS:-30}"
 
 log() { printf '[stub:%s] %s\n' "${MENTIKO_AGENT_ID:-?}" "$*"; }
 
@@ -77,6 +94,97 @@ if [[ "$STUB_MODE" == "crash" ]]; then
   log "simulating a crashing agent CLI (exit 7)" >&2
   echo "ERROR: stub intentional startup failure" >&2
   exit 7
+fi
+
+# limbo mode: a process that is ALIVE but is NOT a ready agent (bare shell after a
+# failed CLI launch, or a CLI parked on an auth/trust prompt). Prints NO ready
+# banner, stays alive blocking on stdin (passes the engine's any-child liveness
+# check), and RECORDS every line the engine types at it — but NEVER recognises an
+# instruction, NEVER emits its event, NEVER prints AGENT_COMPLETE, and has NO
+# auto-complete fallback. Bounded so it cannot hang. The Stage-0 guard: a correct
+# engine must type NOTHING (no task pointer, no stale nudge) into this session.
+if [[ "$STUB_MODE" == "limbo" ]]; then
+  : > "${STUB_STDIN_LOG:-/dev/null}"
+  log "limbo: live non-agent; recording stdin; will not finish" >&2
+  _limbo_deadline=$(( $(date +%s) + STUB_LIMBO_SECONDS ))
+  while [[ "$(date +%s)" -lt "$_limbo_deadline" ]]; do
+    if IFS= read -r -t 3 _line; then
+      [[ -n "$_line" ]] && printf '%s\n' "$_line" >> "${STUB_STDIN_LOG:-/dev/null}"
+    fi
+  done
+  exit 0
+fi
+
+# echo-stall mode: reproduces the NUDGE-LOOP DEFEAT. Passes startup (prints a ready
+# banner, blocks on stdin), then ECHOES every line it receives back to stdout — so
+# each monitor nudge repaints the screen and resets the per-cycle stale counter,
+# which is exactly why the old max_stale_count cap could never fire from the nudge
+# path. It NEVER emits its event or prints AGENT_COMPLETE. Without a DURABLE nudge
+# budget the monitor types at it forever; with the budget it must stop after
+# MENTIKO_MONITOR_MAX_NUDGES keystrokes and escalate (monitor-agent-stalled →
+# BLOCKED). Stays alive well past the expected escalation (so it is the STALL path,
+# not the dead-process path, that catches it), bounded so it cannot hang.
+if [[ "$STUB_MODE" == "echo-stall" ]]; then
+  echo "stub echo-stall ready (for agents)"
+  log "echo-stall: ready; will echo every nudge but never complete" >&2
+  _es_deadline=$(( $(date +%s) + STUB_LIMBO_SECONDS ))
+  while [[ "$(date +%s)" -lt "$_es_deadline" ]]; do
+    if IFS= read -r -t 2 _es_line; then
+      # repaint the screen on EVERY received line (instruction pointer + each nudge)
+      [[ -n "$_es_line" ]] && printf 'echo> %s\n' "${_es_line:0:60}"
+    fi
+  done
+  exit 0
+fi
+
+# advisor-probe mode: stand in for the stale-advisor CLI. When the monitor invokes
+# the advisor (build_profile_command on the isAdvisorDefault profile, prompt piped
+# on stdin), this records that a consultation HAPPENED — appends to
+# $STUB_ADVISOR_MARKER — then exits without a reply. Kept as a SEPARATE profile from
+# the agent so its invocation is detectable and never pollutes the agent's stdin
+# log. Used to assert a never-ready agent triggers NO advisor call during startup.
+if [[ "$STUB_MODE" == "advisor-probe" ]]; then
+  printf '%s advisor-invoked\n' "$(date +%s)" >> "${STUB_ADVISOR_MARKER:-/dev/null}"
+  exit 0
+fi
+
+# advisor-recover mode: stand in for the PHASE-AWARE startup advisor. Ignores stdin
+# (the recovery prompt) and returns a single low-risk, high-confidence send_keys[ENTER]
+# JSON action — the advisor-recovery.sh contract. Used to prove the engine consults the
+# advisor on a recoverable startup, auto-applies the key, and the agent then proceeds.
+if [[ "$STUB_MODE" == "advisor-recover" ]]; then
+  printf '%s\n' '{"action":"send_keys","confidence":0.95,"risk":"low","reason":"benign continue prompt","evidence":"Press Enter to continue","keys":["ENTER"],"retry_after_seconds":0}'
+  exit 0
+fi
+
+# recoverable-prompt mode: a CLI parked on a BENIGN prompt at startup ("Press Enter to
+# continue") — NOT ready yet, but recoverable by a single Enter. It prints the prompt,
+# waits for an Enter (an empty stdin line = the engine's recovery send_keys), then
+# becomes a normal ready agent (falls through to the banner + REPL). If no Enter ever
+# arrives it exits non-zero. Proves bounded auto-recovery end to end.
+if [[ "$STUB_MODE" == "recoverable-prompt" ]]; then
+  # Drain stray startup input (the launch keystrokes / double-Enter) for a few seconds so
+  # ONLY a deliberate recovery Enter from the advisor clears the prompt below. Otherwise the
+  # launch's own Enter answers it and the advisor path is never exercised — which is itself
+  # the "extra Enter accepts a default" hazard, but here it would mask the test.
+  _drain_until=$(( $(date +%s) + 3 ))
+  while [[ "$(date +%s)" -lt "$_drain_until" ]]; do IFS= read -r -t 1 _drain || true; done
+  echo "Press Enter to continue"
+  _rp_deadline=$(( $(date +%s) + STUB_RECOVER_SECONDS ))
+  _rp_recovered=0
+  while [[ "$(date +%s)" -lt "$_rp_deadline" ]]; do
+    if IFS= read -r -t 3 _rp_line; then
+      [[ -z "$_rp_line" ]] && { _rp_recovered=1; break; }   # empty line = Enter pressed
+    fi
+  done
+  if [[ "$_rp_recovered" != "1" ]]; then
+    echo "ERROR: stub recoverable-prompt got no Enter to clear the prompt" >&2
+    exit 1
+  fi
+  log "recovered via Enter; becoming a ready agent" >&2
+  printf '\033[2J\033[3J\033[H'   # redraw: clear screen+scrollback so the cleared prompt is
+                                  # gone from the readiness capture (a real CLI redraws too)
+  STUB_MODE="complete"   # fall through to the ready banner + REPL below
 fi
 
 # mid-run-crash: handled INSIDE the REPL below (do_mid_run_crash), NOT as an early

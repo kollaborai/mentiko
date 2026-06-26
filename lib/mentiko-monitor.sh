@@ -80,6 +80,14 @@ STATE_FILE="$STATE_DIR/${SESSION_NAME}_state"
 STALE_FILE="$STATE_DIR/${SESSION_NAME}_stale"
 LOG_FILE="$STATE_DIR/${SESSION_NAME}_log"
 
+# nudge budget: stop nudging the session after this many consecutive stale cycles,
+# so an unattended monitor can't spam keystrokes + burn advisor tokens overnight.
+# It keeps watching (AGENT_COMPLETE is still detected) — only the nudging stops.
+# This is the STANDALONE monitor (the `mentiko monitor` CLI command); the chain
+# path uses monitor-chain-agent, not this. 0 = unbounded (prior behavior). Raise
+# via MENTIKO_MONITOR_MAX_STALE for long manual runs.
+MAX_STALE_COUNT="${MENTIKO_MONITOR_MAX_STALE:-10}"
+
 echo "0" > "$STALE_FILE"
 
 # -------------------------------------------------------------------
@@ -217,6 +225,17 @@ while true; do
     STALE_COUNT=$(cat "$STALE_FILE")
     STALE_COUNT=$((STALE_COUNT + 1))
     echo "$STALE_COUNT" > "$STALE_FILE"
+
+    # nudge budget: past the cap, keep watching for AGENT_COMPLETE but stop nudging
+    # (no more advisor calls, no more keystrokes typed into the session) so an
+    # unattended standalone monitor cannot run the terminal forever.
+    if [[ "$MAX_STALE_COUNT" -gt 0 && "$STALE_COUNT" -ge "$MAX_STALE_COUNT" ]]; then
+        if [[ "$STALE_COUNT" -eq "$MAX_STALE_COUNT" ]]; then
+            echo "$(date '+%H:%M:%S') stale x${STALE_COUNT}: nudge budget (${MAX_STALE_COUNT}) exhausted; watching without nudging."
+            echo "$(date -Iseconds) nudge budget exhausted at x${STALE_COUNT}" >> "$LOG_FILE"
+        fi
+        continue
+    fi
 
     echo "$(date '+%H:%M:%S') stale x${STALE_COUNT}. nudging..."
     echo "$(date -Iseconds) stale x${STALE_COUNT}" >> "$LOG_FILE"

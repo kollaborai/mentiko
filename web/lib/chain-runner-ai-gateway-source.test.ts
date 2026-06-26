@@ -80,8 +80,11 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain("MENTIKO_SESSION_TOKEN=%q");
     expect(chainRunner).toContain("MENTIKO_WEB_URL=%q");
     expect(chainRunner).toContain("KOLLABOR_ENGINE_URL=%q");
-    expect(chainRunner).toContain("KOLLAB_NO_HUB=%q");
-    expect(chainRunner).toContain("KOLLAB_HUB_DISABLED=%q");
+    // hub-disable env removed: mentiko no longer forces kollab into single-process
+    // mode, so the koordinator can use its hub. Guard the removal so it doesn't
+    // creep back in (was KOLLAB_NO_HUB=1 / KOLLAB_HUB_DISABLED=1).
+    expect(chainRunner).not.toContain("KOLLAB_NO_HUB");
+    expect(chainRunner).not.toContain("KOLLAB_HUB_DISABLED");
   });
 
   it("sets the visible local pty shell cwd to the workspace before launching agents", () => {
@@ -218,6 +221,24 @@ describe("chain launch surfaces pass local proxy env to runners", () => {
       expect(source).not.toContain("buildLocalAiGatewayProxyEnv()");
       expect(source).toContain("buildLocalAiGatewayProxyEnv(new URL(");
     }
+  });
+});
+
+describe("chain runner next launch flag contract", () => {
+  const source = readFileSync(new URL("./runs/chain-run-service.ts", import.meta.url), "utf8");
+  const childEnvSource = readFileSync(new URL("./runs/child-env.ts", import.meta.url), "utf8");
+
+  it("keeps MENTIKO_RUNNER_V2 reachable after child env filtering", () => {
+    expect(childEnvSource).toContain('"MENTIKO_RUNNER_V2"');
+    expect(childEnvSource).toContain('"MENTIKO_RUNNER_V2_COMPLETION"');
+    expect(source.indexOf("const childEnv = buildChildEnv")).toBeGreaterThan(-1);
+    expect(source.indexOf("isRunnerV2Enabled(childEnv)")).toBeGreaterThan(source.indexOf("const childEnv = buildChildEnv"));
+  });
+
+  it("falls back to the shell runner when runner-next is disabled or unsupported", () => {
+    expect(source).toContain('runnerV2Launch?.support === "supported"');
+    expect(source).toContain('spawn(\n      "/bin/zsh"');
+    expect(source).toContain('["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}');
   });
 });
 

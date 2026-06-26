@@ -73,8 +73,10 @@ ensure-watchdog() {
         return 0  # already running
     fi
     echo "  starting watchdog daemon..."
-    # kill dead session before respawning (pty-manager rejects duplicate names)
-    "$PTY_CMD" kill "mentiko-watchdog" >/dev/null 2>&1 || true
+    # remove (not kill) any dead session before respawning: pty-manager rejects
+    # duplicate names, and `p kill` leaves the registry entry behind, so a later
+    # spawn would throw on the still-registered name. `p remove` frees the name.
+    "$PTY_CMD" remove "mentiko-watchdog" >/dev/null 2>&1 || true
     transport_new_session "mentiko-watchdog" bash "$SCRIPT_DIR/watchdog.sh" || true
 }
 ensure-watchdog
@@ -86,8 +88,9 @@ ensure-chain-watcher() {
         return 0  # already running
     fi
     echo "  starting chain event watcher..."
-    # kill dead session before respawning (pty-manager rejects duplicate names)
-    "$PTY_CMD" kill "mentiko-chain-watcher" >/dev/null 2>&1 || true
+    # remove (not kill) any dead session before respawning: `p kill` leaves the
+    # registry entry behind, so a later spawn would throw on the registered name.
+    "$PTY_CMD" remove "mentiko-chain-watcher" >/dev/null 2>&1 || true
     transport_new_session "mentiko-chain-watcher" \
         bash "$SCRIPT_DIR/chain-event-watcher.sh" \
         --namespace "${NAMESPACE_ID:-default}" || true
@@ -774,6 +777,94 @@ write_startup_recovery_artifacts() {
     fi
 }
 
+# _startup_recovery_send_key <session> <key>
+# Translate a small, safe set of named keys to raw bytes; anything else is sent as
+# literal text. Only ever reached for an advisor action already gated to risk=low,
+# confidence>=0.85, so this is a bounded "answer a benign prompt", never free-form auto-typing.
+_startup_recovery_send_key() {
+    local session="$1" key="$2"
+    case "$key" in
+        ENTER|RETURN|CR|$'\r'|$'\n') transport_send_raw "$session" $'\r' ;;
+        ESC|ESCAPE)                  transport_send_raw "$session" $'\e' ;;
+        CTRL_C|"^C")                 transport_send_raw "$session" $'\003' ;;
+        TAB)                         transport_send_raw "$session" $'\t' ;;
+        SPACE)                       transport_send_raw "$session" ' ' ;;
+        *)                           transport_send_raw "$session" "$key" ;;
+    esac
+}
+
+# attempt_startup_recovery <agent_id> <profile_id> <cli> <cwd> <cli_cmd> <state_file> <capture_file> <session>
+# Consult the PHASE-AWARE startup advisor (advisor-recovery.sh contract — it is told
+# "no agent task has been delivered yet; do not tell a nonexistent agent to keep working")
+# and, ONLY when it returns a low-risk, high-confidence send_keys/retry_launch action,
+# apply it ONCE. Every decision is recorded for audit. rc 0 = an action was applied (the
+# caller should re-poll to see if startup resolved); rc 1 = escalate (block). The caller
+# enforces a hard per-startup budget on how many times this may act, so recovery is
+# always bounded — it can never become the unbounded-nudge problem.
+attempt_startup_recovery() {
+    local agent_id="$1" profile_id="$2" profile_cli="$3" cwd="$4" cli_cmd="$5" state_file="$6" capture_file="$7" session="$8"
+
+    # need the advisor contract + an advisor profile + the command builder, else escalate.
+    declare -f advisor_recovery_prompt >/dev/null 2>&1 || return 1
+    declare -f advisor_recovery_validate_json >/dev/null 2>&1 || return 1
+    declare -f advisor_recovery_should_auto_apply >/dev/null 2>&1 || return 1
+    declare -f find_advisor_profile >/dev/null 2>&1 || return 1
+    declare -f build_profile_command >/dev/null 2>&1 || return 1
+
+    local advisor_id advisor_file advisor_cmd
+    advisor_id="$(find_advisor_profile 2>/dev/null || true)"
+    [[ -n "$advisor_id" ]] || return 1
+    advisor_file="$(agent_profile_path "$advisor_id" 2>/dev/null || true)"
+    [[ -f "$advisor_file" ]] || return 1
+    advisor_cmd="$(build_profile_command "$advisor_file" 2>/dev/null || true)"
+    [[ -n "$advisor_cmd" ]] || return 1
+
+    local prompt response payload
+    prompt="$(advisor_recovery_prompt \
+        --run-id "${RUN_ID:-}" --agent-id "$agent_id" --profile-id "$profile_id" \
+        --cli "$profile_cli" --cwd "$cwd" --command "$cli_cmd" \
+        --state-file "$state_file" --capture-file "$capture_file" 2>/dev/null)"
+    response="$(printf '%s' "$prompt" | bash -lc "$advisor_cmd" 2>/dev/null || true)"
+    [[ -n "$response" ]] || return 1
+
+    # the advisor is told to return strict JSON; be defensive and extract the object.
+    payload="$(printf '%s' "$response" | sed -n '/{/,/}/p')"
+    [[ -n "$payload" ]] || payload="$response"
+    advisor_recovery_validate_json "$payload" >/dev/null 2>&1 || return 1
+
+    # durable audit of every decision (applied or not), so a startup is reconstructable.
+    if [[ -n "${RUN_ID:-}" ]]; then
+        local adir="$RUNS_DIR/${RUN_ID}/artifacts"
+        mkdir -p "$adir" 2>/dev/null || true
+        printf '%s\n' "$payload" >> "$adir/${agent_id}-startup-recovery-decisions.jsonl" 2>/dev/null || true
+    fi
+
+    # ONLY low-risk + confidence>=0.85 + send_keys/retry_launch auto-applies.
+    advisor_recovery_should_auto_apply "$payload" >/dev/null 2>&1 || return 1
+
+    local action
+    action="$(printf '%s' "$payload" | jq -r '.action // ""' 2>/dev/null || echo "")"
+    case "$action" in
+        send_keys)
+            local k applied=0
+            while IFS= read -r k; do
+                [[ -n "$k" ]] || continue
+                _startup_recovery_send_key "$session" "$k"
+                applied=1
+            done < <(printf '%s' "$payload" | jq -r '.keys[]?' 2>/dev/null)
+            [[ "$applied" == "1" ]] || return 1
+            declare -f _sys_log >/dev/null 2>&1 && _sys_log "info" "startup-recovery" "auto-applied send_keys for ${agent_id}" || true
+            return 0
+            ;;
+        retry_launch)
+            send-message "$session" "$cli_cmd" 2>/dev/null || true
+            declare -f _sys_log >/dev/null 2>&1 && _sys_log "info" "startup-recovery" "auto-applied retry_launch for ${agent_id}" || true
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 # wait_for_profile_readiness <session> <state_file> <agent_id> <profile_file> <profile_id> <cli> <cmd> <cwd>
 # Profile readiness is data-driven. It never writes CLI config, never pins a CLI,
 # and never auto-accepts a prompt. rc: 0 ready, 1 recoverable/blocked/unknown, 2 exited.
@@ -783,6 +874,11 @@ wait_for_profile_readiness() {
     local poll="${MENTIKO_CLI_READY_POLL:-2}"
     local deadline=$(( $(date +%s) + timeout ))
     local capture_file readiness_json readiness_status readiness_reason
+    # bounded, phase-aware startup recovery (advisor-recovery.sh). On by default; a hard
+    # per-startup action budget guarantees recovery can never loop into the nudge problem.
+    local recovery_enabled="${MENTIKO_STARTUP_RECOVERY:-1}"
+    local recovery_budget="${MENTIKO_STARTUP_RECOVERY_MAX:-2}"
+    local recovery_used=0
 
     while (( $(date +%s) < deadline )); do
         if ! session_has_active_command "$session"; then
@@ -800,7 +896,26 @@ wait_for_profile_readiness() {
             return 0
         fi
 
-        if [[ "$readiness_status" == "blocked" || "$readiness_status" == "recover" || "$readiness_status" == "retry" || "$readiness_status" == "unknown" ]]; then
+        # KNOWN-terminal startup states block immediately: a blocked/recover/retry
+        # PATTERN matched, or (fail-closed) there is no ready signal to ever observe.
+        # `unknown` is deliberately NOT here — it means a ready signal is expected but
+        # has not appeared YET, so it must keep polling through the startup grace
+        # window and only block at the deadline below. (Previously `unknown` blocked
+        # on the first cycle, which made the grace window + deadline fallback dead code.)
+        if [[ "$readiness_status" == "blocked" || "$readiness_status" == "recover" || "$readiness_status" == "retry" || "$readiness_status" == "no_ready_signal" ]]; then
+            # Phase-aware advisor recovery for RUNTIME-recoverable states (a matched
+            # blocked/recover/retry pattern — e.g. a benign "press enter" prompt). It is
+            # bounded by recovery_budget so it can act at most a fixed number of times.
+            # no_ready_signal is a config error (no readiness policy) the advisor cannot
+            # fix, so it escalates immediately.
+            if [[ "$recovery_enabled" == "1" && "$readiness_status" != "no_ready_signal" && "$recovery_used" -lt "$recovery_budget" ]]; then
+                recovery_used=$((recovery_used + 1))
+                if attempt_startup_recovery "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$session"; then
+                    rm -f "$capture_file"
+                    sleep "$poll"
+                    continue   # an action was applied — re-poll to see if startup resolved
+                fi
+            fi
             write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
             rm -f "$capture_file"
             mark_state_blocked "$state_file" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
@@ -808,6 +923,16 @@ wait_for_profile_readiness() {
             return 1
         fi
 
+        # unknown / not-yet-ready: a ready signal is expected but hasn't appeared.
+        #   - enforce (MENTIKO_READINESS_FAIL_CLOSED=1): keep polling through the grace
+        #     window and block at the deadline below.
+        #   - legacy (flag off): do NOT gate on a missing banner — proceed. This keeps
+        #     adding ready_patterns to a profile INERT until a deployment turns the flag
+        #     on, so the catalog can be populated CLI-by-CLI without changing behavior.
+        if [[ "${MENTIKO_READINESS_FAIL_CLOSED:-0}" != "1" ]]; then
+            rm -f "$capture_file"
+            return 0
+        fi
         rm -f "$capture_file"
         sleep "$poll"
     done
@@ -1160,7 +1285,7 @@ agent_run_context_export_command() {
     local mentiko_bin="$mentiko_bin_dir/mentiko"
     local agent_path="$mentiko_bin_dir:${PATH:-}"
 
-    printf "export PATH=%q MENTIKO_BIN=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_SESSION_ID=%q MENTIKO_SESSION_TOKEN=%q MENTIKO_WEB_URL=%q KOLLABOR_ENGINE_URL=%q KOLLAB_NO_HUB=%q KOLLAB_HUB_DISABLED=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q; hash -r 2>/dev/null || true" \
+    printf "export PATH=%q MENTIKO_BIN=%q MENTIKO_RUN_ID=%q RUN_ID=%q NAMESPACE_ID=%q ORG_ID=%q MENTIKO_AGENT_ID=%q MENTIKO_AGENT_EMITS=%q MENTIKO_CODE_ROOT=%q MENTIKO_PROJECT_ROOT=%q MENTIKO_ORG_ROOT=%q MENTIKO_NAMESPACE_ROOT=%q EVENTS_DIR=%q ARTIFACTS_DIR=%q MENTIKO_SESSION_ID=%q MENTIKO_SESSION_TOKEN=%q MENTIKO_WEB_URL=%q KOLLABOR_ENGINE_URL=%q MENTIKO_DECISION_IMPORT_TOKEN=%q MENTIKO_DECISION_ID=%q MENTIKO_DECISION_PHASE=%q MENTIKO_DECISION_SELECTED_OPTION_ID=%q MENTIKO_DECISION_WORKSPACE_PATH=%q MENTIKO_JOB_IMPORT_TOKEN=%q MENTIKO_GENERATION_JOB_ID=%q MENTIKO_GENERATION_KIND=%q; hash -r 2>/dev/null || true" \
         "$agent_path" \
         "$mentiko_bin" \
         "${RUN_ID:-}" \
@@ -1179,8 +1304,6 @@ agent_run_context_export_command() {
         "${MENTIKO_SESSION_TOKEN:-}" \
         "${MENTIKO_WEB_URL:-}" \
         "${KOLLABOR_ENGINE_URL:-}" \
-        "${KOLLAB_NO_HUB:-1}" \
-        "${KOLLAB_HUB_DISABLED:-1}" \
         "${MENTIKO_DECISION_IMPORT_TOKEN:-}" \
         "${MENTIKO_DECISION_ID:-}" \
         "${MENTIKO_DECISION_PHASE:-}" \
@@ -1766,7 +1889,11 @@ $rs_produces
         cap_wait_for_agent_slot "$RUN_ID" "$agent_name ($agent_id)" || true
     fi
 
-    # create session (all workspace types use local pty-manager)
+    # create session (all workspace types use local pty-manager).
+    # remove any stale registered session with this name first: a crashed or
+    # retried prior attempt can leave a dead-but-registered entry, which would make
+    # the spawn throw on the duplicate name (p kill leaves the entry; p remove frees it).
+    "$PTY_CMD" remove "$session_name" >/dev/null 2>&1 || true
     transport_new_session "$session_name"
 
     # register session with run object (pass agent name for display)
@@ -2144,6 +2271,9 @@ export RUN_ID="${RUN_ID}"
 export MENTIKO_AGENT_ID="${agent_id}"
 export AGENT_PROFILES_DIR="${AGENT_PROFILES_DIR}"
 export MENTIKO_MONITOR_PROFILE_ID="${monitor_advisor_profile}"
+export MENTIKO_MONITOR_MAX_NUDGES="${MENTIKO_MONITOR_MAX_NUDGES:-}"
+export MENTIKO_ADVISOR_STALE_COUNT="${MENTIKO_ADVISOR_STALE_COUNT:-}"
+export MENTIKO_MONITOR_MAX_STALE="${MENTIKO_MONITOR_MAX_STALE:-}"
 MONEOF
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
             ai_gateway_append_local_proxy_control_exports "$mon_script"

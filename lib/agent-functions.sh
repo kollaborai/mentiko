@@ -605,14 +605,26 @@ launch-chain-runner-complete() {
     completion_session="complete-${session_name}-$(date +%s)"
     local completion_env_file=""
     local completion_script_q=""
+    local runner_v2_compiled_script_q=""
+    local runner_v2_completion_script_q=""
     local session_name_q=""
     local chain_file_q=""
     local completion_cmd=""
+    local completion_run_dir=""
 
     printf -v completion_script_q "%q" "$script_dir/chain-runner-complete.sh"
+    printf -v runner_v2_compiled_script_q "%q" "$script_dir/runner-v2-complete.js"
+    printf -v runner_v2_completion_script_q "%q" "$script_dir/../web/scripts/runner-v2-complete.cjs"
     printf -v session_name_q "%q" "$session_name"
     printf -v chain_file_q "%q" "$chain_file"
     completion_cmd="exec $completion_script_q $session_name_q $chain_file_q"
+    if [[ "${MENTIKO_RUNNER_V2:-}" =~ ^(1|true|yes|on)$ ]] && \
+       [[ "${MENTIKO_RUNNER_V2_COMPLETION:-}" =~ ^(1|true|yes|on)$ ]]; then
+        completion_cmd="if command -v node >/dev/null 2>&1; then if [[ -f $runner_v2_compiled_script_q ]]; then node $runner_v2_compiled_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; elif [[ -f $runner_v2_completion_script_q ]]; then node $runner_v2_completion_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; fi; fi; exec $completion_script_q $session_name_q $chain_file_q"
+    fi
+    if [[ -n "${RUNS_DIR:-}" && -n "$run_id" ]]; then
+        completion_run_dir="${RUNS_DIR}/${run_id}"
+    fi
 
     if [[ "${MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED:-}" == "true" ]] && \
        [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_BASE_URL:-}" ]] && \
@@ -623,7 +635,7 @@ launch-chain-runner-complete() {
 
         local completion_env_file_q=""
         printf -v completion_env_file_q "%q" "$completion_env_file"
-        completion_cmd="trap 'rm -f $completion_env_file_q' EXIT; source $completion_env_file_q; rm -f $completion_env_file_q; trap - EXIT; exec $completion_script_q $session_name_q $chain_file_q"
+        completion_cmd="trap 'rm -f $completion_env_file_q' EXIT; source $completion_env_file_q; rm -f $completion_env_file_q; trap - EXIT; $completion_cmd"
     fi
 
     # Run completion in its own PTY session. The handler kills the monitor
@@ -635,6 +647,11 @@ launch-chain-runner-complete() {
             NAMESPACE_ID="${NAMESPACE_ID:-default}" \
             ORG_ID="${ORG_ID:-default}" \
             WORKSPACE_TYPE="${WORKSPACE_TYPE:-local}" \
+            MENTIKO_RUN_DIR="$completion_run_dir" \
+            EVENTS_DIR="${EVENTS_DIR:-}" \
+            STATE_DIR="${STATE_DIR:-}" \
+            MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}" \
+            MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}" \
             bash -lc "$completion_cmd"; then
             echo "  chain-runner-complete session started: $completion_session"
             return 0
@@ -741,7 +758,7 @@ monitor-with-ai() {
             else
                 echo "  complete-agent.sh not found at: $runtime_dir"
             fi
-            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
         fi
 
@@ -765,7 +782,7 @@ monitor-with-ai() {
             if [[ $stale_count -ge $max_stale_count ]]; then
                 monitor-agent-stalled "$session_name" "$chain_file" "$stale_count" \
                     "monitor: agent output quiescent for ${stale_count} stale cycles (max ${max_stale_count})"
-                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+                rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
                 break
             fi
 
@@ -829,9 +846,18 @@ monitor-chain-agent() {
     local state_dir="$HOME/.mentiko_monitor"
     local state_file="$state_dir/${session_name}_state"
     local stale_count_file="$state_dir/${session_name}_stale"
+    # durable nudge budget: a hard ceiling on keystrokes typed into a quiescent
+    # session, tracked in a file the screen-echo reset never touches. The
+    # per-cycle stale counter is defeated because each nudge's echo repaints the
+    # screen and resets it (so it never reaches max_stale_count from the nudge
+    # path); this budget survives that AND a monitor restart, so a 0-progress
+    # agent is escalated instead of nudged forever.
+    local nudge_count_file="$state_dir/${session_name}_nudges"
+    local max_total_nudges="${MENTIKO_MONITOR_MAX_NUDGES:-5}"
 
     mkdir -p "$state_dir"
     echo "0" > "$stale_count_file"
+    [[ -f "$nudge_count_file" ]] || echo "0" > "$nudge_count_file"
 
     # wait for session to appear (handles race with agent launch)
     local retries=0
@@ -850,6 +876,14 @@ monitor-chain-agent() {
     local current_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
     echo "$current_state" > "$state_file"
     local observed_completion_event_file=""
+    # after a nudge, the agent's echo of it can span a COUPLE of poll cycles — the
+    # PTY first echoes the typed keystrokes, then the agent prints its own
+    # response. This grace window absorbs those cycles so nudge-induced repaints
+    # are not miscredited as real progress (which would wrongly refill the budget
+    # and let the loop run forever — the very bug the budget exists to stop). A
+    # single-cycle flag is NOT enough: it catches the keystroke echo but the
+    # agent's response on the next cycle then refills the budget.
+    local nudge_echo_grace=0
 
     while true; do
         sleep "$check_interval"
@@ -939,7 +973,7 @@ monitor-chain-agent() {
                     disown $!
                 fi
             fi
-            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
         fi
 
@@ -955,6 +989,19 @@ monitor-chain-agent() {
 
                 if declare -f monitor_should_ask_advisor >/dev/null && ! monitor_should_ask_advisor "$stale_count" "$advisor_stale_threshold"; then
                     echo "$(date '+%H:%M:%S') - completion event exists; waiting for AGENT_COMPLETE threshold ($stale_count/$advisor_stale_threshold)."
+                    echo "$new_state" > "$state_file"
+                    continue
+                fi
+
+                # bound the keystrokes: this branch fires while the screen keeps
+                # CHANGING, so without a ceiling a forever-repainting session with a
+                # completion event present would be nudged indefinitely (the
+                # max_stale_count break below only guards the hash-stable branch).
+                # The completion event is authoritative — the latch completes this
+                # run once the screen stabilises — so past the budget we stop typing
+                # into the session rather than spam it.
+                if [[ $stale_count -ge $max_stale_count ]]; then
+                    echo "$(date '+%H:%M:%S') - completion event exists; nudge budget exhausted (${stale_count}/${max_stale_count}); awaiting latch, not nudging."
                     echo "$new_state" > "$state_file"
                     continue
                 fi
@@ -975,6 +1022,17 @@ monitor-chain-agent() {
             echo "$(date '+%H:%M:%S') - active"
             echo "0" > "$stale_count_file"
             echo "$new_state" > "$state_file"
+            # Only progress we did NOT cause refills the nudge budget. A nudge's
+            # echo spans a few cycles (typed keystrokes, then the agent's
+            # response); the grace window absorbs them. Activity beyond the window
+            # is real progress and safely refills the budget. This stops a 0-work
+            # session from refilling its budget by echoing our keystrokes — the
+            # exact loop that defeated the per-cycle stale cap.
+            if [[ "${nudge_echo_grace:-0}" -gt 0 ]]; then
+                nudge_echo_grace=$((nudge_echo_grace - 1))
+            else
+                echo "0" > "$nudge_count_file"
+            fi
 
             # profiler: periodic snapshot (every cycle)
             if declare -f profiler-snapshot >/dev/null; then
@@ -1010,7 +1068,7 @@ monitor-chain-agent() {
                     disown $!
                 fi
             fi
-            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
         fi
 
@@ -1027,7 +1085,7 @@ monitor-chain-agent() {
         if [[ $stale_count -ge $max_stale_count ]]; then
             monitor-agent-stalled "$session_name" "$chain_file" "$stale_count" \
                 "monitor: agent output quiescent for ${stale_count} stale cycles (max ${max_stale_count}); no AGENT_COMPLETE and no completion event"
-            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
         fi
 
@@ -1035,6 +1093,21 @@ monitor-chain-agent() {
             echo "$(date '+%H:%M:%S') - stale ($stale_count). waiting for advisor threshold ($advisor_stale_threshold)."
             echo "$new_state" > "$state_file"
             continue
+        fi
+
+        # durable nudge budget gate: past the budget, a quiescent agent is
+        # escalated as BLOCKED instead of being typed at forever. The per-cycle
+        # stale counter can never reach max_stale_count here — each nudge's echo
+        # repaints the screen and resets it — so this file-backed ceiling is the
+        # only thing that actually stops an unresponsive (e.g. 0-token) session.
+        local nudge_total=0
+        [[ -f "$nudge_count_file" ]] && nudge_total=$(cat "$nudge_count_file" 2>/dev/null || echo 0)
+        if [[ "${nudge_total:-0}" -ge "$max_total_nudges" ]]; then
+            echo "$(date '+%H:%M:%S') - nudge budget spent (${nudge_total}/${max_total_nudges}); escalating, not nudging."
+            monitor-agent-stalled "$session_name" "$chain_file" "$nudge_total" \
+                "monitor: no real progress after ${nudge_total} nudges (budget ${max_total_nudges}); escalating instead of nudging an unresponsive session indefinitely"
+            rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
+            break
         fi
 
         echo "$(date '+%H:%M:%S') - stale ($stale_count). asking Mentiko advisor..."
@@ -1058,6 +1131,11 @@ monitor-chain-agent() {
         sleep 1
         transport_send_raw "$session_name" $'\r'
         sleep 0.5
+
+        # charge this keystroke against the durable budget and mark that the next
+        # "active" cycle is our own echo, not progress.
+        echo "$(( ${nudge_total:-0} + 1 ))" > "$nudge_count_file"
+        nudge_echo_grace=3
 
         echo "$new_state" > "$state_file"
     done
