@@ -1,0 +1,36 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": ["lib/agent-functions.sh", "lib/monitor-completion.sh"],
+  "role": "monitor pty agent sessions, latch completion, classify stale/dead, and launch completion handler",
+  "completion_latch": {
+    "rule": "OR latch explicit terminal marker or declared emits event",
+    "terminal_marker": "AGENT_COMPLETE on its own stripped terminal line",
+    "event_match": "expected emits event with source containing agent id and matching run id",
+    "latch_file": "~/.mentiko_monitor/${session}_complete"
+  },
+  "stale_behavior": {
+    "detector": "md5 of last 20 captured lines unchanged",
+    "advisor_threshold": "MENTIKO_ADVISOR_STALE_COUNT default 3",
+    "max_stale": "MENTIKO_MONITOR_MAX_STALE or DEFAULT_MAX_STALE_COUNT default 5",
+    "effect": "advisor nudge, blocked diagnostic, or failure classification",
+    "never": "stale output does not imply completion"
+  },
+  "death_behavior": {
+    "local": "pgrep child process under pane pid",
+    "remote": "skip local process death checks for ssh/docker",
+    "with_event": "complete normally",
+    "without_event": "failed diagnostic agent-error"
+  },
+  "launches": {
+    "completion": "chain-runner-complete in separate pty when chain.json exists",
+    "legacy": "complete-agent.sh only when monitor has no chain.json"
+  },
+  "invariants": [
+    "stale is not complete",
+    "dead without declared event is not success",
+    "completion matcher never accepts monitor diagnostic events",
+    "AGENT_COMPLETE must be standalone line",
+    "event match respects agent id and run id",
+    "completion handler runs outside monitor pty"
+  ]
+}

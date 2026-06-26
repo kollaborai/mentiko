@@ -1,0 +1,53 @@
+{
+  "schema_version": "runner-v2-watched-proof/v1",
+  "generated_at": "2026-06-26T19:41:03.073Z",
+  "status": "passed",
+  "temp_root": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-UlArb5",
+  "pty_daemon": "mentiko-v2-proof-57808-1782502856288",
+  "checks": [
+    {
+      "id": "launch-supported",
+      "status": "pass",
+      "evidence": "typed-plan"
+    },
+    {
+      "id": "run-completed",
+      "status": "pass",
+      "evidence": "completed"
+    },
+    {
+      "id": "agent-complete",
+      "status": "pass",
+      "evidence": "complete"
+    },
+    {
+      "id": "event-written",
+      "status": "pass",
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-UlArb5/data/namespaces/default/events"
+    },
+    {
+      "id": "completion-session",
+      "status": "pass",
+      "evidence": [
+        "workspace-writer-run-1782502856288-e1d0"
+      ]
+    },
+    {
+      "id": "typed-bootstrap-session",
+      "status": "pass",
+      "evidence": "workspace-writer-run-1782502856288-e1d0"
+    },
+    {
+      "id": "monitor-session-alive-or-exited-with-output",
+      "status": "pass",
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-UlArb5/data/namespaces/default/runs/run-1782502856288-e1d0/monitor-capture.txt"
+    },
+    {
+      "id": "completion-session-spawned",
+      "status": "pass",
+      "evidence": [
+        "complete-workspace-writer-run-1782502856288-e1d0-1782502862"
+      ]
+    }
+  ]
+}

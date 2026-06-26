@@ -1,0 +1,46 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": ["lib/watchdog.sh", "lib/chain-event-watcher.sh", "lib/scheduler.sh"],
+  "role": "singleton daemon supervision, event-triggered chain launch, schedule launch, and stalled run recovery",
+  "daemons": {
+    "watchdog": {
+      "session": "mentiko-watchdog",
+      "command": "bash lib/watchdog.sh",
+      "loop": "check pty-manager, scan runs, cleanup orphans, reconcile tasks",
+      "interval": "WATCHDOG_INTERVAL default 60"
+    },
+    "chain_event_watcher": {
+      "session": "mentiko-chain-watcher",
+      "command": "bash lib/chain-event-watcher.sh --namespace $NAMESPACE_ID",
+      "loop": "scan events and chain config.event_triggers",
+      "interval": "CHAIN_WATCHER_INTERVAL default 10"
+    }
+  },
+  "event_triggers": {
+    "source": "$CHAINS_DIR/*/chain.json .config.event_triggers[]",
+    "enabled": "included unless enabled == false",
+    "idempotency": "handled marker under runtime/chain-watcher/handled",
+    "condition_policy": "reject shell metacharacters and fail closed",
+    "launch": "nohup bash lib/chain-runner.sh <chain_path>",
+    "env": ["NAMESPACE_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT"]
+  },
+  "watchdog_recovery": {
+    "stall_condition": "running run has no alive session/monitor/grace and running or pending agents",
+    "preferred_write": "watchdog-stop-run from run-lib under shared run lock",
+    "fallback_write": "inline jq rewrite",
+    "event": "diagnostic run-stalled event, not canonical agent handoff"
+  },
+  "session_liveness": {
+    "source_of_truth": "live PTY session means alive",
+    "foreign_scope": "skip sessions from another MENTIKO_GLOBAL_ROOT/NAMESPACE_ID/ORG_ID",
+    "skip_prefixes": ["mentiko-watchdog", "mentiko-chain-watcher", "monitor-", "complete-", "term-", "link-", "peer-"]
+  },
+  "invariants": [
+    "do not treat stale age as dead if PTY session is live",
+    "do not kill live monitor sessions",
+    "watchdog diagnostic events do not use canonical agent handoff shape",
+    "condition evaluation remains fail-closed",
+    "watcher idempotency uses handled markers, not processed mutation",
+    "scheduler state ids are path-derived"
+  ]
+}

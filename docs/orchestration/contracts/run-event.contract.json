@@ -1,0 +1,39 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": ["lib/run-lib.sh", "lib/event-trigger.sh"],
+  "role": "run.json mutation, task propagation, event file emission, processed markers, and archive scoping",
+  "run_json": {
+    "path": "$RUNS_DIR/<run_id>/run.json",
+    "lock_dir": "<run.json>.lock/",
+    "write_policy": "read-modify-write under lock, tmp file, rename",
+    "timeout_policy": "warn and proceed unlocked",
+    "read_policy": "lock-free",
+    "statuses": ["pending", "running", "blocked", "failed", "stopped", "completed"]
+  },
+  "event_file": {
+    "format": "key-value text",
+    "fields": ["event", "source", "run_id", "timestamp", "processed", "data"],
+    "parser": "split on first colon",
+    "filename": "${run_id-optional}<source>-<event>.event",
+    "source_of_truth": "body fields before filename fallback"
+  },
+  "task_update": {
+    "api_base": "http://localhost:${WEB_PORT:-3000}",
+    "auth": "Authorization: Bearer ${BETTER_AUTH_SECRET:-}",
+    "terminal_statuses": ["completed", "failed", "stopped", "cancelled", "error"],
+    "completion_behavior": "completed run reopens non-open task to open and writes summary comment"
+  },
+  "archive": {
+    "triggered_event": "always archived if explicit path is present",
+    "owned_events": "run_id plus source/agent exact or superstring match",
+    "forbidden": "global archive sweep of sibling agents or other runs"
+  },
+  "invariants": [
+    "agent success status is complete, run success status is completed",
+    "create-run starts pending",
+    "add-run-session is canonical running promotion",
+    "event body fields are authoritative",
+    "archive scope is run plus source/agent",
+    "schemas are not trusted over actual disk format"
+  ]
+}

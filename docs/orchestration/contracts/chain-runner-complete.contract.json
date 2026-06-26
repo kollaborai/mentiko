@@ -1,0 +1,53 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_file": "lib/chain-runner-complete.sh",
+  "role": "agent completion, event verification, artifact capture, and downstream routing",
+  "entrypoint": "chain-runner-complete.sh <session-name> <chain.json>",
+  "caller": "lib/agent-functions.sh launch-chain-runner-complete",
+  "phase_order": [
+    "resolve current agent",
+    "capture terminal output/activity",
+    "find required event",
+    "kill current monitor/session",
+    "mark event processed and archive owned events",
+    "update agent/run artifacts",
+    "fan-group short-circuit",
+    "quality gates",
+    "generation import backstop",
+    "find next agents",
+    "launch downstream or complete chain"
+  ],
+  "event_matching": {
+    "formats": ["key-value event/source/run_id", "source alias agent", "AGENT EVENT line", "simple json fields"],
+    "requires_run_id_match_when_present": true,
+    "unexpected_same_agent_event": "ignored",
+    "declared_emits_missing": "failed, diagnostic agent-error, no downstream launch",
+    "diagnostic_source": "chain-runner-complete"
+  },
+  "routing": {
+    "priority": ["branches[event]", "agents[].triggers"],
+    "shapes": ["string", "array", "fan_out object", "conditional object"],
+    "dedupe": "skip target already running, complete, or completed",
+    "loop_guard": "repeat current-agent:event pair completes run to avoid infinite loop",
+    "max_rounds": "exceeding config.max_rounds stops run/task"
+  },
+  "artifacts": [
+    "<agent>-events.json",
+    "<agent>-output.txt",
+    "<agent>-diff.patch",
+    "<agent>-files-changed.json",
+    "<agent>-conversations.json",
+    "<agent>-summary.json",
+    "<agent>-summary.md",
+    "<agent>-quality-gate.json"
+  ],
+  "invariants": [
+    "never fabricate the declared emits event",
+    "diagnostic events never satisfy success handoff matching",
+    "archive only events owned by run id plus source or agent",
+    "quality gates run before generation import and downstream routing",
+    "fan-in launches exactly once under fan-group lock",
+    "fan-out launches detached with nohup/disown semantics",
+    "task status propagation happens on completed, failed, and stopped"
+  ]
+}

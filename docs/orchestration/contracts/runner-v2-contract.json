@@ -1,0 +1,93 @@
+{
+  "schema_version": "runner-contract/v1",
+  "generated_at": "2026-06-25",
+  "migration_mode": "side-by-side",
+  "default_runner": "shell",
+  "flag": {
+    "name": "MENTIKO_RUNNER_V2",
+    "enabled_values": ["1", "true", "yes", "on"],
+    "default": "off",
+    "scope": "initial web chain launch; completion re-entry requires the separate completion flag"
+  },
+  "completion_flag": {
+    "name": "MENTIKO_RUNNER_V2_COMPLETION",
+    "enabled_values": ["1", "true", "yes", "on"],
+    "default": "off",
+    "scope": "opt-in typed completion re-entry bridge from monitor handoff"
+  },
+  "entrypoints": {
+    "web_initial_launch": {
+      "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>'",
+      "v2": "web/lib/runner-v2/controller.ts -> web/lib/runner-v2/agent-bootstrap-plan.ts validates first-agent/profile context, then typed-plan still delegates PTY startup to lib/chain-runner.sh --start",
+      "fallback": "shell launch when v2 disabled or returns unsupported"
+    },
+    "completion_reentry": {
+      "current": "lib/chain-runner-complete.sh -> lib/chain-runner.sh --start/--parallel",
+      "v2": "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled",
+      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported",
+      "reason": "completion owns fan-in, fan-out, retries, generation backstop, and event archiving; typed re-entry is opt-in until full branch parity is proven"
+    },
+    "daemon_watchers": {
+      "current": "chain-runner ensures mentiko-watchdog and mentiko-chain-watcher pty sessions",
+      "v2": "must preserve singleton behavior before replacing shell startup"
+    }
+  },
+  "disk_contracts": {
+    "run_json": {
+      "path": "$RUNS_DIR/<run_id>/run.json",
+      "lock": "<run.json>.lock/",
+      "write_policy": "read-modify-write under lock, temp file, atomic rename",
+      "read_policy": "lock-free readers tolerate old or new whole file",
+      "run_success_status": "completed",
+      "agent_success_status": "complete",
+      "initial_status": "pending in shell create-run; web-created runs may already be running or pending"
+    },
+    "event_file": {
+      "format": "key-value text",
+      "fields": ["event", "source", "run_id", "timestamp", "processed", "data"],
+      "parser_rule": "split on first colon; data may contain more colons",
+      "processed_default": "false",
+      "source_of_truth": "body fields before filename fallback"
+    }
+  },
+  "monitor_contract": {
+    "completion": "OR-latched explicit AGENT_COMPLETE line or declared emits event match",
+    "stale": "stale/idle only drives advisor nudges or diagnostics",
+    "forbidden": [
+      "idle implies complete",
+      "dead without declared event implies success",
+      "monitor diagnostic event counts as handoff success"
+    ],
+    "event_match": {
+      "agent_id": "MENTIKO_AGENT_ID or session-name inference",
+      "event": "agent emits field lower-case equals event file event lower-case",
+      "source": "event source contains agent id case-insensitive",
+      "run_id": "if present in env, event run id must match"
+    }
+  },
+  "watcher_contract": {
+    "event_trigger_source": "chain.json config.event_triggers",
+    "enabled": "trigger included unless enabled == false",
+    "idempotency": "handled marker under runtime/chain-watcher/handled",
+    "condition_policy": "fail closed on rejected shell metacharacters or malformed condition",
+    "launch_env": ["NAMESPACE_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT"]
+  },
+  "watchdog_contract": {
+    "alive_source": "live PTY session wins over age/stale checks",
+    "foreign_scope": "never reap sessions from another root/namespace/org",
+    "run_stop": "use shared run lock when available",
+    "stalled_event": "diagnostic run-stalled event is not canonical agent handoff"
+  },
+  "invariants": [
+    "do not mutate existing shell runner behavior when MENTIKO_RUNNER_V2 is unset",
+    "do not use stale json schemas as the runtime truth",
+    "do not collapse watcher/watchdog/scheduler/completion into one implicit state machine",
+    "do not fabricate agent success events",
+    "do not archive sibling-agent or other-run events",
+    "preserve run.json lock interoperability with bash",
+    "preserve agent terminal status complete vs run status completed",
+    "preserve chain-authored trigger configuration",
+    "preserve namespace/org/root scoping for daemon sessions",
+    "completion re-entry remains shell fallback-capable until parity tests cover every branch"
+  ]
+}
