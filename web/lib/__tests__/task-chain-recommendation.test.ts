@@ -30,4 +30,18 @@ describe("task chain recommendation helpers", () => {
       recommendation
     )).toContain("Create a Mentiko chain for this task");
   });
+
+  it("normalizes already-satisfied recommendations as no-action-needed", () => {
+    const normalized = normalizeTaskChainRecommendation({
+      action: "already_satisfied",
+      reasoning: "The peer review UI files and tests already exist.",
+      confidence: 1,
+    });
+
+    expect(normalized).toMatchObject({
+      action: "no_action_needed",
+      reasoning: "The peer review UI files and tests already exist.",
+      confidence: 1,
+    });
+  });
 });

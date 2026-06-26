@@ -68,6 +68,7 @@ export function runRunnerV2CompletionEntrypoint(
         taskId: run.taskId,
         lastAgentId: agent.id,
       },
+      generation: generationImportPlan(run, runDir, env),
       retry: {
         policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
         currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,
@@ -132,6 +133,41 @@ export function runRunnerV2CompletionEntrypoint(
     restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
     throw error;
   }
+}
+
+function generationImportPlan(
+  run: RunRecord,
+  runDir: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+) {
+  const metadata = objectValue(run.metadata);
+  const jobId = stringValue(metadata?.generationJobId) || stringValue(metadata?.jobId);
+  const generationKind = stringValue(metadata?.generationKind);
+  if (!jobId || !generationKind) return undefined;
+  const artifactsDir = join(runDir, "artifacts");
+  return {
+    jobId,
+    generationKind,
+    runId: run.id,
+    artifactsDir,
+    namespaceId: env.NAMESPACE_ID,
+    orgId: env.ORG_ID,
+    webUrl: env.MENTIKO_WEB_URL,
+    importablePayload: hasImportableGenerationPayload(artifactsDir),
+  };
+}
+
+function hasImportableGenerationPayload(artifactsDir: string): boolean {
+  if (!existsSync(artifactsDir)) return false;
+  const canonical = join(artifactsDir, "generation-result.json");
+  if (existsSync(canonical)) return true;
+  return readdirSync(artifactsDir).some((file) =>
+    file.endsWith("-generation-result.json") ||
+    file.endsWith("-output.json") ||
+    file.endsWith("-result.json") ||
+    file.endsWith("-output.txt") ||
+    file.endsWith("-conversations.json")
+  );
 }
 
 export class RunnerV2CompletionUnsupportedError extends Error {

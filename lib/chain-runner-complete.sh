@@ -125,6 +125,11 @@ else
     fi
 fi
 
+if [[ -n "${RUN_ID:-}" ]]; then
+    RUN_DIR="$RUNS_DIR_BASE/$RUN_ID"
+    ARTIFACTS_DIR="$RUN_DIR/artifacts"
+fi
+
 # build flags for chain-runner.sh re-invocation
 WORKSPACE_FLAG="--workspace $CHAIN_PROJECT_ROOT"
 TASK_FLAG=""
@@ -402,6 +407,40 @@ emit_completion_diagnostic_event() {
     echo "  diagnostic event written: $(basename "$event_file")"
 }
 
+import_generation_job_backstop() {
+    [[ -n "${RUN_ID:-}" ]] || return 1
+    [[ -n "${RUN_DIR:-}" && -f "$RUN_DIR/run.json" ]] || return 1
+
+    local _gen_job_id
+    local _gen_kind
+    _gen_job_id=$(jq -r '.metadata.generationJobId // .metadata.jobId // empty' "$RUN_DIR/run.json" 2>/dev/null || true)
+    _gen_kind=$(jq -r '.metadata.generationKind // empty' "$RUN_DIR/run.json" 2>/dev/null || true)
+    [[ -n "$_gen_job_id" && "$_gen_job_id" != "null" ]] || return 1
+    [[ -n "$_gen_kind" && "$_gen_kind" != "null" ]] || return 1
+
+    local _gen_bin
+    local _gen_output
+    _gen_bin="${BIN_DIR:-$SCRIPT_DIR/../bin}/mentiko"
+    if _gen_output=$(ARTIFACTS_DIR="${ARTIFACTS_DIR:-$RUN_DIR/artifacts}" \
+        MENTIKO_GENERATION_JOB_ID="$_gen_job_id" \
+        MENTIKO_GENERATION_KIND="$_gen_kind" \
+        MENTIKO_RUN_ID="$RUN_ID" \
+        MENTIKO_COMPLETION_EVENT_DATA="${TRIGGERED_EVENT_DATA:-}" \
+        NAMESPACE_ID="${NAMESPACE_ID:-default}" \
+        ORG_ID="${ORG_ID:-default}" \
+        MENTIKO_WEB_URL="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-3000}}" \
+        "$_gen_bin" generation import 2>&1); then
+        echo "  generation: job $_gen_job_id ($_gen_kind) import ok"
+        _sys_log "info" "chain-runner-complete" "run ${RUN_ID} generation import backstop ok" "job: $_gen_job_id, kind: $_gen_kind"
+        return 0
+    fi
+
+    if [[ -n "${_gen_output:-}" ]]; then
+        printf '%s\n' "$_gen_output" | tail -n 3 | sed 's/^/  generation: /'
+    fi
+    return 1
+}
+
 # fail_completion_no_event: the agent's process reached this completion handler
 # (it printed AGENT_COMPLETE / its monitor latched) but it NEVER wrote its
 # declared emits event. dead/quiescent-without-event = FAILURE, never a fabricated
@@ -412,6 +451,20 @@ emit_completion_diagnostic_event() {
 # trap, so every step is guarded.
 fail_completion_no_event() {
     local reason="${1:-agent reached completion handler without writing its declared emits event ($EXPECTED_EVENT)}"
+
+    if import_generation_job_backstop; then
+        echo ""
+        echo "  no completion event from $CURRENT_AGENT_ID, but generation payload imported successfully."
+        echo "  treating core generation run as complete via file backstop."
+        _sys_log "info" "chain-runner-complete" "run ${RUN_ID:-unknown} agent ${CURRENT_AGENT_ID} completed without emit; generation backstop accepted payload" \
+            "expected: ${EXPECTED_EVENT:-none}, session: ${SESSION_NAME:-unknown}"
+        if [[ -n "${RUN_ID:-}" ]]; then
+            update-run-agent "$RUN_ID" "$CURRENT_AGENT_ID" "complete" 2>/dev/null || true
+            update-run-status "$RUN_ID" "completed" 2>/dev/null || true
+            update-task-from-run "$RUN_ID" "completed" 2>/dev/null || true
+        fi
+        exit 0
+    fi
 
     echo ""
     echo "  no completion event from $CURRENT_AGENT_ID; declared emits '$EXPECTED_EVENT' was never written."

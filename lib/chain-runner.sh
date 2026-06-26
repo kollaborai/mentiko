@@ -612,6 +612,50 @@ build_completion_contract() {
     local s_prefix="$2"   # retained for signature compatibility; events are now emitted
                           # via `mentiko emit`, which derives source from MENTIKO_AGENT_ID
     local agent_emits="$3"
+    local core_generation_chain="false"
+    if [[ -n "${CHAIN_FILE:-}" && -f "${CHAIN_FILE:-}" ]]; then
+        core_generation_chain=$(jq -r '.metadata.coreGenerationChain // false' "$CHAIN_FILE" 2>/dev/null || echo "false")
+    fi
+
+    if [[ "$core_generation_chain" == "true" ]]; then
+        cat <<EOF
+COMPLETION CONTRACT:
+Before you finish, create these two user-facing handoff artifacts:
+- $ARTIFACTS_DIR/${agent_id}-summary.json
+- $ARTIFACTS_DIR/${agent_id}-summary.md
+
+The JSON summary must use this shape:
+{
+  "status": "complete|partial|blocked",
+  "executiveSummary": "2-4 sentences suitable for the run UI",
+  "workCompleted": ["specific work performed"],
+  "artifactsProduced": ["artifact paths you created or updated"],
+  "codeChanges": ["files changed, or 'none'"],
+  "findings": ["important discoveries"],
+  "risks": ["known risks or gaps"],
+  "nextAgentHints": ["what the next agent should read or do"]
+}
+
+Core generation handoff:
+- Write the required JSON payload to $ARTIFACTS_DIR/generation-result.json.
+- Mentiko imports that file automatically when the run completes.
+- You may run "mentiko emit ${agent_emits}" after writing the file, but the file is the authoritative handoff.
+- Do NOT hand-write any .event file.
+
+Your final terminal response must be in this order:
+SUMMARY:
+- one to three concise bullets
+ARTIFACTS:
+- paths to the most important artifacts
+NEXT:
+- handoff notes or "none"
+<the completion marker line>
+
+The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.
+The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.
+EOF
+        return
+    fi
 
     cat <<EOF
 COMPLETION CONTRACT:

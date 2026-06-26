@@ -123,6 +123,77 @@ describe("runner-v2 completion entrypoint", () => {
     expect(readRunJson(runJsonPath).agents[0]).toMatchObject({ id: "a", status: "running" });
   });
 
+  it("handles core generation completion without an emitted event when a payload exists", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain-recommendation",
+      name: "Chain Recommendation",
+      metadata: { coreGenerationChain: true, generationKind: "chain_recommendation" },
+      config: { project_root: root, on_complete: "stop" },
+      agents: [{ id: "chain-recommender", name: "Chain Recommender", emits: "chain-recommendation-complete" }],
+    });
+
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Chain Recommendation", goal: "recommend" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      metadata: {
+        generationJobId: "job-1",
+        generationKind: "chain_recommendation",
+      },
+      agents: [{ id: "chain-recommender", name: "Chain Recommender", session: "chain-recommender-run-123", status: "running" }],
+      sessions: ["chain-recommender-run-123"],
+    }));
+    writeJson(join(artifactsDir, "generation-result.json"), {
+      recommendation: {
+        action: "no_action_needed",
+        reasoning: "Already built.",
+      },
+    });
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "chain-recommender-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      dryRun: true,
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      decision: "generation-terminal",
+      plan: {
+        action: "generation-terminal",
+        effects: [
+          { type: "generation-import", plan: { jobId: "job-1", generationKind: "chain_recommendation" } },
+          { type: "terminal" },
+        ],
+      },
+    });
+    expect(readRunJson(runJsonPath).agents[0]).toMatchObject({
+      id: "chain-recommender",
+      status: "running",
+    });
+  });
+
   it("returns an unsupported error before mutation when run context is incomplete", () => {
     const root = tempRoot();
     const chainPath = join(root, "chain.json");

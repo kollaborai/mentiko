@@ -57,7 +57,7 @@ describe("chain utils", () => {
     });
   });
 
-  it("includes agent prompt hints in chain summaries", () => {
+  it("omits agent prompt hints from chain summaries", () => {
     const summary = buildChainSummary([
       {
         id: "smoke-chain",
@@ -92,7 +92,8 @@ describe("chain utils", () => {
     expect(summary).toContain("triggers: chain_start");
     expect(summary).toContain("emits: artifact-written");
     expect(summary).toContain("artifacts:");
-    expect(summary).toContain("prompt_hint:");
+    expect(summary).not.toContain("prompt_hint:");
+    expect(summary).not.toContain("Create cli-agnostic-pointer-proof.json");
     expect(summary).toContain("cli-agnostic-pointer-proof.json");
   });
 });

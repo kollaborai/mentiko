@@ -425,6 +425,34 @@ function extractGeneratedChain(result: Record<string, unknown> | undefined): Rec
   return null;
 }
 
+function recoverGeneratedChainFromRunArtifacts(
+  metadata: Record<string, unknown>,
+  namespaceId: string
+): Record<string, unknown> | undefined {
+  const runId = typeof metadata.generated_chain_run_id === "string"
+    ? metadata.generated_chain_run_id
+    : undefined;
+  if (!runId) return undefined;
+  const artifactsDir = nsPath(namespaceId, "runs", runId, "artifacts");
+  if (!existsSync(artifactsDir)) return undefined;
+  const candidates = [
+    "generation-result.json",
+    ...readdirSync(artifactsDir).filter((file) =>
+      file.endsWith("-generation-result.json") ||
+      file.endsWith("-output.json") ||
+      file.endsWith("-result.json")
+    ),
+  ];
+  for (const candidate of candidates) {
+    const path = join(artifactsDir, candidate);
+    if (!existsSync(path)) continue;
+    const parsed = parseJsonObject(readFileSync(path, "utf8"));
+    const chain = extractGeneratedChain(parsed || undefined);
+    if (chain) return chain;
+  }
+  return undefined;
+}
+
 function parseTaskMetadata(
   task: ReturnType<typeof taskGet>
 ): Record<string, unknown> {
@@ -533,6 +561,19 @@ async function triggerAutoRun(
   if (generationJobId) {
     const job = getJob(generationJobId, namespaceId);
     if (!job) {
+      const recovered = recoverGeneratedChainFromRunArtifacts(metadata, namespaceId);
+      if (recovered) {
+        return await autoAcceptGeneratedChain(
+          taskId,
+          task.title,
+          metadata,
+          recovered,
+          namespaceId,
+          orgId,
+          request,
+          workspacePath
+        );
+      }
       taskUpdate(orgId, taskId, {
         metadata: {
           ...metadata,
@@ -724,6 +765,27 @@ async function autoAcceptRecommendation(
       triggered: false,
       taskId,
       action: "execute_directly",
+      reason: normalized.reasoning,
+    };
+  }
+
+  if (action === "no_action_needed") {
+    const updated = {
+      ...metadata,
+      auto_run: false,
+      analysis_status: "accepted",
+      chain_recommendation_action: "no_action_needed",
+      chain_recommendation_reason: normalized.reasoning,
+    };
+    try {
+      taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
+    } catch {
+      /* non-fatal */
+    }
+    return {
+      triggered: false,
+      taskId,
+      action: "no_action_needed",
       reason: normalized.reasoning,
     };
   }

@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import config from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 import type { TypedExecutorEffect, TypedExecutorPlan } from "@/lib/runner-v2/executor";
+import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { writeFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
@@ -22,6 +23,7 @@ export type AdapterOperation =
   | { type: "session-policy"; policy: string; sessions?: string[] }
   | { type: "next-chain"; chainName: string; parentRunId: string }
   | { type: "retry-state"; action: string; agentId: string }
+  | ({ type: "generation-import" } & GenerationImportPlan)
   | { type: "circuit-breaker"; action: string; chainName: string; agentId: string; threshold: number; timeout: number }
   | { type: "rollback"; action: string; agentId: string; startSha?: string };
 
@@ -76,6 +78,8 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
     applyEventSideEffects(effect.plan.markProcessed, effect.plan.archiveOwned, context);
   } else if (effect.type === "fan-group-create") {
     writeFanGroup(context.stateDir, effect.group);
+  } else if (effect.type === "generation-import") {
+    applyGenerationImport(effect.plan, context);
   } else if (effect.type === "run-terminal") {
     updateRunStatus(context.runJsonPath, effect.status, effect.reason);
   } else if (effect.type === "terminal") {
@@ -96,6 +100,36 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
     }
   }
   return { operations, launchesStarted };
+}
+
+function applyGenerationImport(plan: GenerationImportPlan, context: AdapterContext): void {
+  const mentikoBin = join(config.codeRoot, "bin", "mentiko");
+  const result = spawnSync(mentikoBin, ["generation", "import"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ARTIFACTS_DIR: plan.artifactsDir,
+      MENTIKO_GENERATION_JOB_ID: plan.jobId,
+      MENTIKO_GENERATION_KIND: plan.generationKind,
+      MENTIKO_RUN_ID: plan.runId,
+      NAMESPACE_ID: plan.namespaceId || process.env.NAMESPACE_ID || "default",
+      ORG_ID: plan.orgId || process.env.ORG_ID || "default",
+      ...(plan.webUrl ? { MENTIKO_WEB_URL: plan.webUrl } : {}),
+    },
+  });
+  appendJsonl(join(context.stateDir, "generation-import.jsonl"), {
+    jobId: plan.jobId,
+    generationKind: plan.generationKind,
+    runId: plan.runId,
+    artifactsDir: plan.artifactsDir,
+    status: result.status === 0 ? "complete" : "failed",
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    timestamp: new Date().toISOString(),
+  });
+  if (result.status !== 0) {
+    throw new Error(`generation import failed for job ${plan.jobId}: ${result.stderr || result.stdout || result.status}`);
+  }
 }
 
 export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): ChildProcess | undefined {
@@ -450,6 +484,9 @@ function plannedOperations(effect: TypedExecutorEffect): AdapterOperation[] {
     return effect.plan.launch
       ? [{ type: "next-chain", chainName: effect.plan.launch.agentId, parentRunId: effect.plan.group.runId || "" }]
       : [];
+  }
+  if (effect.type === "generation-import") {
+    return [{ type: "generation-import", ...effect.plan }];
   }
   return [];
 }

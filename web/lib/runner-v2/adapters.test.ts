@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
 import { parseRunnerEvent } from "@/lib/runner-v2/events";
 import { createFanGroupState } from "@/lib/runner-v2/fan-group";
@@ -12,6 +12,7 @@ import { planTerminalCompletion } from "@/lib/runner-v2/terminal-plan";
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
   spawn: jest.fn(() => ({ pid: 4242, unref: jest.fn() })),
+  spawnSync: jest.fn(() => ({ status: 0, stdout: "import ok", stderr: "" })),
 }));
 
 function tempDir() {
@@ -153,6 +154,50 @@ describe("runner-v2 adapters", () => {
       launchesStarted: [{ command: "echo ok", pid: undefined }],
     });
     expect(readRunJson(runJsonPath).status).toBe("running");
+  });
+
+  it("applies generation import effects through the mentiko CLI", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const artifactsDir = join(dir, "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const result = applyTypedExecutorPlan({
+      action: "generation-terminal",
+      effects: [{
+        type: "generation-import",
+        plan: {
+          jobId: "job-1",
+          generationKind: "chain_recommendation",
+          runId: "run-123",
+          artifactsDir,
+          namespaceId: "default",
+          orgId: "default",
+        },
+      }],
+      launches: [],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+    });
+
+    expect(result.operations).toEqual([
+      expect.objectContaining({
+        type: "generation-import",
+        jobId: "job-1",
+        generationKind: "chain_recommendation",
+        artifactsDir,
+      }),
+    ]);
+    expect(readFileSync(join(dir, "generation-import.jsonl"), "utf8")).toContain("\"status\":\"complete\"");
+    expect(spawn).not.toHaveBeenCalledWith(expect.stringContaining("mentiko"), expect.arrayContaining(["generation", "import"]), expect.anything());
+    expect(spawnSync).toHaveBeenCalledWith(expect.stringContaining("/bin/mentiko"), ["generation", "import"], expect.objectContaining({
+      env: expect.objectContaining({
+        ARTIFACTS_DIR: artifactsDir,
+        MENTIKO_GENERATION_JOB_ID: "job-1",
+        MENTIKO_GENERATION_KIND: "chain_recommendation",
+      }),
+    }));
   });
 
   it("records terminal side-effect operations while applying run status", () => {

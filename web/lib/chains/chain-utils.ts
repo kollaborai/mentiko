@@ -188,11 +188,6 @@ export function getAllChains(chainsDir: string, cliBin: string, runsDir?: string
 export function buildChainSummary(chains: ChainData[]): string {
   if (chains.length === 0) return "No chains available.";
 
-  const summarizePrompt = (prompt?: string) => {
-    if (!prompt) return "";
-    return prompt.replace(/\s+/g, " ").trim().slice(0, 800);
-  };
-
   const summarizeArtifacts = (agent: ChainAgent) => {
     const produces = agent.artifacts?.produces;
     if (!produces?.length) return "";
@@ -209,14 +204,12 @@ export function buildChainSummary(chains: ChainData[]): string {
     .map((c) => {
       const agentList = c.agents
         .map((a) => {
-          const promptHint = summarizePrompt(a.prompt || a.description);
           const artifactHint = summarizeArtifacts(a);
           return [
             `    - ${a.name}${a.role ? ` (${a.role})` : ""}`,
             a.triggers?.length ? `      triggers: ${a.triggers.join(", ")}` : null,
             a.emits ? `      emits: ${a.emits}` : null,
             artifactHint ? `      artifacts: ${artifactHint}` : null,
-            promptHint ? `      prompt_hint: ${promptHint}` : null,
           ].filter(Boolean).join("\n");
         })
         .join("\n");

@@ -331,7 +331,8 @@ AVAILABLE CHAIN CATALOG:
 DECISION RULES:
 - If an existing chain is a good fit (>70% match to the task requirements), recommend "use_existing"
 - If no chain fits well, recommend "generate_new" with suggested agents and a generation prompt
-- Do not return "no_match", "execute directly", or "no chain needed"; if the task is not covered by an existing chain, create a new chain recommendation
+- If the task is already satisfied by the current workspace state, recommend "no_action_needed" and include concrete evidence
+- Do not return "no_match" or "execute directly"; if the task is not covered by an existing chain, create a new chain recommendation
 - A good fit means the chain satisfies the exact task contract, not just the general category. If the task names a required file, artifact, command, framework, workspace, acceptance criterion, or output shape and the existing chain is hardcoded for a different one, recommend "generate_new".
 - Do not recommend reusable-looking chains that produce task-specific hardcoded outputs unless those outputs exactly match the current task or the chain description/catalog clearly says the chain parameterizes them from task context.
 - Always provide reasoning (2-3 sentences) and a confidence score (0-1)
@@ -345,7 +346,7 @@ Raw JSON only. No markdown, no code blocks, no explanation outside the JSON.
 JSON SCHEMA:
 {
   "recommendation": {
-    "action": "use_existing" | "generate_new",
+    "action": "use_existing" | "generate_new" | "no_action_needed",
     "reasoning": "string (2-3 sentences)",
     "confidence": number (0-1),
     "chain_id": "string (when use_existing)",
@@ -355,7 +356,8 @@ JSON SCHEMA:
     "suggested_name": "string (when generate_new)",
     "suggested_description": "string (when generate_new)",
     "suggested_agents": [{"name": "string", "role": "string"}],
-    "generation_prompt": "string (when generate_new, ready for chain generator)"
+    "generation_prompt": "string (when generate_new, ready for chain generator)",
+    "evidence": ["string array (when no_action_needed)"]
   },
   "alternatives": [
     {

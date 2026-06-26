@@ -1,7 +1,8 @@
 export type TaskChainRecommendationAction =
   | "use_existing"
   | "generate_new"
-  | "execute_directly";
+  | "execute_directly"
+  | "no_action_needed";
 
 export interface TaskChainRecommendation {
   action: TaskChainRecommendationAction;
@@ -62,8 +63,10 @@ export function normalizeTaskChainRecommendation(value: unknown): TaskChainRecom
   );
 
   let action: TaskChainRecommendationAction;
-  if (rawAction === "use_existing" || rawAction === "generate_new") {
+  if (rawAction === "use_existing" || rawAction === "generate_new" || rawAction === "no_action_needed") {
     action = rawAction;
+  } else if (rawAction === "already_satisfied" || rawAction === "no_chain_needed") {
+    action = "no_action_needed";
   } else if (chainId) {
     action = "use_existing";
   } else if (hasGenerationShape) {

@@ -11,6 +11,7 @@ export type CompletionRunnerDecision =
   | { action: "fail"; reason: string; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "retry"; reason: string; retry: Extract<RetryNoEventPlan, { action: "retry" }>; run: RunRecord }
   | { action: "exhausted"; reason: string; retry: Extract<RetryNoEventPlan, { action: "exhausted" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
+  | { action: "generation-terminal"; reason: string; generation: GenerationImportPlan; terminal: TerminalCompletionPlan; run: RunRecord }
   | { action: "route"; event: RunnerEventRecord; route: RoutingDecision; loopGuard?: LoopGuardDecision; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "loop-complete"; event: RunnerEventRecord; loopGuard: Extract<LoopGuardDecision, { action: "complete" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "max-rounds-stop"; event: RunnerEventRecord; loopGuard: Extract<LoopGuardDecision, { action: "stop" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -34,12 +35,23 @@ export interface CompleteAgentInput {
     debug?: boolean;
   };
   fanGroup?: FanGroupState;
+  generation?: GenerationImportPlan & { importablePayload?: boolean };
   loopGuard?: {
     visited?: string[];
     currentRound?: number;
     maxRounds?: number;
   };
   now?: Date;
+}
+
+export interface GenerationImportPlan {
+  jobId: string;
+  generationKind: string;
+  runId: string;
+  artifactsDir: string;
+  namespaceId?: string;
+  orgId?: string;
+  webUrl?: string;
 }
 
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
@@ -50,6 +62,22 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   });
 
   if (!match.matched || !match.event) {
+    if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
+      updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
+      const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);
+      return {
+        action: "generation-terminal",
+        reason: match.reason || "no matching completion event; generation payload accepted",
+        generation: input.generation,
+        terminal: planTerminalCompletion(input.terminal || {
+          runId: input.runId,
+          chainName: input.chain.name || input.chain.id || "unknown",
+          lastAgentId: input.agent.id,
+        }, "explicit-stop"),
+        run,
+      };
+    }
+
     if (shouldCompleteEmptyEmitsAgent(input.agent.emits, hasDownstreamForAgent(input.chain, input.agent.id))) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
       const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);

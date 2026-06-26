@@ -42,6 +42,36 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
+  it("imports core generation payload instead of failing a missing emit", () => {
+    const file = runPath();
+    seedRun(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { id: "chain-generation", name: "Chain Generation", agents: [] },
+      events: [],
+      generation: {
+        jobId: "job-1",
+        generationKind: "chain_generation",
+        runId: "run-123",
+        artifactsDir: "/tmp/run-123/artifacts",
+        importablePayload: true,
+      },
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "generation-terminal",
+      generation: { jobId: "job-1", generationKind: "chain_generation" },
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "completed",
+      agents: [{ id: "writer", status: "complete" }],
+    });
+  });
+
   it("plans retry without failing the run when a declared emits event is missing and retry remains", () => {
     const file = runPath();
     seedRun(file);
