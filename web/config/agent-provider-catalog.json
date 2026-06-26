@@ -147,6 +147,7 @@
           "pipe_flag": "-p",
           "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
           "pre_exec": "unset CLAUDECODE",
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Balanced performance - always latest Sonnet"
         },
         {
@@ -157,6 +158,7 @@
           "pipe_flag": "-p",
           "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
           "pre_exec": "unset CLAUDECODE",
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Highest capability - always latest Opus"
         },
         {
@@ -167,6 +169,7 @@
           "pipe_flag": "-p",
           "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
           "pre_exec": "unset CLAUDECODE",
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Fastest for simple tasks - always latest Haiku"
         }
       ]
@@ -187,6 +190,7 @@
           "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
           "readiness": {
             "enabled": true,
+            "ready_patterns": [ { "name": "codex tui banner", "type": "text", "value": "OpenAI Codex (v", "action": "ready", "risk": "low", "enabled": true }, { "name": "codex input placeholder", "type": "text", "value": "Find and fix a bug", "action": "ready", "risk": "low", "enabled": true } ],
             "blocked_patterns": [
               {
                 "name": "unsupported skip git repo check arg",
@@ -229,6 +233,7 @@
           "permission_flag": "--dangerously-bypass-approvals-and-sandbox",
           "readiness": {
             "enabled": true,
+            "ready_patterns": [ { "name": "codex tui banner", "type": "text", "value": "OpenAI Codex (v", "action": "ready", "risk": "low", "enabled": true }, { "name": "codex input placeholder", "type": "text", "value": "Find and fix a bug", "action": "ready", "risk": "low", "enabled": true } ],
             "blocked_patterns": [
               {
                 "name": "unsupported skip git repo check arg",
@@ -277,6 +282,7 @@
           "cli": "opencode",
           "model": "anthropic/claude-sonnet-4-6",
           "pipe_flag": "-p",
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "opencode input ready", "type": "text", "value": "Ask anything", "action": "ready", "risk": "low", "enabled": true }, { "name": "opencode command hint", "type": "text", "value": "ctrl+p commands", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Claude Sonnet 4.6 via OpenCode runner"
         },
         {
@@ -285,6 +291,7 @@
           "cli": "opencode",
           "model": "openai/gpt-5.5",
           "pipe_flag": "-p",
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "opencode input ready", "type": "text", "value": "Ask anything", "action": "ready", "risk": "low", "enabled": true }, { "name": "opencode command hint", "type": "text", "value": "ctrl+p commands", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "OpenAI GPT-5.5 via OpenCode runner"
         }
       ]
@@ -303,6 +310,7 @@
           "pipe_flag": "-p",
           "permission_flag": "--permissions trust",
           "preferredAdvisorDefault": true,
+          "readiness": { "enabled": true, "ready_patterns": [ { "name": "kollab ready line", "type": "text", "value": "ready ·", "action": "ready", "risk": "low", "enabled": true }, { "name": "kollab hooks active", "type": "text", "value": "hooks active", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Kollab / Mentiko"
         }
       ]

@@ -192,9 +192,10 @@ export function PageBanner({
   const hash = hashString(title);
   const pattern = PATTERNS[hash % PATTERNS.length];
   const isLoginHalftone = pattern === LOGIN_HALFTONE_PATTERN;
+  const isCustomIcon = !!icon;
+  const hasRightWatermark = isCustomIcon;
 
   // if icon provided, use it as watermark; otherwise fall back to abstract vectors
-  const isCustomIcon = !!icon;
   const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
 
   return (
@@ -204,14 +205,23 @@ export function PageBanner({
         {isLoginHalftone ? (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute inset-0 auth-background-core opacity-55" />
-            <div className="absolute left-[38%] -top-[65%] h-[190%] w-[46%] auth-halftone auth-halftone-teal opacity-75" />
-            <div className="absolute -bottom-[86%] -right-[8%] h-[175%] w-[52%] auth-halftone auth-halftone-ember opacity-72" />
+            <div
+              className={`absolute -top-[65%] h-[190%] auth-halftone auth-halftone-teal opacity-75 ${
+                hasRightWatermark ? "left-[22%] w-[42%]" : "left-[38%] w-[46%]"
+              }`}
+            />
+            <div
+              className={`absolute -bottom-[86%] h-[175%] auth-halftone auth-halftone-ember opacity-72 ${
+                hasRightWatermark ? "left-[45%] w-[36%]" : "-right-[8%] w-[52%]"
+              }`}
+            />
             <div className="absolute inset-0 auth-background-vignette opacity-80" />
             <div
               className="absolute inset-0"
               style={{
-                background:
-                  "linear-gradient(to right, rgb(0 0 0 / 0.72) 0 31%, transparent 46%), radial-gradient(ellipse at 55% 58%, rgb(0 0 0 / 0.88) 0 20%, transparent 50%)",
+                background: hasRightWatermark
+                  ? "linear-gradient(to right, rgb(0 0 0 / 0.72) 0 24%, transparent 40%, transparent 58%, rgb(0 0 0 / 0.78) 82%), radial-gradient(ellipse at 44% 58%, rgb(0 0 0 / 0.72) 0 16%, transparent 48%)"
+                  : "linear-gradient(to right, rgb(0 0 0 / 0.72) 0 31%, transparent 46%), radial-gradient(ellipse at 55% 58%, rgb(0 0 0 / 0.88) 0 20%, transparent 50%)",
               }}
             />
           </div>

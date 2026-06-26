@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import { GoalCard } from "@/components/ui/goal-card";
 import { Badge } from "@/components/ui/badge";
 import { TrendUpFilled, ChartFilled, ChartFilled as BarChart3, RefreshFilled, ClockFilled as Clock, TickCircleFilled as CheckCircle, Star1Filled as Coins } from "@aliimam/icons";
-import { BotMessageSquare as Bot } from "@aliimam/icons";
+import { BotMessageSquare as Bot, ArrowRight2Filled, ArrowDown2Filled, ArrowUp2Filled, ArrowSwapFilled, SearchNormal1Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -88,6 +88,24 @@ function formatTokens(n: number): string {
   return n.toString();
 }
 
+// compact "time since" for the Started column; absolute timestamp lives in the title attr
+function formatRelative(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return iso;
+  const diff = Date.now() - t;
+  if (diff < 0) return "just now";
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  return `${mo}mo ago`;
+}
+
 function MiniSparkLine({ data, max, color }: { data: number[]; max: number; color: string }) {
   if (data.length === 0) return null;
 
@@ -169,205 +187,170 @@ function TokenBreakdown({ tokens }: { tokens: TokenCounts }) {
   );
 }
 
-function ProfileCard({ profile }: { profile: AgentProfile }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const goalStatus: Record<string, "pending" | "in_progress" | "completed" | "blocked" | "cancelled"> = {
-    running: "in_progress",
-    completed: "completed",
-    complete: "completed",
-    failed: "blocked",
-    error: "blocked",
-    pending: "pending",
-    cancelled: "cancelled",
-    paused: "blocked",
-    delivered: "completed",
-    idle: "pending",
-    warning: "blocked",
-  };
-
-  const status = goalStatus[profile.status] || "pending";
-
-  const metaParts = [];
-  if (profile.duration_ms !== undefined) metaParts.push(formatDuration(nsToMs(profile.duration_ms)));
-  if (profile.tokens.total > 0) metaParts.push(`${formatTokens(profile.tokens.total)} tok`);
-  if (profile.peak_memory_mb > 0) metaParts.push(`${profile.peak_memory_mb}MB`);
-
+// Expanded detail for a single profile row — the full metric breakdown.
+function ProfileDetail({ profile }: { profile: AgentProfile }) {
   return (
-    <GoalCard
-      id={profile.session}
-      title={profile.agent_name}
-      description={profile.session}
-      status={status}
-      icon={<Bot className="h-4 w-4 text-foreground/60" />}
-      meta={metaParts.join(" · ")}
-      onClick={() => setExpanded(!expanded)}
-      className={expanded ? "bg-muted" : ""}
-    >
-      {expanded && (
-        <div className="space-y-3 mt-3">
-          {/* status and timing */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-1">Status</p>
-              <div className="flex items-center gap-1.5">
-                <StatusBadge status={profile.status} size="sm" />
-                <span className="text-xs text-foreground/60">{profile.status}</span>
-              </div>
-            </div>
-            {profile.duration_ms !== undefined && (
-              <div>
-                <p className="text-[10px] text-foreground/40 mb-1">Duration</p>
-                <p className="text-xs font-mono text-foreground/60">
-                  {formatDuration(nsToMs(profile.duration_ms))}
-                </p>
-              </div>
-            )}
+    <div className="space-y-3">
+      {/* status and timing */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-1">Status</p>
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={profile.status} size="sm" />
+            <span className="text-xs text-foreground/60">{profile.status}</span>
           </div>
+        </div>
+        {profile.duration_ms !== undefined && (
+          <div>
+            <p className="text-[10px] text-foreground/40 mb-1">Duration</p>
+            <p className="text-xs font-mono text-foreground/60">
+              {formatDuration(nsToMs(profile.duration_ms))}
+            </p>
+          </div>
+        )}
+      </div>
 
-          {/* error if any */}
-          {profile.error && (
-            <div className="p-2 bg-accent rounded">
-              <p className="text-[10px] text-foreground/60">{profile.error}</p>
-            </div>
-          )}
+      {/* error if any */}
+      {profile.error && (
+        <div className="p-2 bg-accent rounded">
+          <p className="text-[10px] text-foreground/60">{profile.error}</p>
+        </div>
+      )}
 
-          {/* metrics bars */}
-          {profile.duration_ms !== undefined && profile.duration_ms > 0 && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-2">Execution</p>
-              <MetricBar
-                label="duration"
-                value={nsToMs(profile.duration_ms) / 1000}
-                max={300}
-                color="#3b82f6"
-                unit="s"
-              />
-            </div>
-          )}
+      {/* metrics bars */}
+      {profile.duration_ms !== undefined && profile.duration_ms > 0 && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-2">Execution</p>
+          <MetricBar
+            label="duration"
+            value={nsToMs(profile.duration_ms) / 1000}
+            max={300}
+            color="#3b82f6"
+            unit="s"
+          />
+        </div>
+      )}
 
-          {profile.tokens.total > 0 && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-2">Tokens</p>
-              <MetricBar
-                label="input"
-                value={profile.tokens.total_input}
-                max={profile.tokens.total}
-                color="#22c55e"
-                unit=""
-              />
-              <MetricBar
-                label="output"
-                value={profile.tokens.total_output}
-                max={profile.tokens.total}
-                color="#60a5fa"
-                unit=""
-              />
-              <div className="mt-2">
-                <p className="text-[10px] text-foreground/40 mb-1">By Model</p>
-                <TokenBreakdown tokens={profile.tokens} />
-              </div>
-            </div>
-          )}
+      {profile.tokens.total > 0 && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-2">Tokens</p>
+          <MetricBar
+            label="input"
+            value={profile.tokens.total_input}
+            max={profile.tokens.total}
+            color="#22c55e"
+            unit=""
+          />
+          <MetricBar
+            label="output"
+            value={profile.tokens.total_output}
+            max={profile.tokens.total}
+            color="#60a5fa"
+            unit=""
+          />
+          <div className="mt-2">
+            <p className="text-[10px] text-foreground/40 mb-1">By Model</p>
+            <TokenBreakdown tokens={profile.tokens} />
+          </div>
+        </div>
+      )}
 
-          {profile.peak_memory_mb > 0 && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-2">Memory</p>
-              <MetricBar
-                label="peak"
-                value={profile.peak_memory_mb}
-                max={4096}
+      {profile.peak_memory_mb > 0 && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-2">Memory</p>
+          <MetricBar
+            label="peak"
+            value={profile.peak_memory_mb}
+            max={4096}
+            color="#8b5cf6"
+            unit="MB"
+          />
+          {profile.memory_samples.length > 1 && (
+            <div className="mt-1 flex items-center text-[10px] text-foreground/50">
+              <span>samples: </span>
+              <MiniSparkLine
+                data={profile.memory_samples}
+                max={profile.peak_memory_mb}
                 color="#8b5cf6"
-                unit="MB"
               />
-              {profile.memory_samples.length > 1 && (
-                <div className="mt-1 flex items-center text-[10px] text-foreground/50">
-                  <span>samples: </span>
-                  <MiniSparkLine
-                    data={profile.memory_samples}
-                    max={profile.peak_memory_mb}
-                    color="#8b5cf6"
-                  />
-                  <span className="ml-1">({profile.memory_samples.length})</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {profile.avg_cpu_pct > 0 && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-2">CPU</p>
-              <MetricBar
-                label="average"
-                value={profile.avg_cpu_pct}
-                max={100}
-                color="#06b6d4"
-                unit="%"
-              />
-              {profile.cpu_samples.length > 1 && (
-                <div className="mt-1 flex items-center text-[10px] text-foreground/50">
-                  <span>samples: </span>
-                  <MiniSparkLine
-                    data={profile.cpu_samples}
-                    max={100}
-                    color="#06b6d4"
-                  />
-                  <span className="ml-1">({profile.cpu_samples.length})</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* api calls */}
-          {profile.api_calls.length > 0 && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-1">
-                api calls ({profile.api_calls.length})
-              </p>
-              <div className="max-h-24 overflow-y-auto space-y-1">
-                {profile.api_calls.map((call, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 text-[10px] bg-muted rounded px-2 py-1"
-                  >
-                    <span className="w-20 truncate text-foreground/50">{call.model}</span>
-                    <span className="font-mono text-foreground/60">
-                      {formatTokens(call.total_tokens)}
-                    </span>
-                    <span className="text-foreground/30 ml-auto">
-                      {call.duration_ms}ms
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* timestamps */}
-          <div className="grid grid-cols-2 gap-2 text-[10px] text-foreground/40 font-mono">
-            <div>
-              <p className="mb-0.5">Started</p>
-              <p className="text-foreground/60">{profile.started_at}</p>
-            </div>
-            {profile.ended_at && (
-              <div>
-                <p className="mb-0.5">Ended</p>
-                <p className="text-foreground/60">{profile.ended_at}</p>
-              </div>
-            )}
-          </div>
-
-          {profile.run_id && (
-            <div>
-              <p className="text-[10px] text-foreground/40 mb-1">Run ID</p>
-              <Badge variant="ghost" className="text-[10px] font-mono bg-muted">
-                {profile.run_id.slice(0, 12)}
-              </Badge>
+              <span className="ml-1">({profile.memory_samples.length})</span>
             </div>
           )}
         </div>
       )}
-    </GoalCard>
+
+      {profile.avg_cpu_pct > 0 && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-2">CPU</p>
+          <MetricBar
+            label="average"
+            value={profile.avg_cpu_pct}
+            max={100}
+            color="#06b6d4"
+            unit="%"
+          />
+          {profile.cpu_samples.length > 1 && (
+            <div className="mt-1 flex items-center text-[10px] text-foreground/50">
+              <span>samples: </span>
+              <MiniSparkLine
+                data={profile.cpu_samples}
+                max={100}
+                color="#06b6d4"
+              />
+              <span className="ml-1">({profile.cpu_samples.length})</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* api calls */}
+      {profile.api_calls.length > 0 && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-1">
+            api calls ({profile.api_calls.length})
+          </p>
+          <div className="max-h-24 overflow-y-auto space-y-1">
+            {profile.api_calls.map((call, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 text-[10px] bg-muted rounded px-2 py-1"
+              >
+                <span className="w-20 truncate text-foreground/50">{call.model}</span>
+                <span className="font-mono text-foreground/60">
+                  {formatTokens(call.total_tokens)}
+                </span>
+                <span className="text-foreground/30 ml-auto">
+                  {call.duration_ms}ms
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* timestamps */}
+      <div className="grid grid-cols-2 gap-2 text-[10px] text-foreground/40 font-mono">
+        <div>
+          <p className="mb-0.5">Started</p>
+          <p className="text-foreground/60">{profile.started_at}</p>
+        </div>
+        {profile.ended_at && (
+          <div>
+            <p className="mb-0.5">Ended</p>
+            <p className="text-foreground/60">{profile.ended_at}</p>
+          </div>
+        )}
+      </div>
+
+      {profile.run_id && (
+        <div>
+          <p className="text-[10px] text-foreground/40 mb-1">Run ID</p>
+          <Badge variant="ghost" className="text-[10px] font-mono bg-muted">
+            {profile.run_id}
+          </Badge>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -469,11 +452,149 @@ function AggregateStats({ profiles }: { profiles: AgentProfile[] }) {
   );
 }
 
+type SortKey = "agent" | "status" | "started" | "duration" | "tokens" | "memory" | "cpu" | "calls";
+type SortDir = "asc" | "desc";
+
+function sortValue(p: AgentProfile, key: SortKey): number | string {
+  switch (key) {
+    case "agent": return (p.agent_name || "").toLowerCase();
+    case "status": return p.status || "";
+    case "started": return p.start_epoch || 0;
+    case "duration": return p.duration_ms ?? -1;
+    case "tokens": return p.tokens.total || 0;
+    case "memory": return p.peak_memory_mb || 0;
+    case "cpu": return p.avg_cpu_pct || 0;
+    case "calls": return p.api_calls.length;
+  }
+}
+
+function SortHeader({ label, sortKey, active, dir, align, onSort }: {
+  label: string;
+  sortKey: SortKey;
+  active: boolean;
+  dir: SortDir;
+  align?: "right";
+  onSort: (k: SortKey) => void;
+}) {
+  const Icon = !active ? ArrowSwapFilled : dir === "asc" ? ArrowUp2Filled : ArrowDown2Filled;
+  return (
+    <th className={`p-2 text-[10px] font-normal ${active ? "text-foreground/70" : "text-foreground/40"} ${align === "right" ? "text-right" : "text-left"}`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 hover:text-foreground transition-colors ${align === "right" ? "flex-row-reverse" : ""}`}
+      >
+        <span>{label}</span>
+        <Icon className={`h-2.5 w-2.5 ${active ? "" : "opacity-40"}`} />
+      </button>
+    </th>
+  );
+}
+
+function ProfilesTable({ profiles }: { profiles: AgentProfile[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("started");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [openSession, setOpenSession] = useState<string | null>(null);
+
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      // text columns read better ascending; metrics/time default to descending
+      setSortDir(k === "agent" || k === "status" ? "asc" : "desc");
+    }
+  };
+
+  const sorted = useMemo(() => {
+    const factor = sortDir === "asc" ? 1 : -1;
+    return [...profiles].sort((a, b) => {
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      if (typeof va === "string" || typeof vb === "string") {
+        return factor * String(va).localeCompare(String(vb));
+      }
+      return factor * (va - vb);
+    });
+  }, [profiles, sortKey, sortDir]);
+
+  if (profiles.length === 0) {
+    return (
+      <div className="bg-muted rounded-md p-8 text-center">
+        <p className="text-sm text-foreground/40">No runs match your filters</p>
+        <p className="text-xs text-foreground/30 mt-1">try a different status or clear the search</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-muted rounded-md overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-foreground/10">
+              <th className="w-7" />
+              <SortHeader label="Agent" sortKey="agent" active={sortKey === "agent"} dir={sortDir} onSort={onSort} />
+              <SortHeader label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
+              <SortHeader label="Started" sortKey="started" active={sortKey === "started"} dir={sortDir} onSort={onSort} />
+              <SortHeader label="Duration" sortKey="duration" active={sortKey === "duration"} dir={sortDir} align="right" onSort={onSort} />
+              <SortHeader label="Tokens" sortKey="tokens" active={sortKey === "tokens"} dir={sortDir} align="right" onSort={onSort} />
+              <SortHeader label="Peak Mem" sortKey="memory" active={sortKey === "memory"} dir={sortDir} align="right" onSort={onSort} />
+              <SortHeader label="CPU" sortKey="cpu" active={sortKey === "cpu"} dir={sortDir} align="right" onSort={onSort} />
+              <SortHeader label="Calls" sortKey="calls" active={sortKey === "calls"} dir={sortDir} align="right" onSort={onSort} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p) => {
+              const isOpen = openSession === p.session;
+              const Caret = isOpen ? ArrowDown2Filled : ArrowRight2Filled;
+              return (
+                <Fragment key={p.session}>
+                  <tr
+                    onClick={() => setOpenSession(isOpen ? null : p.session)}
+                    className={`cursor-pointer border-b border-foreground/5 hover:bg-accent transition-colors ${isOpen ? "bg-accent" : ""}`}
+                  >
+                    <td className="pl-2 align-top pt-2.5">
+                      <Caret className="h-3 w-3 text-foreground/40" />
+                    </td>
+                    <td className="p-2">
+                      <div className="font-medium text-foreground/90 truncate max-w-[200px]">{p.agent_name}</div>
+                      <div className="text-[10px] text-foreground/40 font-mono truncate max-w-[200px]">{p.run_id || p.session}</div>
+                    </td>
+                    <td className="p-2"><StatusBadge status={p.status} size="sm" /></td>
+                    <td className="p-2 text-foreground/60 whitespace-nowrap" title={p.started_at}>{formatRelative(p.started_at)}</td>
+                    <td className="p-2 text-right font-mono text-foreground/60 whitespace-nowrap">{p.duration_ms !== undefined ? formatDuration(nsToMs(p.duration_ms)) : "—"}</td>
+                    <td className="p-2 text-right font-mono text-foreground/60">{p.tokens.total > 0 ? formatTokens(p.tokens.total) : "—"}</td>
+                    <td className="p-2 text-right font-mono text-foreground/60 whitespace-nowrap">{p.peak_memory_mb > 0 ? `${p.peak_memory_mb}MB` : "—"}</td>
+                    <td className="p-2 text-right font-mono text-foreground/60">{p.avg_cpu_pct > 0 ? `${p.avg_cpu_pct.toFixed(0)}%` : "—"}</td>
+                    <td className="p-2 text-right font-mono text-foreground/60">{p.api_calls.length || "—"}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="border-b border-foreground/5">
+                      <td colSpan={9} className="bg-card px-4 py-3">
+                        <ProfileDetail profile={p} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const FILTERS = ["all", "running", "completed", "failed"] as const;
+type Filter = (typeof FILTERS)[number];
+
 export default function ProfilesPage() {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "running" | "completed" | "failed">("all");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
 
   const loadProfiles = useCallback(async () => {
     queueMicrotask(() => setLoading(true));
@@ -487,14 +608,22 @@ export default function ProfilesPage() {
     loadProfiles();
   }, [loadProfiles]);
 
-  const filtered = profiles.filter(p => {
-    if (filter === "all") return true;
-    return p.status === filter;
-  });
-
-  const sorted = [...filtered].sort((a, b) => {
-    return (b.start_epoch || 0) - (a.start_epoch || 0);
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return profiles.filter((p) => {
+      const statusOk =
+        filter === "all" ? true :
+        filter === "failed" ? (p.status === "failed" || p.status === "error") :
+        p.status === filter;
+      if (!statusOk) return false;
+      if (!q) return true;
+      return (
+        (p.agent_name || "").toLowerCase().includes(q) ||
+        (p.session || "").toLowerCase().includes(q) ||
+        (p.run_id || "").toLowerCase().includes(q)
+      );
+    });
+  }, [profiles, filter, search]);
 
   return (
     <div>
@@ -510,9 +639,9 @@ export default function ProfilesPage() {
       />
       <div className="px-4 py-3 max-w-6xl mx-auto">
 
-      {/* filter tabs */}
-      <div className="flex items-center gap-2 mb-4">
-        {(["all", "running", "completed", "failed"] as const).map((f) => (
+      {/* filter tabs + search */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        {FILTERS.map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -525,8 +654,17 @@ export default function ProfilesPage() {
             {f}
           </button>
         ))}
-        <div className="ml-auto text-xs text-foreground/40">
-          {sorted.length} profile{sorted.length !== 1 ? "s" : ""}
+        <div className="relative ml-auto">
+          <SearchNormal1Filled className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-foreground/30" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter by agent, run, session…"
+            className="w-56 pl-7 pr-2 py-1.5 rounded-md text-xs bg-muted text-foreground placeholder:text-foreground/30 focus:outline-none focus:ring-1 focus:ring-foreground/20"
+          />
+        </div>
+        <div className="text-xs text-foreground/40 whitespace-nowrap">
+          {filtered.length} of {profiles.length}
         </div>
       </div>
 
@@ -549,14 +687,10 @@ export default function ProfilesPage() {
           {/* comparison chart */}
           <ComparisonChart profiles={profiles} />
 
-          {/* profile list */}
+          {/* runs table */}
           <div>
-            <h2 className="text-sm font-medium mb-3">Profiles</h2>
-            <div className="space-y-2">
-              {sorted.map((profile) => (
-                <ProfileCard key={profile.session} profile={profile} />
-              ))}
-            </div>
+            <h2 className="text-sm font-medium mb-3">Runs</h2>
+            <ProfilesTable profiles={filtered} />
           </div>
         </div>
       )}
