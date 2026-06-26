@@ -47,6 +47,20 @@ const ALLOWED_KEYS = [
   // CLI auth may still use its own config dir. Provider credentials must come
   // from an explicit agent profile, never inherited from the server process.
   "CLAUDE_CONFIG_DIR",
+
+  // startup readiness + bounded recovery toggles. The engine (chain-runner.sh)
+  // reads these; forwarding them lets a deployment turn fail-closed readiness on
+  // via env (e.g. web/.env.local or the tenant container) without code changes.
+  "MENTIKO_READINESS_FAIL_CLOSED",
+  "MENTIKO_STARTUP_RECOVERY",
+  "MENTIKO_STARTUP_RECOVERY_MAX",
+  "MENTIKO_CLI_READY_TIMEOUT",
+  "MENTIKO_CLI_READY_POLL",
+
+  // side-by-side migration flag for the typescript orchestration controller.
+  // checked by the web launch service before spawning the runner process.
+  "MENTIKO_RUNNER_V2",
+  "MENTIKO_RUNNER_V2_COMPLETION",
 ];
 
 type ChildEnvOverrides = Record<string, string | undefined>;

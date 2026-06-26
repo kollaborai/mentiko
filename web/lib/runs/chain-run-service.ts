@@ -37,6 +37,9 @@ import { BadRequest, Conflict, Forbidden } from "@/lib/api-errors";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
+import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
+import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
+import { runSyntheticRunnerV2Probe, runSyntheticRunnerV2ProbeWithDispatch } from "@/lib/runner-v2/probe";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
@@ -450,6 +453,7 @@ export async function startChainRun({
   const taskFlag = taskId && typeof taskId === "string"
     ? ` --task ${shellEscape(taskId)}`
     : "";
+  const executionTaskId = typeof taskId === "string" ? taskId : undefined;
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "w");
 
@@ -466,67 +470,120 @@ export async function startChainRun({
   }
   const sessionEnv = await buildChainSessionEnv(request, namespaceId, orgId, runId, actor);
 
-  const child = spawn(
-    "/bin/zsh",
-    ["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}${wsFlag}${taskFlag}${debugFlag}`],
-    {
-      cwd: config.codeRoot,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      env: buildChildEnv({
-        ...workspaceEnv,
-        ...getSecretsEnvVars(namespaceId, orgId),
-        ...profileEnv,
-        ...sessionEnv,
-        BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-run"),
-        MENTIKO_DECISION_IMPORT_TOKEN: resolveInternalAuthSecret("decision-import"),
-        MENTIKO_DECISION_ID: typeof decisionRunMetadata?.decisionId === "string" ? decisionRunMetadata.decisionId : undefined,
-        MENTIKO_DECISION_PHASE: typeof decisionRunMetadata?.decisionPhase === "string" ? decisionRunMetadata.decisionPhase : undefined,
-        MENTIKO_DECISION_SELECTED_OPTION_ID: typeof decisionRunMetadata?.selectedOptionId === "string" ? decisionRunMetadata.selectedOptionId : undefined,
-        MENTIKO_DECISION_WORKSPACE_PATH: typeof decisionRunMetadata?.workspacePath === "string" ? decisionRunMetadata.workspacePath : undefined,
-        MENTIKO_JOB_IMPORT_TOKEN: resolveInternalAuthSecret("jobs-complete"),
-        MENTIKO_GENERATION_JOB_ID: typeof generationRunMetadata?.generationJobId === "string" ? generationRunMetadata.generationJobId : undefined,
-        MENTIKO_GENERATION_KIND: typeof generationRunMetadata?.generationKind === "string" ? generationRunMetadata.generationKind : undefined,
-        ...buildLocalAiGatewayProxyEnv(new URL(request.url).origin),
-        MENTIKO_GLOBAL_ROOT: config.globalRoot,
-        MENTIKO_CODE_ROOT: config.codeRoot,
-        MENTIKO_PROJECT_ROOT: orgPath(namespaceId, orgId),
-        MENTIKO_ORG_ROOT: orgPath(namespaceId, orgId),
-        MENTIKO_NAMESPACE_ROOT: nsPath(namespaceId),
-        NAMESPACE_ID: namespaceId,
-        ORG_ID: orgId,
-        MENTIKO_RUN_ID: runId,
-        ...(executor && typeof executor === "string" && EXECUTOR_MAP[executor]
-          ? { MENTIKO_CLI: EXECUTOR_MAP[executor] }
-          : {}),
-      }),
-    }
-  );
-
-  child.unref();
-  closeSync(logFd);
-
-  child.on("error", (spawnError) => {
-    const errorRunPath = join(runDir, "run.json");
-    if (existsSync(errorRunPath)) {
-      const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
-      errorRun.status = "failed";
-      errorRun.error = spawnError.message;
-      writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
-    }
-    createNotification(namespaceId, {
-      type: "chain_failed",
-      title: `Chain failed: ${validChainName}`,
-      message: `Spawn error: ${spawnError.message}`,
-      metadata: {
-        chainId: runObject.chainId as string,
-        runId,
-        error: spawnError.message,
-        actionUrl: `/runs?runId=${runId}`,
-        actionLabel: "View Run",
-      },
-    });
+  const childEnv = buildChildEnv({
+    ...workspaceEnv,
+    ...getSecretsEnvVars(namespaceId, orgId),
+    ...profileEnv,
+    ...sessionEnv,
+    BETTER_AUTH_SECRET: resolveInternalAuthSecret("chain-run"),
+    MENTIKO_DECISION_IMPORT_TOKEN: resolveInternalAuthSecret("decision-import"),
+    MENTIKO_DECISION_ID: typeof decisionRunMetadata?.decisionId === "string" ? decisionRunMetadata.decisionId : undefined,
+    MENTIKO_DECISION_PHASE: typeof decisionRunMetadata?.decisionPhase === "string" ? decisionRunMetadata.decisionPhase : undefined,
+    MENTIKO_DECISION_SELECTED_OPTION_ID: typeof decisionRunMetadata?.selectedOptionId === "string" ? decisionRunMetadata.selectedOptionId : undefined,
+    MENTIKO_DECISION_WORKSPACE_PATH: typeof decisionRunMetadata?.workspacePath === "string" ? decisionRunMetadata.workspacePath : undefined,
+    MENTIKO_JOB_IMPORT_TOKEN: resolveInternalAuthSecret("jobs-complete"),
+    MENTIKO_GENERATION_JOB_ID: typeof generationRunMetadata?.generationJobId === "string" ? generationRunMetadata.generationJobId : undefined,
+    MENTIKO_GENERATION_KIND: typeof generationRunMetadata?.generationKind === "string" ? generationRunMetadata.generationKind : undefined,
+    ...buildLocalAiGatewayProxyEnv(new URL(request.url).origin),
+    MENTIKO_GLOBAL_ROOT: config.globalRoot,
+    MENTIKO_CODE_ROOT: config.codeRoot,
+    MENTIKO_PROJECT_ROOT: orgPath(namespaceId, orgId),
+    MENTIKO_ORG_ROOT: orgPath(namespaceId, orgId),
+    MENTIKO_NAMESPACE_ROOT: nsPath(namespaceId),
+    NAMESPACE_ID: namespaceId,
+    ORG_ID: orgId,
+    MENTIKO_RUN_ID: runId,
+    ...(executor && typeof executor === "string" && EXECUTOR_MAP[executor]
+      ? { MENTIKO_CLI: EXECUTOR_MAP[executor] }
+      : {}),
   });
+
+  if (isRunnerV2Enabled(childEnv) && runMetadata?.runnerV2Probe === true) {
+    const probeInput = {
+      runDir: join(runDir, "runner-v2-probe"),
+      env: childEnv,
+      dryRun: runMetadata.runnerV2ProbeMode !== "live",
+      dispatchExternalEffects: runMetadata.runnerV2DispatchExternalEffects === true,
+      namespaceId,
+      orgId,
+    };
+    const probe = runMetadata.runnerV2DispatchExternalEffects === true
+      ? await runSyntheticRunnerV2ProbeWithDispatch(probeInput)
+      : runSyntheticRunnerV2Probe(probeInput);
+    writeFileSync(join(runDir, "runner-v2-probe.json"), JSON.stringify(probe, null, 2));
+    const probeRunPath = join(runDir, "run.json");
+    const probeRun = JSON.parse(readFileSync(probeRunPath, "utf-8"));
+    probeRun.status = probe.status === "ok" ? "completed" : "failed";
+    probeRun.status_message = probe.status === "ok"
+      ? `runner-v2 typed ${probe.mode} probe completed`
+      : `runner-v2 typed dry-run probe ${probe.reason}`;
+    writeFileSync(probeRunPath, JSON.stringify(probeRun, null, 2));
+    closeSync(logFd);
+    return {
+      runId,
+      chainId: runObject.chainId as string,
+      status: "started",
+    };
+  }
+
+  const runnerV2Launch = isRunnerV2Enabled(childEnv)
+    ? await startRunnerV2Launch({
+      chainPath: validatedChainPath,
+      runDir,
+      runId,
+      chainName: validChainName,
+      workspacePath: authorizedWorkspacePath,
+      taskId: executionTaskId,
+      debug,
+      logFd,
+      cwd: config.codeRoot,
+      env: childEnv,
+    })
+    : null;
+
+  if (runnerV2Launch?.support === "unsupported" && runnerV2Launch.fallbackAllowed === false) {
+    closeSync(logFd);
+    throw new Error(runnerV2Launch.reason);
+  }
+
+  const child = runnerV2Launch?.support === "supported"
+    ? null
+    : spawn(
+        "/bin/zsh",
+        ["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}${wsFlag}${taskFlag}${debugFlag}`],
+        {
+          cwd: config.codeRoot,
+          detached: true,
+          stdio: ["ignore", logFd, logFd],
+          env: childEnv,
+        }
+      );
+
+  if (child) {
+    child.unref();
+    child.on("error", (spawnError) => {
+      const errorRunPath = join(runDir, "run.json");
+      if (existsSync(errorRunPath)) {
+        const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
+        errorRun.status = "failed";
+        errorRun.error = spawnError.message;
+        writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
+      }
+      createNotification(namespaceId, {
+        type: "chain_failed",
+        title: `Chain failed: ${validChainName}`,
+        message: `Spawn error: ${spawnError.message}`,
+        metadata: {
+          chainId: runObject.chainId as string,
+          runId,
+          error: spawnError.message,
+          actionUrl: `/runs?runId=${runId}`,
+          actionLabel: "View Run",
+        },
+      });
+    });
+  }
+  closeSync(logFd);
 
   logAuditEvent("chain_complete", `Chain launched from web: ${validChainName}`, {
     chain_name: validChainName,
@@ -535,7 +592,6 @@ export async function startChainRun({
     namespace_id: namespaceId,
   }, ip).catch(() => {});
 
-  const executionTaskId = typeof taskId === "string" ? taskId : undefined;
   if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
     try {
       taskUpdate(orgId, executionTaskId, { status: "in_progress" }, namespaceId);

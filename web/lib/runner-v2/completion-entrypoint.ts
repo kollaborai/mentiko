@@ -1,0 +1,264 @@
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
+import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
+import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
+import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
+import { readRunJson, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import type { RoutingChain } from "@/lib/runner-v2/routing";
+
+export interface RunnerV2CompletionEntrypointInput {
+  sessionName: string;
+  chainPath: string;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  dryRun?: boolean;
+  now?: Date;
+}
+
+export interface RunnerV2CompletionEntrypointResult {
+  status: "handled";
+  runId: string;
+  agentId: string;
+  decision: string;
+  plan: TypedExecutorPlan;
+  adapter: AdapterResult;
+  runJsonPath: string;
+  eventsDir: string;
+}
+
+export function runRunnerV2CompletionEntrypoint(
+  input: RunnerV2CompletionEntrypointInput,
+): RunnerV2CompletionEntrypointResult {
+  const env = input.env || process.env;
+  const chain = readChain(input.chainPath);
+  const runId = env.MENTIKO_RUN_ID || env.RUN_ID;
+  if (!runId) {
+    throw unsupported("missing MENTIKO_RUN_ID/RUN_ID");
+  }
+
+  const runDir = resolveRunDir(env, runId);
+  const runJsonPath = join(runDir, "run.json");
+  if (!existsSync(runJsonPath)) {
+    throw unsupported(`run.json not found: ${runJsonPath}`);
+  }
+
+  const run = readRunJson(runJsonPath);
+  const agent = resolveAgent(input.sessionName, chain, run);
+  const eventsDir = resolveEventsDir(env, input.chainPath);
+  const events = readEvents(eventsDir);
+  const runJsonSnapshot = readFileSync(runJsonPath, "utf8");
+  const eventSnapshots = snapshotEvents(events);
+  const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
+  const maxRounds = numberValue(chain.config?.max_rounds);
+
+  try {
+    const pipeline = runCompletionPipeline({
+      runDir,
+      runJsonPath,
+      runId,
+      agent,
+      chain,
+      events,
+      maxRounds,
+      now: input.now,
+      terminal: {
+        runId,
+        chainName: chain.name || chain.id || "unknown",
+        chainPath: input.chainPath,
+        taskId: run.taskId,
+        lastAgentId: agent.id,
+      },
+      retry: {
+        policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
+        currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,
+        chainPath: input.chainPath,
+        workspacePath,
+        taskId: run.taskId,
+        startSha: stringValue(run.startSha),
+        debug: env.DEBUG === "1" || env.MENTIKO_DEBUG === "1",
+      },
+    });
+
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      allEvents: events,
+      terminal: {
+        runId,
+        chainName: chain.name || chain.id || "unknown",
+        chainPath: input.chainPath,
+        taskId: run.taskId,
+        lastAgentId: agent.id,
+      },
+      routeContext: {
+        chainPath: input.chainPath,
+        workspacePath,
+        taskId: run.taskId,
+        runDir,
+        env: {
+          MENTIKO_RUN_ID: runId,
+          RUN_ID: runId,
+          NAMESPACE_ID: env.NAMESPACE_ID,
+          ORG_ID: env.ORG_ID,
+          WORKSPACE_TYPE: env.WORKSPACE_TYPE,
+          MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
+          MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
+        },
+      },
+    });
+
+    const adapter = applyTypedExecutorPlan(plan, {
+      runJsonPath,
+      stateDir: resolveStateDir(env, runDir),
+      eventsDir,
+      eventsArchiveDir: join(eventsDir, "archive"),
+      dryRun: input.dryRun,
+    });
+
+    if (input.dryRun) {
+      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    }
+
+    return {
+      status: "handled",
+      runId,
+      agentId: agent.id,
+      decision: pipeline.decision.action,
+      plan,
+      adapter,
+      runJsonPath,
+      eventsDir,
+    };
+  } catch (error) {
+    restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    throw error;
+  }
+}
+
+export class RunnerV2CompletionUnsupportedError extends Error {
+  readonly code = "RUNNER_V2_COMPLETION_UNSUPPORTED";
+}
+
+function unsupported(message: string): RunnerV2CompletionUnsupportedError {
+  return new RunnerV2CompletionUnsupportedError(message);
+}
+
+interface ChainAgent {
+  id: string;
+  name?: string;
+  emits?: string;
+  triggers?: string[];
+  session_prefix?: string;
+  retry?: unknown;
+}
+
+interface ChainConfig {
+  project_root?: unknown;
+  max_rounds?: unknown;
+  retry?: unknown;
+  session_prefix?: unknown;
+}
+
+interface ChainFile extends RoutingChain {
+  id?: string;
+  name?: string;
+  config?: ChainConfig;
+  agents: ChainAgent[];
+}
+
+function readChain(path: string): ChainFile {
+  if (!existsSync(path)) throw unsupported(`chain not found: ${path}`);
+  const chain = JSON.parse(readFileSync(path, "utf8")) as ChainFile;
+  if (!Array.isArray(chain.agents)) throw unsupported("chain agents missing");
+  return chain;
+}
+
+function resolveRunDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, runId: string): string {
+  if (env.MENTIKO_RUN_DIR) return env.MENTIKO_RUN_DIR;
+  if (env.RUN_DIR) return env.RUN_DIR;
+  if (env.RUNS_DIR) return join(env.RUNS_DIR, runId);
+  throw unsupported("missing MENTIKO_RUN_DIR/RUN_DIR/RUNS_DIR");
+}
+
+function resolveEventsDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, chainPath: string): string {
+  return env.EVENTS_DIR || join(dirname(chainPath), "events");
+}
+
+function resolveStateDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, runDir: string): string {
+  return env.STATE_DIR || join(runDir, "state");
+}
+
+function readEvents(eventsDir: string): RunnerEventRecord[] {
+  if (!existsSync(eventsDir)) return [];
+  return readdirSync(eventsDir)
+    .filter((file) => file.endsWith(".event"))
+    .map((file) => {
+      const path = join(eventsDir, file);
+      return { ...parseRunnerEvent(readFileSync(path, "utf8")), path };
+    });
+}
+
+function resolveAgent(sessionName: string, chain: ChainFile, run: RunRecord): ChainAgent {
+  const runAgent = (run.agents || []).find((agent) => agent.session === sessionName);
+  const agent = runAgent ? chain.agents.find((candidate) => candidate.id === runAgent.id) : undefined;
+  if (agent) return normalizeAgent(agent, runAgent);
+
+  const prefix = sessionPrefix(sessionName, chain);
+  const byPrefix = chain.agents.find((candidate) => candidate.session_prefix === prefix)
+    || chain.agents.find((candidate) => candidate.id === prefix)
+    || chain.agents.find((candidate) => prefix.endsWith(candidate.id));
+  if (byPrefix) return normalizeAgent(byPrefix);
+
+  throw unsupported(`could not resolve agent for session: ${sessionName}`);
+}
+
+function normalizeAgent(agent: ChainAgent, runAgent?: RunAgentRecord): ChainAgent {
+  return {
+    ...agent,
+    name: agent.name || runAgent?.name || agent.id,
+  };
+}
+
+function sessionPrefix(sessionName: string, chain: ChainFile): string {
+  let prefix = sessionName
+    .replace(/-run-[0-9]+(-[0-9a-zA-Z]+)?$/, "")
+    .replace(/-[0-9]{8}-[0-9]{4}$/, "");
+  const chainPrefix = stringValue(chain.config?.session_prefix);
+  if (chainPrefix && prefix.startsWith(`${chainPrefix}-`)) {
+    prefix = prefix.slice(chainPrefix.length + 1);
+  }
+  return prefix;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function objectValue<T extends object = Record<string, unknown>>(value: unknown): T | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as T : undefined;
+}
+
+function snapshotEvents(events: RunnerEventRecord[]): Map<string, string> {
+  const snapshots = new Map<string, string>();
+  for (const event of events) {
+    if (event.path && existsSync(event.path)) {
+      snapshots.set(event.path, readFileSync(event.path, "utf8"));
+    }
+  }
+  return snapshots;
+}
+
+function restoreSnapshots(runJsonPath: string, runJsonSnapshot: string, eventSnapshots: Map<string, string>): void {
+  writeFileSync(runJsonPath, runJsonSnapshot);
+  for (const [path, content] of eventSnapshots) {
+    writeFileSync(path, content);
+  }
+}

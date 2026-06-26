@@ -113,6 +113,15 @@ RUN if [ -f /build/web/server/background-worker.ts ]; then \
       rm -f /context/server/background-worker.ts /context/server/background-worker.cjs; \
     fi
 
+# compile runner-v2 completion bridge so tenant runtime does not need ts-node.
+RUN if [ -f /build/web/lib/runner-v2/complete-cli.ts ]; then \
+      echo "=== compiling runner-v2 completion bridge ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/complete-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-complete.js; \
+    fi
+
 # compile process-manager.ts (tsc — needs same anchor; use relative paths
 # from web/ so tsconfig.json auto-discovery picks up web/tsconfig.json)
 RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \
