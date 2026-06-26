@@ -49,6 +49,17 @@ async function refreshToken(): Promise<boolean> {
   }
 }
 
+// When the env-provided token is empty (a run/session that didn't ship one in
+// MENTIKO_SESSION_TOKEN), bootstrap one from the kollab engine BEFORE the first
+// request. The 401-retry path in fetchWithRetry cannot help here: dataHeaders()
+// would throw before any request is made, so there is no 401 to trigger a
+// refresh — a chicken-and-egg that leaves every ops call failing with
+// "session auth required". This lets the bridge self-heal an absent token.
+async function ensureToken(): Promise<void> {
+  if (currentToken) return;
+  await refreshToken();
+}
+
 function dataHeaders(): Record<string, string> {
   if (!currentToken) {
     throw new Error("MENTIKO_SESSION_TOKEN not set — session auth required");
@@ -93,6 +104,7 @@ export async function opsGet<T = any>(
   path: string,
   query?: Record<string, string>,
 ): Promise<T> {
+  await ensureToken();
   const url = new URL(`${WEB_URL}${path}`);
   for (const [k, v] of Object.entries(query || {})) {
     if (v != null) url.searchParams.set(k, v);
@@ -110,6 +122,7 @@ export async function opsPost<T = any>(
   body: any,
   options?: { timeoutMs?: number },
 ): Promise<T> {
+  await ensureToken();
   const res = await fetchWithRetry(`${WEB_URL}${path}`, {
     method: "POST",
     headers: dataHeaders(),
@@ -123,6 +136,7 @@ export async function opsPost<T = any>(
 }
 
 export async function opsPatch<T = any>(path: string, body: any): Promise<T> {
+  await ensureToken();
   const res = await fetchWithRetry(`${WEB_URL}${path}`, {
     method: "PATCH",
     headers: dataHeaders(),
@@ -139,6 +153,7 @@ export async function opsDelete<T = any>(
   path: string,
   query?: Record<string, string>,
 ): Promise<T> {
+  await ensureToken();
   const url = new URL(`${WEB_URL}${path}`);
   for (const [k, v] of Object.entries(query || {})) {
     if (v != null) url.searchParams.set(k, v);
