@@ -30,6 +30,8 @@ import {
   ArrowDown2Filled as ChevronDown,
   ArrowRight2Filled as ChevronRight,
   CopyFilled as Copy,
+  DocumentTextFilled,
+  TaskSquareFilled,
 } from "@aliimam/icons";
 
 interface Agent {
@@ -50,7 +52,37 @@ interface Run {
   started: string;
   completed?: string;
   status: string;
+  taskId?: string;
   agents: Agent[];
+}
+
+interface EventArtifactExecution {
+  id: string;
+  mappingId: string;
+  event: string;
+  status: string;
+  artifactName: string | null;
+  draftTaskName: string | null;
+  artifact: {
+    qualityGate?: {
+      reason?: string;
+      findings?: string[];
+      risks?: string[];
+      nextActions?: string[];
+    };
+    generated?: {
+      title?: string;
+      subtasks?: Array<{ title?: string; type?: string; priority?: number }>;
+    };
+  } | null;
+  draftTask: {
+    title?: string;
+    subtasks?: Array<{ title?: string; type?: string; priority?: number }>;
+  } | null;
+  actionResults: unknown[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface StreamEvent {
@@ -81,6 +113,10 @@ export default function RunDetailPage() {
   const [debugPaused, setDebugPaused] = useState(false);
   const [comparisonMode, setComparisonMode] = useState(false);
   const [currentPerf, setCurrentPerf] = useState<Record<string, unknown> | null>(null);
+  const [eventArtifacts, setEventArtifacts] = useState<EventArtifactExecution[]>([]);
+  const [eventArtifactsLoading, setEventArtifactsLoading] = useState(false);
+  const [applyingExecutionId, setApplyingExecutionId] = useState<string | null>(null);
+  const [eventArtifactError, setEventArtifactError] = useState<string | null>(null);
 
   const { fetchWithNamespace } = useNamespaceFetch();
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -99,6 +135,22 @@ export default function RunDetailPage() {
       console.error("failed to fetch run", e);
     } finally {
       setLoading(false);
+    }
+  }, [runId, fetchWithNamespace]);
+
+  const fetchEventArtifacts = useCallback(async () => {
+    setEventArtifactsLoading(true);
+    setEventArtifactError(null);
+    try {
+      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const payload = data.data || data;
+      setEventArtifacts(payload.executions || []);
+    } catch (e) {
+      setEventArtifactError(e instanceof Error ? e.message : "failed to load triage artifacts");
+    } finally {
+      setEventArtifactsLoading(false);
     }
   }, [runId, fetchWithNamespace]);
 
@@ -219,10 +271,11 @@ export default function RunDetailPage() {
 
   useEffect(() => {
     fetchRun();
+    fetchEventArtifacts();
     const interval = setInterval(pollStatus, 5000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchRun]);
+  }, [fetchRun, fetchEventArtifacts]);
 
   // fetch performance data
   useEffect(() => {
@@ -281,6 +334,32 @@ export default function RunDetailPage() {
 
   const handleRetryAgent = async (_agentId: string) => {
     // TODO: implement retry logic
+  };
+
+  const handleApplyEventArtifact = async (executionId: string) => {
+    if (!run?.taskId) {
+      setEventArtifactError("run has no task id");
+      return;
+    }
+    setApplyingExecutionId(executionId);
+    setEventArtifactError(null);
+    try {
+      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts/${executionId}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentTaskId: run.taskId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error?.message || "apply failed");
+      }
+      await fetchEventArtifacts();
+      await fetchRun();
+    } catch (e) {
+      setEventArtifactError(e instanceof Error ? e.message : "apply failed");
+    } finally {
+      setApplyingExecutionId(null);
+    }
   };
 
   const handlePauseResume = () => {
@@ -417,6 +496,14 @@ export default function RunDetailPage() {
             <TabsList className="bg-muted">
               <TabsTrigger value="agents" className="text-xs">agents</TabsTrigger>
               <TabsTrigger value="output" className="text-xs">output</TabsTrigger>
+              <TabsTrigger value="triage" className="text-xs">
+                triage
+                {eventArtifacts.length > 0 && (
+                  <span className="ml-1 rounded bg-amber-500/15 px-1 text-[9px] text-amber-300">
+                    {eventArtifacts.length}
+                  </span>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="metrics" className="text-xs">metrics</TabsTrigger>
               <TabsTrigger value="timeline" className="text-xs">timeline</TabsTrigger>
             </TabsList>
@@ -625,6 +712,132 @@ export default function RunDetailPage() {
                 )}
               </div>
             </div>
+          </TabsContent>
+
+          {/* triage tab */}
+          <TabsContent value="triage" className="flex-1 overflow-y-auto p-6 mt-0">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TaskSquareFilled className="h-4 w-4 text-amber-300" />
+                <p className="text-[10px] uppercase tracking-wider text-foreground/40">quality gate triage</p>
+              </div>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={fetchEventArtifacts}
+                loading={eventArtifactsLoading}
+              >
+                <RotateCcw className="h-3 w-3" />
+                refresh
+              </Button>
+            </div>
+
+            {eventArtifactError && (
+              <div className="mb-3 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                {eventArtifactError}
+              </div>
+            )}
+
+            {eventArtifactsLoading && eventArtifacts.length === 0 ? (
+              <div className="rounded-md bg-muted p-4 text-xs text-foreground/40">
+                loading triage artifacts...
+              </div>
+            ) : eventArtifacts.length === 0 ? (
+              <div className="rounded-md bg-muted p-4 text-xs text-foreground/40">
+                no triage artifacts
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {eventArtifacts.map((execution) => {
+                  const gate = execution.artifact?.qualityGate;
+                  const draft = execution.draftTask || execution.artifact?.generated;
+                  const subtasks = draft?.subtasks || [];
+                  const canApply = execution.status === "awaiting_review" && Boolean(run.taskId);
+
+                  return (
+                    <Card key={execution.id} className="overflow-hidden">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <DocumentTextFilled className="h-4 w-4 text-foreground/40" />
+                              <CardTitle className="truncate text-sm">
+                                {draft?.title || execution.mappingId}
+                              </CardTitle>
+                              <Badge variant="ghost" className="bg-muted text-[9px]">
+                                {execution.status}
+                              </Badge>
+                            </div>
+                            <p className="mt-1 font-mono text-[10px] text-foreground/40">
+                              {execution.id}
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant={canApply ? "default" : "secondary"}
+                            className="h-7 text-[10px]"
+                            disabled={!canApply}
+                            loading={applyingExecutionId === execution.id}
+                            onClick={() => handleApplyEventArtifact(execution.id)}
+                          >
+                            <TaskSquareFilled className="h-3 w-3" />
+                            apply
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-3 border-t border-foreground/5 pt-3">
+                        <div className="grid gap-2 md:grid-cols-3">
+                          <div className="rounded-md bg-muted p-2">
+                            <p className="text-[10px] uppercase text-foreground/40">reason</p>
+                            <p className="mt-1 text-xs">{gate?.reason || execution.event}</p>
+                          </div>
+                          <div className="rounded-md bg-muted p-2">
+                            <p className="text-[10px] uppercase text-foreground/40">artifact</p>
+                            <p className="mt-1 truncate font-mono text-xs">{execution.artifactName || "-"}</p>
+                          </div>
+                          <div className="rounded-md bg-muted p-2">
+                            <p className="text-[10px] uppercase text-foreground/40">draft</p>
+                            <p className="mt-1 truncate font-mono text-xs">{execution.draftTaskName || "-"}</p>
+                          </div>
+                        </div>
+
+                        {Array.isArray(gate?.findings) && gate.findings.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-[10px] uppercase text-foreground/40">findings</p>
+                            <div className="grid gap-1">
+                              {gate.findings.slice(0, 5).map((finding, index) => (
+                                <div key={`${execution.id}-finding-${index}`} className="rounded bg-muted px-2 py-1 text-xs">
+                                  {finding}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {subtasks.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-[10px] uppercase text-foreground/40">draft tasks</p>
+                            <div className="grid gap-1">
+                              {subtasks.slice(0, 6).map((task, index) => (
+                                <div
+                                  key={`${execution.id}-task-${index}`}
+                                  className="flex items-center justify-between rounded bg-muted px-2 py-1 text-xs"
+                                >
+                                  <span className="truncate">{task.title || `task ${index + 1}`}</span>
+                                  <span className="ml-2 font-mono text-[10px] text-foreground/40">
+                                    {task.type || "task"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </TabsContent>
 
           {/* metrics tab */}
