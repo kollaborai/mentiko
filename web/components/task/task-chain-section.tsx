@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { LinkFilled, Link2Filled as Link2, PlayFilled as Play, CloseCircleFilled as X, ToggleOffFilled as ToggleLeft, ToggleOnFilled as ToggleRight, ExportFilled as ExternalLink, RefreshFilled as Refresh } from "@aliimam/icons";
+import { Link2Filled as Link2, PlayFilled as Play, CloseCircleFilled as X, ToggleOffFilled as ToggleLeft, ToggleOnFilled as ToggleRight, ExportFilled as ExternalLink, RefreshFilled as Refresh } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { ChainAssignWorkflow } from "./chain-assign-workflow";
-import { ChainAgentPipeline } from "./chain-agent-pipeline";
+import { ChainDetailPanelById } from "@/components/chain/chain-detail-panel";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { useJobStatus } from "@/hooks/use-job-status";
 import type { Task } from "@/lib/tasks/task-types";
@@ -79,6 +79,7 @@ export function TaskChainSection({
   const binding = task.chainBinding;
   const autoRunRetries = binding?.auto_run_retries || 0;
   const autoRunPaused = !!binding?.auto_run && autoRunRetries >= 3 && !task.completed;
+  const isRunRunning = binding?.last_run_status === "running";
 
   // track generation job status for real-time updates
   // skip polling for terminal states to avoid request spam on remount
@@ -259,62 +260,93 @@ export function TaskChainSection({
         </div>
       </div>
 
-      <div className="rounded-md bg-muted p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <LinkFilled className="h-3.5 w-3.5 shrink-0" style={{ color: "#b07ee8" }} />
-          <a
-            href={`/chains/${encodeURIComponent(binding.chain_id)}/edit`}
-            className="text-sm font-medium hover:text-cyan-400 transition-colors"
-          >
-            {binding.chain_name || binding.chain_id}
-          </a>
+      <ChainDetailPanelById
+        chainId={binding.chain_id}
+        fallbackName={binding.chain_name}
+        compact
+      />
+
+      <div className="mt-2 space-y-2">
+        <div className="rounded-md bg-muted px-3 py-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-foreground/45">
+              task execution
+            </span>
+            <button
+              onClick={() => onToggleAutoRun(!binding.auto_run)}
+              className="flex items-center gap-1 text-[10px] text-foreground/35 hover:text-foreground/60"
+            >
+              {binding.auto_run ? (
+                <ToggleRight className="h-3.5 w-3.5 text-foreground/45" />
+              ) : (
+                <ToggleLeft className="h-3.5 w-3.5" />
+              )}
+              {binding.auto_run ? "auto-run on" : "manual run"}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!task.completed && isRunRunning && binding.last_run_id ? (
+              <a
+                href={`/runs?runId=${binding.last_run_id}`}
+                className="inline-flex h-7 items-center justify-center rounded-md bg-card px-3 text-xs font-medium text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                View run
+              </a>
+            ) : !task.completed ? (
+              <Button
+                size="sm"
+                variant="default"
+                className="h-7 text-xs"
+                onClick={handleRun}
+                disabled={startingRun}
+                data-testid="run-chain-btn"
+              >
+                <Play className="h-3 w-3 mr-1" />
+                {startingRun ? "Starting..." : "Run chain"}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <TaskChainProvenanceLinks task={task} />
 
-        {/* run status */}
         {binding.last_run_id && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-foreground/35">
-              last execution run
-            </span>
-            <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                binding.last_run_status === "running"
-                  ? "bg-blue-500/15 text-blue-400"
-                  : binding.last_run_status === "complete"
-                    ? "bg-green-500/15 text-green-400"
-                    : binding.last_run_status === "failed"
-                      ? "bg-red-500/15 text-red-400"
-                      : "bg-foreground/5 text-foreground/40"
-              }`}
-            >
-              {binding.last_run_status || "unknown"}
+          <div className="flex items-center gap-2 rounded-sm bg-muted px-2 py-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${
+              isRunRunning
+                ? "bg-cyan-400 animate-pulse"
+                : binding.last_run_status === "complete"
+                  ? "bg-green-400"
+                  : binding.last_run_status === "failed"
+                    ? "bg-red-400"
+                    : "bg-foreground/30"
+            }`} />
+            <span className="text-[10px] text-foreground/45">
+              {isRunRunning ? "current run" : "last run"}
             </span>
             <a
               href={`/runs?runId=${binding.last_run_id}`}
-              className="text-[10px] font-mono text-foreground/40 hover:text-cyan-400 flex items-center gap-0.5 transition-colors"
+              className="min-w-0 flex items-center gap-1 text-[10px] font-mono text-foreground/60 hover:text-cyan-400 transition-colors"
             >
-              {binding.last_run_id}
+              <span className="truncate">{binding.last_run_id}</span>
               <ExternalLink className="h-2.5 w-2.5" />
             </a>
+            <span className={`ml-auto text-[10px] ${
+              isRunRunning
+                ? "text-cyan-400"
+                : binding.last_run_status === "complete"
+                  ? "text-green-400"
+                  : binding.last_run_status === "failed"
+                    ? "text-red-400"
+                    : "text-foreground/35"
+            }`}>
+              {binding.last_run_status || "unknown"}
+            </span>
           </div>
         )}
 
-        {/* run status message */}
-        {binding.last_run_id && binding.last_run_status === "running" && (
-          <div className="flex items-center gap-2 text-[10px] text-cyan-400">
-            <div className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            <span>Running...</span>
-            <a
-              href={`/runs?runId=${binding.last_run_id}`}
-              className="ml-auto flex items-center gap-0.5 text-foreground/30 hover:text-cyan-400 transition-colors"
-            >
-              view run
-              <ExternalLink className="h-2.5 w-2.5" />
-            </a>
-          </div>
-        )}
         {startingRun && (
           <div className="flex items-center gap-2 text-[10px] text-cyan-400">
             <div className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -366,42 +398,6 @@ export function TaskChainSection({
               )}
             </div>
           </div>
-        )}
-
-        {/* actions */}
-        <div className="flex items-center gap-2 pt-1">
-          {!task.completed && (
-            <Button
-              size="sm"
-              variant="default"
-              className="h-7 text-xs"
-              onClick={handleRun}
-              disabled={binding.last_run_status === "running" || startingRun}
-              data-testid="run-chain-btn"
-            >
-              <Play className="h-3 w-3 mr-1" />
-              {startingRun ? "Starting..." : binding.last_run_status === "running" ? "Running..." : "Run Chain"}
-            </Button>
-          )}
-          <button
-            onClick={() => onToggleAutoRun(!binding.auto_run)}
-            className="flex items-center gap-1 text-[10px] text-foreground/40 hover:text-foreground/60"
-          >
-            {binding.auto_run ? (
-              <ToggleRight className="h-3.5 w-3.5 text-green-400" />
-            ) : (
-              <ToggleLeft className="h-3.5 w-3.5" />
-            )}
-            Auto-run
-          </button>
-        </div>
-
-        {/* agent pipeline - only render when chain_id exists */}
-        {binding.chain_id && (
-          <ChainAgentPipeline
-            chainId={binding.chain_id}
-            lastRunId={binding.last_run_id}
-          />
         )}
       </div>
     </div>

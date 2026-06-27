@@ -102,6 +102,12 @@ export function TaskDetail({
   const decisionId = task.type === "decision" && typeof task.metadata?.decision_id === "string"
     ? task.metadata.decision_id
     : undefined;
+  const eventArtifactChildIds = Array.isArray(task.metadata?.event_artifact_child_task_ids)
+    ? task.metadata.event_artifact_child_task_ids.filter((id): id is string => typeof id === "string")
+    : [];
+  const eventArtifactRunId = typeof task.metadata?.event_artifact_run_id === "string"
+    ? task.metadata.event_artifact_run_id
+    : undefined;
 
   if (decisionId) {
     return (
@@ -143,6 +149,31 @@ export function TaskDetail({
       />
 
       <TaskRunStoryPanels task={task} onRefreshTask={onRefreshTask} />
+
+      {eventArtifactChildIds.length > 0 && (
+        <div className="mx-4 my-3 rounded-md bg-amber-500/10 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-amber-300">quality gate follow-up</p>
+              <p className="mt-1 text-[11px] text-foreground/55">
+                created {eventArtifactChildIds.length} child task{eventArtifactChildIds.length === 1 ? "" : "s"}
+                {eventArtifactRunId ? ` from ${eventArtifactRunId}` : ""}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {eventArtifactChildIds.map((id) => (
+                  <button
+                    key={id}
+                    onClick={() => onSelectDep(id)}
+                    className="rounded-sm bg-background/50 px-2 py-1 text-[10px] font-mono text-foreground/60 hover:text-foreground"
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* description */}
       {task.description && (

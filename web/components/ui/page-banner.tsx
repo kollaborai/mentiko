@@ -110,6 +110,8 @@ interface PageBannerProps {
   children?: React.ReactNode;
   backHref?: string;  // explicit back link (shown on all screen sizes)
   backLabel?: string; // label next to arrow (default: "Back")
+  background?: React.ReactNode; // custom full-bleed background; replaces the default pattern + watermark
+  overlayDark?: boolean; // force light title/subtitle for legibility over a dark custom background
 }
 
 // ─── action button (icon-only) ──────────────────────────────
@@ -187,6 +189,8 @@ export function PageBanner({
   children,
   backHref,
   backLabel,
+  background,
+  overlayDark,
 }: PageBannerProps) {
   const router = useRouter();
   const hash = hashString(title);
@@ -199,10 +203,12 @@ export function PageBanner({
   const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
 
   return (
-    <div className="shrink-0 px-4 pt-4 pb-3">
-      <div className="relative rounded-xl bg-transparent overflow-hidden p-6">
-        {/* pattern background - fades to transparent from center to right */}
-        {isLoginHalftone ? (
+    <div className={`shrink-0 ${background ? "" : "px-4 pt-4 pb-3"}`}>
+      <div className={`relative bg-transparent overflow-hidden p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
+        {/* custom full-bleed background — replaces default pattern + watermark when provided */}
+        {background ? (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">{background}</div>
+        ) : isLoginHalftone ? (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute inset-0 auth-background-core opacity-55" />
             <div
@@ -244,7 +250,7 @@ export function PageBanner({
             WebkitMask: "linear-gradient(to right, transparent 10%, black 50%)",
           }}
         >
-          <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: 0.15 }}>
+          <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}>
             {isCustomIcon ? (
               <WatermarkIcon size={400} className="h-64 w-64" />
             ) : (
@@ -276,12 +282,12 @@ export function PageBanner({
           )}
 
           {/* row 1: title */}
-          <h1 className="text-4xl font-black tracking-tighter">
+          <h1 className={`text-4xl font-black tracking-tighter ${overlayDark ? "text-white" : ""}`}>
             {title}
           </h1>
 
           {/* row 2: subtitle */}
-          <p className="text-sm text-foreground/50 mt-1.5 max-w-2xl leading-relaxed">
+          <p className={`text-sm mt-1.5 max-w-2xl leading-relaxed ${overlayDark ? "text-white/60" : "text-foreground/50"}`}>
             {subtitle}
           </p>
 

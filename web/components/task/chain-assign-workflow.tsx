@@ -678,6 +678,15 @@ export function ChainAssignWorkflow({
       sanitized.agents = (sanitized.agents as any[]).map((agent: any, idx: number) => {
         if (!agent) return agent;
         const fixed = { ...agent };
+        const isRefOnlyAgent =
+          typeof fixed.$ref === "string" &&
+          !fixed.prompt &&
+          !fixed.id &&
+          !fixed.name;
+
+        if (isRefOnlyAgent) {
+          return fixed;
+        }
 
         // fix retry: AI sometimes generates retry: 2 (number) but validator requires object
         if (typeof fixed.retry === "number") {

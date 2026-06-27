@@ -10,6 +10,7 @@ import { execAuditLog } from "@/lib/api/audit-exec";
 import { addAuditLog } from "@/lib/api/audit-queue";
 import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { resolveChainAgents } from "@/lib/agents/agent-loader";
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -125,8 +126,14 @@ async function migrateInlineAgents(
 
     writeFileSync(agentPath, JSON.stringify(agentData, null, 2));
 
-    // Replace inline agent with reference
-    (agents[i] as { $ref: string }) = { $ref: agentSlug };
+    // Replace inline agent with reference, but keep routing metadata visible in
+    // the chain so branch validation and editor views do not have to resolve
+    // registry files just to know what event an agent emits.
+    (agents[i] as { $ref: string; triggers?: string[]; emits?: string }) = {
+      $ref: agentSlug,
+      ...(inline.triggers ? { triggers: inline.triggers } : {}),
+      ...(inline.emits ? { emits: inline.emits } : {}),
+    };
     migrated.push(agentSlug);
   }
 
@@ -146,8 +153,17 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("chain and name are required", { field: "chain" });
   }
 
+  const chainForValidation = { ...chain };
+  if (Array.isArray(chain.agents)) {
+    try {
+      chainForValidation.agents = resolveChainAgents(chain.agents, namespaceId, orgId) as unknown[];
+    } catch {
+      chainForValidation.agents = chain.agents;
+    }
+  }
+
   // validate chain before saving
-  const validation = validateChain(chain);
+  const validation = validateChain(chainForValidation);
   if (!validation.valid) {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
   }

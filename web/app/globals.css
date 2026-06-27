@@ -312,9 +312,9 @@
 .auth-background-core {
     background:
         radial-gradient(circle at 50% 44%, rgb(0 0 0) 0 24%, rgb(0 0 0 / 0.94) 38%, rgb(0 0 0 / 0.42) 55%, rgb(0 0 0 / 0.82) 100%),
-        radial-gradient(ellipse at 16% 0%, rgb(25 228 207 / 0.12), transparent 30%),
-        radial-gradient(ellipse at 90% 96%, rgb(234 126 45 / 0.2), transparent 30%),
-        linear-gradient(135deg, rgb(3 18 20), rgb(1 2 2) 46%, rgb(0 0 0));
+        radial-gradient(ellipse at 16% 0%, rgb(150 152 160 / 0.06), transparent 30%),
+        radial-gradient(ellipse at 90% 96%, rgb(150 152 160 / 0.07), transparent 30%),
+        linear-gradient(135deg, rgb(8 8 10), rgb(1 2 2) 46%, rgb(0 0 0));
 }
 
 .auth-background-vignette {
@@ -333,12 +333,12 @@
 }
 
 .auth-halftone-teal {
-    color: rgb(32 219 205 / 0.2);
+    color: rgb(176 178 186 / 0.16);
     mask-image: radial-gradient(ellipse at 24% 23%, black 0 36%, rgb(0 0 0 / 0.7) 52%, transparent 72%);
 }
 
 .auth-halftone-ember {
-    color: rgb(238 138 56 / 0.28);
+    color: rgb(150 152 160 / 0.18);
     mask-image:
         radial-gradient(ellipse at 76% 74%, black 0 33%, rgb(0 0 0 / 0.64) 48%, transparent 70%),
         linear-gradient(180deg, transparent 0 18%, black 44%, black 100%);
@@ -388,6 +388,20 @@
 [data-auth-screen] .bg-card > * {
     position: relative;
     z-index: 1;
+}
+
+/* login card is framed by <LiquidMetalBorder> (the jolyui liquid-metal shader,
+   masked to a rim by this opaque inner panel). keep the panel opaque over the
+   shader and drop the generic shine border. scoped to .lm-card (login only). */
+[data-auth-screen] .bg-card.lm-card {
+    background: var(--card);
+    border: 0;
+    overflow: hidden;
+}
+
+[data-auth-screen] .bg-card.lm-card::before,
+[data-auth-screen] .bg-card.lm-card::after {
+    display: none;
 }
 
 [data-auth-screen] input.bg-background,

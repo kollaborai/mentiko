@@ -7,8 +7,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
-import { VisualChainEditorReactFlow as ChainFlowPreview } from "@/components/chain";
-import { AgentProfileBadge } from "@/components/agent/agent-status-panel";
 import { StatusBadge } from "@/components/common/status-badge";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
@@ -16,14 +14,14 @@ import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import Link from "next/link";
 import {
   PlayFilled, DocumentDownloadFilled, DocumentUploadFilled, GlobalFilled, Edit2Filled,
-  ArrowDown2Filled, ClockFilled, PeopleFilled, FlashFilled, ArrowLeftFilled, TrashFilled,
+  ArrowDown2Filled, ClockFilled, ArrowLeftFilled, TrashFilled,
   TickCircleFilled, CloseCircleFilled, InfoCircleFilled, StopCircleFilled, CopyFilled,
   DocumentCopyFilled, More2Filled,
 } from "@aliimam/icons";
 import { LinkFilled, AddFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
+import EntropyBanner from "@/components/ui/entropy-banner";
 import { BotMessageSquare, RouteSquareFilled, CategoryFilled } from "@aliimam/icons";
-import { ChainIcon } from "@/components/chain/chain-icon";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { useSharedRuns } from "@/lib/runs/runs-store";
@@ -47,6 +45,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
+import { ChainDetailPanel } from "@/components/chain/chain-detail-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
 import { isSystemChainRecord } from "@/lib/chains/system-chain";
 import {
@@ -108,13 +107,6 @@ interface Chain {
   runCount?: number;
   createdAt?: string;
   metadata?: Record<string, unknown>;
-}
-
-function getFlowPreviewKey(chain: Chain) {
-  const agentSignature = chain.agents
-    .map((agent) => `${agent.id}:${agent.triggers.join(",")}:${agent.emits}`)
-    .join("|");
-  return `${chain.id}:${agentSignature}:${JSON.stringify(chain.branches ?? {})}`;
 }
 
 type FilterStatus = "all" | "active" | "draft" | "archived";
@@ -925,6 +917,27 @@ function ChainsPageContent() {
         subtitle="Define agent workflows as visual pipelines. Build multi-agent chains with triggers, event routing, and branching logic."
         icon={LinkFilled}
         sectionColor="#b07ee8"
+        overlayDark
+        background={
+          <>
+            <EntropyBanner
+              color="#b07ee8"
+              background="#0a0a0b"
+              orientation="diagonal"
+              spacing={24}
+              edgeFade
+              style={{ position: "absolute", inset: 0 }}
+            />
+            {/* left-to-right scrim keeps the title legible while the mesh + status show through on the right */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(to right, rgba(8,8,11,0.92) 0%, rgba(8,8,11,0.6) 34%, rgba(8,8,11,0.12) 66%, rgba(8,8,11,0) 100%)",
+              }}
+            />
+          </>
+        }
         actions={[
           { label: "Agents", href: "/agents", icon: BotMessageSquare, iconColor: "#b07ee8" },
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
@@ -1144,18 +1157,9 @@ function ChainsPageContent() {
                   <button onClick={handleBackToList} className="p-1 -ml-1 touch-manipulation md:hidden">
                     <ArrowLeftFilled className="h-4 w-4" />
                   </button>
-                  <h2 className="text-sm font-semibold truncate">{selected.name}</h2>
-                  {getStatusBadge(selected)}
+                  <h2 className="text-sm font-semibold truncate">Chain</h2>
                 </div>
                 <div className="relative flex items-center gap-1.5 shrink-0">
-                  <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditing(true)}>
-                    <Edit2Filled className="h-3 w-3" />
-                    <span className="hidden sm:inline ml-1">Edit</span>
-                  </Button>
-                  <Button size="sm" variant="default" className="h-7 px-2 text-[11px]" onClick={handleOpenRunDialog} data-testid="run-chain-btn">
-                    <PlayFilled className="h-3 w-3" />
-                    <span className="hidden sm:inline ml-1">Run</span>
-                  </Button>
                   {/* overflow menu */}
                   <div className="relative" ref={overflowMenuRef}>
                     <Button
@@ -1230,190 +1234,34 @@ function ChainsPageContent() {
 
               {/* scrollable body */}
               <div className="p-3 md:p-4 w-full">
-                {/* description */}
-                <p className="text-xs text-muted-foreground mb-3">{selected.description}</p>
-                {selected.lastRun && (
-                  <div className="flex items-center gap-1.5 mb-3 text-[10px] text-muted-foreground/60">
-                    <ClockFilled className="h-3 w-3" />
-                    Last run: <TimeAgo date={selected.lastRun} format="long" className="text-[10px]" />
-                  </div>
-                )}
-
-              {/* Quick stats */}
-              <div className="relative bg-[#1a1a1a] dark:bg-[#111] rounded-md overflow-hidden mb-3">
-                <ChainIcon seed={selected.id} size={140} className="!absolute right-3 top-1/2 -translate-y-1/2 opacity-20 pointer-events-none" />
-                <div className="relative z-[1] grid grid-cols-2 md:grid-cols-4 gap-px">
-                  <div className="px-3 py-3">
-                    <div className="flex items-center gap-1.5 text-white/40 mb-1">
-                      <PeopleFilled className="h-3 w-3" />
-                      <span className="text-[10px] uppercase tracking-wide">Agents</span>
+              <ChainDetailPanel
+                chain={selected}
+                workspaceDefaultProfileId={workspaceDefaultProfileId}
+                webhooks={chainWebhooks}
+                showOpenLink={false}
+                headerActions={
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {getStatusBadge(selected)}
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditing(true)}>
+                        <Edit2Filled className="h-3 w-3" />
+                        <span className="ml-1">Edit</span>
+                      </Button>
+                      <Button size="sm" variant="default" className="h-7 px-2 text-[11px]" onClick={handleOpenRunDialog} data-testid="run-chain-btn">
+                        <PlayFilled className="h-3 w-3" />
+                        <span className="ml-1">Run</span>
+                      </Button>
                     </div>
-                    <div className="text-base font-medium text-white/90">{selected.agentCount}</div>
-                  </div>
-                  <div className="px-3 py-3">
-                    <div className="flex items-center gap-1.5 text-white/40 mb-1">
-                      <FlashFilled className="h-3 w-3" />
-                      <span className="text-[10px] uppercase tracking-wide">Profile</span>
-                    </div>
-                    <AgentProfileBadge
-                      chainDefaultProfileId={selected.default_agent_profile}
-                      workspaceDefaultProfileId={workspaceDefaultProfileId}
-                      profiles={profiles}
-                    />
-                  </div>
-                  <div className="px-3 py-3">
-                    <div className="flex items-center gap-1.5 text-white/40 mb-1">
-                      <span className="text-[10px] uppercase tracking-wide">Max Rounds</span>
-                    </div>
-                    <div className="text-base font-medium text-white/90">
-                      {selected.maxRounds ?? selected.config?.max_rounds ?? "\u221E"}
-                    </div>
-                  </div>
-                  <div className="px-3 py-3">
-                    <div className="flex items-center gap-1.5 text-white/40 mb-1">
-                      <span className="text-[10px] uppercase tracking-wide">On Complete</span>
-                    </div>
-                    <div className="text-xs font-mono text-white/60 truncate">
-                      {selected.onComplete ?? selected.config?.on_complete ?? "\u2014"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Flow + right summary panel */}
-              <div className="mb-3 flex flex-col gap-3 xl:flex-row">
-                {/* Flow canvas */}
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-xs font-medium text-foreground mb-2">Flow</h3>
-                  <div className="h-[480px] overflow-hidden rounded-md bg-background">
-                    <ChainFlowPreview
-                      key={getFlowPreviewKey(selected)}
-                      agents={selected.agents}
-                      branches={selected.branches}
-                      onAddAgent={() => {}}
-                      onDeleteAgent={() => {}}
-                      onEditAgent={() => {}}
-                      readOnly
-                    />
-                  </div>
-                </div>
-
-                {/* Right summary panel */}
-                <div className="flex w-full shrink-0 flex-col gap-2 overflow-y-auto xl:w-[220px]">
-                  <h3 className="text-xs font-medium text-foreground mb-0">Details</h3>
-
-                  {/* Connections card */}
-                  {(() => {
-                    // compute connections same way as edit view
-                    const seen = new Set<string>();
-                    const conns: Array<{ from: string; to: string; event: string; type: string }> = [];
-                    // branch-based
-                    Object.entries(selected.branches || {}).forEach(([event, target]) => {
-                      const fromAgent = selected.agents.find((a) => a.emits === event);
-                      if (fromAgent) {
-                        const targets = typeof target === "string" ? [target] : Array.isArray(target) ? target : [];
-                        targets.forEach((t) => {
-                          const k = `${fromAgent.id}-${t}-${event}`;
-                          if (!seen.has(k)) { seen.add(k); conns.push({ from: fromAgent.id, to: t, event, type: "branch" }); }
-                        });
-                      }
-                    });
-                    // trigger-based
-                    const emitMap = new Map(selected.agents.filter((a) => a.emits).map((a) => [a.emits, a.id]));
-                    selected.agents.forEach((toA) => {
-                      (toA.triggers || []).forEach((trigger) => {
-                        const fromId = emitMap.get(trigger);
-                        if (fromId && fromId !== toA.id) {
-                          const k = `${fromId}-${toA.id}-${trigger}`;
-                          if (!seen.has(k)) { seen.add(k); conns.push({ from: fromId, to: toA.id, event: trigger, type: "trigger" }); }
-                        }
-                      });
-                    });
-                    // error/timeout
-                    selected.agents.forEach((a) => {
-                      if (a.on_error) conns.push({ from: a.id, to: a.on_error, event: "error", type: "error" });
-                      if (a.on_timeout) conns.push({ from: a.id, to: a.on_timeout, event: "timeout", type: "timeout" });
-                    });
-                    const agentName = (id: string) => selected.agents.find((a) => a.id === id)?.name ?? id;
-                    return (
-                      <div className="bg-card rounded-md p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-medium">Connections</span>
-                          <span className="text-[10px] text-muted-foreground/40">{conns.length}</span>
-                        </div>
-                        {conns.length === 0 ? (
-                          <span className="text-[10px] text-muted-foreground/30">none</span>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {conns.slice(0, 7).map((c, i) => (
-                              <div key={i} className="flex items-center gap-1 text-[10px]">
-                                <span className="text-foreground/60 truncate max-w-[60px]">{agentName(c.from)}</span>
-                                <span className={`shrink-0 font-mono px-1 rounded text-[9px] ${c.type === "error" ? "text-red-400 bg-red-400/10" : c.type === "timeout" ? "text-purple-400 bg-purple-400/10" : "text-green-400 bg-green-400/10"}`}>{c.event}</span>
-                                <span className="text-muted-foreground/30 shrink-0">→</span>
-                                <span className="text-foreground/60 truncate max-w-[60px]">{agentName(c.to)}</span>
-                              </div>
-                            ))}
-                            {conns.length > 7 && <div className="text-[10px] text-muted-foreground/30">+{conns.length - 7} more</div>}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Triggers card — cross-chain event triggers */}
-                  <div className="bg-card rounded-md p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-medium">Triggers</span>
-                      <span className="text-[10px] text-muted-foreground/40">{(selected.config?.event_triggers ?? []).length}</span>
-                    </div>
-                    {(selected.config?.event_triggers ?? []).length === 0 ? (
-                      <span className="text-[10px] text-muted-foreground/30">no cross-chain triggers</span>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {(selected.config?.event_triggers ?? []).map((t, i) => (
-                          <div key={i} className="space-y-0.5">
-                            <div className="flex items-center gap-1.5 text-[10px]">
-                              <span className="h-1.5 w-1.5 rounded-full bg-blue-400/60 shrink-0" />
-                              <span className="font-mono text-blue-400 truncate">{t.event}</span>
-                            </div>
-                            {t.source_chain && (
-                              <div className="pl-3 text-[10px] text-muted-foreground/40 truncate">from {t.source_chain}</div>
-                            )}
-                          </div>
-                        ))}
+                    {selected.lastRun && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+                        <ClockFilled className="h-3 w-3" />
+                        <span>last run</span>
+                        <TimeAgo date={selected.lastRun} format="long" className="text-[10px]" />
                       </div>
                     )}
                   </div>
-
-                  {/* Webhooks card */}
-                  <div className="bg-card rounded-md p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60 font-medium">Webhooks</span>
-                      <span className="text-[10px] text-muted-foreground/40">{chainWebhooks.length}</span>
-                    </div>
-                    {chainWebhooks.length === 0 ? (
-                      <span className="text-[10px] text-muted-foreground/30">none configured</span>
-                    ) : (
-                      <div className="space-y-2">
-                        {chainWebhooks.map((wh) => (
-                          <div key={wh.id} className="space-y-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${wh.enabled ? "bg-green-400" : "bg-foreground/20"}`} />
-                              <span className="text-[11px] text-foreground/70 truncate">{wh.name}</span>
-                            </div>
-                            <div className="pl-3 text-[10px] font-mono text-muted-foreground/40 truncate">{wh.url}</div>
-                            <div className="pl-3 flex gap-1 flex-wrap">
-                              {wh.events.map((ev) => (
-                                <span key={ev} className="text-[9px] px-1 py-0.5 rounded bg-foreground/5 text-muted-foreground/50">{ev}</span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+                }
+              />
 
 
               {/* Variables */}

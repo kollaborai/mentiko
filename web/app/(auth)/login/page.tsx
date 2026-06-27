@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signIn, isMockOAuth, authClient } from "@/lib/auth/auth-client";
 import { ONBOARDING_DISMISSED_KEY, OPEN_WELCOME_PANEL_KEY } from "@/lib/system/onboarding-storage";
+import { LiquidMetalBorder } from "@/components/ui/liquid-metal-border";
 
 export default function LoginPage() {
   return (
@@ -96,7 +97,7 @@ function LoginForm() {
 
   return (
     <div className="w-full max-w-md">
-      <div className="bg-card rounded-md p-6">
+      <LiquidMetalBorder className="bg-card rounded-md p-6 lm-card" radius={8} borderWidth={2}>
         <div className="text-center mb-5">
           <div className="flex items-center justify-center gap-2 mb-2">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -5 32 32" className="h-6 w-6">
@@ -238,7 +239,7 @@ function LoginForm() {
             </Link>
           </div>
         )}
-      </div>
+      </LiquidMetalBorder>
     </div>
   );
 }

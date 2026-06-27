@@ -81,6 +81,38 @@ interface RunSummary {
   generated_at?: string;
 }
 
+interface GeneratedTriageTask {
+  title?: string;
+  description?: string;
+  labels?: string[];
+  subtasks?: Array<{
+    title?: string;
+    description?: string;
+    type?: string;
+  }>;
+}
+
+interface EventArtifactExecution {
+  id: string;
+  event: string;
+  status: string;
+  artifactName?: string | null;
+  draftTaskName?: string | null;
+  artifact?: {
+    generated?: GeneratedTriageTask;
+    qualityGate?: {
+      reason?: string;
+      findings?: string[];
+      risks?: string[];
+    };
+  } | null;
+  draftTask?: GeneratedTriageTask | null;
+  actionResults?: Array<{ type?: string; count?: number; createdTaskIds?: string[] }>;
+  error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 interface Run {
   id: string;
   chain: string;
@@ -356,6 +388,10 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
   const [costData, setCostData] = useState<RunCost | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [submittingApproval, setSubmittingApproval] = useState(false);
+  const [eventArtifacts, setEventArtifacts] = useState<EventArtifactExecution[]>([]);
+  const [eventArtifactLoading, setEventArtifactLoading] = useState(false);
+  const [eventArtifactError, setEventArtifactError] = useState<string | null>(null);
+  const [applyingEventArtifactId, setApplyingEventArtifactId] = useState<string | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const metricsRef = useRef<Record<string, MetricPoint[]>>({});
@@ -380,6 +416,23 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
       console.error("failed to fetch run", e);
     } finally {
       setLoading(false);
+    }
+  }, [runId, fetchWithNamespace]);
+
+  const fetchEventArtifacts = useCallback(async () => {
+    setEventArtifactLoading(true);
+    setEventArtifactError(null);
+    try {
+      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts`);
+      const raw = await res.json();
+      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to load triage artifacts"));
+      const data = unwrapApiData<{ executions?: EventArtifactExecution[] }>(raw);
+      setEventArtifacts(data.executions || []);
+    } catch (e) {
+      setEventArtifactError(e instanceof Error ? e.message : "failed to load triage artifacts");
+      setEventArtifacts([]);
+    } finally {
+      setEventArtifactLoading(false);
     }
   }, [runId, fetchWithNamespace]);
 
@@ -587,6 +640,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
   useEffect(() => {
     fetchRun();
+    fetchEventArtifacts();
     const interval = setInterval(pollStatus, 5000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -824,6 +878,31 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
     if (res.ok) {
       const updated = await res.json() as { run: Run };
       setRun(updated.run);
+    }
+  };
+
+  const handleApplyEventArtifact = async (executionId: string) => {
+    if (!run?.taskId) {
+      setEventArtifactError("this run is not attached to a task, so draft tasks cannot be applied");
+      return;
+    }
+    setApplyingEventArtifactId(executionId);
+    try {
+      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts/${encodeURIComponent(executionId)}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parentTaskId: run.taskId,
+          ...(run.workspacePath ? { workspacePath: run.workspacePath } : {}),
+        }),
+      });
+      const raw = await res.json();
+      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to apply triage draft"));
+      await fetchEventArtifacts();
+    } catch (e) {
+      setEventArtifactError(e instanceof Error ? e.message : "failed to apply triage draft");
+    } finally {
+      setApplyingEventArtifactId(null);
     }
   };
 
@@ -1246,6 +1325,11 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
               <TabsTrigger value="output" className="text-xs">output</TabsTrigger>
               <TabsTrigger value="metrics" className="text-xs">metrics</TabsTrigger>
               <TabsTrigger value="cost" className="text-xs">cost</TabsTrigger>
+              {(eventArtifacts.length > 0 || eventArtifactLoading || eventArtifactError) && (
+                <TabsTrigger value="triage" className="text-xs">
+                  triage{eventArtifacts.length > 0 ? ` ${eventArtifacts.length}` : ""}
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -2006,6 +2090,104 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                     </div>
                   </div>
                 </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* triage tab */}
+          <TabsContent value="triage" className="flex-1 overflow-y-auto p-4 mt-0">
+            <div className="max-w-4xl space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">quality gate triage</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    review drafted follow-up work from failed quality gates
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={fetchEventArtifacts}>
+                  refresh
+                </Button>
+              </div>
+
+              {eventArtifactError && (
+                <div className="rounded-md bg-red-500/10 border border-red-500/20 p-3 text-xs text-red-300">
+                  {eventArtifactError}
+                </div>
+              )}
+
+              {eventArtifactLoading ? (
+                <div className="rounded-md bg-card p-4 text-xs text-muted-foreground">
+                  loading triage artifacts...
+                </div>
+              ) : eventArtifacts.length === 0 ? (
+                <div className="rounded-md bg-card p-4 text-xs text-muted-foreground">
+                  no triage artifacts for this run
+                </div>
+              ) : (
+                eventArtifacts.map((execution) => {
+                  const draft = execution.draftTask || execution.artifact?.generated;
+                  const gate = execution.artifact?.qualityGate;
+                  const createdIds = execution.actionResults
+                    ?.flatMap((result) => result.createdTaskIds || [])
+                    .filter(Boolean) || [];
+                  const applied = execution.status === "actions_applied" || createdIds.length > 0;
+
+                  return (
+                    <div key={execution.id} className="rounded-md bg-card p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Badge variant="outline" className="text-[10px]">{execution.event}</Badge>
+                            <Badge variant={applied ? "default" : "outline"} className="text-[10px]">
+                              {execution.status}
+                            </Badge>
+                          </div>
+                          <p className="text-sm font-medium">{draft?.title || execution.artifactName || execution.id}</p>
+                          {gate?.reason && (
+                            <p className="text-xs text-muted-foreground mt-1">{gate.reason}</p>
+                          )}
+                        </div>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs shrink-0"
+                          disabled={applied || !draft || !run?.taskId || applyingEventArtifactId === execution.id}
+                          onClick={() => handleApplyEventArtifact(execution.id)}
+                          title={!run?.taskId ? "run is not attached to a task" : undefined}
+                        >
+                          {applied ? "applied" : applyingEventArtifactId === execution.id ? "applying..." : "apply draft"}
+                        </Button>
+                      </div>
+
+                      {draft?.description && (
+                        <pre className="mt-3 whitespace-pre-wrap text-xs text-muted-foreground bg-background/40 rounded-sm p-3 overflow-x-auto">
+                          {draft.description}
+                        </pre>
+                      )}
+
+                      {draft?.subtasks && draft.subtasks.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-[10px] uppercase tracking-wider text-foreground/40">draft subtasks</p>
+                          {draft.subtasks.map((subtask, index) => (
+                            <div key={`${execution.id}-${index}`} className="rounded-sm bg-background/40 p-3">
+                              <p className="text-xs font-medium">{subtask.title || `subtask ${index + 1}`}</p>
+                              {subtask.description && (
+                                <p className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap">
+                                  {subtask.description}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {createdIds.length > 0 && (
+                        <div className="mt-3 text-xs text-muted-foreground">
+                          created: {createdIds.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           </TabsContent>

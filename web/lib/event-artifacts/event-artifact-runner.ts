@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { existsSync, readFileSync } from "fs";
 import { basename, join } from "path";
 import {
   appendExecutionRecord,
@@ -61,8 +62,9 @@ export function runQualityGateEventArtifact(
   const executionId = executionIdForDedupeKey(dedupeKey);
   const artifactPath = resolveArtifactOutputPath(input.runArtifactsDir, mapping.outputArtifact);
   const draftTaskPath = resolveArtifactOutputPath(input.runArtifactsDir, "draft-child-tasks.json");
-  const triage = buildTriageArtifact(input.payload, mapping.maxChildren);
-  const draft = buildDraftTask(input.payload, mapping.maxChildren);
+  const context = buildFailureContext(input.payload);
+  const triage = buildTriageArtifact(input.payload, mapping.maxChildren, context);
+  const draft = buildDraftTask(input.payload, mapping.maxChildren, context);
 
   appendExecutionRecord(input.runArtifactsDir, {
     id: executionId,
@@ -104,7 +106,24 @@ function executionIdForDedupeKey(dedupeKey: string): string {
   return `evt-${createHash("sha256").update(dedupeKey).digest("hex").slice(0, 24)}`;
 }
 
-function buildTriageArtifact(payload: QualityGateFailedPayload, maxChildren: number) {
+interface FailureContext {
+  title: string;
+  descriptionLines: string[];
+  findings: string[];
+  risks: string[];
+  nextActions: string[];
+}
+
+interface AgentSummaryArtifact {
+  status?: string;
+  executiveSummary?: string;
+  findings?: string[];
+  risks?: string[];
+  nextAgentHints?: string[];
+  workCompleted?: string[];
+}
+
+function buildTriageArtifact(payload: QualityGateFailedPayload, maxChildren: number, context = buildFailureContext(payload)) {
   return {
     schema: "generated-tasks/v1",
     event: payload.event,
@@ -116,39 +135,131 @@ function buildTriageArtifact(payload: QualityGateFailedPayload, maxChildren: num
     task: payload.task,
     qualityGate: payload.qualityGate,
     evidence: payload.evidence,
-    generated: buildDraftTask(payload, maxChildren),
+    generated: buildDraftTask(payload, maxChildren, context),
   };
 }
 
-function buildDraftTask(payload: QualityGateFailedPayload, maxChildren: number): GeneratedTask {
-  const taskTitle = payload.task
-    ? `${payload.task.id} ${payload.task.title}`.trim()
-    : payload.run.chainName || payload.run.id;
-  const nextActions = payload.qualityGate.nextActions.length
-    ? payload.qualityGate.nextActions
-    : ["Investigate the failed quality gate and repair the underlying issue."];
+function buildDraftTask(payload: QualityGateFailedPayload, maxChildren: number, context = buildFailureContext(payload)): GeneratedTask {
   return {
-    title: `Fix quality gate failure for ${taskTitle}`,
-    description: [
-      `Run ${payload.run.id} failed quality gate handling.`,
-      `Reason: ${payload.qualityGate.reason}`,
-      payload.qualityGate.findings.length ? `Findings: ${payload.qualityGate.findings.join("; ")}` : "",
-      payload.qualityGate.risks.length ? `Risks: ${payload.qualityGate.risks.join("; ")}` : "",
-    ].filter(Boolean).join("\n"),
+    title: context.title,
+    description: context.descriptionLines.join("\n"),
     type: "bug",
     priority: payload.task?.priority ?? 1,
     labels: ["quality-gate", "triage"],
     acceptance_criteria: [
       "Quality gate evidence is reviewed.",
-      "Root cause is fixed or a follow-up task is documented.",
+      "The validator summary findings are addressed or explicitly accepted.",
       `Run artifact ${basename(payload.run.artifactsDir)} remains auditable.`,
     ],
-    subtasks: nextActions.slice(0, maxChildren).map((action, index) => ({
+    subtasks: context.nextActions.slice(0, maxChildren).map((action, index) => ({
       title: action.length > 80 ? `${action.slice(0, 77)}...` : action,
-      description: `Follow-up from ${payload.event.name} on run ${payload.run.id}.`,
+      description: [
+        `Follow-up from ${payload.event.name} on run ${payload.run.id}.`,
+        context.findings.length ? `Evidence: ${context.findings.slice(0, 3).join("; ")}` : "",
+      ].filter(Boolean).join("\n"),
       type: index === 0 ? "bug" : "task",
       priority: payload.task?.priority ?? 1,
       acceptance_criteria: "Complete this action and update the parent triage task.",
     })),
   };
+}
+
+function buildFailureContext(payload: QualityGateFailedPayload): FailureContext {
+  const summary = readAgentSummary(payload);
+  const taskLabel = payload.task
+    ? `${payload.task.id} ${payload.task.title === payload.task.id ? "" : payload.task.title}`.trim()
+    : payload.run.chainName || payload.run.id;
+  const summaryFindings = boundedSummaryStrings(summary?.findings, 8);
+  const summaryRisks = boundedSummaryStrings(summary?.risks, 6);
+  const nextAgentHints = boundedSummaryStrings(summary?.nextAgentHints, 6);
+  const findings = summaryFindings.length ? summaryFindings : payload.qualityGate.findings;
+  const risks = summaryRisks.length ? summaryRisks : payload.qualityGate.risks;
+  const nextActions = nextAgentHints.length
+    ? nextAgentHints.map(actionFromHint)
+    : payload.qualityGate.nextActions.length
+      ? payload.qualityGate.nextActions
+      : ["Investigate the failed quality gate and repair the underlying issue."];
+
+  const specificTitle = buildSpecificTitle(payload, taskLabel, summary, findings);
+  return {
+    title: specificTitle,
+    descriptionLines: [
+      `Run ${payload.run.id} failed quality gate handling.`,
+      `Reason: ${payload.qualityGate.reason}`,
+      summary?.executiveSummary ? `Validator summary: ${summary.executiveSummary}` : "",
+      findings.length ? `Findings: ${findings.join("; ")}` : "",
+      risks.length ? `Risks: ${risks.join("; ")}` : "",
+    ].filter(Boolean),
+    findings,
+    risks,
+    nextActions,
+  };
+}
+
+function buildSpecificTitle(
+  payload: QualityGateFailedPayload,
+  taskLabel: string,
+  summary: AgentSummaryArtifact | null,
+  findings: string[],
+): string {
+  const text = [
+    summary?.executiveSummary || "",
+    ...findings,
+  ].join(" ").toLowerCase();
+
+  const testCount = text.match(/(\d+)\s+fail(?:ing|ures|ed)?/i)?.[1];
+  const scope = text.includes("stash") ? "stash api" : payload.qualityGate.agentId || "quality gate";
+  const reason = text.includes("mock") ? "mock limitations" : "validator findings";
+
+  if (testCount) {
+    return `Fix ${testCount} failing ${scope} tests from ${reason} for ${taskLabel}`;
+  }
+
+  if (summary?.executiveSummary || findings.length) {
+    return `Fix ${scope} ${reason} for ${taskLabel}`;
+  }
+
+  return `Fix quality gate failure for ${taskLabel}`;
+}
+
+function readAgentSummary(payload: QualityGateFailedPayload): AgentSummaryArtifact | null {
+  const candidates = [
+    payload.qualityGate.summaryPath,
+    ...payload.qualityGate.findings
+      .map((finding) => finding.match(/summary=([^;\s]+)/)?.[1])
+      .filter((path): path is string => Boolean(path)),
+  ];
+
+  for (const path of candidates) {
+    if (!path || !existsSync(path)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as AgentSummaryArtifact;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function boundedSummaryStrings(values: unknown, limit: number): string[] {
+  if (!Array.isArray(values)) return [];
+  return values
+    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+    .map((value) => value.trim())
+    .slice(0, limit);
+}
+
+function actionFromHint(hint: string): string {
+  if (/mock git api|mock implementation|mock limitations/i.test(hint)) {
+    return "Enhance the mock Git API so stash API edge cases pass validation.";
+  }
+  if (/permission/i.test(hint)) {
+    return "Fix the mock permission model used by stash API tests.";
+  }
+  if (/concurrent/i.test(hint)) {
+    return "Redesign the concurrent stash operation test for deterministic validation.";
+  }
+  return hint;
 }

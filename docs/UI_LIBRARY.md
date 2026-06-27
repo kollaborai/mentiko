@@ -98,10 +98,53 @@ Workflow surfaces:
 - chat composer
 - nested menu
 - raised button
+- chain detail panel
 
 Limited-use components:
 - holo card
 - specialized indicators and loading states
+- entropy banner
+- liquid metal border
+
+---
+
+## CHAIN DETAIL PANEL
+
+`web/components/chain/chain-detail-panel.tsx` is the shared read-only chain
+summary surface.
+
+Use it anywhere a chain definition is being inspected but not edited:
+- `/chains` selected-chain detail
+- task assigned-chain section
+- future run/task references to an assigned chain
+
+Rules:
+- do not duplicate the chain canvas/details block in route files
+- keep task-specific controls outside the panel through adjacent action rows
+- use `headerActions` for page-local actions like Edit, Run, status, or last run
+- use `showOpenLink={false}` when the panel is already on the chains page
+- use `compact` for embedded task views
+
+The read-only flow preview uses `previewMode` on
+`visual-editor-reactflow.tsx`. Keep editor behavior and preview behavior
+separate: the editor can stay spacious and draggable; previews must be dense,
+readable, and fit without making agents tiny.
+
+Entry-trigger aliases matter for preview layout. The preview must treat
+`manual-start`, `chain-started`, `chain_start`, and triggers with no local
+emitter as entry points so generated/imported chains do not collapse into
+orphan stacks.
+
+---
+
+## BANNER PRIMITIVES
+
+`PageBanner` owns workflow-page header presentation. Keep watermark/pattern
+effects contained inside the banner component, not leaking into route layouts.
+
+`EntropyBanner` is a canvas banner primitive for controlled decorative motion.
+It must remain behind normal product chrome, support reduced motion, and avoid
+blocking typecheck with nullable canvas/context references.
 
 ---
 

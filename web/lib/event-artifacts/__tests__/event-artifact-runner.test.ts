@@ -48,7 +48,55 @@ describe("event artifact runner", () => {
     expect(result.status).toBe("awaiting_review");
     expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(true);
     expect(existsSync(join(artifactsDir, "draft-child-tasks.json"))).toBe(true);
-    expect(readFileSync(join(artifactsDir, "triage-result.json"), "utf8")).toContain("Fix quality gate failure for FEAT-1");
+    expect(readFileSync(join(artifactsDir, "triage-result.json"), "utf8")).toContain("Fix stash api validator findings for FEAT-1 Fix stash API");
+  });
+
+  it("uses validator summary details when the quality gate points at a summary artifact", () => {
+    const runRoot = mkdtempSync(join(tmpdir(), "event-artifact-runner-"));
+    const artifactsDir = join(runRoot, "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+    const summaryPath = join(artifactsDir, "validator-summary.json");
+    writeFileSync(summaryPath, JSON.stringify({
+      status: "partial",
+      executiveSummary: "Git API validation complete: 132/141 tests passing. 9 failures in Stash API tests are mock implementation limitations.",
+      findings: [
+        "Stash API: 87.3% pass rate (62/71 tests) - 9 failures are mock limitations",
+        "Mock Git API needs enhancements for conflict detection and diff generation",
+      ],
+      risks: ["Mock implementation gaps prevent full validation of advanced stash operations"],
+      nextAgentHints: [
+        "Consider enhancing mock Git API implementation to fix the 9 failing tests",
+        "Fix Permission Mock",
+      ],
+    }), "utf8");
+
+    runQualityGateEventArtifact({
+      namespaceId: "default",
+      orgId: "default",
+      runId: "run-1",
+      runArtifactsDir: artifactsDir,
+      payload: {
+        event: { name: "quality_gate.failed", source: "chain-runner-complete", timestamp: "2026-06-26T00:00:00.000Z" },
+        namespace: { id: "default" },
+        org: { id: "default" },
+        run: { id: "run-1", status: "failed", artifactsDir },
+        task: { id: "FEAT-021", title: "Write comprehensive tests", status: "in_progress", priority: 1 },
+        qualityGate: {
+          status: "failed",
+          agentId: "git-api-test-validator-v2",
+          reason: "quality gate agent summary status is partial",
+          findings: [`summary=${summaryPath}`],
+          risks: [],
+          nextActions: ["Review the quality gate artifact and fix the failing condition."],
+        },
+        evidence: { changedFiles: [], liveSessions: [], artifacts: [summaryPath] },
+      },
+    });
+
+    const draft = JSON.parse(readFileSync(join(artifactsDir, "draft-child-tasks.json"), "utf8"));
+    expect(draft.title).toBe("Fix 9 failing stash api tests from mock limitations for FEAT-021 Write comprehensive tests");
+    expect(draft.description).toContain("132/141 tests passing");
+    expect(draft.subtasks[0].title).toBe("Enhance the mock Git API so stash API edge cases pass validation.");
   });
 
   it("dedupes repeat handling for the same run and task", () => {

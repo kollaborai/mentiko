@@ -29,7 +29,7 @@ describe("event artifact actions", () => {
     closeAll();
   });
 
-  it("imports draft child tasks once and pauses the parent", () => {
+  it("creates one follow-up child task, blocks the parent, and keeps auto-run armed", () => {
     const parent = taskCreate("default", {
       title: "Parent feature",
       issue_type: "feature",
@@ -41,7 +41,7 @@ describe("event artifact actions", () => {
     writeFileSync(draftPath, JSON.stringify({
       title: "Fix quality gate failure for Parent feature",
       description: "Generated from quality gate failure.",
-      type: "task",
+      type: "bug",
       priority: 1,
       subtasks: [
         { title: "Fix failing tests", description: "Repair regression", type: "bug" },
@@ -71,11 +71,22 @@ describe("event artifact actions", () => {
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
+    expect(first.createdTaskIds).toHaveLength(1);
     expect([...second.createdTaskIds].sort()).toEqual([...first.createdTaskIds].sort());
-    expect(taskGet("default", parent.id, "default")?.metadata).toMatchObject({
-      auto_run: false,
+    const child = taskGet("default", first.createdTaskIds[0], "default");
+    expect(child).toMatchObject({
+      issue_type: "bug",
+      parent_id: parent.id,
+    });
+    expect(child?.description).toContain("Follow-up checklist:");
+    expect(child?.description).toContain("Fix failing tests");
+    const updatedParent = taskGet("default", parent.id, "default");
+    expect(updatedParent?.metadata).toMatchObject({
+      auto_run: true,
+      event_artifact_blocks_auto_run: true,
       event_artifact_status: "waiting_on_children",
       event_artifact_execution_id: "exec-1",
     });
+    expect(updatedParent?.dependencies?.map((dep) => dep.depends_on_id)).toContain(child?.id);
   });
 });

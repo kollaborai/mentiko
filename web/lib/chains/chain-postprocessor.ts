@@ -22,8 +22,6 @@ const BASE_AGENT_FIELDS = new Set([
   "role",
   "version",
   "prompt",
-  "triggers",
-  "emits",
   "authorities",
   "timeout",
   "retry",

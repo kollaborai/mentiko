@@ -307,6 +307,12 @@ describe("ChainAssignWorkflow", () => {
         })
       );
     });
+    const saveCall = mockFetchWithNamespace.mock.calls.find(([url]) => url === "/api/chains/save");
+    const savedBody = JSON.parse(String(saveCall?.[1]?.body || "{}"));
+    expect(savedBody.chain.agents).toEqual([
+      { $ref: "shell-executor" },
+      { $ref: "result-verifier" },
+    ]);
     expect(onAssignChain).toHaveBeenCalledWith("shell-command-executor", "Shell Command Executor");
   });
 });

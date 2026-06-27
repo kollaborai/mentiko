@@ -30,6 +30,7 @@ export interface VisualChainEditorProps {
   onEditEdge?: (fromId: string, toId: string, event: string) => void;
   onDeleteEdge?: (fromId: string, toId: string, event: string) => void;
   readOnly?: boolean;
+  previewMode?: boolean;
   debugMode?: boolean;
   breakpoints?: Set<string>;
   onToggleBreakpoint?: (agentId: string) => void;
@@ -65,6 +66,15 @@ const NODE_HEIGHT = 185;
 const H_GAP = 420;
 const V_GAP = 220;
 
+function getNodeMetrics(previewMode: boolean) {
+  return {
+    nodeWidth: previewMode ? 260 : NODE_WIDTH,
+    nodeHeight: previewMode ? 150 : NODE_HEIGHT,
+    hGap: previewMode ? 340 : H_GAP,
+    vGap: previewMode ? 170 : V_GAP,
+  };
+}
+
 const EDGE_COLORS = {
   branch:  "#22c55e",
   trigger: "#22c55e",
@@ -76,7 +86,8 @@ const EDGE_COLORS = {
 
 // ─── Layout ───────────────────────────────────────────────────────────────────
 
-function computeLayout(agents: ChainAgent[]): NodeLayout[] {
+function computeLayout(agents: ChainAgent[], previewMode = false): NodeLayout[] {
+  const { hGap, vGap } = getNodeMetrics(previewMode);
   const triggerMap = new Map<string, ChainAgent[]>();
   agents.forEach((a) => {
     (a.triggers || []).forEach((t) => {
@@ -89,11 +100,18 @@ function computeLayout(agents: ChainAgent[]): NodeLayout[] {
   const levels: ChainAgent[][] = [];
   const placed = new Set<string>();
 
+  const emittedEvents = new Set(agents.map((a) => a.emits).filter(Boolean));
   const entryAgents = agents.filter((a) => {
     const triggers = a.triggers || [];
-    return triggers.includes("manual-start") || triggers.includes("chain-started");
+    return (
+      triggers.includes("manual-start") ||
+      triggers.includes("chain-started") ||
+      triggers.includes("chain_start") ||
+      triggers.every((trigger) => !emittedEvents.has(trigger))
+    );
   });
-  const bfsQueue: { agent: ChainAgent; level: number }[] = entryAgents.map((a) => ({ agent: a, level: 0 }));
+  const fallbackEntryAgents = entryAgents.length > 0 ? entryAgents : agents.slice(0, 1);
+  const bfsQueue: { agent: ChainAgent; level: number }[] = fallbackEntryAgents.map((a) => ({ agent: a, level: 0 }));
 
   while (bfsQueue.length > 0) {
     const { agent, level } = bfsQueue.shift()!;
@@ -117,13 +135,13 @@ function computeLayout(agents: ChainAgent[]): NodeLayout[] {
 
   const nodes: NodeLayout[] = [];
   levels.forEach((levelAgents, levelIdx) => {
-    const levelHeight = (levelAgents.length - 1) * V_GAP;
+    const levelHeight = (levelAgents.length - 1) * vGap;
     const startY = -levelHeight / 2;
     levelAgents.forEach((a, idx) => {
       nodes.push({
         id: a.id,
-        x: levelIdx * H_GAP,
-        y: startY + idx * V_GAP,
+        x: levelIdx * hGap,
+        y: startY + idx * vGap,
         agent: a,
       });
     });
@@ -211,12 +229,22 @@ function bezierPath(x1: number, y1: number, x2: number, y2: number): string {
 interface EdgeSvgProps {
   edges: EdgeLayout[];
   nodeMap: Map<string, NodeLayout>;
+  nodeWidth: number;
+  nodeHeight: number;
   selectedEdge: string | null;
   onEdgeClick: (id: string, e: React.MouseEvent) => void;
   readOnly?: boolean;
 }
 
-function EdgeLayer({ edges, nodeMap, selectedEdge, onEdgeClick, readOnly }: EdgeSvgProps) {
+function EdgeLayer({
+  edges,
+  nodeMap,
+  nodeWidth,
+  nodeHeight,
+  selectedEdge,
+  onEdgeClick,
+  readOnly,
+}: EdgeSvgProps) {
   return (
     <>
       <defs>
@@ -252,10 +280,10 @@ function EdgeLayer({ edges, nodeMap, selectedEdge, onEdgeClick, readOnly }: Edge
         const isAnimated = !isDashed && (edge.edgeType === "branch" || edge.edgeType === "trigger" || edge.edgeType === "fanout" || edge.edgeType === "fanin");
 
         // right-center of source to left-center of target
-        const x1 = from.x + NODE_WIDTH;
-        const y1 = from.y + NODE_HEIGHT / 2;
+        const x1 = from.x + nodeWidth;
+        const y1 = from.y + nodeHeight / 2;
         const x2 = to.x;
-        const y2 = to.y + NODE_HEIGHT / 2;
+        const y2 = to.y + nodeHeight / 2;
 
         const labelX = (x1 + x2) / 2;
         const labelY = (y1 + y2) / 2 - 12;
@@ -324,11 +352,14 @@ function EdgeLayer({ edges, nodeMap, selectedEdge, onEdgeClick, readOnly }: Edge
 
 interface AgentNodeProps {
   node: NodeLayout;
+  nodeWidth: number;
+  nodeHeight: number;
   selected: boolean;
   dragging: boolean;
   hasBreakpoint: boolean;
   debugMode: boolean;
   readOnly: boolean;
+  previewMode: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onClick: (e: React.MouseEvent) => void;
@@ -337,11 +368,14 @@ interface AgentNodeProps {
 
 function AgentNode({
   node,
+  nodeWidth,
+  nodeHeight,
   selected,
   dragging,
   hasBreakpoint,
   debugMode,
   readOnly,
+  previewMode,
   onMouseDown,
   onDoubleClick,
   onClick,
@@ -366,13 +400,14 @@ function AgentNode({
               position: "absolute",
               left: node.x,
               top: node.y,
-              width: NODE_WIDTH,
-              minHeight: NODE_HEIGHT,
+              width: nodeWidth,
+              minHeight: nodeHeight,
               cursor: readOnly ? "default" : dragging ? "grabbing" : "grab",
               userSelect: "none",
             }}
             className={[
-              "px-4 py-3 rounded-md transition-colors duration-150",
+              previewMode ? "px-3 py-2.5" : "px-4 py-3",
+              "rounded-md transition-colors duration-150",
               "bg-card border border-border/50",
               selected ? "ring-2 ring-purple-500" : "hover:bg-muted",
               hasBreakpoint ? "ring-1 ring-red-500/30" : "",
@@ -413,10 +448,10 @@ function AgentNode({
             )}
 
             {/* header */}
-            <div className="flex items-start justify-between gap-3 mb-2">
+            <div className={previewMode ? "mb-1.5 flex items-start justify-between gap-2" : "mb-2 flex items-start justify-between gap-3"}>
               <div className="flex min-w-0 items-center gap-2">
-                <Bot className="h-4 w-4 text-purple-400 shrink-0" />
-                <span className="truncate text-sm font-semibold text-foreground">
+                <Bot className={`${previewMode ? "h-3.5 w-3.5" : "h-4 w-4"} text-purple-400 shrink-0`} />
+                <span className={`${previewMode ? "text-[12px]" : "text-sm"} truncate font-semibold text-foreground`}>
                   {agent.name}
                 </span>
               </div>
@@ -426,13 +461,13 @@ function AgentNode({
             </div>
 
             {/* id */}
-            <div className="text-[10px] font-mono text-muted-foreground/60 mb-2 truncate">
+            <div className={`${previewMode ? "mb-1.5" : "mb-2"} truncate font-mono text-[10px] text-muted-foreground/60`}>
               {agent.id}
             </div>
 
             {/* role */}
             {agent.role && (
-              <div className="h-9 text-[11px] leading-4 text-muted-foreground line-clamp-2 mb-2">
+              <div className={`${previewMode ? "mb-1.5 h-7 text-[10px] leading-3" : "mb-2 h-9 text-[11px] leading-4"} line-clamp-2 text-muted-foreground`}>
                 {agent.role}
               </div>
             )}
@@ -506,6 +541,7 @@ export function VisualChainEditor({
   onEditEdge: _onEditEdge,
   onDeleteEdge,
   readOnly = false,
+  previewMode = false,
   debugMode = false,
   breakpoints = new Set<string>(),
   onToggleBreakpoint,
@@ -515,9 +551,10 @@ export function VisualChainEditor({
     rawAgents.map((a, i) => a.id ? a : { ...a, id: a.name?.toLowerCase().replace(/\s+/g, "-") || `agent-${i}` }),
     [rawAgents]
   );
+  const { nodeWidth, nodeHeight } = useMemo(() => getNodeMetrics(previewMode), [previewMode]);
 
   // initial layout + overrides from dragging
-  const initialNodes = useMemo(() => computeLayout(agents), [agents]);
+  const initialNodes = useMemo(() => computeLayout(agents, previewMode), [agents, previewMode]);
   const [nodeOverrides, setNodeOverrides] = useState<Map<string, { x: number; y: number }>>(new Map());
 
   // when agents change, clear overrides for removed agents
@@ -570,19 +607,23 @@ export function VisualChainEditor({
       const ys = nodes.map((n) => n.y);
       const minX = Math.min(...xs);
       const minY = Math.min(...ys);
-      const maxX = Math.max(...xs) + NODE_WIDTH;
-      const maxY = Math.max(...ys) + NODE_HEIGHT;
+      const maxX = Math.max(...xs) + nodeWidth;
+      const maxY = Math.max(...ys) + nodeHeight;
       const graphW = maxX - minX;
       const graphH = maxY - minY;
 
-      const padding = 72;
+      const padding = previewMode ? 32 : 72;
       const scaleX = (cw - padding * 2) / Math.max(graphW, 1);
       const scaleY = (ch - padding * 2) / Math.max(graphH, 1);
-      const clampedScale = Math.max(0.45, Math.min(1, Math.min(scaleX, scaleY)));
+      const minScale = previewMode ? 0.58 : 0.45;
+      const maxScale = previewMode ? 1.05 : 1;
+      const clampedScale = Math.max(minScale, Math.min(maxScale, Math.min(scaleX, scaleY)));
 
       const scaledW = graphW * clampedScale;
       const scaledH = graphH * clampedScale;
-      const px = (cw - scaledW) / 2 - minX * clampedScale;
+      const px = previewMode
+        ? padding - minX * clampedScale
+        : (cw - scaledW) / 2 - minX * clampedScale;
       const py = (ch - scaledH) / 2 - minY * clampedScale;
 
       setScale(clampedScale);
@@ -591,20 +632,20 @@ export function VisualChainEditor({
     }, 80);
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents.length]);
+  }, [agents.length, previewMode, nodeWidth, nodeHeight]);
 
   // compute SVG canvas size (enough to cover all nodes + some margin)
   const svgSize = useMemo(() => {
     if (nodes.length === 0) return { w: 2000, h: 2000 };
     const xs = nodes.map((n) => n.x);
     const ys = nodes.map((n) => n.y);
-    const w = Math.max(...xs) + NODE_WIDTH + 400;
-    const h = Math.max(...ys) + NODE_HEIGHT + 400;
+    const w = Math.max(...xs) + nodeWidth + 400;
+    const h = Math.max(...ys) + nodeHeight + 400;
     return {
       w: Math.max(w - Math.min(...xs) + 400, 2000),
       h: Math.max(h - Math.min(...ys) + 400, 2000),
     };
-  }, [nodes]);
+  }, [nodes, nodeWidth, nodeHeight]);
 
   // selection
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -627,23 +668,27 @@ export function VisualChainEditor({
     const ys = nodes.map((n) => n.y);
     const minX = Math.min(...xs);
     const minY = Math.min(...ys);
-    const maxX = Math.max(...xs) + NODE_WIDTH;
-    const maxY = Math.max(...ys) + NODE_HEIGHT;
+    const maxX = Math.max(...xs) + nodeWidth;
+    const maxY = Math.max(...ys) + nodeHeight;
     const graphW = maxX - minX;
     const graphH = maxY - minY;
 
-    const padding = 72;
+    const padding = previewMode ? 32 : 72;
     const scaleX = (cw - padding * 2) / Math.max(graphW, 1);
     const scaleY = (ch - padding * 2) / Math.max(graphH, 1);
-    const clampedScale = Math.max(0.45, Math.min(1, Math.min(scaleX, scaleY)));
+    const minScale = previewMode ? 0.58 : 0.45;
+    const maxScale = previewMode ? 1.05 : 1;
+    const clampedScale = Math.max(minScale, Math.min(maxScale, Math.min(scaleX, scaleY)));
     const scaledW = graphW * clampedScale;
     const scaledH = graphH * clampedScale;
-    const px = (cw - scaledW) / 2 - minX * clampedScale;
+    const px = previewMode
+      ? padding - minX * clampedScale
+      : (cw - scaledW) / 2 - minX * clampedScale;
     const py = (ch - scaledH) / 2 - minY * clampedScale;
 
     setScale(clampedScale);
     setPan({ x: px, y: py });
-  }, [nodes]);
+  }, [nodes, previewMode, nodeWidth, nodeHeight]);
 
   // wheel zoom (cursor-anchored). Plain scroll should move the page/panel,
   // not mutate the graph reference view by accident.
@@ -891,6 +936,8 @@ export function VisualChainEditor({
             <EdgeLayer
               edges={edges}
               nodeMap={nodeMap}
+              nodeWidth={nodeWidth}
+              nodeHeight={nodeHeight}
               selectedEdge={selectedEdgeId}
               onEdgeClick={handleEdgeClick}
               readOnly={readOnly}
@@ -902,11 +949,14 @@ export function VisualChainEditor({
             <AgentNode
               key={node.id}
               node={node}
+              nodeWidth={nodeWidth}
+              nodeHeight={nodeHeight}
               selected={selectedNodeId === node.id}
               dragging={draggingNodeId === node.id}
               hasBreakpoint={debugMode && breakpoints.has(node.id)}
               debugMode={debugMode}
               readOnly={readOnly}
+              previewMode={previewMode}
               onMouseDown={(e) => handleNodeMouseDown(node.id, e)}
               onDoubleClick={() => onEditAgent(node.agent)}
               onClick={(e) => handleNodeClick(node.id, e)}
