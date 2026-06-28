@@ -91,6 +91,7 @@ const TIER_C = new Set([
   "delete_application",
   "send_command",
   "start_run",
+  "run_task_chain",
   "cancel_run",
   "create_secret",
 ]);
@@ -548,6 +549,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         await dispatchEffect("navigate", { route: `/runs/${result.runId}` });
       }
       return textResult(`Run started: ${result.runId}`);
+    }
+
+    if (name === "run_task_chain") {
+      const { allowed } = await checkPermission(name, args);
+      if (!allowed) return textResult("Permission denied by user.");
+      const result = await context.runTaskChain(args.taskId, args.workspaceId);
+      if (result.runId) {
+        await dispatchEffect("navigate", { route: `/runs/${result.runId}` });
+      }
+      return textResult(
+        result.runId
+          ? `Task chain started for ${args.taskId} (tied to the task): ${result.runId}`
+          : `Run requested for task ${args.taskId}, but no run id was returned.`,
+      );
     }
 
     if (name === "cancel_run") {

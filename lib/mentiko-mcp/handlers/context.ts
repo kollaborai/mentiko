@@ -31,3 +31,10 @@ export async function startRun(
 export async function cancelRun(runId: string) {
   return await opsPost("/api/mentiko-mcp/ops/context/runs/cancel", { runId });
 }
+
+export async function runTaskChain(taskId: string, workspaceId?: string) {
+  return await opsPost("/api/mentiko-mcp/ops/tasks/run-chain", {
+    taskId,
+    workspaceId,
+  }) as { runId?: string };
+}

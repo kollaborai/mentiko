@@ -32,6 +32,7 @@ const BAR_TOOL_NAMES = new Set([
   "create_task",
   "generate_tasks",
   "mark_task_done",
+  "run_task_chain",
   "open_file",
   "read_file",
   "write_file",
@@ -461,7 +462,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "start_run",
-    description: "Spawn processes for a chain run.",
+    description: "Spawn a chain run by chain id with an ad-hoc prompt (the `task` field is free-text injected as the prompt). Does NOT tie the run to a task. To run a TASK's assigned chain so the run links back to the task, use run_task_chain instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -470,6 +471,18 @@ const ALL_TOOLS: Tool[] = [
         workspaceId: { type: "string" }
       },
       required: ["chainId"]
+    }
+  },
+  {
+    name: "run_task_chain",
+    description: "Run the chain ASSIGNED TO A TASK, tied back to that task (the task UI 'Run chain' button): writes last_run_id onto the task, sets it in_progress, injects the task's title/description/acceptance-criteria/notes/comments as the agent prompt, and reads the chain binding from the task's own metadata. Use this — NOT start_run — whenever running a task's chain, so the run links to the task.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        workspaceId: { type: "string" }
+      },
+      required: ["taskId"]
     }
   },
   {
