@@ -77,6 +77,13 @@ def main():
         # set TERM
         os.environ['TERM'] = 'xterm-256color'
 
+        # strip BASH_FUNC_* exported functions — these are bash internals
+        # that corrupt child shells (cause subshell failures in every session
+        # when a stale daemon environment propagates them forward)
+        for _key in list(os.environ.keys()):
+            if _key.startswith('BASH_FUNC_'):
+                del os.environ[_key]
+
         # ensure erase char matches what xterm.js sends (DEL / 0x7f)
         # macOS xterm-256color terminfo has kbs=^H which mismatches
         attrs = termios.tcgetattr(0)
@@ -94,11 +101,11 @@ def main():
     sys.stderr.write(f"PID:{pid}\n")
     sys.stderr.flush()
 
-    # make stdin non-blocking
     stdin_fd = sys.stdin.fileno()
     stdout_fd = sys.stdout.fileno()
 
-    # set master to non-blocking
+    # set master to non-blocking (reads are guarded by select, but the fd
+    # is non-blocking so EAGAIN is safe on spurious wakeups)
     flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
@@ -131,21 +138,31 @@ def main():
 
     signal.signal(signal.SIGWINCH, on_sigwinch)
 
+    # track which fds to watch; stdin is dropped on EOF so we never busy-spin
+    # on a closed pipe while the child is still running
+    watch_fds = [master_fd, stdin_fd]
+
+    def _drain_master():
+        """Read and forward any remaining bytes on the pty master."""
+        try:
+            while True:
+                data = os.read(master_fd, 4096)
+                if not data:
+                    break
+                os.write(stdout_fd, data)
+        except (OSError, IOError):
+            pass
+
     try:
         while True:
+            # Block indefinitely until the pty or stdin has data, or a signal
+            # (SIGCHLD on child exit) interrupts us.  No timeout = 0% CPU when
+            # the child is idle.  SIGCHLD fires → InterruptedError → drain & break.
             try:
-                rfds, _, _ = select.select([master_fd, stdin_fd], [], [], 0.1)
+                rfds, _, _ = select.select(watch_fds, [], [])
             except (InterruptedError, select.error):
                 if child_exited[0]:
-                    # drain remaining output
-                    try:
-                        while True:
-                            data = os.read(master_fd, 4096)
-                            if not data:
-                                break
-                            os.write(stdout_fd, data)
-                    except (OSError, IOError):
-                        pass
+                    _drain_master()
                     break
                 continue
 
@@ -157,7 +174,7 @@ def main():
                     os.write(stdout_fd, data)
                 except OSError as e:
                     if e.errno == errno.EIO:
-                        # child closed its side
+                        # child closed its side of the pty
                         break
                     if e.errno != errno.EAGAIN:
                         raise
@@ -166,25 +183,20 @@ def main():
                 try:
                     data = os.read(stdin_fd, 4096)
                     if not data:
-                        # stdin closed - send EOF to child
-                        # don't break, let child finish
-                        pass
+                        # stdin EOF — stop watching to avoid a busy-spin on the
+                        # closed fd while we wait for the child to finish
+                        watch_fds = [f for f in watch_fds if f != stdin_fd]
                     else:
                         os.write(master_fd, data)
                 except OSError as e:
-                    if e.errno != errno.EAGAIN:
-                        break
+                    if e.errno == errno.EAGAIN:
+                        pass
+                    else:
+                        # unreadable — drop stdin from watch list
+                        watch_fds = [f for f in watch_fds if f != stdin_fd]
 
             if child_exited[0]:
-                # drain remaining output
-                try:
-                    while True:
-                        data = os.read(master_fd, 4096)
-                        if not data:
-                            break
-                        os.write(stdout_fd, data)
-                except (OSError, IOError):
-                    pass
+                _drain_master()
                 break
 
     except KeyboardInterrupt:

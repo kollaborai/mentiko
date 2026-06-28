@@ -31,6 +31,9 @@ source "$SCRIPT_DIR/run-lib.sh" 2>/dev/null || true
 
 # log crashes (set -e exits)
 trap '_sys_log "error" "chain-watcher" "CRASHED at line $LINENO (exit $?)"' ERR
+# cleanup on any exit (LOCKDIR set after mkdir -p below; guarded for early exits)
+_cleanup_lock() { [[ -n "${LOCKDIR:-}" ]] && rm -rf "$LOCKDIR" 2>/dev/null || true; }
+trap '_cleanup_lock' EXIT
 
 POLL_INTERVAL="${CHAIN_WATCHER_INTERVAL:-10}"
 NAMESPACE_ID="${NAMESPACE_ID:-default}"
@@ -51,6 +54,29 @@ WATCHER_STATE_DIR="${RUNTIME_DIR}/chain-watcher"
 WATCHER_LOG="$WATCHER_STATE_DIR/watcher.log"
 
 mkdir -p "$WATCHER_STATE_DIR"
+
+# -------------------------------------------------------------------
+# single-instance guard: at most one watcher per namespace.
+# mkdir(2) is atomic on POSIX — exactly one caller wins the create.
+# (flock(1) is absent on macOS; mkdir matches the pattern in routing-lib.sh)
+# -------------------------------------------------------------------
+LOCKDIR="${WATCHER_STATE_DIR}/running-${NAMESPACE_ID}"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    existing_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || echo "")
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+        echo "[chain-watcher] already running for namespace ${NAMESPACE_ID} (pid ${existing_pid}) — exiting" >&2
+        exit 0
+    fi
+    # stale lock from a dead holder — reclaim it
+    rm -f "$LOCKDIR/pid" 2>/dev/null || true
+    rmdir "$LOCKDIR" 2>/dev/null || true
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+        # another instance won the race
+        echo "[chain-watcher] lost lock race for namespace ${NAMESPACE_ID} — exiting" >&2
+        exit 0
+    fi
+fi
+echo "$$" > "$LOCKDIR/pid"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [chain-watcher] $*" | tee -a "$WATCHER_LOG"
@@ -241,6 +267,29 @@ clean_handled() {
 }
 
 # -------------------------------------------------------------------
+# wait_for_events: block until a file appears in the events dir
+# (or the timeout expires).  Prefers inotifywait (Linux) or fswatch
+# (macOS) so an idle watcher consumes near-zero CPU; falls back to
+# plain sleep when neither is installed.
+# -------------------------------------------------------------------
+wait_for_events() {
+    local dir="$1" timeout_secs="$2"
+    if [[ ! -d "$dir" ]]; then
+        sleep "$timeout_secs"
+        return
+    fi
+    if command -v inotifywait &>/dev/null; then
+        # block until a file is created/moved in, then return immediately
+        inotifywait -qq -e create -e moved_to -t "$timeout_secs" "$dir" 2>/dev/null || true
+    elif command -v fswatch &>/dev/null; then
+        # fswatch on macOS: block until first event, capped by timeout
+        timeout "$timeout_secs" fswatch -1 "$dir" >/dev/null 2>&1 || true
+    else
+        sleep "$timeout_secs"
+    fi
+}
+
+# -------------------------------------------------------------------
 # main loop
 # -------------------------------------------------------------------
 log "started (interval=${POLL_INTERVAL}s, namespace=${NAMESPACE_ID})"
@@ -271,7 +320,9 @@ while true; do
         break
     fi
 
-    sleep "$POLL_INTERVAL"
+    # block until a new event file appears (or timeout), then re-scan.
+    # idle watcher uses ~0% CPU when inotifywait/fswatch is available.
+    wait_for_events "$EVENTS_DIR" "$POLL_INTERVAL"
 done
 
 log "stopped"
