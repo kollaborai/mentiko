@@ -30,8 +30,27 @@ interface DispatchCreds {
 }
 
 /**
+ * Is a JWT-style signaling token expired? Decodes the payload exp (seconds).
+ * Unreadable tokens return false (let the server reject, don't silently drop a
+ * possibly-valid opaque token); clearly-JWT tokens past their exp return true.
+ */
+function isSignalingExpired(token: string | undefined): boolean {
+  if (!token || token.split(".").length !== 3) return false;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
+    ) as { exp?: number };
+    return typeof payload.exp === "number" && payload.exp * 1000 < Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Who do we dispatch as? env inbox key (bar) wins; else a granted UI-control
  * sidecar (scoped signaling token); else null = headless with no UI to drive.
+ * An expired UI-control grant is treated as no grant (headless) rather than
+ * sending a dead token that 401s.
  */
 function resolveCreds(): DispatchCreds | null {
   const inbox = process.env.MENTIKO_INBOX_KEY;
@@ -42,7 +61,7 @@ function resolveCreds(): DispatchCreds | null {
     };
   }
   const ui = readUiControl();
-  if (ui?.signaling_token && ui?.session_id) {
+  if (ui?.signaling_token && ui?.session_id && !isSignalingExpired(ui.signaling_token)) {
     return {
       headers: { Authorization: `Bearer ${ui.signaling_token}` },
       sessionId: ui.session_id,
@@ -114,6 +133,14 @@ export async function dispatchEffect(
   );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    // Fire-and-forget UI effects (navigate, toast, highlight, ...) must never
+    // fail a tool — a stale/expired UI grant or a closed window must not mask a
+    // successful data write. Delivery-dependent effects (ask_* prompts) still
+    // surface failures because the user never received the prompt.
+    if (!options.waitForDelivery) {
+      console.error(`[mentiko-mcp] fire-and-forget dispatch "${kind}" failed (non-fatal): ${res.status} ${body}`);
+      return { ok: true };
+    }
     throw new Error(`dispatch failed: ${res.status} ${body}`);
   }
   const data = (await res.json()) as { ok: true; id?: string };
