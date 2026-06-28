@@ -520,6 +520,26 @@ native sqlite via better-sqlite3. database: ~/.mentiko/namespaces/{id}/data/task
 details: .kdex/articles/storage-state-management.md (task-store section)
 source: web/lib/task-store.ts, web/lib/task-store-types.ts
 
+## MCP auth recovery (self-service reconnect)
+
+standalone MCP clients (Claude Code wired as the `mentiko` server) self-recover an
+expired/invalid session via a device-authorization flow -- no manual token re-wiring.
+spec: docs/specs/MCP_AUTH_RECOVERY.md
+
+- `reconnect` MCP tool -> magic link -> cookie-authed approve at /mcp-auth -> bridge
+  picks up a revocable 90d refresh token. token lives in sidecar
+  ~/.mentiko/mcp/session.json (read at runtime, PRECEDENCE over MENTIKO_SESSION_TOKEN env),
+  which also kills the ~/.claude.json clobber problem.
+- bridge auto-exchanges the refresh token on 401 (silent), so 24h access-token expiry is
+  invisible after one reconnect. friendly "run reconnect" message replaces the raw 401.
+- web: /api/mentiko-mcp/auth/{device/start,poll,approve,info,token}; tables
+  mcp_device_code + mcp_refresh_token (auto-create on first use, no migration). revoke at
+  Settings > Security > MCP Connections (/api/account/mcp-tokens).
+- bridge source: lib/mentiko-mcp/handlers/{auth,session-store,ops-client}.ts +
+  server.ts (reconnect dispatch + friendly error) + tools.ts. rebuild dist before shipping.
+- web lib: web/lib/auth/mcp-device-auth.ts. ops routes stay gated by requireOpsAuth;
+  the /auth/* routes intentionally sit OUTSIDE it (they mint the token it validates).
+
 ## agent profile env sourcing
 
 env vars are NEVER inlined in commands -- sourced from temp file, deleted immediately.
