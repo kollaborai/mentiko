@@ -1702,9 +1702,9 @@ export function FloatingKollaborBar() {
           }
           .mentiko-agent-markdown blockquote {
             margin: 0.45em 0;
-            border-left: 1px solid rgba(255,255,255,0.16);
+            border-left: 1px solid color-mix(in oklch, var(--foreground) 16%, transparent);
             padding-left: 0.75em;
-            color: rgba(255,255,255,0.74);
+            color: color-mix(in oklch, var(--foreground) 74%, transparent);
           }
           .mentiko-agent-markdown code,
           .mentiko-agent-markdown pre {

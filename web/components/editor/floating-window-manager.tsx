@@ -272,7 +272,7 @@ function FloatingWindow({
   return (
     <div
       data-pane-id={paneId}
-      className="absolute flex flex-col overflow-hidden rounded-lg bg-[#0e0e0e] transition-shadow"
+      className="absolute flex flex-col overflow-hidden rounded-lg bg-background dark:bg-[#0e0e0e] transition-shadow"
       style={{
         left: windowState.x,
         top: windowState.y,
@@ -293,7 +293,7 @@ function FloatingWindow({
 
       {/* title bar - draggable */}
       <div
-        className="flex items-center px-3 py-1.5 shrink-0 bg-[#0a0a0a]/60 cursor-grab active:cursor-grabbing select-none"
+        className="flex items-center px-3 py-1.5 shrink-0 bg-background/60 dark:bg-[#0a0a0a]/60 cursor-grab active:cursor-grabbing select-none"
         onMouseDown={handleDragStart}
       >
         <TabBar paneId={paneId} rootPath={rootPath} />

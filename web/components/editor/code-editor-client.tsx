@@ -115,7 +115,7 @@ export function CodeEditorClient() {
 
       {/* page header - pill nav inspired */}
       <div className="flex items-center gap-3 px-4 py-2 shrink-0">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#1a1a1a]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.06)]">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-background/80 dark:bg-[#1a1a1a]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.06)]">
           <h1 className="text-sm font-bold tracking-tight">Code</h1>
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/60 animate-pulse" />
           <span className="text-[10px] text-white/25 font-mono">{projectRoot.split("/").slice(-2).join("/")}</span>

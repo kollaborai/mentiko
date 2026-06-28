@@ -18,7 +18,7 @@ function StatusBadge({ code }: { code: string }) {
   const isModified = x === "M" || y === "M";
 
   let label = "?";
-  let color = "text-white/30";
+  let color = "text-foreground/30 dark:text-white/30";
 
   if (isUntracked) { label = "U"; color = "text-cyan-400/70"; }
   else if (isAdded) { label = "A"; color = "text-emerald-400/70"; }
@@ -53,16 +53,16 @@ function FileRow({
 
   return (
     <div
-      className="group flex items-center gap-1.5 px-3 py-0.5 hover:bg-white/5 transition-colors cursor-pointer"
+      className="group flex items-center gap-1.5 px-3 py-0.5 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => onFileClick(file.path)}
     >
       <StatusBadge code={file.statusCode} />
-      <span className="flex-1 text-[11px] font-mono text-white/60 truncate" title={file.path}>
+      <span className="flex-1 text-[11px] font-mono text-foreground/60 dark:text-white/60 truncate" title={file.path}>
         {file.name}
         {dir && (
-          <span className="ml-1 text-[9px] text-white/25">{dir}</span>
+          <span className="ml-1 text-[9px] text-foreground/25 dark:text-white/25">{dir}</span>
         )}
       </span>
       {hovered && (
@@ -71,7 +71,7 @@ function FileRow({
             <button
               onClick={(e) => { e.stopPropagation(); onStage(file.path); }}
               title="Stage file"
-              className="flex items-center justify-center w-5 h-5 rounded text-white/30 hover:text-emerald-400/80 hover:bg-white/5 transition-colors"
+              className="flex items-center justify-center w-5 h-5 rounded text-foreground/30 dark:text-white/30 hover:text-emerald-400/80 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             >
               <AddFilled className="h-3 w-3" />
             </button>
@@ -80,7 +80,7 @@ function FileRow({
             <button
               onClick={(e) => { e.stopPropagation(); onUnstage(file.path); }}
               title="Unstage file"
-              className="flex items-center justify-center w-5 h-5 rounded text-white/30 hover:text-yellow-400/80 hover:bg-white/5 transition-colors"
+              className="flex items-center justify-center w-5 h-5 rounded text-foreground/30 dark:text-white/30 hover:text-yellow-400/80 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             >
               <MinusFilled className="h-3 w-3" />
             </button>
@@ -108,16 +108,16 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center justify-between px-3 py-1 shrink-0">
-      <span className="text-[10px] text-white/35 uppercase tracking-wider font-medium">
+      <span className="text-[10px] text-foreground/35 dark:text-white/35 uppercase tracking-wider font-medium">
         {label}
       </span>
       <div className="flex items-center gap-1">
-        <span className="text-[10px] text-white/25 font-mono">{count}</span>
+        <span className="text-[10px] text-foreground/25 dark:text-white/25 font-mono">{count}</span>
         {type !== "staged" && onStageAll && (
           <button
             onClick={onStageAll}
             title="Stage all"
-            className="text-[9px] text-white/25 hover:text-white/60 hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors"
+            className="text-[9px] text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors"
           >
             stage all
           </button>
@@ -126,7 +126,7 @@ function SectionHeader({
           <button
             onClick={onUnstageAll}
             title="Unstage all"
-            className="text-[9px] text-white/25 hover:text-white/60 hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors"
+            className="text-[9px] text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors"
           >
             unstage all
           </button>
@@ -141,7 +141,7 @@ function SectionHeader({
 function LogView({ entries }: { entries: GitLogEntry[] }) {
   if (!entries.length) {
     return (
-      <div className="px-3 py-4 text-xs text-white/25 text-center">no commits yet</div>
+      <div className="px-3 py-4 text-xs text-foreground/25 dark:text-white/25 text-center">no commits yet</div>
     );
   }
 
@@ -150,10 +150,10 @@ function LogView({ entries }: { entries: GitLogEntry[] }) {
       {entries.map((entry) => (
         <div
           key={entry.hash}
-          className="px-3 py-1.5 border-b border-white/5 hover:bg-white/5 transition-colors"
+          className="px-3 py-1.5 border-b border-foreground/5 dark:border-white/5 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
         >
           <div className="flex items-center gap-2">
-            <span className="text-[9px] font-mono text-white/25 shrink-0 w-12">
+            <span className="text-[9px] font-mono text-foreground/25 dark:text-white/25 shrink-0 w-12">
               {entry.shortHash}
             </span>
             {entry.refs && (
@@ -162,10 +162,10 @@ function LogView({ entries }: { entries: GitLogEntry[] }) {
               </span>
             )}
           </div>
-          <div className="mt-0.5 text-[11px] text-white/70 truncate">{entry.message}</div>
+          <div className="mt-0.5 text-[11px] text-foreground/70 dark:text-white/70 truncate">{entry.message}</div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[9px] text-white/25">{entry.author}</span>
-            <span className="text-[9px] text-white/20">{entry.date}</span>
+            <span className="text-[9px] text-foreground/25 dark:text-white/25">{entry.author}</span>
+            <span className="text-[9px] text-foreground/20 dark:text-white/20">{entry.date}</span>
           </div>
         </div>
       ))}
@@ -403,7 +403,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     <div className="flex flex-col h-full">
       {/* header */}
       <div className="flex items-center justify-between px-3 py-1.5 shrink-0">
-        <span className="text-[11px] text-white/50 font-medium">
+        <span className="text-[11px] text-foreground/50 dark:text-white/50 font-medium">
           {totalChanges} change{totalChanges !== 1 ? "s" : ""}
         </span>
         <div className="flex items-center gap-1">
@@ -411,7 +411,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
             onClick={refresh}
             disabled={busy}
             title="Refresh"
-            className="flex items-center justify-center w-6 h-6 rounded text-white/25 hover:text-white/60 hover:bg-white/5 transition-colors disabled:opacity-40"
+            className="flex items-center justify-center w-6 h-6 rounded text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40"
           >
             <Refresh2Filled className="h-3 w-3" />
           </button>
@@ -420,8 +420,8 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
             title={activeView === "status" ? "Show log" : "Show status"}
             className={`flex items-center justify-center w-6 h-6 rounded transition-colors ${
               activeView === "log"
-                ? "text-white/60 bg-white/10"
-                : "text-white/25 hover:text-white/60 hover:bg-white/5"
+                ? "text-foreground/60 dark:text-white/60 bg-foreground/10 dark:bg-white/10"
+                : "text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5"
             }`}
           >
             <ClockFilled className="h-3 w-3" />
@@ -431,7 +431,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
               onClick={handleStageAll}
               disabled={busy}
               title="Stage all"
-              className="text-[9px] text-white/30 hover:text-white/60 hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40"
+              className="text-[9px] text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40"
             >
               stage all
             </button>
@@ -493,7 +493,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
           )}
 
           {totalChanges === 0 && (
-            <div className="px-3 py-6 text-xs text-white/25 text-center">
+            <div className="px-3 py-6 text-xs text-foreground/25 dark:text-white/25 text-center">
               no changes
             </div>
           )}
@@ -501,18 +501,18 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
       )}
 
       {/* bottom: commit + push */}
-      <div className="shrink-0 border-t border-white/5 p-2 flex flex-col gap-1.5">
+      <div className="shrink-0 border-t border-foreground/5 dark:border-white/5 p-2 flex flex-col gap-1.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             {/* inline git branch SVG — @aliimam/icons has no git icon */}
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="text-white/30">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="text-foreground/30 dark:text-white/30">
               <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
               <circle cx="6" cy="18" r="2.5" stroke="currentColor" strokeWidth="2"/>
               <circle cx="18" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
               <line x1="6" y1="8.5" x2="6" y2="15.5" stroke="currentColor" strokeWidth="2"/>
               <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
             </svg>
-            <span className="text-[10px] font-mono text-white/40">
+            <span className="text-[10px] font-mono text-foreground/40 dark:text-white/40">
               {status?.branch ?? "…"}
             </span>
           </div>
@@ -520,7 +520,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
             <button
               onClick={handlePush}
               disabled={busy}
-              className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white/70 hover:bg-white/5 px-2 py-0.5 rounded transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 text-[10px] text-foreground/40 dark:text-white/40 hover:text-foreground/70 dark:hover:text-white/70 hover:bg-foreground/5 dark:hover:bg-white/5 px-2 py-0.5 rounded transition-colors disabled:opacity-40"
             >
               {status.ahead > 0 && (
                 <span className="text-cyan-400/60">{status.ahead}</span>
@@ -539,13 +539,13 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
             }}
             placeholder="commit message"
             rows={2}
-            className="w-full bg-white/5 rounded-md px-2 py-1.5 text-[11px] font-mono text-white/60 placeholder:text-white/20 outline-none resize-none border border-white/5 focus:border-white/10 transition-colors"
+            className="w-full bg-foreground/5 dark:bg-white/5 rounded-md px-2 py-1.5 text-[11px] font-mono text-foreground/60 dark:text-white/60 placeholder:text-foreground/20 dark:placeholder:text-white/20 outline-none resize-none border border-foreground/5 dark:border-white/5 focus:border-foreground/10 dark:focus:border-white/10 transition-colors"
           />
         </div>
         <button
           onClick={handleCommit}
           disabled={busy || !commitMsg.trim() || stagedFiles.length === 0}
-          className="text-[10px] text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 px-3 py-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          className="text-[10px] text-foreground/50 dark:text-white/50 hover:text-foreground/80 dark:hover:text-white/80 bg-foreground/5 dark:bg-white/5 hover:bg-foreground/10 dark:hover:bg-white/10 px-3 py-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
           {busy ? "…" : "Commit Staged"}
         </button>

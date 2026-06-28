@@ -116,7 +116,7 @@ export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPan
   }, [vc]);
 
   return (
-    <Card className="bg-[#0a0a0a]">
+    <Card className="bg-background dark:bg-[#0a0a0a]">
       {/* Collapsible header */}
       <button
         onClick={() => setExpanded(!expanded)}

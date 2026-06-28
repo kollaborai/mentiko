@@ -436,9 +436,9 @@ export function FloatingTerminalPanel() {
       style={{ ...panelStyle, zIndex: FLOATING_SURFACE_Z.terminalPanel }}
       className={cn(
         "fixed flex flex-col rounded-xl",
-        "bg-[#0e0e0e]/75 dark:bg-[#060606]/75 backdrop-blur-xl",
+        "bg-background/75 dark:bg-[#060606]/75 backdrop-blur-xl",
         "shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6)]",
-        "text-white/80",
+        "text-foreground/80 dark:text-white/80",
         isMax && "inset-4"
       )}
     >
@@ -464,7 +464,7 @@ export function FloatingTerminalPanel() {
           "flex items-center justify-between px-3 sm:px-4 py-2 shrink-0",
           !isMobile && (isMax ? "cursor-default" : "cursor-grab active:cursor-grabbing"),
         )}
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+        style={{ borderBottom: "1px solid color-mix(in oklch, var(--foreground) 6%, transparent)" }}
         onMouseDown={isMobile ? undefined : onDragMouseDown}
       >
         <div className="flex items-center gap-2 sm:gap-3">
@@ -473,7 +473,7 @@ export function FloatingTerminalPanel() {
               onClick={() => setSessionListOpen(v => !v)}
               className={cn(
                 "flex items-center justify-center w-8 h-8 rounded-lg transition-colors",
-                sessionListOpen ? "text-cyan-400/80 bg-cyan-400/10" : "text-white/40 hover:text-white/70 hover:bg-white/10",
+                sessionListOpen ? "text-cyan-400/80 bg-cyan-400/10" : "text-foreground/40 dark:text-white/40 hover:text-foreground/70 dark:hover:text-white/70 hover:bg-foreground/10 dark:hover:bg-white/10",
               )}
               title="Sessions"
             >
@@ -482,12 +482,12 @@ export function FloatingTerminalPanel() {
           )}
           <div className="flex items-center gap-2">
             {!isMobile && <CommandSquareFilled className="h-4 w-4 text-cyan-400/80" />}
-            <span className="text-xs font-bold tracking-tight text-white/80 truncate max-w-[120px] sm:max-w-none">
+            <span className="text-xs font-bold tracking-tight text-foreground/80 dark:text-white/80 truncate max-w-[120px] sm:max-w-none">
               {activeSession || "Terminal"}
             </span>
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/60 animate-pulse" />
           </div>
-          <span className="text-[10px] text-white/20 font-mono hidden sm:inline">
+          <span className="text-[10px] text-foreground/20 dark:text-white/20 font-mono hidden sm:inline">
             {sessions.filter((session) => session.alive).length} live
           </span>
         </div>
@@ -497,28 +497,28 @@ export function FloatingTerminalPanel() {
             onClick={spawnNew}
             disabled={spawning || wsStatus === "down"}
             title="New terminal"
-            className="flex items-center gap-1 h-8 sm:h-7 rounded-lg px-2.5 text-[11px] text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center gap-1 h-8 sm:h-7 rounded-lg px-2.5 text-[11px] text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             {spawning ? <RefreshFilled className="h-3.5 w-3.5 animate-spin" /> : <AddFilled className="h-3.5 w-3.5" />}
             <span className="hidden sm:inline">New</span>
           </button>
           <button
             onClick={() => void fetchSessions()}
-            className="flex items-center justify-center w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+            className="flex items-center justify-center w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             title="Refresh sessions"
           >
             <RefreshFilled className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={() => setShowShortcuts((value) => !value)}
-            className="hidden sm:flex items-center justify-center w-7 h-7 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+            className="hidden sm:flex items-center justify-center w-7 h-7 rounded-lg text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             title="Keyboard shortcuts (Cmd+/)"
           >
             <KeyboardFilled className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={() => setPanelSize((size) => (size === "maximized" ? "normal" : "maximized"))}
-            className="hidden sm:flex items-center justify-center w-7 h-7 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+            className="hidden sm:flex items-center justify-center w-7 h-7 rounded-lg text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             title={isMax ? "Restore" : "Maximize"}
           >
             {isMax ? <Minimize className="h-3.5 w-3.5" /> : <MaximizeFilled className="h-3.5 w-3.5" />}
@@ -528,7 +528,7 @@ export function FloatingTerminalPanel() {
               setActiveSession(null);
               setOpen(false);
             }}
-            className="flex items-center justify-center w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+            className="flex items-center justify-center w-8 h-8 sm:w-7 sm:h-7 rounded-lg text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
             title="Close panel (sessions keep running)"
           >
             <CloseCircleFilled className="h-3.5 w-3.5" />
@@ -540,14 +540,14 @@ export function FloatingTerminalPanel() {
         {/* session sidebar / mobile top panel */}
         <div
           className={cn(
-            "flex shrink-0 flex-col bg-white/[0.02]",
+            "flex shrink-0 flex-col bg-foreground/[0.02] dark:bg-white/[0.02]",
             isMobile
               ? sessionListOpen ? "max-h-[40%] overflow-hidden" : "hidden"
               : "w-56",
           )}
           style={isMobile
-            ? { borderBottom: sessionListOpen ? "1px solid rgba(255,255,255,0.06)" : undefined }
-            : { borderRight: "1px solid rgba(255,255,255,0.06)" }
+            ? { borderBottom: sessionListOpen ? "1px solid color-mix(in oklch, var(--foreground) 6%, transparent)" : undefined }
+            : { borderRight: "1px solid color-mix(in oklch, var(--foreground) 6%, transparent)" }
           }
         >
           {/* ws-terminal status banner */}
@@ -565,14 +565,14 @@ export function FloatingTerminalPanel() {
           {/* search */}
           <div className="px-2 pt-2 pb-1">
             <div className="relative">
-              <SearchNormalFilled className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-white/20" />
+              <SearchNormalFilled className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-foreground/20 dark:text-white/20" />
               <input
                 data-terminal-search
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Filter... (Cmd+K)"
-                className="w-full rounded-lg bg-white/5 py-1.5 pl-7 pr-2 text-[10px] text-white/80 placeholder:text-white/20 focus:bg-white/8 focus:outline-none focus:ring-1 focus:ring-cyan-400/20 transition-colors"
+                className="w-full rounded-lg bg-foreground/5 dark:bg-white/5 py-1.5 pl-7 pr-2 text-[10px] text-foreground/80 dark:text-white/80 placeholder:text-foreground/20 dark:placeholder:text-white/20 focus:bg-foreground/8 dark:focus:bg-white/8 focus:outline-none focus:ring-1 focus:ring-cyan-400/20 transition-colors"
               />
             </div>
           </div>
@@ -580,9 +580,9 @@ export function FloatingTerminalPanel() {
           {/* sessions */}
           <div className="flex-1 overflow-y-auto px-2 py-1.5">
             {wsStatus === "checking" ? (
-              <p className="px-2 py-2 text-[10px] text-white/30">connecting...</p>
+              <p className="px-2 py-2 text-[10px] text-foreground/30 dark:text-white/30">connecting...</p>
             ) : filteredSessions.length === 0 ? (
-              <p className="px-2 py-2 text-[10px] text-white/30">
+              <p className="px-2 py-2 text-[10px] text-foreground/30 dark:text-white/30">
                 {searchQuery ? "No matching sessions" : "No active sessions"}
               </p>
             ) : (
@@ -599,8 +599,8 @@ export function FloatingTerminalPanel() {
                       "flex items-center gap-2 rounded-xl px-2.5 py-2 transition-colors",
                       wsStatus !== "running" ? "cursor-not-allowed" :
                       activeSession === s.name
-                        ? "bg-white/10 shadow-sm"
-                        : "hover:bg-white/5"
+                        ? "bg-foreground/10 dark:bg-white/10 shadow-sm"
+                        : "hover:bg-foreground/5 dark:hover:bg-white/5"
                     )}
                   >
                     <button
@@ -611,20 +611,20 @@ export function FloatingTerminalPanel() {
                       <span
                         className={cn(
                           "h-2 w-2 shrink-0 rounded-full",
-                          s.alive ? "bg-green-400" : "bg-white/20"
+                          s.alive ? "bg-green-400" : "bg-foreground/20 dark:bg-white/20"
                         )}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-1.5">
                           <span
-                            className="truncate font-mono text-[11px] font-medium text-white/80"
+                            className="truncate font-mono text-[11px] font-medium text-foreground/80 dark:text-white/80"
                             style={{ color: s.color || undefined }}
                           >
                             {s.name}
                           </span>
-                          {s.pinned && <AttachCircleFilled className="h-3 w-3 shrink-0 text-white/30" />}
+                          {s.pinned && <AttachCircleFilled className="h-3 w-3 shrink-0 text-foreground/30 dark:text-white/30" />}
                         </div>
-                        <p className="text-[10px] text-white/30">
+                        <p className="text-[10px] text-foreground/30 dark:text-white/30">
                           {s.alive ? "Live session" : "Session ended"}
                         </p>
                       </div>
@@ -639,7 +639,7 @@ export function FloatingTerminalPanel() {
                       <button
                         type="button"
                         onClick={(e) => void killSession(s.name, e)}
-                        className="rounded-md p-1 text-white/30 transition hover:bg-red-500/20 hover:text-red-400"
+                        className="rounded-md p-1 text-foreground/30 dark:text-white/30 transition hover:bg-red-500/20 hover:text-red-400"
                         title="Close session"
                       >
                         <CloseCircleFilled className="h-3.5 w-3.5" />
@@ -649,7 +649,7 @@ export function FloatingTerminalPanel() {
                         <button
                           type="button"
                           onClick={(e) => e.stopPropagation()}
-                          className="rounded-md p-1 text-white/30 transition hover:bg-white/10 hover:text-white/60"
+                          className="rounded-md p-1 text-foreground/30 dark:text-white/30 transition hover:bg-foreground/10 dark:hover:bg-white/10 hover:text-foreground/60 dark:hover:text-white/60"
                           title={`Session actions for ${s.name}`}
                         >
                           <More2Filled className="h-3.5 w-3.5" />
@@ -707,11 +707,11 @@ export function FloatingTerminalPanel() {
           </div>
 
           {/* footer */}
-          <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <span className="text-[10px] text-white/30">
+          <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: "1px solid color-mix(in oklch, var(--foreground) 6%, transparent)" }}>
+            <span className="text-[10px] text-foreground/30 dark:text-white/30">
               {sessions.filter((session) => session.alive).length} alive
             </span>
-            <span className="text-[10px] text-white/20 hidden sm:inline">Cmd+N new terminal</span>
+            <span className="text-[10px] text-foreground/20 dark:text-white/20 hidden sm:inline">Cmd+N new terminal</span>
           </div>
         </div>
 
@@ -720,23 +720,23 @@ export function FloatingTerminalPanel() {
           {wsStatus === "down" ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
               <DangerFilled className="h-8 w-8 text-amber-400/50" />
-              <p className="text-sm text-white/40">Terminal server not running</p>
-              <p className="text-[11px] font-mono text-white/25">npm run ws:terminal</p>
+              <p className="text-sm text-foreground/40 dark:text-white/40">Terminal server not running</p>
+              <p className="text-[11px] font-mono text-foreground/25 dark:text-white/25">npm run ws:terminal</p>
               <button
                 onClick={() => { void fetchWsUrl(); }}
-                className="mt-1 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-colors"
+                className="mt-1 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-foreground/40 dark:text-white/40 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
               >
                 <RefreshFilled className="h-3 w-3" /> Retry
               </button>
             </div>
           ) : !activeSession ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <CommandSquareFilled className="h-8 w-8 text-white/10" />
-              <p className="text-xs text-white/30">Select a session or start a new one</p>
+              <CommandSquareFilled className="h-8 w-8 text-foreground/10 dark:text-white/10" />
+              <p className="text-xs text-foreground/30 dark:text-white/30">Select a session or start a new one</p>
               <button
                 onClick={spawnNew}
                 disabled={spawning}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-white/50 bg-white/5 hover:bg-white/10 hover:text-white/70 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-foreground/50 dark:text-white/50 bg-foreground/5 dark:bg-white/5 hover:bg-foreground/10 dark:hover:bg-white/10 hover:text-foreground/70 dark:hover:text-white/70 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <AddFilled className="h-3 w-3" />
                 New Terminal
@@ -744,7 +744,7 @@ export function FloatingTerminalPanel() {
             </div>
           ) : !wsUrl ? (
             <div className="absolute inset-0 flex items-center justify-center bg-[#1a1a1a] rounded-br-xl">
-              <p className="text-xs text-white/30">connecting...</p>
+              <p className="text-xs text-foreground/30 dark:text-white/30">connecting...</p>
             </div>
           ) : (
             <div className="relative h-full w-full overflow-hidden bg-[#1a1a1a] rounded-br-xl">
@@ -778,39 +778,39 @@ export function FloatingTerminalPanel() {
           <div
             role="dialog"
             aria-modal="true"
-            className="w-full max-w-sm rounded-xl bg-[#0e0e0e]/95 backdrop-blur-xl p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6)]"
+            className="w-full max-w-sm rounded-xl bg-background/95 dark:bg-[#0e0e0e]/95 backdrop-blur-xl p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_20px_60px_rgba(0,0,0,0.6)]"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-medium text-white/80">Keyboard Shortcuts</h3>
+              <h3 className="text-xs font-medium text-foreground/80 dark:text-white/80">Keyboard Shortcuts</h3>
               <button
                 onClick={() => setShowShortcuts(false)}
-                className="flex items-center justify-center w-6 h-6 rounded-full text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors"
+                className="flex items-center justify-center w-6 h-6 rounded-full text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
               >
                 <CloseCircleFilled className="h-3 w-3" />
               </button>
             </div>
             <div className="space-y-2 text-[10px]">
-              <div className="flex justify-between text-white/40">
+              <div className="flex justify-between text-foreground/40 dark:text-white/40">
                 <span>New terminal</span>
-                <kbd className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/30">Cmd+N</kbd>
+                <kbd className="rounded bg-foreground/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-foreground/30 dark:text-white/30">Cmd+N</kbd>
               </div>
-              <div className="flex justify-between text-white/40">
+              <div className="flex justify-between text-foreground/40 dark:text-white/40">
                 <span>Filter sessions</span>
-                <kbd className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/30">Cmd+K</kbd>
+                <kbd className="rounded bg-foreground/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-foreground/30 dark:text-white/30">Cmd+K</kbd>
               </div>
-              <div className="flex justify-between text-white/40">
+              <div className="flex justify-between text-foreground/40 dark:text-white/40">
                 <span>Toggle shortcuts</span>
-                <kbd className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/30">Cmd+/</kbd>
+                <kbd className="rounded bg-foreground/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-foreground/30 dark:text-white/30">Cmd+/</kbd>
               </div>
-              <div className="flex justify-between text-white/40">
+              <div className="flex justify-between text-foreground/40 dark:text-white/40">
                 <span>Close panel</span>
-                <kbd className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/30">Esc</kbd>
+                <kbd className="rounded bg-foreground/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-foreground/30 dark:text-white/30">Esc</kbd>
               </div>
-              <div className="flex justify-between text-white/40">
+              <div className="flex justify-between text-foreground/40 dark:text-white/40">
                 <span>Session actions</span>
-                <kbd className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-white/30">...</kbd>
+                <kbd className="rounded bg-foreground/5 dark:bg-white/5 px-1.5 py-0.5 font-mono text-foreground/30 dark:text-white/30">...</kbd>
               </div>
             </div>
           </div>

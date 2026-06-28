@@ -185,15 +185,15 @@ function SettingsPillMenu({
           }}
           className={cn(
             "group relative flex items-center justify-center rounded-full transition-colors w-8 h-8",
-            active ? "bg-white/15" : "hover:bg-white/10",
-            !tint && !active && "text-white/40 hover:text-white/80",
+            active ? "bg-foreground/15 dark:bg-white/15" : "hover:bg-foreground/10 dark:hover:bg-white/10",
+            !tint && !active && "text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80",
           )}
           style={tint ? { color: tint } : undefined}
           title="Settings"
         >
           <Setting2Filled className="h-5 w-5" />
           <span className={cn(
-            "absolute px-2 py-1 bg-[#1a1a1a] text-[10px] text-white/70 font-medium rounded-md",
+            "absolute px-2 py-1 bg-background dark:bg-[#1a1a1a] text-[10px] text-foreground/70 dark:text-white/70 font-medium rounded-md",
             "opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50",
             open && "!opacity-0",
             vertical ? "left-full ml-2 top-1/2 -translate-y-1/2" : "bottom-full mb-2 left-1/2 -translate-x-1/2",
@@ -212,15 +212,15 @@ function SettingsPillMenu({
           style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           className={cn(
             "w-52 rounded-lg py-1.5",
-            "bg-[#1a1a1a]/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
+            "bg-background/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
             "shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_32px_rgba(0,0,0,0.5)]",
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           )}
         >
           {SETTINGS_QUICK_MENU_GROUPS.map((group, gi) => (
             <div key={group.label}>
-              {gi > 0 && <div className="h-px bg-white/8 mx-2 my-1" />}
-              <p className="text-[9px] font-semibold uppercase tracking-widest text-white/25 px-3 pt-1.5 pb-0.5">
+              {gi > 0 && <div className="h-px bg-foreground/8 dark:bg-white/8 mx-2 my-1" />}
+              <p className="text-[9px] font-semibold uppercase tracking-widest text-foreground/25 dark:text-white/25 px-3 pt-1.5 pb-0.5">
                 {group.label}
               </p>
               {group.items.map((item) => {
@@ -230,16 +230,16 @@ function SettingsPillMenu({
                   key={item.id}
                   type="button"
                   onClick={() => handleSelect(item.href, item.label)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/60 hover:text-white hover:bg-white/8 transition-colors text-left"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-foreground/60 dark:text-white/60 hover:text-foreground dark:hover:text-white hover:bg-foreground/8 dark:hover:bg-white/8 transition-colors text-left"
                 >
-                  <span className="text-white/30 shrink-0"><Icon className="h-3.5 w-3.5" /></span>
+                  <span className="text-foreground/30 dark:text-white/30 shrink-0"><Icon className="h-3.5 w-3.5" /></span>
                   {item.label}
                 </button>
                 );
               })}
             </div>
           ))}
-          <div className="h-px bg-white/8 mx-2 my-1" />
+          <div className="h-px bg-foreground/8 dark:bg-white/8 mx-2 my-1" />
           <button
             type="button"
             onClick={handleSignOut}
@@ -292,7 +292,7 @@ function WorkspaceSwitcherPill({
             if (onPanelRoute?.("/workspaces", "Workspaces")) return;
             router.push("/workspaces");
           }}
-          className="group relative flex items-center justify-center rounded-full transition-colors w-8 h-8 hover:bg-white/10"
+          className="group relative flex items-center justify-center rounded-full transition-colors w-8 h-8 hover:bg-foreground/10 dark:hover:bg-white/10"
           title={current?.name || "Workspaces"}
         >
           {current?.icon ? (
@@ -306,7 +306,7 @@ function WorkspaceSwitcherPill({
             </span>
           )}
           <span className={cn(
-            "absolute px-2 py-1 bg-[#1a1a1a] text-[10px] text-white/70 font-medium rounded-md",
+            "absolute px-2 py-1 bg-background dark:bg-[#1a1a1a] text-[10px] text-foreground/70 dark:text-white/70 font-medium rounded-md",
             "opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50",
             open && "!opacity-0",
             "bottom-full mb-2 left-1/2 -translate-x-1/2",
@@ -325,19 +325,19 @@ function WorkspaceSwitcherPill({
           style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           className={cn(
             "w-56 rounded-lg py-1.5",
-            "bg-[#1a1a1a]/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
+            "bg-background/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
             "shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_32px_rgba(0,0,0,0.5)]",
             "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           )}
         >
           {current && (
             <div className="px-3 py-2">
-              <div className="text-[11px] font-medium text-white/80 truncate">{current.name}</div>
-              <div className="text-[9px] text-white/30 font-mono truncate">{current.path}</div>
+              <div className="text-[11px] font-medium text-foreground/80 dark:text-white/80 truncate">{current.name}</div>
+              <div className="text-[9px] text-foreground/30 dark:text-white/30 font-mono truncate">{current.path}</div>
             </div>
           )}
-          <div className="h-px bg-white/8 mx-2 my-0.5" />
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-white/25 px-3 pt-1.5 pb-0.5">
+          <div className="h-px bg-foreground/8 dark:bg-white/8 mx-2 my-0.5" />
+          <p className="text-[9px] font-semibold uppercase tracking-widest text-foreground/25 dark:text-white/25 px-3 pt-1.5 pb-0.5">
             switch workspace
           </p>
           {workspaces.filter(w => w.id !== workspaceId).map(w => (
@@ -345,7 +345,7 @@ function WorkspaceSwitcherPill({
               key={w.id}
               type="button"
               onClick={() => { setWorkspaceId(w.id); setOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/60 hover:text-white hover:bg-white/8 transition-colors text-left"
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-foreground/60 dark:text-white/60 hover:text-foreground dark:hover:text-white hover:bg-foreground/8 dark:hover:bg-white/8 transition-colors text-left"
             >
               {w.icon ? (
                 <span
@@ -360,7 +360,7 @@ function WorkspaceSwitcherPill({
               <span className="truncate">{w.name}</span>
             </button>
           ))}
-          <div className="h-px bg-white/8 mx-2 my-0.5" />
+          <div className="h-px bg-foreground/8 dark:bg-white/8 mx-2 my-0.5" />
           <button
             type="button"
             onClick={() => {
@@ -368,7 +368,7 @@ function WorkspaceSwitcherPill({
               if (onPanelRoute?.("/workspaces", "Workspaces")) return;
               router.push("/workspaces");
             }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-white/40 hover:text-white hover:bg-white/8 transition-colors text-left"
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-foreground/40 dark:text-white/40 hover:text-foreground dark:hover:text-white hover:bg-foreground/8 dark:hover:bg-white/8 transition-colors text-left"
           >
             <AddFilled className="h-3 w-3 shrink-0" />
             Manage Workspaces
@@ -1153,7 +1153,7 @@ export function FloatingPillNav() {
         style={style}
         className={cn(
           "flex items-center gap-0.5 px-2 py-1.5",
-          "bg-[#1a1a1a]/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
+          "bg-background/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl",
           "touch-manipulation",
           isDragging && edgeProximity.pull > 0.6
             ? "shadow-[0_0_40px_rgba(255,255,255,0.15),0_0_80px_rgba(255,255,255,0.05)]"
@@ -1326,7 +1326,7 @@ export function FloatingPillNav() {
         {/* ── app drawer / search ── */}
         <button
           onClick={openSearch}
-          className="flex items-center justify-center w-8 h-8 rounded-full text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors"
+          className="flex items-center justify-center w-8 h-8 rounded-full text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80 hover:bg-foreground/10 dark:hover:bg-white/10 transition-colors"
           title="Search & Navigate (Cmd+K)"
         >
           <Element3Filled className="h-5 w-5" />
@@ -1371,8 +1371,8 @@ export function FloatingPillNav() {
           className={cn(
             "flex items-center justify-center w-8 h-8 rounded-full transition-colors",
             isCodeOverlayOpen
-              ? "text-cyan-400/80 bg-white/10"
-              : "text-white/40 hover:text-white/80 hover:bg-white/10",
+              ? "text-cyan-400/80 bg-foreground/10 dark:bg-white/10"
+              : "text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80 hover:bg-foreground/10 dark:hover:bg-white/10",
           )}
           title="Code editor (Cmd+Shift+E)"
         >
@@ -1381,7 +1381,7 @@ export function FloatingPillNav() {
         <SessionsIndicator />
         <NotificationsPanel />
         <WorkspaceSwitcherPill onPanelRoute={openPanelRoute} />
-        <div className="[&_button]:text-white/40 [&_button]:hover:text-white/80 [&_button]:text-xs">
+        <div className="[&_button]:text-foreground/40 dark:text-white/40 [&_button]:hover:text-foreground/80 dark:hover:text-white/80 [&_button]:text-xs">
           <NavNamespaceSelector />
         </div>
 
@@ -1393,8 +1393,8 @@ export function FloatingPillNav() {
             "touch-none select-none",
             isMobile && "hidden",
             isLocked
-              ? "text-white/50 hover:text-white/70 cursor-pointer"
-              : "text-white/20 hover:text-white/40 cursor-grab active:cursor-grabbing",
+              ? "text-foreground/50 dark:text-white/50 hover:text-foreground/70 dark:hover:text-white/70 cursor-pointer"
+              : "text-foreground/20 dark:text-white/20 hover:text-foreground/40 dark:hover:text-white/40 cursor-grab active:cursor-grabbing",
             vert && "rotate-90"
           )}
           title={isLocked ? "Unlock position" : "Lock position"}
@@ -1512,13 +1512,13 @@ function PillItem({
   const classes = cn(
     "group relative flex items-center justify-center rounded-full transition-colors",
     brandLabel ? "gap-1.5 pl-2 pr-3 h-8" : "w-8 h-8",
-    active ? "bg-white/15" : "hover:bg-white/10",
-    !tint && !active && "text-white/40 hover:text-white/80",
+    active ? "bg-foreground/15 dark:bg-white/15" : "hover:bg-foreground/10 dark:hover:bg-white/10",
+    !tint && !active && "text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80",
     dimmed && "opacity-50",
   );
   const tooltip = !brandLabel && !hideTooltip && (
     <span className={cn(
-      "absolute px-2 py-1 bg-[#1a1a1a] text-[10px] text-white/70 font-medium rounded-md",
+      "absolute px-2 py-1 bg-background dark:bg-[#1a1a1a] text-[10px] text-foreground/70 dark:text-white/70 font-medium rounded-md",
       "opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50",
       vertical ? "left-full ml-2 top-1/2 -translate-y-1/2" : "bottom-full mb-2 left-1/2 -translate-x-1/2",
     )}>
@@ -1526,7 +1526,7 @@ function PillItem({
     </span>
   );
   const brand = brandLabel && !vertical && (
-    <span className="text-[11px] font-black tracking-tight font-mono text-white/80">
+    <span className="text-[11px] font-black tracking-tight font-mono text-foreground/80 dark:text-white/80">
       {brandLabel}
     </span>
   );
@@ -1569,6 +1569,6 @@ function PillItem({
 
 function Divider({ vertical }: { vertical: boolean }) {
   return vertical
-    ? <div className="w-5 h-px bg-white/10 mx-auto my-0.5" />
-    : <div className="w-px h-5 bg-white/10 mx-0.5" />;
+    ? <div className="w-5 h-px bg-foreground/10 dark:bg-white/10 mx-auto my-0.5" />
+    : <div className="w-px h-5 bg-foreground/10 dark:bg-white/10 mx-0.5" />;
 }

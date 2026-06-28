@@ -44,7 +44,7 @@ const PANEL_VISIBLE_OPACITY = 1;
 const MONO_PANEL_SHINE_COLORS =
   "rgba(255,255,255,0.16), rgba(255,255,255,0.5), rgba(255,255,255,0.18)";
 const DESKTOP_PATTERN_STYLE: React.CSSProperties = {
-  backgroundColor: "#010101",
+  backgroundColor: "var(--background)",
 };
 
 function clamp(value: number, min: number, max: number) {

@@ -27,7 +27,7 @@ interface DetailHeaderProps {
 export function DetailHeader({ children, className = "" }: DetailHeaderProps) {
   return (
     <div
-      className={`relative flex items-center justify-between bg-[#0a0a0a] rounded-md px-4 py-3 overflow-hidden ${className}`}
+      className={`relative flex items-center justify-between bg-muted dark:bg-[#0a0a0a] rounded-md px-4 py-3 overflow-hidden ${className}`}
     >
       <div
         className="absolute inset-0 opacity-[0.07] pointer-events-none"

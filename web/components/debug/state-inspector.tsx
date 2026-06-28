@@ -220,7 +220,7 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
   };
 
   return (
-    <Card className="bg-[#0a0a0a]">
+    <Card className="bg-background dark:bg-[#0a0a0a]">
       <div className="p-3 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
           <DataFilled className="h-3.5 w-3.5 text-foreground/40" />

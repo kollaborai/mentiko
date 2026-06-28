@@ -61,8 +61,6 @@ const PATTERNS: CSSProperties[] = [
     background: `repeating-linear-gradient(45deg, ${l}, ${l} 7.5px, transparent 7.5px, transparent 37.5px)`,
     opacity: 0.05,
   },
-  // login halftone
-  LOGIN_HALFTONE_PATTERN,
   // grid fine
   {
     backgroundImage: `linear-gradient(${p} 2px, transparent 2px), linear-gradient(90deg, ${p} 2px, transparent 2px), linear-gradient(${p} 1px, transparent 1px), linear-gradient(90deg, ${p} 1px, transparent 1px)`,
