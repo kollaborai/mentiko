@@ -20,6 +20,7 @@ import { FloatingAppPanels } from "@/components/app-shell/floating-app-panels";
 import { FloatingCodePill } from "@/components/editor/floating-code-pill";
 import { FloatingWelcomePanel } from "@/components/onboarding/floating-welcome-panel";
 import { FloatingKollaborBar } from "@/components/app-shell/floating-kollabor-bar";
+import { UIControlGrant } from "@/components/app-shell/ui-control-grant";
 import { PANEL_MODE_BACKGROUND_LAYERS } from "@/components/app-shell/panel-mode-background";
 import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
 import { MustChangePasswordGate } from "@/components/app-shell/must-change-password-gate";
@@ -391,6 +392,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
                     <FloatingKollaborBar />
                   </Suspense>
                 )}
+                <UIControlGrant />
               </WhenNotPanelSurface>
             </Suspense>
           </div>
