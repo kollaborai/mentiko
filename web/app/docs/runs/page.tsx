@@ -125,12 +125,13 @@ monitor-{sessionName}               // watchdog monitor session
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Run Monitoring</h2>
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
-          The background worker reconciler monitors runs for inconsistencies and
-          marks orphaned runs stopped. The shell watchdog also cleans orphaned PTY sessions.
+          The background worker reconciler monitors runs for inconsistencies,
+          marks orphaned runs stopped, and closes completed auto-run tasks. The shell watchdog also cleans orphaned PTY sessions.
         </p>
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1">
           <div>Checks PTY session aliveness for running run records</div>
           <div>Marks orphaned runs stopped and fixes stale agent states</div>
+          <div>Closes completed <span className="text-foreground/70">auto_run</span> tasks when all auto-close conditions are met (see <a href="/docs/tasks" className="text-foreground/70 underline">Tasks docs</a>)</div>
           <div>Watchdog cleanup skips monitor-* sessions when pruning orphaned PTYs</div>
           <div>Runs every 60 seconds via the background worker daemon</div>
         </div>

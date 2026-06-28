@@ -20,6 +20,7 @@ import * as decisionsHandler from "./handlers/decisions.js";
 import * as onboarding from "./handlers/onboarding.js";
 import * as schedules from "./handlers/schedules.js";
 import * as applications from "./handlers/applications.js";
+import * as jobs from "./handlers/jobs.js";
 import * as runtime from "./handlers/runtime.js";
 import * as auth from "./handlers/auth.js";
 import * as uiControl from "./handlers/ui-control.js";
@@ -370,11 +371,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       const { allowed } = await checkPermission(name, args);
       if (!allowed) return textResult("Permission denied by user.");
       const autoRun = args.auto_run === true || args.autoRun === true;
-      const result = await tasks.generateTasks(args.description, args.workspace_path, autoRun);
-      const taskId = result?.parentId;
-      if (taskId) await dispatchEffect("navigate", { route: `/tasks/${taskId}` });
-      const count = Array.isArray(result?.tasks) ? result.tasks.length : 0;
-      return textResult(`Task tree generated: ${taskId || JSON.stringify(result)}${count ? ` (${count} tasks)` : ""}${autoRun ? " with auto-run enabled" : ""}`);
+      const sendToDecisionIfWarranted = args.send_to_decision_if_warranted !== false;
+      const mode = args.mode === "decision" ? "decision" : "task";
+      const result = await tasks.generateTasks(
+        args.description,
+        args.workspace_path,
+        autoRun,
+        sendToDecisionIfWarranted,
+        mode,
+      );
+      // Decision routing (warranted heuristic or explicit mode=decision)
+      if (result && typeof result === "object" && "routedTo" in result) {
+        const { decisionId, taskId } = result;
+        await dispatchEffect("navigate", { route: `/decisions?id=${encodeURIComponent(decisionId)}` });
+        return textResult(
+          `Routed to a decision (prompt looked strategic/complex, or mode=decision). `
+          + `decisionId: ${decisionId}, taskId: ${taskId}. The human steps through it in /decisions.`
+          + ` To force a task tree instead, retry with send_to_decision_if_warranted: false.`,
+        );
+      }
+      const runId = result?.runId;
+      const jobId = result?.jobId;
+      if (runId) await dispatchEffect("navigate", { route: `/runs/${runId}` });
+      return textResult(
+        `Task generation started — async. runId: ${runId || "?"}, jobId: ${jobId || "?"}. `
+        + `Poll get_job { id: "${jobId}" } until status is "complete"; the result carries the created task IDs (parentId/createdTaskIds).`
+        + `${autoRun ? " auto-run enabled (fires on completion)." : ""}`,
+      );
     }
 
     if (name === "mark_task_done") {
@@ -570,6 +593,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       if (!allowed) return textResult("Permission denied by user.");
       await context.cancelRun(args.id);
       return textResult(`Run cancelled: ${args.id}`);
+    }
+
+    if (name === "get_job") {
+      // tier A (read-only poll) — no approval prompt
+      const result = await jobs.getJob(args.id);
+      return textResult(JSON.stringify(result, null, 2));
     }
 
     // ---------- workspaces (tier A) ----------

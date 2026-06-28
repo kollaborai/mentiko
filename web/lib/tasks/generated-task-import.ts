@@ -1,4 +1,8 @@
-import { _getDb, taskAddDep, taskCreate } from "@/lib/tasks/task-store";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import config from "@/lib/config";
+import { _getDb, taskAddDep, taskCreate, taskGet } from "@/lib/tasks/task-store";
+import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 
 type IssueType = "epic" | "feature" | "task" | "bug" | "chore";
 
@@ -64,6 +68,58 @@ function issueType(value: string | undefined, fallback: IssueType): IssueType {
     return value;
   }
   return fallback;
+}
+
+// Read the generating run's workspace from run.json. The run always knows its
+// workspace (workspacePath/workspaceId), so this is the ground-truth fallback
+// when no workspace was threaded into the generate call. Returns undefined if
+// the run is unscoped, missing, or unreadable (never throws).
+function readRunWorkspacePath(runId?: string): string | undefined {
+  if (!runId) return undefined;
+  try {
+    const runsDir = (config as { runsDir?: string }).runsDir;
+    if (!runsDir) return undefined;
+    const runJsonPath = join(runsDir, runId, "run.json");
+    if (!existsSync(runJsonPath)) return undefined;
+    const data = JSON.parse(readFileSync(runJsonPath, "utf8")) as {
+      workspacePath?: string;
+      workspaceId?: string;
+    };
+    if (typeof data.workspacePath === "string" && data.workspacePath.trim()) return data.workspacePath;
+    if (typeof data.workspaceId === "string" && data.workspaceId.trim()) return data.workspaceId;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Look up an existing parent task's workspace_id (e.g. generating under an
+// existing epic). Returns undefined if there's no parent or the parent is
+// itself unscoped.
+function parentTaskWorkspaceId(
+  namespaceId: string,
+  orgId: string,
+  parentId?: string,
+): string | undefined {
+  if (!parentId) return undefined;
+  try {
+    const parent = taskGet(orgId, parentId, namespaceId);
+    return parent?.workspace_id ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Resolve the effective workspace for a generated tree, preferring the most
+// specific source. Order: explicit workspacePath -> existing parent's
+// workspace_id -> the generating run's workspace. Falls back to undefined only
+// when no workspace is knowable (a genuinely global task).
+function resolveEffectiveWorkspace(input: ImportGeneratedTaskTreeInput): string | undefined {
+  return (
+    input.workspacePath ||
+    parentTaskWorkspaceId(input.namespaceId, input.orgId, input.parentId) ||
+    readRunWorkspacePath(input.generationRunId)
+  );
 }
 
 function generatedTaskMetadata(input: ImportGeneratedTaskTreeInput, extra?: Record<string, unknown>) {
@@ -146,6 +202,10 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
   const createTree = _getDb(input.namespaceId).transaction(() => {
     const hasSubtasks = Boolean(input.generated.subtasks?.length);
     const parentIssueType = hasSubtasks ? "epic" : issueType(input.generated.type, "task");
+    // Resolve once: explicit workspace wins, then inherit from an existing
+    // parent task, then the generating run's workspace. Stamped on every task
+    // in the tree so generated tasks are never orphaned out of /tasks.
+    const effectiveWorkspace = resolveEffectiveWorkspace(input);
 
     const parent = taskCreate(
       input.orgId,
@@ -160,7 +220,7 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
         notes: input.generated.notes,
         parent_id: input.parentId,
         created_by: input.createdBy,
-        workspace_id: input.workspacePath || undefined,
+        workspace_id: effectiveWorkspace,
         metadata: generatedTaskMetadata(input, { task_generation_role: "parent" }),
       },
       input.namespaceId,
@@ -185,7 +245,7 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
             acceptance_criteria: normalizeTextOrArray(subtask.acceptance_criteria),
             parent_id: parent.id,
             created_by: input.createdBy,
-            workspace_id: input.workspacePath || undefined,
+            workspace_id: effectiveWorkspace,
             metadata: generatedTaskMetadata(input, {
               task_generation_role: "subtask",
               task_generation_parent_id: parent.id,
@@ -220,4 +280,90 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
   });
 
   return createTree();
+}
+
+// ---------- agent-as-gate: honor the generation agent's route decision --------
+
+/**
+ * Outcome of processing a completed task-generation job. The agent acts as a
+ * gate: it returns either a task tree or a decision hand-back. This helper
+ * inspects that decision and creates the right entity.
+ */
+export type GenerationOutcome =
+  | { kind: "task"; parentId: string; createdTaskIds: string[]; tasks: CreatedTaskSummary[] }
+  | { kind: "decision"; decisionId: string; taskId: string; reason?: string };
+
+interface ProcessTaskGenerationResultInput {
+  namespaceId: string;
+  orgId: string;
+  /** Parsed agent output: { route?: "task"|"decision", task?: GeneratedTask, reason?: string } (or a bare GeneratedTask). */
+  result: Record<string, unknown>;
+  workspacePath?: string;
+  parentId?: string;
+  createdBy: string;
+  generationJobId?: string;
+  generationRunId?: string;
+  generationChainId?: string;
+  autoRun?: boolean;
+  /** Default true. When false, decision hand-backs are ignored and a task is always produced. */
+  allowDecisionRouting?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Process the generation agent's gated output:
+ *  - route "decision" (and routing allowed) -> createTaskDecision -> decision outcome
+ *  - otherwise -> importGeneratedTaskTree(result.task ?? result) -> task outcome
+ *
+ * Defensive: a bare task object (no route field) is treated as route "task",
+ * so older/non-envelope outputs still import correctly.
+ */
+export async function processTaskGenerationResult(
+  input: ProcessTaskGenerationResultInput,
+): Promise<GenerationOutcome> {
+  const result = input.result as {
+    route?: unknown;
+    task?: GeneratedTask;
+    reason?: unknown;
+  };
+  const allowDecisionRouting = input.allowDecisionRouting !== false;
+  const wantsDecision = allowDecisionRouting && result?.route === "decision";
+
+  if (wantsDecision) {
+    const reason =
+      typeof result.reason === "string" && result.reason.trim()
+        ? result.reason.trim()
+        : "Routed to a decision during task generation.";
+    const { decision, task } = await createTaskDecision({
+      namespaceId: input.namespaceId,
+      orgId: input.orgId,
+      prompt: reason,
+      source: "task-generate",
+      workspacePath: input.workspacePath,
+      parentTaskId: input.parentId,
+    });
+    return { kind: "decision", decisionId: decision.id, taskId: task.id, reason };
+  }
+
+  // Task path: unwrap the envelope, fall back to a bare task object.
+  const generated = (result?.task ?? (result as unknown as GeneratedTask)) as GeneratedTask;
+  const importResult = importGeneratedTaskTree({
+    namespaceId: input.namespaceId,
+    orgId: input.orgId,
+    generated,
+    workspacePath: input.workspacePath,
+    parentId: input.parentId,
+    createdBy: input.createdBy,
+    generationJobId: input.generationJobId,
+    generationRunId: input.generationRunId,
+    generationChainId: input.generationChainId,
+    autoRun: input.autoRun,
+    metadata: input.metadata,
+  });
+  return {
+    kind: "task",
+    parentId: importResult.parentId,
+    createdTaskIds: importResult.createdTaskIds,
+    tasks: importResult.tasks,
+  };
 }

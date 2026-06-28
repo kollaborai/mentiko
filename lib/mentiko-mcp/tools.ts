@@ -496,6 +496,17 @@ const ALL_TOOLS: Tool[] = [
       required: ["id"]
     }
   },
+  {
+    name: "get_job",
+    description: "Poll an async generation job (e.g. the { jobId, runId } handle returned by generate_tasks). Returns status (pending|running|complete|failed); on completion the result carries the created task IDs (parentId/createdTaskIds) plus runId. Poll until status is complete or failed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The jobId returned by generate_tasks." }
+      },
+      required: ["id"]
+    }
+  },
 
   // ⑧ Task Ops
   {
@@ -539,7 +550,7 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "generate_tasks",
-    description: "Generate and create a fully structured task tree from a natural-language work description.",
+    description: "Start AI generation of a task tree from a natural-language work description. ASYNC: returns immediately with { runId, jobId } — does NOT wait. Poll get_job { id: jobId } until status \"complete\". The generation AGENT acts as a gate: it decides task-vs-decision while building. On completion the job result either carries the created task IDs (parentId/createdTaskIds) OR routedTo:'decision' with decisionId/taskId (the agent decided a human should step through a decision first). send_to_decision_if_warranted (default true) toggles whether the agent may route to a decision; pass false to force a task tree. mode:'decision' skips generation and creates a decision directly. Pass workspace_path or tasks won't appear in the /tasks workspace filter.",
     inputSchema: {
       type: "object",
       properties: {
@@ -554,6 +565,15 @@ const ALL_TOOLS: Tool[] = [
         auto_run: {
           type: "boolean",
           description: "When true, created parent and subtasks are marked for auto-run so Mentiko analyzes, creates or selects chains, and runs ready tasks."
+        },
+        send_to_decision_if_warranted: {
+          type: "boolean",
+          description: "Default true (ON). In task mode, a prompt that looks strategic/complex (architecture, migration, strategy, broad redesign...) is automatically routed to the decision flow instead of generating a task tree — returns routedTo:'decision'. Pass false to force task generation."
+        },
+        mode: {
+          type: "string",
+          enum: ["task", "decision"],
+          "description": "task (default) = generate a task tree, subject to send_to_decision_if_warranted routing. decision = force the decision flow (human steps through it in /decisions)."
         }
       },
       required: ["description"]

@@ -9,7 +9,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
-import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/tasks/generated-task-import";
+import { processTaskGenerationResult } from "@/lib/tasks/generated-task-import";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 
@@ -222,10 +222,14 @@ export const POST = withErrorHandling(async (
         ? updatedJob.input.parentId
         : undefined;
       const autoRun = updatedJob.input.autoRun === true;
-      const importResult = importGeneratedTaskTree({
+      const allowDecisionRouting = updatedJob.input.allowDecisionRouting !== false;
+      // Agent-as-gate: the generation agent decides task vs decision in its
+      // output; processTaskGenerationResult honors that (route "decision" ->
+      // createTaskDecision, otherwise import the task tree).
+      const outcome = await processTaskGenerationResult({
         namespaceId,
         orgId,
-        generated: updatedJob.result as unknown as GeneratedTask,
+        result: (updatedJob.result ?? {}) as Record<string, unknown>,
         workspacePath,
         parentId,
         createdBy: "mentiko-generation",
@@ -233,22 +237,39 @@ export const POST = withErrorHandling(async (
         generationRunId: updatedJob.runId,
         generationChainId: updatedJob.chainId,
         autoRun,
+        allowDecisionRouting,
         metadata: taskGenerationMetadataFromJobInput(updatedJob.input),
       });
-      const enrichedResult = {
-        ...updatedJob.result,
-        taskId: importResult.parentId,
-        createdTaskIds: importResult.createdTaskIds,
-        createdTasks: importResult.tasks,
-      };
-      updateJob(id, {
-        taskId: importResult.parentId,
-        result: enrichedResult,
-      }, namespaceId);
-      updatedJob = getJob(id, namespaceId);
 
-      if (autoRun) {
-        await triggerAutoRunContinuation(request, namespaceId, orgId, importResult.parentId);
+      if (outcome.kind === "decision") {
+        const enrichedResult = {
+          ...updatedJob.result,
+          routedTo: "decision",
+          decisionId: outcome.decisionId,
+          taskId: outcome.taskId,
+        };
+        updateJob(id, {
+          taskId: outcome.taskId,
+          result: enrichedResult,
+        }, namespaceId);
+        updatedJob = getJob(id, namespaceId);
+        // Decisions don't auto-run — the human steps through them in /decisions.
+      } else {
+        const enrichedResult = {
+          ...updatedJob.result,
+          taskId: outcome.parentId,
+          createdTaskIds: outcome.createdTaskIds,
+          createdTasks: outcome.tasks,
+        };
+        updateJob(id, {
+          taskId: outcome.parentId,
+          result: enrichedResult,
+        }, namespaceId);
+        updatedJob = getJob(id, namespaceId);
+
+        if (autoRun) {
+          await triggerAutoRunContinuation(request, namespaceId, orgId, outcome.parentId);
+        }
       }
     } catch (e) {
       updateJob(id, {

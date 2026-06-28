@@ -183,7 +183,21 @@ export function TaskGenerateDialog({
           error?: string;
         };
         if (job.status === "complete" && job.result) {
-          if (job.taskId || job.result.createdTaskIds?.length) {
+          const result = job.result as GeneratedTask & {
+            routedTo?: string;
+            decisionId?: string;
+            createdTaskIds?: string[];
+          };
+          // Agent-as-gate: the generation agent may route a strategic prompt to
+          // a decision instead of producing a task tree.
+          if (result.routedTo === "decision" && result.decisionId) {
+            onRefresh?.();
+            resetForm();
+            onClose();
+            router.push(`/decisions?id=${encodeURIComponent(result.decisionId)}`);
+            return;
+          }
+          if (job.taskId || result.createdTaskIds?.length) {
             onRefresh?.();
             resetForm();
             onClose();

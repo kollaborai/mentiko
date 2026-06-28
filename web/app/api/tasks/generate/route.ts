@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { createJob } from "@/lib/runs/job-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
@@ -10,8 +9,7 @@ import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
-import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
-import { shouldRouteTaskPromptToDecision } from "@/lib/tasks/task-decision-routing";
+import { startGenerationJob } from "@/lib/generation/generation-chain-dispatch";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +22,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new Unauthorized();
   }
 
-  const { prompt, workspacePath, parentId, autoRun, sendToDecisionIfWarranted, mode } = await request.json();
+  const { prompt, workspacePath, parentId, autoRun, sendToDecisionIfWarranted = true, mode } = await request.json();
 
   if (!prompt || typeof prompt !== "string") {
     throw new BadRequest("prompt is required", { field: "prompt" });
@@ -35,20 +33,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getSessionUser(request);
   const userId = session?.id;
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, userId);
+  const trimmedPrompt = prompt.trim();
+  const allowDecisionRouting = sendToDecisionIfWarranted !== false;
 
-  if (mode === "decision" || (
-    sendToDecisionIfWarranted === true &&
-    shouldRouteTaskPromptToDecision(prompt)
-  )) {
+  // Explicit decision mode: skip generation, create a decision directly.
+  if (mode === "decision") {
     const { decision, task } = await createTaskDecision({
       namespaceId,
       orgId,
-      prompt,
-      source: mode === "decision" ? "task-generate-decision" : "task-generate",
+      prompt: trimmedPrompt,
+      source: "task-generate-decision",
       workspacePath: authorizedWorkspacePath,
-      parentTaskId: typeof parentId === "string" && parentId.trim()
-        ? parentId.trim()
-        : undefined,
+      parentTaskId: typeof parentId === "string" && parentId.trim() ? parentId.trim() : undefined,
     });
 
     return apiSuccess({
@@ -60,42 +56,40 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }, undefined, 201);
   }
 
+  // Task mode: the generation agent gates task-vs-decision in its output.
+  // The completion backstop (/api/jobs/[id]/complete) honors the agent's
+  // route decision. sendToDecisionIfWarranted (default on; the dialog toggle)
+  // controls whether the agent is allowed to route to a decision.
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT: These tasks are for the project in "${authorizedWorkspacePath}". Tailor task descriptions and scope to this specific codebase.\n`
     : "";
+  const allowDecisionRoutingContext = allowDecisionRouting
+    ? ""
+    : "\nDECISION ROUTING DISABLED: you MUST output route \"task\". Never choose \"decision\".\n";
 
   const schema = getTaskSchema();
   const template = getTemplate(namespaceId, orgId, "task_generation");
   const generationPrompt = resolveTemplate(template.content, {
-    USER_PROMPT: prompt,
+    USER_PROMPT: trimmedPrompt,
     SCHEMA: schema,
     WORKSPACE_CONTEXT: workspaceContext,
+    ALLOW_DECISION_ROUTING: allowDecisionRoutingContext,
   });
 
-  // create job with resolved prompt (job-runner will use it directly)
-  const job = createJob(
-    "task" as const,
-    {
-      prompt: generationPrompt,
-      workspacePath: authorizedWorkspacePath,
-      ...(typeof parentId === "string" && parentId.trim() ? { parentId: parentId.trim() } : {}),
-      ...(autoRun === true ? { autoRun: true } : {}),
-    },
-    undefined,
-    undefined,
-    userId,
-    namespaceId,
-  );
-
-  const run = await startGenerationChainRun({
+  const handle = await startGenerationJob({
     request,
     namespaceId,
     orgId,
     kind: "task",
-    job,
     prompt: generationPrompt,
-    workspacePath: authorizedWorkspacePath,
+    workspacePath: authorizedWorkspacePath || undefined,
+    userId,
+    jobInput: {
+      ...(typeof parentId === "string" && parentId.trim() ? { parentId: parentId.trim() } : {}),
+      ...(autoRun === true ? { autoRun: true } : {}),
+      allowDecisionRouting,
+    },
   });
 
-  return apiSuccess({ jobId: job.id, runId: run.runId, status: job.status });
+  return apiSuccess({ jobId: handle.jobId, runId: handle.runId, status: handle.status });
 });

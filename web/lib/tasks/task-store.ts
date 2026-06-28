@@ -132,6 +132,24 @@ function runMigrations(db: Database.Database): void {
       INSERT INTO _migrations (version) VALUES (1);
     `);
   }
+
+  // Invariant repair (idempotent, runs once per process per namespace): any
+  // task with no workspace_id whose parent IS workspace-scoped inherits the
+  // parent's workspace_id. Backfills the orphan class produced by older
+  // generators that didn't thread workspace_id. Leaves intentionally-global
+  // tasks (no parent, or parent also unscoped) NULL.
+  db.exec(`
+    UPDATE tasks
+    SET workspace_id = (
+      SELECT p.workspace_id FROM tasks p WHERE p.id = tasks.parent_id
+    )
+    WHERE workspace_id IS NULL
+      AND parent_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM tasks p
+        WHERE p.id = tasks.parent_id AND p.workspace_id IS NOT NULL
+      )
+  `);
 }
 
 // ---------- ID generation ----------
@@ -327,6 +345,17 @@ export function taskCreate(
   const id = generateId(db, orgId, issueType);
   const timestamp = now();
 
+  // Workspace fallback: a child created without an explicit workspace inherits
+  // its parent's workspace_id. This keeps generated/sub tasks from being
+  // orphaned out of the workspace-scoped /tasks view (workspace_id NULL). Only
+  // applied when the caller left workspace_id unset.
+  let workspaceId = input.workspace_id;
+  if (workspaceId === undefined && input.parent_id) {
+    const parent = db.prepare("SELECT workspace_id FROM tasks WHERE id = ? AND org_id = ?")
+      .get(input.parent_id, orgId) as { workspace_id: string | null } | undefined;
+    if (parent?.workspace_id) workspaceId = parent.workspace_id;
+  }
+
   db.prepare(`
     INSERT INTO tasks (id, org_id, workspace_id, title, description, status, priority,
       issue_type, owner, assignee, parent_id, labels, metadata,
@@ -335,7 +364,7 @@ export function taskCreate(
     VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, orgId,
-    input.workspace_id ?? null,
+    workspaceId ?? null,
     input.title,
     input.description ?? "",
     input.priority ?? 2,

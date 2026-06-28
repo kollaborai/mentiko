@@ -13,6 +13,7 @@ import {
   taskGetActivity,
   validateTaskId,
   closeAll,
+  _getDb,
 } from "../tasks/task-store";
 
 jest.mock("../config", () => ({
@@ -127,6 +128,74 @@ describe("task-store", () => {
       const child = taskCreate("parent-org", { title: "Child", parent_id: parent.id });
       const fetched = taskGet("parent-org", child.id)!;
       expect(fetched.parent_id).toBe(parent.id);
+    });
+
+    it("child inherits parent workspace_id when none is specified", () => {
+      const parent = taskCreate("inherit-org", {
+        title: "Epic",
+        issue_type: "epic",
+        workspace_id: "/ws/mentiko",
+      });
+      // child created with no explicit workspace -> inherits parent's
+      const child = taskCreate("inherit-org", { title: "Child", parent_id: parent.id });
+      expect(taskGet("inherit-org", child.id)!.workspace_id).toBe("/ws/mentiko");
+    });
+
+    it("child keeps an explicit workspace_id over the parent's", () => {
+      const parent = taskCreate("inherit-org-2", {
+        title: "Epic",
+        workspace_id: "/ws/mentiko",
+      });
+      const child = taskCreate("inherit-org-2", {
+        title: "Child",
+        parent_id: parent.id,
+        workspace_id: "/ws/other",
+      });
+      expect(taskGet("inherit-org-2", child.id)!.workspace_id).toBe("/ws/other");
+    });
+
+    it("child stays NULL when parent is also unscoped", () => {
+      const parent = taskCreate("inherit-org-3", { title: "Epic" });
+      const child = taskCreate("inherit-org-3", { title: "Child", parent_id: parent.id });
+      expect(taskGet("inherit-org-3", child.id)!.workspace_id).toBeNull();
+    });
+  });
+
+  // ---- startup repair sweep (workspace_id backfill from parent) ----
+
+  describe("startup repair sweep", () => {
+    it("backfills NULL workspace_id from a workspace-scoped parent on reconnect", () => {
+      const NS = "repair-ns";
+      const ORG = "repair-org";
+      const parent = taskCreate(ORG, {
+        title: "Scoped epic",
+        issue_type: "epic",
+        workspace_id: "/ws/repair",
+      }, NS);
+      // Simulate a legacy orphan: raw-insert a child with NULL workspace_id,
+      // bypassing taskCreate's inheritance.
+      const db = _getDb(NS);
+      db.prepare(
+        `INSERT INTO tasks (id, org_id, workspace_id, title, status, priority, issue_type, parent_id, labels, metadata, created_at, created_by, updated_at)
+         VALUES ('ORPHAN-1', ?, NULL, 'legacy orphan', 'open', 2, 'task', ?, '[]', '{}', ?, 'legacy', ?)`,
+      ).run(ORG, parent.id, new Date().toISOString(), new Date().toISOString());
+      expect(taskGet(ORG, "ORPHAN-1", NS)!.workspace_id).toBeNull();
+
+      // Closing + reopening the connection re-runs runMigrations, which fires
+      // the invariant repair sweep.
+      closeAll();
+      const repaired = taskGet(ORG, "ORPHAN-1", NS);
+      expect(repaired!.workspace_id).toBe("/ws/repair");
+    });
+
+    it("leaves genuinely-global tasks (no parent) NULL", () => {
+      const NS = "repair-ns-2";
+      const ORG = "repair-org-2";
+      taskCreate(ORG, { title: "global task" }, NS); // no parent, no workspace
+      closeAll();
+      const tasks = taskList(ORG, { status: "all" }, undefined, NS);
+      const global = tasks.find((t) => t.title === "global task");
+      expect(global!.workspace_id).toBeNull();
     });
   });
 
