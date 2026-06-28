@@ -480,7 +480,7 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it("still marks an old orphaned real run stopped", async () => {
+  it("marks an old orphaned real run stopped and hands it to the auditor", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -533,32 +533,11 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
-    expect(mockTaskUpdate).toHaveBeenCalledWith(
-      "default",
-      "TASK-044",
-      {
-        status: "open",
-        metadata: expect.objectContaining({
-          auto_run: true,
-          last_run_id: undefined,
-          last_run_status: "stopped",
-          auto_run_retries: 1,
-        }),
-      },
-      "default",
+    // Terminal failure now routes through the auditor (which owns retry vs
+    // decision vs close), not a blind reconcile retry.
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
     );
     expect(mockTaskClose).not.toHaveBeenCalled();
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      "default",
-      expect.objectContaining({
-        type: "warning",
-        title: "Auto-run failed",
-        metadata: {
-          taskId: "TASK-044",
-          runId: "run-exec",
-          status: "stopped",
-        },
-      }),
-    );
   });
 });

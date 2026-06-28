@@ -7,7 +7,6 @@ import { validateTaskId } from "@/lib/tasks/task-store";
 import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getLiveSessions } from "@/lib/pty/pty-client";
-import { createNotification } from "@/lib/notifications/notification-server";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import config from "@/lib/config";
 import { writeLog } from "@/lib/system/system-logger";
@@ -19,7 +18,10 @@ import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run
 export const dynamic = "force-dynamic";
 
 const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
-const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
+// Any terminal run state hands off to the completion auditor, which owns the
+// retry-vs-decision-vs-close call. A genuine failure becomes the auditor's
+// "retry"; a run that needs a human becomes "decision".
+const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "failed", "stopped"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
 
@@ -68,7 +70,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     return meta?.last_run_status === "running" && meta?.last_run_id;
   });
-  const completedAutoRunTasks = issues.filter((issue) => {
+  const terminalAutoRunTasks = issues.filter((issue) => {
     if (DONE_TASK_STATUSES.has(issue.status)) return false;
     const meta = parseMetadata(issue.metadata);
     const lastRunStatus =
@@ -76,12 +78,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     return (
       !!meta &&
       !!lastRunStatus &&
-      COMPLETED_RUN_STATUSES.has(lastRunStatus) &&
+      TERMINAL_RUN_STATUSES.has(lastRunStatus) &&
       shouldAuditCompletedAutoRun(meta)
     );
   });
 
-  if (runningTasks.length === 0 && completedAutoRunTasks.length === 0) {
+  if (runningTasks.length === 0 && terminalAutoRunTasks.length === 0) {
     return apiSuccess({ reconciled: 0, results: [] });
   }
 
@@ -167,44 +169,19 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
-        // auto-run handling: on success, hand the completed run to the
-        // completion auditor (which decides close/decision/retry); on failure,
-        // clear state so the auto-run poller retries from scratch.
+        // auto-run handling: hand ANY terminal run (success or failure) to the
+        // completion auditor, which owns the retry-vs-decision-vs-close call. A
+        // genuine failure becomes the auditor's capped "retry"; a run that needs
+        // a human becomes a "decision". This unifies the old failed-retry path
+        // and the success path into one judged, loop-bounded trigger.
         const autoRun = meta?.auto_run === true;
-        if (autoRun && newStatus === "completed") {
+        if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus)) {
           try {
             await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
           } catch (auditError) {
             failed.push({
               taskId: issue.id,
               error: `Failed to start completion audit: ${(auditError as Error).message}`,
-            });
-          }
-        } else if (autoRun && (newStatus === "stopped" || newStatus === "failed")) {
-          // clear run state so next auto-run poll cycle retries from scratch
-          try {
-            const updateFields = DONE_TASK_STATUSES.has(issue.status)
-              ? {}
-              : { status: "open" };
-            taskUpdate(orgId, safeId, {
-              ...updateFields,
-              metadata: {
-                ...meta,
-                last_run_status: newStatus,
-                last_run_id: undefined,
-                auto_run_retries: ((meta.auto_run_retries as number) || 0) + 1,
-              },
-            }, namespaceId);
-            createNotification(namespaceId, {
-              type: "warning",
-              title: "Auto-run failed",
-              message: `Task "${issue.title}" run ${newStatus}. Will retry on next cycle.`,
-              metadata: { taskId: issue.id, runId, status: newStatus },
-            });
-          } catch (retryError) {
-            failed.push({
-              taskId: issue.id,
-              error: `Failed to clear run state for retry: ${(retryError as Error).message}`,
             });
           }
         }
@@ -227,7 +204,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
-  for (const issue of completedAutoRunTasks) {
+  for (const issue of terminalAutoRunTasks) {
     const meta = parseMetadata(issue.metadata)!;
     const runId = meta.last_run_id as string;
     const runDir = join(config.runsDir, runId);
@@ -235,7 +212,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
     try {
       if (!existsSync(runDir) || !existsSync(runJsonPath)) {
-        failed.push({ taskId: issue.id, error: `Completed run ${runId} no longer exists` });
+        failed.push({ taskId: issue.id, error: `Terminal run ${runId} no longer exists` });
         continue;
       }
 
@@ -257,7 +234,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         continue;
       }
 
-      if (!run.status || !COMPLETED_RUN_STATUSES.has(run.status)) {
+      if (!run.status || !TERMINAL_RUN_STATUSES.has(run.status)) {
         continue;
       }
 
@@ -265,7 +242,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       const audit = await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
         `task ${issue.id} run ${runId}: audit ${audit.status}`,
-        "completion audit triggered for completed auto-run task");
+        "completion audit triggered for terminal auto-run task");
       results.push({
         taskId: issue.id,
         runId,
@@ -283,7 +260,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   return apiSuccess({
     reconciled: results.length,
-    checked: runningTasks.length + completedAutoRunTasks.length,
+    checked: runningTasks.length + terminalAutoRunTasks.length,
     failed: failed.length,
     results,
     errors: failed,
