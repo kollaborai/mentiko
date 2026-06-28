@@ -77,6 +77,12 @@ async function createDecisionSubtask(
 ): Promise<ApplyCompletionAuditResult> {
   const { request, namespaceId, orgId, task, audit, runId, workspacePath } = input;
 
+  // Claim the run BEFORE creating the decision. If createTaskDecision throws,
+  // the run is still marked audited, so the next reconcile sweep's idempotency
+  // check (completion_audit_run_id === runId) skips it instead of creating a
+  // DUPLICATE decision subtask. (Bug surfaced by the apply integration tests.)
+  taskMergeMeta(orgId, task.id, { completion_audit_run_id: runId }, namespaceId);
+
   const prompt = buildDecisionPrompt(task, audit);
   const { decision, task: decisionTask } = await createTaskDecision({
     namespaceId,
