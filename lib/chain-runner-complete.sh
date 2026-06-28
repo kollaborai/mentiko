@@ -830,7 +830,7 @@ if [[ -n "$RUN_ID" ]]; then
             | tail -20 || true)
 
         jq -n \
-            --arg status "complete" \
+            --arg status "unknown" \
             --arg executiveSummary "$SUMMARY_TEXT" \
             --arg agentId "$CURRENT_AGENT_ID" \
             --arg agentName "$CURRENT_AGENT_NAME" \

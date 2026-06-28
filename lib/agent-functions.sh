@@ -237,14 +237,12 @@ ensure-event-file() {
     if [[ -n "$run_id" ]]; then
         fallback_file="$events_dir/${run_id}-${prefix}-${emit_event}-fallback.event"
     fi
-    cat > "$fallback_file" <<FBEOF
-event: ${emit_event}
-source: ${prefix}
-run_id: ${run_id}
-timestamp: $(date -Iseconds)
-data: fallback event (agent completed but did not write event file)
-processed: false
-FBEOF
+    # NOTE: no heredoc here. ensure-event-file is `export -f`'d; bash cannot
+    # serialize a heredoc inside an exported function body — child shells fail to
+    # import the function with "syntax error near unexpected token". printf is safe.
+    printf 'event: %s\nsource: %s\nrun_id: %s\ntimestamp: %s\ndata: fallback event (agent completed but did not write event file)\nprocessed: false\n' \
+        "${emit_event}" "${prefix}" "${run_id}" "$(date -Iseconds)" \
+        > "$fallback_file"
 
     echo "  fallback event written: $(basename "$fallback_file")"
     echo "  event: ${emit_event}, source: ${prefix}"

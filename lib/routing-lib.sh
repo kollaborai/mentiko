@@ -115,19 +115,12 @@ fan-group-create() {
 
     local state_file="$state_dir/${group_id}.state"
 
-    cat > "$state_file" <<FEOF
-status: running
-started: $(date -Iseconds)
-event: $event_name
-fan_out_agents: $fan_out_agents
-fan_in_agent: ${fan_in_agent:-}
-wait_for: $wait_for
-quorum: ${quorum:-0}
-on_error: ${on_error:-}
-completed: 0
-failed: 0
-total: $(echo "$fan_out_agents" | wc -w)
-FEOF
+    # NOTE: no heredoc here. fan-group-create is `export -f`'d; bash cannot
+    # serialize a heredoc inside an exported function body — child shells fail to
+    # import the function with "syntax error near unexpected token". printf is safe.
+    printf 'status: running\nstarted: %s\nevent: %s\nfan_out_agents: %s\nfan_in_agent: %s\nwait_for: %s\nquorum: %s\non_error: %s\ncompleted: 0\nfailed: 0\ntotal: %s\n' \
+        "$(date -Iseconds)" "$event_name" "$fan_out_agents" "${fan_in_agent:-}" "$wait_for" "${quorum:-0}" "${on_error:-}" "$(echo "$fan_out_agents" | wc -w | tr -d ' ')" \
+        > "$state_file"
 
     echo "$state_file"
 }

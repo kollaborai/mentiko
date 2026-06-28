@@ -239,23 +239,6 @@ create-run() {
 
     mkdir -p "$run_dir"
 
-    # include parent_run_id if this run was spawned by chain chaining
-    local parent_field=""
-    if [[ -n "${MENTIKO_PARENT_RUN_ID:-}" ]]; then
-        parent_field="\"parent_run_id\": \"$MENTIKO_PARENT_RUN_ID\","
-    fi
-
-    # include workspacePath if provided
-    local workspace_field=""
-    if [[ -n "$workspace_path" ]]; then
-        workspace_field="\"workspacePath\": $(printf '%s' "$workspace_path" | jq -Rs .),"
-    fi
-
-    local task_field=""
-    if [[ -n "$task_id" ]]; then
-        task_field="\"taskId\": $(printf '%s' "$task_id" | jq -Rs .),"
-    fi
-
     # A freshly-created run has NOT launched an agent yet, so it does not hold a
     # concurrency slot. Create it `pending` (the queue/waiting state) — the chain-runner's
     # cap gate (lib/concurrency-cap.sh cap_acquire_chain_slot) promotes it to `running`
@@ -267,20 +250,32 @@ create-run() {
     # runs unconditionally in chain-runner.sh right after create-run, so the promote is
     # immediate for every real run. (The web path writes run.json directly and does not
     # use create-run.)
-    cat > "$run_file" <<RUNEOF
-{
-  "id": "$run_id",
-  "chain": "$chain_name",
-  ${parent_field}
-  ${workspace_field}
-  ${task_field}
-  "goal": $(echo "$goal" | jq -Rs .),
-  "started": "$(date -Iseconds)",
-  "status": "pending",
-  "sessions": [],
-  "agents": []
-}
-RUNEOF
+    # NOTE: jq -n instead of heredoc. create-run is `export -f`'d; bash cannot
+    # serialize a heredoc inside an exported function body — child shells fail to
+    # import the function. jq -n + --arg handles JSON escaping for all fields.
+    local _started
+    _started="$(date -Iseconds)"
+    jq -n \
+        --arg id        "$run_id" \
+        --arg chain     "$chain_name" \
+        --arg goal      "$goal" \
+        --arg started   "$_started" \
+        --arg parent    "${MENTIKO_PARENT_RUN_ID:-}" \
+        --arg workspace "$workspace_path" \
+        --arg taskId    "$task_id" '
+        {
+            id:       $id,
+            chain:    $chain,
+            goal:     $goal,
+            started:  $started,
+            status:   "pending",
+            sessions: [],
+            agents:   []
+        }
+        | if $parent    != "" then . + {parent_run_id: $parent}    else . end
+        | if $workspace != "" then . + {workspacePath: $workspace} else . end
+        | if $taskId    != "" then . + {taskId: $taskId}            else . end
+    ' > "$run_file"
 
     echo "$run_id"
 }
@@ -648,14 +643,26 @@ build-run-summary-json() {
         (if any($s[]; status_failed(.) or explicit_fail(.)) then "fail"
          elif any($s[]; explicit_partial(.)) then "partial_pass"
          elif any($s[]; explicit_pass(.)) then "pass"
-         elif (($r.status // "") == "completed" or ($r.status // "") == "complete") then "complete"
+         elif (($r.status // "") == "completed" or ($r.status // "") == "complete") then
+             # Guard: if every agent summary is a stub with status "unknown" or
+             # "needs_review" (i.e. the agent produced no real verdict), do NOT
+             # auto-close as "complete" — that would trigger task close without
+             # evidence. Resolve to "needs_review" so decision_required fires.
+             if ([$s[] | select(
+                     ((.status // "") | ascii_downcase) != "unknown" and
+                     ((.status // "") | ascii_downcase) != "needs_review" and
+                     ((.status // "") | ascii_downcase) != ""
+                 )] | length) > 0
+             then "complete"
+             else "needs_review"
+             end
          else ($r.status // "unknown") end) as $outcome |
         {
             run_id: ($r.id // ""),
             chain: ($r.chain // ""),
             status: ($r.status // ""),
             outcome: $outcome,
-            decision_required: ($outcome == "partial_pass" or $outcome == "fail"),
+            decision_required: ($outcome == "partial_pass" or $outcome == "fail" or $outcome == "needs_review"),
             recommendation: (
                 if $outcome == "partial_pass" then "review_before_next_task"
                 elif $outcome == "fail" then "fix_or_rerun"
@@ -665,7 +672,7 @@ build-run-summary-json() {
             ),
             summary: (
                 ($ordered | map(.executiveSummary // empty) | last) //
-                (if ($r.status // "") == "completed" then "Run completed." else "Run status: " + ($r.status // "unknown") end)
+                (if ($r.status // "") == "completed" then "Run completed (no agent verdict — inspect run)." else "Run status: " + ($r.status // "unknown") end)
             ),
             agents: (($r.agents // []) | map({
                 id,

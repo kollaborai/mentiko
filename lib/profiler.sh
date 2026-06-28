@@ -39,29 +39,32 @@ profiler-start() {
     local start_epoch=$(date +%s%N 2>/dev/null || echo "$(date +%s)000000000")
 
     # init profile
-    cat > "$profile_file" <<EOF
-{
-  "session": "$session",
-  "agent_id": "$agent_id",
-  "agent_name": "$agent_name",
-  "run_id": "$run_id",
-  "started_at": "$timestamp",
-  "start_epoch": $start_epoch,
-  "status": "running",
-  "snapshots": [],
-  "api_calls": [],
-  "tokens": {
-    "total_input": 0,
-    "total_output": 0,
-    "total": 0,
-    "by_model": {}
-  },
-  "memory_samples": [],
-  "peak_memory_mb": 0,
-  "cpu_samples": [],
-  "avg_cpu_pct": 0
-}
-EOF
+    # NOTE: jq -n instead of a heredoc. profiler-start is `export -f`'d; bash
+    # cannot serialize a heredoc inside an exported function body — child shells
+    # fail to import the function. jq -n handles JSON escaping cleanly.
+    jq -n \
+        --arg session "$session" \
+        --arg agent_id "$agent_id" \
+        --arg agent_name "$agent_name" \
+        --arg run_id "$run_id" \
+        --arg started_at "$timestamp" \
+        --argjson start_epoch "${start_epoch:-0}" '
+        {
+          session: $session,
+          agent_id: $agent_id,
+          agent_name: $agent_name,
+          run_id: $run_id,
+          started_at: $started_at,
+          start_epoch: $start_epoch,
+          status: "running",
+          snapshots: [],
+          api_calls: [],
+          tokens: { total_input: 0, total_output: 0, total: 0, by_model: {} },
+          memory_samples: [],
+          peak_memory_mb: 0,
+          cpu_samples: [],
+          avg_cpu_pct: 0
+        }' > "$profile_file"
 
     echo "$profile_file"
 }
