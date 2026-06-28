@@ -259,13 +259,13 @@ export function ToastContainer() {
   const getToastColor = (type: string) => {
     switch (type) {
       case "success":
-        return "bg-card text-green-400";
+        return "text-green-400 ring-1 ring-green-400/30";
       case "error":
-        return "bg-card text-red-400";
+        return "text-red-400 ring-1 ring-red-500/30";
       case "warning":
-        return "bg-card text-orange-400";
+        return "text-orange-400 ring-1 ring-orange-400/30";
       default:
-        return "bg-card text-foreground";
+        return "text-foreground ring-1 ring-foreground/15";
     }
   };
 
@@ -284,8 +284,8 @@ export function ToastContainer() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 flex flex-col gap-2 pointer-events-none"
-      style={{ zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
+      className="fixed top-4 right-4 flex flex-col gap-2 pointer-events-none"
+      style={{ zIndex: FLOATING_SURFACE_Z.toast }}
       aria-live="polite"
       aria-atomic="true"
     >
@@ -294,6 +294,7 @@ export function ToastContainer() {
           key={toast.id}
           className={cn(
             "pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-md min-w-72 max-w-sm",
+            "border border-border bg-card shadow-lg",
             "animate-in slide-in-from-right",
             getToastColor(toast.type)
           )}

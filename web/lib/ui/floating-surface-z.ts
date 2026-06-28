@@ -8,6 +8,9 @@ export const FLOATING_SURFACE_Z = {
   pillNavGlow: 12990,
   pillNav: 13000,
   pillNavMenu: 13010,
+  // transient toasts sit above the top chrome (pill nav / notifications) so they
+  // are never covered, but below the kollabor assistant surfaces.
+  toast: 19500,
   kollaborBackdrop: 19999,
   kollaborBar: 20000,
   kollaborPrompt: 20001,

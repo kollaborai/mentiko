@@ -556,10 +556,13 @@ export function FloatingKollaborBar() {
           routerRef.current.back();
           break;
         case "show_toast":
+          // The message is the content — make it the primary line. The level is
+          // already conveyed by the icon + accent ring, so don't repeat it as a
+          // big "INFO"/"SUCCESS" title that dwarfs the actual message.
           showToast({
             type: (stringPayload(payload, "level") || "info") as "error" | "success" | "warning" | "info",
-            title: stringPayload(payload, "level")?.toUpperCase() || "INFO",
-            message: stringPayload(payload, "message") || "",
+            title: stringPayload(payload, "message") || "",
+            message: "",
             duration: numberPayload(payload, "durationMs"),
           });
           break;
