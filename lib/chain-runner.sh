@@ -31,16 +31,24 @@ source "$SCRIPT_DIR/slack-integration.sh"
 source "$SCRIPT_DIR/run-lib.sh"
 
 # log crashes (set -e exits) and reflect them in run.json immediately.
+# NOTE: $LINENO inside an ERR trap is unreliable — when the failure is in a sourced
+# file or a function it collapsed to a meaningless number (the infamous bogus
+# "crashed at line 18", which is just `source config.sh`). Capture $BASH_COMMAND (the
+# actual failing command) plus the real file/line at trap-fire time instead, so every
+# crash is self-diagnosing.
 handle_chain_runner_error() {
     local exit_code=$?
-    local line_no="${1:-unknown}"
-    _sys_log "error" "chain-runner" "CRASHED at line ${line_no} (exit ${exit_code})" "run: ${RUN_ID:-unknown}, agent: ${CURRENT_AGENT_ID:-unknown}, chain: ${CHAIN_NAME:-unknown}"
+    local failed_cmd="${1:-unknown}"
+    local src_file="${2:-?}"
+    local src_line="${3:-?}"
+    local fn="${FUNCNAME[1]:-main}"
+    _sys_log "error" "chain-runner" "CRASHED at ${src_file}:${src_line} in ${fn}() (exit ${exit_code}): ${failed_cmd}" "run: ${RUN_ID:-unknown}, agent: ${CURRENT_AGENT_ID:-unknown}, chain: ${CHAIN_NAME:-unknown}"
     if [[ -n "${RUN_ID:-}" ]]; then
-        update-run-status "$RUN_ID" "failed" "chain-runner crashed at line ${line_no} (exit ${exit_code})" 2>/dev/null || true
+        update-run-status "$RUN_ID" "failed" "chain-runner crashed at ${src_file}:${src_line} (exit ${exit_code}): ${failed_cmd}" 2>/dev/null || true
     fi
     exit "$exit_code"
 }
-trap 'handle_chain_runner_error "$LINENO"' ERR
+trap 'handle_chain_runner_error "$BASH_COMMAND" "${BASH_SOURCE[0]##*/}" "$LINENO"' ERR
 
 source "$SCRIPT_DIR/metrics.sh"
 # concurrency-cap.sh enforces the engine-level max-concurrency ceiling (phase-2 step 2;
@@ -2344,20 +2352,24 @@ MONEOF
         _sys_log "info" "chain-runner" "monitor started: $monitor_session" "run: ${RUN_ID:-unknown}, agent: $agent_id"
     fi
 
-    # metrics: agent started
-    metric-counter "agents_launched" 1
-    metric-counter "chain_${CHAIN_NAME}_agents_launched" 1
-    metric-start-timer "agent_${session_name}"
+    # metrics + perf + profiler are BEST-EFFORT observability. The agent is ALREADY
+    # launched (and its monitor started) above — a bookkeeping failure must NEVER abort a
+    # live run via the chain-runner's set -e + ERR trap. This is the bug #21 class that
+    # produced the bogus "crashed at line 18" stalls. The producers now self-guard
+    # (lib/metrics.sh, lib/performance.sh); keep `|| true` here as defense-in-depth.
+    metric-counter "agents_launched" 1 || true
+    metric-counter "chain_${CHAIN_NAME}_agents_launched" 1 || true
+    metric-start-timer "agent_${session_name}" || true
 
     # performance tracking: start agent
-    perf-start-agent "$RUN_ID" "$agent_id" "$session_name" "$agent_name"
+    perf-start-agent "$RUN_ID" "$agent_id" "$session_name" "$agent_name" || true
 
     # profiler: start tracking
-    profiler-start "$session_name" "$agent_id" "$agent_name" "$RUN_ID" >/dev/null
+    profiler-start "$session_name" "$agent_id" "$agent_name" "$RUN_ID" >/dev/null || true
 
     # audit log: agent launch
     if declare -f audit-log-agent-launch > /dev/null; then
-        audit-log-agent-launch "$agent_id" "$agent_name" "$session_name" "$RUN_ID"
+        audit-log-agent-launch "$agent_id" "$agent_name" "$session_name" "$RUN_ID" || true
     fi
 
     echo "  done."
@@ -2511,6 +2523,9 @@ else
     launch_chain_agent "$FIRST_AGENT" 1
 fi
 
-# Load enhanced agent launch modules for reliability
-source "$SCRIPT_DIR/cli-readiness-enhanced.sh" 2>/dev/null || true
-source "$SCRIPT_DIR/agent-launch-enhanced.sh" 2>/dev/null || true
+# NOTE: the WIP cli-readiness-enhanced.sh + agent-launch-enhanced.sh modules (commit
+# 538b228, "Untested by me") were sourced here. Removed: none of their functions are
+# called anywhere (pure dead code), and agent-launch-enhanced.sh re-sources
+# cli-readiness-enhanced.sh, so its `declare -r READINESS_STATE_*` ran twice in one
+# invocation → "readonly variable" exit 1 → ERR trap → run marked failed AFTER the agent
+# already launched. Re-integrate properly (idempotent + wired in) before sourcing again.
