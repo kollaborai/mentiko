@@ -34,12 +34,23 @@ interface UiPoll {
 }
 
 function linkMsg(userCode: string, url: string, suffix: string): string {
+  const grantJson = JSON.stringify({
+    type: "mentiko-ui-control",
+    v: 1,
+    code: userCode,
+    label: "Claude Code",
+  });
   return [
-    "🖥️  Open this in the window you want me to control, then approve:",
+    "🖥️  Relay these options to the user verbatim. To let me drive a window, they do ONE of them IN THE WINDOW they want me to control:",
     "",
-    `   ${url}`,
+    "  1) Paste this anywhere on the page (Cmd+V) — easiest, binds that exact window:",
+    `       ${grantJson}`,
     "",
-    `Confirm the code matches:  ${userCode}`,
+    `  2) Or press Cmd+M and type the code:  ${userCode}`,
+    "",
+    `  3) Or open this link there and approve:  ${url}`,
+    "",
+    `A one-tap confirm appears; the code shown should match:  ${userCode}`,
     suffix,
   ].join("\n");
 }
