@@ -102,16 +102,22 @@ send-webhook() {
         local state_file="$WEBHOOK_STATE_DIR/${event_id}-${webhook_id}.json"
 
         # init state
-        cat > "$state_file" <<STATEEOF
-{
-  "event_id": "$event_id",
-  "event_type": "$event_type",
-  "url": "$url",
-  "attempts": 0,
-  "status": "pending",
-  "created_at": "$timestamp"
-}
-STATEEOF
+        # NOTE: jq -n, not a heredoc. send-webhook is `export -f`'d; a heredoc body can fail
+        # to serialize through export -f on some bash builds. jq -n also escapes $url (which
+        # can carry query params with & or quotes) instead of splatting it raw into JSON.
+        jq -n \
+            --arg event_id "$event_id" \
+            --arg event_type "$event_type" \
+            --arg url "$url" \
+            --arg created_at "$timestamp" \
+            '{
+                event_id: $event_id,
+                event_type: $event_type,
+                url: $url,
+                attempts: 0,
+                status: "pending",
+                created_at: $created_at
+            }' > "$state_file"
 
         local attempt=1
         local delay=$initial_delay

@@ -52,14 +52,12 @@ emit-event() {
     local event_file="$EVENTS_DIR/${run_id:+${run_id}-}${source_file_part}-${event_file_part}.event"
 
     mkdir -p "$EVENTS_DIR"
-    if ! cat > "$event_file" <<EOF
-event: $event_name
-source: $source_agent
-run_id: $run_id
-timestamp: $(date -Iseconds)
-processed: false
-data: $data
-EOF
+    # NOTE: no heredoc here. emit-event is `export -f`'d and inherited by nearly every
+    # engine subshell; a heredoc body can fail to serialize through export -f on some bash
+    # builds (the _perf_ensure_file incident), breaking child-shell startup. printf is safe
+    # and byte-identical to the old heredoc (test-agent-emit asserts the body).
+    if ! printf 'event: %s\nsource: %s\nrun_id: %s\ntimestamp: %s\nprocessed: false\ndata: %s\n' \
+        "$event_name" "$source_agent" "$run_id" "$(date -Iseconds)" "$data" > "$event_file"
     then
         echo "error: failed to write event file: $event_file" >&2
         return 1

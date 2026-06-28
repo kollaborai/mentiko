@@ -55,23 +55,35 @@ wait_for_approval() {
 
     # write approval request file
     local request_file="$approvals_dir/${request_id}.json"
-    cat > "$request_file" <<REOF
-{
-  "id": "${request_id}",
-  "chainId": "${chain_id}",
-  "runId": "${run_id}",
-  "agentName": "${agent_name}",
-  "stepName": "${step_name}",
-  "status": "pending",
-  "requestedBy": "system",
-  "requestedAt": "${now}",
-  "expiresAt": "${expires_at}",
-  "method": "web",
-  "action": "${action}",
-  "description": "${description}",
-  "metadata": {}
-}
-REOF
+    # NOTE: jq -n, not a heredoc. wait_for_approval is `export -f`'d; a heredoc body can
+    # fail to serialize through export -f on some bash builds (the _perf_ensure_file
+    # incident). jq -n also fixes a latent bug: the old heredoc did not escape field values,
+    # so a quote in $description or $step_name produced invalid JSON.
+    jq -n \
+        --arg id "$request_id" \
+        --arg chainId "$chain_id" \
+        --arg runId "$run_id" \
+        --arg agentName "$agent_name" \
+        --arg stepName "$step_name" \
+        --arg requestedAt "$now" \
+        --arg expiresAt "$expires_at" \
+        --arg action "$action" \
+        --arg description "$description" \
+        '{
+            id: $id,
+            chainId: $chainId,
+            runId: $runId,
+            agentName: $agentName,
+            stepName: $stepName,
+            status: "pending",
+            requestedBy: "system",
+            requestedAt: $requestedAt,
+            expiresAt: $expiresAt,
+            method: "web",
+            action: $action,
+            description: $description,
+            metadata: {}
+        }' > "$request_file"
 
     echo ""
     echo "  ⏸ APPROVAL GATE — waiting for human approval"

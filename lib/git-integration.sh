@@ -54,25 +54,28 @@ git_init_chain() {
     git config user.email "agent@chain.local" >/dev/null 2>&1
 
     # create .gitignore for chain-specific files
-    cat > .gitignore <<'EOF'
-# state files
-*.state
-*.event
-
-# temp files
-.tmp/
-*.tmp
-.rollback-backup/
-
-# cache
-.cache/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-EOF
+    # NOTE: printf, not a heredoc. git_init_chain is `export -f`'d; a heredoc body can fail to
+    # serialize through export -f on some bash builds. Multi-arg printf '%s\n' has no embedded
+    # newlines, so it round-trips cleanly and emits the same file (trailing newline included).
+    printf '%s\n' \
+        '# state files' \
+        '*.state' \
+        '*.event' \
+        '' \
+        '# temp files' \
+        '.tmp/' \
+        '*.tmp' \
+        '.rollback-backup/' \
+        '' \
+        '# cache' \
+        '.cache/' \
+        '' \
+        '# IDE' \
+        '.idea/' \
+        '.vscode/' \
+        '*.swp' \
+        '*.swo' \
+        > .gitignore
 
     # initial commit if chain.json exists
     if [[ -f "chain.json" ]]; then

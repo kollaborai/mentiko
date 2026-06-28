@@ -55,16 +55,16 @@ get-email-config() {
     local method="${env_method:-auto}"
 
     # build config json
-    cat <<EOF
-{
-  "to": "$env_to",
-  "from": "$from",
-  "smtp": "$env_smtp",
-  "method": "$method",
-  "api_url": "$env_api_url",
-  "api_key": "$env_api_key"
-}
-EOF
+    # NOTE: jq -n, not a heredoc. get-email-config is `export -f`'d; a heredoc body can fail
+    # to serialize through export -f on some bash builds. jq -n also escapes the values.
+    jq -n \
+        --arg to "$env_to" \
+        --arg from "$from" \
+        --arg smtp "$env_smtp" \
+        --arg method "$method" \
+        --arg api_url "$env_api_url" \
+        --arg api_key "$env_api_key" \
+        '{ to: $to, from: $from, smtp: $smtp, method: $method, api_url: $api_url, api_key: $api_key }'
 }
 
 # -------------------------------------------------------------------
@@ -113,25 +113,12 @@ build-email-body() {
     fi
 
     # email body
-    cat <<EOF
-mentiko run report
-
-chain: $chain_name
-run-id: $run_id
-status: $status
-
-goal:
-  $goal
-
-timing:
-  started:  $started
-  completed: $completed
-$agent_summary
-$report_links
-
----
-sent by mentiko on $(hostname) at $(date)
-EOF
+    # NOTE: printf, not a heredoc. build-email-body is `export -f`'d; a heredoc body can fail
+    # to serialize through export -f on some bash builds. $agent_summary / $report_links are
+    # passed as %s args, so their literal "\n" sequences are preserved exactly as the old
+    # heredoc emitted them (printf interprets escapes in the FORMAT only, never in args).
+    printf 'mentiko run report\n\nchain: %s\nrun-id: %s\nstatus: %s\n\ngoal:\n  %s\n\ntiming:\n  started:  %s\n  completed: %s\n%s\n%s\n\n---\nsent by mentiko on %s at %s\n' \
+        "$chain_name" "$run_id" "$status" "$goal" "$started" "$completed" "$agent_summary" "$report_links" "$(hostname)" "$(date)"
 }
 
 # -------------------------------------------------------------------

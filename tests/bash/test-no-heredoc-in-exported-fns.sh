@@ -56,7 +56,9 @@ scan_file_for_heredoc_in_exported_fn() {
                     if (ch[i] == "{") { depth++; seen_open = 1 }
                     if (ch[i] == "}") depth--
                 }
-                if ($0 ~ /<<[^<]/) found = 1
+                # strip here-strings (<<<) first so they are not mistaken for heredocs
+                _l = $0; gsub(/<<</, "", _l)
+                if (_l ~ /<<[^<]/) found = 1
                 if (seen_open && depth <= 0) { in_fn = 0; seen_open = 0 }
             }
             END { print (found+0 > 0 ? "yes" : "no") }
