@@ -41,7 +41,7 @@ function linkMsg(userCode: string, url: string, suffix: string): string {
     label: "Claude Code",
   });
   return [
-    "🖥️  Relay these options to the user verbatim. To let me drive a window, they do ONE of them IN THE WINDOW they want me to control:",
+    "Relay these options to the user verbatim. To let me drive a window, they do ONE of them IN THE WINDOW they want me to control:",
     "",
     "  1) Paste this anywhere on the page (Cmd+V) — easiest, binds that exact window:",
     `       ${grantJson}`,
@@ -89,7 +89,7 @@ export async function requestUiControl(): Promise<string> {
         session_id: result.session_id,
       });
       clearPendingUi();
-      return "✓ UI control granted — I can now drive that window (navigate, highlight, open pages, toasts). Ask me to open something.";
+      return "UI control granted. I can now drive that window (navigate, highlight, open pages, toasts). Ask me to open something.";
     }
     if (result.status === "pending") {
       return linkMsg(
