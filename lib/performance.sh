@@ -80,19 +80,10 @@ _perf_ensure_file() {
     local perf_file="$1"
     mkdir -p "$(dirname "$perf_file")" 2>/dev/null || true
     if [[ ! -s "$perf_file" ]] || ! jq -e . "$perf_file" >/dev/null 2>&1; then
-        cat > "$perf_file" 2>/dev/null <<'EOF' || true
-{
-  "run_id": "",
-  "started": "",
-  "agents": {},
-  "summary": {
-    "total_api_calls": 0,
-    "total_tokens": 0,
-    "total_cost_usd": 0,
-    "total_duration_ms": 0
-  }
-}
-EOF
+        # NOTE: no heredoc here. This function is `export -f`'d, and bash cannot
+        # serialize a heredoc through an exported function — child shells fail to
+        # import it ("syntax error near `||'"). printf serializes cleanly.
+        printf '%s\n' '{"run_id":"","started":"","agents":{},"summary":{"total_api_calls":0,"total_tokens":0,"total_cost_usd":0,"total_duration_ms":0}}' > "$perf_file" 2>/dev/null || true
     fi
     return 0
 }
