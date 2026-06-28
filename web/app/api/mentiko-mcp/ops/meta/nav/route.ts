@@ -16,7 +16,7 @@ interface NavCategory {
   children: NavChild[];
 }
 
-// Extracted from web/components/floating-pill-nav.tsx CATEGORIES array
+// Mirrors web/components/app-shell/floating-pill-nav.tsx CATEGORIES.
 const NAV_STRUCTURE: NavCategory[] = [
   {
     key: "home",
@@ -36,7 +36,6 @@ const NAV_STRUCTURE: NavCategory[] = [
     children: [
       { href: "/tasks", label: "Tasks" },
       { href: "/conversations", label: "Chat" },
-      { href: "/tasks?type=decision", label: "Decisions" },
       { href: "/activity", label: "Activity" },
       { href: "/schedules", label: "Schedules" },
     ],

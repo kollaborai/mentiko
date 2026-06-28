@@ -5,7 +5,7 @@ import { authClient, useSession } from "@/lib/auth/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MonitorFilled, MobileFilled, GlobalFilled, DangerFilled, ShieldTickFilled, LockFilled, SecurityFilled, KeyFilled } from "@aliimam/icons";
+import { MonitorFilled, MobileFilled, GlobalFilled, DangerFilled, ShieldTickFilled, LockFilled, SecurityFilled, KeyFilled, LinkFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 
 const MIN_PASSWORD_LENGTH = 12;
@@ -46,7 +46,7 @@ function formatIp(ip: string | undefined): string {
   return ip;
 }
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string | number): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 2) return "just now";
@@ -114,6 +114,151 @@ function SessionRow({ session, onRevoke }: { session: SessionInfo; onRevoke: () 
         >
           {revoking ? "Revoking..." : "Revoke"}
         </button>
+      )}
+    </div>
+  );
+}
+
+interface McpToken {
+  id: string;
+  label: string;
+  scopes: string[];
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number;
+  revokedAt: number | null;
+}
+
+function McpTokenRow({ token, onRevoke }: { token: McpToken; onRevoke: () => Promise<void> }) {
+  const [revoking, setRevoking] = useState(false);
+  const [rowError, setRowError] = useState("");
+  const revoked = token.revokedAt != null;
+  const created = timeAgo(token.createdAt);
+  const lastUsed = token.lastUsedAt ? timeAgo(token.lastUsedAt) : "Never";
+  const expires = new Date(token.expiresAt).toLocaleDateString();
+
+  return (
+    <div className={`flex items-start justify-between py-3 px-4 rounded-md transition-colors ${
+      revoked ? "bg-muted/20 opacity-60" : "bg-muted/40"
+    }`}>
+      <div className="flex items-start gap-3 min-w-0">
+        <LinkFilled className="h-4 w-4 mt-0.5 shrink-0 text-foreground/30" />
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">{token.label}</span>
+            {revoked ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                Revoked
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
+                Expires {expires}
+              </span>
+            )}
+          </div>
+          {token.scopes.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {token.scopes.map((s) => (
+                <span key={s} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                  {s}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+            <span>Created {created}</span>
+            <span>·</span>
+            <span>Last used {lastUsed}</span>
+          </div>
+          {rowError && <p className="text-xs text-destructive">{rowError}</p>}
+        </div>
+      </div>
+      {!revoked && (
+        <button
+          className="text-xs text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40 shrink-0 mt-0.5"
+          disabled={revoking}
+          onClick={async () => {
+            setRevoking(true);
+            setRowError("");
+            try {
+              await onRevoke();
+            } catch {
+              setRowError("Failed to revoke");
+            } finally {
+              setRevoking(false);
+            }
+          }}
+        >
+          {revoking ? "Revoking..." : "Revoke"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function McpConnections() {
+  const [tokens, setTokens] = useState<McpToken[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadTokens = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/account/mcp-tokens", { credentials: "same-origin" });
+      if (!res.ok) {
+        setError("Failed to load MCP connections");
+      } else {
+        const data = await res.json();
+        setTokens(Array.isArray(data?.tokens) ? data.tokens : []);
+      }
+    } catch {
+      setError("Failed to load MCP connections");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadTokens(); }, []);
+
+  const handleRevoke = async (id: string) => {
+    const res = await fetch(`/api/account/mcp-tokens/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+    if (!res.ok) throw new Error("revoke failed");
+    setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, revokedAt: Date.now() } : t)));
+  };
+
+  return (
+    <div className="bg-card rounded-md p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <LinkFilled className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">MCP Connections</h2>
+        </div>
+        <button
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+          onClick={loadTokens}
+          disabled={loading}
+        >
+          {loading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Apps connected via the device-authorization flow, e.g. Claude Code.
+      </p>
+
+      {error && <p className="text-xs text-destructive">{error}</p>}
+
+      {tokens.length === 0 && !loading ? (
+        <p className="text-sm text-muted-foreground py-2">No MCP connections.</p>
+      ) : (
+        <div className="space-y-2">
+          {tokens.map((t) => (
+            <McpTokenRow key={t.id} token={t} onRevoke={() => handleRevoke(t.id)} />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -425,6 +570,9 @@ export default function SecurityPage() {
               </div>
             )}
           </div>
+
+          {/* MCP connections */}
+          <McpConnections />
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { applyStoredUserDisplayPreferences } from "@/lib/ui/user-display-preferences";
 
 // pages that render standalone (no nav, no sidebar, no providers)
-const STANDALONE_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/welcome"];
+const STANDALONE_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/welcome", "/mcp-auth"];
 const PANEL_MESSAGE_OPEN_WELCOME = "mentiko-open-welcome-panel";
 const PANEL_MESSAGE_OPEN_GLOBAL_SEARCH = "mentiko-open-global-search";
 const APP_BACKGROUND_MASK =

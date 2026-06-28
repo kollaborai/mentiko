@@ -13,14 +13,16 @@
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { readSidecar, writeSidecar, readPending, clearPending } from "./session-store.js";
 
 const WEB_URL     = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
 const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
 const SESSION_ID  = process.env.MENTIKO_SESSION_ID || "";
 const FETCH_TIMEOUT_MS = 15000;
 
-// In-memory token — starts from env, refreshed on 401.
-let currentToken: string = process.env.MENTIKO_SESSION_TOKEN || "";
+// In-memory token. Precedence: sidecar (written by the device-flow reconnect)
+// takes priority over the static env seed; then it's refreshed on 401.
+let currentToken: string = readSidecar()?.session_token || process.env.MENTIKO_SESSION_TOKEN || "";
 
 function getEngineToken(): string {
   try {
@@ -30,17 +32,74 @@ function getEngineToken(): string {
   }
 }
 
+// Standalone client: exchange the sidecar refresh token for a fresh 24h access
+// token. This makes daily expiry invisible after a one-time device-flow reconnect.
+async function exchangeSidecarRefresh(): Promise<boolean> {
+  const sc = readSidecar();
+  if (!sc?.refresh_token) return false;
+  try {
+    const res = await fetch(`${WEB_URL}/api/mentiko-mcp/auth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: sc.refresh_token }),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { session_token?: string };
+    if (!data.session_token) return false;
+    currentToken = data.session_token;
+    writeSidecar({ refresh_token: sc.refresh_token, session_token: data.session_token });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Standalone client: pick up an approved-but-not-yet-collected device-flow
+// reconnect (the user ran `reconnect`, approved in the app, and is now retrying).
+export async function tryPickupPendingDevice(): Promise<boolean> {
+  const pending = readPending();
+  if (!pending) return false;
+  try {
+    const res = await fetch(
+      `${WEB_URL}/api/mentiko-mcp/auth/device/poll?device_code=${encodeURIComponent(pending.device_code)}`,
+    );
+    const data = (await res.json()) as {
+      status?: string;
+      refresh_token?: string;
+      session_token?: string;
+    };
+    if (data.status === "approved" && data.refresh_token && data.session_token) {
+      currentToken = data.session_token;
+      writeSidecar({ refresh_token: data.refresh_token, session_token: data.session_token });
+      clearPending();
+      return true;
+    }
+    if (data.status === "denied" || data.status === "expired") {
+      clearPending();
+    }
+  } catch {
+    // ignore — caller falls through to other refresh sources
+  }
+  return false;
+}
+
+// Refresh the access token from the first available source:
+//   1. sidecar refresh token  (standalone client, silent — Phase 3)
+//   2. approved pending device flow (standalone client, just-approved reconnect)
+//   3. kollab engine          (engine-spawned session)
 async function refreshToken(): Promise<boolean> {
+  if (await exchangeSidecarRefresh()) return true;
+  if (await tryPickupPendingDevice()) return true;
+
   if (!SESSION_ID) return false;
   const engineToken = getEngineToken();
   if (!engineToken) return false;
-
   try {
     const res = await fetch(`${ENGINE_URL}/sessions/${SESSION_ID}/token`, {
       headers: { "Authorization": `Bearer ${engineToken}` },
     });
     if (!res.ok) return false;
-    const data = await res.json() as { session_token?: string };
+    const data = (await res.json()) as { session_token?: string };
     if (!data.session_token) return false;
     currentToken = data.session_token;
     return true;

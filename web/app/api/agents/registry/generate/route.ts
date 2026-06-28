@@ -6,7 +6,7 @@ import { getAgentSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
-import { BadRequest, InternalServerError } from "@/lib/api-errors";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const { prompt, workspacePath } = await request.json();

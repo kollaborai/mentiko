@@ -4,7 +4,7 @@ import { scanAllSkills, skillToAgent } from "@/lib/system/skill-scanner";
 import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { InternalServerError } from "@/lib/api-errors";
+import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  */
 export const GET = withErrorHandling(async (req: NextRequest) => {
   if (!(await checkAuth(req))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const namespaceId = await getNamespaceIdFromRequest(req);

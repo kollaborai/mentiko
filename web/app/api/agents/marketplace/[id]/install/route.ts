@@ -4,7 +4,7 @@ import { join } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { NotFound, InternalServerError } from "@/lib/api-errors";
+import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +92,7 @@ interface Context {
 
 export const POST = withErrorHandling(async (request: NextRequest, context: Context) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const { id } = await context.params;

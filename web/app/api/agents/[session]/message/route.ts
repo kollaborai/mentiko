@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty } from "@/lib/pty/pty-client";
-import { BadRequest, InternalServerError } from "@/lib/api-errors";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export const POST = withErrorHandling(async (
   context: { params: Promise<{ session: string }> }
 ) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const { session } = await context.params;

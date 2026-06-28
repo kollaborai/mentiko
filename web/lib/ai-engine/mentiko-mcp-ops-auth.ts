@@ -6,9 +6,14 @@
 //
 // SECURITY MODEL: ops endpoints are MUTATIVE and READ-ONLY access to
 // user data. We require a signed JWT (session token) because:
-//   1. JWTs are revocable (logout kills them)
-//   2. JWTs encode user identity + role for RBAC
-//   3. JWTs are short-lived (15 min expiry)
+//   1. JWTs encode user identity + role for RBAC
+//   2. JWTs are short-lived (24h expiry — see session-token.ts TTL_SECONDS)
+//
+// NOTE: these access tokens are NOT individually revocable today and are
+// INDEPENDENT of the better-auth cookie session — logout does NOT invalidate
+// them. Revocation levers: 24h expiry, or rotating BETTER_AUTH_SECRET (global).
+// The MCP device-flow *refresh* tokens (lib/auth/mcp-device-auth.ts) ARE
+// revocable per-token; see docs/specs/MCP_AUTH_RECOVERY.md.
 //
 // MENTIKO_INBOX_KEY is NOT accepted here. The inbox key is a shared
 // secret used ONLY for the signaling channel (dispatch/stream/reply) to

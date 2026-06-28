@@ -21,6 +21,7 @@ import * as onboarding from "./handlers/onboarding.js";
 import * as schedules from "./handlers/schedules.js";
 import * as applications from "./handlers/applications.js";
 import * as runtime from "./handlers/runtime.js";
+import * as auth from "./handlers/auth.js";
 
 // Simple fuzzy matching: score based on substring presence and position
 function fuzzyMatch(query: string, target: string): number {
@@ -103,6 +104,39 @@ function textResult(text: string) {
 function errorResult(message: string) {
   return {
     content: [{ type: "text" as const, text: `Error: ${message}` }],
+    isError: true,
+  };
+}
+
+// ---------- auth-failure recovery (Phase 1) ----------
+//
+// Ops calls fail with these shapes when the session token is expired/invalid:
+//   - "MENTIKO_SESSION_TOKEN not set — session auth required"  (no token at all)
+//   - "GET <path> failed: 401 <body>"                          (401 after refresh retry)
+//   - "...Invalid or expired session token"                    (verifySessionToken rejected)
+// Instead of surfacing a raw 401, tell the user how to recover. Phase 3 upgrades
+// this to auto-start the device flow and embed a live sign-in link.
+function isAuthFailure(message: string): boolean {
+  return (
+    /session auth required/i.test(message) ||
+    /failed:\s*401\b/.test(message) ||
+    /invalid or expired session token/i.test(message)
+  );
+}
+
+function authRecoveryResult(originalMessage: string) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          "🔑 Your Mentiko session has expired or isn't authenticated.\n\n" +
+          "Run the `reconnect` tool to get a one-time sign-in link, then approve it in " +
+          "the Mentiko app. After you approve, this connection refreshes automatically — " +
+          "no restart needed.\n\n" +
+          `(underlying error: ${originalMessage})`,
+      },
+    ],
     isError: true,
   };
 }
@@ -690,6 +724,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       return textResult(JSON.stringify(result, null, 2));
     }
 
+    // re-authenticate this MCP connection (device flow → refresh token)
+    if (name === "reconnect") {
+      const message = await auth.reconnect();
+      return textResult(message);
+    }
+
     if (name === "list_secrets") {
       const result = await onboarding.listSecrets();
       return textResult(JSON.stringify(result, null, 2));
@@ -754,6 +794,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   } catch (err: any) {
     const msg = err?.message || String(err);
     console.error(`[mentiko-mcp] tool ${name} failed:`, msg);
+    // recoverable auth failure → guide the user to reconnect instead of a raw 401
+    if (isAuthFailure(msg)) {
+      return authRecoveryResult(msg);
+    }
     // surface error to user in the bar immediately
     dispatchEffect("show_toast", {
       level: "error",

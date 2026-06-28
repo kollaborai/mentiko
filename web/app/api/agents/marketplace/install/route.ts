@@ -4,14 +4,14 @@ import { join } from "path";
 import config, { orgPath } from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { BadRequest, NotFound, InternalServerError } from "@/lib/api-errors";
+import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const body = await request.json();

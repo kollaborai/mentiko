@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty } from "@/lib/pty/pty-client";
 import { sanitizeOutput } from "@/lib/sanitize-output";
-import { BadRequest, InternalServerError } from "@/lib/api-errors";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ function validateSessionName(session: string): string {
 
 export const GET = withErrorHandling(async (request: NextRequest, context: { params: Promise<{ session: string }> }) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const { session } = await context.params;
@@ -37,7 +37,7 @@ export const GET = withErrorHandling(async (request: NextRequest, context: { par
 
 export const DELETE = withErrorHandling(async (request: NextRequest, context: { params: Promise<{ session: string }> }) => {
   if (!(await checkAuth(request))) {
-    throw new InternalServerError("Authentication check failed");
+    throw new Unauthorized("Authentication required");
   }
 
   const { session } = await context.params;

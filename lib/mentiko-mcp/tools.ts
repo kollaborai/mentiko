@@ -1057,6 +1057,11 @@ const ALL_TOOLS: Tool[] = [
     }
   },
   {
+    name: "reconnect",
+    description: "Re-authenticate this Mentiko MCP connection. Call this when a mentiko tool fails with 'session auth required' or a 401. Returns a one-time sign-in link; the user approves it in the Mentiko app, then this connection refreshes automatically (no restart). After approving, call reconnect once more (or just retry the failed command) to finish.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
     name: "list_secrets",
     description: "List stored secrets (names and env var names only, never values).",
     inputSchema: { type: "object", properties: {} }
