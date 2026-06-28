@@ -106,3 +106,9 @@ web/lib/job-store.ts.bak
 
 # internal ops knowledge base — never in the public tree
 .kdex/
+
+# codebase-memory MCP local graph cache (tool artifact)
+.codebase-memory/
+
+# editor/tool backup files
+*.backup
