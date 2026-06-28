@@ -2510,3 +2510,7 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
 else
     launch_chain_agent "$FIRST_AGENT" 1
 fi
+
+# Load enhanced agent launch modules for reliability
+source "$SCRIPT_DIR/cli-readiness-enhanced.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/agent-launch-enhanced.sh" 2>/dev/null || true
