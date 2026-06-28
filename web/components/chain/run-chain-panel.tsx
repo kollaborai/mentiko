@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useParams } from "next/navigation";
-import Link from "next/link";
 import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { AgentStatusPanel, type AgentStatusDetail } from "@/components/agent/agent-status-panel";
 import { PerformanceTab } from "@/components/run/performance-tab";
@@ -11,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-// Alert/AlertDescription available for future error states
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEventStream } from "@/hooks/use-event-stream";
@@ -22,7 +19,7 @@ import { useAgentProfiles } from "@/lib/hooks/use-agent-profiles";
 import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import type { AgentProfile } from "@/lib/types";
 import {
-  ArrowLeftFilled,
+  CloseCircleFilled,
   CommandSquareFilled,
   ClockFilled,
   ChartFilled,
@@ -173,10 +170,10 @@ function GoalInput({
   profiles: AgentProfile[];
 }) {
   return (
-    <div className="h-full flex flex-col p-6 overflow-y-auto">
+    <div className="h-full flex flex-col p-4 overflow-y-auto">
       <div className="flex items-center gap-2 mb-4">
-        <Target className="h-5 w-5 text-foreground/60" />
-        <h2 className="text-lg font-medium">chain goal</h2>
+        <Target className="h-4 w-4 text-foreground/60" />
+        <h2 className="text-sm font-medium">chain goal</h2>
       </div>
 
       {chain && (
@@ -199,7 +196,7 @@ function GoalInput({
 
       {workspaces.length > 0 && (
         <div className="mb-4">
-          <label htmlFor="workspace-select" className="text-sm text-foreground/60 mb-2 block">
+          <label htmlFor="workspace-select" className="text-xs text-foreground/50 mb-2 block">
             <FolderOpenFilled className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
             run in workspace
           </label>
@@ -221,7 +218,7 @@ function GoalInput({
 
       {profiles.length > 0 && (
         <div className="mb-4">
-          <label htmlFor="agent-profile-select" className="text-sm text-foreground/60 mb-2 block">
+          <label htmlFor="agent-profile-select" className="text-xs text-foreground/50 mb-2 block">
             <Square className="h-3.5 w-3.5 inline mr-1.5 -mt-0.5" />
             run with profile
           </label>
@@ -244,7 +241,7 @@ function GoalInput({
       )}
 
       <div className="mb-4">
-        <label htmlFor="chain-goal" className="text-sm text-foreground/60 mb-2 block">
+        <label htmlFor="chain-goal" className="text-xs text-foreground/50 mb-2 block">
           what should this chain accomplish?
         </label>
         <Textarea
@@ -260,21 +257,13 @@ function GoalInput({
       <div className="mt-4">
         <Button
           onClick={onStart}
-          disabled={!goal.trim() || isRunning}
-          className="w-full"
-          size="lg"
+          disabled={!goal.trim()}
+          loading={isRunning}
+          className="h-9 w-full text-xs"
+          size="sm"
         >
-          {isRunning ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              chain is running...
-            </>
-          ) : (
-            <>
-              <Play className="h-4 w-4 mr-2" />
-              start chain
-            </>
-          )}
+          <Play className="h-3.5 w-3.5 mr-1.5" />
+          {isRunning ? "starting chain..." : "start chain"}
         </Button>
       </div>
     </div>
@@ -546,20 +535,26 @@ function MetricsTab({ runId, chainId }: { runId: string | null; chainId: string 
   return <PerformanceTab runId={runId} chainId={chainId || undefined} />;
 }
 
+// persist the per-chain goal across open/close within the session so closing
+// the panel (e.g. clicking the backdrop) doesn't discard what you typed
+const runGoalCache = new Map<string, string>();
+
 // ============================================================
-// main page
+// main panel
 // ============================================================
 
-export default function RunPage() {
+export function RunChainPanel({ chainId, onClose }: { chainId: string; onClose: () => void }) {
   const { fetchWithNamespace } = useNamespaceFetch();
-  const params = useParams();
-  const chainId = params.id as string;
   const { workspaceId: ctxWorkspaceId, workspaces } = useWorkspace();
   const { profiles } = useAgentProfiles();
 
   const [chain, setChain] = useState<Chain | null>(null);
   const [run, setRun] = useState<Run | null>(null);
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(() => runGoalCache.get(chainId) ?? "");
+  const handleGoalChange = (g: string) => {
+    setGoal(g);
+    runGoalCache.set(chainId, g);
+  };
   const [runWorkspaceId, setRunWorkspaceId] = useState(ctxWorkspaceId);
   const [runAgentProfileId, setRunAgentProfileId] = useState("");
   const [isStarting, setIsStarting] = useState(false);
@@ -567,6 +562,15 @@ export default function RunPage() {
   const [webhookEnabled, setWebhookEnabled] = useState(true);
   const selectedWorkspaceDefaultProfileId =
     workspaces.find((workspace) => workspace.id === runWorkspaceId)?.default_agent_profile;
+
+  // reset state when the target chain changes (sheet reopened for a different chain)
+  useEffect(() => {
+    setChain(null);
+    setRun(null);
+    setGoal(runGoalCache.get(chainId) ?? "");
+    setActiveTab("goal");
+    setRunWorkspaceId(ctxWorkspaceId);
+  }, [chainId, ctxWorkspaceId]);
 
   // sync with context workspace when it changes (e.g. user switches in nav)
   useEffect(() => { setRunWorkspaceId(ctxWorkspaceId); }, [ctxWorkspaceId]);
@@ -622,8 +626,8 @@ export default function RunPage() {
         if (res.ok) {
           const data = await res.json();
           setChain(data.chain);
-          if (data.chain.goal) {
-            setGoal(data.chain.goal);
+          if (data.chain.goal && !goal) {
+            handleGoalChange(data.chain.goal);
           }
         }
       } catch {}
@@ -720,11 +724,9 @@ export default function RunPage() {
       {/* header */}
       <header className="h-14 bg-accent flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
-          <Link href={`/chains/${chainId}`}>
-            <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
-              <ArrowLeftFilled className="h-4 w-4" />
-            </Button>
-          </Link>
+          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={onClose} aria-label="Close">
+            <CloseCircleFilled className="h-4 w-4" />
+          </Button>
           <div>
             <h1 className="text-sm">{chain?.name || "chain"}</h1>
             {run && (
@@ -773,8 +775,8 @@ export default function RunPage() {
 
           {/* stop button */}
           {run && isRunning && (
-            <Button size="sm" variant="destructive" className="h-8" onClick={handleStop}>
-              <Square className="h-3.5 w-3.5 mr-1" />
+            <Button size="sm" variant="ghost" className="h-8 px-2 text-[10px] text-red-400/70 hover:text-red-400 hover:bg-red-400/10" onClick={handleStop}>
+              <Square className="h-3 w-3 mr-1" />
               stop
             </Button>
           )}
@@ -804,7 +806,7 @@ export default function RunPage() {
           <div className="h-full">
             <GoalInput
               goal={goal}
-              setGoal={setGoal}
+              setGoal={handleGoalChange}
               isRunning={isStarting}
               onStart={handleStart}
               chain={chain}
@@ -819,18 +821,18 @@ export default function RunPage() {
         ) : (
           // post-run: show tabs
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)} className="h-full flex flex-col">
-            <div className="bg-accent px-4 shrink-0">
-              <TabsList className="bg-transparent border-0 h-12 p-0 gap-1">
+            <div className="border-b border-foreground/5 px-4 py-2 shrink-0">
+              <TabsList>
                 <TabsTrigger
                   value="goal"
-                  className="data-[state=active]:bg-accent data-[state=active]:text-foreground h-8 px-3 text-xs"
+                  className="px-3 text-xs"
                 >
                   <Target className="h-3.5 w-3.5 mr-1.5" />
                   goal
                 </TabsTrigger>
                 <TabsTrigger
                   value="agents"
-                  className="data-[state=active]:bg-accent data-[state=active]:text-foreground h-8 px-3 text-xs"
+                  className="px-3 text-xs"
                 >
                   <Bot className="h-3.5 w-3.5 mr-1.5" />
                   agents
@@ -842,14 +844,14 @@ export default function RunPage() {
                 </TabsTrigger>
                 <TabsTrigger
                   value="terminal"
-                  className="data-[state=active]:bg-accent data-[state=active]:text-foreground h-8 px-3 text-xs"
+                  className="px-3 text-xs"
                 >
                   <CommandSquareFilled className="h-3.5 w-3.5 mr-1.5" />
                   terminal
                 </TabsTrigger>
                 <TabsTrigger
                   value="events"
-                  className="data-[state=active]:bg-accent data-[state=active]:text-foreground h-8 px-3 text-xs"
+                  className="px-3 text-xs"
                 >
                   <ClockFilled className="h-3.5 w-3.5 mr-1.5" />
                   events
@@ -859,7 +861,7 @@ export default function RunPage() {
                 </TabsTrigger>
                 <TabsTrigger
                   value="metrics"
-                  className="data-[state=active]:bg-accent data-[state=active]:text-foreground h-8 px-3 text-xs"
+                  className="px-3 text-xs"
                 >
                   <ChartFilled className="h-3.5 w-3.5 mr-1.5" />
                   metrics
@@ -950,6 +952,48 @@ export default function RunPage() {
           )}
         </div>
       </footer>
+    </div>
+  );
+}
+
+// ============================================================
+// sheet wrapper — the single "run chain" surface used by both
+// view mode and edit mode. Renders inline, scoped to its nearest
+// positioned ancestor (the chain panel area), NOT the viewport —
+// it slides over the right side of the content panel rather than
+// the whole page.
+// ============================================================
+
+export function RunChainSheet({
+  chainId,
+  open,
+  onClose,
+}: {
+  chainId: string | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  // Esc to close
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open || !chainId) return null;
+
+  return (
+    <div className="absolute inset-0 z-50">
+      {/* backdrop — click to close */}
+      <div className="absolute inset-0 bg-background/70" onClick={onClose} aria-hidden />
+      {/* right-anchored drawer — slides in from the right edge of the panel area */}
+      <div className="absolute inset-y-0 right-0 flex w-full flex-col border-l border-foreground/10 bg-background animate-in slide-in-from-right duration-300 sm:max-w-2xl">
+        <h2 className="sr-only">Run chain</h2>
+        <RunChainPanel chainId={chainId} onClose={onClose} />
+      </div>
     </div>
   );
 }

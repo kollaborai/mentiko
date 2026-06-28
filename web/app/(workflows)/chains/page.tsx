@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
@@ -46,6 +45,7 @@ import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
 import { ChainDebugTools } from "@/components/debug/chain-debug-tools";
 import { ChainVersionPanel } from "@/components/chain/chain-version-panel";
 import { ChainDetailPanel } from "@/components/chain/chain-detail-panel";
+import { RunChainSheet } from "@/components/chain/run-chain-panel";
 import type { ChainStatus, RunStatus } from "@/lib/types";
 import { isSystemChainRecord } from "@/lib/chains/system-chain";
 import {
@@ -190,13 +190,8 @@ function ChainsPageContent() {
     }
     setChainRunStatuses(statusByChain);
   }, [sharedRuns]);
-  // run chain dialog state
-  const [runDialogOpen, setRunDialogOpen] = useState(false);
-  const [runGoal, setRunGoal] = useState("");
-  const [runWorkspacePath, setRunWorkspacePath] = useState(workspacePath || "__default__");
-  const [runAgentProfileId, setRunAgentProfileId] = useState("");
-  const [runLoading, setRunLoading] = useState(false);
-  const [runError, setRunError] = useState("");
+  // run chain sheet state — single run surface shared with edit mode
+  const [runChainId, setRunChainId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const debouncedSearch = useDebounce(searchQuery, 250);
   const [showUserChains, setShowUserChains] = useState(() => {
@@ -313,12 +308,6 @@ function ChainsPageContent() {
   const { profiles } = useAgentProfiles();
   const currentWorkspace = workspaces.find((workspace) => workspace.path === workspacePath);
   const workspaceDefaultProfileId = currentWorkspace?.default_agent_profile;
-  const effectiveRunWorkspacePath =
-    runWorkspacePath && runWorkspacePath !== "__default__"
-      ? runWorkspacePath
-      : workspacePath || undefined;
-  const selectedRunWorkspace = workspaces.find((workspace) => workspace.path === effectiveRunWorkspacePath);
-  const selectedRunWorkspaceDefaultProfileId = selectedRunWorkspace?.default_agent_profile;
   const getChainProfileLabel = useCallback((chain: Chain) => {
     const profileId = resolveRunAgentProfileId({
       chainDefaultProfileId: chain.default_agent_profile,
@@ -407,27 +396,10 @@ function ChainsPageContent() {
       });
   }, [selected?.id, selected, fetchWithNamespace]);
 
-  const handleOpenRunDialog = useCallback(() => {
+  const openRunChain = useCallback(() => {
     if (!selected) return;
-    setRunGoal("");
-    setRunError("");
-    setRunWorkspacePath(workspacePath || "__default__");
-    setRunAgentProfileId(resolveRunAgentProfileId({
-      chainDefaultProfileId: selected.default_agent_profile,
-      workspaceDefaultProfileId,
-      profiles,
-    }) || "");
-    setRunDialogOpen(true);
-  }, [selected, workspacePath, workspaceDefaultProfileId, profiles]);
-
-  useEffect(() => {
-    if (!runDialogOpen || !selected) return;
-    setRunAgentProfileId(resolveRunAgentProfileId({
-      chainDefaultProfileId: selected.default_agent_profile,
-      workspaceDefaultProfileId: selectedRunWorkspaceDefaultProfileId,
-      profiles,
-    }) || "");
-  }, [runDialogOpen, selected, selectedRunWorkspaceDefaultProfileId, profiles]);
+    setRunChainId(selected.id);
+  }, [selected]);
 
   // keyboard shortcut: Cmd+R / Ctrl+R to run selected chain
   useEffect(() => {
@@ -436,44 +408,12 @@ function ChainsPageContent() {
         const tag = (document.activeElement as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
         e.preventDefault();
-        handleOpenRunDialog();
+        openRunChain();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [selected, handleOpenRunDialog]);
-
-  const handleRunChain = async () => {
-    if (!selected) return;
-    setRunLoading(true);
-    setRunError("");
-    try {
-      const chainRes = await fetchWithNamespace(`/api/chains/${encodeURIComponent(selected.id)}`);
-      const chainRaw = await chainRes.json();
-      const chainData = unwrapApiData<{ chain?: Chain }>(chainRaw);
-      if (!chainData.chain) throw new Error("Chain not found");
-      const res = await fetchWithNamespace("/api/chains/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chain: chainData.chain,
-          chainId: selected.id,
-          userPrompt: runGoal.trim() || undefined,
-          workspacePath: effectiveRunWorkspacePath,
-          ...(runAgentProfileId ? { agentProfileId: runAgentProfileId } : {}),
-        }),
-      });
-      const raw = await res.json();
-      const data = unwrapApiData<{ runId?: string }>(raw);
-      if (!res.ok) throw new Error(getApiErrorMessage(data, "Failed to start chain"));
-      setRunDialogOpen(false);
-      router.push(`/runs?highlight=${data.runId}`);
-    } catch (err) {
-      setRunError(err instanceof Error ? err.message : "Failed to start chain");
-    } finally {
-      setRunLoading(false);
-    }
-  };
+  }, [selected, openRunChain]);
 
   const handleOpenPublish = () => {
     if (!selected) return;
@@ -1138,8 +1078,11 @@ function ChainsPageContent() {
           <WorkflowSidebarResizeHandle onMouseDown={onDragStart} />
         </WorkflowSidebarPane>
 
-        {/* Right: detail panel - hidden on mobile when list is shown, full screen when editing on mobile */}
-        <div className={`${editing && selected ? "fixed inset-0 z-50 md:static md:z-auto" : mobileView === "list" ? "hidden md:flex" : "flex"} flex-1 min-w-0 flex-col overflow-y-auto overflow-x-hidden md:flex bg-background`}>
+        {/* Right: detail panel - hidden on mobile when list is shown, full screen when editing on mobile.
+            Outer wrapper = positioned panel area (the run sheet overlays THIS, not the viewport);
+            inner div is the scroll container. relative is view-mode only (editing branch is fixed/static). */}
+        <div className={`${editing && selected ? "fixed inset-0 z-50 md:static md:z-auto" : `${mobileView === "list" ? "hidden md:flex" : "flex"} relative`} flex-1 min-w-0 bg-background`}>
+        <div className="flex h-full w-full flex-col overflow-y-auto overflow-x-hidden">
           {creatingNew ? (
             <NewChainPanel />
           ) : !selected ? (
@@ -1151,7 +1094,7 @@ function ChainsPageContent() {
           ) : (
             <>
               {/* sticky action bar — always visible regardless of content width */}
-              <div className="sticky top-0 z-10 bg-background border-b border-foreground/5 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
+              <div className="sticky top-0 z-10 bg-muted dark:bg-background border-b border-foreground/5 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                   {/* mobile back */}
                   <button onClick={handleBackToList} className="p-1 -ml-1 touch-manipulation md:hidden">
@@ -1247,7 +1190,7 @@ function ChainsPageContent() {
                         <Edit2Filled className="h-3 w-3" />
                         <span className="ml-1">Edit</span>
                       </Button>
-                      <Button size="sm" variant="default" className="h-7 px-2 text-[11px]" onClick={handleOpenRunDialog} data-testid="run-chain-btn">
+                      <Button size="sm" variant="default" className="h-7 px-2 text-[11px]" onClick={openRunChain} data-testid="run-chain-btn">
                         <PlayFilled className="h-3 w-3" />
                         <span className="ml-1">Run</span>
                       </Button>
@@ -1294,7 +1237,7 @@ function ChainsPageContent() {
                 {chainRuns.length === 0 ? (
                   <div className="bg-muted rounded-md px-3 py-4 text-center">
                     <p className="text-xs text-muted-foreground/50">never run</p>
-                    <Button size="sm" variant="default" className="mt-2 h-7 text-xs" onClick={handleOpenRunDialog}>
+                    <Button size="sm" variant="default" className="mt-2 h-7 text-xs" onClick={openRunChain}>
                       <PlayFilled className="h-3 w-3 mr-1" />
                       run it
                     </Button>
@@ -1344,6 +1287,9 @@ function ChainsPageContent() {
               </div>{/* end scrollable body */}
             </>
           )}
+        </div>
+        {/* run chain — overlays the panel area only, not the viewport */}
+        <RunChainSheet chainId={runChainId} open={!!runChainId} onClose={() => setRunChainId(null)} />
         </div>
       </div>
     </div>
@@ -1573,74 +1519,6 @@ function ChainsPageContent() {
       </div>
     )}
 
-    {/* run chain dialog */}
-    <Dialog open={runDialogOpen} onOpenChange={setRunDialogOpen}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-sm">
-            Run: {selected?.name}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="space-y-1">
-            <label htmlFor="run-goal" className="text-xs text-foreground/50">Goal (optional)</label>
-            <Textarea
-              id="run-goal"
-              value={runGoal}
-              onChange={(e) => setRunGoal(e.target.value)}
-              placeholder="What should this chain accomplish?"
-              className="min-h-[80px] bg-muted text-sm resize-none"
-              disabled={runLoading}
-            />
-          </div>
-          {workspaces.length > 0 && (
-            <div className="space-y-1">
-              <label htmlFor="run-workspace" className="text-xs text-foreground/50">Workspace</label>
-              <Select value={runWorkspacePath} onValueChange={setRunWorkspacePath}>
-                <SelectTrigger className="h-8 text-xs bg-muted">
-                  <SelectValue placeholder="default workspace" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default__">default</SelectItem>
-                  {workspaces.map((ws) => (
-                    <SelectItem key={ws.id} value={ws.path}>
-                      {ws.name} <span className="text-foreground/40 ml-1 font-mono text-[10px]">{ws.path}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {profiles.length > 0 && (
-            <div className="space-y-1">
-              <label htmlFor="run-profile" className="text-xs text-foreground/50">Profile</label>
-              <Select value={runAgentProfileId} onValueChange={setRunAgentProfileId}>
-                <SelectTrigger id="run-profile" className="h-8 text-xs bg-muted">
-                  <SelectValue placeholder="profile" />
-                </SelectTrigger>
-                <SelectContent>
-                  {profiles.map((profile) => (
-                    <SelectItem key={profile.id} value={profile.id}>
-                      {profile.name} <span className="text-foreground/40 ml-1 font-mono text-[10px]">{profile.cli}{profile.model ? ` / ${profile.model}` : ""}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {runError && <p className="text-xs text-red-400">{runError}</p>}
-        </div>
-        <DialogFooter>
-          <Button size="sm" variant="outline" onClick={() => setRunDialogOpen(false)} disabled={runLoading}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleRunChain} disabled={runLoading} data-testid="confirm-run-chain-btn">
-            <PlayFilled className="h-3 w-3 mr-1" />
-            {runLoading ? "Starting..." : "Run"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   </>
   );
 }

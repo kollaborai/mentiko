@@ -25,12 +25,17 @@ import { test, expect, type Page, type APIRequestContext } from '@playwright/tes
  * lives in the engine-level harness web/e2e/engine/engine-e2e.sh (which gates CI).
  * This spec covers the browser surface that IS reachable: the fixture chain is
  * created through the app and listed, and — WHEN a session is available — the run
- * page renders with its goal input + start control. When the app-shell gate sends
- * the browser to /login (no session), the spec asserts that gating happened
- * (the route is protected, as designed) instead of skipping or hanging.
+ * sheet (opened from the chain list via the Run button) renders with its goal
+ * input + start control. When the app-shell gate sends the browser to /login (no
+ * session), the spec asserts that gating happened (the route is protected, as
+ * designed) instead of skipping or hanging.
+ *
+ * Note: the chain run surface is a slide-over sheet, not a dedicated route (the
+ * old /chains/[id]/run page was removed). The sheet is opened by clicking the
+ * Run button (data-testid="run-chain-btn") on a selected chain.
  *
  * If your environment DOES have auth (DATABASE_URL + a seeded user), set
- * E2E_TEST_EMAIL / E2E_TEST_PASSWORD and the deeper run-page assertions execute.
+ * E2E_TEST_EMAIL / E2E_TEST_PASSWORD and the deeper run-sheet assertions execute.
  */
 
 const FIXTURE_CHAIN_NAME = 'e2e-fixture-execution-stream';
@@ -110,29 +115,33 @@ test.describe('chain execution stream', () => {
     expect(found, `seeded chain '${FIXTURE_CHAIN_NAME}' must appear in the chains list`).toBeTruthy();
   });
 
-  test('run page is reachable and either renders or is correctly auth-gated', async ({ page }) => {
-    await page.goto(`/chains/${FIXTURE_CHAIN_NAME}/run`);
+  test('run sheet opens from the chain list and either renders or is correctly auth-gated', async ({ page }) => {
+    await page.goto('/chains');
     await page.waitForLoadState('networkidle');
 
     if (!authed && page.url().includes('/login')) {
       // EXPECTED in the default local dev config (no DATABASE_URL, no seeded user):
-      // the app-shell gate protects the run page. Assert the gate fired rather than
+      // the app-shell gate protects /chains. Assert the gate fired rather than
       // skipping — the route IS protected, by design. The hermetic engine proof
       // lives in web/e2e/engine/engine-e2e.sh.
       expect(page.url()).toContain('/login');
       test.info().annotations.push({
         type: 'note',
         description:
-          'run page is auth-gated and no browser session is available in this env; ' +
-          'deep run-page assertions are covered hermetically by web/e2e/engine/engine-e2e.sh',
+          'chain list is auth-gated and no browser session is available in this env; ' +
+          'deep run-sheet assertions are covered hermetically by web/e2e/engine/engine-e2e.sh',
       });
       return;
     }
 
-    // AUTHENTICATED PATH: the run page must render its pre-run GoalInput.
-    await expect(page.locator('h1').first()).toBeVisible({ timeout: 15000 });
+    // AUTHENTICATED PATH: the run surface is a slide-over sheet opened by the Run
+    // button on a selected chain (the old /chains/[id]/run route was removed).
+    await page.locator(`text=${FIXTURE_CHAIN_NAME}`).first().click();
+    const runButton = page.getByTestId('run-chain-btn');
+    await expect(runButton).toBeVisible({ timeout: 15000 });
+    await runButton.click();
 
-    await test.step('goal input renders (pre-run GoalInput)', async () => {
+    await test.step('goal input renders (pre-run GoalInput in the sheet)', async () => {
       await expect(page.locator('text=what should this chain accomplish')).toBeVisible({
         timeout: 15000,
       });
@@ -146,7 +155,7 @@ test.describe('chain execution stream', () => {
       await expect(startButton).toBeVisible({ timeout: 15000 });
       await expect(startButton).toBeDisabled(); // disabled={!goal.trim()} pre-input
 
-      await page.locator('#chain-goal').fill('e2e: smoke the run page (no real execution)');
+      await page.locator('#chain-goal').fill('e2e: smoke the run sheet (no real execution)');
       await expect(startButton).toBeEnabled({ timeout: 5000 });
     });
   });

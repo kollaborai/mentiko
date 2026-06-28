@@ -23,6 +23,7 @@ import { VisualChainEditor as VisualChainEditorOld } from "@/components/chain/vi
 import { VisualChainEditor as VisualChainEditorNew } from "@/components/chain/visual-editor-reactflow";
 import { AddAgentDialog } from "@/components/chain/add-agent-dialog";
 import { TestRunPanel } from "@/components/chain/test-run-panel";
+import { RunChainSheet } from "@/components/chain/run-chain-panel";
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
@@ -151,6 +152,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
 
   // test run panel
   const [showTestRun, setShowTestRun] = useState(false);
+  const [runChainId, setRunChainId] = useState<string | null>(null);
 
   // debug mode
   const [debugMode, setDebugMode] = useState(false);
@@ -607,7 +609,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
   const missingDefaultProfileId = getMissingChainDefaultProfileId(chain.default_agent_profile, agentProfiles);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="relative h-full flex flex-col">
       {/* validation errors */}
       {validationErrors.length > 0 && (
         <div className="px-4 py-2 bg-red-500/10">
@@ -717,7 +719,7 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
             size="sm"
             variant="ghost"
             className="h-8 text-xs"
-            onClick={() => router.push(`/chains/${encodeURIComponent(chain.id)}/run`)}
+            onClick={() => setRunChainId(chain.id)}
           >
             <PlayFilled className="mr-1 h-3 w-3" />
             Run
@@ -1886,6 +1888,9 @@ export function EditChainPage({ chainIdProp, onBack }: { chainIdProp?: string; o
       {showTestRun && chain && (
         <TestRunPanel chain={chain} onClose={() => setShowTestRun(false)} workspaceId={workspaceId} workspacePath={workspacePath} />
       )}
+
+      {/* run chain sheet — shared run surface with view mode */}
+      <RunChainSheet chainId={runChainId} open={!!runChainId} onClose={() => setRunChainId(null)} />
 
       {/* debug panel */}
       <ChainDebugPanel
