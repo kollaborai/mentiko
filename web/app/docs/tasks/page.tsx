@@ -136,11 +136,19 @@ chainBinding: {
         <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
           <div><span className="text-foreground/70">Dependency-aware</span> - only runs when all blockers are closed</div>
           <div><span className="text-foreground/70">Concurrency limit</span> - respects <a href="/settings/system" className="text-foreground/70 underline">max concurrent runs</a> setting</div>
-          <div><span className="text-foreground/70">Auto-close</span> - successful runs automatically close the task</div>
+          <div><span className="text-foreground/70">Completion audit</span> - when a run completes, a run-summary agent judges the outcome and issues a close, decision, or retry verdict; non-auto_run tasks are not audited and stay open for manual close</div>
           <div><span className="text-foreground/70">Retry limit</span> - retries up to 3 times on failure, then stops</div>
           <div><span className="text-foreground/70">Chain analysis</span> - if no chain is assigned, auto-run analyzes the task and recommends one</div>
         </div>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-2">Completion audit verdicts:</p>
+        <div className="bg-card rounded-md p-3 text-xs text-foreground/60 space-y-1 mb-3">
+          <div><span className="text-foreground/70">close</span> - acceptance criteria satisfied; task is auto-closed</div>
+          <div><span className="text-foreground/70">decision</span> - run finished but a human must choose how to proceed; a decision subtask is created under the task and research kicks off automatically; the parent task waits</div>
+          <div><span className="text-foreground/70">retry</span> - work is incomplete or missed the intent; task is reopened with auditor comments and re-kicked on the next cycle; capped at 2 retries, then escalates to a decision</div>
+          <div><span className="text-foreground/70">fail-safe</span> - missing, malformed, or unrecognized audit output escalates to &quot;decision&quot;; ambiguous output never auto-closes a task</div>
+        </div>
         <p className="text-xs text-foreground/40 leading-relaxed">
+          Audit runs on the next reconciler sweep (up to 60 s after the run ends).{" "}
           Configure auto-run and concurrent limits at{" "}
           <a href="/settings/system" className="text-foreground/50 underline">Settings &rarr; System</a>.
         </p>

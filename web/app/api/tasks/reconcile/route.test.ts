@@ -28,6 +28,11 @@ jest.mock("@/lib/tasks/task-store", () => ({
   validateTaskId: (id: string) => id,
 }));
 
+const mockStartTaskOutcomeAudit = jest.fn().mockResolvedValue({ status: "started" });
+jest.mock("@/lib/tasks/task-outcome-audit", () => ({
+  startTaskOutcomeAudit: (...args: unknown[]) => mockStartTaskOutcomeAudit(...args),
+}));
+
 jest.mock("@/lib/workspaces/workspace-params", () => ({
   getWorkspaceId: jest.fn().mockReturnValue(undefined),
   hasWorkspaceParam: jest.fn().mockReturnValue(false),
@@ -200,7 +205,7 @@ describe("GET /api/tasks/reconcile", () => {
     );
   });
 
-  it("closes an auto-run task when a real execution run completes", async () => {
+  it("audits an auto-run task when a real execution run completes", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -251,18 +256,10 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
-    expect(mockTaskClose).toHaveBeenCalledWith("default", "TASK-044", undefined, "default");
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      "default",
-      expect.objectContaining({
-        type: "success",
-        title: "Auto-run completed",
-        metadata: {
-          taskId: "TASK-044",
-          runId: "run-exec",
-        },
-      }),
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
     );
+    expect(mockTaskClose).not.toHaveBeenCalled();
   });
 
   it("does not close a completed auto-run task until completion proof metadata exists", async () => {
@@ -316,7 +313,7 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it("closes an open auto-run task whose execution metadata already completed", async () => {
+  it("audits an open auto-run task whose execution metadata already completed", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -351,23 +348,15 @@ describe("GET /api/tasks/reconcile", () => {
           taskId: "TASK-044",
           runId: "run-exec",
           previousStatus: "completed",
-          newStatus: "closed",
-          reason: "completed auto-run task was still open",
+          newStatus: "audit_started",
+          reason: "completion audit triggered",
         }),
       ],
     });
-    expect(mockTaskClose).toHaveBeenCalledWith("default", "TASK-044", undefined, "default");
-    expect(mockCreateNotification).toHaveBeenCalledWith(
-      "default",
-      expect.objectContaining({
-        type: "success",
-        title: "Auto-run completed",
-        metadata: {
-          taskId: "TASK-044",
-          runId: "run-exec",
-        },
-      }),
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
     );
+    expect(mockTaskClose).not.toHaveBeenCalled();
   });
 
   it("does not close a completed analysis run while a generated chain is pending", async () => {

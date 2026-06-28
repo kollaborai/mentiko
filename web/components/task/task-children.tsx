@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownFilled, ArrowUpFilled, Link2Filled as Link2 } from "@aliimam/icons";
+import { ArrowDownFilled, ArrowUpFilled, JudgeFilled, Link2Filled as Link2 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
@@ -91,6 +91,12 @@ export function TaskChildren({ items, onSelectChild, depInfo }: TaskChildrenProp
                       rawPriority={child.rawPriority}
                     />
                     <TypeBadge type={child.type} />
+                    {child.type === "decision" && (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-blue-400/70">
+                        <JudgeFilled className="h-2.5 w-2.5" />
+                        gate
+                      </span>
+                    )}
                     <span className="font-mono text-foreground/30">{shortId(child.id)}</span>
                     {child.chainBinding && (
                       <span className="inline-flex items-center gap-0.5 text-foreground/30">

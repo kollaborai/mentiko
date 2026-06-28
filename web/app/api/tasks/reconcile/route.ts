@@ -2,8 +2,9 @@ import { NextRequest } from "next/server";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
-import { taskList, taskUpdate, taskClose } from "@/lib/tasks/task-store";
+import { taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
+import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getLiveSessions } from "@/lib/pty/pty-client";
 import { createNotification } from "@/lib/notifications/notification-server";
@@ -30,12 +31,14 @@ interface ReconcileResult {
   reason: string;
 }
 
-function canCloseCompletedAutoRun(meta: Record<string, unknown>): boolean {
+// A completed auto-run is eligible for a completion audit once per run, as long
+// as it hasn't already been audited and isn't a generation/meta run.
+function shouldAuditCompletedAutoRun(meta: Record<string, unknown>): boolean {
   return (
     meta.auto_run === true &&
     !meta.generation_job_id &&
-    meta.last_run_decision_required !== true &&
-    meta.last_run_outcome === "complete"
+    !!meta.last_run_id &&
+    meta.completion_audit_run_id !== meta.last_run_id
   );
 }
 
@@ -71,11 +74,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const lastRunStatus =
       typeof meta?.last_run_status === "string" ? meta.last_run_status : undefined;
     return (
-      meta?.auto_run === true &&
-      meta?.last_run_id &&
+      !!meta &&
       !!lastRunStatus &&
       COMPLETED_RUN_STATUSES.has(lastRunStatus) &&
-      canCloseCompletedAutoRun(meta)
+      shouldAuditCompletedAutoRun(meta)
     );
   });
 
@@ -165,21 +167,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
-        // auto-run handling: close on success, clear state on failure so retry works
+        // auto-run handling: on success, hand the completed run to the
+        // completion auditor (which decides close/decision/retry); on failure,
+        // clear state so the auto-run poller retries from scratch.
         const autoRun = meta?.auto_run === true;
-        if (autoRun && newStatus === "completed" && canCloseCompletedAutoRun(updatedMeta)) {
+        if (autoRun && newStatus === "completed") {
           try {
-            taskClose(orgId, safeId, undefined, namespaceId);
-            createNotification(namespaceId, {
-              type: "success",
-              title: "Auto-run completed",
-              message: `Task "${issue.title}" completed successfully and was closed.`,
-              metadata: { taskId: issue.id, runId },
-            });
-          } catch (closeError) {
+            await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
+          } catch (auditError) {
             failed.push({
               taskId: issue.id,
-              error: `Failed to close task: ${(closeError as Error).message}`,
+              error: `Failed to start completion audit: ${(auditError as Error).message}`,
             });
           }
         } else if (autoRun && (newStatus === "stopped" || newStatus === "failed")) {
@@ -263,26 +261,17 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         continue;
       }
 
-      if (!canCloseCompletedAutoRun(meta)) {
-        continue;
-      }
-
       const safeId = validateTaskId(issue.id);
-      taskClose(orgId, safeId, undefined, namespaceId);
-      createNotification(namespaceId, {
-        type: "success",
-        title: "Auto-run completed",
-        message: `Task "${issue.title}" completed successfully and was closed.`,
-        metadata: { taskId: issue.id, runId },
-      });
+      const audit = await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
-        `task ${issue.id} run ${runId}: completed`, "completed auto-run task was still open");
+        `task ${issue.id} run ${runId}: audit ${audit.status}`,
+        "completion audit triggered for completed auto-run task");
       results.push({
         taskId: issue.id,
         runId,
         previousStatus: String(meta.last_run_status || "completed"),
-        newStatus: "closed",
-        reason: "completed auto-run task was still open",
+        newStatus: `audit_${audit.status}`,
+        reason: "completion audit triggered",
       });
     } catch (error) {
       failed.push({

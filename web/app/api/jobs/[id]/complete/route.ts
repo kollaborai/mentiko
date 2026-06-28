@@ -10,6 +10,8 @@ import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
 import { importGeneratedTaskTree, type GeneratedTask } from "@/lib/tasks/generated-task-import";
+import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
+import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 
 export const dynamic = "force-dynamic";
 
@@ -418,6 +420,42 @@ export const POST = withErrorHandling(async (
       }
     } catch (e) {
       console.error("Failed to write task outcome summary:", e);
+    }
+  }
+
+  // completion audit: the run-summary agent doubles as an auditor and embeds a
+  // triage verdict (close | decision | retry) under result.audit. Apply it so a
+  // completed task-backed run self-closes, escalates to a decision, or reopens
+  // for a context-injected retry.
+  if (
+    updatedJob?.type === "task_run_summary" &&
+    updatedJob.taskId &&
+    updatedJob.status === "complete" &&
+    updatedJob.result
+  ) {
+    try {
+      const audit = extractCompletionAudit(updatedJob.result);
+      const sourceRunId = typeof updatedJob.input?.sourceRunId === "string"
+        ? updatedJob.input.sourceRunId
+        : undefined;
+      const auditTask = taskGet(orgId, updatedJob.taskId, namespaceId);
+      if (audit && sourceRunId && auditTask) {
+        const outcome = await applyCompletionAudit({
+          request,
+          namespaceId,
+          orgId,
+          task: auditTask,
+          audit,
+          runId: sourceRunId,
+          workspacePath: workspacePathFromJobInput(updatedJob.input || {}),
+          metadata: metadataRecord(auditTask.metadata),
+        });
+        console.log(
+          `[completion-audit] task ${updatedJob.taskId} run ${sourceRunId}: ${audit.verdict} -> ${outcome.action}`,
+        );
+      }
+    } catch (e) {
+      console.error("Failed to apply completion audit:", e);
     }
   }
 

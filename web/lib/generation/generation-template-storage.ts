@@ -1668,6 +1668,17 @@ RULES:
 7. If no improvement signal is present, include "No orchestration issue detected."
 8. If no next action is needed, use an empty next_actions array.
 
+COMPLETION AUDIT:
+You are also the auditor of record for this task. Decide exactly one verdict in the "audit" object:
+- "close": every acceptance criterion is satisfied and no blocking issue was found. The task is done.
+- "decision": the run finished but a human must choose how to proceed — e.g. real issues were found that need prioritization, or it is unclear whether to create follow-up work or move to the next task. Put the question in audit.decision.prompt and suggested options in audit.decision.options_hint.
+- "retry": the work is wrong, incomplete, or missed the intent, and a re-run would do better. Put what to do differently in audit.retry.guidance, any notes for the next attempt in audit.retry.comments, and any task edits in audit.retry.task_tweaks.
+Audit rules:
+a. Judge against the ACCEPTANCE CRITERIA in TASK DATA, not against whether the run merely finished.
+b. Be conservative: if you are unsure whether the work is correct, choose "decision", never "close".
+c. Only choose "retry" when the fix is a re-run with clearer guidance — not when a human judgment call is required.
+d. audit.reason is always required and must justify the verdict from the evidence.
+
 OUTPUT FORMAT:
 Output ONLY valid JSON matching this schema:
 
@@ -1680,9 +1691,16 @@ Output ONLY valid JSON matching this schema:
   "what_happened": ["specific factual event from the run"],
   "evidence": ["specific artifact, finding, or acceptance proof"],
   "improvement_signals": ["system-level learning or No orchestration issue detected."],
-  "next_actions": ["actionable next step"]
+  "next_actions": ["actionable next step"],
+  "audit": {
+    "verdict": "close" | "decision" | "retry",
+    "reason": "why this verdict, grounded in the evidence",
+    "decision": { "prompt": "the question for the human", "options_hint": "suggested options/context" },
+    "retry": { "guidance": "what to do differently", "comments": ["note for the next attempt"], "task_tweaks": { "title": "", "description": "", "acceptance_criteria": "" } }
+  }
 }
 
+Include "decision" only when verdict is "decision"; include "retry" only when verdict is "retry".
 Raw JSON only. No backticks, no explanation, nothing but the JSON object.`;
 
 export const DEFAULT_FAILURE_TRIAGE_TEMPLATE = `You are a Mentiko quality-gate triage agent. Convert a failed run event into a small, reviewable task plan.

@@ -162,6 +162,7 @@ export default function DecisionsDocPage() {
           <div>Without plan: creates single task from description</div>
           <div>Tasks link back to decision via metadata</div>
           <div>Decision status changes to &quot;approved&quot;</div>
+          <div>Auto-created by the completion auditor when a completed auto-run task needs a human call</div>
         </div>
       </section>
 
