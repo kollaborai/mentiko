@@ -40,6 +40,7 @@ function McpAuthFlow() {
   const { data: session, isPending: sessionPending } = useSession();
   const searchParams = useSearchParams();
   const code = (searchParams.get("code") || "").trim();
+  const isUi = searchParams.get("ui") === "1";
 
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [infoState, setInfoState] = useState<InfoState>("idle");
@@ -100,11 +101,30 @@ function McpAuthFlow() {
       setSubmitting(true);
       setActionError("");
       try {
+        // UI-control grants bind the window the user is approving from. The bar
+        // persists its engine sessionId to localStorage (shared same-origin), so
+        // read the most recent one and send it as the routing target.
+        const body: Record<string, unknown> = { user_code: code, decision };
+        if (decision === "approve" && isUi) {
+          let target = "";
+          try {
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith("mentiko-kollabor-session-id:")) {
+                const val = localStorage.getItem(key);
+                if (val) target = val;
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+          body.target_session_id = target;
+        }
         const res = await fetch("/api/mentiko-mcp/auth/device/approve", {
           method: "POST",
           headers: { "content-type": "application/json" },
           credentials: "same-origin",
-          body: JSON.stringify({ user_code: code, decision }),
+          body: JSON.stringify(body),
         });
         const data = await res.json().catch(() => ({}));
         if (res.ok && data?.ok) {
@@ -118,7 +138,7 @@ function McpAuthFlow() {
         setSubmitting(false);
       }
     },
-    [code, submitting],
+    [code, submitting, isUi],
   );
 
   return <Shell>{renderContent()}</Shell>;

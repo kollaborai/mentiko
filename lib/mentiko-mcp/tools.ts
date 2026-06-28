@@ -1062,6 +1062,11 @@ const ALL_TOOLS: Tool[] = [
     inputSchema: { type: "object", properties: {} }
   },
   {
+    name: "request_ui_control",
+    description: "Request permission to control the user's Mentiko UI in ONE specific browser window — navigate pages, highlight elements, open chains/runs/agents, show toasts. Returns a one-time code + link; the user opens it IN THE WINDOW THEY WANT CONTROLLED and approves, which binds that window. After approving, call request_ui_control again to finish. Effects then route to that window only, never other windows or users. Use when the user asks you to drive, control, or show them something in their UI.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
     name: "list_secrets",
     description: "List stored secrets (names and env var names only, never values).",
     inputSchema: { type: "object", properties: {} }

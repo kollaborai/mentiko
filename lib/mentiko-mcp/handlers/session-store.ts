@@ -78,6 +78,60 @@ export function clearPending(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// UI-control grant (scoped signaling token + bound window sessionId), written
+// by the request_ui_control flow and read at runtime by dispatch.ts.
+//   ~/.mentiko/mcp/ui-control.json   { signaling_token, session_id, updatedAt }
+//   ~/.mentiko/mcp/pending-ui.json   { device_code, user_code, verification_url }
+// ---------------------------------------------------------------------------
+
+const UI_CONTROL_FILE = () => join(mcpDir(), "ui-control.json");
+const PENDING_UI_FILE = () => join(mcpDir(), "pending-ui.json");
+
+export interface UiControlGrant {
+  signaling_token?: string;
+  session_id?: string;
+  updatedAt?: number;
+}
+
+export interface PendingUi {
+  device_code: string;
+  user_code: string;
+  verification_url: string;
+}
+
+export function readUiControl(): UiControlGrant | null {
+  return readJson<UiControlGrant>(UI_CONTROL_FILE());
+}
+
+export function writeUiControl(grant: UiControlGrant): void {
+  writeJson(UI_CONTROL_FILE(), { ...grant, updatedAt: nowMs() });
+}
+
+export function clearUiControl(): void {
+  try {
+    rmSync(UI_CONTROL_FILE(), { force: true });
+  } catch {
+    // ignore
+  }
+}
+
+export function readPendingUi(): PendingUi | null {
+  return readJson<PendingUi>(PENDING_UI_FILE());
+}
+
+export function writePendingUi(p: PendingUi): void {
+  writeJson(PENDING_UI_FILE(), p);
+}
+
+export function clearPendingUi(): void {
+  try {
+    rmSync(PENDING_UI_FILE(), { force: true });
+  } catch {
+    // ignore
+  }
+}
+
 // Date.now via an indirection so the rest of the bridge can stay testable.
 function nowMs(): number {
   return Date.now();

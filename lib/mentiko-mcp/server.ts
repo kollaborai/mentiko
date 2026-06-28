@@ -22,6 +22,7 @@ import * as schedules from "./handlers/schedules.js";
 import * as applications from "./handlers/applications.js";
 import * as runtime from "./handlers/runtime.js";
 import * as auth from "./handlers/auth.js";
+import * as uiControl from "./handlers/ui-control.js";
 
 // Simple fuzzy matching: score based on substring presence and position
 function fuzzyMatch(query: string, target: string): number {
@@ -161,6 +162,19 @@ async function checkPermission(
 
   if (!isB && !isC) return { allowed: true, approvedAlwaysGranted: false };
 
+  // Approval is the bridge's responsibility ONLY in application/bar mode — i.e.
+  // when the Mentiko app launched this subprocess wired to the portal's approval
+  // UI. The signal is MENTIKO_INBOX_KEY, the dispatch-channel credential the app
+  // injects (see web/lib/kollabor-mcp-server-env.ts; the same launch sets
+  // MENTIKO_MCP_TOOL_SCOPE=bar). Without it, the bridge is running under a standard
+  // MCP host (Claude Code, Claude Desktop, CI) that has ALREADY obtained the user's
+  // approval for this tool call before invoking it — re-gating here is redundant
+  // double-gating. Defer to the host and allow.
+  if (!process.env.MENTIKO_INBOX_KEY) {
+    return { allowed: true, approvedAlwaysGranted: false };
+  }
+
+  // ----- application/bar mode: per-call approval through the portal -----
   // tier-B: skip if already approved-always this session
   if (isB && approvedAlways.has(toolName)) {
     return { allowed: true, approvedAlwaysGranted: false };
@@ -727,6 +741,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     // re-authenticate this MCP connection (device flow → refresh token)
     if (name === "reconnect") {
       const message = await auth.reconnect();
+      return textResult(message);
+    }
+
+    // request user-approved control of one browser window's UI (signaling grant)
+    if (name === "request_ui_control") {
+      const message = await uiControl.requestUiControl();
       return textResult(message);
     }
 

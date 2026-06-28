@@ -19,6 +19,7 @@
 import { randomBytes, createHash } from "crypto";
 import { getDb } from "@/lib/auth/auth-server";
 import { mintSessionToken } from "@/lib/auth/session-token";
+import { mintSignalToken } from "@/lib/auth/mcp-signal-token";
 import type { OrgRole } from "@/lib/orgs/org-types";
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
@@ -67,6 +68,19 @@ function ensureTables(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_refresh_user ON mcp_refresh_token(user_id);
   `);
+  // Additive columns for UI-control grants (reuse the device-code table). SQLite
+  // has no ADD COLUMN IF NOT EXISTS, so try each and ignore "duplicate column".
+  for (const col of [
+    "grant_kind TEXT",          // 'data' (default/legacy) | 'ui'
+    "target_session_id TEXT",   // bound approving-window sessionId (ui grants)
+    "pickup_signaling TEXT",    // single-use scoped signaling token (ui grants)
+  ]) {
+    try {
+      db.exec(`ALTER TABLE mcp_device_code ADD COLUMN ${col}`);
+    } catch {
+      // column already exists — fine
+    }
+  }
   tablesCreated = true;
 }
 
@@ -310,6 +324,139 @@ export async function denyDeviceCode(userCode: string): Promise<{ ok: boolean }>
     userCode.trim().toUpperCase(),
   );
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// UI-control grants (external bridge → drive ONE approved browser window)
+// ---------------------------------------------------------------------------
+//
+// Reuses the device-code table + /mcp-auth approval UX, but instead of a data
+// refresh token the approve step binds the approving WINDOW's sessionId and mints
+// a scoped signaling token (see mcp-signal-token). The bridge picks up
+// { signaling_token, session_id } once, then dispatches UI effects to that window
+// only. The signaling token cannot read/mutate data (ops routes reject its
+// audience) and cannot target any other session.
+
+/** Start a UI-control grant. Verification URL carries &ui=1 so the approve page
+ *  knows to capture the window's sessionId. */
+export async function createUiGrant(opts: {
+  verificationBase: string;
+  clientLabel?: string;
+}): Promise<DeviceStart | null> {
+  const db = await getDb();
+  if (!db) return null;
+  ensureTables(db);
+
+  const deviceCode = randomBytes(32).toString("hex");
+  const userCode = genUserCode();
+  const now = Date.now();
+
+  db.prepare(
+    `INSERT INTO mcp_device_code
+       (device_code_hash, user_code, status, client_label, scopes, grant_kind, created_at, expires_at)
+     VALUES (?, ?, 'pending', ?, ?, 'ui', ?, ?)`,
+  ).run(
+    sha256(deviceCode),
+    userCode,
+    opts.clientLabel ?? "MCP client",
+    JSON.stringify([]),
+    now,
+    now + DEVICE_CODE_TTL_MS,
+  );
+
+  const base = opts.verificationBase.replace(/\/+$/, "");
+  return {
+    device_code: deviceCode,
+    user_code: userCode,
+    verification_url: `${base}/mcp-auth?code=${encodeURIComponent(userCode)}&ui=1`,
+    interval: POLL_INTERVAL_SECONDS,
+    expires_in: Math.floor(DEVICE_CODE_TTL_MS / 1000),
+  };
+}
+
+/** Grant kind for a user_code ('ui' | 'data'), or null if unknown. For the approve page. */
+export async function getGrantKind(userCode: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  ensureTables(db);
+  const row = db
+    .prepare(`SELECT grant_kind FROM mcp_device_code WHERE user_code = ?`)
+    .get(userCode.trim().toUpperCase()) as { grant_kind: string | null } | undefined;
+  return row ? row.grant_kind || "data" : null;
+}
+
+/** Approve a UI-control grant from the cookie-authed window the user chose.
+ *  targetSessionId is that window's bar sessionId — effects route there only. */
+export async function approveUiGrant(
+  userCode: string,
+  user: ApprovingUser,
+  targetSessionId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const db = await getDb();
+  if (!db) return { ok: false, error: "no database" };
+  ensureTables(db);
+
+  const code = userCode.trim().toUpperCase();
+  const sid = (targetSessionId || "").trim();
+  if (!sid) return { ok: false, error: "no target window session" };
+
+  const row = db
+    .prepare(`SELECT status, grant_kind, expires_at FROM mcp_device_code WHERE user_code = ?`)
+    .get(code) as { status: string; grant_kind: string | null; expires_at: number } | undefined;
+  if (!row) return { ok: false, error: "unknown code" };
+  if ((row.grant_kind || "data") !== "ui") return { ok: false, error: "not a UI-control grant" };
+  if (row.status !== "pending") return { ok: false, error: `code already ${row.status}` };
+  if (Date.now() > row.expires_at) return { ok: false, error: "code expired" };
+
+  const signalToken = await mintSignalToken({ sub: user.id, sid });
+
+  db.prepare(
+    `UPDATE mcp_device_code
+       SET status = 'approved', user_id = ?, target_session_id = ?, pickup_signaling = ?
+     WHERE user_code = ?`,
+  ).run(user.id, sid, signalToken, code);
+
+  return { ok: true };
+}
+
+export interface UiPollResult {
+  status: PollStatus;
+  signaling_token?: string;
+  session_id?: string;
+}
+
+/** Poll a UI-control grant. On approval, delivers the signaling token + bound
+ *  sessionId exactly once (pickup slot cleared, row marked consumed). */
+export async function pollUiGrant(deviceCode: string): Promise<UiPollResult> {
+  const db = await getDb();
+  if (!db) return { status: "expired" };
+  ensureTables(db);
+
+  const row = db
+    .prepare(
+      `SELECT status, target_session_id, pickup_signaling, expires_at
+         FROM mcp_device_code WHERE device_code_hash = ?`,
+    )
+    .get(sha256(deviceCode)) as
+    | { status: string; target_session_id: string | null; pickup_signaling: string | null; expires_at: number }
+    | undefined;
+
+  if (!row) return { status: "expired" };
+  if (row.status === "denied") return { status: "denied" };
+  if (Date.now() > row.expires_at && row.status !== "approved") return { status: "expired" };
+
+  if (row.status === "approved" && row.pickup_signaling && row.target_session_id) {
+    db.prepare(
+      `UPDATE mcp_device_code SET status = 'consumed', pickup_signaling = NULL WHERE device_code_hash = ?`,
+    ).run(sha256(deviceCode));
+    return {
+      status: "approved",
+      signaling_token: row.pickup_signaling,
+      session_id: row.target_session_id,
+    };
+  }
+  if (row.status === "consumed") return { status: "expired" };
+  return { status: "pending" };
 }
 
 // ---------------------------------------------------------------------------

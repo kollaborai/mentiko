@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/auth";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
-import { approveDeviceCode, denyDeviceCode } from "@/lib/auth/mcp-device-auth";
+import { approveDeviceCode, approveUiGrant, denyDeviceCode, getGrantKind } from "@/lib/auth/mcp-device-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "could not resolve user" }, { status: 401 });
   }
 
-  let body: { user_code?: string; decision?: string };
+  let body: { user_code?: string; decision?: string; target_session_id?: string };
   try {
     body = await request.json();
   } catch {
@@ -54,14 +54,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, decision: "deny" });
   }
 
-  const result = await approveDeviceCode(userCode, {
+  const approvingUser = {
     id: user.id,
     namespaceId: user.namespaceId,
     orgId: user.orgId,
     role: user.role,
-  });
+  };
+  // UI-control grants bind the approving window's sessionId and mint a scoped
+  // signaling token; data device codes mint a refresh/access token as before.
+  const kind = await getGrantKind(userCode);
+  const result =
+    kind === "ui"
+      ? await approveUiGrant(userCode, approvingUser, (body.target_session_id || "").trim())
+      : await approveDeviceCode(userCode, approvingUser);
   if (!result.ok) {
     return NextResponse.json({ error: result.error || "approval failed" }, { status: 409 });
   }
-  return NextResponse.json({ ok: true, decision: "approve" });
+  return NextResponse.json({ ok: true, decision: "approve", kind: kind || "data" });
 }

@@ -1,13 +1,19 @@
 /**
- * dispatch.ts — HTTP client for the MCP → web inbox.
+ * dispatch.ts — HTTP client for the MCP → web inbox (UI-effect signaling).
  *
- * Signaling channel (dispatch/reply) still uses MENTIKO_INBOX_KEY.
- * sessionId is included in every dispatch so effects route to the correct tab.
- * WEB_URL defaults to the next.js dev/prod URL on the same container loopback.
+ * Credentials are resolved per call:
+ *   - MENTIKO_INBOX_KEY (env): app-launched bar bridge → X-Mentiko-Inbox-Key,
+ *     routes effects to MENTIKO_SESSION_ID.
+ *   - else ~/.mentiko/mcp/ui-control.json (a user-approved UI-control grant) →
+ *     Authorization: Bearer <signaling token>, routes to the approved window's id.
+ *   - else headless + ungranted → effects no-op (there is no UI to drive, so a
+ *     post-write navigate must not fail the tool, and interactive prompts can't
+ *     be shown).
  */
 
+import { readUiControl } from "./handlers/session-store.js";
+
 const WEB_URL = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
-const SESSION_ID = process.env.MENTIKO_SESSION_ID || "global";
 const FETCH_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 500;
 const DELIVERY_POLL_INTERVAL_MS = 500;
@@ -18,14 +24,31 @@ interface DispatchEffectOptions {
   waitForDelivery?: boolean;
 }
 
-function inboxKey(): string {
-  const k = process.env.MENTIKO_INBOX_KEY;
-  if (!k) {
-    throw new Error(
-      "MENTIKO_INBOX_KEY not set — cannot reach mentiko-web dispatch endpoint",
-    );
+interface DispatchCreds {
+  headers: Record<string, string>;
+  sessionId: string;
+}
+
+/**
+ * Who do we dispatch as? env inbox key (bar) wins; else a granted UI-control
+ * sidecar (scoped signaling token); else null = headless with no UI to drive.
+ */
+function resolveCreds(): DispatchCreds | null {
+  const inbox = process.env.MENTIKO_INBOX_KEY;
+  if (inbox) {
+    return {
+      headers: { "X-Mentiko-Inbox-Key": inbox },
+      sessionId: process.env.MENTIKO_SESSION_ID || "global",
+    };
   }
-  return k;
+  const ui = readUiControl();
+  if (ui?.signaling_token && ui?.session_id) {
+    return {
+      headers: { Authorization: `Bearer ${ui.signaling_token}` },
+      sessionId: ui.session_id,
+    };
+  }
+  return null;
 }
 
 async function withTimeout<T>(p: Promise<T>, ms = FETCH_TIMEOUT_MS): Promise<T> {
@@ -41,18 +64,16 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForDelivery(effectId: string): Promise<void> {
+async function waitForDelivery(effectId: string, creds: DispatchCreds): Promise<void> {
   const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
       const url = new URL(`${WEB_URL}/api/mentiko-mcp/dispatch`);
       url.searchParams.set("id", effectId);
-      url.searchParams.set("sessionId", SESSION_ID);
+      url.searchParams.set("sessionId", creds.sessionId);
 
       const res = await withTimeout(
-        fetch(url, {
-          headers: { "X-Mentiko-Inbox-Key": inboxKey() },
-        }),
+        fetch(url, { headers: creds.headers }),
         Math.min(FETCH_TIMEOUT_MS, Math.max(250, deadline - Date.now())),
       );
       if (res.ok) {
@@ -68,7 +89,7 @@ async function waitForDelivery(effectId: string): Promise<void> {
     await sleep(DELIVERY_POLL_INTERVAL_MS);
   }
   throw new Error(
-    `dispatch ${effectId} was not delivered to session ${SESSION_ID} within ${DELIVERY_TIMEOUT_MS}ms`,
+    `dispatch ${effectId} was not delivered to session ${creds.sessionId} within ${DELIVERY_TIMEOUT_MS}ms`,
   );
 }
 
@@ -77,14 +98,18 @@ export async function dispatchEffect(
   payload: Record<string, unknown>,
   options: DispatchEffectOptions = {},
 ): Promise<{ ok: true; id?: string }> {
+  const creds = resolveCreds();
+  // No UI target (headless, no grant) — fire-and-forget effects no-op so a
+  // successful write isn't reported as a failure.
+  if (!creds) {
+    return { ok: true };
+  }
+
   const res = await withTimeout(
     fetch(`${WEB_URL}/api/mentiko-mcp/dispatch`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Mentiko-Inbox-Key": inboxKey(),
-      },
-      body: JSON.stringify({ kind, payload, sessionId: SESSION_ID }),
+      headers: { "Content-Type": "application/json", ...creds.headers },
+      body: JSON.stringify({ kind, payload, sessionId: creds.sessionId }),
     }),
   );
   if (!res.ok) {
@@ -93,7 +118,7 @@ export async function dispatchEffect(
   }
   const data = (await res.json()) as { ok: true; id?: string };
   if (options.waitForDelivery && data.id) {
-    await waitForDelivery(data.id);
+    await waitForDelivery(data.id, creds);
   }
   return data;
 }
@@ -102,18 +127,18 @@ export async function waitForResult(
   toolId: string,
   timeoutMs: number = DEFAULT_REPLY_TIMEOUT_MS,
 ): Promise<unknown> {
+  const creds = resolveCreds();
+  if (!creds) {
+    throw new Error("no UI channel to wait on (headless, ungranted)");
+  }
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const url = new URL(`${WEB_URL}/api/mentiko-mcp/reply`);
       url.searchParams.set("toolId", toolId);
-      url.searchParams.set("sessionId", SESSION_ID);
+      url.searchParams.set("sessionId", creds.sessionId);
 
-      const res = await withTimeout(
-        fetch(url, {
-          headers: { "X-Mentiko-Inbox-Key": inboxKey() },
-        }),
-      );
+      const res = await withTimeout(fetch(url, { headers: creds.headers }));
       if (res.status === 200) {
         const data = (await res.json()) as { result: unknown };
         return data.result;
