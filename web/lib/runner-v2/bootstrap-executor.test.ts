@@ -133,6 +133,11 @@ describe("runner-v2 bootstrap executor", () => {
   it("does not send instructions when the agent cli readiness never appears", async () => {
     jest.useFakeTimers();
     const root = tempDir();
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
     const executor = {
       remove: jest.fn(async () => {}),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),

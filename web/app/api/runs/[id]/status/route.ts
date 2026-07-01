@@ -59,5 +59,6 @@ export const GET = withErrorHandling(async (
     started: run.started,
     completed: run.completed || null,
     agents: annotatedAgents,
+    runnerV2: run.runnerV2 || { attempts: [] },
   });
 });
