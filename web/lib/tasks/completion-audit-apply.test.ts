@@ -295,4 +295,35 @@ describe("applyCompletionAudit", () => {
       "default",
     );
   });
+
+  // 7. regression: FEAT-014 stayed "closed" even after the auditor flagged
+  // decision_required and spawned a decision subtask, because this path never
+  // touched task.status. A "decision" verdict means the outcome is NOT
+  // settled, so a closed task must be reopened.
+  it("decision: reopens a closed task to 'blocked' before creating the decision subtask", async () => {
+    const task = makeTask({ status: "closed" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Chain produced a specification, not working code.",
+      decision: { prompt: "Proceed to implementation or refine the spec?" },
+    };
+
+    const result = await applyCompletionAudit(makeInput(task, audit));
+
+    expect(result.action).toBe("decision_created");
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
+  });
+
+  it("decision: does not touch status when the task is already open", async () => {
+    const task = makeTask({ status: "in_progress" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which way?" },
+    };
+
+    await applyCompletionAudit(makeInput(task, audit));
+
+    expect(taskUpdate).not.toHaveBeenCalled();
+  });
 });

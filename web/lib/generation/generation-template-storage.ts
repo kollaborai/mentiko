@@ -102,6 +102,23 @@ CHAIN DESIGN PRINCIPLES:
    Orchestration: ["read_files"]
    Notification only: []
 
+   DELIVERY RULE (non-negotiable when the request is asking for a feature, fix, or
+   concrete piece of work — not a pure research/analysis/decision question):
+   At least one agent in the chain MUST have "edit_files" in its authorities and an
+   explicit instruction to implement the acceptance criteria as real, working code —
+   not a specification, not a design document, not a "next steps for the code
+   generator" handoff. A chain built entirely from read_files/run_commands-only
+   agents (analyzers, designers, planners, "synthesizers") produces documents, not
+   software, and does NOT satisfy a delivery request no matter how thorough its
+   output looks. If the request explicitly IS a research/analysis/design-only ask,
+   read-only agents are correct — but say so nowhere in your output implies delivery
+   happened when it didn't. When in doubt about whether the request wants working
+   code, assume it does and include an edit_files agent.
+   The LAST agent in a delivery chain should verify its own work: run the relevant
+   build/lint/test command, or read back the file it just wrote, and only emit
+   completion once the acceptance criteria are demonstrably true — not merely
+   "specified".
+
 7. EXISTING AGENTS — prefer $ref over inline
    Check {{AGENT_CATALOG}} for agents that match your needs:
    - Same role and capabilities? Use {"$ref": "agent-id"}
@@ -180,6 +197,9 @@ REQUIREMENTS:
 6. Wire agents together: each agent's emits must match a downstream agent's triggers
 7. For complex requests: use review loops, parallel agents, or conditional branching
 8. Match the architectural complexity to what the user actually needs
+9. If this is a delivery request (feature/fix/concrete work, see DELIVERY RULE above),
+   at least one agent must have "edit_files" authority and implement real code — a
+   chain of only analyzers/designers/planners is a rejected output for this case
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;
@@ -372,6 +392,20 @@ DECISION RULES:
 - Always provide 1-3 alternatives from existing chains if any are partially relevant
 - For "use_existing": include match_reasons as bullet points explaining why this chain fits
 - For "generate_new": include a suggested chain name, description, agent list, and a generation_prompt ready for the chain generator API
+
+DELIVERY RULE (applies when the task's type in TASK TO ANALYZE is "feature", "task", or
+"bug" — these promise working software, not a document):
+- For "use_existing": only recommend a catalog chain if it includes an agent with
+  "edit_files" authority that actually implements things, or match_reasons show concrete
+  evidence the work is already done in the workspace (real file paths, passing tests, a
+  working endpoint). Never recommend a read-only analysis/design chain as a fit for a
+  feature/task/bug — that is a mismatch, not a match, no matter how detailed its output is.
+- For "generate_new": the generation_prompt you write MUST explicitly require at least one
+  edit_files agent that implements the acceptance criteria as working code, plus a final
+  verification step. Do not write a "produce a specification for a future code generator"
+  prompt as if it satisfies the task.
+- For "no_action_needed": evidence must point at actual files/behavior in the workspace, not
+  at a prior run's summary or spec document merely claiming the work is done.
 
 OUTPUT FORMAT:
 Raw JSON only. No markdown, no code blocks, no explanation outside the JSON.
@@ -1695,6 +1729,16 @@ a. Judge against the ACCEPTANCE CRITERIA in TASK DATA, not against whether the r
 b. Be conservative: if you are unsure whether the work is correct, choose "decision", never "close".
 c. Only choose "retry" when the fix is a re-run with clearer guidance — not when a human judgment call is required.
 d. audit.reason is always required and must justify the verdict from the evidence.
+e. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-014): if TASK DATA's type is
+   "feature", "task", or "bug", the acceptance criteria describe working software, not a document. Before
+   choosing "close", check RUN SUMMARY / RUN ARTIFACTS for evidence that real code files were written or
+   modified (not just markdown/spec/plan artifacts, and not just a "here is the implementation plan for the
+   next agent" handoff). A chain whose agents only analyzed, designed, or synthesized a specification —
+   however complete-sounding — has NOT satisfied a feature/task/bug and must get "decision", with
+   audit.decision.prompt asking whether to proceed to an implementation chain. Note: even if you judge this
+   as "close", the platform independently verifies that at least one agent in the chain had file-write
+   authority and will downgrade to "decision" if not — so there is no advantage to rating a spec-only run as
+   "close"; it will not stick.
 
 OUTPUT FORMAT:
 Output ONLY valid JSON matching this schema:

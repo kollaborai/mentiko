@@ -72,6 +72,18 @@ async function createDecisionSubtask(
 ): Promise<ApplyCompletionAuditResult> {
   const { request, namespaceId, orgId, task, audit, runId, workspacePath } = input;
 
+  // A "decision" verdict means the run's outcome is NOT settled — the task is
+  // not actually done until a human resolves the decision. If the task is
+  // sitting at status "closed" (whether from an earlier close, a bulk-close,
+  // or any other path), that status is now misleading: the tracker would show
+  // "closed" while a pending decision says otherwise. Reopen to "blocked" so
+  // task lists don't report false completion. (This is the bug that let
+  // FEAT-014 stay "closed" even after the auditor flagged decision_required
+  // and spawned DEC-009 — createDecisionSubtask never touched task.status.)
+  if (task.status === "closed") {
+    taskUpdate(orgId, task.id, { status: "blocked" }, namespaceId);
+  }
+
   // Claim the run BEFORE creating the decision. If createTaskDecision throws,
   // the run is still marked audited, so the next reconcile sweep's idempotency
   // check (completion_audit_run_id === runId) skips it instead of creating a
