@@ -76,7 +76,20 @@ const nextConfig: NextConfig = {
   // native/optional packages that must not be bundled by webpack
   // nodemailer: optional email dep — dynamic import inside try-catch in email.ts,
   //   webpack can't resolve it at compile time so we mark it external
-  serverExternalPackages: ["better-sqlite3", "better-sqlite3-multiple-ciphers", "nodemailer"],
+  // @opentelemetry/semantic-conventions: transitive dep of better-auth's
+  //   @better-auth/core instrumentation (dist/instrumentation/attributes.mjs).
+  //   It's installed correctly (satisfies @better-auth/core's ^1.39.0 dependency,
+  //   node resolution finds it fine) but Turbopack's bundler-time resolver can't
+  //   follow it through the nested better-auth/node_modules/@better-auth/core
+  //   path — "Module not found" during build/dev even though the package exists.
+  //   Marking it external skips Turbopack's resolution and defers to Node's
+  //   own require/import at runtime, which works.
+  serverExternalPackages: [
+    "better-sqlite3",
+    "better-sqlite3-multiple-ciphers",
+    "nodemailer",
+    "@opentelemetry/semantic-conventions",
+  ],
 
   // enable production source maps for debugging
   productionBrowserSourceMaps: false,
