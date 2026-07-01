@@ -14,7 +14,7 @@ const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
-const startDecisionChainRun = jest.fn();
+const startDecisionResearch = jest.fn();
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskClose: (...a: unknown[]) => taskClose(...a),
@@ -35,7 +35,7 @@ jest.mock("@/lib/notifications/notification-server", () => ({
 // createDecisionSubtask — Jest intercepts dynamic imports through the same
 // module registry that jest.mock() patches.
 jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
-  startDecisionChainRun: (...a: unknown[]) => startDecisionChainRun(...a),
+  startDecisionResearch: (...a: unknown[]) => startDecisionResearch(...a),
 }));
 
 import { applyCompletionAudit } from "./completion-audit-apply";
@@ -101,7 +101,7 @@ beforeEach(() => {
     decision: { id: "decision-x1" },
     task: { id: "DEC-1" },
   });
-  startDecisionChainRun.mockResolvedValue(undefined);
+  startDecisionResearch.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ describe("applyCompletionAudit", () => {
     );
 
     expect(createTaskDecision).not.toHaveBeenCalled();
-    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    expect(startDecisionResearch).not.toHaveBeenCalled();
   });
 
   // 2. verdict "decision"
@@ -156,7 +156,7 @@ describe("applyCompletionAudit", () => {
       expect.objectContaining({ parentTaskId: "TASK-42" }),
     );
 
-    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(startDecisionResearch).toHaveBeenCalledTimes(1);
 
     expect(taskMergeMeta).toHaveBeenCalledWith(
       "default",
@@ -270,8 +270,8 @@ describe("applyCompletionAudit", () => {
   });
 
   // 6. research failure is non-fatal
-  it("decision: returns decision_created even when startDecisionChainRun throws", async () => {
-    startDecisionChainRun.mockRejectedValue(new Error("chain service unavailable"));
+  it("decision: returns decision_created even when startDecisionResearch throws", async () => {
+    startDecisionResearch.mockRejectedValue(new Error("chain service unavailable"));
 
     const task = makeTask();
     const audit: CompletionAudit = {

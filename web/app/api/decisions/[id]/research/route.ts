@@ -11,7 +11,7 @@ import type { Decision } from "@/lib/decisions/decision-types";
 import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
-import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
+import { startDecisionChainRun, startDecisionResearch } from "@/lib/decisions/decision-chain-dispatch";
 import { taskUpdate } from "@/lib/tasks/task-store";
 
 export const dynamic = "force-dynamic";
@@ -70,7 +70,7 @@ export const POST = withErrorHandling(async (
     const parsed = job.result as Record<string, unknown>;
     const decision = getDecision(namespaceId, orgId, id, workspacePath);
     if (!decision) throw new NotFound("Decision", id);
-    const title = (parsed.title as string) || decision.prompt;
+    const title = (parsed.title as string) || decision.title || decision.prompt.split("\n")[0];
     if (decision.taskId) {
       taskUpdate(orgId, decision.taskId, { title }, namespaceId);
     }
@@ -95,31 +95,35 @@ export const POST = withErrorHandling(async (
     ? `\nWORKSPACE CONTEXT:\n- Source checkout: ${authorizedWorkspacePath}\n- If this decision involves code, inspect files under this checkout and cite repo-relative paths in references.\n`
     : "";
 
-  let researchPrompt: string;
+  let run: Awaited<ReturnType<typeof startDecisionChainRun>>;
   if (body.steering) {
     const template = getTemplate(namespaceId, orgId, "decision_steering");
-    researchPrompt = resolveTemplate(template.content, {
+    const researchPrompt = resolveTemplate(template.content, {
       PREVIOUS_ANALYSIS: buildPreviousAnalysis(decision),
       STEERING_INPUT: body.steering,
       WORKSPACE_CONTEXT: workspaceContext,
     });
+    run = await startDecisionChainRun({
+      request,
+      namespaceId,
+      orgId,
+      decision,
+      phase: "research",
+      prompt: researchPrompt,
+      workspacePath: authorizedWorkspacePath,
+    });
   } else {
-    const template = getTemplate(namespaceId, orgId, "decision_research");
-    researchPrompt = resolveTemplate(template.content, {
-      USER_PROMPT: decision.prompt,
-      WORKSPACE_CONTEXT: workspaceContext,
+    // Same path autonomous callers (completion-audit) use, so a decision created
+    // by hand and one created automatically get framed and packaged identically.
+    run = await startDecisionResearch({
+      request,
+      namespaceId,
+      orgId,
+      decision,
+      userPrompt: decision.prompt,
+      workspacePath: authorizedWorkspacePath,
     });
   }
-
-  const run = await startDecisionChainRun({
-    request,
-    namespaceId,
-    orgId,
-    decision,
-    phase: "research",
-    prompt: researchPrompt,
-    workspacePath: authorizedWorkspacePath,
-  });
 
   const updated = await updateDecision(namespaceId, orgId, id, {
     status: "researching",

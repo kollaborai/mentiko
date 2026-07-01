@@ -349,6 +349,28 @@ export function groupByEpic(
   const groups = new Map<string, Task[]>();
   const ungrouped: Task[] = [];
 
+  // index tasks by id so we can walk a task's parent chain up to its epic.
+  const taskById = new Map<string, Task>();
+  for (const t of tasks) taskById.set(t.id, t);
+
+  // Resolve the epic a task rolls up to. A task may sit under a non-epic parent
+  // (e.g. an auto-raised decision under a feature, or tasks generated under a
+  // feature); walk up parentId until we reach a known epic so it groups under
+  // that epic instead of falling into "ungrouped". Returns undefined when no
+  // epic ancestor exists.
+  const resolveEpicGroupId = (task: Task): string | undefined => {
+    const seen = new Set<string>();
+    let current: Task | undefined = task;
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      const pid = current.parentId;
+      if (!pid) return undefined;
+      if (epicMap.has(pid)) return pid;
+      current = taskById.get(pid);
+    }
+    return undefined;
+  };
+
   for (const task of tasks) {
     // skip epics themselves from the task list
     if (task.type === "epic") {
@@ -356,13 +378,15 @@ export function groupByEpic(
       continue;
     }
 
-    // try parentId first, then fall back to ID prefix matching
+    // resolve the epic by walking the parent chain (handles tasks whose direct
+    // parent is a feature, not an epic), then fall back to ID prefix matching
     // (dot notation: epic "EPIC-001" may have children "EPIC-001.1", etc)
     let matched = false;
-    if (task.parentId && epicMap.has(task.parentId)) {
-      const group = groups.get(task.parentId) || [];
+    const epicGroupId = resolveEpicGroupId(task);
+    if (epicGroupId) {
+      const group = groups.get(epicGroupId) || [];
       group.push(task);
-      groups.set(task.parentId, group);
+      groups.set(epicGroupId, group);
       matched = true;
     } else {
       for (const epicId of epicMap.keys()) {

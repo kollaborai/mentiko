@@ -63,11 +63,6 @@ function buildDecisionPrompt(task: TaskRecord, audit: CompletionAudit): string {
   if (task.acceptance_criteria) {
     lines.push("", `ACCEPTANCE CRITERIA:\n${task.acceptance_criteria}`);
   }
-  lines.push(
-    "",
-    "Research what decision should be presented to the human: whether to create",
-    "follow-up work to resolve what was found, or to proceed to the next task.",
-  );
   return lines.join("\n");
 }
 
@@ -93,18 +88,20 @@ async function createDecisionSubtask(
     parentTaskId: task.id,
   });
 
-  // Best-effort: kick off research so the decision agent investigates what to
-  // present. A research failure must not block the triage. Imported lazily to
-  // keep chain-run-service (and its ESM deps) out of consumers' static graphs.
+  // Best-effort: kick off research so the decision agent packages the decision
+  // (clean title, brief, options) exactly like the interactive flow. We go
+  // through the SAME startDecisionResearch path the research route uses — same
+  // decision_research template — so auto-created decisions don't look different
+  // from hand-made ones. A research failure must not block the triage. Imported
+  // lazily to keep chain-run-service (and its ESM deps) out of static graphs.
   try {
-    const { startDecisionChainRun } = await import("@/lib/decisions/decision-chain-dispatch");
-    await startDecisionChainRun({
+    const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
+    await startDecisionResearch({
       request,
       namespaceId,
       orgId,
       decision,
-      phase: "research",
-      prompt,
+      userPrompt: prompt,
       workspacePath,
     });
   } catch (error) {

@@ -556,6 +556,42 @@ describe("groupByEpic", () => {
     });
     expect(groups[0].tasks.map((task) => task.id)).toEqual(["t1", "t2"]);
   });
+
+  it("rolls a task up to its epic ancestor when its direct parent is a feature", () => {
+    const tasks = [
+      { id: "epic-1", type: "epic" as const },
+      { id: "feat-1", parentId: "epic-1", type: "feature" as const },
+      { id: "dec-1", parentId: "feat-1", type: "decision" as const },
+    ].map(
+      (t) =>
+        ({
+          ...t,
+          title: t.id,
+          description: "",
+          completed: false,
+          status: "open" as const,
+          priority: "medium" as const,
+          rawPriority: 2,
+          owner: "",
+          assignee: "",
+          createdBy: "",
+          createdAt: "",
+          updatedAt: "",
+          labels: [],
+          dependencyCount: 0,
+          dependentCount: 0,
+          commentCount: 0,
+        })
+    );
+
+    const groups = groupByEpic(tasks, epics, { includeEpics: true });
+    const epicGroup = groups.find((g) => g.epic?.id === "epic-1");
+    expect(epicGroup).toBeDefined();
+    // the feature AND the decision nested under it both roll up to epic-1
+    expect(epicGroup!.tasks.map((task) => task.id).sort()).toEqual(["dec-1", "feat-1"]);
+    // nothing falls into the ungrouped bucket
+    expect(groups.find((g) => g.epic === null)).toBeUndefined();
+  });
 });
 
 describe("timeAgo", () => {

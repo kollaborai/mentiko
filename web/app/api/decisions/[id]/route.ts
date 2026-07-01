@@ -109,13 +109,23 @@ export const PATCH = withErrorHandling(async (
   const orgId = await getOrgIdFromRequest(request);
   const workspacePath = getWorkspacePath(request);
   const body = await request.json();
-  const existing = typeof body.title === "string"
+
+  // Allow-list: this generic PATCH may only rename the decision or skip it.
+  // Everything else — parentTaskId, taskId, options, resolution, and status
+  // transitions other than "skipped" — must flow through the dedicated routes
+  // (resolve / research / guided). Letting them through here would desync the
+  // decision from its task tree or bypass resolveDecisionToTasks entirely.
+  const updates: Record<string, unknown> = {};
+  if (typeof body.title === "string") updates.title = body.title;
+  if (body.status === "skipped") updates.status = "skipped";
+
+  const existing = typeof updates.title === "string"
     ? getDecision(nsId, orgId, id, workspacePath)
     : null;
 
-  const decision = await updateDecision(nsId, orgId, id, body, workspacePath);
-  if (existing?.taskId && typeof body.title === "string") {
-    taskUpdate(orgId, existing.taskId, { title: body.title }, nsId);
+  const decision = await updateDecision(nsId, orgId, id, updates, workspacePath);
+  if (existing?.taskId && typeof updates.title === "string") {
+    taskUpdate(orgId, existing.taskId, { title: updates.title as string }, nsId);
   }
   return apiSuccess({ decision });
 });
