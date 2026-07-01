@@ -90,14 +90,13 @@ export function TaskChildren({ items, onSelectChild, depInfo }: TaskChildrenProp
                       priority={child.priority}
                       rawPriority={child.rawPriority}
                     />
-                    <TypeBadge type={child.type} />
+                    <TypeBadge type={child.type} label={shortId(child.id)} />
                     {child.type === "decision" && (
                       <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-blue-400/70">
                         <JudgeFilled className="h-2.5 w-2.5" />
                         gate
                       </span>
                     )}
-                    <span className="font-mono text-foreground/30">{shortId(child.id)}</span>
                     {child.chainBinding && (
                       <span className="inline-flex items-center gap-0.5 text-foreground/30">
                         <Link2 className="h-2.5 w-2.5" />

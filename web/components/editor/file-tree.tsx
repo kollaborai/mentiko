@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { unwrapApiData } from "@/lib/api/api-client";
 import {
@@ -14,6 +14,7 @@ import {
 import { useEditorStore } from "@/lib/ui/editor-store";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { FileTypeIcon } from "./quick-open";
+import { cn } from "@/lib/utils";
 
 interface FileNode {
   name: string;
@@ -66,13 +67,6 @@ export function getFileAccentColor(filePath: string, rootPath: string): string {
   return getFolderColor(firstFolder);
 }
 
-// depth background - each level slightly brighter
-function depthBg(depth: number): string {
-  if (depth <= 0) return "transparent";
-  const alpha = Math.min(depth * 0.025, 0.1);
-  return `rgba(255,255,255,${alpha})`;
-}
-
 const EXPANDED_KEY = "editor-expanded-folders";
 
 function loadExpanded(workspace: string): Set<string> {
@@ -118,6 +112,7 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
   const [searchQuery, setSearchQuery] = useState("");
   const [panelHeights, setPanelHeights] = useState<Map<string, number>>(new Map());
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({});
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const filterOpen = externalFilterOpen ?? false;
@@ -201,6 +196,8 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
 
   const handleFileClick = useCallback(
     async (node: FileNode) => {
+      setSelectedPath(node.path);
+
       if (node.type === "dir") {
         toggleExpand(node.path);
         return;
@@ -243,6 +240,92 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
     },
     [pinFile]
   );
+
+  // flattened, keyboard-navigable order of everything currently visible
+  const flatRows = useMemo(() => {
+    const dirs = tree.filter((n) => n.type === "dir");
+    const files = tree.filter((n) => n.type === "file");
+    return flattenVisibleFileRows(dirs, files, expanded, searchQuery);
+  }, [tree, expanded, searchQuery]);
+
+  // path -> node lookup, so keyboard nav can re-check expand/search state
+  // the same way the render path does (via isDirExpanded), without duplicating it
+  const nodesByPath = useMemo(() => {
+    const map = new Map<string, FileNode>();
+    function walk(nodes: FileNode[]) {
+      for (const node of nodes) {
+        map.set(node.path, node);
+        if (node.children) walk(node.children);
+      }
+    }
+    walk(tree);
+    return map;
+  }, [tree]);
+
+  // keyboard nav: up/down move selection, left/right collapse/expand or step to parent/child
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+      if (flatRows.length === 0) return;
+
+      const currentIndex = flatRows.findIndex((r) => r.path === selectedPath);
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIndex = currentIndex === -1 ? 0 : Math.min(currentIndex + 1, flatRows.length - 1);
+        setSelectedPath(flatRows[nextIndex].path);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
+        setSelectedPath(flatRows[prevIndex].path);
+      } else if (e.key === "ArrowRight") {
+        if (currentIndex === -1) return;
+        const row = flatRows[currentIndex];
+        if (row.type !== "dir" || !row.hasChildren) return;
+        e.preventDefault();
+        const node = nodesByPath.get(row.path);
+        const isOpen = node ? isDirExpanded(node, expanded, searchQuery) : false;
+        if (!isOpen) {
+          toggleExpand(row.path);
+        } else {
+          const child = flatRows[currentIndex + 1];
+          if (child?.parentPath === row.path) setSelectedPath(child.path);
+        }
+      } else if (e.key === "ArrowLeft") {
+        if (currentIndex === -1) return;
+        const row = flatRows[currentIndex];
+        const node = row.type === "dir" ? nodesByPath.get(row.path) : undefined;
+        const isOpen = node ? isDirExpanded(node, expanded, searchQuery) : false;
+        if (row.type === "dir" && row.hasChildren && isOpen) {
+          e.preventDefault();
+          toggleExpand(row.path);
+        } else if (row.parentPath) {
+          e.preventDefault();
+          setSelectedPath(row.parentPath);
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [flatRows, selectedPath, expanded, searchQuery, toggleExpand, nodesByPath]);
+
+  // keep the selected row scrolled into view (keyboard nav can move selection off-screen)
+  useEffect(() => {
+    if (!selectedPath) return;
+    const el = treeRef.current?.querySelector(
+      `[data-file-row-id="${CSS.escape(selectedPath)}"]`
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedPath]);
+
+  // follow the active file so keyboard nav starts from wherever the editor is
+  // (e.g. a file opened via quick-open or a tab click, not just this tree)
+  useEffect(() => {
+    if (activeFilePath) setSelectedPath(activeFilePath);
+  }, [activeFilePath]);
 
   // context menu
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: FileNode; parentPath: string } | null>(null);
@@ -532,6 +615,7 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
             depth={0}
             expanded={expanded}
             activeFilePath={activeFilePath}
+            selectedPath={selectedPath}
             searchQuery={searchQuery}
             panelHeights={panelHeights}
             setPanelHeights={setPanelHeights}
@@ -552,8 +636,8 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
                 <FileItem
                   key={file.path}
                   node={file}
-                  depth={0}
                   isActive={activeFilePath === file.path}
+                  isSelected={selectedPath === file.path}
                   gitIndicator={gitStatus[file.path.startsWith(workspacePath) ? file.path.slice(workspacePath.length + 1) : file.path]}
                   onClick={handleFileClick}
                   onDoubleClick={handleFileDoubleClick}
@@ -612,6 +696,58 @@ function matchesSearch(node: FileNode, query: string): boolean {
   return false;
 }
 
+// should this dir's children currently be shown (manually expanded, or
+// auto-expanded because a search filter matched something inside it)?
+function isDirExpanded(node: FileNode, expanded: Set<string>, searchQuery: string): boolean {
+  const manuallyOpen = expanded.has(node.path);
+  const autoExpand = searchQuery.length > 0 && matchesSearch(node, searchQuery);
+  return manuallyOpen || autoExpand;
+}
+
+interface FlatFileRow {
+  path: string;
+  parentPath: string | null;
+  type: "file" | "dir";
+  hasChildren: boolean;
+}
+
+// flatten the visible tree (respecting collapse + search filter) into
+// keyboard-nav order. mirrors the same dirs-then-files, filtered ordering
+// the render path uses (dirs.map / childDirs.map / childFiles.map).
+function flattenVisibleFileRows(
+  dirs: FileNode[],
+  files: FileNode[],
+  expanded: Set<string>,
+  searchQuery: string
+): FlatFileRow[] {
+  const rows: FlatFileRow[] = [];
+
+  function walkDir(node: FileNode, parentPath: string | null) {
+    if (searchQuery && !matchesSearch(node, searchQuery)) return;
+    const childDirs = node.children?.filter((c) => c.type === "dir") ?? [];
+    const childFiles = node.children?.filter((c) => c.type === "file") ?? [];
+    const hasChildren = childDirs.length > 0 || childFiles.length > 0;
+    rows.push({ path: node.path, parentPath, type: "dir", hasChildren });
+    if (hasChildren && isDirExpanded(node, expanded, searchQuery)) {
+      for (const dir of childDirs) walkDir(dir, node.path);
+      for (const file of childFiles) {
+        if (matchesSearch(file, searchQuery)) {
+          rows.push({ path: file.path, parentPath: node.path, type: "file", hasChildren: false });
+        }
+      }
+    }
+  }
+
+  for (const dir of dirs) walkDir(dir, null);
+  for (const file of files) {
+    if (matchesSearch(file, searchQuery)) {
+      rows.push({ path: file.path, parentPath: null, type: "file", hasChildren: false });
+    }
+  }
+
+  return rows;
+}
+
 // ── accordion folder ──
 
 interface AccordionFolderProps {
@@ -619,6 +755,7 @@ interface AccordionFolderProps {
   depth: number;
   expanded: Set<string>;
   activeFilePath: string | null;
+  selectedPath: string | null;
   searchQuery: string;
   panelHeights: Map<string, number>;
   setPanelHeights: React.Dispatch<React.SetStateAction<Map<string, number>>>;
@@ -634,6 +771,7 @@ function AccordionFolder({
   depth,
   expanded,
   activeFilePath,
+  selectedPath,
   searchQuery,
   panelHeights,
   setPanelHeights,
@@ -643,9 +781,8 @@ function AccordionFolder({
   onDoubleClick,
   onContextMenu,
 }: AccordionFolderProps) {
-  const manuallyOpen = expanded.has(node.path);
-  const autoExpand = searchQuery.length > 0 && matchesSearch(node, searchQuery);
-  const isOpen = manuallyOpen || autoExpand;
+  const isOpen = isDirExpanded(node, expanded, searchQuery);
+  const isSelected = selectedPath === node.path;
   const color = getFolderColor(node.name);
   const childCount = node.children?.length ?? 0;
   const contentRef = useRef<HTMLDivElement>(null);
@@ -697,9 +834,13 @@ function AccordionFolder({
     <div className="mb-0.5">
       {/* folder header */}
       <button
+        data-file-row-id={node.path}
         onClick={() => onClick(node)}
         onContextMenu={(e) => onContextMenu(e, node, node.path)}
-        className="flex items-center gap-2 w-full px-2 py-0.5 rounded-md transition-all hover:bg-white/[0.04] group"
+        className={cn(
+          "flex items-center gap-2 w-full px-2 py-0.5 rounded-md transition-all hover:bg-white/[0.04] group",
+          isSelected && "bg-white/[0.06]"
+        )}
         style={{ paddingLeft: 8 }}
       >
         <span className="shrink-0" style={{ color }}>
@@ -720,10 +861,7 @@ function AccordionFolder({
           <div
             ref={contentRef}
             className={isTopLevel ? "overflow-y-auto overflow-x-hidden rounded-t-md" : "overflow-x-hidden"}
-            style={{
-              ...(isTopLevel ? { maxHeight: maxH } : {}),
-              background: depthBg(depth + 1),
-            }}
+            style={isTopLevel ? { maxHeight: maxH } : undefined}
           >
             {childDirs.map((dir) => (
               <AccordionFolder
@@ -732,6 +870,7 @@ function AccordionFolder({
                 depth={depth + 1}
                 expanded={expanded}
                 activeFilePath={activeFilePath}
+                selectedPath={selectedPath}
                 searchQuery={searchQuery}
                 panelHeights={panelHeights}
                 setPanelHeights={setPanelHeights}
@@ -748,8 +887,8 @@ function AccordionFolder({
                 <FileItem
                   key={file.path}
                   node={file}
-                  depth={depth + 1}
                   isActive={activeFilePath === file.path}
+                  isSelected={selectedPath === file.path}
                   gitIndicator={gitStatus[file.path.startsWith(workspacePath) ? file.path.slice(workspacePath.length + 1) : file.path]}
                   onClick={onClick}
                   onDoubleClick={onDoubleClick}
@@ -784,29 +923,31 @@ const GIT_STATUS_COLORS: Record<string, string> = {
 
 interface FileItemProps {
   node: FileNode;
-  depth: number;
   isActive: boolean;
+  isSelected?: boolean;
   gitIndicator?: string;
   onClick: (node: FileNode) => void;
   onDoubleClick: (node: FileNode) => void;
   onContextMenu?: (e: ReactMouseEvent) => void;
 }
 
-function FileItem({ node, isActive, gitIndicator, onClick, onDoubleClick, onContextMenu }: FileItemProps) {
+function FileItem({ node, isActive, isSelected, gitIndicator, onClick, onDoubleClick, onContextMenu }: FileItemProps) {
   const gitColor = gitIndicator ? GIT_STATUS_COLORS[gitIndicator] : undefined;
 
   return (
     <div
       role="button"
       tabIndex={0}
+      data-file-row-id={node.path}
       onClick={() => onClick(node)}
       onDoubleClick={() => onDoubleClick(node)}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => { if (e.key === "Enter") onClick(node); }}
       data-active={isActive || undefined}
-      className={`flex items-center gap-1.5 py-1 px-2 cursor-pointer transition-all relative rounded-sm ${
-        isActive ? "bg-white/[0.06]" : "hover:bg-white/[0.03]"
-      }`}
+      className={cn(
+        "flex items-center gap-1.5 py-1 px-2 cursor-pointer transition-all relative rounded-sm",
+        isActive ? "bg-white/[0.06]" : isSelected ? "bg-white/[0.04]" : "hover:bg-white/[0.03]"
+      )}
       style={{ paddingLeft: 8 }}
     >
       {isActive && (

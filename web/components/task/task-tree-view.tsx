@@ -64,6 +64,57 @@ function shortId(id: string): string {
   return id.slice(dot);
 }
 
+// does this (closed) node have any non-closed, non-epic descendant?
+function hasOpenDescendant(node: HierarchyNode): boolean {
+  if (node.node.status !== "closed" && node.node.type !== "epic") return true;
+  return node.children.some((child) => hasOpenDescendant(child));
+}
+
+// should this child row be visible given the current showClosed filter?
+function isChildVisible(child: HierarchyNode, showClosed: boolean): boolean {
+  if (showClosed) return true;
+  if (child.node.status !== "closed") return true;
+  if (child.node.type === "epic") return hasOpenDescendant(child);
+  return false;
+}
+
+// should this node itself render at all (epics stay if they have visible children)?
+function isNodeRendered(node: HierarchyNode, showClosed: boolean): boolean {
+  const isClosed = node.node.status === "closed";
+  if (!isClosed || showClosed) return true;
+  if (node.node.type !== "epic") return false;
+  return node.children.some((child) => isChildVisible(child, showClosed));
+}
+
+interface FlatRow {
+  id: string;
+  parentId: string | null;
+  hasChildren: boolean;
+}
+
+// flatten the visible tree (respecting collapse + showClosed) into keyboard-nav order
+function flattenVisibleRows(
+  tree: HierarchyNode[],
+  collapsed: Set<string>,
+  showClosed: boolean
+): FlatRow[] {
+  const rows: FlatRow[] = [];
+
+  function walk(node: HierarchyNode, parentId: string | null) {
+    if (!isNodeRendered(node, showClosed)) return;
+    const visibleChildCount = node.children.filter((c) =>
+      isChildVisible(c, showClosed)
+    ).length;
+    rows.push({ id: node.node.id, parentId, hasChildren: visibleChildCount > 0 });
+    if (visibleChildCount > 0 && !collapsed.has(node.node.id)) {
+      for (const child of node.children) walk(child, node.node.id);
+    }
+  }
+
+  for (const root of tree) walk(root, null);
+  return rows;
+}
+
 export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
   const { workspacePath } = useWorkspace();
   const { fetchWithNamespace } = useNamespaceFetch();
@@ -247,6 +298,67 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
     [onSelectTask]
   );
 
+  // flattened, keyboard-navigable order of everything currently visible
+  const flatRows = useMemo(
+    () => flattenVisibleRows(tree, collapsed, showClosed),
+    [tree, collapsed, showClosed]
+  );
+
+  // keyboard nav: up/down move selection, left/right collapse/expand or step to parent/child
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+      if (flatRows.length === 0) return;
+
+      const currentIndex = flatRows.findIndex((r) => r.id === selectedId);
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIndex = currentIndex === -1 ? 0 : Math.min(currentIndex + 1, flatRows.length - 1);
+        onSelectTask?.(flatRows[nextIndex].id);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIndex = currentIndex <= 0 ? 0 : currentIndex - 1;
+        onSelectTask?.(flatRows[prevIndex].id);
+      } else if (e.key === "ArrowRight") {
+        if (currentIndex === -1) return;
+        const row = flatRows[currentIndex];
+        if (!row.hasChildren) return;
+        e.preventDefault();
+        if (collapsed.has(row.id)) {
+          toggleCollapse(row.id);
+        } else {
+          const child = flatRows[currentIndex + 1];
+          if (child?.parentId === row.id) onSelectTask?.(child.id);
+        }
+      } else if (e.key === "ArrowLeft") {
+        if (currentIndex === -1) return;
+        const row = flatRows[currentIndex];
+        if (row.hasChildren && !collapsed.has(row.id)) {
+          e.preventDefault();
+          toggleCollapse(row.id);
+        } else if (row.parentId) {
+          e.preventDefault();
+          onSelectTask?.(row.parentId);
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [flatRows, selectedId, collapsed, onSelectTask, toggleCollapse]);
+
+  // keep the selected row scrolled into view (keyboard nav can move selection off-screen)
+  useEffect(() => {
+    if (!selectedId) return;
+    const el = document.querySelector(
+      `[data-task-row-id="${CSS.escape(selectedId)}"]`
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedId]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -354,26 +466,10 @@ function TreeRow({
   const priority: TaskPriority = mapPriority(node.priority);
 
   // count visible children (open items, or closed epics with their own open children)
-  const visibleChildren = showClosed
-    ? children.length
-    : children.filter((c) => {
-        // open items always visible
-        if (c.node.status !== "closed") return true;
-        // closed items only visible if they're epics with open descendants
-        if (c.node.type === "epic") {
-          // recursively check if this epic has any open descendants
-          function hasOpenDescendant(node: HierarchyNode): boolean {
-            if (node.node.status !== "closed" && node.node.type !== "epic") return true;
-            return node.children.some(child => hasOpenDescendant(child));
-          }
-          return hasOpenDescendant(c);
-        }
-        return false;
-      }).length;
+  const visibleChildren = children.filter((c) => isChildVisible(c, showClosed)).length;
 
   // hide closed items unless showClosed, but keep epics that have visible children
-  const shouldHide = isClosed && !showClosed;
-  if (shouldHide && !(isEpic && visibleChildren > 0)) return null;
+  if (!isNodeRendered(treeNode, showClosed)) return null;
 
   // for epics: count open/total tasks (recursive)
   const epicStats = isEpic ? countTasks(treeNode, showClosed) : null;
@@ -390,8 +486,9 @@ function TreeRow({
       <div>
         {/* epic row */}
         <div
+          data-task-row-id={node.id}
           className="flex items-center group"
-          style={{ paddingLeft: 12 + depth * 16 }}
+          style={{ paddingLeft: 4 }}
         >
           {/* chevron toggle */}
           <button
@@ -477,7 +574,7 @@ function TreeRow({
             {!showClosed && visibleChildren < children.length && (
               <div
                 className="text-[10px] font-mono text-foreground/20 py-1"
-                style={{ paddingLeft: 12 + (depth + 1) * 16 + 20 }}
+                style={{ paddingLeft: 4 + 20 }}
               >
                 {children.length - visibleChildren} completed
               </div>
@@ -495,6 +592,7 @@ function TreeRow({
   return (
     <div>
       <div
+        data-task-row-id={node.id}
         onDragOver={(e) => {
           const srcId = dragIdRef.current;
           if (srcId && srcId !== node.id) {
@@ -518,7 +616,7 @@ function TreeRow({
           ${isDragging ? "opacity-40" : ""}
           ${isDropTarget ? "bg-blue-500/15" : ""}
           ${isDecision ? "bg-blue-500/5" : ""}`}
-        style={{ paddingLeft: 12 + depth * 16 }}
+        style={{ paddingLeft: 4 }}
       >
         {/* expand/collapse for tasks with dep-children */}
         <button
@@ -562,7 +660,7 @@ function TreeRow({
 
           {/* priority + type */}
           <PriorityBadge priority={priority} rawPriority={node.priority} />
-          <TypeBadge type={node.type} />
+          <TypeBadge type={node.type} label={shortId(node.id)} />
           {isDecision && (
             <span
               className="inline-flex items-center gap-1 rounded-sm bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300/75"
@@ -616,10 +714,6 @@ function TreeRow({
             </span>
           )}
 
-          {/* id */}
-          <span className="text-[10px] font-mono text-foreground/15 shrink-0 hidden group-hover:inline">
-            {shortId(node.id)}
-          </span>
         </button>
       </div>
 
