@@ -714,7 +714,7 @@ export function GuidedFlowShell({ decision, workspacePath, onUpdate, onExit, sel
         onSkipToDashboard={onExit}
       />
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {/* round 1: preference gathering */}
         {currentRound === 1 && flow.round1.status === "in_progress" && flow.round1.questions.length > 0 && (
           <Round1Cards

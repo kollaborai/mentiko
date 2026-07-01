@@ -82,7 +82,7 @@ export function Round1Cards({
   if (!currentQuestion) return null;
 
   return (
-    <div className="relative flex h-full flex-col items-center justify-center overflow-y-auto overflow-x-hidden">
+    <div className="relative flex h-full flex-col items-center overflow-y-auto overflow-x-hidden">
       <GradientDots dotSize={6} spacing={12} duration={40} colorCycleDuration={8} className="opacity-[0.07] pointer-events-none" />
       <div className="absolute -right-20 -bottom-20 pointer-events-none opacity-[0.03] z-[1]">
         <Abstract60Shapes className="w-[600px] h-[600px] text-foreground" />

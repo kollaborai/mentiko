@@ -788,7 +788,7 @@ export function DecisionDetail({
           onOpenTask={onOpenTask}
         />
       ) : viewMode === "guided" ? (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <GuidedFlowShell
             decision={decision}
             workspacePath={workspacePath}
