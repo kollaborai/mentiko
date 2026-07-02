@@ -88,16 +88,21 @@ export function TerminalPanel({
   const displayStatusMsg =
     wsStatus === "down" && status !== "attached" ? "terminal server unavailable" : statusMsg;
   const isLive = displayStatus === "attached" || displayStatus === "connecting";
+  const sessionLabel = compact
+    ? session
+    : session.length > 36
+      ? `${session.slice(0, 18)}...${session.slice(-12)}`
+      : session;
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* header - hidden in compact mode */}
       {!compact && (
-        <div className="flex items-center justify-between px-3 py-2 bg-card shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex shrink-0 flex-col items-stretch gap-2 bg-card px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <TerminalIcon className="h-3.5 w-3.5 text-foreground/40 shrink-0" />
-            <span className="text-xs font-mono truncate">
-              {session}
+            <span className="min-w-0 flex-1 truncate text-xs font-mono sm:flex-none" title={session}>
+              {sessionLabel}
             </span>
             <div className="flex items-center gap-1.5 shrink-0">
               <div
@@ -116,7 +121,7 @@ export function TerminalPanel({
             )}
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-1 sm:shrink-0 sm:flex-nowrap">
             {!isLive && sessionAlive && (
               <Button
                 variant="ghost"
@@ -133,20 +138,22 @@ export function TerminalPanel({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 text-[10px] px-2"
+                  className="h-6 px-2 text-[10px]"
                   onClick={handleReconnect}
+                  title="Reload terminal"
                 >
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                  reload
+                  <RefreshCw className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">reload</span>
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 text-[10px] px-2"
+                  className="h-6 px-2 text-[10px]"
                   onClick={handleDetach}
+                  title="Detach terminal"
                 >
-                  <XCircle className="h-3 w-3 mr-1" />
-                  detach
+                  <XCircle className="h-3 w-3 sm:mr-1" />
+                  <span className="hidden sm:inline">detach</span>
                 </Button>
               </>
             )}
@@ -168,7 +175,7 @@ export function TerminalPanel({
           />
         ) : fallbackOutput ? (
           <div className="h-full overflow-y-auto p-3">
-            <pre className="text-xs whitespace-pre overflow-x-auto font-mono text-[#e5e5e5]/80">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-[#e5e5e5]/80 [overflow-wrap:anywhere] sm:whitespace-pre sm:overflow-x-auto">
               {fallbackOutput}
             </pre>
           </div>
