@@ -12,6 +12,8 @@ import {
   EditFilled as Pencil,
   Link2Filled as Link2,
   JudgeFilled as DecisionIcon,
+  ToggleOffFilled as ToggleLeft,
+  ToggleOnFilled as ToggleRight,
 } from "@aliimam/icons";
 import { ArrowLeftFilled, PlayFilled, LinkFilled } from "@aliimam/icons";
 import { useState } from "react";
@@ -24,6 +26,8 @@ import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
 import type { Task } from "@/lib/tasks/task-types";
 
+const MAX_AUTO_RUN_RETRIES = 3;
+
 interface TaskDetailHeaderProps {
   task: Task;
   onBack: () => void;
@@ -31,6 +35,8 @@ interface TaskDetailHeaderProps {
   onReopen: () => void;
   onRunChain: () => void;
   onEdit: () => void;
+  onToggleAutoRun?: (autoRun: boolean) => Promise<void>;
+  onResetAutoRunAttempts?: () => Promise<void>;
   onSelectParent?: (parentId: string) => void;
   isRunning: boolean;
 }
@@ -42,10 +48,19 @@ export function TaskDetailHeader({
   onReopen,
   onRunChain,
   onEdit,
+  onToggleAutoRun,
+  onResetAutoRunAttempts,
   onSelectParent,
   isRunning,
 }: TaskDetailHeaderProps) {
   const [copied, setCopied] = useState(false);
+  const [autoRunPending, setAutoRunPending] = useState(false);
+  const [autoRunResetting, setAutoRunResetting] = useState(false);
+  const [autoRunError, setAutoRunError] = useState<string | null>(null);
+
+  const autoRunEnabled = !!task.chainBinding?.auto_run;
+  const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
+  const autoRunPaused = autoRunEnabled && autoRunRetries >= MAX_AUTO_RUN_RETRIES && !task.completed;
 
   function copyId() {
     copyToClipboard(task.id);
@@ -53,12 +68,38 @@ export function TaskDetailHeader({
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function toggleAutoRun() {
+    if (!onToggleAutoRun || autoRunPending || task.completed) return;
+    setAutoRunPending(true);
+    setAutoRunError(null);
+    try {
+      await onToggleAutoRun(!autoRunEnabled);
+    } catch (err) {
+      setAutoRunError(err instanceof Error ? err.message : "failed to update auto-run");
+    } finally {
+      setAutoRunPending(false);
+    }
+  }
+
+  async function resetAutoRunAttempts() {
+    if (!onResetAutoRunAttempts || autoRunResetting) return;
+    setAutoRunResetting(true);
+    setAutoRunError(null);
+    try {
+      await onResetAutoRunAttempts();
+    } catch (err) {
+      setAutoRunError(err instanceof Error ? err.message : "failed to reset attempts");
+    } finally {
+      setAutoRunResetting(false);
+    }
+  }
+
   return (
     <div className="px-3 pt-2 shrink-0">
       {/* mobile back button */}
       <button
         onClick={onBack}
-        className="md:hidden flex items-center gap-1 text-xs text-foreground/40 mb-2 hover:text-foreground/60"
+        className="flex items-center gap-1 text-xs text-foreground/40 mb-2 hover:text-foreground/60 lg:hidden"
       >
         <ArrowLeftFilled className="h-3.5 w-3.5" />
         Back
@@ -161,6 +202,56 @@ export function TaskDetailHeader({
               Run
             </Button>
           )}
+          {task.chainBinding && onToggleAutoRun && (
+            task.completed ? (
+              autoRunEnabled ? (
+                <span className="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-[10px] font-mono text-foreground/45 max-[420px]:w-full max-[420px]:justify-center">
+                  <ToggleRight className="h-3.5 w-3.5 text-foreground/45" />
+                  auto-run on
+                </span>
+              ) : null
+            ) : (
+              <div className="flex flex-wrap items-center gap-1 max-[420px]:w-full">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-label="auto-run"
+                  aria-checked={autoRunEnabled}
+                  onClick={toggleAutoRun}
+                  disabled={autoRunPending}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-mono transition-colors disabled:opacity-50 max-[420px]:flex-1 max-[420px]:justify-center ${
+                    autoRunEnabled
+                      ? "bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
+                      : "bg-muted text-foreground/45 hover:bg-accent hover:text-foreground/65"
+                  }`}
+                >
+                  {autoRunEnabled ? (
+                    <ToggleRight className="h-3.5 w-3.5" />
+                  ) : (
+                    <ToggleLeft className="h-3.5 w-3.5" />
+                  )}
+                  {autoRunEnabled ? "auto-run on" : "auto-run off"}
+                </button>
+                {autoRunPaused ? (
+                  <>
+                    <span className="inline-flex h-7 items-center rounded-md bg-red-500/10 px-2 text-[10px] font-mono text-red-300">
+                      auto-run paused
+                    </span>
+                    {onResetAutoRunAttempts ? (
+                      <button
+                        type="button"
+                        onClick={resetAutoRunAttempts}
+                        disabled={autoRunResetting}
+                        className="inline-flex h-7 items-center rounded-md bg-red-500/10 px-2 text-[10px] font-mono text-red-200 transition-colors hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {autoRunResetting ? "resetting..." : "reset attempts"}
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            )
+          )}
           {task.completed ? (
             <Button
               size="sm"
@@ -182,6 +273,11 @@ export function TaskDetailHeader({
               Close
             </Button>
           )}
+          {autoRunError ? (
+            <span className="w-full text-[10px] text-red-300 xl:text-right">
+              {autoRunError}
+            </span>
+          ) : null}
         </div>
       </DetailHeader>
 

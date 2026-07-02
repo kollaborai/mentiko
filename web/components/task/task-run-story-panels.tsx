@@ -156,7 +156,7 @@ function Widget({
         {icon}
         {label}
       </div>
-      <div className="mt-1 truncate text-sm font-semibold text-foreground/80">{value}</div>
+      <div className="mt-1 truncate text-xs font-semibold text-foreground/80">{value}</div>
       {detail ? <div className="mt-0.5 truncate text-[10px] text-foreground/35">{detail}</div> : null}
     </div>
   );
@@ -186,6 +186,30 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function SummarySectionHeader({
+  outcome,
+  outcomeTone,
+  status,
+}: {
+  outcome: string;
+  outcomeTone: "neutral" | "good" | "warn" | "info" | "bad";
+  status?: string;
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-foreground/40">Summary</span>
+        <Badge tone={outcomeTone}>{outcome}</Badge>
+        {status ? (
+          <Badge tone={status === "ready" ? "good" : status === "failed" ? "bad" : "info"}>
+            {status === "running" ? "summarizing" : status}
+          </Badge>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export function TaskRunStoryPanels({
@@ -280,22 +304,24 @@ export function TaskRunStoryPanels({
 
   if (!summary && !lastRunId) return null;
 
-  const visibleSummaryStatus = matchingAiSummary ? "ready" : localStatus || summaryStatus || "queued";
+  const staleStoredRunningStatus = summaryStatus === "running" && !!summary;
+  const visibleSummaryStatus = matchingAiSummary
+    ? "ready"
+    : localStatus || (staleStoredRunningStatus ? undefined : summaryStatus) || (summary ? undefined : "queued");
   const outcomeTone = outcome === "failed" || outcome === "error" ? "bad" : decisionRequired ? "warn" : "good";
 
   return (
     <section className="px-4 py-3">
+      <SummarySectionHeader
+        outcome={outcome}
+        outcomeTone={outcomeTone}
+        status={visibleSummaryStatus}
+      />
+
       <div className="rounded-sm bg-muted p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xs font-medium text-foreground/45">Outcome Dashboard</div>
-              <Badge tone={outcomeTone}>{outcome}</Badge>
-              <Badge tone={visibleSummaryStatus === "ready" ? "good" : visibleSummaryStatus === "failed" ? "bad" : "info"}>
-                {visibleSummaryStatus === "running" ? "summarizing" : visibleSummaryStatus}
-              </Badge>
-            </div>
-            <h3 className="mt-2 text-sm font-semibold text-foreground/85">{headline}</h3>
+            <h3 className="text-sm font-semibold text-foreground/85">{headline}</h3>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-foreground/60">{narrative}</p>
             {summaryError ? <p className="mt-1 text-[10px] text-red-300">{summaryError}</p> : null}
           </div>

@@ -64,25 +64,6 @@ interface ChainAssignWorkflowProps {
   workspacePath?: string;
 }
 
-function JobRunLink({
-  label,
-  runId,
-}: {
-  label: string;
-  runId?: unknown;
-}) {
-  if (typeof runId !== "string") return null;
-
-  return (
-    <a
-      href={`/runs?runId=${encodeURIComponent(runId)}`}
-      className="text-[10px] font-mono text-foreground/35 hover:text-cyan-400 transition-colors"
-    >
-      {label}: {runId}
-    </a>
-  );
-}
-
 function isGeneratedChain(value: unknown): value is GeneratedChain {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
@@ -934,7 +915,6 @@ export function ChainAssignWorkflow({
             ))}
           </div>
         )}
-        <JobRunLink label="analysis run" runId={analysisJob?.runId} />
         {isPending && isStale && (
           <div className="text-[10px] text-amber-400/70">
             Job hasn&apos;t started — runner may be offline
@@ -976,7 +956,6 @@ export function ChainAssignWorkflow({
             Assigning recommended chain...
           </span>
         </div>
-        <JobRunLink label="analysis run" runId={analysisJob?.runId} />
       </div>
     );
   }
@@ -1196,7 +1175,6 @@ export function ChainAssignWorkflow({
             Job hasn&apos;t started — runner may be offline
           </div>
         )}
-        <JobRunLink label="chain generation run" runId={generationJob?.runId} />
         <div className="flex items-center gap-2">
           <button
             className="text-[10px] text-foreground/30 hover:text-foreground/50"
