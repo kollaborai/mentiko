@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { existsSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -19,6 +19,15 @@ interface GitCommit {
   body: string;
 }
 
+// argv git — no shell, so the branch ref can never be interpreted as a command.
+function runGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+}
+
 export const GET = withErrorHandling(async (
   request: NextRequest,
   _context: { params: Promise<{ id: string }> }
@@ -32,8 +41,14 @@ export const GET = withErrorHandling(async (
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const { searchParams } = new URL(request.url);
-  const maxCount = parseInt(searchParams.get("limit") || "50", 10);
+  const parsedLimit = parseInt(searchParams.get("limit") || "50", 10);
+  const maxCount = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(1000, parsedLimit)) : 50;
   const branch = searchParams.get("branch") || "HEAD";
+
+  // reject option-like refs (array form already kills shell injection)
+  if (branch.startsWith("-")) {
+    throw new BadRequest("Invalid branch");
+  }
 
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
   const gitDir = join(chainDir, ".git");
@@ -55,9 +70,9 @@ export const GET = withErrorHandling(async (
   const formatString = Object.values(logFormat).join("%x1E");
   const delimiter = "%x1F";
 
-  const logOutput = execSync(
-    `git log -n ${maxCount} --format="${formatString}${delimiter}" ${branch}`,
-    { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
+  const logOutput = runGit(
+    chainDir,
+    ["log", "-n", String(maxCount), `--format=${formatString}${delimiter}`, branch]
   );
 
   const commits: GitCommit[] = logOutput
@@ -76,11 +91,7 @@ export const GET = withErrorHandling(async (
     });
 
   // Get current branch
-  const currentBranch = execSync("git branch --show-current", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  }).trim();
+  const currentBranch = runGit(chainDir, ["branch", "--show-current"]).trim();
 
   return apiSuccess({
     branch: currentBranch,

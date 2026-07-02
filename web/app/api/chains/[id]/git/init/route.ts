@@ -1,14 +1,25 @@
 import { NextRequest } from "next/server";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { orgPath } from "@/lib/config";
-import { Unauthorized, NotFound } from "@/lib/api-errors";
+import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
+
+// argv git — no shell, so the branch name can never be interpreted as a
+// command (the old `execSync('git init -b "' + initialBranch + '"')` form
+// broke on a literal `"` in the name and let `$()` / backticks through).
+function runGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+}
 
 export const POST = withErrorHandling(async (
   request: NextRequest,
@@ -23,7 +34,14 @@ export const POST = withErrorHandling(async (
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();
-  const initialBranch = body.branch || "main";
+  const initialBranch =
+    (typeof body.branch === "string" ? body.branch.trim() : "") || "main";
+
+  // reject shell/flag-like branch names (defense against option-injection on
+  // top of the argv form)
+  if (!/^[a-zA-Z0-9._\-/]+$/.test(initialBranch)) {
+    throw new BadRequest("Invalid branch name");
+  }
 
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
 
@@ -42,9 +60,9 @@ export const POST = withErrorHandling(async (
   }
 
   // Initialize git repo
-  execSync('git init -b "' + initialBranch + '"', { cwd: chainDir, stdio: "pipe" });
-  execSync('git config user.name "Agent Chain"', { cwd: chainDir, stdio: "pipe" });
-  execSync('git config user.email "agent@chain.local"', { cwd: chainDir, stdio: "pipe" });
+  runGit(chainDir, ["init", "-b", initialBranch]);
+  runGit(chainDir, ["config", "user.name", "Agent Chain"]);
+  runGit(chainDir, ["config", "user.email", "agent@chain.local"]);
 
   // Create .gitignore
   const gitignorePath = join(chainDir, ".gitignore");
@@ -72,8 +90,8 @@ export const POST = withErrorHandling(async (
   // Initial commit if chain.json exists
   const chainJsonPath = join(chainDir, "chain.json");
   if (existsSync(chainJsonPath)) {
-    execSync("git add chain.json .gitignore", { cwd: chainDir, stdio: "pipe" });
-    execSync('git commit -m "Initial import"', { cwd: chainDir, stdio: "pipe" });
+    runGit(chainDir, ["add", "chain.json", ".gitignore"]);
+    runGit(chainDir, ["commit", "-m", "Initial import"]);
   }
 
   return apiSuccess({

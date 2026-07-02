@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { existsSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -27,6 +27,24 @@ interface DiffResult {
     deletions: number;
   };
   diff?: string;
+}
+
+// argv git — no shell, so refs/paths can never be interpreted as a command.
+function runGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+}
+
+// Reject option-like values (`--output=...`, `-S`, ...). Array form already
+// kills shell injection; this closes the separate flag-injection vector where
+// git would treat the value as its own option.
+function assertRef(value: string, label: string): void {
+  if (value.startsWith("-")) {
+    throw new BadRequest(`Invalid ${label}`);
+  }
 }
 
 function getStatusSymbol(status: string): string {
@@ -57,6 +75,10 @@ export const GET = withErrorHandling(async (
   const to = searchParams.get("to") || "";
   const includeContent = searchParams.get("content") === "true";
 
+  assertRef(from, "from");
+  const toRev = to || "HEAD";
+  if (to) assertRef(to, "to");
+
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
   const gitDir = join(chainDir, ".git");
 
@@ -64,13 +86,8 @@ export const GET = withErrorHandling(async (
     throw new BadRequest("Not a git repository");
   }
 
-  const toRev = to || "HEAD";
-
   // Get diff summary
-  const diffOutput = execSync(
-    `git diff --numstat ${from} ${toRev}`,
-    { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
-  );
+  const diffOutput = runGit(chainDir, ["diff", "--numstat", from, toRev]);
 
   const files: DiffFile[] = [];
   let totalAdditions = 0;
@@ -89,9 +106,9 @@ export const GET = withErrorHandling(async (
       totalAdditions += additions;
       totalDeletions += deletions;
 
-      const statusOutput = execSync(
-        `git diff --name-status ${from} ${toRev} -- "${file}"`,
-        { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
+      const statusOutput = runGit(
+        chainDir,
+        ["diff", "--name-status", from, toRev, "--", file]
       );
       const status = statusOutput.trim().split(" ")[0] || "M";
 
@@ -117,10 +134,7 @@ export const GET = withErrorHandling(async (
 
   // Optionally include full diff content
   if (includeContent) {
-    const diffContent = execSync(
-      `git diff ${from} ${toRev}`,
-      { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
-    );
+    const diffContent = runGit(chainDir, ["diff", from, toRev]);
     result.diff = diffContent;
   }
 
@@ -144,6 +158,11 @@ export const POST = withErrorHandling(async (
   const commit = body.commit || "HEAD";
   const file = body.file || "chain.json";
 
+  assertRef(commit, "commit");
+  if (file.startsWith("-") || file.includes("..")) {
+    throw new BadRequest("Invalid file");
+  }
+
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
   const gitDir = join(chainDir, ".git");
 
@@ -151,10 +170,7 @@ export const POST = withErrorHandling(async (
     throw new BadRequest("Not a git repository");
   }
 
-  const content = execSync(
-    `git show ${commit}:${file}`,
-    { cwd: chainDir, stdio: "pipe", encoding: "utf-8" }
-  );
+  const content = runGit(chainDir, ["show", `${commit}:${file}`]);
 
   return apiSuccess({
     commit,
