@@ -584,7 +584,8 @@ function getDockedStyle(pos: PillPosition): React.CSSProperties {
 
 // ─── component ──────────────────────────────────────────────
 
-const MOBILE_SCALE = 0.75;
+const MOBILE_NAV_HEIGHT = 58;
+const MOBILE_NAV_OFFSET = `calc(${MOBILE_NAV_HEIGHT}px + env(safe-area-inset-top, 0px))`;
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
@@ -665,13 +666,30 @@ export function FloatingPillNav() {
     if (pillPrefs.navigationMode !== "floating-nav-panels") setPanelActivePath(null);
   }, [pillPrefs.navigationMode]);
 
-  // mobile: force top center, locked, scaled down
+  // mobile: force a fixed top rail; no drag/scale physics on narrow screens.
   useEffect(() => {
     if (isMobile) {
       setPosition({ edge: "top", offset: 50 });
       setIsLocked(true);
-      setPillScale(MOBILE_SCALE);
+      setPillScale(1);
     }
+  }, [isMobile]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!isMobile) {
+      root.style.removeProperty("--mentiko-mobile-pill-nav-offset");
+      root.removeAttribute("data-mobile-pill-nav");
+      return;
+    }
+
+    root.style.setProperty("--mentiko-mobile-pill-nav-offset", MOBILE_NAV_OFFSET);
+    root.setAttribute("data-mobile-pill-nav", "true");
+
+    return () => {
+      root.style.removeProperty("--mentiko-mobile-pill-nav-offset");
+      root.removeAttribute("data-mobile-pill-nav");
+    };
   }, [isMobile]);
 
   // track page visits for recents
@@ -1075,14 +1093,15 @@ export function FloatingPillNav() {
   const style: React.CSSProperties = isMobile && !isDragging
     ? {
         position: "fixed" as const,
-        top: "env(safe-area-inset-top, 0px)",
-        left: "max(env(safe-area-inset-left, 0px), 8px)",
-        right: "max(env(safe-area-inset-right, 0px), 8px)",
+        top: 0,
+        left: 0,
+        right: 0,
         width: "auto",
         maxWidth: "none",
+        height: MOBILE_NAV_OFFSET,
         transform: "none",
         transformOrigin: "top center",
-        borderRadius: "0 0 20px 20px",
+        borderRadius: 0,
         zIndex: FLOATING_SURFACE_Z.pillNav,
         transition: "all 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
       }
@@ -1165,8 +1184,8 @@ export function FloatingPillNav() {
           vert && "flex-col",
           "[&>*]:shrink-0",
           isMobile
-            ? "w-auto max-w-none overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch]"
-            : "max-w-[100vw] overflow-x-auto scrollbar-none",
+            ? "max-w-full justify-start overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar border-b border-border/40 bg-background dark:bg-[#0a0a0a] pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] py-2 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] backdrop-blur-none [-webkit-overflow-scrolling:touch] [&>*]:shrink-0"
+            : "max-w-[100vw] overflow-x-auto no-scrollbar",
         )}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1185,6 +1204,7 @@ export function FloatingPillNav() {
         <div
           aria-hidden="true"
           style={{
+            display: isMobile ? "none" : undefined,
             position: "absolute",
             inset: 0,
             padding: "1px",
@@ -1242,13 +1262,14 @@ export function FloatingPillNav() {
               href={cat.href}
               label={cat.label}
               icon={cat.icon}
-              active={isActive}
-              tint={isActive ? cat.color : undefined}
-              vertical={vert}
-              brandLabel={cat.key === "home" ? "mentiko" : undefined}
-              onAction={catRouteAction}
-              actionKind="link"
-              hideTooltip={catHasHoverCard}
+	                  active={isActive}
+	                  tint={isActive ? cat.color : undefined}
+	                  vertical={vert}
+	                  brandLabel={cat.key === "home" ? "mentiko" : undefined}
+	                  mobileIconOnly={isMobile && cat.key === "home"}
+	                  onAction={catRouteAction}
+	                  actionKind="link"
+	                  hideTooltip={catHasHoverCard}
             />
           );
 
@@ -1492,8 +1513,9 @@ function PillItem({
   tint,
   dimmed,
   vertical,
-  brandLabel,
-  onAction,
+	  brandLabel,
+	  mobileIconOnly,
+	  onAction,
   actionKind = "button",
   hideTooltip,
 }: {
@@ -1504,18 +1526,23 @@ function PillItem({
   tint?: string;
   dimmed?: boolean;
   vertical: boolean;
-  brandLabel?: string;
-  onAction?: () => void;
+	  brandLabel?: string;
+	  mobileIconOnly?: boolean;
+	  onAction?: () => void;
   actionKind?: "button" | "link";
   hideTooltip?: boolean;
 }) {
-  const classes = cn(
-    "group relative flex items-center justify-center rounded-full transition-colors",
-    brandLabel ? "gap-1.5 pl-2 pr-3 h-8" : "w-8 h-8",
-    active ? "bg-foreground/15 dark:bg-white/15" : "hover:bg-foreground/10 dark:hover:bg-white/10",
-    !tint && !active && "text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80",
-    dimmed && "opacity-50",
-  );
+	  const classes = cn(
+	    "group relative flex items-center justify-center rounded-full transition-colors",
+	    brandLabel && !mobileIconOnly ? "gap-1.5 pl-2 pr-3 h-8" : "w-8 h-8",
+	    mobileIconOnly
+	      ? "bg-transparent dark:bg-transparent hover:bg-transparent dark:hover:bg-transparent"
+	      : active
+	      ? "bg-foreground/15 dark:bg-white/15"
+	      : "hover:bg-foreground/10 dark:hover:bg-white/10",
+	    !tint && !active && "text-foreground/40 dark:text-white/40 hover:text-foreground/80 dark:hover:text-white/80",
+	    dimmed && "opacity-50",
+	  );
   const tooltip = !brandLabel && !hideTooltip && (
     <span className={cn(
       "absolute px-2 py-1 bg-background dark:bg-[#1a1a1a] text-[10px] text-foreground/70 dark:text-white/70 font-medium rounded-md",
@@ -1525,7 +1552,7 @@ function PillItem({
       {label}
     </span>
   );
-  const brand = brandLabel && !vertical && (
+	  const brand = brandLabel && !vertical && !mobileIconOnly && (
     <span className="text-[11px] font-black tracking-tight font-mono text-foreground/80 dark:text-white/80">
       {brandLabel}
     </span>

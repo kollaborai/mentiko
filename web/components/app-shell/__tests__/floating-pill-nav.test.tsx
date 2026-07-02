@@ -5,6 +5,7 @@ import { usePillNavPreferences } from '@/lib/ui/pill-nav-preferences'
 // ─── mocks ──────────────────────────────────────────────────
 
 let mockPathname = '/dashboard'
+let mockIsMobile = false
 
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
@@ -120,7 +121,7 @@ jest.mock('@/components/app-shell/nav-namespace-selector', () => ({
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: jest.fn().mockImplementation((query: string) => ({
-    matches: false,
+    matches: query === '(max-width: 640px)' ? mockIsMobile : false,
     media: query,
     onchange: null,
     addListener: jest.fn(),
@@ -148,6 +149,9 @@ afterAll(() => {
 beforeEach(() => {
   localStorageMap.clear()
   mockPathname = '/dashboard'
+  mockIsMobile = false
+  document.documentElement.style.removeProperty('--mentiko-mobile-pill-nav-offset')
+  document.documentElement.removeAttribute('data-mobile-pill-nav')
   usePillNavPreferences.setState({
     prefs: {
       colorScheme: 'rainbow',
@@ -198,6 +202,30 @@ describe('FloatingPillNav', () => {
       // home category has the mentiko svg logo, not an aliimam icon
       // workspace, workflows, marketplace, settings are rendered
       expect(screen.getByTitle('Settings')).toBeInTheDocument()
+    })
+
+    it('pins mobile nav as a fixed top rail with internal horizontal scroll', () => {
+      mockIsMobile = true
+
+      render(<FloatingPillNav />)
+
+      const nav = document.querySelector('[data-pill-nav]') as HTMLDivElement
+      expect(nav).toBeInTheDocument()
+      expect(nav).toHaveStyle({
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        right: '0',
+        transform: 'none',
+        borderRadius: '0',
+      })
+      expect(nav.className).toContain('overflow-x-auto')
+      expect(nav.className).toContain('overflow-y-hidden')
+      expect(nav.className).toContain('max-w-full')
+      expect(nav.className).toContain('no-scrollbar')
+      expect(screen.getByTitle(/lock position|unlock position/i).className).toContain('hidden')
+      expect(document.documentElement).toHaveAttribute('data-mobile-pill-nav', 'true')
+      expect(document.documentElement.style.getPropertyValue('--mentiko-mobile-pill-nav-offset')).toContain('58px')
     })
   })
 

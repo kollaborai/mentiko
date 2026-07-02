@@ -376,7 +376,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             <main
               id="main-content"
               tabIndex={-1}
-              className="relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0"
+              className="relative z-[1] flex-1 overflow-x-hidden overflow-y-auto min-h-0 pt-[var(--mentiko-mobile-pill-nav-offset,0px)]"
             >
               {children}
             </main>

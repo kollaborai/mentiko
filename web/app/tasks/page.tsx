@@ -1053,8 +1053,8 @@ function TasksPageContent() {
         {/* left: tree sidebar (resizable) */}
         <WorkflowSidebarPane
           className={`${
-            mobileView === "detail" ? "hidden md:flex" : "flex"
-          } md:flex`}
+            mobileView === "detail" ? "hidden lg:flex" : "flex"
+          } lg:flex`}
           style={{ width: sidebarWidth }}
         >
           <TaskTreeView
@@ -1071,8 +1071,8 @@ function TasksPageContent() {
         {/* right: detail panel */}
         <div
           className={`${
-            mobileView === "list" ? "hidden md:flex" : "flex"
-          } flex-1 flex-col overflow-hidden md:flex`}
+            mobileView === "list" ? "hidden lg:flex" : "flex"
+          } flex-1 flex-col overflow-hidden lg:flex`}
         >
           {!selected ? (
             showGenerate ? (
@@ -1117,8 +1117,8 @@ function TasksPageContent() {
         {/* left: task list (resizable) */}
         <WorkflowSidebarPane
           className={`${
-            mobileView === "detail" ? "hidden md:flex" : "flex"
-          } md:flex`}
+            mobileView === "detail" ? "hidden lg:flex" : "flex"
+          } lg:flex`}
           style={{ width: sidebarWidth }}
         >
           <TaskFilters
@@ -1223,8 +1223,8 @@ function TasksPageContent() {
         {/* right: detail panel */}
         <div
           className={`${
-            mobileView === "list" ? "hidden md:flex" : "flex"
-          } flex-1 flex-col overflow-hidden md:flex`}
+            mobileView === "list" ? "hidden lg:flex" : "flex"
+          } flex-1 flex-col overflow-hidden lg:flex`}
         >
           {!selected ? (
             showGenerate ? (
