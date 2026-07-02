@@ -29,7 +29,7 @@ export default async function DashboardPage() {
           <RunsChart />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-[minmax(300px,1fr)] gap-3 md:gap-4 mt-3 md:mt-4 pb-4">
+        <div className="grid grid-cols-1 gap-3 pb-4 mt-3 md:mt-4 md:grid-cols-3 md:auto-rows-[minmax(300px,1fr)] md:gap-4">
           <QuickActions className="md:row-span-2" />
           <RecentRuns />
           <ActivityFeed />
