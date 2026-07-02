@@ -56,7 +56,7 @@ describe("run detail terminal interactivity source contract", () => {
 
   it("uses the run artifact preview endpoint from the run detail surface", () => {
     expect(source).toContain("/api/runs/${runId}/artifacts?path=");
-    expect(source).toContain("artifact review");
+    expect(source).toContain("Artifact Review");
     expect(source).toContain("selectedArtifact");
   });
 

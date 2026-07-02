@@ -328,9 +328,9 @@ function ComparePageContent() {
               <div className="bg-card rounded-md p-4">
                 <h2 className="text-sm font-medium mb-3">Metrics Difference</h2>
                 <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border/50">
-                <span className="text-xs text-foreground/60">Duration</span>
-                <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border/50">
+                    <span className="text-xs text-foreground/60">Duration</span>
+                    <div className="flex items-center gap-3">
                       <span className="text-xs font-mono">{formatDuration(getDuration(runA))}</span>
                       <DiffIndicator value={comparison.metricsDiff.duration} percent={comparison.metricsDiff.durationPercent} />
                       <span className="text-xs font-mono">{formatDuration(getDuration(runB))}</span>

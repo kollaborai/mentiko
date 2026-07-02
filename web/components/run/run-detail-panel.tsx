@@ -1175,8 +1175,10 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     : "mx-3 mt-2 shrink-0 flex-col items-stretch justify-start gap-3 rounded-xl px-4 py-4 sm:flex-row sm:items-center sm:justify-between";
   const runHeaderIdentityClassName = embedded
     ? "relative flex w-full min-w-0 items-start gap-3"
-    : "relative flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center";
-  const runHeaderTitleBlockClassName = embedded ? "min-w-0 flex-1" : "min-w-0 flex-1";
+    : "relative flex w-full min-w-0 items-start sm:w-auto sm:items-center sm:gap-3";
+  const runHeaderTitleBlockClassName = embedded
+    ? "min-w-0 flex-1"
+    : cn("min-w-0 flex-1", onBack && "pt-9 sm:pt-0");
   const runHeaderTitleLineClassName = embedded
     ? "flex min-w-0 flex-wrap items-center gap-2"
     : "flex min-w-0 flex-wrap items-center gap-2";
@@ -1192,7 +1194,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     : "grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:gap-4";
   const runHeaderControlsClassName = embedded
     ? "flex min-w-0 flex-wrap items-center justify-end gap-1.5"
-    : "flex min-w-0 items-center justify-center gap-2 sm:justify-end";
+    : "flex min-w-0 items-center justify-between gap-2 sm:justify-end";
   const tabsChromeClassName = embedded
     ? "shrink-0 overflow-x-auto px-2 pt-2"
     : "shrink-0 max-w-full px-4 pt-3";
@@ -1229,23 +1231,23 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     : "grid grid-cols-2 md:grid-cols-3 gap-2";
   const outputShellClassName = embedded
     ? "flex-1 flex min-h-0 flex-col"
-    : "flex-1 flex min-h-0";
+    : "flex-1 flex min-h-0 flex-col sm:flex-row";
   const outputAgentListClassName = embedded
     ? "shrink-0 border-b border-foreground/5 overflow-x-auto p-2"
-    : "w-40 md:w-48 border-r border-foreground/5 overflow-y-auto p-2 space-y-1";
-  const outputAgentListBodyClassName = embedded ? "flex min-w-max gap-1" : "space-y-1";
+    : "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 sm:w-40 sm:border-b-0 sm:border-r sm:overflow-y-auto md:w-48";
+  const outputAgentListBodyClassName = embedded ? "flex min-w-max gap-1" : "flex min-w-max gap-1 sm:block sm:min-w-0 sm:space-y-1";
   const outputAgentButtonClassName = embedded
     ? "min-w-[128px] max-w-[180px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors"
-    : "w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors";
+    : "min-w-[144px] max-w-[220px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors sm:w-full sm:min-w-0 sm:max-w-none";
   const outputHeaderClassName = embedded
     ? "flex flex-col items-stretch gap-2 px-3 py-2 shrink-0"
-    : "flex items-center justify-between px-4 py-2 shrink-0";
+    : "flex flex-col items-stretch gap-2 px-3 py-2 shrink-0 sm:flex-row sm:items-center sm:justify-between sm:px-4";
   const outputHeaderTitleLineClassName = embedded
     ? "flex min-w-0 flex-wrap items-center gap-2"
-    : "flex items-center gap-2";
+    : "flex min-w-0 flex-wrap items-center gap-2";
   const outputHeaderControlsClassName = embedded
     ? "flex min-w-0 flex-wrap items-center gap-1"
-    : "flex items-center gap-1 ml-4 shrink-0";
+    : "flex min-w-0 flex-wrap items-center gap-1 sm:ml-4 sm:shrink-0 sm:flex-nowrap";
   const outputScrollClassName = embedded
     ? "h-full overflow-y-auto px-3 py-2"
     : "h-full overflow-y-auto px-4 py-2";
@@ -1398,8 +1400,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       <DetailHeader className={headerClassName}>
         <div className={runHeaderIdentityClassName}>
           {onBack && (
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onBack}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="absolute left-0 top-0 h-7 gap-1.5 px-2 text-[11px] sm:static"
+              onClick={onBack}
+            >
               <ArrowLeftFilled className="h-4 w-4" />
+              Back
             </Button>
           )}
           <div className={runHeaderTitleBlockClassName}>
@@ -1411,10 +1419,11 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               ) : (
                 <span className={runHeaderTitleClassName}>{run.chain}</span>
               )}
-              <StatusBadge status={run.status as Status} size="sm" />
-              {connected && isActive && (
-                <Badge variant="ghost" className="text-[9px] bg-green-500/10 text-green-400">live</Badge>
-              )}
+              <StatusBadge
+                status={run.status as Status}
+                label={connected && isActive ? "running · connected" : undefined}
+                size="sm"
+              />
             </div>
             <div className={runHeaderMetaClassName}>
               <CopyButton value={runId} fullValue={run} />
@@ -1447,7 +1456,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               <>
                 <Button size="sm" variant={debugPaused ? "default" : "secondary"} className="h-7 text-[10px]" onClick={() => setDebugPaused(!debugPaused)}>
                   {debugPaused ? <Pause className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
-                  {debugPaused ? "paused" : "live"}
+                  {debugPaused ? "resume" : "pause"}
                 </Button>
                 {confirmStop ? (
                   <>
@@ -1602,7 +1611,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 <div className="rounded-md border border-foreground/10 bg-card p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-foreground/40">run outcome</span>
+                      <span className="text-xs text-foreground/40">Run Outcome</span>
                       <StatusBadge
                         status={runOutcomeStatus(run.summary)}
                         label={runOutcomeLabel(run.summary)}
@@ -1622,38 +1631,38 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                   )}
                   {(run.summary.findings?.length || run.summary.risks?.length || run.summary.next_actions?.length) ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-3 border-t border-foreground/10 pt-3">
-                      <SummaryList label="findings" items={run.summary.findings} />
-                      <SummaryList label="risks" items={run.summary.risks} />
-                      <SummaryList label="next" items={run.summary.next_actions} />
+                      <SummaryList label="Findings" items={run.summary.findings} />
+                      <SummaryList label="Risks" items={run.summary.risks} />
+                      <SummaryList label="Next" items={run.summary.next_actions} />
                     </div>
                   ) : null}
                 </div>
               )}
               <div className={runMetadataGridClassName}>
-                <span className="text-foreground/40">started</span>
+                <span className="text-foreground/40">Started</span>
                 <span>{new Date(run.started).toLocaleString()}</span>
                 {run.completed && (
                   <>
-                    <span className="text-foreground/40">completed</span>
+                    <span className="text-foreground/40">Completed</span>
                     <span>{new Date(run.completed).toLocaleString()}</span>
                   </>
                 )}
                 {run.chainId && (
                   <>
-                    <span className="text-foreground/40">chain id</span>
+                    <span className="text-foreground/40">Chain ID</span>
                     <CopyButton value={run.chainId} className="text-xs" />
                   </>
                 )}
                 {run.sessions?.length > 0 && (
                   <>
-                    <span className="text-foreground/40">sessions</span>
+                    <span className="text-foreground/40">Sessions</span>
                     <span className="min-w-0 break-all font-mono text-[10px] text-foreground/60">{run.sessions.join(", ")}</span>
                   </>
                 )}
               </div>
               <div className="border-t border-foreground/5 pt-4">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs text-foreground/40">goal</span>
+                  <span className="text-xs text-foreground/40">Goal</span>
                   <CopyButton value={run.goal} showLabel={false} className="text-[10px] h-6 px-2" />
                 </div>
                 <GoalContent goal={run.goal} />
@@ -2168,12 +2177,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           <TabsContent value="metrics" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
             {/* agent execution timeline */}
             <div className="max-w-4xl mb-6">
-              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">agent timeline</p>
+              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">Agent Timeline</p>
               <div className="bg-card rounded-sm p-3">
                 <div className={metricsTimelineScaleClassName}>
                   <span>0%</span>
                   <div className="flex-1 h-px bg-foreground/10 mx-2" />
-                  <span>total: {formatDuration(run.started, run.completed)}</span>
+                  <span>Total: {formatDuration(run.started, run.completed)}</span>
                   <div className="flex-1 h-px bg-foreground/10 mx-2" />
                   <span>100%</span>
                 </div>
@@ -2229,14 +2238,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Clock className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">duration</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">Duration</p>
                 </div>
                 <p className="text-lg font-mono">{formatDuration(run.started, run.completed)}</p>
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Zap className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">progress</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">Progress</p>
                 </div>
                 <p className="text-lg font-mono">{completedAgents}/{totalAgents}</p>
                 <div className="w-full bg-accent rounded-full h-1 mt-2">
@@ -2246,14 +2255,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Cpu className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">active agents</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">Active Agents</p>
                 </div>
                 <p className="text-lg font-mono">{run.agents?.filter((a) => a.status === "running").length || 0}</p>
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Terminal className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">total agents</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">Total Agents</p>
                 </div>
                 <p className="text-lg font-mono">{totalAgents}</p>
               </div>
@@ -2289,7 +2298,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
             <div className="max-w-5xl space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">artifact review</p>
+                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">Artifact Review</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     captured run evidence and agent outputs
                   </p>
@@ -2394,26 +2403,26 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                   {/* totals */}
                   <div className={costSummaryGridClassName}>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">total cost</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Total Cost</p>
                       <p className="text-2xl font-mono">{costData.totalCostDisplay}</p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">input tokens</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Input Tokens</p>
                       <p className="text-lg font-mono">{costData.totalInputTokens.toLocaleString()}</p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">output tokens</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Output Tokens</p>
                       <p className="text-lg font-mono">{costData.totalOutputTokens.toLocaleString()}</p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">total tokens</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Total Tokens</p>
                       <p className="text-lg font-mono">{(costData.totalInputTokens + costData.totalOutputTokens).toLocaleString()}</p>
                     </div>
                   </div>
 
                   {/* agent breakdown */}
                   <div>
-                    <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">agent breakdown</p>
+                    <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">Agent Breakdown</p>
                     <div className="grid gap-2">
                       {costData.agentBreakdown.map((agent) => (
                         <div key={agent.agentId} className="bg-card rounded-md p-3">
