@@ -210,13 +210,18 @@ function now(): string {
 
 // ---------- CRUD ----------
 
-export function taskList(
+// Row cap used when a caller doesn't bound the query itself (e.g. the web UI's
+// full task list). Bounded consumers (MCP list endpoint) pass filter.limit.
+const DEFAULT_TASK_LIMIT = 500;
+
+// Shared WHERE builder for taskList / taskCount so the two queries can't drift
+// (a mismatch would make has_more lie). Returns the clause (without "WHERE")
+// and its bind params.
+function buildTaskWhere(
   orgId: string,
-  filter?: TaskListFilter,
+  filter: TaskListFilter | undefined,
   workspaceId?: string,
-  namespaceId?: string
-): TaskRecord[] {
-  const db = getDb(namespaceId);
+): { clause: string; params: unknown[] } {
   const conditions: string[] = ["org_id = ?"];
   const params: unknown[] = [orgId];
 
@@ -247,8 +252,22 @@ export function taskList(
     params.push(`%${filter.query}%`);
   }
 
-  const sql = `SELECT * FROM tasks WHERE ${conditions.join(" AND ")} ORDER BY updated_at DESC LIMIT 500`;
-  const rows = db.prepare(sql).all(...params) as RawTaskRow[];
+  return { clause: conditions.join(" AND "), params };
+}
+
+export function taskList(
+  orgId: string,
+  filter?: TaskListFilter,
+  workspaceId?: string,
+  namespaceId?: string
+): TaskRecord[] {
+  const db = getDb(namespaceId);
+  const where = buildTaskWhere(orgId, filter, workspaceId);
+
+  const limit = filter?.limit ?? DEFAULT_TASK_LIMIT;
+  const offset = filter?.offset ?? 0;
+  const sql = `SELECT * FROM tasks WHERE ${where.clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?`;
+  const rows = db.prepare(sql).all(...where.params, limit, offset) as RawTaskRow[];
   if (rows.length === 0) return [];
 
   const ids = rows.map((r) => r.id);
@@ -276,6 +295,22 @@ export function taskList(
     record.comment_count = cmtMap.get(row.id) ?? 0;
     return record;
   });
+}
+
+// Total count of rows matching the same filter (ignores limit/offset).
+// Pair with taskList() to compute has_more for paginated consumers.
+export function taskCount(
+  orgId: string,
+  filter?: TaskListFilter,
+  workspaceId?: string,
+  namespaceId?: string
+): number {
+  const db = getDb(namespaceId);
+  const where = buildTaskWhere(orgId, filter, workspaceId);
+  const row = db
+    .prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE ${where.clause}`)
+    .get(...where.params) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
 }
 
 export function taskGet(

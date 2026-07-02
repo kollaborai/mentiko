@@ -516,12 +516,14 @@ const ALL_TOOLS: Tool[] = [
   // ⑧ Task Ops
   {
     name: "list_tasks",
-    description: "List tasks.",
+    description: "List tasks, paginated, as a SUMMARY (id/title/status/priority/owner/assignee/labels/counts). Heavy text (description/notes/design/acceptance_criteria) is NOT included — call get_task for a single task's full record. Response: { tasks, total, limit, offset, has_more }. Page by passing offset = prevOffset + limit while has_more is true. Defaults to 50 rows.",
     inputSchema: {
       type: "object",
       properties: {
-        status: { type: "string" },
-        epic: { type: "string" }
+        status: { type: "string", description: "Filter by lifecycle status: open, in_progress, blocked, closed, or all. Omit for not-closed." },
+        query: { type: "string", description: "Title substring filter (case-insensitive)." },
+        limit: { type: "number", description: "Page size, 1-200. Default 50." },
+        offset: { type: "number", description: "Skip this many rows for pagination. Default 0." }
       }
     }
   },

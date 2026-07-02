@@ -2,20 +2,24 @@ import { NextResponse } from "next/server";
 import {
   taskCreate,
   taskList,
+  taskCount,
   taskClose,
   taskUpdate,
   taskGet,
   taskGetAllDeps,
   taskGetComments,
 } from "@/lib/tasks/task-store";
-import type { TaskUpdateFields } from "@/lib/tasks/task-store-types";
+import type { TaskListFilter, TaskRecord, TaskUpdateFields } from "@/lib/tasks/task-store-types";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 /**
  * /api/mentiko-mcp/ops/tasks
  *
- * GET   ?status=...     list tasks
+ * GET   ?status=...     list tasks (summary fields, paginated). Paging params:
+ *                      limit (1-200, default 50), offset (default 0), query
+ *                      (title substring). Returns { tasks, total, limit, offset, has_more }.
+ *                      Use the ?id= read for a single task's full record.
  * GET   ?id=TASK-123    single task + dependencies + dependents + comments
  * POST  {subject, desc?, parentId?, workspacePath?, issue_type?, priority?,
  *        owner?, assignee?, labels?, notes?, acceptance_criteria?, design?,
@@ -66,23 +70,59 @@ export async function GET(req: Request) {
     });
   }
 
+  // List path: bounded, summarized, paginated. Returning full records here
+  // was sending hundreds of KB (every task's description/notes/design/AC).
+  // Agents get a summary list, then call get_task (?id=) for full detail.
   const status = searchParams.get("status") || undefined;
-  const tasks = taskList(
-    orgId,
-    status
-      ? {
-          status: status as
-            | "open"
-            | "in_progress"
-            | "blocked"
-            | "closed"
-            | "all",
-        }
-      : undefined,
-    undefined,
-    namespaceId,
-  );
-  return NextResponse.json({ tasks });
+  const query = searchParams.get("query") || undefined;
+  const rawLimit = Number(searchParams.get("limit"));
+  const rawOffset = Number(searchParams.get("offset"));
+  // Default 50, clamp to [1, 200] so a caller can't re-bloat the response.
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(Math.max(Math.floor(rawLimit), 1), 200)
+    : 50;
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0
+    ? Math.floor(rawOffset)
+    : 0;
+
+  const filter: TaskListFilter = { limit, offset };
+  if (status) filter.status = status;
+  if (query) filter.query = query;
+
+  const tasks = taskList(orgId, filter, undefined, namespaceId);
+  const total = taskCount(orgId, filter, undefined, namespaceId);
+  return NextResponse.json({
+    tasks: tasks.map(toTaskSummary),
+    total,
+    limit,
+    offset,
+    has_more: offset + tasks.length < total,
+  });
+}
+
+// List-view projection: drops the heavy text columns (description, notes,
+// acceptance_criteria, design) and metadata, which are the size offenders.
+// Full record is available via the ?id= read / get_task.
+function toTaskSummary(t: TaskRecord) {
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    priority: t.priority,
+    issue_type: t.issue_type,
+    owner: t.owner,
+    assignee: t.assignee,
+    parent_id: t.parent_id,
+    labels: t.labels,
+    workspace_id: t.workspace_id,
+    estimated_minutes: t.estimated_minutes,
+    due_at: t.due_at,
+    created_at: t.created_at,
+    updated_at: t.updated_at,
+    dependency_count: t.dependency_count,
+    dependent_count: t.dependent_count,
+    comment_count: t.comment_count,
+  };
 }
 
 export async function POST(req: Request) {

@@ -56,6 +56,11 @@ export interface TaskListFilter {
   issue_type?: string;
   assignee?: string;
   query?: string;
+  // Paging. When omitted, taskList falls back to its built-in row cap
+  // (preserves the web UI's full-list behavior). Set explicitly for
+  // bounded consumers like the MCP list endpoint.
+  limit?: number;
+  offset?: number;
 }
 
 export interface TaskCreateInput {

@@ -358,7 +358,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- tasks (tier A reads, tier B writes) ----------
     if (name === "list_tasks") {
-      const result = await tasks.listTasks(args.status, args.epic);
+      const result = await tasks.listTasks({
+        status: args.status,
+        query: args.query,
+        limit: args.limit,
+        offset: args.offset,
+      });
       return textResult(JSON.stringify(result, null, 2));
     }
 

@@ -1,10 +1,21 @@
 import { opsGet, opsPatch, opsPost, opsDelete } from "./ops-client.js";
 
-export async function listTasks(status?: string, _epic?: string) {
-  return await opsGet(
-    "/api/mentiko-mcp/ops/tasks",
-    status ? { status } : undefined,
-  );
+export interface ListTasksInput {
+  status?: string;
+  query?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// Returns { tasks (summary fields only), total, limit, offset, has_more }.
+// Pass offset = prevOffset + limit while has_more is true to page through.
+export async function listTasks(input: ListTasksInput = {}) {
+  const params: Record<string, string> = {};
+  if (input.status) params.status = input.status;
+  if (input.query) params.query = input.query;
+  if (input.limit !== undefined) params.limit = String(input.limit);
+  if (input.offset !== undefined) params.offset = String(input.offset);
+  return await opsGet("/api/mentiko-mcp/ops/tasks", params);
 }
 
 export interface CreateTaskInput {
