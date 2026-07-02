@@ -6,6 +6,7 @@ import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { projectAgentAttemptsForStatus } from "@/lib/runner-v2/agent-attempt";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,6 @@ export const GET = withErrorHandling(async (
     started: run.started,
     completed: run.completed || null,
     agents: annotatedAgents,
-    runnerV2: run.runnerV2 || { attempts: [] },
+    runnerV2: projectAgentAttemptsForStatus(run.runnerV2),
   });
 });

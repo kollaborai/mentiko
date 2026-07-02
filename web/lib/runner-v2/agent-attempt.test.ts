@@ -3,9 +3,12 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   AgentAttemptTransitionError,
+  classifyReadinessFailure,
   createAgentAttempt,
+  projectAgentAttemptsForStatus,
   reconcileAgentAttempt,
   recordAgentAttemptProcess,
+  releaseAgentAttempt,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
 } from "@/lib/runner-v2/agent-attempt";
@@ -124,5 +127,74 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
       attemptId: attempt.id,
       reason: "reconciliation_window_expired",
     });
+  });
+
+  it("preserves startup terminal reason when releasing the lease", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "startup_failed", reason: "readiness_deadline_expired" });
+
+    const released = releaseAgentAttempt({ runJsonPath: path, attemptId: attempt.id });
+
+    expect(released).toMatchObject({
+      phase: "released",
+      terminalReason: "readiness_deadline_expired",
+      releaseReason: "released",
+    });
+  });
+
+  it("keeps repeated stuck reconciliation idempotent", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      now: new Date("2026-06-30T00:00:00.000Z"),
+    });
+
+    reconcileAgentAttempt({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      reconciliationWindowMs: 1_000,
+      now: new Date("2026-06-30T00:00:02.000Z"),
+    });
+    const second = reconcileAgentAttempt({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      reconciliationWindowMs: 1_000,
+      now: new Date("2026-06-30T00:00:04.000Z"),
+    });
+
+    expect(second.phase).toBe("stuck");
+    expect(readRun(path).runnerV2.stuckEvents).toHaveLength(1);
+  });
+
+  it("projects status payload without instruction paths or transition details", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    submitAgentAttemptInstructions({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      idempotencyKey: "same",
+      instructionPath: "/tmp/private/instructions.md",
+      pointer: "Read /tmp/private/instructions.md",
+    });
+
+    const projected = projectAgentAttemptsForStatus(readRun(path).runnerV2);
+
+    expect(projected.attempts[0]).toMatchObject({
+      id: attempt.id,
+      agentId: "writer",
+      phase: "created",
+      recoveryDecisionCount: 0,
+    });
+    expect(JSON.stringify(projected)).not.toContain("/tmp/private");
+    expect(JSON.stringify(projected)).not.toContain("instructionLedger");
+    expect(JSON.stringify(projected)).not.toContain("transitions");
+  });
+
+  it("classifies auth prompts separately from generic install output", () => {
+    expect(classifyReadinessFailure("Please log in to continue").phase).toBe("human_action_required");
+    expect(classifyReadinessFailure("install dependencies still running").phase).toBe("startup_failed");
   });
 });

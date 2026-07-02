@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
 import {
   classifyReadinessFailure,
   createAgentAttempt,
@@ -180,19 +181,24 @@ function buildInitialState(plan: AgentBootstrapPlan): string {
 function registerRunSession(context: RunnerV2LaunchContext, plan: AgentBootstrapPlan): void {
   const runJsonPath = join(context.runDir, "run.json");
   if (!existsSync(runJsonPath)) return;
-  const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as {
-    sessions?: string[];
-    agents?: Array<{ id?: string; session?: string; status?: string; name?: string }>;
-  };
-  run.sessions = Array.from(new Set([...(Array.isArray(run.sessions) ? run.sessions : []), plan.sessionName]));
-  if (Array.isArray(run.agents)) {
-    const agent = run.agents.find((item) => item.id === plan.agentId);
-    if (agent) {
-      agent.session = plan.sessionName;
-      if (!agent.status || agent.status === "pending") agent.status = "running";
-    }
-  }
-  writeFileSync(runJsonPath, `${JSON.stringify(run, null, 2)}\n`);
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const agents = Array.isArray(current.agents)
+      ? current.agents.map((agent) => {
+        if (agent.id !== plan.agentId) return agent;
+        return {
+          ...agent,
+          session: plan.sessionName,
+          status: !agent.status || agent.status === "pending" ? "running" : agent.status,
+        };
+      })
+      : [];
+    return {
+      ...current,
+      sessions: Array.from(new Set([...(Array.isArray(current.sessions) ? current.sessions : []), plan.sessionName])),
+      agents,
+    };
+  });
 }
 
 async function waitForBootstrapReadiness(

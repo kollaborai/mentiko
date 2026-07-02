@@ -54,6 +54,7 @@ export interface AgentAttemptRecord {
   observedPhase?: AgentAttemptPhase;
   terminalReason?: AgentAttemptTerminalReason;
   terminalDetail?: string;
+  releaseReason?: AgentAttemptTerminalReason;
   leaseId?: string;
   leaseAcquiredAt?: string;
   leaseReleasedAt?: string;
@@ -68,6 +69,16 @@ export interface AgentAttemptRecord {
 export interface RunnerV2AttemptState {
   attempts: AgentAttemptRecord[];
   stuckEvents?: AgentAttemptStuckEvent[];
+}
+
+export interface AgentAttemptStatusDto {
+  id: string;
+  agentId: string;
+  phase: AgentAttemptPhase;
+  terminalReason?: AgentAttemptTerminalReason;
+  processEvidence?: AgentAttemptProcessEvidence;
+  recoveryDecisionCount: number;
+  updatedAt: string;
 }
 
 export interface AgentAttemptStuckEvent {
@@ -102,6 +113,15 @@ const TERMINAL_PHASES = new Set<AgentAttemptPhase>([
   "stuck",
   "released",
 ]);
+
+const NEXT_DESIRED_PHASE: Partial<Record<AgentAttemptPhase, AgentAttemptPhase>> = {
+  created: "lease_acquired",
+  lease_acquired: "pty_allocated",
+  pty_allocated: "process_spawned",
+  process_spawned: "ready_for_instructions",
+  ready_for_instructions: "instructions_submitted",
+  instructions_submitted: "completed",
+};
 
 export class AgentAttemptTransitionError extends Error {
   readonly reason = "invalid_transition" as const;
@@ -154,12 +174,16 @@ export function transitionAgentAttempt(input: {
     if (!canTransition(attempt.phase, input.to)) {
       throw new AgentAttemptTransitionError(attempt.phase, input.to);
     }
+    const terminalReason = terminalReasonForTransition(attempt, input.to, input.reason);
+    const terminalDetail = terminalDetailForTransition(attempt, input.to, input.detail);
     return {
       ...attempt,
       phase: input.to,
+      desiredPhase: NEXT_DESIRED_PHASE[input.to] || input.to,
       observedPhase: input.to,
-      terminalReason: TERMINAL_PHASES.has(input.to) ? input.reason : attempt.terminalReason,
-      terminalDetail: TERMINAL_PHASES.has(input.to) ? input.detail : attempt.terminalDetail,
+      terminalReason,
+      terminalDetail,
+      releaseReason: input.to === "released" ? input.reason : attempt.releaseReason,
       leaseAcquiredAt: input.to === "lease_acquired" ? at : attempt.leaseAcquiredAt,
       leaseReleasedAt: input.to === "released" ? at : attempt.leaseReleasedAt,
       updatedAt: at,
@@ -169,6 +193,19 @@ export function transitionAgentAttempt(input: {
       ],
     };
   });
+}
+
+export function recordAgentAttemptRecoveryDecision(input: {
+  runJsonPath: string;
+  attemptId: string;
+  now?: Date;
+}): AgentAttemptRecord {
+  const at = iso(input.now);
+  return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => ({
+    ...attempt,
+    recoveryDecisionCount: attempt.recoveryDecisionCount + 1,
+    updatedAt: at,
+  }));
 }
 
 export function recordAgentAttemptProcess(input: {
@@ -249,9 +286,15 @@ export function reconcileAgentAttempt(input: {
 }): AgentAttemptRecord {
   const now = input.now || new Date();
   const attempt = readAttempt(input.runJsonPath, input.attemptId);
+  if (TERMINAL_PHASES.has(attempt.phase)) return attempt;
   if (!attempt.desiredPhase || attempt.desiredPhase === attempt.observedPhase) return attempt;
   if (now.getTime() - new Date(attempt.updatedAt).getTime() < input.reconciliationWindowMs) return attempt;
 
+  recordAgentAttemptRecoveryDecision({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    now,
+  });
   const stuck = transitionAgentAttempt({
     runJsonPath: input.runJsonPath,
     attemptId: input.attemptId,
@@ -300,6 +343,22 @@ export function readRunnerV2AttemptState(runJsonPath: string): RunnerV2AttemptSt
   };
 }
 
+export function projectAgentAttemptsForStatus(state: RunnerV2AttemptState | undefined): {
+  attempts: AgentAttemptStatusDto[];
+} {
+  return {
+    attempts: (Array.isArray(state?.attempts) ? state.attempts : []).map((attempt) => ({
+      id: attempt.id,
+      agentId: attempt.agentId,
+      phase: attempt.phase,
+      terminalReason: attempt.terminalReason,
+      processEvidence: attempt.processEvidence,
+      recoveryDecisionCount: attempt.recoveryDecisionCount,
+      updatedAt: attempt.updatedAt,
+    })),
+  };
+}
+
 export function canTransition(from: AgentAttemptPhase, to: AgentAttemptPhase): boolean {
   return ALLOWED_TRANSITIONS[from]?.includes(to) === true;
 }
@@ -311,12 +370,10 @@ export function classifyReadinessFailure(output: string): {
 } {
   const normalized = output.toLowerCase();
   if (
-    normalized.includes("login")
-    || normalized.includes("sign in")
-    || normalized.includes("authentication")
-    || normalized.includes("auth")
-    || normalized.includes("api key")
-    || normalized.includes("install")
+    /\b(log in|login|sign in|authenticate|authentication required|please authenticate)\b/.test(normalized)
+    || /\b(api key|token)\b.*\b(required|missing|not found|invalid)\b/.test(normalized)
+    || /\b(required|missing|invalid)\b.*\b(api key|token)\b/.test(normalized)
+    || normalized.includes("oauth")
   ) {
     return {
       phase: "human_action_required",
@@ -393,12 +450,16 @@ function appendStuckEvent(runJsonPath: string, event: AgentAttemptStuckEvent): v
   updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
     const runnerV2 = current.runnerV2 as RunnerV2AttemptState | undefined;
+    const existing = Array.isArray(runnerV2?.stuckEvents) ? runnerV2.stuckEvents : [];
+    if (existing.some((item) => item.attemptId === event.attemptId)) {
+      return current;
+    }
     return {
       ...current,
       runnerV2: {
         ...(runnerV2 || {}),
         attempts: Array.isArray(runnerV2?.attempts) ? runnerV2.attempts : [],
-        stuckEvents: [...(Array.isArray(runnerV2?.stuckEvents) ? runnerV2.stuckEvents : []), event],
+        stuckEvents: [...existing, event],
       },
     };
   });
@@ -420,4 +481,24 @@ function writeStuckEventFile(eventsDir: string, event: AgentAttemptStuckEvent): 
 
 function iso(now = new Date()): string {
   return now.toISOString();
+}
+
+function terminalReasonForTransition(
+  attempt: AgentAttemptRecord,
+  to: AgentAttemptPhase,
+  reason: AgentAttemptTerminalReason | undefined,
+): AgentAttemptTerminalReason | undefined {
+  if (!TERMINAL_PHASES.has(to)) return attempt.terminalReason;
+  if (to === "released" && attempt.terminalReason) return attempt.terminalReason;
+  return reason || attempt.terminalReason;
+}
+
+function terminalDetailForTransition(
+  attempt: AgentAttemptRecord,
+  to: AgentAttemptPhase,
+  detail: string | undefined,
+): string | undefined {
+  if (!TERMINAL_PHASES.has(to)) return attempt.terminalDetail;
+  if (to === "released" && attempt.terminalDetail) return attempt.terminalDetail;
+  return detail || attempt.terminalDetail;
 }
