@@ -1,0 +1,452 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import {
+  PeopleFilled,
+  AddFilled,
+  CheckFilled,
+  CloseCircleFilled as XFilled,
+} from "@aliimam/icons";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+
+/**
+ * Props for ReviewAssignmentDialog component
+ */
+interface ReviewAssignmentDialogProps {
+  /** Whether the dialog is open */
+  open: boolean;
+  /** Callback when dialog closes */
+  onOpenChange: (open: boolean) => void;
+  /** Selected files for review */
+  selectedFiles: string[];
+  /** Workspace path for Git operations */
+  workspacePath: string;
+  /** Branch the review is for (the currently checked-out branch) */
+  sourceBranch: string;
+  /** Callback when review is successfully created */
+  onReviewCreated?: (reviewId: string) => void;
+}
+
+/**
+ * Org member for reviewer selection
+ */
+interface OrgMember {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/** Raw member shape from GET /api/orgs/[id]/members */
+interface OrgMemberRaw {
+  id: string;
+  userId?: string;
+  email: string;
+  role?: string;
+}
+
+/** Unwrap the {success, data} envelope used by all API routes. */
+async function unwrap(res: Response): Promise<Record<string, unknown>> {
+  const body = await res.json().catch(() => ({}));
+  return (body?.data ?? body) as Record<string, unknown>;
+}
+
+/**
+ * Review assignment dialog component
+ * Enables users to assign reviewers to Git changes with context and criteria
+ */
+export function ReviewAssignmentDialog({
+  open,
+  onOpenChange,
+  selectedFiles,
+  workspacePath,
+  sourceBranch,
+  onReviewCreated,
+}: ReviewAssignmentDialogProps) {
+  // ── state management ──────────────────────────────────────────────────────
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Form state
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedReviewers, setSelectedReviewers] = useState<string[]>([]);
+  const [criteria, setCriteria] = useState<string[]>([""]);
+  const [dueDate, setDueDate] = useState("");
+  const [targetBranch, setTargetBranch] = useState("");
+
+  // Org members (fetched when the dialog opens)
+  const [availableMembers, setAvailableMembers] = useState<OrgMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
+
+  // ── data loading ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    // Reviewer candidates come from the org member list.
+    setMembersLoading(true);
+    setMembersError(null);
+    (async () => {
+      try {
+        const orgData = (await unwrap(await fetch("/api/orgs"))) as { org?: { id?: string } };
+        const orgId = orgData?.org?.id;
+        if (!orgId) throw new Error("no org");
+        const membersData = (await unwrap(await fetch(`/api/orgs/${orgId}/members`))) as {
+          members?: OrgMemberRaw[];
+        };
+        const raw: OrgMemberRaw[] = membersData?.members ?? [];
+        if (cancelled) return;
+        setAvailableMembers(
+          raw.map((m) => ({
+            // assignments reference user ids (matches session identity on the server)
+            id: m.userId || m.id,
+            name: m.email.split("@")[0],
+            email: m.email,
+          }))
+        );
+      } catch {
+        if (!cancelled) setMembersError("Could not load org members");
+      } finally {
+        if (!cancelled) setMembersLoading(false);
+      }
+    })();
+
+    // Default the merge target to the repo's default branch.
+    (async () => {
+      try {
+        const res = await fetch("/api/git", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "list_branches", workspacePath }),
+        });
+        const data = (await unwrap(res)) as { defaultBranch?: string };
+        if (!cancelled) {
+          setTargetBranch((prev) => prev || data?.defaultBranch || "main");
+        }
+      } catch {
+        if (!cancelled) setTargetBranch((prev) => prev || "main");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workspacePath]);
+
+  // ── derived state ─────────────────────────────────────────────────────────
+  const canSubmit =
+    title.trim().length > 0 &&
+    description.trim().length > 0 &&
+    selectedReviewers.length > 0 &&
+    criteria.filter(c => c.trim().length > 0).length > 0 &&
+    targetBranch.trim().length > 0 &&
+    !loading;
+
+  // ── handlers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Toggle reviewer selection
+   */
+  const toggleReviewer = useCallback((memberId: string) => {
+    setSelectedReviewers(prev =>
+      prev.includes(memberId)
+        ? prev.filter(id => id !== memberId)
+        : [...prev, memberId]
+    );
+  }, []);
+
+  /**
+   * Update a specific criterion
+   */
+  const updateCriterion = useCallback((index: number, value: string) => {
+    setCriteria(prev => {
+      const newCriteria = [...prev];
+      newCriteria[index] = value;
+      return newCriteria;
+    });
+  }, []);
+
+  /**
+   * Add a new criterion
+   */
+  const addCriterion = useCallback(() => {
+    setCriteria(prev => [...prev, ""]);
+  }, []);
+
+  /**
+   * Remove a criterion
+   */
+  const removeCriterion = useCallback((index: number) => {
+    setCriteria(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  /**
+   * Submit the review assignment
+   */
+  const handleSubmit = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspacePath,
+          selectedFiles,
+          assignment: {
+            title: title.trim(),
+            description: description.trim(),
+            reviewers: selectedReviewers,
+            source_branch: sourceBranch,
+            target_branch: targetBranch.trim(),
+            checklist: criteria
+              .filter(c => c.trim().length > 0)
+              .map(c => ({ title: c.trim(), required: true, completed: false })),
+            due_date: dueDate || undefined,
+          },
+        }),
+      });
+
+      const data = (await unwrap(res)) as {
+        ok?: boolean;
+        reviewId?: string;
+        error?: { message?: string };
+      };
+      const reviewId = data?.reviewId;
+      if (!res.ok || data?.ok === false || !reviewId) {
+        throw new Error(data?.error?.message ?? "Failed to create review");
+      }
+
+      // Success callback
+      onReviewCreated?.(reviewId);
+
+      // Reset and close
+      setTitle("");
+      setDescription("");
+      setSelectedReviewers([]);
+      setCriteria([""]);
+      setDueDate("");
+      onOpenChange(false);
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create review");
+    } finally {
+      setLoading(false);
+    }
+  }, [title, description, selectedReviewers, criteria, dueDate, sourceBranch, targetBranch, workspacePath, selectedFiles, onReviewCreated, onOpenChange]);
+
+  // ── render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PeopleFilled className="w-5 h-5" />
+            Assign Reviewers
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-6">
+          {/* Error banner */}
+          {error && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-md">
+              <p className="text-sm text-red-400">{error}</p>
+            </div>
+          )}
+
+          {/* Selected files summary */}
+          <div className="p-3 bg-muted rounded-md">
+            <p className="text-xs text-foreground/60 mb-1">
+              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} selected for review
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {selectedFiles.slice(0, 3).map(file => (
+                <span key={file} className="text-xs bg-card px-2 py-1 rounded">
+                  {file.split("/").pop()}
+                </span>
+              ))}
+              {selectedFiles.length > 3 && (
+                <span className="text-xs bg-card px-2 py-1 rounded">
+                  +{selectedFiles.length - 3} more
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Branches */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Source Branch</label>
+              <input
+                type="text"
+                value={sourceBranch}
+                readOnly
+                className="w-full px-3 py-2 bg-muted border border-border rounded-md text-sm text-foreground/70"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Target Branch *</label>
+              <input
+                type="text"
+                value={targetBranch}
+                onChange={(e) => setTargetBranch(e.target.value)}
+                placeholder="main"
+                className="w-full px-3 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                disabled={loading}
+              />
+            </div>
+          </div>
+
+          {/* Title */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Review Title *</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g., Fix authentication bug in login flow"
+              className="w-full px-3 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+              disabled={loading}
+            />
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Description *</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Provide context about the changes and what reviewers should focus on..."
+              rows={4}
+              className="w-full px-3 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent resize-none"
+              disabled={loading}
+            />
+          </div>
+
+          {/* Reviewers */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              Reviewers * ({selectedReviewers.length} selected)
+            </label>
+            {membersLoading && (
+              <p className="text-xs text-foreground/50">Loading org members...</p>
+            )}
+            {membersError && (
+              <p className="text-xs text-red-400">{membersError}</p>
+            )}
+            {!membersLoading && !membersError && availableMembers.length === 0 && (
+              <p className="text-xs text-foreground/50">No org members available.</p>
+            )}
+            <div className="space-y-2">
+              {availableMembers.map(member => (
+                <div
+                  key={member.id}
+                  onClick={() => !loading && toggleReviewer(member.id)}
+                  className={cn(
+                    "flex items-center gap-3 p-3 rounded-md cursor-pointer transition-colors",
+                    "border border-border",
+                    selectedReviewers.includes(member.id)
+                      ? "bg-accent/20 border-accent"
+                      : "bg-card hover:bg-muted"
+                  )
+                }
+                >
+                  <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-foreground/70 text-sm font-medium">
+                    {member.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{member.name}</p>
+                    <p className="text-xs text-foreground/60">{member.email}</p>
+                  </div>
+                  {selectedReviewers.includes(member.id) && (
+                    <CheckFilled className="w-5 h-5 text-accent" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Review criteria */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Review Criteria *</label>
+            <div className="space-y-2">
+              {criteria.map((criterion, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={criterion}
+                    onChange={(e) => updateCriterion(index, e.target.value)}
+                    placeholder="e.g., Security: Check for SQL injection vulnerabilities"
+                    className="flex-1 px-3 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                    disabled={loading}
+                  />
+                  {criteria.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeCriterion(index)}
+                      disabled={loading}
+                    >
+                      <XFilled className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={addCriterion}
+              disabled={loading}
+              className="mt-2"
+            >
+              <AddFilled className="w-4 h-4 mr-1" />
+              Add Criterion
+            </Button>
+          </div>
+
+          {/* Due date (optional) */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Due Date (optional)</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full px-3 py-2 bg-card border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+              disabled={loading}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={!canSubmit || loading}
+            className="min-w-[120px]"
+          >
+            {loading ? "Creating..." : "Assign Reviewers"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

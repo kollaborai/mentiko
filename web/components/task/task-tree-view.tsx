@@ -418,7 +418,7 @@ function TreeRow({
             className={`flex-1 flex items-center gap-2 px-2 py-2 rounded-sm transition-colors cursor-pointer min-w-0
               ${isSelected ? "bg-accent" : "hover:bg-accent/50"}`}
           >
-            <PriorityBadge priority={priority} rawPriority={node.priority} />
+            <PriorityBadge priority={priority} />
 
             <span className="text-xs font-medium text-foreground truncate flex-1 text-left">
               {node.label}
@@ -561,7 +561,7 @@ function TreeRow({
           />
 
           {/* priority + type */}
-          <PriorityBadge priority={priority} rawPriority={node.priority} />
+          <PriorityBadge priority={priority} />
           <TypeBadge type={node.type} />
           {isDecision && (
             <span

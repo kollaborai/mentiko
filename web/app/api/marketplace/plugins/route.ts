@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
 import type { PluginManifest } from "@/lib/system/plugin-types";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +62,8 @@ function scanPluginsDir(baseDir: string, prefix: string): MarketplacePlugin[] {
 }
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
+  const perm = await requirePermission(request, "view_chains");
+  if (perm) return perm;
   const marketplaceBase = join(config.globalRoot, "marketplace");
   const pluginsDir = join(marketplaceBase, "plugins");
 

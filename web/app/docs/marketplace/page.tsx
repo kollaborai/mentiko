@@ -56,8 +56,7 @@ export default function MarketplaceDocPage() {
           <div><code className="text-foreground/70">MARKETPLACE_SYNC_INTERVAL</code> - interval in ms.</div>
           <div><code className="text-foreground/70">MARKETPLACE_SYNC_TIMEOUT</code> - timeout in ms.</div>
         </div>
-        <CodeBlock>{`POST /api/marketplace/sync     # set url / force clone
-POST /api/marketplace/refresh  # immediate refresh
+        <CodeBlock>{`POST /api/marketplace/sync     # set url / force clone (manage_org)
 GET  /api/marketplace/chains
 GET  /api/agents/marketplace
 GET  /api/marketplace/artifacts

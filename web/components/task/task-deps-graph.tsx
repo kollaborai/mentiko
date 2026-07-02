@@ -60,7 +60,7 @@ function ChainView({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             {currentTask && (
-              <PriorityBadge priority={mapPriority(currentTask.priority ?? 2)} rawPriority={currentTask.priority ?? 2} />
+              <PriorityBadge priority={mapPriority(currentTask.priority ?? 2)} />
             )}
             <TypeBadge type={currentTask?.type || "task"} />
             <span className="text-[9px] font-mono text-foreground/30">{shortId(taskId)}</span>
@@ -129,7 +129,7 @@ function ChainNode({
       <div className="flex-1 min-w-0">
         <div className="text-[10px] text-foreground/50 truncate">{node.label}</div>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <PriorityBadge priority={mapPriority(node.priority ?? 2)} rawPriority={node.priority ?? 2} />
+          <PriorityBadge priority={mapPriority(node.priority ?? 2)} />
           <TypeBadge type={node.type} />
           <span className="text-[8px] font-mono text-foreground/20">{shortId}</span>
         </div>

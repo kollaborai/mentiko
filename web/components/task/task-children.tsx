@@ -88,7 +88,6 @@ export function TaskChildren({ items, onSelectChild, depInfo }: TaskChildrenProp
                     )}
                     <PriorityBadge
                       priority={child.priority}
-                      rawPriority={child.rawPriority}
                     />
                     <TypeBadge type={child.type} />
                     {child.type === "decision" && (

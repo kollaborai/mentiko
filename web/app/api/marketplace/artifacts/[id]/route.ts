@@ -4,6 +4,7 @@ import { join } from "path";
 import yaml from "js-yaml";
 import config from "@/lib/config";
 import { NotFound } from "@/lib/api-errors";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +37,12 @@ function parseFrontmatter(content: string): { frontmatter: ArtifactFrontmatter; 
 }
 
 export const GET = withErrorHandling(async (
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) => {
+  const perm = await requirePermission(request, "view_chains");
+  if (perm) return perm;
+
   const { id } = await params;
   const artifactsDir = join(config.globalRoot, "marketplace", "artifacts");
 

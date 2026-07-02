@@ -79,7 +79,7 @@ function runMigrations(db: Database.Database): void {
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         org_id TEXT NOT NULL,
-        workspace_id TEXT,
+        workspace_id TEXT, -- nullable; scopes task to a workspace within the org (null = org-wide)
         title TEXT NOT NULL,
         description TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'open',

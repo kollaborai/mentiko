@@ -36,6 +36,95 @@ export interface GitLogEntry {
   refs: string;
 }
 
+// Branch management types
+export interface GitBranch {
+  name: string;           // Branch name (e.g., "feature/new-ui" or "origin/main")
+  isCurrent: boolean;     // true if this is the currently checked-out branch
+  isRemote: boolean;     // true if this is a remote branch (contains /)
+  tracking?: string;      // Remote branch this local branch tracks (e.g., "origin/main")
+  lastCommit?: string;    // Short hash of last commit (optional, for UI display)
+  lastCommitDate?: string; // Human-readable date (e.g., "2 days ago")
+}
+
+export interface GitBranchListResult {
+  branches: GitBranch[];   // All local and remote branches
+  current: string;         // Name of currently checked-out branch
+  defaultBranch?: string;  // Repository's default branch (main/master)
+}
+
+export interface GitBranchCreateResult {
+  ok: boolean;            // true if branch was created successfully
+  branch?: string;        // Name of the created branch
+  error?: string;         // Error message if creation failed
+  current?: string;       // Current branch after creation (unchanged)
+}
+
+export interface GitBranchSwitchResult {
+  ok: boolean;            // true if switch succeeded
+  current?: string;       // New current branch name
+  previous?: string;      // Previous branch name (for undo)
+  error?: string;         // Error message if switch failed
+  hasUncommittedChanges?: boolean; // Warning flag if switch had uncommitted changes
+}
+
+export interface GitBranchDeleteResult {
+  ok: boolean;            // true if branch was deleted
+  deleted?: string;       // Name of deleted branch
+  error?: string;         // Error message if deletion failed
+  forceUsed?: boolean;    // true if -D (force delete) was used
+}
+
+export interface GitBranchCurrentResult {
+  ok: boolean;
+  current?: string;
+  error?: string;
+}
+
+// Stash management types
+export interface GitStash {
+  id: string;              // "0", "1", etc. or full "stash@{0}"
+  branch: string;          // Branch where stash was created (e.g., "main")
+  message: string;         // User-provided message or "WIP on branch: hash" default
+  date: string;            // ISO timestamp or relative (e.g., "2 days ago")
+  commitHash?: string;     // Abbreviated SHA of stashed commit
+}
+
+export interface GitStashListResult {
+  ok: boolean;             // Success flag
+  stashes: GitStash[];     // All stashes, newest first
+  error?: string;          // Error if retrieval failed
+}
+
+export interface GitStashCreateResult {
+  ok: boolean;             // true if stash created
+  stashId?: string;        // Identifier of created stash (e.g., "stash@{0}")
+  message?: string;        // Actual message used (user-provided or default)
+  error?: string;          // Error if creation failed
+}
+
+export interface GitStashApplyResult {
+  ok: boolean;             // true if apply succeeded without conflicts
+  appliedStashId?: string; // Which stash was applied
+  conflicts?: string[];    // File paths with merge conflicts (if any)
+  conflictCount?: number;  // Count of conflicted files
+  hasUnmergedPaths?: boolean; // true if conflicts remain after apply
+  error?: string;          // Error message (conflict or other issue)
+  status?: GitStatusResult; // Updated working directory status
+}
+
+export interface GitStashDropResult {
+  ok: boolean;             // true if drop succeeded
+  droppedId?: string;      // Stash that was dropped
+  error?: string;          // Error if drop failed
+}
+
+export interface GitStashShowResult {
+  ok: boolean;             // true if show succeeded
+  diff: string;            // Unified diff format (may be empty)
+  stashId?: string;        // Which stash was shown
+  error?: string;          // Error if show failed
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 // read-only: swallows errors, returns "" on failure
@@ -127,6 +216,428 @@ function parseLog(cwd: string, limit = 20): GitLogEntry[] {
   });
 }
 
+// ── branch helpers ────────────────────────────────────────────────────────
+
+/**
+ * Validate Git branch name according to git-check-ref-format rules
+ * - Must not start or end with dot
+ * - Must not contain consecutive dots
+ * - Must not contain ~ ^ : ? * [ \
+ * - Must not contain @{
+ * - Must not be a single @
+ * - Must not end with .lock
+ * - Max length: 255 characters
+ */
+function validateBranchName(branchName: string): { valid: boolean; error?: string } {
+  if (!branchName || branchName.trim().length === 0) {
+    return { valid: false, error: "Branch name cannot be empty" };
+  }
+
+  if (branchName.length > 255) {
+    return { valid: false, error: "Branch name must be 255 characters or less" };
+  }
+
+  // Git ref format validation (from git-check-ref-format)
+  const invalidChars = /[~^:?*\[\\@{}]/;
+  if (invalidChars.test(branchName)) {
+    return { valid: false, error: `Branch name contains invalid characters: ~ ^ : ? * [ \\ @ { }` };
+  }
+
+  // Cannot start or end with dot
+  if (branchName.startsWith(".") || branchName.endsWith(".")) {
+    return { valid: false, error: "Branch name cannot start or end with a dot" };
+  }
+
+  // Cannot have consecutive dots
+  if (branchName.includes("..")) {
+    return { valid: false, error: "Branch name cannot contain consecutive dots" };
+  }
+
+  // Cannot be single @
+  if (branchName === "@") {
+    return { valid: false, error: "Branch name cannot be a single @" };
+  }
+
+  // Cannot contain @{ (prevents reflog access)
+  if (branchName.includes("@{")) {
+    return { valid: false, error: "Branch name cannot contain '@{" };
+  }
+
+  // Cannot end with .lock
+  if (branchName.endsWith(".lock")) {
+    return { valid: false, error: "Branch name cannot end with .lock" };
+  }
+
+  // Cannot contain slash at start or end (prevents absolute paths)
+  if (branchName.startsWith("/") || branchName.endsWith("/")) {
+    return { valid: false, error: "Branch name cannot start or end with slash" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Get current branch name
+ */
+function getCurrentBranch(cwd: string): string {
+  return run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+}
+
+/**
+ * List all local and remote branches
+ */
+function parseBranchList(cwd: string): GitBranchListResult {
+  // Get current branch
+  const current = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+
+  // Get default branch
+  const defaultBranch = run("git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@refs/remotes/origin/@@'", cwd) || undefined;
+
+  const branches: GitBranch[] = [];
+
+  // Get local branches with tracking info
+  const localRaw = run('git branch --format="%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)|%(committerdate:relative)"', cwd);
+  for (const line of localRaw.split("\n").filter(Boolean)) {
+    const parts = line.split("|");
+    if (parts.length < 5) continue;
+    const [name, headMarker, tracking, shortHash, date] = parts;
+    branches.push({
+      name,
+      isCurrent: headMarker === "*",
+      isRemote: false,
+      tracking: tracking || undefined,
+      lastCommit: shortHash,
+      lastCommitDate: date,
+    });
+  }
+
+  // Get remote branches
+  const remoteRaw = run('git branch --remote --format="%(refname:short)|%(HEAD)|%(objectname:short)|%(committerdate:relative)"', cwd);
+  for (const line of remoteRaw.split("\n").filter(Boolean)) {
+    const parts = line.split("|");
+    if (parts.length < 4) continue;
+    const [name, headMarker, shortHash, date] = parts;
+    branches.push({
+      name,
+      isCurrent: false, // Remote branches are never "current" in the working tree
+      isRemote: true,
+      lastCommit: shortHash,
+      lastCommitDate: date,
+    });
+  }
+
+  return { branches, current, defaultBranch };
+}
+
+/**
+ * Create a new branch from current HEAD
+ */
+function createBranch(cwd: string, branchName: string): GitBranchCreateResult {
+  try {
+    exec(["branch", branchName], cwd);
+    const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+    return {
+      ok: true,
+      branch: branchName,
+      current: current || "HEAD",
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e),
+    };
+  }
+}
+
+/**
+ * Switch to a different branch
+ */
+function switchBranch(cwd: string, targetBranch: string): GitBranchSwitchResult {
+  const previous = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+
+  try {
+    // Try safe switch first (fails if uncommitted changes)
+    exec(["switch", targetBranch], cwd);
+    const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+    return {
+      ok: true,
+      current: current || targetBranch,
+      previous,
+      hasUncommittedChanges: false,
+    };
+  } catch (e) {
+    const error = String(e);
+
+    // If error is about uncommitted changes, retry with --merge, which carries
+    // the uncommitted changes over into the target branch (NOT a stash).
+    if (error.includes("uncommitted") || error.includes("working tree") || error.includes("changes")) {
+      try {
+        exec(["switch", "-m", targetBranch], cwd);
+        const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+        return {
+          ok: true,
+          current: current || targetBranch,
+          previous,
+          hasUncommittedChanges: true,
+        };
+      } catch (e2) {
+        return {
+          ok: false,
+          error: String(e2),
+          previous,
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      error: String(e),
+      previous,
+    };
+  }
+}
+
+/**
+ * Delete a branch (local or remote)
+ */
+function deleteBranch(cwd: string, branchName: string, force: boolean = false): GitBranchDeleteResult {
+  const current = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+
+  // Cannot delete current branch
+  if (branchName === current) {
+    return {
+      ok: false,
+      error: "Cannot delete the currently checked-out branch. Switch to another branch first.",
+    };
+  }
+
+  // A branch is only remote if its first path segment names an actual remote —
+  // local branches (feature/x, fix/y) contain slashes too, and must never be
+  // turned into a `git push <remote> --delete` call.
+  const remotes = runArgs(["remote"], cwd).split("\n").filter(Boolean);
+  const remote = remotes.find((r) => branchName.startsWith(`${r}/`));
+
+  try {
+    if (remote) {
+      // Delete remote branch
+      const remoteBranch = branchName.substring(remote.length + 1);
+      exec(["push", remote, "--delete", remoteBranch], cwd);
+      return {
+        ok: true,
+        deleted: branchName,
+        forceUsed: false,
+      };
+    } else {
+      // Delete local branch
+      const args = force ? ["branch", "-D", branchName] : ["branch", "-d", branchName];
+      exec(args, cwd);
+      return {
+        ok: true,
+        deleted: branchName,
+        forceUsed: force,
+      };
+    }
+  } catch (e) {
+    const error = String(e);
+
+    // If safe delete failed, suggest force delete
+    if (!force && error.includes("not fully merged")) {
+      return {
+        ok: false,
+        error: `Branch has unmerged commits. Use force delete to remove it anyway.`,
+      };
+    }
+
+    return {
+      ok: false,
+      error: String(e),
+    };
+  }
+}
+
+// ── stash helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Helper: format stash ID into git reference
+ */
+function formatStashRef(id: string): string {
+  if (id.startsWith("stash@{")) {
+    return id; // Already formatted
+  }
+  return `stash@{${id}}`;
+}
+
+/**
+ * Helper: extract branch name from stash message
+ */
+function extractBranchFromMessage(message: string): string {
+  // "WIP on main: a1b2c3d message" → "main"
+  const match = message.match(/on (.+?):/);
+  return match ? match[1] : "unknown";
+}
+
+/**
+ * Parse stash list output into structured stashes
+ */
+function parseStashList(cwd: string): GitStash[] {
+  const sep = "||STASHSEP||";
+  // `git stash list` runs `git log` over the stash reflog, so the format MUST
+  // use git-log placeholders — NOT for-each-ref %(refname:short) / %(subject) /
+  // %(objectname:short) / %(creatordate:relative), which git-log prints
+  // literally (the whole stash list came back as one garbage entry, so
+  // list_stashes / resolveStashRef-by-SHA silently never matched anything).
+  //   %gd = reflog selector ("stash@{0}")  %s = subject  %cr = relative date
+  //   %h  = abbreviated commit hash (the stable SHA resolveStashRef keys on)
+  const fmt = `%gd${sep}%s${sep}%cr${sep}%h`;
+  const raw = run(`git stash list --format="${fmt}"`, cwd);
+
+  if (!raw) return [];
+
+  return raw
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(sep);
+      const fullId = parts[0] ?? "stash@{0}";
+      const id = fullId.replace(/^stash@\{|\}$/g, ""); // "0" from "stash@{0}"
+
+      return {
+        id,
+        branch: extractBranchFromMessage(parts[1] ?? ""),
+        message: parts[1] ?? "",
+        date: parts[2] ?? "",
+        commitHash: parts[3],
+      };
+    });
+}
+
+/**
+ * Create a new stash from working directory changes
+ */
+function createStash(cwd: string, message?: string, includeUntracked?: boolean): GitStashCreateResult {
+  try {
+    const args = ["stash", "push"];
+    if (includeUntracked) {
+      args.push("-u");
+    }
+    if (message?.trim()) {
+      args.push("-m", message);
+    }
+    exec(args, cwd);
+
+    // After push, list to get the new stash ID
+    const stashes = parseStashList(cwd);
+    if (stashes.length > 0) {
+      return {
+        ok: true,
+        stashId: `stash@{${stashes[0].id}}`,
+        message: message?.trim() || stashes[0].message,
+      };
+    }
+    return { ok: true, message: message?.trim() };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/**
+ * Resolve a stash reference for a mutating operation. Prefers the stable commit
+ * SHA (positional indices shift whenever stashes are created or dropped, so an
+ * index captured by the UI can point at the wrong stash by the time the user
+ * clicks). Falls back to the positional id when no SHA is provided. Returns
+ * null when a SHA is provided but no longer matches any stash — callers must
+ * NOT fall back to an index in that case.
+ */
+function resolveStashRef(cwd: string, stashId?: string, stashCommit?: string): string | null {
+  if (stashCommit) {
+    const hit = parseStashList(cwd).find(
+      (s) => s.commitHash && stashCommit.startsWith(s.commitHash)
+    );
+    return hit ? formatStashRef(hit.id) : null;
+  }
+  if (stashId) return formatStashRef(stashId);
+  return null;
+}
+
+/**
+ * Apply a stash (without removing)
+ */
+function applyStash(cwd: string, ref: string): GitStashApplyResult {
+  try {
+    exec(["stash", "apply", ref], cwd);
+
+    const status = parseStatus(cwd);
+    return {
+      ok: true,
+      appliedStashId: ref,
+      status,
+    };
+  } catch (e) {
+    const error = String(e);
+
+    // Detect merge conflicts in error output
+    if (error.includes("CONFLICT") || error.includes("conflicting")) {
+      const status = parseStatus(cwd);
+      const conflicts = status.files
+        .filter((f) => f.statusCode.includes("U"))
+        .map((f) => f.path);
+
+      return {
+        ok: false,
+        appliedStashId: ref,
+        conflicts,
+        conflictCount: conflicts.length,
+        hasUnmergedPaths: conflicts.length > 0,
+        error: "Merge conflicts during stash apply. Resolve conflicts and commit.",
+        status,
+      };
+    }
+
+    return { ok: false, error, appliedStashId: ref };
+  }
+}
+
+/**
+ * Drop a stash permanently
+ */
+function dropStash(cwd: string, ref: string): GitStashDropResult {
+  try {
+    exec(["stash", "drop", ref], cwd);
+    return {
+      ok: true,
+      droppedId: ref,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e),
+      droppedId: ref,
+    };
+  }
+}
+
+/**
+ * Show stash diff
+ */
+function showStash(cwd: string, stashId: string): GitStashShowResult {
+  try {
+    const ref = formatStashRef(stashId);
+    const diff = runArgs(["stash", "show", "-p", ref], cwd);
+    return {
+      ok: true,
+      diff,
+      stashId,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      diff: "",
+      error: String(e),
+      stashId,
+    };
+  }
+}
+
 // ── handler ────────────────────────────────────────────────────────────────
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
@@ -139,6 +650,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     message?: string;
     path?: string;
     staged?: boolean;
+    branchName?: string;
+    force?: boolean;
+    stashId?: string;
+    stashCommit?: string;
+    stashMessage?: string;
+    includeUntracked?: boolean;
   };
 
   const { action, workspacePath } = body;
@@ -149,6 +666,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // mutating git actions are member+ (block guests); reads stay auth-only
   const GIT_WRITE_ACTIONS = new Set([
     "stage", "unstage", "stage_all", "unstage_all", "commit", "push",
+    "create_branch", "switch_branch", "delete_branch",
+    "create_stash", "apply_stash", "drop_stash",
   ]);
   if (GIT_WRITE_ACTIONS.has(action)) {
     const permError = await requirePermission(request, "manage_chains");
@@ -264,6 +783,107 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       } catch {
         return apiSuccess({ diff: "" });
       }
+    }
+
+    // ── branch actions ─────────────────────────────────────────────────────
+
+    case "list_branches": {
+      return apiSuccess(parseBranchList(gitRoot));
+    }
+
+    case "current_branch": {
+      const current = getCurrentBranch(gitRoot);
+      return apiSuccess({ ok: true, current });
+    }
+
+    case "create_branch": {
+      const branchName = body.branchName?.trim();
+      if (!branchName) {
+        return apiSuccess({ ok: false, error: "branchName is required" }, undefined, 400);
+      }
+
+      const validation = validateBranchName(branchName);
+      if (!validation.valid) {
+        return apiSuccess({ ok: false, error: validation.error }, undefined, 400);
+      }
+
+      return apiSuccess(createBranch(gitRoot, branchName));
+    }
+
+    case "switch_branch": {
+      const branchName = body.branchName?.trim();
+      if (!branchName) {
+        return apiSuccess({ ok: false, error: "branchName is required" }, undefined, 400);
+      }
+
+      const validation = validateBranchName(branchName);
+      if (!validation.valid) {
+        return apiSuccess({ ok: false, error: validation.error }, undefined, 400);
+      }
+
+      return apiSuccess(switchBranch(gitRoot, branchName));
+    }
+
+    case "delete_branch": {
+      const branchName = body.branchName?.trim();
+      if (!branchName) {
+        return apiSuccess({ ok: false, error: "branchName is required" }, undefined, 400);
+      }
+
+      const validation = validateBranchName(branchName);
+      if (!validation.valid) {
+        return apiSuccess({ ok: false, error: validation.error }, undefined, 400);
+      }
+
+      const force = body.force || false;
+      return apiSuccess(deleteBranch(gitRoot, branchName, force));
+    }
+
+    // ── stash actions ──────────────────────────────────────────────────────
+
+    case "list_stashes": {
+      const stashes = parseStashList(gitRoot);
+      return apiSuccess({ ok: true, stashes });
+    }
+
+    case "create_stash": {
+      const message = body.stashMessage?.trim();
+      const includeUntracked = body.includeUntracked as boolean | undefined;
+      return apiSuccess(createStash(gitRoot, message, includeUntracked));
+    }
+
+    case "apply_stash": {
+      const stashId = body.stashId?.trim();
+      const stashCommit = body.stashCommit?.trim();
+      if (!stashId && !stashCommit) {
+        return apiSuccess({ ok: false, error: "stashId or stashCommit required" }, undefined, 400);
+      }
+      const ref = resolveStashRef(gitRoot, stashId, stashCommit);
+      if (!ref) {
+        return apiSuccess({ ok: false, error: "stash not found — it may have been applied or dropped already" });
+      }
+      return apiSuccess(applyStash(gitRoot, ref));
+    }
+
+    case "drop_stash": {
+      const stashId = body.stashId?.trim();
+      const stashCommit = body.stashCommit?.trim();
+      if (!stashId && !stashCommit) {
+        return apiSuccess({ ok: false, error: "stashId or stashCommit required" }, undefined, 400);
+      }
+      const ref = resolveStashRef(gitRoot, stashId, stashCommit);
+      if (!ref) {
+        return apiSuccess({ ok: false, error: "stash not found — it may have been applied or dropped already" });
+      }
+      return apiSuccess(dropStash(gitRoot, ref));
+    }
+
+    case "show_stash": {
+      const stashId = body.stashId?.trim();
+      if (!stashId) {
+        return apiSuccess({ ok: false, error: "stashId required" }, undefined, 400);
+      }
+      return apiSuccess(showStash(gitRoot, stashId));
     }
 
     default:

@@ -8,7 +8,16 @@ export interface Release {
 }
 
 export const releases: Release[] = [
-  // --- v0.3.x (June 2026) ---
+  // --- v0.3.x (2026) ---
+  {
+    version: "v0.3.41",
+    date: "July 1, 2026",
+    title: "Git Workflow in the Code Editor",
+    description:
+      "The floating code editor's Git panel now covers the full loop. A branch selector views, creates, switches, and deletes branches with validation and keyboard navigation. Stash apply/drop is keyed to each stash's commit hash, so a shifting stash list can never apply or drop the wrong one. Peer review is built in: assign reviewers from your org, leave file- and line-level comments, and gate the commit button until every assigned reviewer approves. Reviews are org-scoped and tied to the signed-in session, not forgeable headers.",
+    category: "new",
+    docsHref: "/docs/peer-review",
+  },
   {
     version: "v0.3.40",
     date: "June 13, 2026",

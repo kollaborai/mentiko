@@ -1,8 +1,8 @@
-# api route auth coverage (as of 2026-06-01)
+# api route auth coverage (as of 2026-07-01)
 
 ## summary
-- total routes: 329
-- authenticated: 312   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 347
+- authenticated: 330   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -30,6 +30,8 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 
 - activity/route.ts
 - account/finish-password-setup/route.ts
+- account/mcp-tokens/[id]/route.ts
+- account/mcp-tokens/route.ts
 - ai-gateway/local/v1/chat/completions/route.ts
 - agent-health/route.ts
 - agent-profiles/[id]/resolved-env/route.ts
@@ -176,10 +178,11 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - marketplace/artifacts/route.ts
 - marketplace/chains/route.ts
 - marketplace/plugins/route.ts
-- marketplace/refresh/route.ts
 - marketplace/sync/route.ts
 - meetings/route.ts
 - meetings/[id]/transcript/route.ts
+- mentiko-mcp/auth/device/approve/route.ts
+- mentiko-mcp/auth/device/info/route.ts
 - mentiko-mcp/current-page/route.ts
 - mentiko-mcp/dispatch/route.ts
 - mentiko-mcp/ops/agents/route.ts
@@ -198,6 +201,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/ops/decisions/select/route.ts
 - mentiko-mcp/ops/files/route.ts
 - mentiko-mcp/ops/fs/route.ts
+- mentiko-mcp/ops/jobs/[id]/route.ts
 - mentiko-mcp/ops/meta/docs/route.ts
 - mentiko-mcp/ops/meta/nav/route.ts
 - mentiko-mcp/ops/meta/settings/route.ts
@@ -210,6 +214,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/ops/system/cli-auth/route.ts
 - mentiko-mcp/ops/system/cli-status/route.ts
 - mentiko-mcp/ops/tasks/generate/route.ts
+- mentiko-mcp/ops/tasks/run-chain/route.ts
 - mentiko-mcp/ops/tasks/route.ts
 - mentiko-mcp/ops/templates/route.ts
 - mentiko-mcp/ops/terminal/route.ts
@@ -247,10 +252,18 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - retry/circuit/route.ts
 - retry/config/route.ts
 - retry/state/route.ts
+- reviews/[id]/assignments/[assignmentId]/route.ts
+- reviews/[id]/assignments/route.ts
+- reviews/[id]/comments/[commentId]/route.ts
+- reviews/[id]/comments/route.ts
+- reviews/[id]/route.ts
+- reviews/route.ts
 - runs/[id]/agents/[agentId]/activity/route.ts
 - runs/[id]/agents/[agentId]/heartbeat/route.ts
 - runs/[id]/approve/route.ts
 - runs/[id]/cost/route.ts
+- runs/[id]/event-artifacts/[executionId]/apply/route.ts
+- runs/[id]/event-artifacts/route.ts
 - runs/[id]/output/route.ts
 - runs/[id]/resume/route.ts
 - runs/[id]/route.ts
@@ -352,11 +365,11 @@ Routes intentionally public with explicit security justifications:
 - webhooks/inbound/[token]/route.ts — inbound webhook receiver; authenticated with signed token in URL
 - webhooks/inbound/triggers/[triggerId]/route.ts — inbound webhook trigger status lookup; authenticated with status token in query/header
 - version/route.ts — version info for health checks and monitoring
-- marketplace/artifacts/[id]/route.ts — public marketplace artifact templates (no user data, read-only listing)
-- marketplace/artifacts/route.ts — public marketplace artifacts listing (no user data)
-- marketplace/chains/route.ts — public marketplace chain templates (no user data)
-- marketplace/plugins/route.ts — public marketplace plugins listing (no user data)
-- marketplace/refresh/route.ts — marketplace sync trigger; runs on schedule, internal-only
+- mentiko-mcp/auth/device/start/route.ts — device-authorization bootstrap; unauthenticated by design (standalone MCP client calls it with no token). Security anchor is the cookie-authed /device/approve step that follows.
+- mentiko-mcp/auth/device/poll/route.ts — device-code poll; possession of the secret device_code is the authorization (single-use token pickup, mirroring RFC 8628).
+- mentiko-mcp/auth/token/route.ts — refresh-token exchange; possession of the long-lived refresh token is the authorization. Rate-limited per token; revocable at /api/account/mcp-tokens.
+- mentiko-mcp/ui-control/start/route.ts — UI-control grant bootstrap; unauthenticated by design (mirrors device/start). Anchor is the cookie-authed approve step that binds a specific window's sessionId.
+- mentiko-mcp/ui-control/poll/route.ts — UI-control grant poll; possession of the secret device_code is the authorization (single-use signaling-token pickup).
 
 ## unclear (needs human review)
 

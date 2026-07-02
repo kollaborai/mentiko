@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import yaml from "js-yaml";
 import config from "@/lib/config";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -91,6 +92,8 @@ function scanArtifactsDir(baseDir: string, prefix: string): MarketplaceArtifact[
 }
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
+  const perm = await requirePermission(request, "view_chains");
+  if (perm) return perm;
   const marketplaceBase = join(config.globalRoot, "marketplace");
   const artifactsDir = join(marketplaceBase, "artifacts");
 

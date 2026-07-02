@@ -872,13 +872,6 @@ const endpoints: ApiEndpoint[] = [
   // Marketplace
   {
     method: "POST",
-    path: "/api/marketplace/refresh",
-    auth: true,
-    description: "refresh marketplace cache",
-    response: { success: true },
-  },
-  {
-    method: "POST",
     path: "/api/marketplace/sync",
     auth: true,
     description: "sync from marketplace",

@@ -87,7 +87,6 @@ export function TaskDetailHeader({
             <TypeBadge type={task.type} />
             <PriorityBadge
               priority={task.priority}
-              rawPriority={task.rawPriority}
             />
             {task.chainBinding && (
               <Link

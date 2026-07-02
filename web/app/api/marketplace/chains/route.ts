@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
+import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -109,6 +110,8 @@ function scanChainsDir(baseDir: string, prefix: string): MarketplaceChain[] {
 }
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
+  const perm = await requirePermission(request, "view_chains");
+  if (perm) return perm;
   const marketplaceBase = join(config.globalRoot, "marketplace");
   const chainsDir = join(marketplaceBase, "chains");
 

@@ -1,9 +1,16 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { AddFilled, MinusFilled, Refresh2Filled, ClockFilled } from "@aliimam/icons";
+import { AddFilled, MinusFilled, Refresh2Filled, ClockFilled, BoxFilled, PeopleFilled } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { useEditorStore } from "@/lib/ui/editor-store";
+import { BranchSelector } from "@/components/editor/branch-selector";
+import { StashSelector } from "@/components/editor/stash-selector";
+import { ReviewPanelSection } from "@/components/git/review-panel-section";
+import { ReviewApprovalGate } from "@/components/git/review-approval-gate";
+import { ReviewStatusTracker, type ReviewerStatus } from "@/components/git/review-status-tracker";
+import type { ReviewStatus } from "@/components/git/review-status-badge";
+import type { ReviewRecord, ReviewAssignment } from "@/lib/reviews/review-store-types";
 import type { GitStatusResult, GitLogEntry, GitFileStatus } from "@/app/api/git/route";
 
 // ── status badge ────────────────────────────────────────────────────────────
@@ -175,6 +182,8 @@ function LogView({ entries }: { entries: GitLogEntry[] }) {
 
 // ── main component ───────────────────────────────────────────────────────────
 
+type ActiveView = "status" | "stash" | "log" | "review";
+
 interface GitPanelProps {
   workspacePath: string;
 }
@@ -188,7 +197,9 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [commitMsg, setCommitMsg] = useState("");
-  const [activeView, setActiveView] = useState<"status" | "log">("status");
+  const [activeView, setActiveView] = useState<ActiveView>("status");
+  const [reviewers, setReviewers] = useState<ReviewerStatus[]>([]);
+  const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -225,6 +236,81 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
       setLogEntries((data as { entries: GitLogEntry[] }).entries ?? []);
     } catch {}
   }, [gitPost]);
+
+  // ── peer review: load the open review (if any) for the current branch ──────
+  // The approval gate blocks commit until every assigned reviewer approves, so
+  // the reviewer set must reflect the real review for THIS branch.
+  const refreshReviewers = useCallback(
+    async (branch: string) => {
+      if (!branch) {
+        setReviewers([]);
+        setActiveReviewId(null);
+        return;
+      }
+      try {
+        const listRes = await fetch(
+          `/api/reviews?workspacePath=${encodeURIComponent(workspacePath)}`
+        );
+        const listBody = await listRes.json();
+        const reviews: ReviewRecord[] = listBody?.data?.reviews ?? [];
+        const open = reviews.find(
+          (r) =>
+            r.source_branch === branch &&
+            (r.status === "pending" || r.status === "in_progress")
+        );
+        if (!open) {
+          setReviewers([]);
+          setActiveReviewId(null);
+          return;
+        }
+        const detailRes = await fetch(`/api/reviews/${open.id}`);
+        const detailBody = await detailRes.json();
+        const assignments: ReviewAssignment[] = detailBody?.data?.assignments ?? [];
+        setReviewers(
+          assignments.map((a) => ({
+            reviewerId: a.reviewer_id,
+            name:
+              a.reviewer_name || a.reviewer_email?.split("@")[0] || a.reviewer_id,
+            status: a.status as ReviewStatus,
+            updatedAt: a.completed_at || a.assigned_at,
+            assignmentId: a.id,
+            reviewId: open.id,
+          }))
+        );
+        setActiveReviewId(open.id);
+      } catch {
+        // Reviews are optional — never block the panel on them.
+      }
+    },
+    [workspacePath]
+  );
+
+  // Reload reviewers whenever the checked-out branch changes.
+  useEffect(() => {
+    if (status?.branch) refreshReviewers(status.branch);
+  }, [status?.branch, refreshReviewers]);
+
+  // A reviewer changing their status → PATCH the assignment, then reload.
+  const handleReviewerStatusChange = useCallback(
+    async (reviewerId: string, newStatus: ReviewStatus) => {
+      const reviewer = reviewers.find((r) => r.reviewerId === reviewerId);
+      if (!reviewer?.reviewId || !reviewer?.assignmentId) return;
+      try {
+        await fetch(
+          `/api/reviews/${reviewer.reviewId}/assignments/${reviewer.assignmentId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: newStatus }),
+          }
+        );
+        if (status?.branch) refreshReviewers(status.branch);
+      } catch {
+        // ignore — the next poll resyncs
+      }
+    },
+    [reviewers, status?.branch, refreshReviewers]
+  );
 
   // initial load
   useEffect(() => {
@@ -401,155 +487,233 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* header */}
+      {/* branch selector */}
+      <div className="px-2 py-1.5 border-b border-foreground/5 dark:border-white/5 shrink-0">
+        <BranchSelector workspacePath={workspacePath} />
+      </div>
+
+      {/* header: view tabs + actions */}
       <div className="flex items-center justify-between px-3 py-1.5 shrink-0">
-        <span className="text-[11px] text-foreground/50 dark:text-white/50 font-medium">
-          {totalChanges} change{totalChanges !== 1 ? "s" : ""}
-        </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={refresh}
-            disabled={busy}
-            title="Refresh"
-            className="flex items-center justify-center w-6 h-6 rounded text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40"
+            onClick={() => setActiveView("status")}
+            title="Changes"
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] transition-colors ${
+              activeView === "status"
+                ? "text-foreground/80 dark:text-white/80 bg-foreground/10 dark:bg-white/10"
+                : "text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5"
+            }`}
           >
-            <Refresh2Filled className="h-3 w-3" />
+            <span className="font-mono">{totalChanges}</span>
           </button>
           <button
-            onClick={() => setActiveView(activeView === "status" ? "log" : "status")}
-            title={activeView === "status" ? "Show log" : "Show status"}
+            onClick={() => setActiveView("stash")}
+            title="Stashes"
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors ${
+              activeView === "stash"
+                ? "text-foreground/80 dark:text-white/80 bg-foreground/10 dark:bg-white/10"
+                : "text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5"
+            }`}
+          >
+            <BoxFilled className="h-3 w-3" />
+          </button>
+          <button
+            onClick={() => setActiveView("log")}
+            title="Log"
             className={`flex items-center justify-center w-6 h-6 rounded transition-colors ${
               activeView === "log"
-                ? "text-foreground/60 dark:text-white/60 bg-foreground/10 dark:bg-white/10"
+                ? "text-foreground/80 dark:text-white/80 bg-foreground/10 dark:bg-white/10"
                 : "text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5"
             }`}
           >
             <ClockFilled className="h-3 w-3" />
           </button>
-          {totalChanges > 0 && (
-            <button
-              onClick={handleStageAll}
-              disabled={busy}
-              title="Stage all"
-              className="text-[9px] text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40"
-            >
-              stage all
-            </button>
+          <button
+            onClick={() => setActiveView("review")}
+            title="Review"
+            className={`flex items-center justify-center w-6 h-6 rounded transition-colors ${
+              activeView === "review"
+                ? "text-foreground/80 dark:text-white/80 bg-foreground/10 dark:bg-white/10"
+                : "text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5"
+            }`}
+          >
+            <PeopleFilled className="h-3 w-3" />
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          {activeView === "status" && (
+            <>
+              <button
+                onClick={refresh}
+                disabled={busy}
+                title="Refresh"
+                className="flex items-center justify-center w-6 h-6 rounded text-foreground/25 dark:text-white/25 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40"
+              >
+                <Refresh2Filled className="h-3 w-3" />
+              </button>
+              {totalChanges > 0 && (
+                <button
+                  onClick={handleStageAll}
+                  disabled={busy}
+                  title="Stage all"
+                  className="text-[9px] text-foreground/30 dark:text-white/30 hover:text-foreground/60 dark:hover:text-white/60 hover:bg-foreground/5 dark:hover:bg-white/5 px-1.5 py-0.5 rounded transition-colors disabled:opacity-40"
+                >
+                  stage all
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {error && (
+      {error && activeView === "status" && (
         <div className="mx-3 mb-1 px-2 py-1 rounded bg-red-500/10 text-[10px] text-red-400/70">
           {error}
         </div>
       )}
 
-      {/* body */}
-      {activeView === "log" ? (
-        <LogView entries={logEntries} />
-      ) : (
+      {/* view: stash */}
+      {activeView === "stash" && (
+        <div className="flex-1 overflow-hidden">
+          <StashSelector
+            workspacePath={workspacePath}
+            onStashApplied={() => refresh()}
+          />
+        </div>
+      )}
+
+      {/* view: log */}
+      {activeView === "log" && (
+        <div className="flex-1 overflow-hidden">
+          <LogView entries={logEntries} />
+        </div>
+      )}
+
+      {/* view: review */}
+      {activeView === "review" && (
         <div className="flex-1 overflow-y-auto">
-          {stagedFiles.length > 0 && (
-            <>
-              <SectionHeader
-                label="Staged"
-                count={stagedFiles.length}
-                onUnstageAll={handleUnstageAll}
-                type="staged"
+          <ReviewPanelSection
+            selectedFiles={status?.files.map((f) => f.path) ?? []}
+            workspacePath={workspacePath}
+            sourceBranch={status?.branch ?? ""}
+            onReviewCreated={() =>
+              status?.branch && refreshReviewers(status.branch)
+            }
+          />
+          {reviewers.length > 0 && (
+            <div className="px-2 pb-3">
+              <ReviewStatusTracker
+                reviewers={reviewers}
+                onStatusChange={handleReviewerStatusChange}
               />
-              {stagedFiles.map((f) => (
-                <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
-              ))}
-            </>
-          )}
-
-          {changedFiles.length > 0 && (
-            <>
-              <SectionHeader
-                label="Changes"
-                count={changedFiles.length}
-                onStageAll={handleStageAll}
-                type="changes"
-              />
-              {changedFiles.map((f) => (
-                <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
-              ))}
-            </>
-          )}
-
-          {untrackedFiles.length > 0 && (
-            <>
-              <SectionHeader
-                label="Untracked"
-                count={untrackedFiles.length}
-                onStageAll={handleStageAll}
-                type="untracked"
-              />
-              {untrackedFiles.map((f) => (
-                <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
-              ))}
-            </>
-          )}
-
-          {totalChanges === 0 && (
-            <div className="px-3 py-6 text-xs text-foreground/25 dark:text-white/25 text-center">
-              no changes
             </div>
           )}
         </div>
       )}
 
-      {/* bottom: commit + push */}
-      <div className="shrink-0 border-t border-foreground/5 dark:border-white/5 p-2 flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            {/* inline git branch SVG — @aliimam/icons has no git icon */}
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="text-foreground/30 dark:text-white/30">
-              <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
-              <circle cx="6" cy="18" r="2.5" stroke="currentColor" strokeWidth="2"/>
-              <circle cx="18" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
-              <line x1="6" y1="8.5" x2="6" y2="15.5" stroke="currentColor" strokeWidth="2"/>
-              <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
-            </svg>
-            <span className="text-[10px] font-mono text-foreground/40 dark:text-white/40">
-              {status?.branch ?? "…"}
-            </span>
-          </div>
-          {status?.upstream && (
-            <button
-              onClick={handlePush}
-              disabled={busy}
-              className="flex items-center gap-1 text-[10px] text-foreground/40 dark:text-white/40 hover:text-foreground/70 dark:hover:text-white/70 hover:bg-foreground/5 dark:hover:bg-white/5 px-2 py-0.5 rounded transition-colors disabled:opacity-40"
-            >
-              {status.ahead > 0 && (
-                <span className="text-cyan-400/60">{status.ahead}</span>
-              )}
-              Push
-            </button>
-          )}
-        </div>
+      {/* view: status */}
+      {activeView === "status" && (
+        <>
+          <div className="flex-1 overflow-y-auto">
+            {stagedFiles.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Staged"
+                  count={stagedFiles.length}
+                  onUnstageAll={handleUnstageAll}
+                  type="staged"
+                />
+                {stagedFiles.map((f) => (
+                  <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
+                ))}
+              </>
+            )}
 
-        <div className="relative">
-          <textarea
-            value={commitMsg}
-            onChange={(e) => setCommitMsg(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleCommit();
-            }}
-            placeholder="commit message"
-            rows={2}
-            className="w-full bg-foreground/5 dark:bg-white/5 rounded-md px-2 py-1.5 text-[11px] font-mono text-foreground/60 dark:text-white/60 placeholder:text-foreground/20 dark:placeholder:text-white/20 outline-none resize-none border border-foreground/5 dark:border-white/5 focus:border-foreground/10 dark:focus:border-white/10 transition-colors"
-          />
-        </div>
-        <button
-          onClick={handleCommit}
-          disabled={busy || !commitMsg.trim() || stagedFiles.length === 0}
-          className="text-[10px] text-foreground/50 dark:text-white/50 hover:text-foreground/80 dark:hover:text-white/80 bg-foreground/5 dark:bg-white/5 hover:bg-foreground/10 dark:hover:bg-white/10 px-3 py-1 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          {busy ? "…" : "Commit Staged"}
-        </button>
-      </div>
+            {changedFiles.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Changes"
+                  count={changedFiles.length}
+                  onStageAll={handleStageAll}
+                  type="changes"
+                />
+                {changedFiles.map((f) => (
+                  <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
+                ))}
+              </>
+            )}
+
+            {untrackedFiles.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Untracked"
+                  count={untrackedFiles.length}
+                  onStageAll={handleStageAll}
+                  type="untracked"
+                />
+                {untrackedFiles.map((f) => (
+                  <FileRow key={f.path} file={f} onStage={handleStage} onUnstage={handleUnstage} onFileClick={handleFileClick} />
+                ))}
+              </>
+            )}
+
+            {totalChanges === 0 && (
+              <div className="px-3 py-6 text-xs text-foreground/25 dark:text-white/25 text-center">
+                no changes
+              </div>
+            )}
+          </div>
+
+          {/* bottom: commit + push */}
+          <div className="shrink-0 border-t border-foreground/5 dark:border-white/5 p-2 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                {/* inline git branch SVG — @aliimam/icons has no git icon */}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="text-foreground/30 dark:text-white/30">
+                  <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="6" cy="18" r="2.5" stroke="currentColor" strokeWidth="2"/>
+                  <circle cx="18" cy="6" r="2.5" stroke="currentColor" strokeWidth="2"/>
+                  <line x1="6" y1="8.5" x2="6" y2="15.5" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
+                </svg>
+                <span className="text-[10px] font-mono text-foreground/40 dark:text-white/40">
+                  {status?.branch ?? "…"}
+                </span>
+              </div>
+              {status?.upstream && (
+                <button
+                  onClick={handlePush}
+                  disabled={busy}
+                  className="flex items-center gap-1 text-[10px] text-foreground/40 dark:text-white/40 hover:text-foreground/70 dark:hover:text-white/70 hover:bg-foreground/5 dark:hover:bg-white/5 px-2 py-0.5 rounded transition-colors disabled:opacity-40"
+                >
+                  {status.ahead > 0 && (
+                    <span className="text-cyan-400/60">{status.ahead}</span>
+                  )}
+                  Push
+                </button>
+              )}
+            </div>
+
+            <div className="relative">
+              <textarea
+                value={commitMsg}
+                onChange={(e) => setCommitMsg(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleCommit();
+                }}
+                placeholder="commit message"
+                rows={2}
+                className="w-full bg-foreground/5 dark:bg-white/5 rounded-md px-2 py-1.5 text-[11px] font-mono text-foreground/60 dark:text-white/60 placeholder:text-foreground/20 dark:placeholder:text-white/20 outline-none resize-none border border-foreground/5 dark:border-white/5 focus:border-foreground/10 dark:focus:border-white/10 transition-colors"
+              />
+            </div>
+            <ReviewApprovalGate
+              reviewers={reviewers}
+              onCommit={handleCommit}
+              baseDisabled={busy || !commitMsg.trim() || stagedFiles.length === 0}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
