@@ -101,6 +101,13 @@ node dist/server.js
 The server should print a ready line to stderr and then wait for MCP stdio
 messages.
 
+## Adding or enriching a tool
+
+See **[AUTHORING.md](./AUTHORING.md)** — the three-layer pattern (schema →
+dispatch → handler → platform ops route), the permission tiers, the auth/identity
+rules, and the build-and-respawn step (rebuilding `dist/` does nothing until the
+MCP host respawns the subprocess; the `reconnect` tool is auth-only).
+
 ## Release
 
 Publish manually after npm org access is confirmed:

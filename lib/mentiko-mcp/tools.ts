@@ -33,6 +33,11 @@ const BAR_TOOL_NAMES = new Set([
   "generate_tasks",
   "mark_task_done",
   "run_task_chain",
+  "get_task",
+  "update_task",
+  "comment_task",
+  "add_task_dependency",
+  "remove_task_dependency",
   "open_file",
   "read_file",
   "write_file",
@@ -533,19 +538,108 @@ const ALL_TOOLS: Tool[] = [
   },
   {
     name: "create_task",
-    description: "Create a new task.",
+    description: "Create a task, or an epic/feature/bug/chore via issue_type. Owner defaults to the authenticated MCP user unless you pass owner. Use issue_type:'epic' to mint an EPIC, then add_task_dependency to wire prerequisites. assignee is a free field — a user id/name OR a chain id/name.",
     inputSchema: {
       type: "object",
       properties: {
-        subject: { type: "string" },
-        desc: { type: "string" },
-        parentId: { type: "string" },
+        subject: { type: "string", description: "Task title." },
+        desc: { type: "string", description: "Task description / body." },
+        parentId: { type: "string", description: "Parent task or epic id (e.g. EPIC-011)." },
         workspace_path: {
           type: "string",
           description: "Absolute path to the workspace. Tasks without this won't appear in the /tasks UI workspace filter."
-        }
+        },
+        issue_type: {
+          type: "string",
+          enum: ["epic", "feature", "task", "decision", "link", "bug", "chore"],
+          description: "Defaults to 'task'. 'epic' mints EPIC-###, 'feature' FEAT-###, 'bug' BUG-###, etc."
+        },
+        priority: { type: "number", description: "1 = highest. Defaults to 2." },
+        owner: { type: "string", description: "Responsible identity. Defaults to the authenticated MCP user." },
+        assignee: { type: "string", description: "Who/what works it — a user id/name or a chain id/name." },
+        labels: { type: "array", items: { type: "string" }, description: "Label strings, e.g. [\"backend\",\"notifications\"]." },
+        notes: { type: "string", description: "Free-form notes." },
+        acceptance_criteria: { type: "string", description: "Given/when/then acceptance criteria." },
+        design: { type: "string", description: "Design / approach notes." },
+        estimated_minutes: { type: "number", description: "Estimate in minutes." },
+        due_at: { type: "string", description: "Due date, ISO 8601." }
       },
       required: ["subject"]
+    }
+  },
+  {
+    name: "get_task",
+    description: "Get one task's full record plus its dependencies (blockers it waits on), dependents (tasks waiting on it), and comments.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Task id, e.g. TASK-160 or EPIC-011." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "update_task",
+    description: "Update fields on an existing task (any subset). Setting status to 'closed' stamps closed_at. issue_type, owner and parent are set at creation and are not updatable here — use create_task for those.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Task id to update." },
+        title: { type: "string" },
+        description: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["open", "in_progress", "blocked", "closed"],
+          description: "Lifecycle status."
+        },
+        priority: { type: "number", description: "1 = highest." },
+        assignee: { type: "string", description: "User id/name or chain id/name." },
+        acceptance_criteria: { type: "string" },
+        design: { type: "string" },
+        notes: { type: "string" },
+        labels: { type: "array", items: { type: "string" } },
+        metadata: { type: "object", description: "Merged as-is into the metadata column (overwrites keys you set)." },
+        estimated_minutes: { type: "number" },
+        due_at: { type: "string", description: "ISO 8601." },
+        workspace_id: { type: "string", description: "Absolute workspace path; must be authorized." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "comment_task",
+    description: "Add a comment to a task. The author is the authenticated MCP user.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Task id to comment on." },
+        text: { type: "string", description: "Comment body." }
+      },
+      required: ["id", "text"]
+    }
+  },
+  {
+    name: "add_task_dependency",
+    description: "Add a dependency edge: taskId depends on / is blocked by dependsOnId. taskId only unblocks once dependsOnId is closed. Use this to wire epic subtasks and prerequisites.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "The dependent (blocked) task." },
+        dependsOnId: { type: "string", description: "The prerequisite (blocker) task it waits on." }
+      },
+      required: ["taskId", "dependsOnId"]
+    }
+  },
+  {
+    name: "remove_task_dependency",
+    description: "Remove the dependency edge taskId -> dependsOnId.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "The dependent task." },
+        dependsOnId: { type: "string", description: "The prerequisite it no longer waits on." }
+      },
+      required: ["taskId", "dependsOnId"]
     }
   },
   {

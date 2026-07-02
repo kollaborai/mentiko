@@ -70,6 +70,10 @@ const TIER_B = new Set([
   "create_task",
   "generate_tasks",
   "mark_task_done",
+  "update_task",
+  "comment_task",
+  "add_task_dependency",
+  "remove_task_dependency",
   "create_workspace",
   "write_file",
   "show_terminal",
@@ -361,10 +365,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     if (name === "create_task") {
       const { allowed } = await checkPermission(name, args);
       if (!allowed) return textResult("Permission denied by user.");
-      const result = await tasks.createTask(args.subject, args.desc, args.parentId, args.workspace_path);
+      const result = await tasks.createTask({
+        subject: args.subject,
+        desc: args.desc,
+        parentId: args.parentId,
+        workspacePath: args.workspace_path,
+        issue_type: args.issue_type,
+        priority: args.priority,
+        owner: args.owner,
+        assignee: args.assignee,
+        labels: args.labels,
+        notes: args.notes,
+        acceptance_criteria: args.acceptance_criteria,
+        design: args.design,
+        estimated_minutes: args.estimated_minutes,
+        due_at: args.due_at,
+      });
       const taskId = result?.task?.id;
       if (taskId) await dispatchEffect("navigate", { route: `/tasks/${taskId}` });
       return textResult(`Task created: ${taskId || JSON.stringify(result)}`);
+    }
+
+    if (name === "get_task") {
+      const result = await tasks.getTask(args.id);
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    if (name === "update_task") {
+      const { allowed } = await checkPermission(name, args);
+      if (!allowed) return textResult("Permission denied by user.");
+      const { id, ...fields } = args;
+      const result = await tasks.updateTask(id, fields);
+      return textResult(`Task updated: ${id}\n${JSON.stringify(result, null, 2)}`);
+    }
+
+    if (name === "comment_task") {
+      const { allowed } = await checkPermission(name, args);
+      if (!allowed) return textResult("Permission denied by user.");
+      await tasks.commentTask(args.id, args.text);
+      return textResult(`Comment added to ${args.id}.`);
+    }
+
+    if (name === "add_task_dependency") {
+      const { allowed } = await checkPermission(name, args);
+      if (!allowed) return textResult("Permission denied by user.");
+      await tasks.addTaskDependency(args.taskId, args.dependsOnId);
+      return textResult(`Dependency added: ${args.taskId} depends on ${args.dependsOnId}.`);
+    }
+
+    if (name === "remove_task_dependency") {
+      const { allowed } = await checkPermission(name, args);
+      if (!allowed) return textResult("Permission denied by user.");
+      await tasks.removeTaskDependency(args.taskId, args.dependsOnId);
+      return textResult(`Dependency removed: ${args.taskId} no longer depends on ${args.dependsOnId}.`);
     }
 
     if (name === "generate_tasks") {
