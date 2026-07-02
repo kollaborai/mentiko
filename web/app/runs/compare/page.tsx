@@ -105,7 +105,7 @@ function RunSelector({
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full bg-card rounded-md px-3 py-2 text-left flex items-center justify-between hover:bg-card/80 transition-colors"
+        className="flex w-full items-center justify-between rounded-md bg-card px-3 py-2 text-left transition-colors hover:bg-card/80"
       >
         <div className="flex-1 min-w-0">
           <div className="text-[10px] text-foreground/40 uppercase">{label}</div>
@@ -165,7 +165,7 @@ function DiffIndicator({ value, percent }: { value: number; percent: number }) {
 
 function OutputDiff({ diff }: { diff: Array<{ type: "added" | "removed" | "unchanged"; value: string }> }) {
   return (
-    <div className="bg-muted/50 p-3 rounded-md font-mono text-xs overflow-x-auto max-h-96 overflow-y-auto">
+    <div className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs [overflow-wrap:anywhere]">
       {diff.map((part, idx) => {
         const lines = part.value.split("\n");
         return (
@@ -253,23 +253,23 @@ function ComparePageContent() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center justify-between px-3 py-2 sm:px-4">
+        <div className="flex min-w-0 items-center gap-3">
           <Link href="/runs">
             <Button size="sm" variant="ghost">
               <ArrowLeftFilled className="mr-1 h-3 w-3" />
               Runs
             </Button>
           </Link>
-          <h1>Compare Runs</h1>
+          <h1 className="truncate text-lg font-semibold sm:text-xl">Compare Runs</h1>
         </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4">
         <div className="max-w-6xl mx-auto space-y-4">
           {/* Selector section */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
             <RunSelector runs={runs} selected={runAId} onSelect={setRunAId} label="Run A" />
             <RunSelector runs={runs} selected={runBId} onSelect={setRunBId} label="Run B" />
           </div>
@@ -293,7 +293,7 @@ function ComparePageContent() {
               {/* Summary stats */}
               <div className="bg-card rounded-md p-4">
                 <h2 className="text-sm font-medium mb-3">Summary</h2>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
+                <div className="grid grid-cols-2 gap-3 text-xs sm:gap-4 md:grid-cols-5">
                   <div>
                     <div className="text-foreground/40 mb-1">Duration A</div>
                     <div className="font-mono">{formatDuration(getDuration(runA))}</div>
@@ -328,15 +328,15 @@ function ComparePageContent() {
               <div className="bg-card rounded-md p-4">
                 <h2 className="text-sm font-medium mb-3">Metrics Difference</h2>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between py-2 border-b border-border/50">
-                    <span className="text-xs text-foreground/60">Duration</span>
-                    <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border/50">
+                <span className="text-xs text-foreground/60">Duration</span>
+                <div className="flex items-center gap-3">
                       <span className="text-xs font-mono">{formatDuration(getDuration(runA))}</span>
                       <DiffIndicator value={comparison.metricsDiff.duration} percent={comparison.metricsDiff.durationPercent} />
                       <span className="text-xs font-mono">{formatDuration(getDuration(runB))}</span>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between py-2 border-b border-border/50">
+                  <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border/50">
                     <span className="text-xs text-foreground/60">Tokens</span>
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-mono">{comparison.perfA?.summary.total_tokens || 0}</span>
@@ -344,7 +344,7 @@ function ComparePageContent() {
                       <span className="text-xs font-mono">{comparison.perfB?.summary.total_tokens || 0}</span>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between py-2 border-b border-border/50">
+                  <div className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-border/50">
                     <span className="text-xs text-foreground/60">Cost</span>
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-mono">{formatCost(comparison.perfA?.summary.total_cost_usd || 0)}</span>
@@ -352,7 +352,7 @@ function ComparePageContent() {
                       <span className="text-xs font-mono">{formatCost(comparison.perfB?.summary.total_cost_usd || 0)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 py-2">
                     <span className="text-xs text-foreground/60">Agent Count</span>
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-mono">{runA?.agents.length || 0}</span>
@@ -364,7 +364,7 @@ function ComparePageContent() {
               </div>
 
               {/* Split view */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {/* Run A */}
                 <div className="bg-card rounded-md p-4">
                   <h3 className="text-sm font-medium mb-2">Run A</h3>
@@ -393,8 +393,8 @@ function ComparePageContent() {
                       <div className="text-[10px] text-foreground/40 mb-1">Agents</div>
                       <div className="space-y-1">
                         {runA?.agents.map((agent) => (
-                          <div key={agent.id} className="flex items-center justify-between text-xs bg-muted/50 px-2 py-1 rounded">
-                            <span>{agent.name || agent.id}</span>
+                          <div key={agent.id} className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 text-xs">
+                            <span className="min-w-0 truncate">{agent.name || agent.id}</span>
                             <StatusBadge status={agent.status as Status} size="sm" />
                           </div>
                         ))}
@@ -431,8 +431,8 @@ function ComparePageContent() {
                       <div className="text-[10px] text-foreground/40 mb-1">Agents</div>
                       <div className="space-y-1">
                         {runB?.agents.map((agent) => (
-                          <div key={agent.id} className="flex items-center justify-between text-xs bg-muted/50 px-2 py-1 rounded">
-                            <span>{agent.name || agent.id}</span>
+                          <div key={agent.id} className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 text-xs">
+                            <span className="min-w-0 truncate">{agent.name || agent.id}</span>
                             <StatusBadge status={agent.status as Status} size="sm" />
                           </div>
                         ))}
