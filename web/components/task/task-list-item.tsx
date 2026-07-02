@@ -128,7 +128,7 @@ export function TaskListItem({
 
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
             <TypeBadge type={task.type} />
-            <PriorityBadge priority={task.priority} />
+            <PriorityBadge priority={task.priority} rawPriority={task.rawPriority} />
             <span className="font-mono text-foreground/25">{task.id}</span>
             {task.chainBinding && (
               <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] text-foreground/55">

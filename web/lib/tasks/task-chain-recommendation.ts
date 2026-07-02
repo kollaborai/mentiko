@@ -1,3 +1,5 @@
+import { isDeliverableIssueType } from "@/lib/tasks/deliverable-issue-types";
+
 export type TaskChainRecommendationAction =
   | "use_existing"
   | "generate_new"
@@ -97,12 +99,10 @@ export function normalizeTaskChainRecommendation(value: unknown): TaskChainRecom
 }
 
 export function buildGenerationPromptFromTaskRecommendation(
-  task: { title: string; description?: string },
+  task: { title: string; description?: string; issue_type?: string; acceptance_criteria?: string },
   recommendation: TaskChainRecommendation | null
 ): string {
-  if (recommendation?.generation_prompt) return recommendation.generation_prompt;
-
-  return [
+  const base = recommendation?.generation_prompt || [
     `Create a Mentiko chain for this task: ${task.title}.`,
     task.description ? `Task description: ${task.description}` : null,
     recommendation?.reasoning ? `Recommendation analysis: ${recommendation.reasoning}` : null,
@@ -110,5 +110,24 @@ export function buildGenerationPromptFromTaskRecommendation(
       ? `Original recommender note: ${recommendation.direct_instructions}`
       : null,
     "The chain should break the work into trustworthy agent steps, include verification, and be usable for this task from the task screen.",
+  ].filter(Boolean).join("\n\n");
+
+  // Appended even when the recommender already supplied its own
+  // generation_prompt — a chain-recommendation output for a feature/task/bug
+  // is exactly where this requirement was previously missing. (FEAT-014's
+  // chain was born from a chain-recommendation-generated prompt and ended up
+  // with 4 read-only agents and zero code.)
+  if (!isDeliverableIssueType(task.issue_type)) return base;
+
+  return [
+    base,
+    `DELIVERY REQUIREMENT: this task's type is "${task.issue_type}", which promises a working code ` +
+      "deliverable, not a document. The chain MUST include at least one agent with \"edit_files\" " +
+      "authority whose job is to implement the acceptance criteria in the actual codebase, and the " +
+      "final agent must verify the specific behavior/files described in the acceptance criteria exist " +
+      "before reporting completion. A chain made only of analysis, design, or specification agents " +
+      "(read_files-only / run_commands-only authorities) does NOT satisfy this task, no matter how " +
+      "thorough — the acceptance criteria describe working software, and a spec is not working software.",
+    task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : null,
   ].filter(Boolean).join("\n\n");
 }

@@ -33,8 +33,16 @@ export async function createTaskDecision({
   workspacePath,
   parentTaskId,
 }: CreateTaskDecisionInput): Promise<CreateTaskDecisionResult> {
-  const decisionPrompt = buildDecisionPromptFromTaskPrompt(prompt);
-  const title = titleFromDecisionPrompt(prompt);
+  // The completion-audit path hands us a fully composed decision prompt; the
+  // Generate-Task path hands us a raw user request that still needs the decision
+  // framing. Only wrap the latter — wrapping an already-composed prompt is what
+  // produced the doubled "Decide the implementation approach for… Original
+  // request:…" text on auto-created decisions.
+  const alreadyComposed = source === "completion-audit";
+  const decisionPrompt = alreadyComposed ? prompt : buildDecisionPromptFromTaskPrompt(prompt);
+  const title = alreadyComposed
+    ? (prompt.split("\n")[0] || prompt)
+    : titleFromDecisionPrompt(prompt);
   const decision = createDecision(
     namespaceId,
     orgId,

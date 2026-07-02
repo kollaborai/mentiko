@@ -1,4 +1,4 @@
-import { opsGet, opsPatch, opsPost } from "./ops-client.js";
+import { opsGet, opsPatch, opsPost, opsDelete } from "./ops-client.js";
 
 export async function listTasks(status?: string, _epic?: string) {
   return await opsGet(
@@ -7,18 +7,63 @@ export async function listTasks(status?: string, _epic?: string) {
   );
 }
 
-export async function createTask(
-  subject: string,
-  desc?: string,
-  parentId?: string,
-  workspacePath?: string,
-) {
-  return await opsPost("/api/mentiko-mcp/ops/tasks", {
-    subject,
-    desc,
-    parentId,
-    workspacePath,
-  });
+export interface CreateTaskInput {
+  subject: string;
+  desc?: string;
+  parentId?: string;
+  workspacePath?: string;
+  issue_type?: string;
+  priority?: number;
+  owner?: string;
+  assignee?: string;
+  labels?: string[];
+  notes?: string;
+  acceptance_criteria?: string;
+  design?: string;
+  estimated_minutes?: number;
+  due_at?: string;
+}
+
+export async function createTask(input: CreateTaskInput) {
+  return await opsPost("/api/mentiko-mcp/ops/tasks", input);
+}
+
+export interface UpdateTaskFields {
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: number;
+  assignee?: string;
+  acceptance_criteria?: string;
+  design?: string;
+  notes?: string;
+  labels?: string[];
+  metadata?: Record<string, unknown>;
+  estimated_minutes?: number;
+  due_at?: string;
+  workspace_id?: string;
+}
+
+export async function updateTask(id: string, fields: UpdateTaskFields) {
+  return await opsPatch("/api/mentiko-mcp/ops/tasks", { id, ...fields });
+}
+
+// Full record + dependency edges + comments for a single task.
+export async function getTask(id: string) {
+  return await opsGet("/api/mentiko-mcp/ops/tasks", { id });
+}
+
+export async function commentTask(id: string, text: string) {
+  return await opsPost("/api/mentiko-mcp/ops/tasks/comment", { id, text });
+}
+
+// taskId depends on / is blocked by dependsOnId.
+export async function addTaskDependency(taskId: string, dependsOnId: string) {
+  return await opsPost("/api/mentiko-mcp/ops/tasks/deps", { taskId, dependsOnId });
+}
+
+export async function removeTaskDependency(taskId: string, dependsOnId: string) {
+  return await opsDelete("/api/mentiko-mcp/ops/tasks/deps", { taskId, dependsOnId });
 }
 
 export async function generateTasks(

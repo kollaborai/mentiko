@@ -54,7 +54,7 @@ function SchemaTree({ schema, depth = 0 }: { schema: Record<string, unknown>; de
 
   if (schema.type === "array" && items) {
     return (
-      <div style={{ paddingLeft: depth > 0 ? 12 : 0 }}>
+      <div style={{ paddingLeft: 4 }}>
         <span className="text-[10px] text-muted-foreground/60 italic">array of:</span>
         <SchemaTree schema={items} depth={depth + 1} />
       </div>
@@ -69,7 +69,7 @@ function SchemaTree({ schema, depth = 0 }: { schema: Record<string, unknown>; de
   }
 
   return (
-    <div style={{ paddingLeft: depth > 0 ? 12 : 0 }} className="space-y-0.5">
+    <div style={{ paddingLeft: 4 }} className="space-y-0.5">
       {Object.entries(properties).map(([key, prop]) => {
         const isRequired = required.includes(key);
         const typeVal = prop.type;

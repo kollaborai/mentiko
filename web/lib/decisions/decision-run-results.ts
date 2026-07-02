@@ -63,7 +63,7 @@ export async function applyDecisionRunResult({
   const parsed = resultObject(result);
 
   if (phase === "research") {
-    const title = (parsed.title as string) || decision.prompt;
+    const title = (parsed.title as string) || decision.title || decision.prompt.split("\n")[0];
     if (decision.taskId) {
       taskUpdate(orgId, decision.taskId, { title }, namespaceId);
     }

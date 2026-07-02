@@ -96,7 +96,7 @@ export function ActiveChains({ className }: ActiveChainsProps) {
           </div>
         </div>
 
-        <div className="relative z-10 max-h-64 overflow-y-auto">
+        <div className="relative z-10 max-h-64 overflow-y-auto no-scrollbar">
           {loading ? (
           <div className="p-4 md:p-6 text-center text-foreground/40 text-sm">
             Loading runs...

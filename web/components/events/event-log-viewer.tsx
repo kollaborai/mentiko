@@ -199,7 +199,7 @@ export function EventLogViewer({ className }: EventLogViewerProps) {
           </div>
         </div>
 
-        <div className="relative z-10 max-h-80 overflow-y-auto">
+        <div className="relative z-10 max-h-80 overflow-y-auto no-scrollbar">
         {loading ? (
           <div className="p-8 text-center text-foreground/40 text-sm">
             Loading events...

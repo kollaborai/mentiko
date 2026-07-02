@@ -4,10 +4,12 @@ import { typeLabel, typeBgColor } from "@/lib/tasks/task-transforms";
 
 interface TypeBadgeProps {
   type: string;
+  /** override the displayed text (e.g. "TASK-152" instead of just "TASK") */
+  label?: string;
   className?: string;
 }
 
-export function TypeBadge({ type, className }: TypeBadgeProps) {
+export function TypeBadge({ type, label, className }: TypeBadgeProps) {
   const Icon = type === "decision" ? JudgeFilled : type === "link" ? LinkFilled : null;
 
   return (
@@ -19,7 +21,7 @@ export function TypeBadge({ type, className }: TypeBadgeProps) {
       )}
     >
       {Icon && <Icon className="h-2.5 w-2.5" />}
-      {typeLabel(type)}
+      {label ?? typeLabel(type)}
     </span>
   );
 }

@@ -168,7 +168,7 @@ export const ActivityFeed = memo(function ActivityFeed({ className }: ActivityFe
           </div>
         </div>
 
-        <div className="relative z-10 max-h-72 overflow-y-auto">
+        <div className="relative z-10 max-h-72 overflow-y-auto no-scrollbar">
         {loading ? (
           <>
             <ActivityItemSkeleton />

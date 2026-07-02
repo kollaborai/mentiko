@@ -39,6 +39,7 @@ import {
   RefreshFilled as RefreshCw,
   TrashFilled as Trash2,
   DocumentDownloadFilled as Download,
+  DocumentTextFilled as Document,
   Star1Filled as DollarSign,
   StopFilled as Square,
   CheckFilled as Check,
@@ -64,9 +65,22 @@ interface RunAgent extends Omit<WorkflowAgent, "emits"> {
 
 interface RunArtifact {
   agentId?: string;
-  type: string;
+  type?: string;
+  path?: string;
+  timestamp?: string;
+}
+
+interface ArtifactPreview {
+  name: string;
   path: string;
-  timestamp: string;
+  size: number;
+  language: string;
+  truncated: boolean;
+  content: string;
+}
+
+interface ArtifactPreviewState extends ArtifactPreview {
+  requestPath: string;
 }
 
 interface RunSummary {
@@ -254,7 +268,7 @@ function AgentTimeline({ run }: { run: Run }) {
 }
 
 function renderMarkdownBlock(text: string) {
-  return <Markdown content={text} compact />;
+  return <Markdown content={text} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />;
 }
 
 function GoalContent({ goal }: { goal: string }) {
@@ -347,7 +361,7 @@ function SummaryList({ label, items }: { label: string; items?: string[] }) {
       <p className="text-[10px] text-foreground/40 uppercase mb-1.5">{label}</p>
       <div className="space-y-1">
         {items.slice(0, 4).map((item, index) => (
-          <p key={index} className="text-[11px] text-foreground/60 leading-relaxed">
+          <p key={index} className="break-words text-[11px] text-foreground/60 leading-relaxed [overflow-wrap:anywhere]">
             {item}
           </p>
         ))}
@@ -356,13 +370,24 @@ function SummaryList({ label, items }: { label: string; items?: string[] }) {
   );
 }
 
+function artifactPathValue(artifact?: RunArtifact | null) {
+  const path = artifact?.path;
+  return typeof path === "string" && path.trim().length > 0 ? path.trim() : null;
+}
+
+function artifactName(path?: string) {
+  if (!path) return "unknown artifact";
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
 interface RunDetailPanelProps {
   runId: string;
   onBack?: () => void;
   onDelete?: () => void;
+  embedded?: boolean;
 }
 
-export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps) {
+export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: RunDetailPanelProps) {
   useRunNotifications(runId);
   const { fetchWithNamespace } = useNamespaceFetch();
   const router = useRouter();
@@ -392,6 +417,10 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
   const [eventArtifactLoading, setEventArtifactLoading] = useState(false);
   const [eventArtifactError, setEventArtifactError] = useState<string | null>(null);
   const [applyingEventArtifactId, setApplyingEventArtifactId] = useState<string | null>(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<RunArtifact | null>(null);
+  const [artifactPreview, setArtifactPreview] = useState<ArtifactPreviewState | null>(null);
+  const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
+  const [artifactPreviewError, setArtifactPreviewError] = useState<string | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const metricsRef = useRef<Record<string, MetricPoint[]>>({});
@@ -403,6 +432,37 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
   const prevAgentTotalsRef = useRef<Record<string, number>>({});
   const outputAutoTerminalRef = useRef<Record<string, boolean>>({});
   const conversationLookupAttemptsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    setRun(null);
+    setLoading(true);
+    setConnected(false);
+    setExpandedAgents(new Set());
+    setAgentOutputs({});
+    setMetricsTimeline({});
+    setSelectedAgent(null);
+    setAgentConversations({});
+    setAgentMessages({});
+    setAgentMsgTotals({});
+    setAgentActivity({});
+    setExpandedDiffs(new Set());
+    setCostData(null);
+    setEventArtifacts([]);
+    setEventArtifactError(null);
+    setApplyingEventArtifactId(null);
+    setSelectedArtifact(null);
+    setArtifactPreview(null);
+    setArtifactPreviewError(null);
+    metricsRef.current = {};
+    outputsRef.current = {};
+    expandedAgentsRef.current = new Set();
+    prevAgentTotalsRef.current = {};
+    outputAutoTerminalRef.current = {};
+    conversationLookupAttemptsRef.current = {};
+    outputNearBottomRef.current = true;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+  }, [runId]);
 
   const fetchRun = useCallback(async () => {
     try {
@@ -767,18 +827,22 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
     }
   }, [autoScrollEnabled]);
 
-  const scrollToBottom = useCallback(() => {
-    if (outputBottomRef.current) {
-      outputBottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-    setAutoScrollEnabled(true);
+  const scrollOutputToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = outputScrollRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
   }, []);
 
+  const scrollToBottom = useCallback(() => {
+    scrollOutputToBottom("smooth");
+    setAutoScrollEnabled(true);
+  }, [scrollOutputToBottom]);
+
   useEffect(() => {
-    if (autoScrollEnabled && outputNearBottomRef.current && outputBottomRef.current) {
-      outputBottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScrollEnabled && outputNearBottomRef.current) {
+      scrollOutputToBottom("smooth");
     }
-  }, [agentMessages, agentOutputs, autoScrollEnabled]);
+  }, [agentMessages, agentOutputs, autoScrollEnabled, scrollOutputToBottom]);
 
   // Auto-enable scroll when agent is running
   useEffect(() => {
@@ -905,6 +969,32 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
       setApplyingEventArtifactId(null);
     }
   };
+
+  const handleSelectArtifact = useCallback(async (artifact: RunArtifact) => {
+    const artifactPath = artifactPathValue(artifact);
+    setSelectedArtifact(artifact);
+    setArtifactPreview(null);
+    setArtifactPreviewError(null);
+    if (!artifactPath) {
+      setArtifactPreviewError("artifact is missing a readable path");
+      setArtifactPreviewLoading(false);
+      return;
+    }
+    setArtifactPreviewLoading(true);
+    try {
+      const res = await fetchWithNamespace(
+        `/api/runs/${runId}/artifacts?path=${encodeURIComponent(artifactPath)}`,
+      );
+      const raw = await res.json();
+      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to load artifact"));
+      const data = unwrapApiData<ArtifactPreview>(raw);
+      setArtifactPreview({ ...data, requestPath: artifactPath });
+    } catch (e) {
+      setArtifactPreviewError(e instanceof Error ? e.message : "failed to load artifact");
+    } finally {
+      setArtifactPreviewLoading(false);
+    }
+  }, [fetchWithNamespace, runId]);
 
   const handleResume = async () => {
     try {
@@ -1071,6 +1161,122 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
   const isLinkRun = run?.type === "link";
   const completedAgents = run?.agents?.filter((a) => a.status === "complete").length || 0;
   const totalAgents = run?.agents?.length || 0;
+  const runArtifacts = run?.artifacts || [];
+  const artifactCount = runArtifacts.length || run?.summary?.artifacts_count || 0;
+  const selectedArtifactPath = artifactPathValue(selectedArtifact);
+  const activeArtifactPreview = selectedArtifactPath && artifactPreview?.requestPath === selectedArtifactPath
+    ? artifactPreview
+    : null;
+  const panelClassName = embedded
+    ? "h-[720px] max-h-[calc(100vh-220px)] min-h-[560px] overflow-hidden flex flex-col rounded-sm bg-background/45"
+    : "h-full overflow-hidden flex flex-col";
+  const headerClassName = embedded
+    ? "mx-2 mt-2 shrink-0 flex-col items-stretch justify-start gap-2"
+    : "mx-3 mt-2 shrink-0 flex-col items-stretch justify-start gap-3 rounded-xl px-4 py-4 sm:flex-row sm:items-center sm:justify-between";
+  const runHeaderIdentityClassName = embedded
+    ? "relative flex w-full min-w-0 items-start gap-3"
+    : "relative flex w-full min-w-0 items-start gap-3 sm:w-auto sm:items-center";
+  const runHeaderTitleBlockClassName = embedded ? "min-w-0 flex-1" : "min-w-0 flex-1";
+  const runHeaderTitleLineClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center gap-2"
+    : "flex min-w-0 flex-wrap items-center gap-2";
+  const runHeaderTitleClassName = "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere] sm:line-clamp-none sm:tracking-tighter";
+  const runHeaderMetaClassName = embedded
+    ? "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+    : "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 sm:mt-0.5";
+  const runHeaderActionsClassName = embedded
+    ? "relative flex w-full min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs"
+    : "relative flex w-full min-w-0 flex-col items-stretch gap-3 text-xs sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-4";
+  const runHeaderMetricsClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+    : "grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:gap-4";
+  const runHeaderControlsClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center justify-end gap-1.5"
+    : "flex min-w-0 items-center justify-center gap-2 sm:justify-end";
+  const tabsChromeClassName = embedded
+    ? "shrink-0 overflow-x-auto px-2 pt-2"
+    : "shrink-0 max-w-full px-4 pt-3";
+  const tabsListClassName = embedded
+    ? "min-w-max bg-card"
+    : "mx-auto flex w-full max-w-full min-w-0 justify-center gap-1 rounded-xl bg-card/90 p-1";
+  const goalTabClassName = embedded
+    ? "flex-1 overflow-y-auto p-3 mt-0"
+    : "flex-1 overflow-y-auto p-6 mt-0";
+  const runMetadataGridClassName = embedded
+    ? "grid gap-y-1.5 text-xs"
+    : "grid grid-cols-[110px_1fr] gap-y-2.5 text-xs";
+  const agentHeaderClassName = embedded
+    ? "flex flex-col items-stretch gap-2"
+    : "flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between";
+  const agentIdentityClassName = embedded
+    ? "flex min-w-0 items-start gap-2"
+    : "flex min-w-0 items-start gap-3";
+  const agentTitleBlockClassName = embedded ? "min-w-0 flex-1" : "min-w-0 flex-1";
+  const agentTitleClassName = embedded
+    ? "text-sm font-medium leading-tight break-words"
+    : "text-base font-semibold leading-tight tracking-normal [overflow-wrap:anywhere] sm:text-sm";
+  const agentStatusClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center gap-1.5 pl-6"
+    : "flex min-w-0 flex-wrap items-center gap-1.5 pl-7 sm:justify-end sm:pl-0";
+  const agentEmitBadgeClassName = embedded
+    ? "max-w-[160px] truncate text-[9px] bg-card"
+    : "text-[9px] bg-card";
+  const agentDurationClassName = embedded
+    ? "text-[10px] text-foreground/40 font-mono"
+    : "text-[10px] text-foreground/40 font-mono hidden sm:inline";
+  const agentDetailGridClassName = embedded
+    ? "grid grid-cols-1 gap-2"
+    : "grid grid-cols-2 md:grid-cols-3 gap-2";
+  const outputShellClassName = embedded
+    ? "flex-1 flex min-h-0 flex-col"
+    : "flex-1 flex min-h-0";
+  const outputAgentListClassName = embedded
+    ? "shrink-0 border-b border-foreground/5 overflow-x-auto p-2"
+    : "w-40 md:w-48 border-r border-foreground/5 overflow-y-auto p-2 space-y-1";
+  const outputAgentListBodyClassName = embedded ? "flex min-w-max gap-1" : "space-y-1";
+  const outputAgentButtonClassName = embedded
+    ? "min-w-[128px] max-w-[180px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors"
+    : "w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors";
+  const outputHeaderClassName = embedded
+    ? "flex flex-col items-stretch gap-2 px-3 py-2 shrink-0"
+    : "flex items-center justify-between px-4 py-2 shrink-0";
+  const outputHeaderTitleLineClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center gap-2"
+    : "flex items-center gap-2";
+  const outputHeaderControlsClassName = embedded
+    ? "flex min-w-0 flex-wrap items-center gap-1"
+    : "flex items-center gap-1 ml-4 shrink-0";
+  const outputScrollClassName = embedded
+    ? "h-full overflow-y-auto px-3 py-2"
+    : "h-full overflow-y-auto px-4 py-2";
+  const outputInnerClassName = "mx-auto max-w-3xl min-w-0";
+  const metricsTimelineScaleClassName = embedded
+    ? "flex items-center gap-1 text-[9px] text-foreground/30 mb-2"
+    : "flex items-center gap-1 text-[9px] text-foreground/30 mb-2 ml-28";
+  const metricsTimelineRowClassName = embedded
+    ? "grid gap-1.5 py-1.5"
+    : "flex items-center gap-2 py-1";
+  const metricsTimelineAgentClassName = embedded
+    ? "min-w-0 text-[10px] text-foreground/60 truncate"
+    : "w-28 text-[10px] text-foreground/60 truncate";
+  const metricsTimelineDurationClassName = embedded
+    ? "text-[10px] text-foreground/40 font-mono"
+    : "w-16 text-[10px] text-foreground/40 font-mono text-right";
+  const metricsSummaryGridClassName = embedded
+    ? "grid grid-cols-1 gap-2 mb-6 max-w-4xl"
+    : "grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 max-w-4xl";
+  const costSummaryGridClassName = embedded
+    ? "grid grid-cols-1 gap-2"
+    : "grid grid-cols-2 md:grid-cols-4 gap-4";
+  const costAgentHeaderClassName = embedded
+    ? "flex flex-col items-start gap-1 mb-2"
+    : "flex items-center justify-between mb-2";
+  const costAgentTokenGridClassName = embedded
+    ? "grid grid-cols-1 gap-1 text-[10px] text-foreground/50"
+    : "grid grid-cols-2 gap-2 text-[10px] text-foreground/50";
+  const triageHeaderClassName = embedded
+    ? "flex flex-wrap items-center justify-between gap-3"
+    : "flex items-center justify-between gap-3";
 
   // detect stale state: run is stopped/done but agents are still running/pending
   const hasStaleAgents = !isActive && run?.agents?.some(
@@ -1091,7 +1297,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
       return `${x},${y}`;
     }).join(" ");
     return (
-      <svg width={width} height={height} className="overflow-visible">
+      <svg width={width} height={height} className="max-w-full overflow-visible">
         <polyline fill="none" stroke="url(#sparkline-gradient)" strokeWidth="2" points={points} />
         <defs>
           <linearGradient id="sparkline-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -1187,30 +1393,30 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
   // Normal chain run rendering
   return (
-    <div className="h-full overflow-hidden flex flex-col">
+    <div className={panelClassName}>
       {/* header */}
-      <DetailHeader className="mx-3 mt-2 shrink-0">
-        <div className="relative flex items-center gap-3">
+      <DetailHeader className={headerClassName}>
+        <div className={runHeaderIdentityClassName}>
           {onBack && (
             <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onBack}>
               <ArrowLeftFilled className="h-4 w-4" />
             </Button>
           )}
-          <div>
-            <div className="flex items-center gap-2">
+          <div className={runHeaderTitleBlockClassName}>
+            <div className={runHeaderTitleLineClassName}>
               {run.chainId ? (
-                <Link href={`/chains/${encodeURIComponent(run.chainId)}/edit`} className="text-sm font-bold tracking-tighter hover:text-cyan-400 transition-colors">
+                <Link href={`/chains/${encodeURIComponent(run.chainId)}/edit`} className={cn(runHeaderTitleClassName, "hover:text-cyan-400 transition-colors")}>
                   {run.chain}
                 </Link>
               ) : (
-                <span className="text-sm font-bold tracking-tighter">{run.chain}</span>
+                <span className={runHeaderTitleClassName}>{run.chain}</span>
               )}
               <StatusBadge status={run.status as Status} size="sm" />
               {connected && isActive && (
                 <Badge variant="ghost" className="text-[9px] bg-green-500/10 text-green-400">live</Badge>
               )}
             </div>
-            <div className="flex items-center gap-3 mt-0.5">
+            <div className={runHeaderMetaClassName}>
               <CopyButton value={runId} fullValue={run} />
               {run.taskId && (
                 <Link
@@ -1225,16 +1431,18 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
           </div>
         </div>
 
-        <div className="relative flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-1.5">
-            <Clock className="h-3 w-3 text-foreground/40" />
-            <span className="font-mono">{formatDuration(run.started, run.completed)}</span>
+        <div className={runHeaderActionsClassName}>
+          <div className={runHeaderMetricsClassName}>
+            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
+              <Clock className="h-3 w-3 text-foreground/40" />
+              <span className="font-mono">{formatDuration(run.started, run.completed)}</span>
+            </div>
+            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
+              <Zap className="h-3 w-3 text-foreground/40" />
+              <span className="font-mono">{completedAgents}/{totalAgents}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Zap className="h-3 w-3 text-foreground/40" />
-            <span className="font-mono">{completedAgents}/{totalAgents}</span>
-          </div>
-          <div className="flex items-center gap-2">
+          <div className={runHeaderControlsClassName}>
             {isActive && (
               <>
                 <Button size="sm" variant={debugPaused ? "default" : "secondary"} className="h-7 text-[10px]" onClick={() => setDebugPaused(!debugPaused)}>
@@ -1318,16 +1526,25 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
       {/* tabs */}
       <div className="flex-1 overflow-hidden">
         <Tabs defaultValue="goal" className="h-full flex flex-col">
-          <div className="px-4 pt-3 shrink-0">
-            <TabsList className="bg-card">
-              <TabsTrigger value="goal" className="text-xs">goal</TabsTrigger>
-              <TabsTrigger value="agents" className="text-xs">agents</TabsTrigger>
-              <TabsTrigger value="output" className="text-xs">output</TabsTrigger>
-              <TabsTrigger value="metrics" className="text-xs">metrics</TabsTrigger>
-              <TabsTrigger value="cost" className="text-xs">cost</TabsTrigger>
+          <div className={tabsChromeClassName}>
+            <TabsList className={tabsListClassName}>
+              <TabsTrigger value="goal" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Goal</TabsTrigger>
+              <TabsTrigger value="agents" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Agents</TabsTrigger>
+              <TabsTrigger value="output" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Output</TabsTrigger>
+              <TabsTrigger value="metrics" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
+                <span className="sm:hidden">Metrics</span>
+                <span className="hidden sm:inline">Metrics</span>
+              </TabsTrigger>
+              <TabsTrigger value="cost" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Cost</TabsTrigger>
+              {artifactCount > 0 && (
+                <TabsTrigger value="artifacts" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
+                  <span className="sm:hidden">Art {artifactCount > 0 ? artifactCount : ""}</span>
+                  <span className="hidden sm:inline">Artifacts{artifactCount > 0 ? ` ${artifactCount}` : ""}</span>
+                </TabsTrigger>
+              )}
               {(eventArtifacts.length > 0 || eventArtifactLoading || eventArtifactError) && (
-                <TabsTrigger value="triage" className="text-xs">
-                  triage{eventArtifacts.length > 0 ? ` ${eventArtifacts.length}` : ""}
+                <TabsTrigger value="triage" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
+                  Triage{eventArtifacts.length > 0 ? ` ${eventArtifacts.length}` : ""}
                 </TabsTrigger>
               )}
             </TabsList>
@@ -1379,7 +1596,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
           )}
 
           {/* goal tab */}
-          <TabsContent value="goal" className="flex-1 overflow-y-auto p-6 mt-0">
+          <TabsContent value="goal" className={goalTabClassName}>
             <div className="max-w-4xl space-y-6">
               {run.summary && (
                 <div className="rounded-md border border-foreground/10 bg-card p-3">
@@ -1399,7 +1616,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                     )}
                   </div>
                   {run.summary.summary && (
-                    <p className="text-sm text-foreground/70 leading-relaxed">
+                    <p className="break-words text-sm text-foreground/70 leading-relaxed [overflow-wrap:anywhere]">
                       {run.summary.summary}
                     </p>
                   )}
@@ -1412,7 +1629,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                   ) : null}
                 </div>
               )}
-              <div className="grid grid-cols-[110px_1fr] gap-y-2.5 text-xs">
+              <div className={runMetadataGridClassName}>
                 <span className="text-foreground/40">started</span>
                 <span>{new Date(run.started).toLocaleString()}</span>
                 {run.completed && (
@@ -1430,7 +1647,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                 {run.sessions?.length > 0 && (
                   <>
                     <span className="text-foreground/40">sessions</span>
-                    <span className="font-mono text-[10px] text-foreground/60">{run.sessions.join(", ")}</span>
+                    <span className="min-w-0 break-all font-mono text-[10px] text-foreground/60">{run.sessions.join(", ")}</span>
                   </>
                 )}
               </div>
@@ -1445,7 +1662,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
           </TabsContent>
 
           {/* agents tab */}
-          <TabsContent value="agents" className="flex-1 overflow-y-auto p-4 mt-0">
+          <TabsContent value="agents" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
             <AgentTimeline run={run} />
             {run.agents && run.agents.length > 1 && (
               <div className="flex justify-end mb-3 max-w-4xl">
@@ -1480,40 +1697,49 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                 const hasFilesArtifact = agentArtifacts.some(a => a.type === "files-changed");
                 const hasOutputArtifact = agentArtifacts.some(a => a.type === "output");
                 const hasEventArtifact = agentArtifacts.some(a => a.type === "event" || a.type === "events");
+                const evidenceBadges = [
+                  hasFilesArtifact ? { label: "files", className: "bg-emerald-500/10 text-emerald-300" } : null,
+                  hasDiffArtifact ? { label: "diff", className: "bg-amber-500/10 text-amber-300" } : null,
+                  hasConvArtifact ? { label: "conv", className: "bg-blue-500/10 text-blue-300" } : null,
+                  hasEventArtifact ? { label: "evt", className: "bg-violet-500/10 text-violet-300" } : null,
+                  !hasFilesArtifact && !hasDiffArtifact && !hasConvArtifact && hasOutputArtifact
+                    ? { label: "log", className: "bg-foreground/5 text-foreground/35" }
+                    : null,
+                ].filter(Boolean) as Array<{ label: string; className: string }>;
                 return (
-                  <div key={agent.id} className="bg-card rounded-md overflow-hidden">
-                    <div className="p-3 cursor-pointer hover:bg-accent transition-colors" onClick={() => toggleExpand(agent.id)}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {isExpanded ? <ArrowDown1Filled className="h-4 w-4 text-foreground/40" /> : <ArrowRight1Filled className="h-4 w-4 text-foreground/40" />}
-                          <Terminal className="h-4 w-4 text-foreground/40" />
-                          <div>
-                            <p className="text-sm font-medium">{agent.name || agent.id}</p>
-                            <CopyButton value={agent.id} fullValue={agent} />
+                  <div key={agent.id} className="overflow-hidden rounded-xl border border-border/55 bg-card/80 shadow-sm">
+                    <div className="cursor-pointer p-4 transition-colors hover:bg-accent/80" onClick={() => toggleExpand(agent.id)}>
+                      <div className={agentHeaderClassName}>
+                        <div className={agentIdentityClassName}>
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background/45 text-foreground/45">
+                            {isExpanded ? <ArrowDown1Filled className="h-3.5 w-3.5" /> : <ArrowRight1Filled className="h-3.5 w-3.5" />}
+                          </div>
+                          <div className={agentTitleBlockClassName}>
+                            <p className={agentTitleClassName}>{agent.name || agent.id}</p>
+                            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-foreground/35">
+                              <Terminal className="h-3 w-3 shrink-0" />
+                              <CopyButton value={agent.id} fullValue={agent} />
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {!isExpanded && hasFilesArtifact && (
-                            <span className="text-[9px] text-green-400/50 font-mono">files</span>
-                          )}
-                          {!isExpanded && hasDiffArtifact && (
-                            <span className="text-[9px] text-amber-400/60 font-mono">diff</span>
-                          )}
-                          {!isExpanded && hasConvArtifact && (
-                            <span className="text-[9px] text-blue-400/50 font-mono">conv</span>
-                          )}
-                          {!isExpanded && hasEventArtifact && (
-                            <span className="text-[9px] text-violet-400/40 font-mono">evt</span>
-                          )}
-                          {!isExpanded && !hasFilesArtifact && !hasDiffArtifact && !hasConvArtifact && hasOutputArtifact && (
-                            <span className="text-[9px] text-foreground/20 font-mono">log</span>
-                          )}
+                        <div className={agentStatusClassName}>
+                          {!isExpanded && evidenceBadges.map((badge) => (
+                            <span
+                              key={badge.label}
+                              className={cn(
+                                "rounded-full px-2 py-1 text-[10px] font-mono leading-none",
+                                badge.className
+                              )}
+                            >
+                              {badge.label}
+                            </span>
+                          ))}
                           {agent.isStale && (
-                            <span className="text-[9px] text-orange-400/70 font-mono" title="No heartbeat — agent may be stale">stale</span>
+                            <span className="rounded-full bg-orange-400/10 px-2 py-1 text-[10px] font-mono leading-none text-orange-300" title="No heartbeat — agent may be stale">stale</span>
                           )}
-                          {agent.emits && <Badge variant="ghost" className="text-[9px] bg-card">{agent.emits}</Badge>}
+                          {agent.emits && <Badge variant="ghost" className={agentEmitBadgeClassName}>{agent.emits}</Badge>}
                           <StatusBadge status={agent.status as Status} size="sm" />
-                          <span className="text-[10px] text-foreground/40 font-mono hidden sm:inline">
+                          <span className={agentDurationClassName}>
                             {formatDuration(agent.started, agent.completed)}
                           </span>
                         </div>
@@ -1527,45 +1753,62 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                     </div>
                     {isExpanded && (
                       <div className="border-t border-foreground/5 p-3 space-y-3">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px]">
-                          <div className="bg-card rounded p-2">
+                        <div className="space-y-2 text-[10px]">
+                          <div className="session-row bg-card rounded p-2">
                             <p className="text-foreground/40 uppercase">session</p>
-                            {agent.session ? <CopyButton value={agent.session} fullValue={agent} /> : <p className="font-mono text-[10px]">-</p>}
+                            {agent.session ? (
+                              <div className="mt-1 flex min-w-0 items-start gap-1.5">
+                                <CopyButton
+                                  value={agent.session}
+                                  fullValue={agent}
+                                  showLabel={false}
+                                  className="mt-0.5 shrink-0"
+                                />
+                                <p className="min-w-0 break-all font-mono text-[10px] leading-relaxed text-foreground/45">
+                                  {agent.session}
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="font-mono text-[10px]">-</p>
+                            )}
                           </div>
-                          <div className="bg-card rounded p-2">
-                            <p className="text-foreground/40 uppercase">started</p>
-                            <p>{agent.started ? new Date(agent.started).toLocaleTimeString() : "-"}</p>
-                          </div>
-                          <div className="bg-card rounded p-2">
-                            <p className="text-foreground/40 uppercase">completed</p>
-                            <p>{agent.completed ? new Date(agent.completed).toLocaleTimeString() : "-"}</p>
-                          </div>
-                          <div className="bg-card rounded p-2">
-                            <p className="text-foreground/40 uppercase">duration</p>
-                            <p className="font-mono">{formatDuration(agent.started, agent.completed)}</p>
-                          </div>
-                          {agent.lastHeartbeat && (
-                            <div className={`bg-card rounded p-2 col-span-2 ${agent.isStale ? "border border-orange-400/30" : ""}`}>
-                              <p className={`text-foreground/40 uppercase ${agent.isStale ? "text-orange-400/60" : ""}`}>last heartbeat</p>
-                              <p className="font-mono text-[10px]">
-                                {new Date(agent.lastHeartbeat).toLocaleTimeString()}
-                                {agent.msSinceHeartbeat != null && (
-                                  <span className="text-foreground/40 ml-1">
-                                    ({Math.round(agent.msSinceHeartbeat / 1000 / 60)}m ago)
-                                  </span>
-                                )}
-                                {agent.isStale && <span className="text-orange-400/70 ml-2">stale</span>}
-                              </p>
-                              {agent.lastMessage && (
-                                <p className="text-foreground/50 mt-1 truncate">{agent.lastMessage}</p>
-                              )}
+
+                          <div className={agentDetailGridClassName}>
+                            <div className="bg-card rounded p-2">
+                              <p className="text-foreground/40 uppercase">started</p>
+                              <p>{agent.started ? new Date(agent.started).toLocaleTimeString() : "-"}</p>
                             </div>
-                          )}
+                            <div className="bg-card rounded p-2">
+                              <p className="text-foreground/40 uppercase">completed</p>
+                              <p>{agent.completed ? new Date(agent.completed).toLocaleTimeString() : "-"}</p>
+                            </div>
+                            <div className="bg-card rounded p-2">
+                              <p className="text-foreground/40 uppercase">duration</p>
+                              <p className="font-mono">{formatDuration(agent.started, agent.completed)}</p>
+                            </div>
+                            {agent.lastHeartbeat && (
+                              <div className={`bg-card rounded p-2 ${embedded ? "" : "col-span-2 md:col-span-3"} ${agent.isStale ? "border border-orange-400/30" : ""}`}>
+                                <p className={`text-foreground/40 uppercase ${agent.isStale ? "text-orange-400/60" : ""}`}>last heartbeat</p>
+                                <p className="font-mono text-[10px]">
+                                  {new Date(agent.lastHeartbeat).toLocaleTimeString()}
+                                  {agent.msSinceHeartbeat != null && (
+                                    <span className="text-foreground/40 ml-1">
+                                      ({Math.round(agent.msSinceHeartbeat / 1000 / 60)}m ago)
+                                    </span>
+                                  )}
+                                  {agent.isStale && <span className="text-orange-400/70 ml-2">stale</span>}
+                                </p>
+                                {agent.lastMessage && (
+                                  <p className="text-foreground/50 mt-1 truncate">{agent.lastMessage}</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                         {timeline.length > 2 && (
                           <div className="bg-card rounded p-3">
                             <p className="text-[10px] text-foreground/40 uppercase mb-2">activity</p>
-                            <Sparkline data={timeline} width={300} height={32} />
+                            <Sparkline data={timeline} width={embedded ? 220 : 300} height={32} />
                           </div>
                         )}
                         {/* agent activity: files changed + diff + captured conversations */}
@@ -1594,16 +1837,16 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                                   <p className="text-[10px] text-foreground/40 uppercase mb-1.5">summary</p>
                                   <div className="bg-card rounded p-2 text-[11px] text-foreground/70">
                                     {activity.summary?.executiveSummary ? (
-                                      <p className="whitespace-pre-wrap break-words">{activity.summary.executiveSummary}</p>
+                                      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{activity.summary.executiveSummary}</p>
                                     ) : (
-                                      <Markdown content={activity.summaryMarkdown || ""} compact />
+                                      <Markdown content={activity.summaryMarkdown || ""} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
                                     )}
                                     {activity.summary?.nextAgentHints && activity.summary.nextAgentHints.length > 0 && (
                                       <div className="mt-2 pt-2 border-t border-foreground/10">
                                         <p className="text-[9px] text-foreground/35 uppercase mb-1">next</p>
                                         <ul className="space-y-0.5">
                                           {activity.summary.nextAgentHints.slice(0, 3).map((hint, i) => (
-                                            <li key={i} className="text-foreground/55 break-words">{hint}</li>
+                                            <li key={i} className="text-foreground/55 break-words [overflow-wrap:anywhere]">{hint}</li>
                                           ))}
                                         </ul>
                                       </div>
@@ -1622,13 +1865,13 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                                     </p>
                                     <div className="space-y-0.5">
                                       {visible.map((f, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-[11px] font-mono">
+                                        <div key={i} className="flex min-w-0 items-center gap-2 text-[11px] font-mono">
                                           <span className={`w-3 shrink-0 font-bold ${
                                             f.status === "M" ? "text-amber-400" :
                                             f.status === "A" ? "text-green-400" :
                                             f.status === "D" ? "text-red-400" : "text-foreground/40"
                                           }`}>{f.status}</span>
-                                          <span className="text-foreground/70 truncate">{f.file}</span>
+                                          <span className="min-w-0 truncate text-foreground/70">{f.file}</span>
                                         </div>
                                       ))}
                                       {hidden > 0 && (
@@ -1719,9 +1962,9 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                                                     tc.name === "WebFetch" ? "text-cyan-400" :
                                                     "text-foreground/40";
                                                   return (
-                                                    <span key={j} className={`inline-flex items-center gap-1 text-[9px] bg-background/60 rounded px-1.5 py-0.5 font-mono ${toolColor}`}>
-                                                      <span className="text-foreground/30">{tc.name}</span>
-                                                      <span className="max-w-[200px] truncate">{tc.label}</span>
+                                            <span key={j} className={`inline-flex min-w-0 items-center gap-1 text-[9px] bg-background/60 rounded px-1.5 py-0.5 font-mono ${toolColor}`}>
+                                              <span className="text-foreground/30">{tc.name}</span>
+                                              <span className="max-w-[200px] truncate">{tc.label}</span>
                                                     </span>
                                                   );
                                                 })}
@@ -1740,7 +1983,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                                   <div>
                                     <p className="text-[10px] text-foreground/40 uppercase mb-1.5">session output</p>
                                     <div className="bg-card text-foreground p-2 rounded max-h-48 overflow-y-auto no-scrollbar">
-                                      <Markdown content={out} compact />
+                                      <Markdown content={out} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
                                     </div>
                                   </div>
                                 );
@@ -1764,7 +2007,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                               </Button>
                             </div>
                             <div className="bg-card text-foreground p-3 rounded h-32 overflow-y-auto">
-                              <Markdown content={agentOutputs[agent.session || ""] || ""} compact />
+                              <Markdown content={agentOutputs[agent.session || ""] || ""} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
                             </div>
                           </div>
                         )}
@@ -1778,31 +2021,34 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
           {/* output tab */}
           <TabsContent value="output" className="flex-1 overflow-hidden flex flex-col mt-0">
-            <div className="flex-1 flex min-h-0">
-              <div className="w-40 md:w-48 border-r border-foreground/5 overflow-y-auto p-2 space-y-1">
+            <div className={outputShellClassName}>
+              <div className={outputAgentListClassName}>
                 <p className="text-[10px] text-foreground/40 uppercase px-2 mb-2">agents</p>
-                {run.agents?.map((agent) => (
-                  <button
-                    key={agent.id}
-                    onClick={() => setSelectedAgent(agent.id)}
-                    className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
-                      selectedAgent === agent.id ? "bg-accent" : "hover:bg-card"
-                    }`}
-                  >
-                    <div className={`w-1.5 h-1.5 rounded-full ${
-                      agent.status === "running" ? "bg-amber-400" :
-                      agent.status === "complete" ? "bg-green-400" :
-                      agent.status === "error" ? "bg-red-400" : "bg-gray-400"
-                    }`} />
-                    <span className="font-mono truncate flex-1">{agent.id}</span>
-                    {agentMsgTotals[agent.id] > 0 && (
-                      <span className="text-[9px] text-foreground/30">{agentMsgTotals[agent.id]}</span>
-                    )}
-                  </button>
-                ))}
+                <div className={outputAgentListBodyClassName}>
+                  {run.agents?.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => setSelectedAgent(agent.id)}
+                      className={cn(
+                        outputAgentButtonClassName,
+                        selectedAgent === agent.id ? "bg-accent" : "hover:bg-card",
+                      )}
+                    >
+                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        agent.status === "running" ? "bg-amber-400" :
+                        agent.status === "complete" ? "bg-green-400" :
+                        agent.status === "error" ? "bg-red-400" : "bg-gray-400"
+                      }`} />
+                      <span className="min-w-0 flex-1 truncate font-mono">{agent.id}</span>
+                      {agentMsgTotals[agent.id] > 0 && (
+                        <span className="shrink-0 text-[9px] text-foreground/30">{agentMsgTotals[agent.id]}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="flex-1 flex flex-col min-h-0">
+              <div className="flex-1 flex flex-col min-h-0 min-w-0">
                 {selectedAgent ? (() => {
                   const agent = run.agents?.find((a) => a.id === selectedAgent);
                   const messages = agentMessages[selectedAgent] || [];
@@ -1814,17 +2060,17 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
                   return (
                     <>
-                      <div className="flex items-center justify-between px-4 py-2 shrink-0">
+                      <div className={outputHeaderClassName}>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
+                          <div className={outputHeaderTitleLineClassName}>
                             <h1 className="text-sm truncate">{agent?.name || agent?.id}</h1>
                             <StatusBadge status={(agent?.status || "pending") as Status} size="sm" />
                           </div>
-                          <p className="text-xs text-foreground/50">
+                          <p className="truncate text-xs text-foreground/50">
                             {outputView === "terminal" ? agent?.session || "no session" : hasConversation ? `${agentMsgTotals[selectedAgent] || messages.length} messages` : agent?.session || "no session"}
                           </p>
                         </div>
-                        <div className="flex items-center gap-1 ml-4 shrink-0">
+                        <div className={outputHeaderControlsClassName}>
                           {agent?.session && (
                             <Button
                               variant={outputView === "terminal" ? "default" : "ghost"}
@@ -1863,7 +2109,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                                   <Wrench className="mr-1 h-3 w-3" />Results
                                 </Button>
                               )}
-                              <Button variant={autoScrollEnabled ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => { setAutoScrollEnabled(!autoScrollEnabled); if (!autoScrollEnabled && outputBottomRef.current) outputBottomRef.current.scrollIntoView({ behavior: "smooth" }); }}>
+                              <Button variant={autoScrollEnabled ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => { setAutoScrollEnabled(!autoScrollEnabled); if (!autoScrollEnabled) scrollOutputToBottom("smooth"); }}>
                                 <ArrowDown className="mr-1 h-3 w-3" />Scroll
                               </Button>
                               <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { if (hasConversation) fetchAgentMessages(selectedAgent); if (agent?.session) fetchAgentOutput(selectedAgent, agent.session); }}>
@@ -1878,16 +2124,16 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                         {outputView === "terminal" && agent?.session ? (
                           <TerminalPanel session={agent.session} sessionAlive={agentAlive} fallbackOutput={rawOutput} readOnly={!terminalInputEnabled} />
                         ) : hasConversation ? (
-                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className="h-full overflow-y-auto px-4 py-2">
-                            <div className="max-w-3xl mx-auto">
+                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className={outputScrollClassName}>
+                            <div className={outputInnerClassName}>
                               <MessageList messages={messages} showToolResults={showToolResults} />
                               <div ref={outputBottomRef} />
                             </div>
                           </div>
                         ) : rawOutput ? (
-                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className="h-full overflow-y-auto px-4 py-2">
-                            <div className="max-w-3xl mx-auto">
-                              <Markdown content={rawOutput || ""} compact />
+                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className={outputScrollClassName}>
+                            <div className={outputInnerClassName}>
+                              <Markdown content={rawOutput || ""} compact className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                               <div ref={outputBottomRef} />
                             </div>
                           </div>
@@ -1919,12 +2165,12 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
           </TabsContent>
 
           {/* metrics tab */}
-          <TabsContent value="metrics" className="flex-1 overflow-y-auto p-4 mt-0">
+          <TabsContent value="metrics" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
             {/* agent execution timeline */}
             <div className="max-w-4xl mb-6">
               <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">agent timeline</p>
               <div className="bg-card rounded-sm p-3">
-                <div className="flex items-center gap-1 text-[9px] text-foreground/30 mb-2 ml-28">
+                <div className={metricsTimelineScaleClassName}>
                   <span>0%</span>
                   <div className="flex-1 h-px bg-foreground/10 mx-2" />
                   <span>total: {formatDuration(run.started, run.completed)}</span>
@@ -1961,8 +2207,8 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                     const showInside = rawWidth > 5;
 
                     return (
-                      <div key={agent.id} className="flex items-center gap-2 py-1">
-                        <span className="w-28 text-[10px] text-foreground/60 truncate" title={agent.name || agent.id}>{agent.name || agent.id}</span>
+                      <div key={agent.id} className={metricsTimelineRowClassName}>
+                        <span className={metricsTimelineAgentClassName} title={agent.name || agent.id}>{agent.name || agent.id}</span>
                         <div className="flex-1 relative h-5 bg-accent/30 rounded-sm">
                           <div
                             className={cn("h-full rounded-sm flex items-center justify-end px-1.5 text-[9px] text-white font-mono truncate", statusColor[agent.status] || "bg-muted")}
@@ -1971,7 +2217,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                             {showInside && <span className="drop-shadow-sm">{durationText}</span>}
                           </div>
                         </div>
-                        {!showInside && <span className="w-16 text-[10px] text-foreground/40 font-mono text-right">{durationText}</span>}
+                        {!showInside && <span className={metricsTimelineDurationClassName}>{durationText}</span>}
                       </div>
                     );
                   });
@@ -1979,7 +2225,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 max-w-4xl">
+            <div className={metricsSummaryGridClassName}>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Clock className="h-4 w-4 text-foreground/40" />
@@ -2019,15 +2265,15 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                   const timeline = metricsTimeline[agent.id] || [];
                   return (
                     <div key={agent.id} className="bg-card rounded-md p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium">{agent.name || agent.id}</span>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="min-w-0 break-words text-xs font-medium [overflow-wrap:anywhere]">{agent.name || agent.id}</span>
                           <StatusBadge status={agent.status as Status} size="sm" />
                         </div>
-                        <span className="text-[10px] text-foreground/40 font-mono">{formatDuration(agent.started, agent.completed)}</span>
+                        <span className="shrink-0 text-[10px] text-foreground/40 font-mono">{formatDuration(agent.started, agent.completed)}</span>
                       </div>
                       {timeline.length > 2 ? (
-                        <Sparkline data={timeline} width={300} height={32} />
+                        <Sparkline data={timeline} width={embedded ? 220 : 300} height={32} />
                       ) : (
                         <div className="h-8 flex items-center text-[9px] text-foreground/30">no activity data yet</div>
                       )}
@@ -2038,8 +2284,105 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
             </div>
           </TabsContent>
 
+          {/* artifacts tab */}
+          <TabsContent value="artifacts" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+            <div className="max-w-5xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">artifact review</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    captured run evidence and agent outputs
+                  </p>
+                </div>
+                <span className="rounded-sm bg-card px-2 py-1 text-[10px] font-mono text-foreground/45">
+                  {artifactCount} artifact{artifactCount === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              {runArtifacts.length > 0 ? (
+                <div className="grid min-h-[420px] gap-3 lg:grid-cols-[280px_1fr]">
+                  <div className="min-h-0 rounded-sm bg-card p-1">
+                    <div className="max-h-[560px] overflow-y-auto pr-1">
+                      {runArtifacts.map((artifact, artifactIndex) => {
+                        const artifactPath = artifactPathValue(artifact);
+                        const selected = Boolean(artifactPath && selectedArtifactPath === artifactPath);
+                        return (
+                          <button
+                            key={`${artifact.type || "artifact"}-${artifactPath || artifact.agentId || artifact.timestamp || artifactIndex}`}
+                            type="button"
+                            disabled={!artifactPath}
+                            onClick={() => artifactPath ? void handleSelectArtifact(artifact) : undefined}
+                            className={cn(
+                              "mb-1 w-full rounded-sm px-2 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                              selected
+                                ? "bg-sky-500/10 text-sky-200"
+                                : "text-foreground/55 hover:bg-muted hover:text-foreground/75",
+                            )}
+                          >
+                            <div className="flex items-start gap-2">
+                              <Document className="mt-0.5 h-3 w-3 shrink-0 text-foreground/35" />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-xs font-medium">
+                                  {artifactName(artifactPath || undefined)}
+                                </div>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/35">
+                                  <span className="truncate">{artifact.type || "artifact"}</span>
+                                  {artifact.agentId ? <span className="truncate">{artifact.agentId}</span> : null}
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 rounded-sm bg-card p-3">
+                    {artifactPreviewLoading ? (
+                      <div className="text-xs text-foreground/40">loading artifact...</div>
+                    ) : artifactPreviewError ? (
+                      <div className="flex items-start gap-2 rounded-sm bg-red-500/10 p-3 text-xs text-red-300">
+                        <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                        {artifactPreviewError}
+                      </div>
+                    ) : activeArtifactPreview ? (
+                      <>
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-foreground/80">
+                              {activeArtifactPreview.name}
+                            </div>
+                            <div className="truncate text-[10px] font-mono text-foreground/35">
+                              {activeArtifactPreview.language} · {activeArtifactPreview.size.toLocaleString()} bytes
+                            </div>
+                          </div>
+                          {activeArtifactPreview.truncated ? (
+                            <span className="rounded-sm bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+                              truncated
+                            </span>
+                          ) : null}
+                        </div>
+                        <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap break-words rounded-sm bg-background/50 p-3 text-[10px] leading-relaxed text-foreground/65 [overflow-wrap:anywhere]">
+                          {activeArtifactPreview.content}
+                        </pre>
+                      </>
+                    ) : (
+                      <div className="flex h-full min-h-[280px] items-center justify-center text-xs text-foreground/40">
+                        select an artifact to preview
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-sm bg-card p-4 text-xs text-muted-foreground">
+                  this run reported {artifactCount} artifact{artifactCount === 1 ? "" : "s"}, but no artifact list was captured
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
           {/* cost tab */}
-          <TabsContent value="cost" className="flex-1 overflow-y-auto p-4 mt-0">
+          <TabsContent value="cost" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
             <div className="max-w-4xl">
               {!costData ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -2049,7 +2392,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
               ) : (
                 <div className="space-y-6">
                   {/* totals */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className={costSummaryGridClassName}>
                     <div className="bg-card rounded-md p-4">
                       <p className="text-[10px] text-foreground/40 uppercase mb-1">total cost</p>
                       <p className="text-2xl font-mono">{costData.totalCostDisplay}</p>
@@ -2074,14 +2417,14 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                     <div className="grid gap-2">
                       {costData.agentBreakdown.map((agent) => (
                         <div key={agent.agentId} className="bg-card rounded-md p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium">{agent.agentName || agent.agentId}</span>
-                              <span className="text-[9px] text-foreground/30 font-mono">{agent.model}</span>
+                          <div className={costAgentHeaderClassName}>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className="min-w-0 break-words text-xs font-medium">{agent.agentName || agent.agentId}</span>
+                              <span className="max-w-full truncate text-[9px] text-foreground/30 font-mono">{agent.model}</span>
                             </div>
-                            <span className="text-xs font-mono">{agent.costDisplay}</span>
+                            <span className="shrink-0 text-xs font-mono">{agent.costDisplay}</span>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-[10px] text-foreground/50">
+                          <div className={costAgentTokenGridClassName}>
                             <div>input: {agent.inputTokens.toLocaleString()}</div>
                             <div>output: {agent.outputTokens.toLocaleString()}</div>
                           </div>
@@ -2095,9 +2438,9 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
           </TabsContent>
 
           {/* triage tab */}
-          <TabsContent value="triage" className="flex-1 overflow-y-auto p-4 mt-0">
+          <TabsContent value="triage" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
             <div className="max-w-4xl space-y-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className={triageHeaderClassName}>
                 <div>
                   <p className="text-[10px] uppercase tracking-wider text-foreground/40">quality gate triage</p>
                   <p className="text-xs text-muted-foreground mt-1">
@@ -2134,7 +2477,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
 
                   return (
                     <div key={execution.id} className="rounded-md bg-card p-4">
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 mb-2">
                             <Badge variant="outline" className="text-[10px]">{execution.event}</Badge>
@@ -2159,7 +2502,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                       </div>
 
                       {draft?.description && (
-                        <pre className="mt-3 whitespace-pre-wrap text-xs text-muted-foreground bg-background/40 rounded-sm p-3 overflow-x-auto">
+                        <pre className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs text-muted-foreground bg-background/40 rounded-sm p-3 overflow-x-auto">
                           {draft.description}
                         </pre>
                       )}
@@ -2171,7 +2514,7 @@ export function RunDetailPanel({ runId, onBack, onDelete }: RunDetailPanelProps)
                             <div key={`${execution.id}-${index}`} className="rounded-sm bg-background/40 p-3">
                               <p className="text-xs font-medium">{subtask.title || `subtask ${index + 1}`}</p>
                               {subtask.description && (
-                                <p className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap">
+                                <p className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                                   {subtask.description}
                                 </p>
                               )}

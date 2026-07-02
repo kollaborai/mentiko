@@ -14,7 +14,7 @@ const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
-const startDecisionChainRun = jest.fn();
+const startDecisionResearch = jest.fn();
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskClose: (...a: unknown[]) => taskClose(...a),
@@ -35,7 +35,7 @@ jest.mock("@/lib/notifications/notification-server", () => ({
 // createDecisionSubtask — Jest intercepts dynamic imports through the same
 // module registry that jest.mock() patches.
 jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
-  startDecisionChainRun: (...a: unknown[]) => startDecisionChainRun(...a),
+  startDecisionResearch: (...a: unknown[]) => startDecisionResearch(...a),
 }));
 
 import { applyCompletionAudit } from "./completion-audit-apply";
@@ -101,7 +101,7 @@ beforeEach(() => {
     decision: { id: "decision-x1" },
     task: { id: "DEC-1" },
   });
-  startDecisionChainRun.mockResolvedValue(undefined);
+  startDecisionResearch.mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ describe("applyCompletionAudit", () => {
     );
 
     expect(createTaskDecision).not.toHaveBeenCalled();
-    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    expect(startDecisionResearch).not.toHaveBeenCalled();
   });
 
   // 2. verdict "decision"
@@ -156,7 +156,7 @@ describe("applyCompletionAudit", () => {
       expect.objectContaining({ parentTaskId: "TASK-42" }),
     );
 
-    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(startDecisionResearch).toHaveBeenCalledTimes(1);
 
     expect(taskMergeMeta).toHaveBeenCalledWith(
       "default",
@@ -270,8 +270,8 @@ describe("applyCompletionAudit", () => {
   });
 
   // 6. research failure is non-fatal
-  it("decision: returns decision_created even when startDecisionChainRun throws", async () => {
-    startDecisionChainRun.mockRejectedValue(new Error("chain service unavailable"));
+  it("decision: returns decision_created even when startDecisionResearch throws", async () => {
+    startDecisionResearch.mockRejectedValue(new Error("chain service unavailable"));
 
     const task = makeTask();
     const audit: CompletionAudit = {
@@ -294,5 +294,36 @@ describe("applyCompletionAudit", () => {
       expect.objectContaining({ decision_subtask_id: "DEC-1" }),
       "default",
     );
+  });
+
+  // 7. regression: FEAT-014 stayed "closed" even after the auditor flagged
+  // decision_required and spawned a decision subtask, because this path never
+  // touched task.status. A "decision" verdict means the outcome is NOT
+  // settled, so a closed task must be reopened.
+  it("decision: reopens a closed task to 'blocked' before creating the decision subtask", async () => {
+    const task = makeTask({ status: "closed" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Chain produced a specification, not working code.",
+      decision: { prompt: "Proceed to implementation or refine the spec?" },
+    };
+
+    const result = await applyCompletionAudit(makeInput(task, audit));
+
+    expect(result.action).toBe("decision_created");
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
+  });
+
+  it("decision: does not touch status when the task is already open", async () => {
+    const task = makeTask({ status: "in_progress" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which way?" },
+    };
+
+    await applyCompletionAudit(makeInput(task, audit));
+
+    expect(taskUpdate).not.toHaveBeenCalled();
   });
 });

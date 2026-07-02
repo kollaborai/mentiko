@@ -1,8 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
+import {
+  classifyReadinessFailure,
+  createAgentAttempt,
+  recordAgentAttemptProcess,
+  releaseAgentAttempt,
+  submitAgentAttemptInstructions,
+  transitionAgentAttempt,
+} from "@/lib/runner-v2/agent-attempt";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 
 export interface RunnerV2BootstrapExecutor {
@@ -59,6 +68,15 @@ export async function executeLocalBootstrap(
   context: RunnerV2LaunchContext,
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
+  const runJsonPath = join(context.runDir, "run.json");
+  const attempt = createAgentAttempt({
+    runJsonPath,
+    runId: context.runId,
+    agentId: plan.agentId,
+    leaseId: plan.sessionName,
+  });
+  transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
+
   mkdirSync(plan.artifactsDir, { recursive: true });
   mkdirSync(plan.eventsDir, { recursive: true });
   mkdirSync(dirname(plan.statePath), { recursive: true });
@@ -69,25 +87,52 @@ export async function executeLocalBootstrap(
   writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
   chmodSync(startScriptPath, 0o700);
 
-  await executor.remove(plan.sessionName);
-  await executor.spawn(plan.sessionName, "zsh", [], {
-    cwd: plan.projectRoot,
-    env: sanitizePtyEnv({
-      PATH: context.env.PATH || process.env.PATH || "",
-      HOME: context.env.HOME || process.env.HOME || "",
-      SHELL: context.env.SHELL || process.env.SHELL || "",
-      TERM: context.env.TERM || process.env.TERM || "xterm-256color",
-      MENTIKO_RUNNER_V2_ACTIVE: "1",
-      MENTIKO_RUNNER_V2_MODE: "typed-plan",
-      ...plan.runContextExports,
-    }),
-  });
-  registerRunSession(context, plan);
-  const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)}`;
-  await executor.sendKeys(plan.sessionName, `${startCommand}\r`);
-  await waitForBootstrapReadiness(plan, executor);
-  await executor.sendKeys(plan.sessionName, `${plan.instructionPointer}\r`);
-  await startMonitorSession(plan, executor);
+  try {
+    await executor.remove(plan.sessionName);
+    const spawned = await executor.spawn(plan.sessionName, "zsh", [], {
+      cwd: plan.projectRoot,
+      env: sanitizePtyEnv({
+        PATH: context.env.PATH || process.env.PATH || "",
+        HOME: context.env.HOME || process.env.HOME || "",
+        SHELL: context.env.SHELL || process.env.SHELL || "",
+        TERM: context.env.TERM || process.env.TERM || "xterm-256color",
+        MENTIKO_RUNNER_V2_ACTIVE: "1",
+        MENTIKO_RUNNER_V2_MODE: "typed-plan",
+        ...plan.runContextExports,
+      }),
+    });
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
+    recordAgentAttemptProcess({
+      runJsonPath,
+      attemptId: attempt.id,
+      processPid: spawned.pid,
+      ptySessionId: spawned.name,
+    });
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
+
+    registerRunSession(context, plan);
+    const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)}`;
+    await executor.sendKeys(plan.sessionName, `${startCommand}\r`);
+    await waitForBootstrapReadiness(plan, executor, attempt.id, runJsonPath);
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
+    const submission = submitAgentAttemptInstructions({
+      runJsonPath,
+      attemptId: attempt.id,
+      idempotencyKey: `${context.runId}:${plan.agentId}:${plan.instructionPath}`,
+      instructionPath: plan.instructionPath,
+      pointer: plan.instructionPointer,
+    });
+    if (submission.delivered) {
+      await executor.sendKeys(plan.sessionName, `${plan.instructionPointer}\r`);
+      transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
+    }
+    await startMonitorSession(plan, executor);
+  } catch (error) {
+    await executor.remove(plan.sessionName).catch(() => undefined);
+    await executor.remove(plan.monitorSessionName).catch(() => undefined);
+    releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+    throw error;
+  }
 }
 
 function buildStartScript(plan: AgentBootstrapPlan): string {
@@ -136,24 +181,31 @@ function buildInitialState(plan: AgentBootstrapPlan): string {
 function registerRunSession(context: RunnerV2LaunchContext, plan: AgentBootstrapPlan): void {
   const runJsonPath = join(context.runDir, "run.json");
   if (!existsSync(runJsonPath)) return;
-  const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as {
-    sessions?: string[];
-    agents?: Array<{ id?: string; session?: string; status?: string; name?: string }>;
-  };
-  run.sessions = Array.from(new Set([...(Array.isArray(run.sessions) ? run.sessions : []), plan.sessionName]));
-  if (Array.isArray(run.agents)) {
-    const agent = run.agents.find((item) => item.id === plan.agentId);
-    if (agent) {
-      agent.session = plan.sessionName;
-      if (!agent.status || agent.status === "pending") agent.status = "running";
-    }
-  }
-  writeFileSync(runJsonPath, `${JSON.stringify(run, null, 2)}\n`);
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const agents = Array.isArray(current.agents)
+      ? current.agents.map((agent) => {
+        if (agent.id !== plan.agentId) return agent;
+        return {
+          ...agent,
+          session: plan.sessionName,
+          status: !agent.status || agent.status === "pending" ? "running" : agent.status,
+        };
+      })
+      : [];
+    return {
+      ...current,
+      sessions: Array.from(new Set([...(Array.isArray(current.sessions) ? current.sessions : []), plan.sessionName])),
+      agents,
+    };
+  });
 }
 
 async function waitForBootstrapReadiness(
   plan: AgentBootstrapPlan,
   executor: RunnerV2BootstrapExecutor,
+  attemptId: string,
+  runJsonPath: string,
 ): Promise<void> {
   const deadline = Date.now() + 15_000;
   let lastOutput = "";
@@ -161,11 +213,27 @@ async function waitForBootstrapReadiness(
     const output = await executor.capture(plan.sessionName, 80);
     lastOutput = output;
     if (output.includes(plan.localStartCommand) || output.includes(plan.instructionPointer)) {
+      const failure = classifyReadinessFailure(output);
+      transitionAgentAttempt({
+        runJsonPath,
+        attemptId,
+        to: failure.phase,
+        reason: failure.reason,
+        detail: "bootstrap command echoed without starting agent CLI",
+      });
       throw new Error("runner-v2 bootstrap command echoed without starting agent CLI");
     }
     if (isLikelyAgentPrompt(output)) return;
     await sleep(500);
   }
+  const failure = classifyReadinessFailure(lastOutput);
+  transitionAgentAttempt({
+    runJsonPath,
+    attemptId,
+    to: failure.phase,
+    reason: failure.reason,
+    detail: failure.detail,
+  });
   throw new Error(`runner-v2 typed bootstrap timed out waiting for agent CLI readiness; last_output=${lastOutput.slice(-500)}`);
 }
 

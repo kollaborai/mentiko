@@ -193,7 +193,7 @@ export function SystemStatusWidget() {
   const uptime = health?.uptime_seconds ?? null;
 
   return (
-    <div className="flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5">
+    <div className="col-span-2 flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5 sm:col-span-3 md:col-span-1">
       {/* header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">

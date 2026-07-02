@@ -6,6 +6,7 @@ import { planTerminalCompletion, shouldCompleteEmptyEmitsAgent, type TerminalCom
 import { planNoEventRetry, type RetryNoEventPlan, type RetryPolicy } from "@/lib/runner-v2/retry-plan";
 import { completeFanGroupMember, type FanGroupCompletionPlan, type FanGroupState } from "@/lib/runner-v2/fan-group";
 import { applyLoopGuardToRoute, routeAgentIds, type LoopGuardDecision } from "@/lib/runner-v2/loop-guard";
+import { markAgentAttemptCompletedFromGeneration } from "@/lib/runner-v2/agent-attempt";
 
 export type CompletionRunnerDecision =
   | { action: "fail"; reason: string; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -65,6 +66,13 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
       const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);
+      markAgentAttemptCompletedFromGeneration({
+        runJsonPath: input.runJsonPath,
+        runId: input.runId,
+        agentId: input.agent.id,
+        detail: match.reason || "no matching completion event; generation payload accepted",
+        now: input.now,
+      });
       return {
         action: "generation-terminal",
         reason: match.reason || "no matching completion event; generation payload accepted",

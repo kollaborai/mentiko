@@ -9,6 +9,7 @@ import { TaskComments } from "./task-comments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
 import { TaskRunStoryPanels } from "./task-run-story-panels";
+import { TaskAttemptsPanel } from "./task-attempts-panel";
 import { DecisionDetail } from "@/components/decision/decision-detail";
 import type { Task, TaskComment } from "@/lib/tasks/task-types";
 import { Markdown } from "@/components/ui/markdown";
@@ -140,6 +141,8 @@ export function TaskDetail({
         onReopen={onReopen}
         onRunChain={onRunChain}
         onEdit={onEdit}
+        onToggleAutoRun={onToggleAutoRun}
+        onResetAutoRunAttempts={onResetAutoRunAttempts}
         onSelectParent={onSelectDep}
         isRunning={isRunning}
       />
@@ -149,13 +152,12 @@ export function TaskDetail({
         task={task}
         onAssignChain={onAssignChain}
         onRemoveChain={onRemoveChain}
-        onRunChain={onRunChain}
-        onToggleAutoRun={onToggleAutoRun}
-        onResetAutoRunAttempts={onResetAutoRunAttempts}
         onMetadataUpdate={onMetadataUpdate}
         onClearMetadata={onClearMetadata}
         workspacePath={workspacePath}
       />
+
+      <TaskAttemptsPanel taskId={task.id} />
 
       <TaskRunStoryPanels task={task} onRefreshTask={onRefreshTask} />
 

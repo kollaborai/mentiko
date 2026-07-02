@@ -44,6 +44,22 @@ interface Agent {
   completed?: string;
 }
 
+interface AgentAttempt {
+  id: string;
+  agentId: string;
+  phase: string;
+  terminalReason?: string;
+  terminalDetail?: string;
+  processEvidence?: {
+    processPid?: number;
+    processSpawnedAt?: string;
+    ptySessionId?: string;
+  };
+  instructionLedger?: Array<{ idempotencyKey: string; submittedAt: string }>;
+  recoveryDecisionCount?: number;
+  updatedAt?: string;
+}
+
 interface Run {
   id: string;
   chain: string;
@@ -54,6 +70,9 @@ interface Run {
   status: string;
   taskId?: string;
   agents: Agent[];
+  runnerV2?: {
+    attempts?: AgentAttempt[];
+  };
 }
 
 interface EventArtifactExecution {
@@ -166,6 +185,7 @@ export default function RunDetailPage() {
           ...prev,
           status: data.status,
           completed: data.completed || prev.completed,
+          runnerV2: data.runnerV2 || prev.runnerV2,
           agents: prev.agents.map((agent) => {
             const live = (data.agents || []).find((a: { id: string }) => a.id === agent.id);
             return live ? { ...agent, status: live.status, session: live.session } : agent;
@@ -366,6 +386,11 @@ export default function RunDetailPage() {
     setDebugPaused(!debugPaused);
   };
 
+  const latestAttemptForAgent = (agentId: string): AgentAttempt | undefined => {
+    const attempts = run?.runnerV2?.attempts?.filter((attempt) => attempt.agentId === agentId) || [];
+    return attempts[attempts.length - 1];
+  };
+
   const Sparkline = ({ data, width = 200, height = 40 }: { data: MetricPoint[]; width?: number; height?: number }) => {
     if (data.length < 2) return null;
 
@@ -519,6 +544,7 @@ export default function RunDetailPage() {
                   const isExpanded = expandedAgents.has(agent.id);
                   const hasOutput = agentOutputs[agent.session || ""]?.length > 0;
                   const timeline = metricsTimeline[agent.id] || [];
+                  const attempt = latestAttemptForAgent(agent.id);
 
                   return (
                     <Card key={agent.id} className="overflow-hidden">
@@ -543,6 +569,11 @@ export default function RunDetailPage() {
                             {agent.emits && (
                               <Badge variant="ghost" className="text-[9px] bg-muted">
                                 emits: {agent.emits}
+                              </Badge>
+                            )}
+                            {attempt && (
+                              <Badge variant="ghost" className="text-[9px] bg-cyan-500/10 text-cyan-300 border-cyan-500/20">
+                                {attempt.phase}
                               </Badge>
                             )}
                             <StatusBadge status={agent.status as Status} size="sm" />
@@ -594,6 +625,31 @@ export default function RunDetailPage() {
                               <p className="font-mono">{formatDuration(agent.started, agent.completed)}</p>
                             </div>
                           </div>
+
+                          {attempt && (
+                            <div className="grid grid-cols-4 gap-2 text-[10px]">
+                              <div className="bg-muted rounded p-2">
+                                <p className="text-foreground/40 uppercase">attempt phase</p>
+                                <p className="font-mono truncate">{attempt.phase}</p>
+                              </div>
+                              <div className="bg-muted rounded p-2">
+                                <p className="text-foreground/40 uppercase">terminal reason</p>
+                                <p className="font-mono truncate">{attempt.terminalReason || "-"}</p>
+                              </div>
+                              <div className="bg-muted rounded p-2">
+                                <p className="text-foreground/40 uppercase">process</p>
+                                <p className="font-mono truncate">
+                                  {attempt.processEvidence?.processPid
+                                    ? `${attempt.processEvidence.processPid} / ${attempt.processEvidence.ptySessionId || "-"}`
+                                    : "-"}
+                                </p>
+                              </div>
+                              <div className="bg-muted rounded p-2">
+                                <p className="text-foreground/40 uppercase">recovery decisions</p>
+                                <p className="font-mono">{attempt.recoveryDecisionCount || 0}</p>
+                              </div>
+                            </div>
+                          )}
 
                           {/* sparkline */}
                           {timeline.length > 2 && (

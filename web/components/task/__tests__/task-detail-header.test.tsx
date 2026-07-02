@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AnchorHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { TaskDetailHeader } from "../task-detail-header";
 import type { Task } from "@/lib/tasks/task-types";
@@ -41,6 +41,12 @@ jest.mock("@aliimam/icons", () => ({
     <svg className={className} aria-hidden="true" />
   ),
   TickCircleFilled: ({ className }: { className?: string }) => (
+    <svg className={className} aria-hidden="true" />
+  ),
+  ToggleOffFilled: ({ className }: { className?: string }) => (
+    <svg className={className} aria-hidden="true" />
+  ),
+  ToggleOnFilled: ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
   UserFilled: ({ className }: { className?: string }) => (
@@ -133,6 +139,22 @@ describe("TaskDetailHeader", () => {
     expect(screen.getByRole("button", { name: /close/i }).parentElement).toBe(actionRow);
   });
 
+  it("keeps the back-to-list control visible below the split-pane breakpoint", () => {
+    render(
+      <TaskDetailHeader
+        task={taskWithActions}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /back/i })).toHaveClass("lg:hidden");
+  });
+
   it("does not show provenance-only child tasks as decision tasks", () => {
     render(
       <TaskDetailHeader
@@ -156,5 +178,83 @@ describe("TaskDetailHeader", () => {
     );
 
     expect(screen.queryByRole("link", { name: /decision/i })).not.toBeInTheDocument();
+  });
+
+  it("renders auto-run as a header switch and toggles future runs", async () => {
+    const onToggleAutoRun = jest.fn().mockResolvedValue(undefined);
+    render(
+      <TaskDetailHeader
+        task={taskWithActions}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={onToggleAutoRun}
+        isRunning={false}
+      />
+    );
+
+    const switchButton = screen.getByRole("switch", { name: /auto-run/i });
+
+    expect(switchButton).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(switchButton);
+    await waitFor(() => expect(onToggleAutoRun).toHaveBeenCalledWith(true));
+  });
+
+  it("shows paused auto-run state and reset action in the header", async () => {
+    const onResetAutoRunAttempts = jest.fn().mockResolvedValue(undefined);
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: {
+            ...taskWithActions.chainBinding!,
+            auto_run: true,
+            auto_run_retries: 3,
+            last_run_status: "failed",
+          },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onResetAutoRunAttempts={onResetAutoRunAttempts}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByRole("switch", { name: /auto-run/i })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/auto-run paused/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reset attempts/i }));
+    await waitFor(() => expect(onResetAutoRunAttempts).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not offer an active auto-run switch on a closed task", () => {
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          completed: true,
+          status: "closed",
+          chainBinding: {
+            ...taskWithActions.chainBinding!,
+            auto_run: true,
+          },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.queryByRole("switch", { name: /auto-run/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/auto-run on/i)).toBeInTheDocument();
   });
 });

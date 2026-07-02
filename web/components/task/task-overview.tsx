@@ -501,7 +501,7 @@ function TaskCard({
             <>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <TypeBadge type={task.type} />
-                <PriorityBadge priority={priority} />
+                <PriorityBadge priority={priority} rawPriority={task.priority} />
                 {isDecision && (
                   <span className="inline-flex items-center gap-1 rounded-sm bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-300/75">
                     <JudgeFilled className="h-2.5 w-2.5" />
@@ -553,7 +553,7 @@ function TaskCard({
 
           {compact && (
             <div className="flex items-center gap-1">
-              <PriorityBadge priority={priority} />
+              <PriorityBadge priority={priority} rawPriority={task.priority} />
               {isDecision && (
                 <span className="inline-flex items-center gap-0.5 text-[9px] text-blue-300/70">
                   <JudgeFilled className="h-2 w-2" />

@@ -12,6 +12,7 @@ import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/d
 import { processTaskGenerationResult } from "@/lib/tasks/generated-task-import";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
+import { enforceDeliveryGate } from "@/lib/tasks/completion-audit-delivery-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -455,12 +456,19 @@ export const POST = withErrorHandling(async (
     updatedJob.result
   ) {
     try {
-      const audit = extractCompletionAudit(updatedJob.result);
+      const rawAudit = extractCompletionAudit(updatedJob.result);
       const sourceRunId = typeof updatedJob.input?.sourceRunId === "string"
         ? updatedJob.input.sourceRunId
         : undefined;
       const auditTask = taskGet(orgId, updatedJob.taskId, namespaceId);
-      if (audit && sourceRunId && auditTask) {
+      if (rawAudit && sourceRunId && auditTask) {
+        // Deterministic backstop: the auditor is an LLM judgment call and can
+        // be talked into "close" by a chain that never wrote anything (see
+        // completion-audit-delivery-gate.ts — this is the exact bug that let
+        // FEAT-014 close after a read-only, spec-only chain). Downgrades
+        // "close" to "decision" for feature/task/bug work when no agent in
+        // the audited chain had file-write authority; no-op otherwise.
+        const audit = enforceDeliveryGate(rawAudit, auditTask, namespaceId, orgId, sourceRunId);
         const outcome = await applyCompletionAudit({
           request,
           namespaceId,
@@ -472,7 +480,9 @@ export const POST = withErrorHandling(async (
           metadata: metadataRecord(auditTask.metadata),
         });
         console.log(
-          `[completion-audit] task ${updatedJob.taskId} run ${sourceRunId}: ${audit.verdict} -> ${outcome.action}`,
+          `[completion-audit] task ${updatedJob.taskId} run ${sourceRunId}: ${rawAudit.verdict}` +
+          (audit.verdict !== rawAudit.verdict ? ` -> delivery-gate:${audit.verdict}` : "") +
+          ` -> ${outcome.action}`,
         );
       }
     } catch (e) {

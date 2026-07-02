@@ -1,5 +1,6 @@
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
 import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 
@@ -103,6 +104,23 @@ function buildNotesParts(
   return notesParts;
 }
 
+function resolveEpicAncestor(
+  orgId: string,
+  parentTask: TaskRecord,
+  namespaceId: string,
+): string {
+  // Walk up the parent chain to the nearest ancestor whose type is "epic".
+  // Returns the parent task's own id if it is already an epic or has no epic
+  // ancestor (preserving prior behavior). Bounded to guard against cycles.
+  let current: TaskRecord | null | undefined = parentTask;
+  for (let hops = 0; current && hops < 16; hops++) {
+    if (current.issue_type === "epic") return current.id;
+    if (!current.parent_id) break;
+    current = taskGet(orgId, current.parent_id, namespaceId);
+  }
+  return parentTask.id;
+}
+
 export async function resolveDecisionToTasks({
   namespaceId,
   orgId,
@@ -136,8 +154,10 @@ export async function resolveDecisionToTasks({
   const hasPlan = plan && Array.isArray(plan.tasks) && plan.tasks.length > 0;
   const decisionTaskId = decision.taskId;
   const existingParentTaskId = decision.parentTaskId;
+  const parentTask = existingParentTaskId
+    ? taskGet(orgId, existingParentTaskId, namespaceId)
+    : undefined;
   if (existingParentTaskId) {
-    const parentTask = taskGet(orgId, existingParentTaskId, namespaceId);
     if (!parentTask) {
       throw new BadRequest("Decision parent task not found", {
         decisionId,
@@ -154,6 +174,14 @@ export async function resolveDecisionToTasks({
     }
   }
 
+  // The decision sits under whatever triggered it (often a feature), but the
+  // implementation tasks it generates should land under that trigger's EPIC,
+  // not nested under a leaf. Walk up to the nearest epic ancestor; if the parent
+  // is already an epic — or has no epic ancestor — this resolves to itself.
+  const resolutionParentId = parentTask
+    ? resolveEpicAncestor(orgId, parentTask, namespaceId)
+    : existingParentTaskId;
+
   let epicId: string;
   const allTaskIds: string[] = [];
   if (decisionTaskId) {
@@ -161,7 +189,7 @@ export async function resolveDecisionToTasks({
   }
 
   if (hasPlan && existingParentTaskId) {
-    epicId = existingParentTaskId;
+    epicId = resolutionParentId as string;
     const taskIdMap: Record<string, string> = {};
     for (const [index, planTask] of plan.tasks.entries()) {
       const subtask = taskCreate(
@@ -177,7 +205,7 @@ export async function resolveDecisionToTasks({
           ].filter(Boolean).join("\n"),
           issue_type: "task",
           priority: planTask.priority ?? priorityToNumber(decision.priority),
-          parent_id: existingParentTaskId,
+          parent_id: epicId,
           metadata: {
             decision_id: decisionId,
             decision_task_id: decisionTaskId,
@@ -282,7 +310,7 @@ export async function resolveDecisionToTasks({
         description: descriptionParts.join("\n"),
         issue_type: "task",
         priority: priorityToNumber(decision.priority),
-        parent_id: existingParentTaskId,
+        parent_id: resolutionParentId,
         notes: notesParts.length > 0 ? notesParts.join("\n") : undefined,
         metadata: {
           decision_id: decisionId,
@@ -293,7 +321,7 @@ export async function resolveDecisionToTasks({
       },
       namespaceId,
     );
-    epicId = existingParentTaskId ?? task.id;
+    epicId = resolutionParentId ?? task.id;
     allTaskIds.push(task.id);
   }
 

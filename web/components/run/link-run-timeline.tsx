@@ -670,17 +670,17 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* header */}
-      <div className="shrink-0 px-5 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
+      <div className="shrink-0 px-4 py-4 sm:px-5">
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:items-center">
             {onBack && (
               <Button size="sm" variant="ghost" className="h-7 w-7 p-0 shrink-0" onClick={onBack}>
                 <ArrowLeftFilled className="h-4 w-4" />
               </Button>
             )}
             <div className="min-w-0">
-              <div className="flex items-center gap-2.5">
-                <span className="text-sm font-medium truncate">
+              <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                <span className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">
                   {run.linkName || run.chain}
                 </span>
                 <StatusBadge status={run.status as Status} size="sm" />
@@ -699,15 +699,15 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-xs shrink-0">
-            <div className="flex items-center gap-1.5 text-foreground/40">
+          <div className="grid grid-cols-2 gap-2 text-xs sm:flex sm:shrink-0 sm:items-center sm:gap-4">
+            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-card/70 px-3 py-2 text-foreground/40 sm:bg-transparent sm:px-0 sm:py-0">
               <Clock className="h-3 w-3" />
               <span className="font-mono text-foreground/60">
                 {formatDuration(run.started, run.completed)}
               </span>
             </div>
             {run.rounds != null && run.rounds > 0 && (
-              <div className="flex items-center gap-1.5 text-foreground/40">
+              <div className="flex items-center justify-center gap-1.5 rounded-lg bg-card/70 px-3 py-2 text-foreground/40 sm:bg-transparent sm:px-0 sm:py-0">
                 <Zap className="h-3 w-3" />
                 <span className="font-mono text-foreground/60">{run.rounds} rounds</span>
               </div>
@@ -733,17 +733,17 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
       </div>
 
       {/* tab bar */}
-      <div className="shrink-0 flex px-5 gap-1">
+      <div className="shrink-0 flex gap-1 px-4 sm:px-5">
         <button
           onClick={() => setActiveTab("summary")}
           className={cn(
-            "px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors",
+            "min-w-0 flex-1 rounded-md px-2 py-2 text-[11px] font-medium transition-colors sm:flex-none sm:px-3 sm:py-1.5",
             activeTab === "summary"
               ? "bg-foreground/10 text-foreground/80"
               : "text-foreground/30 hover:text-foreground/50"
           )}
         >
-          summary
+          Summary
           {summaryData && (
             <span className="ml-1.5 text-[9px] text-emerald-400/60 font-mono">
               done
@@ -758,24 +758,24 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
         <button
           onClick={() => setActiveTab("agents")}
           className={cn(
-            "px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors",
+            "min-w-0 flex-1 rounded-md px-2 py-2 text-[11px] font-medium transition-colors sm:flex-none sm:px-3 sm:py-1.5",
             activeTab === "agents"
               ? "bg-foreground/10 text-foreground/80"
               : "text-foreground/30 hover:text-foreground/50"
           )}
         >
-          agents
+          Agents
         </button>
         <button
           onClick={() => setActiveTab("transcript")}
           className={cn(
-            "px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors",
+            "min-w-0 flex-1 rounded-md px-2 py-2 text-[11px] font-medium transition-colors sm:flex-none sm:px-3 sm:py-1.5",
             activeTab === "transcript"
               ? "bg-violet-500/15 text-violet-400"
               : "text-foreground/30 hover:text-foreground/50"
           )}
         >
-          transcript
+          Transcript
           {transcriptEntries.length > 0 && (
             <span className="ml-1.5 text-[9px] text-foreground/20 font-mono">
               {transcriptEntries.length}
@@ -785,13 +785,13 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
         <button
           onClick={() => setActiveTab("moderator")}
           className={cn(
-            "px-3 py-1.5 text-[11px] font-medium rounded-sm transition-colors",
+            "min-w-0 flex-1 rounded-md px-2 py-2 text-[11px] font-medium transition-colors sm:flex-none sm:px-3 sm:py-1.5",
             activeTab === "moderator"
               ? "bg-violet-500/15 text-violet-400"
               : "text-foreground/30 hover:text-foreground/50"
           )}
         >
-          moderator
+          Moderator
           {relaySessions.length > 0 && (
             <span className="ml-1.5 text-[9px] text-foreground/20 font-mono">
               {relaySessions.length}
@@ -802,7 +802,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
 
       {/* summary tab */}
       {activeTab === "summary" && (
-        <div className="flex-1 overflow-y-auto px-5 py-3">
+        <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5">
           {summaryLoading ? (
             <div className="flex items-center justify-center py-20">
               <div className="flex items-center gap-2 text-foreground/30 text-xs">
@@ -903,7 +903,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                         <p className="text-[11px] text-foreground/50 leading-relaxed">
                           {r.summary}
                         </p>
-                        <div className="flex gap-4 mt-2">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:gap-4 mt-2">
                           <div className="flex-1">
                             <span className={cn("text-[9px] font-medium", AGENT_STYLES[0].accent)}>
                               {agent1Name}
@@ -912,7 +912,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                               {r.agent1_stance}
                             </p>
                           </div>
-                          <div className="w-px bg-foreground/5 shrink-0" />
+                          <div className="hidden w-px bg-foreground/5 sm:block" />
                           <div className="flex-1">
                             <span className={cn("text-[9px] font-medium", AGENT_STYLES[1].accent)}>
                               {agent2Name}
@@ -957,7 +957,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                             {kp.resolution}
                           </span>
                         </div>
-                        <div className="flex gap-4">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:gap-4">
                           <div className="flex-1">
                             <span className={cn("text-[9px] font-medium", AGENT_STYLES[0].accent)}>
                               {agent1Name}
@@ -966,7 +966,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                               {kp.agent1_position}
                             </p>
                           </div>
-                          <div className="w-px bg-foreground/5 shrink-0" />
+                          <div className="hidden w-px bg-foreground/5 sm:block" />
                           <div className="flex-1">
                             <span className={cn("text-[9px] font-medium", AGENT_STYLES[1].accent)}>
                               {agent2Name}
@@ -1017,7 +1017,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                   <span className="text-[9px] text-foreground/25 uppercase tracking-wider block mb-2">
                     agent performance
                   </span>
-                  <div className="flex gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     {(["agent1", "agent2"] as const).map((key) => {
                       const a = summaryData.agent_summaries?.[key];
                       if (!a) return null;
@@ -1127,7 +1127,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
       {activeTab === "agents" && (
         <>
           {/* column headers */}
-          <div className="shrink-0 flex mt-2">
+          <div className="shrink-0 grid grid-cols-1 gap-1 px-4 pt-2 sm:flex sm:px-0">
             <div className={cn("flex-1 px-5 py-2", style1.headerBg)}>
               <div className="flex items-center gap-2">
                 <div className={cn("w-2 h-2 rounded-full", style1.dot)} />
@@ -1137,7 +1137,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                 </span>
               </div>
             </div>
-            <div className="w-px bg-foreground/5 shrink-0" />
+            <div className="hidden w-px bg-foreground/5 sm:block" />
             <div className={cn("flex-1 px-5 py-2", style2.headerBg)}>
               <div className="flex items-center gap-2">
                 <div className={cn("w-2 h-2 rounded-full", style2.dot)} />
@@ -1158,7 +1158,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex min-h-0">
+            <div className="flex-1 grid min-h-0 grid-rows-2 sm:flex">
               <div className="flex-1 overflow-y-auto px-4 py-3">
                 {agent1Messages.length > 0 ? (
                   <MessageList messages={agent1Messages} showToolResults={false} />
@@ -1170,7 +1170,7 @@ export function LinkRunTimeline({ run, onBack, onDelete, onRerun }: LinkRunTimel
                   </div>
                 )}
               </div>
-              <div className="w-px bg-foreground/5 shrink-0" />
+              <div className="h-px bg-foreground/5 sm:h-auto sm:w-px sm:shrink-0" />
               <div className="flex-1 overflow-y-auto px-4 py-3">
                 {agent2Messages.length > 0 ? (
                   <MessageList messages={agent2Messages} showToolResults={false} />

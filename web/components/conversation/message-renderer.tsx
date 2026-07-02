@@ -3,6 +3,8 @@
 import { UserFilled, BotMessageSquare, SettingsFilled } from "@aliimam/icons";
 import { Markdown } from "@/components/ui/markdown";
 
+const messageTextClassName = "min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
+
 export interface ConversationMessage {
   type: "user" | "assistant" | "tool_use" | "tool_result";
   timestamp?: string;
@@ -53,13 +55,13 @@ export function MessageItem({
   if (msg.type === "user") {
     const ts = formatTimestamp(msg.timestamp);
     return (
-      <div key={idx} className="flex gap-2 py-1.5">
+      <div key={idx} className="flex min-w-0 gap-2 py-1.5">
         <div className="shrink-0 w-5 h-5 rounded-full bg-accent flex items-center justify-center">
           <UserFilled className="h-2.5 w-2.5 text-foreground/70" />
         </div>
         <div className="flex-1 min-w-0">
           {ts && <span className="text-[10px] text-foreground/25 font-mono">{ts}</span>}
-          <pre className="text-xs whitespace-pre-wrap break-words font-mono text-foreground/80">
+          <pre className={`text-xs font-mono text-foreground/80 ${messageTextClassName}`}>
             {msg.text || ""}
           </pre>
         </div>
@@ -70,13 +72,13 @@ export function MessageItem({
   if (msg.type === "assistant") {
     const ts = formatTimestamp(msg.timestamp);
     return (
-      <div key={idx} className="flex gap-2 py-1.5">
+      <div key={idx} className="flex min-w-0 gap-2 py-1.5">
         <div className="shrink-0 w-5 h-5 rounded-full bg-accent flex items-center justify-center">
           <BotMessageSquare className="h-2.5 w-2.5 text-foreground/70" />
         </div>
         <div className="flex-1 min-w-0">
           {ts && <span className="text-[10px] text-foreground/25 font-mono">{ts}</span>}
-          <Markdown content={msg.text || ""} compact />
+          <Markdown content={msg.text || ""} compact className={messageTextClassName} />
         </div>
       </div>
     );
@@ -84,9 +86,9 @@ export function MessageItem({
 
   if (msg.type === "tool_use") {
     return (
-      <div key={idx} className="flex gap-2 py-0.5 pl-7">
+      <div key={idx} className="flex min-w-0 gap-2 py-0.5 pl-7">
         <SettingsFilled className="h-2.5 w-2.5 text-amber-500/70 shrink-0 mt-0.5" />
-        <span className="text-xs font-mono text-amber-500/70 break-all">
+        <span className="min-w-0 text-xs font-mono text-amber-500/70 break-all">
           {msg.toolName}
           <span className="text-foreground/40 ml-1">
             {formatToolInput(msg.toolName || "", msg.toolInput || {})}
@@ -98,8 +100,8 @@ export function MessageItem({
 
   if (msg.type === "tool_result" && showToolResults) {
     return (
-      <div key={idx} className="pl-7 py-0.5">
-        <pre className="text-xs text-foreground/40 font-mono bg-card rounded-md px-2 py-1 max-h-24 overflow-y-auto">
+      <div key={idx} className="min-w-0 pl-7 py-0.5">
+        <pre className={`max-h-24 overflow-y-auto rounded-md bg-card px-2 py-1 text-xs font-mono text-foreground/40 ${messageTextClassName}`}>
           {msg.toolResult || ""}
         </pre>
       </div>
@@ -117,7 +119,7 @@ export function MessageList({
   showToolResults: boolean;
 }) {
   return (
-    <div className="space-y-0">
+    <div className="min-w-0 space-y-0">
       {messages.map((msg, idx) => (
         <MessageItem key={idx} msg={msg} idx={idx} showToolResults={showToolResults} />
       ))}

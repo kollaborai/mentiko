@@ -226,6 +226,28 @@ rules:
 - sidebar items: ALWAYS use WorkflowSidebarItem (NOT WorkflowCard)
 - status colors: ALWAYS use status-colors.ts (web/lib/status-colors.ts)
 
+tree/sidebar/hierarchical list standard (established 2026-06-30, reference:
+web/components/task/task-tree-view.tsx + web/components/task/type-badge.tsx):
+1. no depth-based indentation — flat small paddingLeft on every row regardless
+   of nesting depth; hierarchy comes from DOM nesting + expand/collapse chevron,
+   not `depth * n` / cascading `pl-`/`ml-`. `depth` prop can still exist and be
+   threaded through recursion for other logic, just not layout.
+2. real per-item ids (e.g. TASK-152) go directly in the badge via a `label`
+   override prop (see TypeBadge), never behind a `group-hover`-only reveal.
+   skip this if the list has no meaningful per-item id format.
+3. full keyboard nav for interactive trees: Up/Down move selection through
+   currently visible rows (respecting collapse/filters), Right expands or
+   steps into first child, Left collapses or steps to parent, selected row
+   scrolls into view via a `data-*-row-id` attribute + `scrollIntoView({block:
+   "nearest"})`, ignored when focus is in input/textarea.
+4. no duplicated recursive visibility/filter logic — extract shared pure
+   helpers (see `flattenVisibleRows`, `isNodeRendered`, `isChildVisible` in
+   task-tree-view.tsx) used by both the render path and the keyboard-flatten
+   path.
+apply what genuinely fits; not every list is a tree, not every panel needs all
+four parts. also applied to components/ui/nested-menu.tsx and
+components/editor/file-tree.tsx.
+
 gaia ui (component library, NOT an npm package):
 install: npx shadcn@latest add https://ui.heygaia.io/r/<component>.json
 docs: https://ui.heygaia.io/docs

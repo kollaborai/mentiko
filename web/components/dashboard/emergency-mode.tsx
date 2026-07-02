@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { DangerFilled as AlertTriangle } from "@aliimam/icons";
+import { ArrowDown1Filled, ArrowRight1Filled, DangerFilled as AlertTriangle } from "@aliimam/icons";
 import type { Run } from "@/lib/types";
 
 interface DashboardDecision {
@@ -29,6 +30,7 @@ function decisionTitle(decision: DashboardDecision): string {
 }
 
 export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: EmergencyModeProps) {
+  const [expanded, setExpanded] = useState(false);
   const items: Array<{ label: string; count: number; href: string; color: string }> = [];
 
   if (failedRuns.length > 0) {
@@ -72,24 +74,34 @@ export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: Eme
 
   return (
     <div className="mb-3 rounded-xl border border-border/50 bg-gradient-to-r from-card via-muted/20 to-card p-3 md:mb-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div className="flex min-w-0 items-center gap-2.5">
-        <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
-        <p className="text-xs min-w-0">
-          <span className="font-medium">{total} issue{total !== 1 ? "s" : ""}</span>
-          <span className="text-muted-foreground ml-1.5">
-            {items.map((item, i) => (
-              <span key={item.label}>
-                {i > 0 && " · "}
-                <Link href={item.href} className={`${item.color} hover:underline`}>
-                  {item.count} {item.label}{item.count > 1 ? "s" : ""}
-                </Link>
-              </span>
-            ))}
+      <button
+        type="button"
+        onClick={() => setExpanded((next) => !next)}
+        className="flex w-full min-w-0 items-center justify-between gap-3 rounded-md px-0 text-left"
+        aria-expanded={expanded}
+      >
+        <span className="flex min-w-0 items-center gap-2.5">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <span className="min-w-0 text-xs">
+            <span className="font-medium">{total} issue{total !== 1 ? "s" : ""}</span>
+            <span className="ml-1.5 text-muted-foreground">
+              {items.map((item, i) => (
+                <span key={item.label}>
+                  {i > 0 && " · "}
+                  <span className={item.color}>
+                    {item.count} {item.label}{item.count > 1 ? "s" : ""}
+                  </span>
+                </span>
+              ))}
+            </span>
           </span>
-        </p>
-      </div>
-        <div className="grid min-w-0 flex-1 grid-cols-1 gap-1 md:max-w-[72%] md:grid-cols-2">
+        </span>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/25 bg-background/45 text-foreground/55 transition-colors hover:border-border/50 hover:bg-accent/40 hover:text-foreground">
+          {expanded ? <ArrowDown1Filled className="h-3.5 w-3.5" /> : <ArrowRight1Filled className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {expanded && details.length > 0 && (
+        <div className="mt-2 grid min-w-0 grid-cols-1 gap-1 md:grid-cols-2">
           {details.map((detail) => (
             <Link
               key={detail.id}
@@ -101,7 +113,7 @@ export function EmergencyMode({ failedRuns, stalledRuns, pendingDecisions }: Eme
             </Link>
           ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }

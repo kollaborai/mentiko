@@ -11,6 +11,8 @@ import {
 
 export interface PriorityBadgeProps extends React.HTMLAttributes<HTMLSpanElement>, VariantProps<typeof priorityVariants> {
   priority: TaskPriority
+  /** Numeric priority (0,1,2…) — when present the badge reads "P{n}", matching the rest of the task UI. */
+  rawPriority?: number
   label?: string
   showIcon?: boolean
 }
@@ -43,16 +45,20 @@ const priorityIcons: Record<TaskPriority, React.ReactNode> = {
 
 export function PriorityBadge({
   priority,
+  rawPriority,
   label,
   showIcon = true,
   className,
   size,
   ...props
 }: PriorityBadgeProps) {
+  // Prefer the numeric "P{n}" label when rawPriority is supplied (matches the
+  // rest of the task UI), else an explicit label, else the priority string.
+  const display = rawPriority !== undefined ? `P${rawPriority}` : (label ?? priority)
   return (
     <span
       className={cn(priorityVariants({ size }), priorityBgColor(priority), className)}
-      aria-label={`Priority: ${label ?? priority}`}
+      aria-label={`Priority: ${display}`}
       data-slot="priority-badge"
       data-priority={priority}
       data-size={size}
@@ -60,7 +66,7 @@ export function PriorityBadge({
       {...props}
     >
       {showIcon && priorityIcons[priority]}
-      {label ?? priority}
+      {display}
     </span>
   )
 }

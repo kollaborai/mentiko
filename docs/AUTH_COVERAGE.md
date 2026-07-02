@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-07-01)
 
 ## summary
-- total routes: 347
-- authenticated: 330   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 351
+- authenticated: 334   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -215,6 +215,8 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/ops/system/cli-status/route.ts
 - mentiko-mcp/ops/tasks/generate/route.ts
 - mentiko-mcp/ops/tasks/run-chain/route.ts
+- mentiko-mcp/ops/tasks/comment/route.ts
+- mentiko-mcp/ops/tasks/deps/route.ts
 - mentiko-mcp/ops/tasks/route.ts
 - mentiko-mcp/ops/templates/route.ts
 - mentiko-mcp/ops/terminal/route.ts
@@ -262,6 +264,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - runs/[id]/agents/[agentId]/heartbeat/route.ts
 - runs/[id]/approve/route.ts
 - runs/[id]/cost/route.ts
+- runs/[id]/artifacts/route.ts
 - runs/[id]/event-artifacts/[executionId]/apply/route.ts
 - runs/[id]/event-artifacts/route.ts
 - runs/[id]/output/route.ts
@@ -302,6 +305,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - system/stop-all/route.ts
 - system/viewport/route.ts
 - system/web-proxy/route.ts
+- tasks/[id]/attempts/route.ts
 - tasks/[id]/auto-run/route.ts
 - tasks/[id]/close/route.ts
 - tasks/[id]/comments/route.ts

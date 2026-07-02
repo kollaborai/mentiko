@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { orgPath } from "@/lib/config";
 import { ensureDecisionCoreChains, type DecisionCoreChainId } from "@/lib/decisions/decision-core-chains";
 import { startChainRun } from "@/lib/runs/chain-run-service";
+import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { resolveTemplate } from "@/lib/system/template-resolver";
 import type { Decision } from "@/lib/decisions/decision-types";
 import type { Chain } from "@/lib/types";
 
@@ -69,5 +71,50 @@ export async function startDecisionChainRun({
         ...(selectedOptionId ? { selectedOptionId } : {}),
       },
     },
+  });
+}
+
+interface StartDecisionResearchInput {
+  request: Request;
+  namespaceId: string;
+  orgId: string;
+  decision: Decision;
+  /** The raw, user-style ask to research (what a person would type/speak). */
+  userPrompt: string;
+  workspacePath?: string;
+}
+
+/**
+ * Resolve the `decision_research` template around a user-style prompt and launch
+ * the research phase. This is the SINGLE path for turning a raw decision ask into
+ * a briefed decision (clean title, brief, context, options). Both the interactive
+ * research route and autonomous callers (e.g. completion-audit) go through here,
+ * so an auto-created decision packages identically to one created by hand.
+ */
+export async function startDecisionResearch({
+  request,
+  namespaceId,
+  orgId,
+  decision,
+  userPrompt,
+  workspacePath,
+}: StartDecisionResearchInput) {
+  const ws = workspacePath ?? decision.workspacePath;
+  const workspaceContext = ws
+    ? `\nWORKSPACE CONTEXT:\n- Source checkout: ${ws}\n- If this decision involves code, inspect files under this checkout and cite repo-relative paths in references.\n`
+    : "";
+  const template = getTemplate(namespaceId, orgId, "decision_research");
+  const researchPrompt = resolveTemplate(template.content, {
+    USER_PROMPT: userPrompt,
+    WORKSPACE_CONTEXT: workspaceContext,
+  });
+  return startDecisionChainRun({
+    request,
+    namespaceId,
+    orgId,
+    decision,
+    phase: "research",
+    prompt: researchPrompt,
+    workspacePath: ws,
   });
 }

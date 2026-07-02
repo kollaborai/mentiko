@@ -201,8 +201,8 @@ export function PageBanner({
   const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
 
   return (
-    <div className={`shrink-0 ${background ? "" : "px-4 pt-4 pb-3"}`}>
-      <div className={`relative bg-transparent overflow-hidden p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
+    <div className={`shrink-0 ${background ? "" : "px-3 pt-3 pb-2 sm:px-4 sm:pt-4 sm:pb-3"}`}>
+      <div className={`relative bg-transparent overflow-hidden p-4 sm:p-6 ${background ? "min-h-[224px] flex flex-col justify-center" : "rounded-xl"}`}>
         {/* custom full-bleed background — replaces default pattern + watermark when provided */}
         {background ? (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">{background}</div>
@@ -263,7 +263,7 @@ export function PageBanner({
           {backHref ? (
             <Link
               href={backHref}
-              className="flex items-center gap-1.5 mb-2 -ml-1 px-2 py-1.5 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
+              className="flex items-center gap-1.5 mb-1 -ml-1 px-2 py-1 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors sm:mb-2 sm:py-1.5"
             >
               <ArrowLeftFilled className="h-4 w-4" />
               <span className="text-xs">{backLabel || "Back"}</span>
@@ -272,7 +272,7 @@ export function PageBanner({
             <button
               type="button"
               onClick={() => router.back()}
-              className="sm:hidden flex items-center gap-1.5 mb-2 -ml-1 px-2 py-1.5 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
+              className="sm:hidden flex items-center gap-1.5 mb-1 -ml-1 px-2 py-1 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-foreground/5 active:bg-foreground/10 transition-colors"
             >
               <ArrowLeftFilled className="h-4 w-4" />
               <span className="text-xs">Back</span>
@@ -280,19 +280,19 @@ export function PageBanner({
           )}
 
           {/* row 1: title */}
-          <h1 className={`text-4xl font-black tracking-tighter ${overlayDark ? "text-white" : ""}`}>
+          <h1 className={`text-3xl font-black leading-none tracking-normal sm:text-4xl sm:tracking-tighter ${overlayDark ? "text-white" : ""}`}>
             {title}
           </h1>
 
           {/* row 2: subtitle */}
-          <p className={`text-sm mt-1.5 max-w-2xl leading-relaxed ${overlayDark ? "text-white/60" : "text-foreground/50"}`}>
+          <p className={`mt-1 max-w-2xl text-sm leading-snug sm:mt-1.5 sm:leading-relaxed ${overlayDark ? "text-white/60" : "text-foreground/50"}`}>
             {subtitle}
           </p>
 
           {/* row 3: action icons + doc icons */}
           {((actions && actions.length > 0) || (docs && docs.length > 0)) && (
             <TooltipProvider delayDuration={200}>
-            <div className="flex items-center gap-1 flex-wrap mt-3">
+            <div className="mt-2 flex items-center gap-1 flex-wrap sm:mt-3">
               {actions?.map((action, i) => (
                 <ActionButton key={i} action={action} />
               ))}

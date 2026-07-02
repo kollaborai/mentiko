@@ -103,7 +103,7 @@ export function TaskDepPickerDialog({
                       {task.title}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      <PriorityBadge priority={task.priority} />
+                      <PriorityBadge priority={task.priority} rawPriority={typeof task.rawPriority === "number" ? task.rawPriority : undefined} />
                       <TypeBadge type={task.type} />
                       <span className="text-[9px] font-mono text-foreground/20 truncate">
                         {task.id}

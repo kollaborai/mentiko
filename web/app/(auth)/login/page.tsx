@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useEffect, FormEvent } from "react";
+import { Suspense, useState, useEffect, useRef, FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signIn, isMockOAuth, authClient } from "@/lib/auth/auth-client";
@@ -25,6 +25,8 @@ function LoginForm() {
   const emailParam = searchParams.get("email") || "";
   const [email, setEmail] = useState(emailParam);
   const [password, setPassword] = useState("");
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [providers, setProviders] = useState<{
@@ -51,13 +53,36 @@ function LoginForm() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const syncAutofill = () => {
+      const nextEmail = emailRef.current?.value ?? "";
+      const nextPassword = passwordRef.current?.value ?? "";
+      if (nextEmail) setEmail(nextEmail);
+      if (nextPassword) setPassword(nextPassword);
+    };
+
+    const frame = requestAnimationFrame(syncAutofill);
+    const timer = setTimeout(syncAutofill, 350);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const formData = new FormData(form);
+    const formEmail = String(formData.get("email") || emailRef.current?.value || email);
+    const formPassword = String(formData.get("password") || passwordRef.current?.value || password);
+
+    setEmail(formEmail);
+    setPassword(formPassword);
     setError("");
     setLoading(true);
 
     try {
-      const result = await signIn.email({ email, password });
+      const result = await signIn.email({ email: formEmail, password: formPassword });
       if (result.error) {
         setError(result.error.message || "Invalid credentials");
       } else {
@@ -127,7 +152,7 @@ function LoginForm() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form method="post" onSubmit={handleSubmit} className="space-y-3">
           {createdAccount && (
             <p className="text-xs text-green-400 bg-green-500/10 rounded px-2 py-1">
               Account created. Sign in with your new email and password.
@@ -135,18 +160,24 @@ function LoginForm() {
           )}
 
           <input
+            ref={emailRef}
+            name="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onInput={(e) => setEmail(e.currentTarget.value)}
             placeholder="Email"
             autoComplete="email"
             className="w-full bg-background rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
             disabled={loading}
           />
           <input
+            ref={passwordRef}
+            name="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onInput={(e) => setPassword(e.currentTarget.value)}
             placeholder="Password"
             autoComplete="current-password"
             className="w-full bg-background rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
@@ -161,7 +192,7 @@ function LoginForm() {
 
           <button
             type="submit"
-            disabled={loading || !email || !password}
+            disabled={loading}
             className="w-full bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground text-sm font-medium py-2 rounded-md transition-colors"
           >
             {loading ? "Signing in..." : "Sign in"}

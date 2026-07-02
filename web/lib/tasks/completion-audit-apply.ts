@@ -63,11 +63,6 @@ function buildDecisionPrompt(task: TaskRecord, audit: CompletionAudit): string {
   if (task.acceptance_criteria) {
     lines.push("", `ACCEPTANCE CRITERIA:\n${task.acceptance_criteria}`);
   }
-  lines.push(
-    "",
-    "Research what decision should be presented to the human: whether to create",
-    "follow-up work to resolve what was found, or to proceed to the next task.",
-  );
   return lines.join("\n");
 }
 
@@ -76,6 +71,18 @@ async function createDecisionSubtask(
   escalated: boolean,
 ): Promise<ApplyCompletionAuditResult> {
   const { request, namespaceId, orgId, task, audit, runId, workspacePath } = input;
+
+  // A "decision" verdict means the run's outcome is NOT settled — the task is
+  // not actually done until a human resolves the decision. If the task is
+  // sitting at status "closed" (whether from an earlier close, a bulk-close,
+  // or any other path), that status is now misleading: the tracker would show
+  // "closed" while a pending decision says otherwise. Reopen to "blocked" so
+  // task lists don't report false completion. (This is the bug that let
+  // FEAT-014 stay "closed" even after the auditor flagged decision_required
+  // and spawned DEC-009 — createDecisionSubtask never touched task.status.)
+  if (task.status === "closed") {
+    taskUpdate(orgId, task.id, { status: "blocked" }, namespaceId);
+  }
 
   // Claim the run BEFORE creating the decision. If createTaskDecision throws,
   // the run is still marked audited, so the next reconcile sweep's idempotency
@@ -93,18 +100,20 @@ async function createDecisionSubtask(
     parentTaskId: task.id,
   });
 
-  // Best-effort: kick off research so the decision agent investigates what to
-  // present. A research failure must not block the triage. Imported lazily to
-  // keep chain-run-service (and its ESM deps) out of consumers' static graphs.
+  // Best-effort: kick off research so the decision agent packages the decision
+  // (clean title, brief, options) exactly like the interactive flow. We go
+  // through the SAME startDecisionResearch path the research route uses — same
+  // decision_research template — so auto-created decisions don't look different
+  // from hand-made ones. A research failure must not block the triage. Imported
+  // lazily to keep chain-run-service (and its ESM deps) out of static graphs.
   try {
-    const { startDecisionChainRun } = await import("@/lib/decisions/decision-chain-dispatch");
-    await startDecisionChainRun({
+    const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
+    await startDecisionResearch({
       request,
       namespaceId,
       orgId,
       decision,
-      phase: "research",
-      prompt,
+      userPrompt: prompt,
       workspacePath,
     });
   } catch (error) {

@@ -736,11 +736,25 @@ async function autoAcceptRecommendation(
   }
 
   if (action === "generate_new") {
+    // Full task lookup (not just the title string threaded through this
+    // function) so the delivery-requirement rule in
+    // buildGenerationPromptFromTaskRecommendation can see issue_type +
+    // acceptance_criteria. Without this, autonomous auto-run generation never
+    // told the chain-generator this task needed a code-writing agent.
+    const fullTask = taskGet(orgId, taskId, namespaceId);
     // kick off generation job — next trigger cycle will start the run
     return await startGenerationJob(
       taskId,
       metadata,
-      buildGenerationPromptFromTaskRecommendation({ title: taskTitle }, normalized),
+      buildGenerationPromptFromTaskRecommendation(
+        {
+          title: taskTitle,
+          description: fullTask?.description ?? undefined,
+          issue_type: fullTask?.issue_type ?? undefined,
+          acceptance_criteria: fullTask?.acceptance_criteria ?? undefined,
+        },
+        normalized
+      ),
       namespaceId,
       orgId,
       request,

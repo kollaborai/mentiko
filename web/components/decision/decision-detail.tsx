@@ -603,7 +603,7 @@ export function DecisionDetail({
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-medium leading-tight">
+            <h2 className="text-base font-medium leading-tight line-clamp-2">
               {decision.title || decision.prompt}
             </h2>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -788,7 +788,7 @@ export function DecisionDetail({
           onOpenTask={onOpenTask}
         />
       ) : viewMode === "guided" ? (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <GuidedFlowShell
             decision={decision}
             workspacePath={workspacePath}

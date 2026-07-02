@@ -1,0 +1,124 @@
+import { render, screen } from "@testing-library/react";
+import type { Task } from "@/lib/tasks/task-types";
+import { TaskRunStoryPanels } from "../task-run-story-panels";
+
+jest.mock("@aliimam/icons", () => new Proxy({}, {
+  get: () => ({ className }: { className?: string }) => (
+    <svg className={className} aria-hidden="true" />
+  ),
+}));
+
+const mockFetchWithNamespace = jest.fn();
+jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
+  useNamespaceFetch: () => ({ fetchWithNamespace: mockFetchWithNamespace }),
+}));
+
+const task: Task = {
+  id: "TASK-1",
+  title: "Validate branch API",
+  description: "",
+  completed: true,
+  status: "closed",
+  priority: "high",
+  rawPriority: 1,
+  type: "feature",
+  owner: "",
+  assignee: "",
+  createdBy: "",
+  createdAt: "2026-06-21T00:00:00Z",
+  updatedAt: "2026-06-21T01:00:00Z",
+  closedAt: "2026-06-21T02:00:00Z",
+  labels: [],
+  dependencyCount: 0,
+  dependentCount: 0,
+  commentCount: 0,
+  chainBinding: {
+    chain_id: "git-branch-management-api-chain",
+    chain_name: "Git Branch Management API Chain",
+    auto_run: false,
+    last_run_id: "run-exec",
+    last_run_status: "completed",
+  },
+  metadata: {
+    task_outcome_summary_status: "running",
+    task_outcome_summary_source_run_id: "run-old",
+    last_run_summary: {
+      run_id: "run-exec",
+      chain: "Git Branch Management API Chain",
+      status: "completed",
+      outcome: "complete",
+      summary: "Task completed from the stored run summary.",
+      findings: ["All checks passed."],
+      artifacts_count: 21,
+      agents: [{ name: "Git API Architect", status: "complete" }],
+    },
+  },
+};
+
+describe("TaskRunStoryPanels", () => {
+  beforeEach(() => {
+    mockFetchWithNamespace.mockReset();
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: {} }),
+    });
+  });
+
+  it("does not show stale summarizing status when a fallback run summary is already present", () => {
+    render(<TaskRunStoryPanels task={task} />);
+
+    expect(screen.getByText("Summary")).toBeInTheDocument();
+    expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
+    expect(screen.queryByText("summarizing")).not.toBeInTheDocument();
+  });
+
+  it("keeps the Summary label outside the panel while summary generation is pending", () => {
+    const pendingTask: Task = {
+      ...task,
+      chainBinding: {
+        ...task.chainBinding!,
+        last_run_status: "completed",
+        last_run_id: "run-pending",
+      },
+      metadata: {
+        task_outcome_summary_status: "running",
+        task_outcome_summary_source_run_id: "run-old",
+      },
+    };
+
+    render(<TaskRunStoryPanels task={pendingTask} />);
+
+    const section = screen.getByText("Summary").closest("section");
+    expect(section).toBeInTheDocument();
+    expect(section?.firstElementChild).toHaveTextContent("Summary");
+    expect(section?.firstElementChild).toHaveTextContent("summarizing");
+    expect(section?.querySelector(":scope > .rounded-sm.bg-muted")).not.toHaveTextContent("Summary");
+    expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
+  });
+
+  it("keeps the Summary label outside the panel when summary generation fails", () => {
+    const failedTask: Task = {
+      ...task,
+      chainBinding: {
+        ...task.chainBinding!,
+        last_run_status: "completed",
+        last_run_id: "run-failed",
+      },
+      metadata: {
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_error: "Generation failed.",
+        task_outcome_summary_source_run_id: "run-old",
+      },
+    };
+
+    render(<TaskRunStoryPanels task={failedTask} />);
+
+    const section = screen.getByText("Summary").closest("section");
+    expect(section).toBeInTheDocument();
+    expect(section?.firstElementChild).toHaveTextContent("Summary");
+    expect(section?.firstElementChild).toHaveTextContent("failed");
+    expect(section?.querySelector(":scope > .rounded-sm.bg-muted")).not.toHaveTextContent("Summary");
+    expect(screen.getByText("Generation failed.")).toBeInTheDocument();
+    expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
+  });
+});
