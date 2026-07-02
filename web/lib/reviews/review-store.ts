@@ -136,6 +136,26 @@ function runMigrations(db: Database.Database): void {
 
     db.prepare("INSERT INTO _migrations (version) VALUES (1)").run();
   }
+
+  if (current < 2) {
+    // Reviews used to use a per-org counter (generateId(orgId, "rev")), but
+    // reviews.id is a GLOBAL primary key — so two orgs in one namespace both
+    // minted rev-000001 and threw UNIQUE constraint failed. Reviews now use the
+    // global counter like assignments/comments do. Seed the global "rev" counter
+    // above the highest legacy per-org sequence so the first global ID can't
+    // collide with a pre-existing per-org row. generateId increments before use.
+    const maxRow = db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, 5) AS INTEGER)) AS max_seq
+         FROM reviews
+        WHERE id LIKE 'rev-%'`
+    ).get() as { max_seq: number | null } | undefined;
+    const seed = maxRow?.max_seq ?? 0;
+    db.prepare(
+      `INSERT INTO id_counters (org_id, prefix, next_val) VALUES ('global', 'rev', ?)
+         ON CONFLICT(org_id, prefix) DO UPDATE SET next_val = MAX(next_val, excluded.next_val)`
+    ).run(seed);
+    db.prepare("INSERT INTO _migrations (version) VALUES (2)").run();
+  }
 }
 
 // ---------- ID generation ----------
@@ -164,7 +184,7 @@ export function createReview(
   workspaceId?: string
 ): ReviewRecord {
   const db = getDb();
-  const id = generateId(orgId, "rev");
+  const id = generateId("global", "rev");
   const now = new Date().toISOString();
   
   const checklist = JSON.stringify(input.checklist || []);

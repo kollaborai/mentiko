@@ -8,17 +8,18 @@
  * the store via `jest.isolateModules` so `config` and the connection Map
  * re-evaluate against that temp root. The live DB is never touched.
  *
- * NOTE on the store's ID scheme: `id_counters` is keyed on (org_id, prefix), so
- * each org restarts at rev-000001, but `reviews.id` is a GLOBAL primary key —
- * two creates across different orgs collide. So each test creates in at most
- * ONE org and only *reads* a second org for scoping assertions.
+ * NOTE on the store's ID scheme: review IDs use a GLOBAL counter (the `rev-`
+ * prefix space is shared across orgs), so two orgs in one namespace never
+ * collide on the global `reviews.id` primary key. Assignments (`asn-`) and
+ * comments (`cmt-`) are global too.
  *
  * @jest-environment node
  */
 import { describe, test, expect, beforeEach, afterEach } from "@jest/globals";
 import { join } from "path";
 import { tmpdir } from "os";
-import { mkdtempSync, rmSync, existsSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync } from "fs";
+import Database from "better-sqlite3";
 
 type ReviewStore = typeof import("../reviews/review-store");
 let store: ReviewStore;
@@ -86,6 +87,64 @@ describe("Review Store (isolated temp DB)", () => {
     );
     expect(store.listReviews({ org_id: "org-a" }).some((r) => r.id === review.id)).toBe(true);
     expect(store.listReviews({ org_id: "org-b" }).some((r) => r.id === review.id)).toBe(false);
+  });
+
+  // ── GLOBAL ID COUNTER (regression for multi-org PK collision) ────────────
+  // reviews.id is a GLOBAL primary key. Two orgs in one namespace creating their
+  // first review must both succeed with distinct IDs — previously the per-org
+  // counter restarted at rev-000001 in each org and threw UNIQUE constraint failed.
+  test("createReview across two orgs yields distinct, non-colliding IDs", () => {
+    const a = store.createReview("org-a", { title: "A", source_branch: "f", target_branch: "main" }, "u");
+    const b = store.createReview("org-b", { title: "B", source_branch: "f", target_branch: "main" }, "u");
+    expect(a.id).toMatch(/^rev-\d{6}$/);
+    expect(b.id).toMatch(/^rev-\d{6}$/);
+    expect(a.id).not.toBe(b.id);
+    // Both are retrievable within their own org scope.
+    expect(store.getReview(a.id, "org-a")?.id).toBe(a.id);
+    expect(store.getReview(b.id, "org-b")?.id).toBe(b.id);
+  });
+
+  // ── MIGRATION BACKFILL (v1 → v2) ────────────────────────────────────────
+  // Simulate a legacy DB that stopped at migration v1 with per-org review IDs
+  // already on disk (org-a reached rev-000003). On upgrade, the global counter
+  // must be seeded above 3 so the first new review is rev-000004 — not
+  // rev-000001, which would collide with nothing here but proves the seed works.
+  test("v2 migration seeds global rev counter above legacy per-org IDs", () => {
+    const legacyRoot = mkdtempSync(join(tmpdir(), "mentiko-review-legacy-"));
+    const savedLegacy = process.env.MENTIKO_GLOBAL_ROOT;
+    process.env.MENTIKO_GLOBAL_ROOT = legacyRoot;
+    const dbPath = join(legacyRoot, "namespaces", "default", "data", "reviews.db");
+    mkdirSync(join(legacyRoot, "namespaces", "default", "data"), { recursive: true });
+    const seed = new Database(dbPath);
+    seed.pragma("journal_mode = WAL");
+    seed.exec(`
+      CREATE TABLE _migrations (version INTEGER PRIMARY KEY);
+      CREATE TABLE id_counters (org_id TEXT NOT NULL, prefix TEXT NOT NULL, next_val INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (org_id, prefix));
+      CREATE TABLE reviews (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, workspace_id TEXT, title TEXT NOT NULL, description TEXT DEFAULT '', source_branch TEXT NOT NULL, target_branch TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium', created_by TEXT NOT NULL, created_at TEXT NOT NULL, due_date TEXT, labels TEXT DEFAULT '[]', checklist TEXT DEFAULT '[]', updated_at TEXT NOT NULL, closed_at TEXT);
+      CREATE TABLE review_assignments (id TEXT PRIMARY KEY, review_id TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE, reviewer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', assigned_at TEXT NOT NULL, completed_at TEXT);
+      CREATE TABLE review_comments (id TEXT PRIMARY KEY, review_id TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE, file_path TEXT NOT NULL, line_number INTEGER, commenter_id TEXT NOT NULL, comment TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved BOOLEAN NOT NULL DEFAULT 0, resolved_at TEXT, resolved_by TEXT);
+    `);
+    seed.prepare("INSERT INTO _migrations (version) VALUES (1)").run();
+    seed.prepare("INSERT INTO id_counters (org_id,prefix,next_val) VALUES ('org-a','rev',3)").run();
+    seed.prepare("INSERT INTO reviews (id,org_id,title,source_branch,target_branch,created_by,created_at,updated_at) VALUES ('rev-000003','org-a','legacy','f','main','u','t','t')").run();
+    seed.close();
+
+    // Load the store against the legacy root — it opens the existing file,
+    // runs migration v2, then the first create must be rev-000004.
+    let legacyStore: ReviewStore;
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      legacyStore = require("../reviews/review-store");
+    });
+    const r = legacyStore!.createReview("org-b", { title: "after-upgrade", source_branch: "f", target_branch: "main" }, "u");
+    expect(r.id).toBe("rev-000004");
+    // Legacy row survives the upgrade and stays org-scoped.
+    expect(legacyStore!.getReview("rev-000003", "org-a")?.id).toBe("rev-000003");
+    legacyStore!.closeAll();
+
+    if (savedLegacy === undefined) delete process.env.MENTIKO_GLOBAL_ROOT;
+    else process.env.MENTIKO_GLOBAL_ROOT = savedLegacy;
+    rmSync(legacyRoot, { recursive: true, force: true });
   });
 
   test("update a review (title + status) and set closed_at on completion", () => {

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { getOrgIdFromRequest } from "@/lib/namespace-config";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
 import {
   getReview,
   getAssignment,
@@ -52,6 +53,18 @@ export const PATCH = withErrorHandling(
     const assignment = await resolveScopedAssignment(req, id, assignmentId);
     if (!assignment) {
       return apiSuccess({ ok: false, error: { message: "Assignment not found" } }, undefined, 404);
+    }
+
+    // Only the assigned reviewer may set their own status. Without this, any
+    // manage_chains member could approve every assignment (including their own)
+    // and unblock the ReviewApprovalGate, defeating the peer-review gate.
+    const user = await getSessionUser(req);
+    if (!user || user.id !== assignment.reviewer_id) {
+      return apiSuccess(
+        { ok: false, error: { message: "Only the assigned reviewer can update this assignment" } },
+        undefined,
+        403
+      );
     }
 
     const updated = updateAssignmentStatus(assignmentId, status);
