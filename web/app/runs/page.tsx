@@ -538,10 +538,10 @@ function RunsPageContent() {
       />
 
       {/* List-Detail split */}
-      <div className="flex-1 flex overflow-hidden pl-2 sm:pl-4">
+      <div className="flex-1 flex min-h-0 overflow-hidden pl-2 sm:pl-4">
         {/* Left: run list (resizable) */}
         <WorkflowSidebarPane
-          className={`${mobileView === "detail" ? "hidden md:flex" : "flex"}`}
+          className={`h-full ${mobileView === "detail" ? "hidden md:flex" : "flex"}`}
           style={{ width: sidebarWidth }}
         >
           {/* Search & filters */}
@@ -612,7 +612,7 @@ function RunsPageContent() {
           </WorkflowSidebarFilters>
 
           {/* Run list */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto no-scrollbar">
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <WaveSpinner size="sm" color="primary" animation="ripple" />

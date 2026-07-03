@@ -119,7 +119,7 @@ function RunSelector({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute z-20 w-full mt-1 bg-card rounded-md shadow-lg max-h-64 overflow-y-auto">
+          <div className="absolute z-20 w-full mt-1 bg-card rounded-md shadow-lg max-h-64 overflow-y-auto no-scrollbar">
             {runs.map((run) => (
               <button
                 key={run.id}
@@ -165,7 +165,7 @@ function DiffIndicator({ value, percent }: { value: number; percent: number }) {
 
 function OutputDiff({ diff }: { diff: Array<{ type: "added" | "removed" | "unchanged"; value: string }> }) {
   return (
-    <div className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs [overflow-wrap:anywhere]">
+    <div className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 font-mono text-xs [overflow-wrap:anywhere] no-scrollbar">
       {diff.map((part, idx) => {
         const lines = part.value.split("\n");
         return (
@@ -266,7 +266,7 @@ function ComparePageContent() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 no-scrollbar">
         <div className="max-w-6xl mx-auto space-y-4">
           {/* Selector section */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">

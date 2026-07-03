@@ -15,11 +15,12 @@ import {
   ToggleOffFilled as ToggleLeft,
   ToggleOnFilled as ToggleRight,
 } from "@aliimam/icons";
-import { ArrowLeftFilled, PlayFilled, LinkFilled } from "@aliimam/icons";
+import { PlayFilled, LinkFilled } from "@aliimam/icons";
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { DetailHeader } from "@/components/ui/detail-header";
+import { SplitDetailHeader } from "@/components/ui/detail-header";
+import { BackButton } from "@/components/ui/back-button";
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
@@ -96,14 +97,7 @@ export function TaskDetailHeader({
 
   return (
     <div className="px-3 pt-2 shrink-0">
-      {/* mobile back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1 text-xs text-foreground/40 mb-2 hover:text-foreground/60 lg:hidden"
-      >
-        <ArrowLeftFilled className="h-3.5 w-3.5" />
-        Back
-      </button>
+      <BackButton onBack={onBack} />
 
       {/* task id */}
       <button
@@ -119,58 +113,61 @@ export function TaskDetailHeader({
       </button>
 
       {/* title row */}
-      <DetailHeader className="items-start gap-3 flex-wrap xl:flex-nowrap">
-        <div className="relative flex-1 min-w-0 w-full xl:w-auto">
-          <h2 className="text-base font-bold tracking-tighter leading-tight">
-            {task.title}
-          </h2>
-          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-            <TypeBadge type={task.type} />
-            <PriorityBadge
-              priority={task.priority}
-              rawPriority={task.rawPriority}
-            />
-            {task.chainBinding && (
-              <Link
-                href={`/chains/${encodeURIComponent(task.chainBinding.chain_id)}/edit`}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-accent text-foreground/70 hover:bg-accent/80 transition-colors"
+      <SplitDetailHeader
+        className="items-start"
+        identityClassName="items-start"
+        identity={
+          <div className="relative min-w-0 flex-1">
+            <h2 className="text-base font-bold tracking-tighter leading-tight">
+              {task.title}
+            </h2>
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <TypeBadge type={task.type} />
+              <PriorityBadge
+                priority={task.priority}
+                rawPriority={task.rawPriority}
+              />
+              {task.chainBinding && (
+                <Link
+                  href={`/chains/${encodeURIComponent(task.chainBinding.chain_id)}/edit`}
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-accent text-foreground/70 hover:bg-accent/80 transition-colors"
+                >
+                  <LinkFilled className="h-2.5 w-2.5" style={{ color: "#b07ee8" }} />
+                  {task.chainBinding.chain_name || task.chainBinding.chain_id}
+                </Link>
+              )}
+              {task.type === "decision" && typeof task.metadata?.decision_id === "string" && (
+                <a
+                  href={`/tasks?type=decision&task=${encodeURIComponent(task.id)}`}
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition-colors"
+                >
+                  <Link2 className="h-2.5 w-2.5" />
+                  decision
+                </a>
+              )}
+              <span
+                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                  task.completed
+                    ? "bg-green-500/15 text-green-400"
+                    : "bg-foreground/5 text-foreground/50"
+                }`}
               >
-                <LinkFilled className="h-2.5 w-2.5" style={{ color: "#b07ee8" }} />
-                {task.chainBinding.chain_name || task.chainBinding.chain_id}
-              </Link>
-            )}
-            {task.type === "decision" && typeof task.metadata?.decision_id === "string" && (
-              <a
-                href={`/tasks?type=decision&task=${encodeURIComponent(task.id)}`}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 transition-colors"
-              >
-                <Link2 className="h-2.5 w-2.5" />
-                decision
-              </a>
-            )}
-            <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                task.completed
-                  ? "bg-green-500/15 text-green-400"
-                  : "bg-foreground/5 text-foreground/50"
-              }`}
-            >
-              {task.completed ? "closed" : "open"}
-            </span>
-            {task.assignee && (
-              <span className="inline-flex items-center gap-0.5 text-[10px] text-foreground/40">
-                <User className="h-2.5 w-2.5" />
-                {task.assignee}
+                {task.completed ? "closed" : "open"}
               </span>
-            )}
-            <span className="text-[10px] text-foreground/30 ml-auto">
-              {timeAgo(task.updatedAt)}
-            </span>
+              {task.assignee && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] text-foreground/40">
+                  <User className="h-2.5 w-2.5" />
+                  {task.assignee}
+                </span>
+              )}
+              <span className="text-[10px] text-foreground/30 ml-auto">
+                {timeAgo(task.updatedAt)}
+              </span>
+            </div>
           </div>
-        </div>
-
-        {/* actions */}
-        <div className="relative flex w-full flex-wrap items-center gap-1 pt-1 shrink-0 xl:w-auto xl:justify-end xl:pt-0">
+        }
+        actions={
+          <>
           <Button
             size="sm"
             variant="ghost"
@@ -278,8 +275,9 @@ export function TaskDetailHeader({
               {autoRunError}
             </span>
           ) : null}
-        </div>
-      </DetailHeader>
+          </>
+        }
+      />
 
       {/* metadata grid */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 px-3 py-2.5 bg-muted rounded-md text-[10px]">

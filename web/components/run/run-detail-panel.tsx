@@ -6,7 +6,7 @@ import { useRunNotifications, notifyAgentEvent } from "@/hooks/use-notifications
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DetailHeader } from "@/components/ui/detail-header";
+import { SplitDetailHeader } from "@/components/ui/detail-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { WorkflowAgent } from "@/components/ui/workflow-card";
 import { StatusBadge, type Status } from "@/components/common/status-badge";
@@ -30,7 +30,6 @@ import {
   ComponentFilled as Cpu,
   FlashFilled as Zap,
   InfoCircleFilled as AlertCircle,
-  CommandSquareFilled as Terminal,
   CopyFilled as Copy,
   Element3Filled as MoreVertical,
   CloseCircleFilled as XCircle,
@@ -48,6 +47,7 @@ import {
 import { ArrowLeftFilled, ArrowDown1Filled, ArrowRight1Filled, TaskSquareFilled } from "@aliimam/icons";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { PeerSplitView } from "@/components/terminal/peer-split-view";
 import { LinkRunTimeline } from "@/components/run/link-run-timeline";
 import { Markdown } from "@/components/ui/markdown";
@@ -1171,39 +1171,23 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     ? "h-[720px] max-h-[calc(100vh-220px)] min-h-[560px] overflow-hidden flex flex-col rounded-sm bg-background/45"
     : "h-full overflow-hidden flex flex-col";
   const headerClassName = embedded
-    ? "mx-2 mt-2 shrink-0 flex-col items-stretch justify-start gap-2"
-    : "mx-3 mt-2 shrink-0 flex-col items-stretch justify-start gap-3 rounded-xl px-4 py-4 sm:flex-row sm:items-center sm:justify-between";
-  const runHeaderIdentityClassName = embedded
-    ? "relative flex w-full min-w-0 items-start gap-3"
-    : "relative flex w-full min-w-0 items-start sm:w-auto sm:items-center sm:gap-3";
-  const runHeaderTitleBlockClassName = embedded
-    ? "min-w-0 flex-1"
-    : cn("min-w-0 flex-1", onBack && "pt-9 sm:pt-0");
-  const runHeaderTitleLineClassName = embedded
-    ? "flex min-w-0 flex-wrap items-center gap-2"
-    : "flex min-w-0 flex-wrap items-center gap-2";
-  const runHeaderTitleClassName = "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere] sm:line-clamp-none sm:tracking-tighter";
-  const runHeaderMetaClassName = embedded
-    ? "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
-    : "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 sm:mt-0.5";
-  const runHeaderActionsClassName = embedded
-    ? "relative flex w-full min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs"
-    : "relative flex w-full min-w-0 flex-col items-stretch gap-3 text-xs sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-4";
-  const runHeaderMetricsClassName = embedded
-    ? "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
-    : "grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:gap-4";
-  const runHeaderControlsClassName = embedded
-    ? "flex min-w-0 flex-wrap items-center justify-end gap-1.5"
-    : "flex min-w-0 items-center justify-between gap-2 sm:justify-end";
+    ? "mx-2 mt-2 shrink-0"
+    : "mx-3 mt-2 shrink-0 rounded-xl px-4 py-4";
+  const runHeaderTitleBlockClassName = cn("min-w-0 flex-1", !embedded && onBack && "pt-9 sm:pt-0");
+  const runHeaderTitleLineClassName = "flex min-w-0 flex-wrap items-center gap-2";
+  const runHeaderTitleClassName = "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere]";
+  const runHeaderMetaClassName = "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1";
+  const runHeaderMetricsClassName = "flex shrink-0 items-center gap-3";
+  const runHeaderControlsClassName = "flex shrink-0 items-center gap-1.5";
   const tabsChromeClassName = embedded
-    ? "shrink-0 overflow-x-auto px-2 pt-2"
+    ? "shrink-0 overflow-x-auto px-2 pt-2 no-scrollbar"
     : "shrink-0 max-w-full px-4 pt-3";
   const tabsListClassName = embedded
     ? "min-w-max bg-card"
     : "mx-auto flex w-full max-w-full min-w-0 justify-center gap-1 rounded-xl bg-card/90 p-1";
   const goalTabClassName = embedded
-    ? "flex-1 overflow-y-auto p-3 mt-0"
-    : "flex-1 overflow-y-auto p-6 mt-0";
+    ? "flex-1 overflow-y-auto p-3 mt-0 no-scrollbar"
+    : "flex-1 overflow-y-auto p-6 mt-0 no-scrollbar";
   const runMetadataGridClassName = embedded
     ? "grid gap-y-1.5 text-xs"
     : "grid grid-cols-[110px_1fr] gap-y-2.5 text-xs";
@@ -1233,8 +1217,8 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     ? "flex-1 flex min-h-0 flex-col"
     : "flex-1 flex min-h-0 flex-col sm:flex-row";
   const outputAgentListClassName = embedded
-    ? "shrink-0 border-b border-foreground/5 overflow-x-auto p-2"
-    : "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 sm:w-40 sm:border-b-0 sm:border-r sm:overflow-y-auto md:w-48";
+    ? "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 no-scrollbar"
+    : "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 sm:w-40 sm:border-b-0 sm:border-r sm:overflow-y-auto md:w-48 no-scrollbar";
   const outputAgentListBodyClassName = embedded ? "flex min-w-max gap-1" : "flex min-w-max gap-1 sm:block sm:min-w-0 sm:space-y-1";
   const outputAgentButtonClassName = embedded
     ? "min-w-[128px] max-w-[180px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors"
@@ -1249,8 +1233,8 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     ? "flex min-w-0 flex-wrap items-center gap-1"
     : "flex min-w-0 flex-wrap items-center gap-1 sm:ml-4 sm:shrink-0 sm:flex-nowrap";
   const outputScrollClassName = embedded
-    ? "h-full overflow-y-auto px-3 py-2"
-    : "h-full overflow-y-auto px-4 py-2";
+    ? "h-full overflow-y-auto px-3 py-2 no-scrollbar"
+    : "h-full overflow-y-auto px-4 py-2 no-scrollbar";
   const outputInnerClassName = "mx-auto max-w-3xl min-w-0";
   const metricsTimelineScaleClassName = embedded
     ? "flex items-center gap-1 text-[9px] text-foreground/30 mb-2"
@@ -1397,140 +1381,144 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   return (
     <div className={panelClassName}>
       {/* header */}
-      <DetailHeader className={headerClassName}>
-        <div className={runHeaderIdentityClassName}>
-          {onBack && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="absolute left-0 top-0 h-7 gap-1.5 px-2 text-[11px] sm:static"
-              onClick={onBack}
-            >
-              <ArrowLeftFilled className="h-4 w-4" />
-              Back
-            </Button>
-          )}
-          <div className={runHeaderTitleBlockClassName}>
-            <div className={runHeaderTitleLineClassName}>
-              {run.chainId ? (
-                <Link href={`/chains/${encodeURIComponent(run.chainId)}/edit`} className={cn(runHeaderTitleClassName, "hover:text-cyan-400 transition-colors")}>
-                  {run.chain}
-                </Link>
-              ) : (
-                <span className={runHeaderTitleClassName}>{run.chain}</span>
-              )}
-              <StatusBadge
-                status={run.status as Status}
-                label={connected && isActive ? "running · connected" : undefined}
+      <SplitDetailHeader
+        className={headerClassName}
+        identity={
+          <>
+            {onBack && (
+              <Button
                 size="sm"
-              />
-            </div>
-            <div className={runHeaderMetaClassName}>
-              <CopyButton value={runId} fullValue={run} />
-              {run.taskId && (
-                <Link
-                  href={`/tasks?task=${encodeURIComponent(run.taskId)}`}
-                  className="flex items-center gap-1 text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors font-mono"
-                >
-                  <TaskSquareFilled className="h-2.5 w-2.5" style={{ color: "#5b9ef5" }} />
-                  {run.taskId}
-                </Link>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className={runHeaderActionsClassName}>
-          <div className={runHeaderMetricsClassName}>
-            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
-              <Clock className="h-3 w-3 text-foreground/40" />
-              <span className="font-mono">{formatDuration(run.started, run.completed)}</span>
-            </div>
-            <div className="flex items-center justify-center gap-1.5 rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
-              <Zap className="h-3 w-3 text-foreground/40" />
-              <span className="font-mono">{completedAgents}/{totalAgents}</span>
-            </div>
-          </div>
-          <div className={runHeaderControlsClassName}>
-            {isActive && (
-              <>
-                <Button size="sm" variant={debugPaused ? "default" : "secondary"} className="h-7 text-[10px]" onClick={() => setDebugPaused(!debugPaused)}>
-                  {debugPaused ? <Pause className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
-                  {debugPaused ? "resume" : "pause"}
-                </Button>
-                {confirmStop ? (
-                  <>
-                    <span className="text-[10px] text-red-400">stop all agents?</span>
-                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-400/10 px-2" onClick={() => { handleStop(); setConfirmStop(false); }} data-testid="confirm-stop-btn">
-                      confirm
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => setConfirmStop(false)}>
-                      cancel
-                    </Button>
-                  </>
+                variant="ghost"
+                className="absolute left-0 top-0 h-7 gap-1.5 px-2 text-[11px] sm:static"
+                onClick={onBack}
+              >
+                <ArrowLeftFilled className="h-4 w-4" />
+                Back
+              </Button>
+            )}
+            <div className={runHeaderTitleBlockClassName}>
+              <div className={runHeaderTitleLineClassName}>
+                {run.chainId ? (
+                  <Link href={`/chains/${encodeURIComponent(run.chainId)}/edit`} className={cn(runHeaderTitleClassName, "hover:text-cyan-400 transition-colors")}>
+                    {run.chain}
+                  </Link>
                 ) : (
-                  <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400/70 hover:text-red-400 hover:bg-red-400/10 px-2" onClick={() => setConfirmStop(true)} title="Force stop run" data-testid="stop-run-btn">
-                    <Square className="h-3 w-3 mr-1" />
-                    stop
+                  <span className={runHeaderTitleClassName}>{run.chain}</span>
+                )}
+                <StatusBadge
+                  status={run.status as Status}
+                  label={connected && isActive ? "running · connected" : undefined}
+                  size="sm"
+                />
+              </div>
+              <div className={runHeaderMetaClassName}>
+                <CopyButton value={runId} fullValue={run} />
+                {run.taskId && (
+                  <Link
+                    href={`/tasks?task=${encodeURIComponent(run.taskId)}`}
+                    className="flex items-center gap-1 text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors font-mono"
+                  >
+                    <TaskSquareFilled className="h-2.5 w-2.5" style={{ color: "#5b9ef5" }} />
+                    {run.taskId}
+                  </Link>
+                )}
+              </div>
+            </div>
+          </>
+        }
+        actions={
+          <>
+            <div className={runHeaderMetricsClassName}>
+              <div className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
+                <Clock className="h-3 w-3 text-foreground/40" />
+                <span className="font-mono">{formatDuration(run.started, run.completed)}</span>
+              </div>
+              <div className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
+                <Zap className="h-3 w-3 text-foreground/40" />
+                <span className="font-mono">{completedAgents}/{totalAgents}</span>
+              </div>
+            </div>
+            <div className={runHeaderControlsClassName}>
+              {isActive && (
+                <>
+                  <Button size="sm" variant={debugPaused ? "default" : "secondary"} className="h-7 text-[10px]" onClick={() => setDebugPaused(!debugPaused)}>
+                    {debugPaused ? <Pause className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+                    {debugPaused ? "resume" : "pause"}
                   </Button>
-                )}
-              </>
-            )}
-            {!isActive && (
-              <>
-                {hasIncompleteAgents && (
-                  <Button size="sm" variant="ghost" className="h-7 text-[10px] text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-400/10 px-2" onClick={handleResume} title="Resume from where it left off" data-testid="resume-btn">
-                    <Play className="h-3 w-3 mr-1" />
-                    resume
+                  {confirmStop ? (
+                    <>
+                      <span className="text-[10px] text-red-400">stop all agents?</span>
+                      <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-400/10 px-2" onClick={() => { handleStop(); setConfirmStop(false); }} data-testid="confirm-stop-btn">
+                        confirm
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => setConfirmStop(false)}>
+                        cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400/70 hover:text-red-400 hover:bg-red-400/10 px-2" onClick={() => setConfirmStop(true)} title="Force stop run" data-testid="stop-run-btn">
+                      <Square className="h-3 w-3 mr-1" />
+                      stop
+                    </Button>
+                  )}
+                </>
+              )}
+              {!isActive && (
+                <>
+                  {hasIncompleteAgents && (
+                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-400/10 px-2" onClick={handleResume} title="Resume from where it left off" data-testid="resume-btn">
+                      <Play className="h-3 w-3 mr-1" />
+                      resume
+                    </Button>
+                  )}
+                  {hasStaleAgents && (
+                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-amber-400/70 hover:text-amber-400 hover:bg-amber-400/10 px-2" onClick={handleCleanup} title="Clean up stale agent states" data-testid="cleanup-btn">
+                      <Square className="h-3 w-3 mr-1" />
+                      clean up
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={handleRerun} title="Rerun from scratch" data-testid="rerun-btn">
+                    <RotateCw className="h-3 w-3 mr-1" />
+                    rerun
                   </Button>
-                )}
-                {hasStaleAgents && (
-                  <Button size="sm" variant="ghost" className="h-7 text-[10px] text-amber-400/70 hover:text-amber-400 hover:bg-amber-400/10 px-2" onClick={handleCleanup} title="Clean up stale agent states" data-testid="cleanup-btn">
-                    <Square className="h-3 w-3 mr-1" />
-                    clean up
+                </>
+              )}
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Copy Run ID" onClick={handleCopyRunId}>
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" title="Download Log" onClick={handleDownloadLog}>
+                <Download className="h-3.5 w-3.5 mr-1" />
+                <span className="hidden sm:inline">Log</span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                    <MoreVertical className="h-4 w-4" />
                   </Button>
-                )}
-                <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={handleRerun} title="Rerun from scratch" data-testid="rerun-btn">
-                  <RotateCw className="h-3 w-3 mr-1" />
-                  rerun
-                </Button>
-              </>
-            )}
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Copy Run ID" onClick={handleCopyRunId}>
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" title="Download Log" onClick={handleDownloadLog}>
-              <Download className="h-3.5 w-3.5 mr-1" />
-              <span className="hidden sm:inline">Log</span>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {isActive && (
-                  <DropdownMenuItem onClick={handleCancel} className="text-red-400 focus:text-red-400">
-                    <XCircle className="h-4 w-4 mr-2" />Cancel Run
-                  </DropdownMenuItem>
-                )}
-                {!isActive && (
-                  <>
-                    <DropdownMenuItem onClick={handleRerun}>
-                      <RotateCw className="h-4 w-4 mr-2" />Rerun
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {isActive && (
+                    <DropdownMenuItem onClick={handleCancel} className="text-red-400 focus:text-red-400">
+                      <XCircle className="h-4 w-4 mr-2" />Cancel Run
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleDelete} className="text-red-400 focus:text-red-400">
-                      <Trash2 className="h-4 w-4 mr-2" />Delete Run
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </DetailHeader>
+                  )}
+                  {!isActive && (
+                    <>
+                      <DropdownMenuItem onClick={handleRerun}>
+                        <RotateCw className="h-4 w-4 mr-2" />Rerun
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={handleDelete} className="text-red-400 focus:text-red-400">
+                        <Trash2 className="h-4 w-4 mr-2" />Delete Run
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </>
+        }
+      />
 
       {/* tabs */}
       <div className="flex-1 overflow-hidden">
@@ -1671,7 +1659,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* agents tab */}
-          <TabsContent value="agents" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+          <TabsContent value="agents" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
             <AgentTimeline run={run} />
             {run.agents && run.agents.length > 1 && (
               <div className="flex justify-end mb-3 max-w-4xl">
@@ -1726,7 +1714,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                           <div className={agentTitleBlockClassName}>
                             <p className={agentTitleClassName}>{agent.name || agent.id}</p>
                             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-foreground/35">
-                              <Terminal className="h-3 w-3 shrink-0" />
+                              <TerminalIcon className="h-3 w-3 shrink-0" />
                               <CopyButton value={agent.id} fullValue={agent} />
                             </div>
                           </div>
@@ -2015,7 +2003,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                 <Copy className="h-3 w-3" />
                               </Button>
                             </div>
-                            <div className="bg-card text-foreground p-3 rounded h-32 overflow-y-auto">
+                            <div className="bg-card text-foreground p-3 rounded h-32 overflow-y-auto no-scrollbar">
                               <Markdown content={agentOutputs[agent.session || ""] || ""} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
                             </div>
                           </div>
@@ -2097,7 +2085,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                 setOutputView(nextView);
                               }}
                             >
-                              <Terminal className="mr-1 h-3 w-3" />Terminal
+                              <TerminalIcon className="mr-1 h-3 w-3" />Terminal
                             </Button>
                           )}
                           {outputView === "terminal" && canInteract && (
@@ -2107,7 +2095,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                               className="h-7 text-xs"
                               onClick={() => setTerminalInputEnabled((enabled) => !enabled)}
                             >
-                              <Terminal className="mr-1 h-3 w-3" />
+                              <TerminalIcon className="mr-1 h-3 w-3" />
                               {terminalInputEnabled ? "Input on" : "Input off"}
                             </Button>
                           )}
@@ -2174,7 +2162,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* metrics tab */}
-          <TabsContent value="metrics" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+          <TabsContent value="metrics" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
             {/* agent execution timeline */}
             <div className="max-w-4xl mb-6">
               <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">Agent Timeline</p>
@@ -2261,7 +2249,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <Terminal className="h-4 w-4 text-foreground/40" />
+                  <TerminalIcon className="h-4 w-4 text-foreground/40" />
                   <p className="text-[10px] text-foreground/40 uppercase">Total Agents</p>
                 </div>
                 <p className="text-lg font-mono">{totalAgents}</p>
@@ -2294,7 +2282,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* artifacts tab */}
-          <TabsContent value="artifacts" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+          <TabsContent value="artifacts" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
             <div className="max-w-5xl space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -2311,7 +2299,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               {runArtifacts.length > 0 ? (
                 <div className="grid min-h-[420px] gap-3 lg:grid-cols-[280px_1fr]">
                   <div className="min-h-0 rounded-sm bg-card p-1">
-                    <div className="max-h-[560px] overflow-y-auto pr-1">
+                    <div className="max-h-[560px] overflow-y-auto pr-1 no-scrollbar">
                       {runArtifacts.map((artifact, artifactIndex) => {
                         const artifactPath = artifactPathValue(artifact);
                         const selected = Boolean(artifactPath && selectedArtifactPath === artifactPath);
@@ -2371,7 +2359,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                             </span>
                           ) : null}
                         </div>
-                        <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap break-words rounded-sm bg-background/50 p-3 text-[10px] leading-relaxed text-foreground/65 [overflow-wrap:anywhere]">
+                        <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap break-words rounded-sm bg-background/50 p-3 text-[10px] leading-relaxed text-foreground/65 [overflow-wrap:anywhere] no-scrollbar">
                           {activeArtifactPreview.content}
                         </pre>
                       </>
@@ -2391,7 +2379,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* cost tab */}
-          <TabsContent value="cost" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+          <TabsContent value="cost" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
             <div className="max-w-4xl">
               {!costData ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -2447,7 +2435,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* triage tab */}
-          <TabsContent value="triage" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0">
+          <TabsContent value="triage" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
             <div className="max-w-4xl space-y-3">
               <div className={triageHeaderClassName}>
                 <div>
@@ -2511,7 +2499,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       </div>
 
                       {draft?.description && (
-                        <pre className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs text-muted-foreground bg-background/40 rounded-sm p-3 overflow-x-auto">
+                        <pre className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs text-muted-foreground bg-background/40 rounded-sm p-3 overflow-x-auto no-scrollbar">
                           {draft.description}
                         </pre>
                       )}
@@ -2632,7 +2620,7 @@ function LinkRunTranscript({
       )}
 
       {/* transcript */}
-      <div className="flex-1 overflow-auto px-4 pb-4 space-y-4">
+      <div className="flex-1 overflow-auto px-4 pb-4 space-y-4 no-scrollbar">
         {loading ? (
           <div className="text-xs text-muted-foreground animate-pulse">Loading transcript...</div>
         ) : transcript.length === 0 ? (

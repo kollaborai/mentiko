@@ -184,7 +184,7 @@ export function TaskAttemptsPanel({ taskId }: { taskId: string }) {
       <div className="rounded-sm bg-muted p-2.5">
         <div className="grid items-start gap-3 xl:grid-cols-[260px_minmax(0,1fr)]">
           <div className="self-start rounded-sm bg-background/45 p-1">
-            <div className="max-h-[340px] overflow-y-auto pr-1">
+            <div className="max-h-[340px] overflow-y-auto pr-1 no-scrollbar">
               {orderedAttempts.map((attempt) => {
                 const selected = selectedAttempt?.runId === attempt.runId;
                 const label = labelFor(attempt.kind);
