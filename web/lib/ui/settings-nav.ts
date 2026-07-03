@@ -2,10 +2,11 @@ import type { ComponentType } from "react";
 import {
   CategoryFilled, UserFilled, ColorSwatchFilled, Element3Filled, NotificationFilled,
   LockFilled, SecurityFilled, ShieldTickFilled, BotMessageSquare, SmsFilled,
-  ExportFilled, PeopleFilled, Setting2Filled, DocumentTextFilled, CommandSquareFilled,
+  ExportFilled, PeopleFilled, Setting2Filled, DocumentTextFilled,
   ChartFilled, ActivityFilled, TrendUpFilled, KeyFilled,
   MagicStarFilled, JudgeFilled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 type SettingsIcon = ComponentType<{ className?: string }>;
 
@@ -65,7 +66,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
       { id: "system", label: "System", href: "/settings/system", icon: Setting2Filled, inSidebar: true, inQuickMenu: true },
       { id: "logs", label: "Logs", href: "/settings/logs", icon: DocumentTextFilled, inSidebar: true, inQuickMenu: true },
       { id: "audit", label: "Audit Trail", href: "/settings/audit", icon: ShieldTickFilled, inSidebar: true, inQuickMenu: false },
-      { id: "pty", label: "PTY Sessions", href: "/settings/pty", icon: CommandSquareFilled, inSidebar: true, inQuickMenu: true },
+      { id: "pty", label: "PTY Sessions", href: "/settings/pty", icon: TerminalIcon, inSidebar: true, inQuickMenu: true },
       { id: "metrics", label: "Metrics", href: "/settings/metrics", icon: ChartFilled, inSidebar: true, inQuickMenu: true },
       { id: "agent-health", label: "Agent Health", href: "/settings/agent-health", icon: ActivityFilled, inSidebar: true, inQuickMenu: true },
       { id: "performance", label: "Performance", href: "/settings/performance", icon: TrendUpFilled, inSidebar: true, inQuickMenu: true },

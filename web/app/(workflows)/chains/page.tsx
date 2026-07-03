@@ -13,12 +13,13 @@ import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import Link from "next/link";
 import {
   PlayFilled, DocumentDownloadFilled, DocumentUploadFilled, GlobalFilled, Edit2Filled,
-  ArrowDown2Filled, ClockFilled, ArrowLeftFilled, TrashFilled,
+  ArrowDown2Filled, ClockFilled, TrashFilled,
   TickCircleFilled, CloseCircleFilled, InfoCircleFilled, StopCircleFilled, CopyFilled,
   DocumentCopyFilled, More2Filled,
 } from "@aliimam/icons";
 import { LinkFilled, AddFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
+import { BackButton } from "@/components/ui/back-button";
 import EntropyBanner from "@/components/ui/entropy-banner";
 import { BotMessageSquare, RouteSquareFilled, CategoryFilled } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -1093,87 +1094,8 @@ function ChainsPageContent() {
             <EditChainPanel chainIdProp={selected.id} onBack={() => { setEditing(false); fetchChains(); }} />
           ) : (
             <>
-              {/* sticky action bar — always visible regardless of content width */}
-              <div className="sticky top-0 z-10 bg-muted dark:bg-background border-b border-foreground/5 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  {/* mobile back */}
-                  <button onClick={handleBackToList} className="p-1 -ml-1 touch-manipulation md:hidden">
-                    <ArrowLeftFilled className="h-4 w-4" />
-                  </button>
-                  <h2 className="text-sm font-semibold truncate">Chain</h2>
-                </div>
-                <div className="relative flex items-center gap-1.5 shrink-0">
-                  {/* overflow menu */}
-                  <div className="relative" ref={overflowMenuRef}>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0"
-                      onClick={() => setShowOverflowMenu(!showOverflowMenu)}
-                    >
-                      <More2Filled className="h-3.5 w-3.5" />
-                    </Button>
-                    {showOverflowMenu && (
-                      <div className="absolute right-0 top-full mt-1 bg-card rounded-md overflow-hidden min-w-[168px] z-50">
-                        {/* export — inline expand */}
-                        <div ref={exportMenuRef}>
-                          <button
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
-                            onClick={() => setShowExportMenu(!showExportMenu)}
-                          >
-                            <DocumentDownloadFilled className="h-3 w-3 text-foreground/50" />
-                            Export
-                            <ArrowDown2Filled className={`h-3 w-3 ml-auto text-foreground/30 transition-transform ${showExportMenu ? "rotate-180" : ""}`} />
-                          </button>
-                          {showExportMenu && (
-                            <div className="bg-muted/40">
-                              <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "json")}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />JSON
-                              </button>
-                              <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "markdown")}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />Markdown
-                              </button>
-                              <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "yaml")}>
-                                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />YAML
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        <Link href={`/chains/${encodeURIComponent(selected.id)}/compare`}>
-                          <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2">
-                            <LinkFilled className="h-3 w-3 text-foreground/50" />
-                            Compare
-                          </button>
-                        </Link>
-                        {publishStatus?.published && publishStatus.chainId === selected.id ? (
-                          <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2 text-green-400" onClick={handleUnpublish}>
-                            <GlobalFilled className="h-3 w-3" />
-                            Published
-                          </button>
-                        ) : (
-                          <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleOpenPublish}>
-                            <GlobalFilled className="h-3 w-3 text-foreground/50" />
-                            Publish
-                          </button>
-                        )}
-                        <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleDuplicate}>
-                          <DocumentCopyFilled className="h-3 w-3 text-foreground/50" />
-                          Duplicate
-                        </button>
-                        <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleOpenTemplateModal}>
-                          <CopyFilled className="h-3 w-3 text-foreground/50" />
-                          Save as Template
-                        </button>
-                        <div className="border-t border-foreground/10 my-0.5" />
-                        <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2 text-red-400" onClick={() => { setShowDeleteModal(true); setShowOverflowMenu(false); }}>
-                          <TrashFilled className="h-3 w-3" />
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              {/* mobile back */}
+              <BackButton onBack={handleBackToList} hideFrom="md" className="px-3 pt-2 mb-1" />
 
               {/* scrollable body */}
               <div className="p-3 md:p-4 w-full">
@@ -1194,6 +1116,75 @@ function ChainsPageContent() {
                         <PlayFilled className="h-3 w-3" />
                         <span className="ml-1">Run</span>
                       </Button>
+                      {/* overflow menu */}
+                      <div className="relative" ref={overflowMenuRef}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0"
+                          onClick={() => setShowOverflowMenu(!showOverflowMenu)}
+                        >
+                          <More2Filled className="h-3.5 w-3.5" />
+                        </Button>
+                        {showOverflowMenu && (
+                          <div className="absolute right-0 top-full mt-1 bg-card rounded-md overflow-hidden min-w-[168px] z-50">
+                            {/* export — inline expand */}
+                            <div ref={exportMenuRef}>
+                              <button
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
+                                onClick={() => setShowExportMenu(!showExportMenu)}
+                              >
+                                <DocumentDownloadFilled className="h-3 w-3 text-foreground/50" />
+                                Export
+                                <ArrowDown2Filled className={`h-3 w-3 ml-auto text-foreground/30 transition-transform ${showExportMenu ? "rotate-180" : ""}`} />
+                              </button>
+                              {showExportMenu && (
+                                <div className="bg-muted/40">
+                                  <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "json")}>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />JSON
+                                  </button>
+                                  <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "markdown")}>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />Markdown
+                                  </button>
+                                  <button className="w-full text-left pl-7 pr-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2" onClick={() => handleExport(selected, "yaml")}>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />YAML
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <Link href={`/chains/${encodeURIComponent(selected.id)}/compare`}>
+                              <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2">
+                                <LinkFilled className="h-3 w-3 text-foreground/50" />
+                                Compare
+                              </button>
+                            </Link>
+                            {publishStatus?.published && publishStatus.chainId === selected.id ? (
+                              <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2 text-green-400" onClick={handleUnpublish}>
+                                <GlobalFilled className="h-3 w-3" />
+                                Published
+                              </button>
+                            ) : (
+                              <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleOpenPublish}>
+                                <GlobalFilled className="h-3 w-3 text-foreground/50" />
+                                Publish
+                              </button>
+                            )}
+                            <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleDuplicate}>
+                              <DocumentCopyFilled className="h-3 w-3 text-foreground/50" />
+                              Duplicate
+                            </button>
+                            <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2" onClick={handleOpenTemplateModal}>
+                              <CopyFilled className="h-3 w-3 text-foreground/50" />
+                              Save as Template
+                            </button>
+                            <div className="border-t border-foreground/10 my-0.5" />
+                            <button className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2 text-red-400" onClick={() => { setShowDeleteModal(true); setShowOverflowMenu(false); }}>
+                              <TrashFilled className="h-3 w-3" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {selected.lastRun && (
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">

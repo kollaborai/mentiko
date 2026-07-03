@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import {
   ArrowLeft2Filled,
-  CommandSquareFilled,
   KeyFilled,
 } from "@aliimam/icons";
 
@@ -16,6 +15,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { TerminalAuthOption } from "./terminal-auth-option";
 
 interface KollabAuthProps {
@@ -104,13 +104,13 @@ export function KollabAuth({
 
   const options: {
     key: AuthMethod;
-    icon: typeof CommandSquareFilled;
+    icon: typeof TerminalIcon;
     label: string;
     desc: string;
   }[] = [
     {
       key: "terminal",
-      icon: CommandSquareFilled,
+      icon: TerminalIcon,
       label: "open in terminal",
       desc: "runs kollab --login openai",
     },

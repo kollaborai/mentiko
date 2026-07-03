@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { CommandSquareFilled } from "@aliimam/icons";
 import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 export { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 
@@ -74,7 +74,7 @@ export function TerminalAuthOption({ tool }: TerminalAuthOptionProps) {
         onClick={launch}
         className="flex items-center gap-2 px-3 py-2 rounded-md bg-card hover:bg-accent text-xs transition-colors w-full"
       >
-        <CommandSquareFilled className="h-4 w-4 text-foreground/50" />
+        <TerminalIcon className="h-4 w-4 text-foreground/50" />
         open terminal & sign in
       </button>
     </div>

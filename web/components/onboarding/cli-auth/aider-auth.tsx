@@ -6,7 +6,6 @@ import {
   ArrowLeft2Filled,
   TickCircleFilled,
   KeyFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { ClaudeAI, OpenAI as OpenAILogo, GoogleGemini } from "@aliimam/logos";
 import { motion } from "motion/react";
@@ -14,6 +13,7 @@ import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { SecretForm } from "@/components/secrets/secret-form";
 import { getDefaultAgentConfigIdForTool, PROVIDER_CREDENTIALS } from "@/lib/agents/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface AiderAuthProps {
   onSave: (config: {
@@ -168,7 +168,7 @@ export function AiderAuth({ onSave, onBack, backLabel }: AiderAuthProps) {
           },
           {
             key: "terminal" as AuthMethod,
-            icon: CommandSquareFilled,
+            icon: TerminalIcon,
             label: "open in terminal",
             desc: "run auth interactively in the terminal",
           },

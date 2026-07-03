@@ -7,7 +7,8 @@ import { getApiErrorMessage } from "@/lib/api/api-client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { PlayFilled as Play, StopFilled as Square, CloseCircleFilled as X, RotateFilled as Loader2, CommandSquareFilled as Terminal, ExportFilled as ExternalLink } from "@aliimam/icons";
+import { PlayFilled as Play, StopFilled as Square, CloseCircleFilled as X, RotateFilled as Loader2, ExportFilled as ExternalLink } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 // Flexible Chain type to accept different Chain interfaces across the app
 interface Chain {
@@ -231,7 +232,7 @@ export function TestRunPanel({ chain, onClose, agentProfileId, workspaceId, work
       <div className="flex items-center justify-between px-4 py-2 border-b border-foreground/5 shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <Terminal className="h-4 w-4 text-foreground/60" />
+            <TerminalIcon className="h-4 w-4 text-foreground/60" />
             <span className="text-sm font-medium">Test Run</span>
           </div>
           {getStatusBadge()}

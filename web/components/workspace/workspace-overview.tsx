@@ -5,7 +5,6 @@ import {
   MonitorFilled as HardDrive,
   GlobalFilled as Globe,
   BoxFilled as Container,
-  CommandSquareFilled as Terminal,
   CodeFilled as Code,
   PlayFilled as Play,
   FolderOpenFilled as FolderOpen,
@@ -13,6 +12,7 @@ import {
   Link2Filled as Link2,
   FlashFilled as Zap,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { Button } from "@/components/ui/button";
 import { useSharedRuns } from "@/lib/runs/runs-store";
 import type { Workspace } from "@/lib/workspaces/workspace-storage";
@@ -152,7 +152,7 @@ export function WorkspaceOverview({
               el?.click();
             }}
           >
-            <Terminal className="h-3.5 w-3.5" />
+            <TerminalIcon className="h-3.5 w-3.5" />
             Open Terminal
           </Button>
           <Button

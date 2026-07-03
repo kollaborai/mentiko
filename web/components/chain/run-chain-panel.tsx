@@ -20,7 +20,6 @@ import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import type { AgentProfile } from "@/lib/types";
 import {
   CloseCircleFilled,
-  CommandSquareFilled,
   ClockFilled,
   ChartFilled,
   FolderOpenFilled,
@@ -34,6 +33,7 @@ import {
   Webhook as WebhookOff,
   Warning2Filled as Target,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 // ============================================================
 // types
@@ -404,7 +404,7 @@ function TerminalOutput({ sessionStates }: { runId: string | null; sessionStates
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between p-3 bg-accent">
         <div className="flex items-center gap-2">
-          <CommandSquareFilled className="h-4 w-4 text-foreground/60" />
+          <TerminalIcon className="h-4 w-4 text-foreground/60" />
           <span className="text-sm">terminal output</span>
         </div>
         {selectedSession && (
@@ -846,7 +846,7 @@ export function RunChainPanel({ chainId, onClose }: { chainId: string; onClose: 
                   value="terminal"
                   className="px-3 text-xs"
                 >
-                  <CommandSquareFilled className="h-3.5 w-3.5 mr-1.5" />
+                  <TerminalIcon className="h-3.5 w-3.5 mr-1.5" />
                   terminal
                 </TabsTrigger>
                 <TabsTrigger

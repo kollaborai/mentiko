@@ -3,11 +3,11 @@
 import { Button } from "@/components/ui/button";
 import {
   FlashCircleFilled,
-  CommandSquareFilled,
   MagicStarFilled,
   ArrowRight2Filled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface WelcomeStepProps {
   onNext: () => void;
@@ -20,7 +20,7 @@ const features = [
     description: "one agent reviews, another implements, another tests",
   },
   {
-    icon: CommandSquareFilled,
+    icon: TerminalIcon,
     title: "real agent sessions",
     description: "each agent runs in its own terminal with full tool access",
   },

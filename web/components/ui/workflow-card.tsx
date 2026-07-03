@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 import { StatusBadge, type Status } from "@/components/common/status-badge"
-import { ClockFilled as Clock, FlashFilled as Zap, CommandSquareFilled as Terminal, PeopleFilled as Users } from "@aliimam/icons"
+import { ClockFilled as Clock, FlashFilled as Zap, PeopleFilled as Users } from "@aliimam/icons"
+import { TerminalIcon } from "@/components/ui/terminal-icon"
 import { TimeAgo } from "@/components/shared/time-ago"
 import type { ReactNode } from "react"
 
@@ -190,7 +191,7 @@ export function WorkflowCard({
           <div className="flex items-start justify-between gap-4 mb-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                {icon || <Terminal className="h-4 w-4 text-foreground/40" />}
+                {icon || <TerminalIcon className="h-4 w-4 text-foreground/40" />}
                 <h3 className="text-base font-medium">{title}</h3>
                 {status && <StatusBadge status={status as Status} size="sm" />}
                 {isRunning && (
@@ -255,7 +256,7 @@ export function WorkflowCard({
               </div>
               <div className="bg-card rounded-md p-2.5">
                 <div className="flex items-center gap-1.5 text-foreground/40 mb-1">
-                  <Terminal className="h-3 w-3" />
+                  <TerminalIcon className="h-3 w-3" />
                   <span className="text-[9px] uppercase">status</span>
                 </div>
                 <div className="text-xs capitalize">{status}</div>
@@ -276,7 +277,7 @@ export function WorkflowCard({
                     className="bg-muted rounded-md p-2.5 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-2">
-                      <Terminal className="h-3 w-3 text-foreground/30" />
+                      <TerminalIcon className="h-3 w-3 text-foreground/30" />
                       <span className="text-xs font-medium">
                         {agent.name || agent.id}
                       </span>

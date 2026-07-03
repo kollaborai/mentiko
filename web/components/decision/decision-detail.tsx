@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  ArrowLeftFilled,
   TrashFilled,
   SendFilled,
   RefreshFilled,
@@ -15,6 +14,7 @@ import { unwrapApiData } from "@/lib/api/api-client";
 import type { Decision } from "@/lib/decisions/decision-types";
 import { Button } from "@/components/ui/button";
 import { RaisedButton } from "@/components/ui/raised-button";
+import { BackButton } from "@/components/ui/back-button";
 import { WorkflowSidebarSegmentedControl } from "@/components/ui/workflow-sidebar";
 import { GuidedFlowShell } from "@/components/guided-flow/guided-flow-shell";
 import { BriefingCarousel } from "./briefing-carousel";
@@ -590,16 +590,7 @@ export function DecisionDetail({
     <div className="flex h-full flex-col">
       {/* header - always visible */}
       <div className="px-4 py-3 shrink-0">
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            className="md:hidden flex items-center gap-1 text-xs text-foreground/40 mb-2 hover:text-foreground/60"
-          >
-            <ArrowLeftFilled className="h-3.5 w-3.5" />
-            Back
-          </button>
-        )}
+        {onBack && <BackButton onBack={onBack} hideFrom="md" />}
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">

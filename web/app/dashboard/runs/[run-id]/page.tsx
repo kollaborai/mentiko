@@ -26,13 +26,13 @@ import {
   InfoCircleFilled as AlertCircle,
   TickCircleFilled as CheckCircle2,
   CloseCircleFilled as XCircle,
-  CommandSquareFilled as Terminal,
   ArrowDown2Filled as ChevronDown,
   ArrowRight2Filled as ChevronRight,
   CopyFilled as Copy,
   DocumentTextFilled,
   TaskSquareFilled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface Agent {
   id: string;
@@ -559,7 +559,7 @@ export default function RunDetailPage() {
                             ) : (
                               <ChevronRight className="h-4 w-4 text-foreground/40" />
                             )}
-                            <Terminal className="h-4 w-4 text-foreground/40" />
+                            <TerminalIcon className="h-4 w-4 text-foreground/40" />
                             <div>
                               <CardTitle className="text-sm">{agent.name}</CardTitle>
                               <p className="text-[10px] text-foreground/40 font-mono">{agent.id}</p>
@@ -734,7 +734,7 @@ export default function RunDetailPage() {
                     <>
                       <div className="flex items-center justify-between px-4 py-2 border-b border-foreground/5">
                         <div className="flex items-center gap-2">
-                          <Terminal className="h-4 w-4 text-foreground/40" />
+                          <TerminalIcon className="h-4 w-4 text-foreground/40" />
                           <span className="text-sm font-medium">{agent?.name}</span>
                           <StatusBadge status={(agent?.status || "pending") as Status} size="sm" />
                         </div>

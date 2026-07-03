@@ -7,12 +7,12 @@ import {
   GlobalFilled,
   FolderOpenFilled,
   RotateFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { FolderBrowser } from "@/components/workspace/folder-browser";
 import { SecretForm } from "@/components/secrets/secret-form";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api/api-client";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface GitCloneSetupProps {
   onComplete: (data: {
@@ -259,7 +259,7 @@ export function GitCloneSetup({
                 onClick={launchGhTerminal}
                 className="flex items-center gap-2 px-3 py-2 rounded-md bg-card hover:bg-accent text-xs transition-colors w-full"
               >
-                <CommandSquareFilled className="h-4 w-4 text-foreground/50" />
+                <TerminalIcon className="h-4 w-4 text-foreground/50" />
                 open terminal & sign in
               </button>
             </div>

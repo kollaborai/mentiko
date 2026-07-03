@@ -10,6 +10,7 @@ import {
   Rocket,
   Element2Filled,
   LinkFilled,
+  HierarchyFilled,
   BotMessageSquare,
   RouteSquareFilled,
   ClockFilled,
@@ -26,7 +27,6 @@ import {
   ActivityFilled,
   ChartFilled,
   CodeFilled as Code,
-  CommandSquareFilled as Terminal,
   CloudConnectionFilled,
   CategoryFilled,
   Palette,
@@ -35,6 +35,7 @@ import {
   PeopleFilled,
   ShopFilled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 type NavItem = {
   label: string;
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { label: "Chains", href: "/docs/chains", icon: LinkFilled },
+      { label: "Version Control", href: "/docs/chain-version-control", icon: HierarchyFilled },
       { label: "Agents", href: "/docs/agents", icon: BotMessageSquare },
       { label: "Runs", href: "/docs/runs", icon: RouteSquareFilled },
       { label: "Schedules", href: "/docs/schedules", icon: ClockFilled },
@@ -97,7 +99,7 @@ const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { label: "API Reference", href: "/docs/api", icon: Code },
-      { label: "CLI Reference", href: "/docs/config-profiles", icon: Terminal },
+      { label: "CLI Reference", href: "/docs/config-profiles", icon: TerminalIcon },
       { label: "MCP", href: "/docs/mcp", icon: CloudConnectionFilled },
       { label: "Templates", href: "/docs/templates", icon: CategoryFilled },
       { label: "Marketplace", href: "/docs/marketplace", icon: ShopFilled },
@@ -107,7 +109,7 @@ const navGroups: NavGroup[] = [
       { label: "UI Library", href: "/docs/ui-library", icon: Palette },
       { label: "Security", href: "/docs/security", icon: Shield },
       { label: "Icon System", href: "/docs/icon-system", icon: ColorSwatchFilled },
-      { label: "Troubleshooting", href: "/docs/troubleshooting", icon: Terminal },
+      { label: "Troubleshooting", href: "/docs/troubleshooting", icon: TerminalIcon },
     ],
   },
 ];

@@ -73,9 +73,14 @@ jest.mock('@/components/common/status-badge', () => ({
   ),
 }))
 
-// Mock @aliimam/icons (component imports CommandSquareFilled as Terminal, etc.)
+jest.mock('@/components/ui/terminal-icon', () => ({
+  TerminalIcon: ({ className }: { className?: string }) => (
+    <svg data-testid="terminal-icon" className={className} />
+  ),
+}))
+
+// Mock @aliimam/icons for the remaining glyphs used by the card.
 jest.mock('@aliimam/icons', () => ({
-  CommandSquareFilled: ({ className }: { className?: string }) => <svg data-testid="terminal-icon" className={className} />,
   SendFilled: ({ className }: { className?: string }) => <svg data-testid="send-icon" className={className} />,
   StopFilled: ({ className }: { className?: string }) => <svg data-testid="square-icon" className={className} />,
   MaximizeFilled: ({ className }: { className?: string }) => <svg data-testid="maximize-icon" className={className} />,

@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge, type Status } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
-import { CommandSquareFilled as Terminal, SendFilled as Send, StopFilled as Square, MaximizeFilled as Maximize2, DocumentTextFilled as FileText, DocumentCodeFilled as FileJson, Code1Filled as Code2, HierarchyFilled as GitBranch, DocumentTextFilled as Sheet, TextalignLeftFilled as AlignLeft, ImageFilled as Image } from "@aliimam/icons";
+import { SendFilled as Send, StopFilled as Square, MaximizeFilled as Maximize2, DocumentTextFilled as FileText, DocumentCodeFilled as FileJson, Code1Filled as Code2, HierarchyFilled as GitBranch, DocumentTextFilled as Sheet, TextalignLeftFilled as AlignLeft, ImageFilled as Image } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import type { AgentSession as BaseAgentSession } from "@/lib/types";
 import type { ArtifactProduces } from "@/lib/agents/agent-loader";
 
@@ -68,7 +69,7 @@ export function AgentCard({
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-muted-foreground" />
+              <TerminalIcon className="h-4 w-4 text-muted-foreground" />
               <CardTitle className="text-sm font-mono">{session.name}</CardTitle>
             </div>
             {artifacts && artifacts.length > 0 && (

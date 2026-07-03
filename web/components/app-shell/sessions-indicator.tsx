@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CommandSquareFilled } from "@aliimam/icons";
 import { unwrapApiData } from "@/lib/api/api-client";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 export function SessionsIndicator() {
   const [activeCount, setActiveCount] = useState(0);
@@ -42,7 +42,7 @@ export function SessionsIndicator() {
       className="relative flex items-center justify-center w-8 h-8 rounded-md hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
       title={activeCount > 0 ? `${activeCount} active PTY session${activeCount !== 1 ? "s" : ""}` : "Open terminal"}
     >
-      <CommandSquareFilled className="h-4 w-4" />
+      <TerminalIcon className="h-4 w-4" />
       {activeCount > 0 && (
         <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center h-4 min-w-4 px-0.5 rounded-full bg-orange-500 text-[10px] font-semibold text-white leading-none">
           {activeCount > 99 ? "99+" : activeCount}

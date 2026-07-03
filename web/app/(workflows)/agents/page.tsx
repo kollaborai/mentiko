@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from "rea
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useSearchParams } from "next/navigation";
-import { Bot, BotMessageSquare, AddFilled as Plus, MagicStarFilled as Sparkles, ImportFilled as Download, CpuFilled as CpuFilledIcon, LinkFilled, BoxFilled, RouteSquareFilled } from "@aliimam/icons";
+import { Bot, BotMessageSquare, AddFilled as Plus, MagicStarFilled as Sparkles, ImportFilled as Download, LinkFilled, BoxFilled, RouteSquareFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Button } from "@/components/ui/button";
 import {
@@ -245,7 +245,7 @@ function AgentsPageContent() {
       <PageBanner
         title="Agents"
         subtitle="AI agent library with role-based specialization. Browse, create, import, and generate agents for use in chains and standalone workflows."
-        icon={CpuFilledIcon}
+        icon={BotMessageSquare}
         sectionColor="#b07ee8"
         actions={[
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
@@ -254,7 +254,7 @@ function AgentsPageContent() {
           { label: "Marketplace", href: "/marketplace/agents", icon: BotMessageSquare, iconColor: "#5cb88a" },
         ]}
         docs={[
-          { label: "Agents Guide", href: "/docs/agents", icon: CpuFilledIcon },
+          { label: "Agents Guide", href: "/docs/agents", icon: BotMessageSquare },
         ]}
       />
 

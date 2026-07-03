@@ -12,11 +12,8 @@ import { useState, useCallback } from "react";
 import { TerminalViewer, type TerminalStatus } from "./terminal-viewer";
 import { useTerminalWsConnection } from "./use-terminal-ws-connection";
 import { Button } from "@/components/ui/button";
-import {
-  Terminal as TerminalIcon,
-  RefreshFilled as RefreshCw,
-  CloseCircleFilled as XCircle,
-} from "@aliimam/icons";
+import { RefreshFilled as RefreshCw, CloseCircleFilled as XCircle } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface TerminalPanelProps {
   session: string;

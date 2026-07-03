@@ -6,7 +6,6 @@ import {
   ArrowRight2Filled,
   PlayFilled,
   ShopFilled,
-  CommandSquareFilled,
   SettingFilled,
   HomeFilled,
   InfoCircleFilled,
@@ -14,6 +13,7 @@ import {
 } from "@aliimam/icons";
 import { motion } from "motion/react";
 import { seedAndOpenSampleChain } from "@/lib/onboarding/seed-sample-chain";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface ConfiguredTool {
   tool: string;
@@ -161,7 +161,7 @@ const ACTIONS: ActionCard[] = [
     route: "/marketplace",
   },
   {
-    icon: CommandSquareFilled,
+    icon: TerminalIcon,
     title: "open your workspace",
     description: "terminal + editor for your project",
     route: "/code",

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
-  CommandSquareFilled,
   CloseCircleFilled,
   AddFilled,
   RefreshFilled,
@@ -18,6 +17,7 @@ import {
   ColorSwatchFilled,
   DangerFilled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { TerminalViewer } from "@/components/terminal/terminal-viewer";
 import { useTerminalWsConnection } from "@/components/terminal/use-terminal-ws-connection";
@@ -477,11 +477,11 @@ export function FloatingTerminalPanel() {
               )}
               title="Sessions"
             >
-              <CommandSquareFilled className="h-4 w-4" />
+              <TerminalIcon className="h-4 w-4" />
             </button>
           )}
           <div className="flex items-center gap-2">
-            {!isMobile && <CommandSquareFilled className="h-4 w-4 text-cyan-400/80" />}
+            {!isMobile && <TerminalIcon className="h-4 w-4 text-cyan-400/80" />}
             <span className="text-xs font-bold tracking-tight text-foreground/80 dark:text-white/80 truncate max-w-[120px] sm:max-w-none">
               {activeSession || "Terminal"}
             </span>
@@ -657,7 +657,7 @@ export function FloatingTerminalPanel() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-44">
                         <DropdownMenuItem onSelect={() => attachSession(s.name)}>
-                          <CommandSquareFilled className="h-3.5 w-3.5" />
+                          <TerminalIcon className="h-3.5 w-3.5" />
                           Open
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => togglePin(s.name)}>
@@ -731,7 +731,7 @@ export function FloatingTerminalPanel() {
             </div>
           ) : !activeSession ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <CommandSquareFilled className="h-8 w-8 text-foreground/10 dark:text-white/10" />
+              <TerminalIcon className="h-8 w-8 text-foreground/10 dark:text-white/10" />
               <p className="text-xs text-foreground/30 dark:text-white/30">Select a session or start a new one</p>
               <button
                 onClick={spawnNew}

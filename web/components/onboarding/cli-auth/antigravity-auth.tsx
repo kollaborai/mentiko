@@ -8,7 +8,6 @@ import {
   CloseCircleFilled,
   Link2Filled,
   KeyFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -19,6 +18,7 @@ import {
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
 import { TerminalAuthOption } from "./terminal-auth-option";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface AntigravityAuthProps {
   onSave: (config: {
@@ -180,7 +180,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
     },
     {
       key: "terminal",
-      icon: CommandSquareFilled,
+      icon: TerminalIcon,
       label: "open in terminal",
       desc: "run auth interactively in the terminal",
     },

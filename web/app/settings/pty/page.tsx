@@ -4,10 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { RefreshFilled, CommandSquareFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, RotateLeftFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
+import { RefreshFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, RotateLeftFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { cn } from "@/lib/utils";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface PtySession {
   name: string;
@@ -303,7 +304,7 @@ export default function PtySessionsPage() {
       <PageBanner
         title="PTY Sessions"
         subtitle="Manage active and dead PTY manager sessions. View output, kill, or restart singleton processes."
-        icon={CommandSquareFilled}
+        icon={TerminalIcon}
         sectionColor="#a0927b"
         actions={[
           { label: "System Logs", href: "/settings/logs", icon: DocumentTextFilled, iconColor: "#a0927b" },
@@ -338,7 +339,7 @@ export default function PtySessionsPage() {
             </>
           ) : sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <CommandSquareFilled className="h-8 w-8 text-foreground/20 mb-3" />
+              <TerminalIcon className="h-8 w-8 text-foreground/20 mb-3" />
               <p className="text-sm text-foreground/40">No PTY sessions found.</p>
               <p className="text-xs text-foreground/25 mt-1">
                 PTY manager may not be running.

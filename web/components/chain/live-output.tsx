@@ -6,7 +6,8 @@ import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshFilled as RefreshCw, CommandSquareFilled as Terminal, CopyFilled as Copy } from "@aliimam/icons";
+import { RefreshFilled as RefreshCw, CopyFilled as Copy } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 
 interface LiveOutputProps {
@@ -55,7 +56,7 @@ export function LiveOutput({
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Terminal className="h-4 w-4" />
+            <TerminalIcon className="h-4 w-4" />
             {session}
           </CardTitle>
           <div className="flex gap-1">

@@ -28,6 +28,7 @@ jest.mock("@aliimam/icons", () => {
   return {
     RefreshFilled: icon("refresh"),
     CommandSquareFilled: icon("command-square"),
+    Code1Filled: icon("code1-filled"),
     ArrowDown2Filled: icon("arrow-down"),
     ArrowUp2Filled: icon("arrow-up"),
     CloseCircleFilled: icon("close-circle"),

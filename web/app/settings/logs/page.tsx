@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshFilled, InfoCircleFilled, DangerFilled, FilterFilled, DocumentTextFilled, CommandSquareFilled, Setting2Filled } from "@aliimam/icons";
+import { RefreshFilled, InfoCircleFilled, DangerFilled, FilterFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import type { LogLevel, LogEntry } from "@/lib/system/system-logger";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 const LEVEL_COLORS: Record<LogLevel, string> = {
   error: "text-red-400",
@@ -95,7 +96,7 @@ export default function LogsSettingsPage() {
         icon={DocumentTextFilled}
         sectionColor="#a0927b"
         actions={[
-          { label: "PTY Sessions", href: "/settings/pty", icon: CommandSquareFilled, iconColor: "#a0927b" },
+          { label: "PTY Sessions", href: "/settings/pty", icon: TerminalIcon, iconColor: "#a0927b" },
           { label: "System", href: "/settings/system", icon: Setting2Filled, iconColor: "#a0927b" },
           { label: "Refresh", onClick: load, icon: RefreshFilled },
         ]}

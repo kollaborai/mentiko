@@ -8,7 +8,6 @@ import {
   CloseCircleFilled,
   Link2Filled,
   KeyFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -20,6 +19,7 @@ import {
 } from "@/lib/agents/provider-config";
 import { getTerminalAuthCommand } from "@/lib/agents/agent-provider-catalog";
 import { TerminalAuthOption } from "./terminal-auth-option";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface CodexAuthProps {
   onSave: (config: {
@@ -185,7 +185,7 @@ export function CodexAuth({ onSave, onBack, detectedVersion, initialAuthMethod, 
     },
     {
       key: "terminal",
-      icon: CommandSquareFilled,
+      icon: TerminalIcon,
       label: "open in terminal",
       desc: "run auth interactively in the terminal",
     },

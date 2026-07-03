@@ -6,13 +6,13 @@ import {
   RefreshFilled,
   ClockFilled as Clock,
   FlashFilled as Power,
-  CommandSquareFilled as Terminal,
   UserFilled as User,
   LinkFilled as Workflow,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api/api-client";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface AgentSession {
   name: string;
@@ -165,7 +165,7 @@ export default function AgentHealthPage() {
         </div>
       ) : (error === "pty-manager not found" || (error && sessions.length === 0 && error.includes("not found"))) ? (
         <div className="bg-card rounded-md p-8 text-center">
-          <Terminal className="h-8 w-8 mx-auto mb-3 text-foreground/15" />
+          <TerminalIcon className="h-8 w-8 mx-auto mb-3 text-foreground/15" />
           <p className="text-sm text-foreground/40">No active sessions</p>
           <p className="text-xs text-foreground/25 mt-1">Start a chain run to see agent sessions here.</p>
         </div>
@@ -179,7 +179,7 @@ export default function AgentHealthPage() {
           <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-card rounded-md p-4">
               <div className="flex items-center gap-2 mb-1">
-                <Terminal className="h-4 w-4 text-foreground/60" />
+                <TerminalIcon className="h-4 w-4 text-foreground/60" />
                 <span className="text-xs text-foreground/60">Total Sessions</span>
               </div>
               <div className="text-2xl font-semibold">{sessions.length}</div>

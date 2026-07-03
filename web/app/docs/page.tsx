@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Search,
   LinkFilled,
+  HierarchyFilled,
   BotMessageSquare,
   RouteSquareFilled,
   ArrowRight,
@@ -23,7 +24,6 @@ import {
   ActivityFilled,
   ChartFilled,
   CodeFilled as Code,
-  CommandSquareFilled as Terminal,
   CategoryFilled,
   Palette,
   Shield,
@@ -35,6 +35,7 @@ import {
   Rocket,
   CloudConnectionFilled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { PageBanner } from "@/components/ui/page-banner";
 
 type DocCard = {
@@ -81,6 +82,7 @@ const categories: Category[] = [
     color: "#b07ee8",
     items: [
       { label: "Chains", href: "/docs/chains", description: "agent pipeline definitions", icon: LinkFilled, color: "#b07ee8" },
+      { label: "Version Control", href: "/docs/chain-version-control", description: "per-chain git history, branches, and merges", icon: HierarchyFilled, color: "#b07ee8" },
       { label: "Agents", href: "/docs/agents", description: "ai workers with prompts and tools", icon: BotMessageSquare, color: "#b07ee8" },
       { label: "Runs", href: "/docs/runs", description: "chain execution and monitoring", icon: RouteSquareFilled, color: "#5cb88a" },
       { label: "Schedules", href: "/docs/schedules", description: "cron-based chain triggers", icon: ClockFilled, color: "#a0927b" },
@@ -116,7 +118,7 @@ const categories: Category[] = [
     color: "#a0927b",
     items: [
       { label: "API Reference", href: "/docs/api", description: "rest api endpoints", icon: Code, color: "#5b9ef5" },
-      { label: "CLI Reference", href: "/docs/config-profiles", description: "command line interface", icon: Terminal, color: "#5b9ef5" },
+      { label: "CLI Reference", href: "/docs/config-profiles", description: "command line interface", icon: TerminalIcon, color: "#5b9ef5" },
       { label: "Templates", href: "/docs/templates", description: "chain template library", icon: CategoryFilled, color: "#f59e0b" },
       { label: "UI Library", href: "/docs/ui-library", description: "component documentation", icon: Palette, color: "#b07ee8" },
       { label: "Environment", href: "/docs/environment", description: "platform variables and operator config", icon: MonitorFilled, color: "#5b9ef5" },

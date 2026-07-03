@@ -8,7 +8,6 @@ import {
   CloseCircleFilled,
   KeyFilled,
   GlobalFilled,
-  CommandSquareFilled,
 } from "@aliimam/icons";
 import { motion } from "motion/react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -18,6 +17,7 @@ import {
   getAgentConfigOptionsForTool,
   getDefaultAgentConfigIdForTool,
 } from "@/lib/agents/provider-config";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { TerminalAuthOption } from "./terminal-auth-option";
 import { WebViewport } from "@/components/ui/web-viewport";
 
@@ -229,7 +229,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
     },
     {
       key: "terminal",
-      icon: CommandSquareFilled,
+      icon: TerminalIcon,
       label: "open in terminal",
       desc: "run auth interactively in the terminal",
     },

@@ -9,18 +9,18 @@ import { WorkspaceEditor } from "@/components/workspace/workspace-editor";
 import { WorkspaceSettings } from "@/components/workspace/workspace-settings";
 import {
   CategoryFilled,
-  CommandSquareFilled,
   CodeFilled,
   Setting2Filled,
 } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 type Tab = "overview" | "terminal" | "editor" | "settings";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview", label: "Overview", icon: <CategoryFilled className="h-3.5 w-3.5" /> },
-  { id: "terminal", label: "Terminal", icon: <CommandSquareFilled className="h-3.5 w-3.5" /> },
+  { id: "terminal", label: "Terminal", icon: <TerminalIcon className="h-3.5 w-3.5" /> },
   { id: "editor", label: "Editor", icon: <CodeFilled className="h-3.5 w-3.5" /> },
   { id: "settings", label: "Settings", icon: <Setting2Filled className="h-3.5 w-3.5" /> },
 ];

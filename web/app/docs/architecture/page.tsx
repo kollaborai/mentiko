@@ -1,6 +1,7 @@
 "use client";
 
-import { CommandSquareFilled, BotMessageSquare, Data2Filled, GlobalFilled, Element2Filled, DocumentTextFilled } from "@aliimam/icons";
+import { BotMessageSquare, Data2Filled, GlobalFilled, Element2Filled, DocumentTextFilled } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { PageBanner } from "@/components/ui/page-banner";
 
 const layers = [
@@ -15,7 +16,7 @@ const layers = [
     ],
   },
   {
-    icon: CommandSquareFilled,
+    icon: TerminalIcon,
     name: "Orchestration Layer",
     description: "bash scripts + Node.js modules that coordinate chain execution",
     items: [

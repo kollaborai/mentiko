@@ -17,7 +17,6 @@ import {
   RouteSquareFilled,
   ClockFilled,
   MagicStarFilled,
-  CommandSquareFilled,
   DangerFilled,
   HomeFilled,
   MonitorFilled,
@@ -30,6 +29,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { SETTINGS_SIDEBAR_GROUPS } from "@/lib/ui/settings-nav";
 import { getPillNavShineGradient, usePillNavPreferences } from "@/lib/ui/pill-nav-preferences";
 import { useGlobalSearch, type SearchFilter, type SearchResult } from "@/hooks/use-global-search";
@@ -366,7 +366,7 @@ function StartPageBriefing({ onNavigate }: { onNavigate: (url: string) => void }
     { label: "New Chain", href: "/chains", icon: LinkFilled, color: "text-purple-400" },
     { label: "New Task", href: "/tasks", icon: TaskSquareFilled, color: "text-blue-400" },
     { label: "Decisions", href: "/tasks?type=decision", icon: JudgeFilled, color: "text-blue-400" },
-    { label: "Terminal", href: "/workspaces", icon: CommandSquareFilled, color: "text-foreground/50" },
+    { label: "Terminal", href: "/workspaces", icon: TerminalIcon, color: "text-foreground/50" },
     { label: "Generate", href: "/generation", icon: MagicStarFilled, color: "text-purple-400" },
   ];
 

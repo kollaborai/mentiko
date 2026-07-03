@@ -31,6 +31,7 @@ jest.mock("@aliimam/icons", () => {
     CloudConnectionFilled: Icon,
     ColorSwatchFilled: Icon,
     CommandSquareFilled: Icon,
+    Code1Filled: Icon,
     DocumentTextFilled: Icon,
     Element3Filled: Icon,
     ExportFilled: Icon,

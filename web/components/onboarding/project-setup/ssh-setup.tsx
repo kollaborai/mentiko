@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft2Filled,
-  CommandSquareFilled,
   RotateFilled,
   AddFilled,
   ShieldTickFilled,
@@ -12,6 +11,7 @@ import {
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api/api-client";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface SshSetupProps {
   onComplete: (data: {
@@ -335,7 +335,7 @@ export function SshSetup({ onComplete, onBack }: SshSetupProps) {
           ) : (
             <>
               create workspace
-              <CommandSquareFilled className="h-4 w-4" />
+              <TerminalIcon className="h-4 w-4" />
             </>
           )}
         </Button>

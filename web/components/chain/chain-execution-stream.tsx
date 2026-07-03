@@ -13,9 +13,9 @@ import {
   ClockFilled as Clock,
   ArrowDown2Filled as ChevronDown,
   ArrowRight2Filled as ChevronRight,
-  CommandSquareFilled as Terminal,
 } from "@aliimam/icons";
 import type { StreamEvent } from "@/hooks/use-websocket";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 export interface ChainStep {
   id: string;
@@ -153,7 +153,7 @@ export function ChainExecutionStream({
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Terminal className="h-4 w-4 text-foreground/50" />
+            <TerminalIcon className="h-4 w-4 text-foreground/50" />
             <div>
               <CardTitle className="text-sm">{chainName}</CardTitle>
               <p className="text-xs text-foreground/40 mt-0.5">
