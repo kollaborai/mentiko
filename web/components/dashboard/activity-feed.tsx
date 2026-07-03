@@ -97,12 +97,10 @@ export const ActivityFeed = memo(function ActivityFeed({ className }: ActivityFe
   const [loading, setLoading] = useState(true);
 
   const fetchActivity = useCallback(async () => {
-    try {
-      const [eventsRes] = await Promise.all([
-        fetch("/api/events?" + Date.now()),
-      ]);
+    const items: ActivityItem[] = [];
 
-      const items: ActivityItem[] = [];
+    try {
+      const eventsRes = await fetch("/api/events?" + Date.now());
 
       if (eventsRes.ok) {
         const eventsData = unwrapApiData<EventsResponse>(await eventsRes.json());
@@ -110,36 +108,38 @@ export const ActivityFeed = memo(function ActivityFeed({ className }: ActivityFe
           items.push({ type: "event", data: ev });
         });
       }
-
-      // use shared runs instead of a separate fetch
-      sharedRuns.slice(0, 5).forEach((run) => {
-        items.push({ type: "run", data: run as Run });
-      });
-
-      items.sort((a, b) => {
-        const aTime =
-          a.type === "event"
-            ? new Date(a.data.timestamp).getTime()
-            : new Date(a.data.started).getTime();
-        const bTime =
-          b.type === "event"
-            ? new Date(b.data.timestamp).getTime()
-            : new Date(b.data.started).getTime();
-        return bTime - aTime;
-      });
-
-      setActivities(items.slice(0, 8));
-    } catch (e) {
-      console.error("Failed to fetch activity", e);
-    } finally {
-      setLoading(false);
+    } catch {
+      // Events are optional for this dashboard widget; shared runs still render.
     }
+
+    // use shared runs instead of a separate fetch
+    sharedRuns.slice(0, 5).forEach((run) => {
+      items.push({ type: "run", data: run as Run });
+    });
+
+    items.sort((a, b) => {
+      const aTime =
+        a.type === "event"
+          ? new Date(a.data.timestamp).getTime()
+          : new Date(a.data.started).getTime();
+      const bTime =
+        b.type === "event"
+          ? new Date(b.data.timestamp).getTime()
+          : new Date(b.data.started).getTime();
+      return bTime - aTime;
+    });
+
+    setActivities(items.slice(0, 8));
+    setLoading(false);
   }, [sharedRuns]);
 
   useEffect(() => {
-    fetchActivity();
+    const initialFetch = setTimeout(fetchActivity, 0);
     const interval = setInterval(fetchActivity, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(interval);
+    };
   }, [workspacePath, fetchActivity]);
 
   return (
