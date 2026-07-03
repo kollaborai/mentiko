@@ -20,6 +20,9 @@ jest.mock('@aliimam/icons', () => ({
   CommandSquareFilled: ({ className }: { className?: string }) => (
     <svg data-testid="command-icon" className={className} />
   ),
+  Code1Filled: ({ className }: { className?: string }) => (
+    <svg data-testid="code1-icon" className={className} />
+  ),
   ArrowDown2Filled: ({ className }: { className?: string }) => (
     <svg data-testid="arrow-down-icon" className={className} />
   ),

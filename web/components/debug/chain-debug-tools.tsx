@@ -7,10 +7,10 @@ import { DebugConsole } from "./debug-console";
 import { StateInspector } from "./state-inspector";
 import { Card } from "@/components/ui/card";
 import {
-  CommandSquareFilled,
   ArrowDown2Filled,
   ArrowRight2Filled,
 } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface ChainDebugToolsProps {
   chainId: string;
@@ -132,7 +132,7 @@ export function ChainDebugTools({ chainId, agents, paused = false }: ChainDebugT
     : "no agents available";
 
   return (
-    <Card className="bg-background dark:bg-[#0a0a0a]">
+    <Card className="bg-background dark:bg-[#0a0a0a] gap-0 py-0 overflow-hidden">
       {/* Collapsible header */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -143,8 +143,8 @@ export function ChainDebugTools({ chainId, agents, paused = false }: ChainDebugT
         ) : (
           <ArrowRight2Filled className="h-3 w-3 text-foreground/40" />
         )}
-        <CommandSquareFilled className="h-3.5 w-3.5 text-foreground/40" />
-        <span className="text-xs font-medium">debug tools</span>
+        <TerminalIcon className="h-3 w-3 text-foreground/40" />
+        <span className="text-[10px] uppercase tracking-wide text-foreground/40">debug tools</span>
         {lastStatus && (
           <span className="text-[9px] text-foreground/30 ml-2">
             {lastStatus}
@@ -153,16 +153,14 @@ export function ChainDebugTools({ chainId, agents, paused = false }: ChainDebugT
       </button>
 
       {expanded && (
-        <div className="border-t border-border">
+        <div>
           {/* Help text showing available agents */}
-          <div className="px-3 py-1.5 text-[9px] text-foreground/30 border-b border-border">
+          <div className="mx-3 py-2 text-[9px] text-foreground/30 border-t border-b border-border">
             {helpText}
           </div>
 
           {/* State Inspector */}
-          <div className="border-b border-border">
-            <StateInspector chainId={chainId} paused={paused} />
-          </div>
+          <StateInspector chainId={chainId} paused={paused} />
 
           {/* Debug Console */}
           <DebugConsole onCommand={handleCommand} />

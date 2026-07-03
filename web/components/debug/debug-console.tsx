@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { CommandSquareFilled, SendFilled, ArrowDown2Filled, ArrowUp2Filled } from "@aliimam/icons";
+import { SendFilled, ArrowDown2Filled, ArrowUp2Filled } from "@aliimam/icons";
+import { TerminalIcon } from "@/components/ui/terminal-icon";
 
 interface ConsoleEntry {
   id: string;
@@ -120,10 +121,10 @@ export function DebugConsole({ onCommand, className = "" }: DebugConsoleProps) {
   return (
     <div className={`bg-muted/40 ${collapsed ? "h-9" : "h-48"} ${className}`}>
       {/* header */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
+      <div className="flex items-center justify-between mx-3 py-1.5 border-b border-border">
         <div className="flex items-center gap-2">
-          <CommandSquareFilled className="h-3 w-3 text-foreground/40" />
-          <span className="text-[10px] text-foreground/40">debug console</span>
+        <TerminalIcon className="h-3 w-3 text-foreground/40" />
+          <span className="text-[10px] uppercase tracking-wide text-foreground/40">debug console</span>
           {entries.length > 0 && (
             <span className="text-[9px] text-foreground/30">
               {entries.filter((e) => e.type === "command").length} commands
@@ -147,7 +148,7 @@ export function DebugConsole({ onCommand, className = "" }: DebugConsoleProps) {
           {/* output */}
           <div
             ref={outputRef}
-            className="p-2 h-36 overflow-y-auto font-mono text-[10px] space-y-1"
+            className="px-3 py-2 h-36 overflow-y-auto font-mono text-[10px] space-y-1"
           >
             {entries.length === 0 ? (
               <p className="text-foreground/20 italic">
@@ -169,7 +170,7 @@ export function DebugConsole({ onCommand, className = "" }: DebugConsoleProps) {
           </div>
 
           {/* input */}
-          <div className="flex items-center gap-2 px-2 pb-2">
+          <div className="flex items-center gap-2 px-3 pb-2">
             <span className="text-amber-400/50 text-[10px] font-mono">→</span>
             <input
               ref={inputRef}

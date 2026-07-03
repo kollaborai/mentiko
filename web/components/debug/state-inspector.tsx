@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -220,11 +219,11 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
   };
 
   return (
-    <Card className="bg-background dark:bg-[#0a0a0a]">
-      <div className="p-3 border-b border-border flex items-center justify-between">
+    <div className="bg-background dark:bg-[#0a0a0a]">
+      <div className="mx-3 py-3 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <DataFilled className="h-3.5 w-3.5 text-foreground/40" />
-          <span className="text-xs font-medium">state inspector</span>
+          <DataFilled className="h-3 w-3 text-foreground/40" />
+          <span className="text-[10px] uppercase tracking-wide text-foreground/40">state inspector</span>
           {state && (
             <Badge
               variant="outline"
@@ -412,6 +411,6 @@ export function StateInspector({ chainId, paused, onRefresh }: StateInspectorPro
           </>
         )}
       </div>
-    </Card>
+    </div>
   );
 }
