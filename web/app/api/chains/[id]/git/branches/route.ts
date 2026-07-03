@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { execFileSync } from "child_process";
+import { runGit } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
@@ -17,18 +19,6 @@ interface GitBranch {
   date: string;
   message: string;
   current: boolean;
-}
-
-/**
- * Execute a git command safely using argv-style argument passing.
- * Branch names and other user input are never interpolated into shell strings.
- */
-function runGit(cwd: string, args: string[]): string {
-  return execFileSync("git", args, {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    encoding: "utf-8",
-  });
 }
 
 /**
@@ -60,7 +50,7 @@ export const GET = withErrorHandling(async (
   }
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
 
@@ -109,9 +99,11 @@ export const POST = withErrorHandling(async (
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();

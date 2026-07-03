@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { runGit } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +19,11 @@ export const POST = withErrorHandling(async (
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();
@@ -48,31 +52,20 @@ export const POST = withErrorHandling(async (
   }
 
   // Get current branch before merge
-  const currentBranch = execSync("git branch --show-current", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  }).trim();
+  const currentBranch = runGit(chainDir, ["branch", "--show-current"]);
 
-  // Perform merge
-  const strategyArg = strategy ? `-s ${strategy}` : "";
-
+  // Perform merge. A failure here can mean conflicts (detected below via the
+  // status check) OR a genuine error (unrelated histories, bad ref, dirty tree).
+  // Capture it so a real failure doesn't fall through to the success path.
+  let mergeError: string | null = null;
   try {
-    execSync(`git merge ${strategyArg} ${sourceBranch}`, {
-      cwd: chainDir,
-      stdio: "pipe",
-      encoding: "utf-8",
-    });
-  } catch (_error: unknown) {
-    // merge failed, check for conflicts below
+    runGit(chainDir, ["merge", ...(strategy ? ["-s", strategy] : []), sourceBranch]);
+  } catch (error: unknown) {
+    mergeError = error instanceof Error ? error.message : "merge failed";
   }
 
   // Check for conflicts
-  const statusOutput = execSync("git status --porcelain", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  });
+  const statusOutput = runGit(chainDir, ["status", "--porcelain"]);
 
   const conflictedFiles = statusOutput
     .split("\n")
@@ -133,6 +126,17 @@ export const POST = withErrorHandling(async (
     });
   }
 
+  // Merge command failed but left no conflict markers — a genuine error, not a
+  // conflict. Report it instead of falsely returning success.
+  if (mergeError) {
+    return apiSuccess({
+      status: "error",
+      message: mergeError,
+      source: sourceBranch,
+      target: currentBranch,
+    });
+  }
+
   // Get merge result info
   const mergedChainJsonPath = join(chainDir, "chain.json");
   let mergedChain = null;
@@ -157,9 +161,11 @@ export const DELETE = withErrorHandling(async (
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
 
@@ -170,7 +176,7 @@ export const DELETE = withErrorHandling(async (
     throw new BadRequest("Not a git repository");
   }
 
-  execSync("git merge --abort", { cwd: chainDir, stdio: "pipe" });
+  runGit(chainDir, ["merge", "--abort"]);
 
   return apiSuccess({
     status: "aborted",

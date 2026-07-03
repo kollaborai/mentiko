@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
 import { existsSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { runGit, runGitOptional } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ export const GET = withErrorHandling(async (
   }
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
 
@@ -34,18 +35,10 @@ export const GET = withErrorHandling(async (
   }
 
   // Get current branch
-  const currentBranch = execSync("git branch --show-current", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  }).trim();
+  const currentBranch = runGit(chainDir, ["branch", "--show-current"]);
 
   // Get status
-  const statusOutput = execSync("git status --porcelain", {
-    cwd: chainDir,
-    stdio: "pipe",
-    encoding: "utf-8",
-  });
+  const statusOutput = runGit(chainDir, ["status", "--porcelain"]);
 
   const staged: string[] = [];
   const modified: string[] = [];
@@ -81,22 +74,8 @@ export const GET = withErrorHandling(async (
   let ahead = 0;
   let behind = 0;
   try {
-    ahead = parseInt(
-      execSync("git rev-list --count HEAD..@{u}", {
-        cwd: chainDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim() || "0",
-      10
-    );
-    behind = parseInt(
-      execSync("git rev-list --count @{u}..HEAD", {
-        cwd: chainDir,
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim() || "0",
-      10
-    );
+    ahead = parseInt(runGitOptional(chainDir, ["rev-list", "--count", "HEAD..@{u}"]) || "0", 10);
+    behind = parseInt(runGitOptional(chainDir, ["rev-list", "--count", "@{u}..HEAD"]) || "0", 10);
   } catch {
     // No upstream or error
   }

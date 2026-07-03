@@ -1,9 +1,9 @@
-import { execSync, execFileSync } from "child_process";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { resolveAndValidate, getAllowedRoots } from "@/lib/system/path-validation";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { Unauthorized, Forbidden } from "@/lib/api-errors";
+import { runGit, runGitOptional } from "@/lib/git/exec";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -126,34 +126,17 @@ export interface GitStashShowResult {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
-
-// read-only: swallows errors, returns "" on failure
-function run(cmd: string, cwd: string): string {
-  try {
-    return execSync(cmd, { cwd, encoding: "utf-8", timeout: 10000 }).trim();
-  } catch {
-    return "";
-  }
-}
-
-// mutation: throws on non-zero exit (caller must catch)
-function exec(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf-8", timeout: 10000 }).trim();
-}
-
-// read-only, array form: swallows errors, returns "" on failure.
-// no shell — args (incl. caller-supplied paths) can never be interpreted.
-function runArgs(args: string[], cwd: string): string {
-  try {
-    return execFileSync("git", args, { cwd, encoding: "utf-8", timeout: 10000 }).trim();
-  } catch {
-    return "";
-  }
-}
+// Thin local aliases over @/lib/git/exec. This file historically used
+// exec(args, cwd) / runArgs(args, cwd) with an args-first signature; the
+// aliases preserve that so the call sites below stay unchanged while every
+// actual git spawn goes through the single argv execution layer shared by all
+// git routes. No `execSync` / shell strings live here.
+const exec = (args: string[], cwd: string): string => runGit(cwd, args);
+const runArgs = (args: string[], cwd: string): string => runGitOptional(cwd, args);
 
 function parseStatus(cwd: string): GitStatusResult {
   // get branch info
-  const branchLine = run("git rev-parse --abbrev-ref HEAD", cwd);
+  const branchLine = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const branch = branchLine || "HEAD";
 
   // upstream tracking
@@ -161,9 +144,9 @@ function parseStatus(cwd: string): GitStatusResult {
   let ahead = 0;
   let behind = 0;
   try {
-    const remote = run("git rev-parse --abbrev-ref @{upstream}", cwd);
+    const remote = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
     if (remote) upstream = remote;
-    const counts = run("git rev-list --left-right --count HEAD...@{upstream}", cwd);
+    const counts = runGitOptional(cwd, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]);
     if (counts) {
       const [a, b] = counts.split("\t").map(Number);
       ahead = a || 0;
@@ -172,7 +155,7 @@ function parseStatus(cwd: string): GitStatusResult {
   } catch {}
 
   // porcelain v1 status
-  const raw = run("git status --porcelain -u", cwd);
+  const raw = runGitOptional(cwd, ["status", "--porcelain", "-u"]);
   const files: GitFileStatus[] = [];
 
   for (const line of raw.split("\n").filter(Boolean)) {
@@ -200,7 +183,7 @@ function parseStatus(cwd: string): GitStatusResult {
 function parseLog(cwd: string, limit = 20): GitLogEntry[] {
   const sep = "||GITSEP||";
   const fmt = `%H${sep}%h${sep}%s${sep}%an${sep}%ar${sep}%D`;
-  const raw = run(`git log --format="${fmt}" -n ${limit}`, cwd);
+  const raw = runGitOptional(cwd, ["log", `--format=${fmt}`, "-n", String(limit)]);
   if (!raw) return [];
 
   return raw.split("\n").filter(Boolean).map((line) => {
@@ -280,7 +263,7 @@ function validateBranchName(branchName: string): { valid: boolean; error?: strin
  * Get current branch name
  */
 function getCurrentBranch(cwd: string): string {
-  return run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+  return runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
 }
 
 /**
@@ -288,15 +271,16 @@ function getCurrentBranch(cwd: string): string {
  */
 function parseBranchList(cwd: string): GitBranchListResult {
   // Get current branch
-  const current = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+  const current = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
 
   // Get default branch
-  const defaultBranch = run("git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@refs/remotes/origin/@@'", cwd) || undefined;
+  const defaultRef = runGitOptional(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
+  const defaultBranch = defaultRef ? defaultRef.replace(/^refs\/remotes\/origin\//, "") : undefined;
 
   const branches: GitBranch[] = [];
 
   // Get local branches with tracking info
-  const localRaw = run('git branch --format="%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)|%(committerdate:relative)"', cwd);
+  const localRaw = runGitOptional(cwd, ["branch", "--format=%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)|%(committerdate:relative)"]);
   for (const line of localRaw.split("\n").filter(Boolean)) {
     const parts = line.split("|");
     if (parts.length < 5) continue;
@@ -312,7 +296,7 @@ function parseBranchList(cwd: string): GitBranchListResult {
   }
 
   // Get remote branches
-  const remoteRaw = run('git branch --remote --format="%(refname:short)|%(HEAD)|%(objectname:short)|%(committerdate:relative)"', cwd);
+  const remoteRaw = runGitOptional(cwd, ["branch", "--remote", "--format=%(refname:short)|%(HEAD)|%(objectname:short)|%(committerdate:relative)"]);
   for (const line of remoteRaw.split("\n").filter(Boolean)) {
     const parts = line.split("|");
     if (parts.length < 4) continue;
@@ -335,7 +319,7 @@ function parseBranchList(cwd: string): GitBranchListResult {
 function createBranch(cwd: string, branchName: string): GitBranchCreateResult {
   try {
     exec(["branch", branchName], cwd);
-    const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+    const current = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
     return {
       ok: true,
       branch: branchName,
@@ -353,12 +337,12 @@ function createBranch(cwd: string, branchName: string): GitBranchCreateResult {
  * Switch to a different branch
  */
 function switchBranch(cwd: string, targetBranch: string): GitBranchSwitchResult {
-  const previous = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+  const previous = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
 
   try {
     // Try safe switch first (fails if uncommitted changes)
     exec(["switch", targetBranch], cwd);
-    const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+    const current = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
     return {
       ok: true,
       current: current || targetBranch,
@@ -373,7 +357,7 @@ function switchBranch(cwd: string, targetBranch: string): GitBranchSwitchResult 
     if (error.includes("uncommitted") || error.includes("working tree") || error.includes("changes")) {
       try {
         exec(["switch", "-m", targetBranch], cwd);
-        const current = run("git rev-parse --abbrev-ref HEAD", cwd);
+        const current = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
         return {
           ok: true,
           current: current || targetBranch,
@@ -401,7 +385,7 @@ function switchBranch(cwd: string, targetBranch: string): GitBranchSwitchResult 
  * Delete a branch (local or remote)
  */
 function deleteBranch(cwd: string, branchName: string, force: boolean = false): GitBranchDeleteResult {
-  const current = run("git rev-parse --abbrev-ref HEAD", cwd) || "HEAD";
+  const current = runGitOptional(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) || "HEAD";
 
   // Cannot delete current branch
   if (branchName === current) {
@@ -489,7 +473,7 @@ function parseStashList(cwd: string): GitStash[] {
   //   %gd = reflog selector ("stash@{0}")  %s = subject  %cr = relative date
   //   %h  = abbreviated commit hash (the stable SHA resolveStashRef keys on)
   const fmt = `%gd${sep}%s${sep}%cr${sep}%h`;
-  const raw = run(`git stash list --format="${fmt}"`, cwd);
+  const raw = runGitOptional(cwd, ["stash", "list", `--format=${fmt}`]);
 
   if (!raw) return [];
 
@@ -685,7 +669,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   // resolve git root from the validated workspace, then re-validate it —
   // `show-toplevel` can walk up out of a workspace subdirectory.
-  const gitRoot = run("git rev-parse --show-toplevel", validatedWorkspace) || validatedWorkspace;
+  const gitRoot = runGitOptional(validatedWorkspace, ["rev-parse", "--show-toplevel"]) || validatedWorkspace;
   if (!resolveAndValidate(gitRoot, allowedRoots)) {
     throw new Forbidden("git root is outside the allowed roots");
   }

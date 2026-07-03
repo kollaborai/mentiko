@@ -1,142 +1,163 @@
 /**
  * Git E2E Test Fixtures
  *
- * Shared Playwright fixtures for the Git workflow test suite.
- * Provides an authenticated session and a ready GitPanelPage instance.
- *
- * Intended project location: web/e2e/tests/git/fixtures.ts
+ * Shared Playwright fixtures for the Git workflow test suite. Provides an
+ * authenticated session (a SIGNED better-auth cookie — see note below) and a
+ * ready GitPanelPage instance mounted on a scratch git repo.
  *
  * Usage in test files:
  *   import { test, expect } from './fixtures';
+ *   test('branch operations', async ({ gitPanel }) => { ... });
  *
- *   test('branch operations', async ({ gitPanel }) => {
- *     const branches = await gitPanel.listBranches();
- *     expect(branches.length).toBeGreaterThan(0);
- *   });
+ * ── Auth strategy (read this — it changed) ───────────────────────────────
+ * better-auth 1.6.15 sets a SIGNED session cookie: the cookie value is
+ * `<token>.<base64-hmac>` where the hmac key is HKDF-SHA256(BETTER_AUTH_SECRET,
+ * "mentiko-session-signing-v1") (see lib/secrets/dev-secret.ts). Injecting the
+ * RAW `session.token` column value — which earlier revisions of this file did —
+ * does NOT authenticate; better-auth verifies the signature and rejects it.
  *
- * Auth strategy:
- *   Injects a valid better-auth session cookie into the browser context.
- *   The server requires a real session token to serve protected pages.
- *   Token MUST be provided via E2E_SESSION_TOKEN (never hardcoded — public repo).
- *   Obtain via: sqlite3 ~/.mentiko/data/auth.db
- *     "SELECT token FROM session WHERE expiresAt > datetime('now') ORDER BY expiresAt DESC LIMIT 1;"
+ * So we obtain a legitimately-issued signed cookie instead:
+ *   - Default (isolated e2e env, see playwright.config.ts → :3100 with a
+ *     throwaway auth.db): bootstrap-signup a fixed e2e account (allowed because
+ *     the temp DB starts empty) and read the signed cookie from Set-Cookie.
+ *   - Override: set E2E_SESSION_COOKIE to a full signed cookie value obtained
+ *     from a browser (DevTools → Application → Cookies → better-auth.session_token).
+ *
+ * `E2E_SESSION_TOKEN` (raw token) is NO LONGER accepted — it cannot authenticate.
  */
 
 import { test as base, expect, Page } from '@playwright/test';
+import { execSync } from 'child_process';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { GitPanelPage } from './git-panel.page';
 
-// ── Fixture type declarations ────────────────────────────────────────────────
-
 type GitFixtures = {
-  /**
-   * GitPanelPage — authenticated, navigated to /code with git view active.
-   * Tests receive this already mounted; no extra setup needed.
-   */
   gitPanel: GitPanelPage;
 };
 
-// A real-looking workspace path for the code editor to render with a projectRoot.
-// Defaults to the checkout the tests run from; override for a specific workspace.
-const E2E_WORKSPACE_PATH = process.env.E2E_WORKSPACE_PATH || process.cwd();
+const BASE_URL =
+  process.env.E2E_BASE_URL ||
+  (process.env.E2E_REUSE_DEV === '1' ? 'http://localhost:3000' : 'http://localhost:3100');
 
-// The session token comes from the dev auth.db. It must be valid (not expired) for the
-// server-side session check to pass (the server returns 307 → /login without a valid cookie).
-// Obtain one via: sqlite3 ~/.mentiko/data/auth.db
-//   "SELECT token FROM session WHERE expiresAt > datetime('now') ORDER BY expiresAt DESC LIMIT 1;"
-// Never hardcode a token here — this repo is public.
-const SESSION_TOKEN = process.env.E2E_SESSION_TOKEN || '';
-if (!SESSION_TOKEN) {
+// Fixed e2e account. In the isolated temp DB this is the bootstrap user
+// (count===0 → signup allowed). Stable creds so a re-run signs IN if it exists.
+const E2E_EMAIL = process.env.E2E_TEST_EMAIL || 'e2e-git@mentiko.test';
+const E2E_PASSWORD = process.env.E2E_TEST_PASSWORD || 'e2e-git-pass-1234';
+
+/**
+ * Scratch git repo for the panel to mount on. Created fresh per worker in the
+ * system tmp dir so branch/stash/commit mutations never touch a real checkout.
+ */
+function createScratchRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'mentiko-git-e2e-'));
+  execSync('git init -q -b main', { cwd: dir });
+  execSync('git config user.email e2e@mentiko.test', { cwd: dir });
+  execSync('git config user.name "E2E"', { cwd: dir });
+  execSync(`printf '# scratch\\n' > README.md`, { cwd: dir });
+  execSync('git add README.md', { cwd: dir });
+  execSync('git commit -q -m init', { cwd: dir });
+  return dir;
+}
+
+/** Read the signed `better-auth.session_token` value from a Set-Cookie header. */
+function extractSessionCookie(setCookie: string | null | undefined): string | null {
+  if (!setCookie) return null;
+  const match = setCookie.match(/better-auth\.session_token=([^;]+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Obtain a legitimately-issued signed session cookie from the server.
+ * Prefers E2E_SESSION_COOKIE (provided). Otherwise bootstraps via signup,
+ * falling back to sign-in if the account already exists.
+ */
+async function mintSessionCookie(): Promise<string> {
+  if (process.env.E2E_SESSION_COOKIE) return process.env.E2E_SESSION_COOKIE;
+
+  const creds = { name: 'E2E Git', email: E2E_EMAIL, password: E2E_PASSWORD };
+
+  // Try signup (works on a fresh/isolated DB via the bootstrap allowance).
+  let res = await fetch(`${BASE_URL}/api/auth/sign-up/email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(creds),
+  });
+  let cookie = extractSessionCookie(res.headers.get('set-cookie'));
+  if (cookie) return cookie;
+
+  // Fallback: sign in (account already exists from a prior run / shared DB).
+  res = await fetch(`${BASE_URL}/api/auth/sign-in/email`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: E2E_EMAIL, password: E2E_PASSWORD }),
+  });
+  cookie = extractSessionCookie(res.headers.get('set-cookie'));
+  if (cookie) return cookie;
+
   throw new Error(
-    'E2E_SESSION_TOKEN is required for the git e2e suite (see fixtures.ts header for how to mint one).'
+    `git e2e: could not obtain a session cookie from ${BASE_URL}. ` +
+      'Run in the default isolated mode (throwaway DB) or set E2E_SESSION_COOKIE ' +
+      'to a signed cookie value from your browser (DevTools → Cookies).'
   );
 }
 
-/**
- * Inject a valid better-auth session cookie into the browser context so the
- * server-side session check on page routes passes (returns 200, not 307 → /login).
- * Also mock /api/config so the code editor has a projectRoot to render with.
- */
-async function injectSession(page: Page): Promise<void> {
-  // Inject the session cookie before any navigation — use url (not domain) for localhost
-  await page.context().addCookies([
-    {
-      name: 'better-auth.session_token',
-      value: SESSION_TOKEN,
-      url: 'http://localhost:3000',
-      httpOnly: true,
-      sameSite: 'Lax',
-    },
-  ]);
-
-  // Config root so CodeEditorClient renders instead of "could not resolve project root"
-  await page.route('**/api/config', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        success: true,
-        data: { root: E2E_WORKSPACE_PATH },
-      }),
-    });
-  });
-}
-
-// ── Extended test object ─────────────────────────────────────────────────────
-
 export const test = base.extend<GitFixtures>({
-  /**
-   * gitPanel fixture — the main fixture for this suite.
-   * Setup sequence:
-   *   1. Inject session cookie so server returns 200 on /code instead of 307→/login
-   *   2. Construct GitPanelPage
-   *   3. Navigate to /code, click "Source Control", wait for branch selector
-   *   4. Hand the fixture to the test body
-   */
   gitPanel: async ({ page }, use) => {
-    // 1. Inject session cookie so the server-side auth check passes (avoids 307→/login)
-    await injectSession(page);
+    const sessionCookie = await mintSessionCookie();
+    const workspacePath = process.env.E2E_WORKSPACE_PATH || createScratchRepo();
 
-    // 2. Build page object
+    await page.context().addCookies([
+      {
+        name: 'better-auth.session_token',
+        value: sessionCookie,
+        url: BASE_URL,
+        httpOnly: true,
+        sameSite: 'Lax',
+      },
+    ]);
+
+    // Config root + workspace list → the editor mounts the git panel on the
+    // scratch repo (the workspace store would otherwise auto-pick a real one).
+    await page.route('**/api/config', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { root: workspacePath } }),
+      })
+    );
+    await page.route('**/api/workspaces**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: [{ id: 'e2e-scratch', name: 'e2e-scratch', path: workspacePath }],
+        }),
+      })
+    );
+
     const gitPanel = new GitPanelPage(page);
-
-    // 3. Open the git panel (navigates + waits for mount)
     await gitPanel.openGitPanel();
-
-    // 4. Assert the panel is usable before handing it to the test
     await expect(gitPanel.branchTrigger).toBeVisible({ timeout: 15000 });
-
-    // 5. Hand to test
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright fixture `use`, not a React hook
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     await use(gitPanel);
-    // No teardown needed — each test gets a fresh browser context
   },
 });
 
-// Re-export expect so test files only need to import from fixtures
 export { expect } from '@playwright/test';
 
-// ── Shared test data ──────────────────────────────────────────────────────────
-
-/**
- * Branch names used across the test suite.
- * Using a shared constant prevents name collisions between tests.
- */
 export const TEST_BRANCHES = {
   feature: 'e2e-test-feature-branch',
   temp: 'e2e-test-temp-branch',
 } as const;
 
-/**
- * Stash messages used across the test suite.
- */
 export const TEST_STASHES = {
   basic: 'e2e test stash',
   withMessage: 'e2e stash with custom message',
 } as const;
 
-/**
- * Commit messages used across the test suite.
- */
 export const TEST_COMMITS = {
   basic: 'e2e: test commit message',
 } as const;

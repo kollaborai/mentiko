@@ -787,9 +787,16 @@ export function StashSelector({
       setApplyConflicts(null);
       setConflictCount(0);
 
+      // Resolve the stash's stable commit SHA so the backend re-targets it even
+      // if the positional list has shifted since render (creating/dropping a
+      // stash renumbers every stash@{N}). Index-only targeting applies the
+      // wrong stash under that race.
+      const stash = stashes.find((s) => s.id === stashId);
+
       try {
         const result = (await gitPost("apply_stash", {
           stashId: `stash@{${stashId}}`,
+          stashCommit: stash?.commitHash,
         })) as GitStashApplyResult;
 
         if (!result.ok && result.conflicts && result.conflicts.length > 0) {
@@ -815,7 +822,7 @@ export function StashSelector({
         setApplyLoading(false);
       }
     },
-    [gitPost, fetchStashes, onStashApplied]
+    [gitPost, fetchStashes, onStashApplied, stashes]
   );
 
   // ── drop stash ────────────────────────────────────────────────────────────
@@ -824,9 +831,14 @@ export function StashSelector({
       setDropLoading(true);
       setDropError(null);
 
+      // Resolve the stable commit SHA — see runApplyStash. Dropping by
+      // positional index deletes the wrong stash if the list shifted.
+      const stash = stashes.find((s) => s.id === stashId);
+
       try {
         const result = (await gitPost("drop_stash", {
           stashId: `stash@{${stashId}}`,
+          stashCommit: stash?.commitHash,
         })) as GitStashDropResult;
 
         if (!result.ok) {
@@ -846,7 +858,7 @@ export function StashSelector({
         setDropLoading(false);
       }
     },
-    [gitPost, fetchStashes]
+    [gitPost, fetchStashes, stashes]
   );
 
   // ── effects ───────────────────────────────────────────────────────────────

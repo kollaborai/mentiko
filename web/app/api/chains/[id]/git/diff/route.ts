@@ -1,11 +1,12 @@
 import { NextRequest } from "next/server";
 import { existsSync } from "fs";
 import { join } from "path";
-import { execFileSync } from "child_process";
+import { runGit } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
@@ -27,15 +28,6 @@ interface DiffResult {
     deletions: number;
   };
   diff?: string;
-}
-
-// argv git — no shell, so refs/paths can never be interpreted as a command.
-function runGit(cwd: string, args: string[]): string {
-  return execFileSync("git", args, {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    encoding: "utf-8",
-  });
 }
 
 // Reject option-like values (`--output=...`, `-S`, ...). Array form already
@@ -67,7 +59,7 @@ export const GET = withErrorHandling(async (
   }
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const { searchParams } = new URL(request.url);
@@ -151,7 +143,7 @@ export const POST = withErrorHandling(async (
   }
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();

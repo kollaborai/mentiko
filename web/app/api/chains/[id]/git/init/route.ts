@@ -1,25 +1,16 @@
 import { NextRequest } from "next/server";
 import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
 import { join } from "path";
-import { execFileSync } from "child_process";
+import { runGit } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
-
-// argv git — no shell, so the branch name can never be interpreted as a
-// command (the old `execSync('git init -b "' + initialBranch + '"')` form
-// broke on a literal `"` in the name and let `$()` / backticks through).
-function runGit(cwd: string, args: string[]): string {
-  return execFileSync("git", args, {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    encoding: "utf-8",
-  });
-}
 
 export const POST = withErrorHandling(async (
   request: NextRequest,
@@ -28,9 +19,11 @@ export const POST = withErrorHandling(async (
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();

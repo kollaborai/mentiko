@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { existsSync, mkdirSync, copyFileSync, readFileSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { runGit } from "@/lib/git/exec";
 import { orgPath } from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +19,11 @@ export const POST = withErrorHandling(async (
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
+  const permError = await requirePermission(request, "manage_chains");
+  if (permError) return permError;
 
   const { id } = await _context.params;
-  const chainId = decodeURIComponent(id);
+  const chainId = validateChainId(id);
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const body = await request.json();
@@ -61,18 +65,12 @@ export const POST = withErrorHandling(async (
   if (createBranch) {
     // Create a new branch from the commit
     const branchName = `revert-${timestamp}`;
-    execSync(`git checkout -b ${branchName} ${commit}`, {
-      cwd: chainDir,
-      stdio: "pipe",
-    });
+    runGit(chainDir, ["checkout", "-b", branchName, commit]);
     result.branch = branchName;
     result.action = "branch_created";
   } else {
     // Hard reset to commit
-    execSync(`git reset --hard ${commit}`, {
-      cwd: chainDir,
-      stdio: "pipe",
-    });
+    runGit(chainDir, ["reset", "--hard", commit]);
     result.action = "reverted";
   }
 
