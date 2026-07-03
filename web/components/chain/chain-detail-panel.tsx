@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ExportFilled as ExternalLink, FlashFilled, PeopleFilled } from "@aliimam/icons";
+import { SplitDetailHeader } from "@/components/ui/detail-header";
 import { VisualChainEditor as ChainFlowPreview } from "@/components/chain/visual-editor-reactflow";
 import { ChainIcon } from "@/components/chain/chain-icon";
 import { AgentProfileBadge } from "@/components/agent/agent-status-panel";
@@ -11,6 +12,12 @@ import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
 import type { ChainAgent, ChainBranch } from "@/components/chain/chain-flow-graph";
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+// A chain shape loose enough to accept both the flat/legacy fields
+// (agentCount, maxRounds, onComplete, default_agent_profile) and the nested
+// `config` object the API now returns — the component reads either via ??.
 export interface ChainDetailPanelChain {
   id: string;
   name: string;
@@ -60,12 +67,26 @@ interface ChainDetailPanelByIdState {
   loading: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Derivation helpers
+// ---------------------------------------------------------------------------
+// Stable structural signature used as the ChainFlowPreview `key`. Forces a
+// full remount whenever the chain's topology (agent ids, their triggers/emits,
+// or the branch map) changes — ReactFlow otherwise keeps stale internal
+// node/edge state and won't reflect the new graph. Cosmetic edits (name,
+// description) intentionally leave the key unchanged so no needless remount.
 function flowPreviewKey(chain: ChainDetailPanelChain) {
   const agentSignature = chain.agents
     .map((agent) => `${agent.id}:${(agent.triggers || []).join(",")}:${agent.emits || ""}`)
     .join("|");
   return `${chain.id}:${agentSignature}:${JSON.stringify(chain.branches ?? {})}`;
 }
+
+// Derive the directed edge list between agents from three independent sources,
+// deduped by a `from-to-event` key. Powers the "connections" summary list.
+//   1. branches  — explicit event -> target(s) routing in chain.branches
+//   2. trigger   — implicit wiring: an agent triggers on an event another emits
+//   3. error/timeout — on_error / on_timeout fields pointing at another agent
 
 function collectConnections(chain: ChainDetailPanelChain) {
   const seen = new Set<string>();
@@ -77,6 +98,7 @@ function collectConnections(chain: ChainDetailPanelChain) {
       .map((agent) => [agent.emits, agent.id])
   );
 
+  // Pass 1: explicit branch routing. target may be a single id or a fan-out array.
   Object.entries(chain.branches || {}).forEach(([event, target]) => {
     const fromAgent = chain.agents.find((agent) => agent.emits === event);
     if (!fromAgent) return;
@@ -95,6 +117,8 @@ function collectConnections(chain: ChainDetailPanelChain) {
     });
   });
 
+  // Pass 2: implicit trigger/emit wiring. Match each agent's trigger event to
+  // whichever agent emits it (self-loops skipped).
   chain.agents.forEach((toAgent) => {
     (toAgent.triggers || []).forEach((trigger) => {
       const fromId = emitMap.get(trigger);
@@ -107,6 +131,8 @@ function collectConnections(chain: ChainDetailPanelChain) {
     });
   });
 
+  // Pass 3: failure routing. on_error / on_timeout edges, only when they point
+  // at an agent that actually exists in this chain.
   chain.agents.forEach((agent) => {
     const withRouting = agent as ChainAgent & { on_error?: string; on_timeout?: string };
     if (withRouting.on_error && agentById.has(withRouting.on_error)) {
@@ -120,6 +146,13 @@ function collectConnections(chain: ChainDetailPanelChain) {
   return connections;
 }
 
+// ---------------------------------------------------------------------------
+// Main panel (presentational)
+// ---------------------------------------------------------------------------
+// Renders a fully-resolved chain: optional header, a left stats grid
+// (agents / triggers / webhooks / profile / max rounds / on complete /
+// connections) layered over a faint ChainIcon, and a read-only flow preview
+// on the right. Pure — takes a chain object, fetches nothing.
 export function ChainDetailPanel({
   chain,
   workspaceDefaultProfileId,
@@ -138,76 +171,49 @@ export function ChainDetailPanel({
   return (
     <div className="overflow-hidden rounded-md bg-[#111]">
       {showHeader && (
-        <div className="grid gap-3 border-b border-white/5 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="truncate text-sm font-semibold text-white/90">{chain.name}</h3>
-              {showOpenLink && (
-                <Link
-                  href={`/chains?chain=${encodeURIComponent(chain.id)}`}
-                  className="text-foreground/30 transition-colors hover:text-cyan-400"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
+        <SplitDetailHeader
+          className="rounded-none rounded-t-md border-b border-white/5"
+          identityClassName="items-start"
+          actionsClassName="items-start"
+          identity={
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="truncate text-sm font-semibold text-white/90">{chain.name}</h3>
+                {showOpenLink && (
+                  <Link
+                    href={`/chains?chain=${encodeURIComponent(chain.id)}`}
+                    className="text-foreground/30 transition-colors hover:text-cyan-400"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </Link>
+                )}
+              </div>
+              {chain.description && (
+                <p className="mt-1 max-w-4xl text-xs leading-relaxed text-white/45">
+                  {chain.description}
+                </p>
               )}
             </div>
-            {chain.description && (
-              <p className="mt-1 max-w-4xl text-xs leading-relaxed text-white/45">
-                {chain.description}
-              </p>
-            )}
-          </div>
-          {headerActions && (
-            <div className="flex shrink-0 items-start justify-start md:justify-end">
-              {headerActions}
-            </div>
-          )}
-        </div>
+          }
+          actions={headerActions || <></>}
+        />
       )}
 
+      {/* body: stats grid (left) + flow preview (right), stacked below xl */}
       <div className="grid gap-4 p-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="relative isolate overflow-hidden rounded-md bg-background/35">
+        {/* left column: metadata tiles over a watermark ChainIcon */}
+        <div className="relative isolate overflow-hidden rounded-md bg-background/95">
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <ChainIcon seed={chain.id} size={compact ? 120 : 140} className="!absolute right-3 top-1/2 -translate-y-1/2 opacity-15" />
+            <ChainIcon seed={chain.id} size={compact ? 240 : 280} className="!absolute right-3 top-1/2 -translate-y-1/2 opacity-15" />
           </div>
-          <div className="relative z-[1] grid grid-cols-2 gap-px">
+          {/* tiles: 1-up on mobile, 3-up from sm upward */}
+          <div className="relative z-[1] grid grid-cols-1 gap-px sm:grid-cols-3">
             <div className="px-3 py-3">
               <div className="mb-1 flex items-center gap-1.5 text-white/40">
                 <PeopleFilled className="h-3 w-3" />
                 <span className="text-[10px] uppercase tracking-wide">agents</span>
               </div>
               <div className="text-base font-medium text-white/90">{chain.agentCount ?? chain.agents.length}</div>
-            </div>
-            <div className="min-w-0 px-3 py-3">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="text-[10px] uppercase tracking-wide text-white/40">connections</span>
-                <span className="text-[10px] text-white/40">{connections.length}</span>
-              </div>
-              {connections.length === 0 ? (
-                <div className="text-[10px] text-white/28">none</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {connections.slice(0, 2).map((connection, index) => (
-                    <div key={index} className="flex min-w-0 items-center gap-1 text-[9px]">
-                      <span className="truncate text-white/55">{agentName(connection.from)}</span>
-                      <span className={`shrink-0 rounded px-1 font-mono ${
-                        connection.type === "error"
-                          ? "bg-red-400/10 text-red-300"
-                          : connection.type === "timeout"
-                            ? "bg-purple-400/10 text-purple-300"
-                            : "bg-green-400/10 text-green-300"
-                      }`}>
-                        {connection.event}
-                      </span>
-                      <span className="shrink-0 text-white/25">→</span>
-                      <span className="truncate text-white/55">{agentName(connection.to)}</span>
-                    </div>
-                  ))}
-                  {connections.length > 2 && (
-                    <div className="text-[9px] text-white/30">+{connections.length - 2} more</div>
-                  )}
-                </div>
-              )}
             </div>
             <div className="min-w-0 px-3 py-3">
               <div className="mb-1 flex items-center justify-between gap-2">
@@ -277,8 +283,41 @@ export function ChainDetailPanel({
               </div>
             </div>
           </div>
+          {/* connections: derived edge list, full-width below the tile grid */}
+          <div className="min-w-0 px-3 py-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[10px] uppercase tracking-wide text-white/40">connections</span>
+              <span className="text-[10px] text-white/40">{connections.length}</span>
+            </div>
+            {connections.length === 0 ? (
+              <div className="text-[10px] text-white/28">none</div>
+            ) : (
+              <div className="space-y-0.5">
+                {connections.slice(0, 7).map((connection, index) => (
+                  <div key={index} className="flex min-w-0 items-center gap-1 text-[9px]">
+                    <span className="truncate text-white/55">{agentName(connection.from)}</span>
+                    <span className={`shrink-0 rounded px-1 font-mono ${
+                      connection.type === "error"
+                        ? "bg-red-400/10 text-red-300"
+                        : connection.type === "timeout"
+                          ? "bg-purple-400/10 text-purple-300"
+                          : "bg-green-400/10 text-green-300"
+                    }`}>
+                      {connection.event}
+                    </span>
+                    <span className="shrink-0 text-white/25">→</span>
+                    <span className="truncate text-white/55">{agentName(connection.to)}</span>
+                  </div>
+                ))}
+                {connections.length > 7 && (
+                  <div className="text-[9px] text-white/30">+{connections.length - 7} more</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
+        {/* right column: read-only ReactFlow render of the chain graph */}
         <div className="min-w-0">
           <div className="mb-2 text-xs font-medium text-white/65">Flow</div>
           <div className={`${flowHeight} overflow-hidden rounded-md bg-background`}>
@@ -299,6 +338,13 @@ export function ChainDetailPanel({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Data-fetching wrapper
+// ---------------------------------------------------------------------------
+// Loads a chain by id and renders ChainDetailPanel, with loading/error states.
+// State is tagged with the chainId it belongs to so a stale in-flight response
+// for a previous id is ignored when `chainId` changes (see the derived
+// `loading`/`chain`/`error` guards below), on top of the cancelled flag.
 export function ChainDetailPanelById({
   chainId,
   fallbackName,

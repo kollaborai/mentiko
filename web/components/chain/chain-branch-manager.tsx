@@ -56,7 +56,7 @@ interface BranchManagerProps {
   onCreateBranch?: (name: string, startPoint?: string) => Promise<void>;
   onSwitchBranch?: (name: string) => Promise<void>;
   onDeleteBranch?: (name: string) => Promise<void>;
-  onMergeBranch?: (name: string) => Promise<{ status: string; conflicts?: MergeConflict[] }>;
+  onMergeBranch?: (name: string) => Promise<{ status: string; conflicts?: MergeConflict[]; error?: string }>;
   onAbortMerge?: () => Promise<void>;
   onCompareBranches?: (branch1: string, branch2: string) => Promise<BranchComparison | null>;
 }
@@ -76,7 +76,7 @@ export function ChainBranchManager({
   const [newBranchStart, setNewBranchStart] = useState(currentBranch);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeSource, setMergeSource] = useState("");
-  const [mergeResult, setMergeResult] = useState<{ status: string; conflicts?: MergeConflict[] } | null>(null);
+  const [mergeResult, setMergeResult] = useState<{ status: string; conflicts?: MergeConflict[]; error?: string } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState("");
   const [compareDiff, setCompareDiff] = useState<BranchComparison | null>(null);
@@ -102,11 +102,21 @@ export function ChainBranchManager({
 
   const handleMergeBranch = async () => {
     if (!mergeSource) return;
-    const result = await onMergeBranch?.(mergeSource);
-    setMergeResult(result || null);
-    if (result?.status === "success") {
-      setMergeDialogOpen(false);
-      setMergeSource("");
+    try {
+      const result = await onMergeBranch?.(mergeSource);
+      // user declined the confirm() — just close, don't show a result screen
+      if (result?.status === "cancelled") {
+        setMergeDialogOpen(false);
+        setMergeSource("");
+        return;
+      }
+      setMergeResult(result ?? { status: "error", error: "merge failed" });
+      if (result?.status === "success") {
+        setMergeDialogOpen(false);
+        setMergeSource("");
+      }
+    } catch (e) {
+      setMergeResult({ status: "error", error: e instanceof Error ? e.message : "merge failed" });
     }
   };
 
@@ -118,23 +128,19 @@ export function ChainBranchManager({
 
   return (
     <>
-      <Card className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold flex items-center gap-2">
-            <GitBranch className="h-4 w-4" />
-            Branches
-          </h3>
+      <div className="space-y-2">
+        <div className="flex items-center justify-end">
           <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" variant="ghost">
-                <Plus className="h-4 w-4 mr-1" />
+              <Button size="sm" variant="ghost" className="h-7 text-[11px]">
+                <Plus className="h-3 w-3 mr-1" />
                 New Branch
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create New Branch</DialogTitle>
-                <DialogDescription>
+                <DialogTitle className="text-xs font-semibold tracking-tight">Create New Branch</DialogTitle>
+                <DialogDescription className="text-[11px]">
                   Create a new branch from an existing point in history.
                 </DialogDescription>
               </DialogHeader>
@@ -165,10 +171,10 @@ export function ChainBranchManager({
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="ghost" onClick={() => setCreateDialogOpen(false)}>
+                <Button variant="ghost" className="h-7 text-[11px]" onClick={() => setCreateDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleCreateBranch} disabled={!newBranchName.trim()}>
+                <Button variant="outline" className="h-7 text-[11px]" onClick={handleCreateBranch} disabled={!newBranchName.trim()}>
                   Create Branch
                 </Button>
               </DialogFooter>
@@ -181,12 +187,12 @@ export function ChainBranchManager({
             <div
               key={branch.name}
               className={`p-3 rounded-md border transition-colors ${
-                branch.current ? "bg-primary/10 border-primary/20" : "bg-background hover:bg-muted/50"
+                branch.current ? "bg-accent border-border" : "bg-background hover:bg-muted/50"
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  {branch.current && <Check className="h-4 w-4 text-primary" />}
+                  {branch.current && <Check className="h-4 w-4 text-foreground/60" />}
                   <GitBranch className="h-4 w-4 text-muted-foreground" />
                   <span className="font-medium truncate">{branch.name}</span>
                   {branch.current && (
@@ -201,7 +207,7 @@ export function ChainBranchManager({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 text-xs"
+                        className="h-7 text-[11px]"
                         onClick={() => handleSwitchBranch(branch.name)}
                       >
                         Switch
@@ -217,7 +223,7 @@ export function ChainBranchManager({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-7 w-7 p-0 text-red-500"
+                        className="h-7 w-7 p-0 text-destructive"
                         onClick={() => {
                           setBranchToDelete(branch.name);
                           setDeleteDialogOpen(true);
@@ -231,9 +237,9 @@ export function ChainBranchManager({
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7"
+                      className="h-7 text-[11px]"
                       onClick={() => {
-                        setMergeSource(branch.name);
+                        setMergeSource("");
                         setMergeDialogOpen(true);
                       }}
                     >
@@ -254,11 +260,11 @@ export function ChainBranchManager({
         </div>
 
         {/* Merge dialog */}
-        <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
+        <Dialog open={mergeDialogOpen} onOpenChange={(open) => { setMergeDialogOpen(open); if (!open) { setMergeResult(null); setMergeSource(""); } }}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Merge Branch</DialogTitle>
-              <DialogDescription>
+              <DialogTitle className="text-xs font-semibold tracking-tight">Merge Branch</DialogTitle>
+              <DialogDescription className="text-[11px]">
                 Select a branch to merge into the current branch.
               </DialogDescription>
             </DialogHeader>
@@ -284,10 +290,10 @@ export function ChainBranchManager({
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button variant="ghost" onClick={() => setMergeDialogOpen(false)}>
+                  <Button variant="ghost" className="h-7 text-[11px]" onClick={() => setMergeDialogOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleMergeBranch} disabled={!mergeSource}>
+                  <Button variant="outline" className="h-7 text-[11px]" onClick={handleMergeBranch} disabled={!mergeSource}>
                     Merge
                   </Button>
                 </DialogFooter>
@@ -316,25 +322,43 @@ export function ChainBranchManager({
                 </div>
                 <DialogFooter>
                   {onAbortMerge && (
-                    <Button variant="ghost" onClick={() => onAbortMerge()}>
+                    <Button variant="ghost" className="h-7 text-[11px]" onClick={() => onAbortMerge()}>
                       Abort Merge
                     </Button>
                   )}
-                  <Button onClick={() => setMergeDialogOpen(false)}>
+                  <Button variant="outline" className="h-7 text-[11px]" onClick={() => setMergeDialogOpen(false)}>
                     Resolve Manually
                   </Button>
+                </DialogFooter>
+              </>
+            ) : mergeResult.status === "success" ? (
+              <>
+                <div className="py-4">
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <Check className="h-5 w-5" />
+                    <span className="text-xs font-semibold">Merge Successful</span>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" className="h-7 text-[11px]" onClick={() => setMergeDialogOpen(false)}>Close</Button>
                 </DialogFooter>
               </>
             ) : (
               <>
                 <div className="py-4">
-                  <div className="flex items-center gap-2 text-green-600">
-                    <Check className="h-5 w-5" />
-                    <span className="font-semibold">Merge Successful</span>
+                  <div className="flex items-center gap-2 text-destructive mb-2">
+                    <AlertTriangle className="h-5 w-5" />
+                    <span className="text-xs font-semibold">Merge Failed</span>
                   </div>
+                  <p className="text-[11px] text-muted-foreground break-words">
+                    {mergeResult.error || "The merge could not be completed."}
+                  </p>
                 </div>
                 <DialogFooter>
-                  <Button onClick={() => setMergeDialogOpen(false)}>Close</Button>
+                  <Button variant="ghost" className="h-7 text-[11px]" onClick={() => setMergeResult(null)}>
+                    Back
+                  </Button>
+                  <Button variant="outline" className="h-7 text-[11px]" onClick={() => setMergeDialogOpen(false)}>Close</Button>
                 </DialogFooter>
               </>
             )}
@@ -345,28 +369,28 @@ export function ChainBranchManager({
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Delete Branch</DialogTitle>
-              <DialogDescription>
+              <DialogTitle className="text-xs font-semibold tracking-tight">Delete Branch</DialogTitle>
+              <DialogDescription className="text-[11px]">
                 Are you sure you want to delete branch &quot;{branchToDelete}&quot;? This action cannot be undone.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)}>
+              <Button variant="ghost" className="h-7 text-[11px]" onClick={() => setDeleteDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={handleDeleteBranch}>
+              <Button variant="destructive" className="h-7 text-[11px]" onClick={handleDeleteBranch}>
                 Delete
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </Card>
+      </div>
 
       {/* Compare branches dialog */}
       <Dialog open={compareDialogOpen} onOpenChange={setCompareDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Compare Branches</DialogTitle>
+            <DialogTitle className="text-xs font-semibold tracking-tight">Compare Branches</DialogTitle>
           </DialogHeader>
           <div>
             {compareDiff ? (
@@ -378,13 +402,13 @@ export function ChainBranchManager({
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <Card className="p-3 text-center">
-                    <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                    <div className="text-2xl font-bold text-emerald-400">
                       {compareDiff.ahead}
                     </div>
                     <div className="text-xs text-muted-foreground">commits ahead</div>
                   </Card>
                   <Card className="p-3 text-center">
-                    <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                    <div className="text-2xl font-bold text-orange-400">
                       {compareDiff.behind}
                     </div>
                     <div className="text-xs text-muted-foreground">commits behind</div>

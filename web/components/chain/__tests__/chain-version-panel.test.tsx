@@ -57,6 +57,7 @@ jest.mock('@aliimam/icons', () => ({
   RotateLeftFilled: ({ className }: { className?: string }) => <svg data-testid="rotate" className={className} />,
   TrashFilled: ({ className }: { className?: string }) => <svg data-testid="trash" className={className} />,
   TickCircleFilled: ({ className }: { className?: string }) => <svg data-testid="tick" className={className} />,
+  CopyFilled: ({ className }: { className?: string }) => <svg data-testid="copy" className={className} />,
   DangerFilled: ({ className }: { className?: string }) => <svg data-testid="danger" className={className} />,
   SearchNormalFilled: ({ className }: { className?: string }) => <svg data-testid="search" className={className} />,
   ArrowUp2Filled: ({ className }: { className?: string }) => <svg data-testid="arrow-up" className={className} />,

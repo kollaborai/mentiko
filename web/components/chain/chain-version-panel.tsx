@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/ui/copy-button";
 import {
   ArrowDown2Filled,
   ArrowRight2Filled,
@@ -23,7 +24,7 @@ interface ChainVersionPanelProps {
   currentChainJson?: Record<string, unknown>;
 }
 
-export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPanelProps) {
+export function ChainVersionPanel({ chainId, chainName, currentChainJson }: ChainVersionPanelProps) {
   const vc = useChainVersionControl(chainId);
   const [expanded, setExpanded] = useState(false);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
@@ -53,9 +54,9 @@ export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPan
   const branchInfos: GitBranchInfo[] = (vc.branches || []).map((b) => ({
     name: b.name,
     short: b.name.slice(0, 20),
-    author: "",
-    date: "",
-    message: "",
+    author: b.author,
+    date: b.date,
+    message: b.message,
     current: b.current,
   }));
 
@@ -96,15 +97,20 @@ export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPan
     await vc.deleteBranch(name);
   }, [vc]);
 
-  const handleMergeBranch = useCallback(async (name: string): Promise<{ status: string; conflicts?: MergeConflict[] }> => {
+  const handleMergeBranch = useCallback(async (name: string): Promise<{ status: string; conflicts?: MergeConflict[]; error?: string }> => {
     if (!confirm(`Merge "${name}" into current branch?`)) {
       return { status: "cancelled" };
     }
-    const result = await vc.mergeBranch(name);
-    return {
-      status: result?.status ?? "error",
-      conflicts: result?.conflicts,
-    };
+    try {
+      const result = await vc.mergeBranch(name);
+      return {
+        status: result?.status ?? "error",
+        conflicts: result?.conflicts,
+        error: result?.message,
+      };
+    } catch (e) {
+      return { status: "error", error: e instanceof Error ? e.message : "merge failed" };
+    }
   }, [vc]);
 
   const handleAbortMerge = useCallback(async () => {
@@ -118,34 +124,43 @@ export function ChainVersionPanel({ chainId, currentChainJson }: ChainVersionPan
   return (
     <Card className="bg-background dark:bg-[#0a0a0a]">
       {/* Collapsible header */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full p-3 text-left hover:bg-muted/5 transition-colors"
-      >
-        {expanded ? (
-          <ArrowDown2Filled className="h-3 w-3 text-foreground/40" />
-        ) : (
-          <ArrowRight2Filled className="h-3 w-3 text-foreground/40" />
+      <div className="flex items-center">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 flex-1 min-w-0 p-3 text-left hover:bg-muted/5 transition-colors"
+        >
+          {expanded ? (
+            <ArrowDown2Filled className="h-3 w-3 shrink-0 text-foreground/40" />
+          ) : (
+            <ArrowRight2Filled className="h-3 w-3 shrink-0 text-foreground/40" />
+          )}
+          <HierarchyFilled className="h-3 w-3 shrink-0 text-foreground/40" />
+          <span className="text-[10px] uppercase tracking-wide text-foreground/40">version control</span>
+          {vc.isRepo && (
+            <Badge variant="outline" className="text-[9px] ml-1">
+              {vc.currentBranch || "main"}
+            </Badge>
+          )}
+          {!vc.isRepo && !vc.loading && (
+            <Badge variant="outline" className="text-[9px] ml-1 text-foreground/30">
+              not initialized
+            </Badge>
+          )}
+        </button>
+        {chainName && (
+          <CopyButton
+            value={chainName}
+            showLabel={false}
+            className="mr-3 shrink-0 text-foreground/30 hover:text-foreground/60"
+          />
         )}
-        <HierarchyFilled className="h-3.5 w-3.5 text-foreground/40" />
-        <span className="text-xs font-medium">version control</span>
-        {vc.isRepo && (
-          <Badge variant="outline" className="text-[9px] ml-1">
-            {vc.currentBranch || "main"}
-          </Badge>
-        )}
-        {!vc.isRepo && !vc.loading && (
-          <Badge variant="outline" className="text-[9px] ml-1 text-foreground/30">
-            not initialized
-          </Badge>
-        )}
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-border p-3 space-y-3">
           {/* Error state */}
           {vc.error && (
-            <div className="p-2 bg-red-500/10 text-red-400 text-[10px] rounded">
+            <div className="p-2 bg-destructive/10 text-destructive text-[10px] rounded">
               {vc.error}
             </div>
           )}
