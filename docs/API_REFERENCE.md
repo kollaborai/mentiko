@@ -190,17 +190,17 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 
 | Method | Path | Purpose | Data Source | Auth | Used? | Screen/Component | Notes |
 |--------|------|---------|-------------|------|-------|------------------|-------|
-| GET | `/api/chains/[id]/git/branches` | List git branches for chain | execSync git commands in chain dir | checkAuth | Yes | hooks/use-chain-version-control | |
-| POST | `/api/chains/[id]/git/branches` | Create/switch/delete/compare branches | execSync git commands | checkAuth | Yes | hooks/use-chain-version-control | |
-| GET | `/api/chains/[id]/git/status` | Get git working tree status (ahead/behind counts) | execSync git status/branch commands | checkAuth | Yes | hooks/use-chain-version-control | also returns ahead/behind counts |
-| POST | `/api/chains/[id]/git/commit` | Stage files and commit (sanitized) | execSync git add/commit commands | checkAuth | Yes | hooks/use-chain-version-control | |
-| GET | `/api/chains/[id]/git/history` | Get commit history | execSync git log command | checkAuth | Yes | hooks/use-chain-version-control | |
-| POST | `/api/chains/[id]/git/init` | Initialize git repo with .gitignore | execSync git init + write .gitignore | checkAuth | Yes | hooks/use-chain-version-control | |
-| GET | `/api/chains/[id]/git/diff` | Get diff summary with optional content | execSync git diff --numstat | checkAuth | Yes | hooks/use-chain-version-control | |
-| POST | `/api/chains/[id]/git/diff` | Get file content at specific commit | execSync git show command | checkAuth | Yes | hooks/use-chain-version-control | |
-| POST | `/api/chains/[id]/git/merge` | Merge branch with conflict detection | execSync git merge + parse conflicts | checkAuth | Yes | hooks/use-chain-version-control | |
-| DELETE | `/api/chains/[id]/git/merge` | Abort merge | execSync git merge --abort | checkAuth | Yes | hooks/use-chain-version-control | |
-| POST | `/api/chains/[id]/git/revert` | Revert to commit (hard reset or branch) | execSync git reset/checkout + backup | checkAuth | Yes | hooks/use-chain-version-control | |
+| GET | `/api/chains/[id]/git/branches` | List git branches for chain | runGit (shared arg-array exec layer) | checkAuth | Yes | hooks/use-chain-version-control | |
+| POST | `/api/chains/[id]/git/branches` | Create/switch/delete/compare branches | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | |
+| GET | `/api/chains/[id]/git/status` | Get git working tree status (ahead/behind counts) | runGit (shared arg-array exec layer) | checkAuth | Yes | hooks/use-chain-version-control | also returns ahead/behind counts |
+| POST | `/api/chains/[id]/git/commit` | Stage files and commit (sanitized) | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | not surfaced in the chains Version Control panel (branch/merge/history only); available via API/hook |
+| GET | `/api/chains/[id]/git/history` | Get commit history | runGit (shared arg-array exec layer) | checkAuth | Yes | hooks/use-chain-version-control | |
+| POST | `/api/chains/[id]/git/init` | Initialize git repo with .gitignore | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | |
+| GET | `/api/chains/[id]/git/diff` | Get diff summary with optional content | runGit (shared arg-array exec layer) | checkAuth | Yes | hooks/use-chain-version-control | |
+| POST | `/api/chains/[id]/git/diff` | Get file content at specific commit | runGit (shared arg-array exec layer) | checkAuth | Yes | hooks/use-chain-version-control | |
+| POST | `/api/chains/[id]/git/merge` | Merge branch (returns success \| conflict \| error) | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | returns status:"error" with the git message on a genuine (non-conflict) failure |
+| DELETE | `/api/chains/[id]/git/merge` | Abort merge | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | |
+| POST | `/api/chains/[id]/git/revert` | Revert to commit (hard reset or branch) | runGit (shared arg-array exec layer) | checkAuth + manage_chains | Yes | hooks/use-chain-version-control | |
 
 ---
 

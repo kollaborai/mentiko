@@ -14,6 +14,7 @@ const DOCS_ARTICLES: DocArticle[] = [
   { route: "/docs/activity", title: "Activity", description: "activity feed, filters, and system event review", tags: ["monitoring", "events"] },
   { route: "/docs/getting-started", title: "Getting Started", description: "first chain, first run, CLI setup", tags: ["onboarding", "beginner"] },
   { route: "/docs/chains", title: "Chains", description: "chain format, agents, events, routing", tags: ["workflows", "core"] },
+  { route: "/docs/chain-version-control", title: "Version Control", description: "per-chain git history, branches, and merges", tags: ["workflows", "advanced"] },
   { route: "/docs/agents", title: "Agents", description: "agent definition, profiles, providers", tags: ["workflows", "core"] },
   { route: "/docs/audit", title: "Audit", description: "audit trail and review workflows", tags: ["security", "monitoring"] },
   { route: "/docs/config-profiles", title: "Config Profiles", description: "execution profiles, models, retries, and workspace defaults", tags: ["configuration", "execution"] },

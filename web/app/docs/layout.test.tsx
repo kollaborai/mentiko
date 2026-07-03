@@ -9,38 +9,11 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@aliimam/icons", () => {
   const Icon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />;
-  return {
-    ActivityFilled: Icon,
-    BotMessageSquare: Icon,
-    BoxFilled: Icon,
-    CategoryFilled: Icon,
-    ChartFilled: Icon,
-    ChevronDown: Icon,
-    ChevronRight: Icon,
-    ClockFilled: Icon,
-    CloudConnectionFilled: Icon,
-    CodeFilled: Icon,
-    ColorSwatchFilled: Icon,
-    CommandSquareFilled: Icon,
-    DirectSendFilled: Icon,
-    Element2Filled: Icon,
-    JudgeFilled: Icon,
-    LinkFilled: Icon,
-    MagicStarFilled: Icon,
-    MessageCircleFilled: Icon,
-    MonitorFilled: Icon,
-    NotificationFilled: Icon,
-    Palette: Icon,
-    PeopleFilled: Icon,
-    Rocket: Icon,
-    RouteSquareFilled: Icon,
-    Search: Icon,
-    SendFilled: Icon,
-    Shield: Icon,
-    ShopFilled: Icon,
-    TaskSquareFilled: Icon,
-    Webhook: Icon,
-  };
+  // catch-all: any icon (including newly-added nav icons) resolves to a stub
+  return new Proxy(
+    {},
+    { get: (_t, name) => (typeof name === "string" && name !== "__esModule" ? Icon : undefined) }
+  );
 });
 
 describe("DocsLayout", () => {
