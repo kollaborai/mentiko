@@ -19,7 +19,7 @@
     "web_initial_launch": {
       "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>'",
       "v2": "web/lib/runner-v2/controller.ts -> web/lib/runner-v2/agent-bootstrap-plan.ts validates first-agent/profile context, then typed-plan still delegates PTY startup to lib/chain-runner.sh --start",
-      "fallback": "shell launch when v2 disabled or returns unsupported"
+      "fallback": "shell launch when v2 is disabled or when v2 returns unsupported before typed bootstrap side effects; do not shell-fallback after v2 allocates sessions or mutates run state"
     },
     "completion_reentry": {
       "current": "lib/chain-runner-complete.sh -> lib/chain-runner.sh --start/--parallel",

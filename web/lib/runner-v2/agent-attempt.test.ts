@@ -5,6 +5,8 @@ import {
   AgentAttemptTransitionError,
   classifyReadinessFailure,
   createAgentAttempt,
+  markAgentAttemptFailedNoCompletion,
+  markAgentAttemptRetriesExhausted,
   projectAgentAttemptsForStatus,
   reconcileAgentAttempt,
   recordAgentAttemptProcess,
@@ -141,6 +143,50 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
       terminalReason: "readiness_deadline_expired",
       releaseReason: "released",
     });
+  });
+
+  it("fails a submitted attempt with a typed completion reason and preserves it on release", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "lease_acquired" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "pty_allocated" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "process_spawned" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "ready_for_instructions" });
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "instructions_submitted" });
+
+    const failed = markAgentAttemptFailedNoCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      detail: "declared completion event missing: no matching completion event",
+    });
+
+    expect(failed).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
+      terminalDetail: "declared completion event missing: no matching completion event",
+    });
+
+    const released = releaseAgentAttempt({ runJsonPath: path, attemptId: attempt.id });
+    expect(released).toMatchObject({
+      phase: "released",
+      terminalReason: "no_completion_event",
+      releaseReason: "released",
+    });
+  });
+
+  it("leaves a non-running attempt untouched when marking a completion failure", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+
+    // never reached instructions_submitted: retries-exhausted marker must no-op, not throw
+    const stillCreated = markAgentAttemptRetriesExhausted({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    expect(stillCreated?.phase).toBe("created");
+
+    // an attempt that already failed at startup is not re-failed as a completion failure
+    transitionAgentAttempt({ runJsonPath: path, attemptId: attempt.id, to: "startup_failed", reason: "readiness_deadline_expired" });
+    const stillStartupFailed = markAgentAttemptFailedNoCompletion({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    expect(stillStartupFailed).toMatchObject({ phase: "startup_failed", terminalReason: "readiness_deadline_expired" });
   });
 
   it("keeps repeated stuck reconciliation idempotent", () => {

@@ -145,7 +145,13 @@ function SectionHeader({
 
 // ── log view ────────────────────────────────────────────────────────────────
 
-function LogView({ entries }: { entries: GitLogEntry[] }) {
+function LogView({
+  entries,
+  onCommitClick,
+}: {
+  entries: GitLogEntry[];
+  onCommitClick?: (entry: GitLogEntry) => void;
+}) {
   if (!entries.length) {
     return (
       <div className="px-3 py-4 text-xs text-foreground/25 dark:text-white/25 text-center">no commits yet</div>
@@ -157,7 +163,17 @@ function LogView({ entries }: { entries: GitLogEntry[] }) {
       {entries.map((entry) => (
         <div
           key={entry.hash}
-          className="px-3 py-1.5 border-b border-foreground/5 dark:border-white/5 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors"
+          onClick={() => onCommitClick?.(entry)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onCommitClick?.(entry);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          title="Open commit diff"
+          className="px-3 py-1.5 border-b border-foreground/5 dark:border-white/5 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors cursor-pointer focus:outline-none focus:bg-foreground/5 dark:focus:bg-white/5"
         >
           <div className="flex items-center gap-2">
             <span className="text-[9px] font-mono text-foreground/25 dark:text-white/25 shrink-0 w-12">
@@ -464,6 +480,42 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     [activePaneId, openFile, openDiffFile, setFileLoading, workspacePath, gitPost]
   );
 
+  // open a commit's full patch as a read-only diff tab in the editor
+  const handleCommitClick = useCallback(
+    async (entry: GitLogEntry) => {
+      if (!activePaneId) return;
+      const base = workspacePath.endsWith("/")
+        ? workspacePath.slice(0, -1)
+        : workspacePath;
+      // synthetic path: gives the patch its own tab, never collides with a real file
+      const virtualPath = `${base}/.diffs/${entry.shortHash}.diff`;
+      const name = `${entry.shortHash} ${entry.message}`.slice(0, 60);
+
+      openFile(activePaneId, virtualPath, name, "diff", "");
+      setFileLoading(virtualPath, true);
+      try {
+        const data = (await gitPost({
+          action: "show_commit",
+          commitHash: entry.hash,
+        })) as { content?: string };
+        openFile(activePaneId, virtualPath, name, "diff", data?.content ?? "");
+      } catch (e) {
+        openFile(
+          activePaneId,
+          virtualPath,
+          name,
+          "diff",
+          `Failed to load commit ${entry.shortHash}: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      } finally {
+        setFileLoading(virtualPath, false);
+      }
+    },
+    [activePaneId, openFile, setFileLoading, workspacePath, gitPost]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -585,7 +637,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
       {/* view: log */}
       {activeView === "log" && (
         <div className="flex-1 overflow-hidden">
-          <LogView entries={logEntries} />
+          <LogView entries={logEntries} onCommitClick={handleCommitClick} />
         </div>
       )}
 

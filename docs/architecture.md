@@ -1,601 +1,587 @@
 # mentiko architecture
 
-event-driven AI agent orchestration system.
+Mentiko is an event-driven AI agent orchestration platform. Users define
+chains in JSON, and Mentiko runs each agent in an isolated PTY session with
+file-backed run state, event files, and web/API visibility.
 
-```
+This document describes the current platform architecture. For the detailed
+chain runner flow, see `docs/orchestration/chain-runner-flow.md`. For the
+runner-v2 migration contract, see `docs/orchestration/contracts/runner-v2-contract.json`.
+
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              mentiko system                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐  │
-│  │    cli      │     │  web ui     │     │      rest api               │  │
-│  │  bin/mentiko│     │  next.js    │     │  app/api/**/route.ts        │  │
-│  └──────┬──────┘     └──────┬──────┘     └──────────┬──────────────────┘  │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐    │
+│  │     cli     │     │   web ui    │     │          rest api           │    │
+│  │ bin/mentiko │     │ web/app     │     │ web/app/api/**/route.ts     │    │
+│  └──────┬──────┘     └──────┬──────┘     └──────────┬──────────────────┘    │
 │         │                   │                       │                       │
 │         └───────────────────┴───────────────────────┘                       │
 │                             │                                               │
 │                             ▼                                               │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         orchestration layer                         │   │
-│  │  chain-runner.sh | launch-agent.sh | event-trigger.sh | watchdog   │   │
-│  │  scheduler.sh | parallel-coordinator.sh                            │   │
-│  └───────────────────────────────┬─────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                         launch boundary                              │    │
+│  │  cli: bin/mentiko run                                                │    │
+│  │  api: /api/chains/run -> web/lib/runs/chain-run-service.ts           │    │
+│  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
 │                                  ▼                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                          execution layer                             │   │
-│  │                   pty-manager daemon (bin/p)                        │   │
-│  │         isolates agent sessions with PTY + file events              │   │
-│  └───────────────────────────────┬─────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      orchestration layer                             │    │
+│  │  lib/chain-runner.sh -> lib/chain-runner-complete.sh                 │    │
+│  │  event-trigger.sh | chain-event-watcher.sh | watchdog.sh             │    │
+│  │  scheduler.sh | routing-lib.sh | run-lib.sh | agent-functions.sh     │    │
+│  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
 │                                  ▼                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                            data layer                                │   │
-│  │  3-tier hierarchy: namespace > org > project                      │   │
-│  │  file-based chains/agents/events + sqlite (auth, tasks, decisions) │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                         execution layer                              │    │
+│  │  pty-mgr daemon + session-transport.sh                               │    │
+│  │  agent CLIs and custom profile commands                              │    │
+│  └───────────────────────────────┬─────────────────────────────────────┘    │
+│                                  │                                          │
+│                                  ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                           data layer                                 │    │
+│  │  data root: ~/.mentiko/namespaces/{namespace}/...                    │    │
+│  │  chains, agents, runs, jobs, events, tasks, decisions, auth          │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## source of truth
 
-## layers
+The runtime truth is code, contracts, and observed state, in that order:
 
-### 1. ui layer
+- `bin/mentiko` dispatches `mentiko run` to `lib/chain-runner.sh`.
+- `web/app/api/chains/run/route.ts` calls `startChainRun`.
+- `web/lib/runs/chain-run-service.ts` prepares run state and spawns the chain
+  runner through `/bin/zsh -lc`.
+- `docs/orchestration/contracts/runner-v2-contract.json` keeps runner-v2
+  side-by-side and shell-default.
+- `web/processes.dev.json` and `web/processes.json` describe the supervised
+  platform processes, not the chain engine itself.
 
-three interfaces to the system:
+Do not treat stale references to `lib/chain-runner.mjs` as current. That
+runner is retired; production chains run through `lib/chain-runner.sh`.
 
-**cli (bin/mentiko)**
-  - run chains: `mentiko run <chain.json> --workspace <path>`
-  - generate chains: AI-powered chain generation from natural language
-  - list/peek sessions: `mentiko list | peek | send | kill | kill-all`
-  - peer collaboration: `peer-manager`, `peer-chain`, `peer-send`, `peer-swarm`
-  - entry point for terminal users and automation
+## entrypoints
 
-**web ui (web/app/)**
-  - next.js 16, react 19, typescript 5, tailwind 4
-  - 60+ routes across workflows, decisions, system, settings, auth
-  - components: visual editor (reactflow), session composer, run viewer, decision flow
+### cli
 
-**rest api (web/app/api/)**
-  - chain crud: /api/chains
-  - run control: /api/runs
-  - agent management: /api/agents
-  - decision flow: /api/decisions
-  - task store: /api/tasks
-  - marketplace: /api/marketplace/*
-  - mcp auth: /api/mentiko-mcp/auth/*
-  - real-time: websocket server for terminal bridge and run updates
+The terminal entrypoint is:
 
-### 2. orchestration layer
+```bash
+cd /path/to/mentiko
+./bin/mentiko run <chain.json> --workspace /abs/path
+```
 
-bash scripts + node orchestrators that coordinate everything:
+Important flags:
 
-**core bash scripts:**
-  - lib/chain-runner.sh       main orchestrator, reads chain.json
-  - lib/launch-agent.sh       spawns agent in pty session
-  - lib/event-trigger.sh      file-based event system
-  - lib/complete-agent.sh     agent completion handler
-  - lib/watchdog.sh           detects stalled runs
-  - lib/scheduler.sh          cron-based chain execution
-  - lib/parallel-coordinator.sh  multi-agent parallel execution
-  - lib/agent-profile.sh      profile resolution + env sourcing
+- `--workspace <path>`: overrides the chain's configured project root.
+- `--task <id>`: binds the run to a task.
+- `--start <agent-id>`: resumes or starts at a specific agent.
+- `--parallel <ids...>`: starts a fan-out branch.
+- `--dry-run`: validates and prints the chain graph.
+- `--debug`: enables step-through debug behavior.
 
-**node orchestrators:**
-  - lib/job-runner.mjs        job execution engine
-  - lib/chain-runner.mjs      modern chain execution
-  - lib/pty-manager.mjs      pty session management
+`bin/mentiko` also exposes session helpers (`list`, `peek`, `send`, `kill`),
+chain generation, validation, graph preview, schedule/application CLI helpers,
+and import helpers for decisions and generation jobs.
 
-**flow:**
-  1. chain-runner.sh reads chain.json
-  2. resolves agent $ref references from agent library
-  3. emits "chain_start" event
-  4. for each agent in dependency order:
-     - launch-agent.sh creates pty session
-     - sends agent spec + instructions
-     - monitors for completion
-     - emits agent events
-  5. on_complete: stop, notify, webhook, or chain:next
+### web and rest api
 
-### 3. execution layer
+The primary HTTP launch path is:
 
-pty-manager daemon (bin/p):
-  - creates isolated PTY sessions for each agent
-  - supports: claude code, codex, antigravity, kollabor, aider + custom
-  - file-based event communication
-  - session lifecycle: create, send, read, destroy
+```text
+POST /api/chains/run
+  -> web/app/api/chains/run/route.ts
+  -> web/lib/runs/chain-run-service.ts:startChainRun
+  -> /bin/zsh -lc "<bin>/mentiko run <run-dir>/chain.json ..."
+```
 
-session transport abstraction (lib/session-transport.sh):
-  - interface for session management
-  - currently backed by pty-manager
-  - previously used tmux (migrated)
+The API route enforces auth and permissions before launch. `startChainRun`
+handles workspace authorization, profile resolution, run directory creation,
+`run.json` initialization, webhook/audit notification, child environment
+construction, and detached process spawning.
 
-### 4. data layer
+Several product surfaces are wrappers around the same launch service:
 
-3-tier hierarchy: namespace > organization > project
+- task run-chain routes call `/api/chains/run`.
+- schedules call `startChainRun` or the same internal API path.
+- webhooks load a saved chain and call `startChainRun`.
+- decision and generation flows call `startChainRun` with metadata.
+- MCP ops routes delegate to existing web routes.
 
-**tier scoping:**
-  - namespace: billing, settings, marketplace, auth (global auth.db)
-  - org: chains, agents, profiles, templates, webhooks, emails, secrets, workspaces
-  - project: runs, jobs, events, state, decisions, schedules, metrics, notifications
+These wrappers are launch surfaces, not separate engines.
 
-**namespace structure:**
-  ```
-  namespaces/{NAMESPACE_ID}/
-    agents/              - agent definitions
-    agents-runtime/      - runtime state
-    chains/              - chain definitions (json)
-    state/               - agent state files
-    events/              - event files
-    workspace/           - working files
-    reports/             - agent reports
-    runs/                - run objects
-    debug/               - debug breakpoints
-    batches/             - batch run state
-    schedules/           - schedule configs
-    watchdog-hooks/      - watchdog hooks
-    runtime/             - runtime state
-    jobs/                - job files
-    metrics/             - performance metrics
-    emails/              - email configs + audit
-    data/                - sqlite databases (auth.db, tasks.db, decisions.db)
-    config-profiles/     - named execution/model/workspace configs
-    generation-templates/ - AI generation templates
-    mcp/                 - MCP session state
-  ```
+### mcp ops
 
-**path resolution:**
-  - NAMESPACE_ID env var defaults to "default"
-  - ORG_ID defaults to "default"
-  - PROJECT_ID workspace-scoped
-  - all scripts use lib/config.sh for path resolution
-  - web uses web/lib/config.ts (typescript mirror)
+The MCP bridge is a headless control surface for tools, context, tasks,
+terminal operations, and run launch. It talks to web ops routes such as:
 
-**sqlite databases:**
-  - auth.db: user accounts, sessions, oauth (better-auth + better-sqlite3)
-  - tasks.db: task management, dependencies, metadata
-  - decisions.db: decision flow state, options, plans
+- `/api/mentiko-mcp/ops/context/runs`
+- `/api/mentiko-mcp/ops/tasks/run-chain`
+- `/api/mentiko-mcp/ops/tasks/generate`
 
----
+The bridge is not the chain engine. It delegates to the same HTTP/runtime
+paths as the web product.
+
+### process manager
+
+`web/lib/process-manager.ts` supervises long-running platform processes.
+It is the app supervisor, not the chain runner.
+
+Dev process config: `web/processes.dev.json`
+
+- `pty-mgr`: repo wrapper, daemonized.
+- `ws-terminal`: terminal websocket bridge on port 3099.
+- `worker`: background worker.
+- `platform`: `next dev` on port 3000.
+- `kollabor-engine`: optional local engine on port 7433.
+
+Production process config: `web/processes.json`
+
+- `pty-mgr`: `/usr/local/bin/pty-mgr daemon`.
+- `ws-terminal`: compiled websocket bridge.
+- `kollabor-engine`: optional service.
+- `platform`: standalone Next server.
+- `worker`: compiled background worker.
+
+In local development, `npm run dev` runs doctor preflight and then the process
+manager. In normal dev sessions this is already owned by tmux `mentiko-dev`;
+do not start a second copy without checking the existing session.
+
+## orchestration model
+
+Mentiko's current chain orchestration is bash-first and event-driven.
+
+The key point: `chain-runner.sh` is not a long loop over every agent. It
+launches one matching agent, starts the required companion monitor, writes
+state, and exits. When an agent completes, the monitor invokes
+`chain-runner-complete.sh`, which processes the handoff and starts the next
+agent or branch by re-entering `chain-runner.sh` with `--start` or `--parallel`.
+
+Core files:
+
+- `lib/chain-runner.sh`: chain validation, agent/profile resolution, run
+  initialization, concurrency admission, PTY agent launch.
+- `lib/chain-runner-complete.sh`: completion capture, event matching,
+  artifact capture, retries, routing, fan-in/fan-out, run completion.
+- `lib/agent-functions.sh`: PTY session helpers and monitor wiring.
+- `lib/session-transport.sh`: transport abstraction over `pty-mgr`.
+- `lib/event-trigger.sh`: writes and reads file-backed events.
+- `lib/chain-event-watcher.sh`: watches event files and launches chains.
+- `lib/watchdog.sh`: detects stalled runs and foreign-scope-safe cleanup.
+- `lib/run-lib.sh`: run object creation and locked `run.json` updates.
+- `lib/concurrency-cap.sh`: shared chain concurrency gate.
+- `lib/scheduler.sh`: schedule evaluation and scheduled launch.
+- `lib/routing-lib.sh`: branch and fan-in/fan-out routing helpers.
+
+Flow:
+
+1. A user, API route, MCP tool, schedule, webhook, or event asks to run a chain.
+2. The launch path writes a run directory and chain snapshot.
+3. `chain-runner.sh` validates the chain and resolves agent refs/profiles.
+4. The runner ensures the watchdog and chain-event watcher sessions exist.
+5. The runner admits the chain through the concurrency cap.
+6. The runner starts exactly the selected agent or agent set in PTY sessions.
+7. A companion monitor watches for `AGENT_COMPLETE` or declared event files.
+8. `chain-runner-complete.sh` captures output and artifacts.
+9. Completion routing either starts the next agent, starts parallel agents,
+   retries, blocks, fails, or marks the run completed.
+
+## runner-v2 boundary
+
+Runner-v2 is an opt-in side-by-side migration path. It is not the default
+engine.
+
+Current contract:
+
+- `default_runner` is `shell`.
+- `MENTIKO_RUNNER_V2=1` enables the initial runner-v2 launch path.
+- `MENTIKO_RUNNER_V2_COMPLETION=1` enables typed completion re-entry.
+- typed launch still preserves shell fallback until parity is proven.
+- completion must remain fallback-capable because branch routing, generation
+  salvage, retries, event archiving, and fan-in/fan-out still depend on the
+  shell-owned completion contract.
+
+Current web behavior:
+
+```text
+startChainRun
+  if MENTIKO_RUNNER_V2 enabled:
+    try web/lib/runner-v2/controller.ts
+  else:
+    spawn /bin/zsh -lc "bin/mentiko run ..."
+```
+
+The migration invariant is explicit: do not change shell runner behavior when
+`MENTIKO_RUNNER_V2` is unset.
+
+## execution layer
+
+Agents run in isolated PTY sessions through `pty-mgr`, reached by
+`lib/session-transport.sh` and web PTY clients.
+
+Common agent CLIs include Claude Code, Codex, Antigravity, Kollab, Aider,
+Opencode, and custom commands configured through agent profiles.
+
+Why PTY is the normal path:
+
+- CLI agents can keep interactive state.
+- Users can inspect and steer sessions.
+- Terminal output becomes the paper trail.
+- File edits and artifacts happen in the real workspace.
+- Monitors can observe live output and declared completion events.
+
+Pipe mode exists for single-turn jobs where the runtime expects stdin/stdout.
+That is the job-runner path, not the normal chain-agent path.
+
+## background jobs
+
+`lib/job-runner.mjs` is the detached background job runner for generation,
+recommendation, decision research, and other single-turn AI jobs.
+
+Launch path:
+
+```text
+web job route or service
+  -> create job file under jobs/
+  -> web/lib/runs/job-runner-launch.ts
+  -> spawn node lib/job-runner.mjs <jobId>
+  -> job-runner reads prompt and profile
+  -> spawns CLI with stdio ["pipe", "pipe", "pipe"]
+  -> validates output and calls callback/import route
+```
+
+This runner is intentionally different from chain execution. It is for
+detached request/response jobs, not multi-agent PTY chains.
+
+## data hierarchy
+
+Code root and data root are separate.
+
+Code root:
+
+```text
+<repo>/
+  bin/
+  lib/
+  web/
+  docs/
+  scripts/
+  tests/
+```
+
+Data root:
+
+```text
+~/.mentiko/
+  namespaces/{namespaceId}/
+```
+
+The default org collapses into the namespace root. Non-default orgs live under:
+
+```text
+~/.mentiko/namespaces/{namespaceId}/orgs/{orgId}/
+```
+
+Common data directories:
+
+- `chains/`: chain definitions.
+- `agents/`: standalone agent definitions.
+- `agent-profiles/`: runtime profile definitions.
+- `workspaces.json`: registered local/remote workspaces.
+- `runs/`: run directories and `run.json`.
+- `events/`: file-backed event stream.
+- `state/`: agent state files.
+- `jobs/`: detached background job files.
+- `tasks.db`: task store.
+- `decisions.db`: decision flow state.
+- `auth.db`: better-auth storage.
+- `secrets/`: encrypted secret records.
+- `runtime/`: daemon and watcher runtime state.
+
+Path resolution sources:
+
+- bash: `lib/config.sh`
+- web: `web/lib/config.ts`
+
+Do not use `process.cwd()` or repo-relative guesses for data paths.
+
+## run state
+
+Each run lives under:
+
+```text
+$RUNS_DIR/<runId>/
+  run.json
+  chain.json
+  output.log
+  artifacts/
+  runspace/
+  .internal/
+```
+
+`run.json` is the user-visible run state. Writers must use the shared lock
+protocol, temporary writes, and atomic rename. Readers should tolerate old or
+new whole-file snapshots.
+
+Status vocabulary:
+
+- run-level success is `completed`.
+- agent-level success is `complete`.
+- shell-created runs start as `pending`, then promote to `running`.
+- web-created runs may start as `running` or `pending` if queued at capacity.
+
+## events
+
+Mentiko uses file-backed events for chain and cross-chain coordination.
+
+Event file shape:
+
+```text
+event: agent-complete
+source: reviewer
+run_id: run-...
+timestamp: 2026-07-03T00:00:00.000Z
+processed: false
+data: ...
+```
+
+Parser rule: split on the first colon. `data` may contain additional colons.
+
+Important distinction:
+
+- declared agent events are handoff signals.
+- monitor diagnostic events are not success handoffs.
+- stalled/dead/idle does not imply completion.
+
+## web app
+
+The web app is a Next.js App Router application under `web/app`.
+
+Major surfaces:
+
+- `/dashboard`: active work and activity.
+- `/chains`: chain list, builder, details, versioning, run launch.
+- `/agents`: agent library.
+- `/runs`: run history and live run detail.
+- `/tasks`: sqlite-backed task management.
+- `/decisions`: guided decision workflow.
+- `/workspaces`: registered local/remote execution contexts.
+- `/code`: file editor.
+- `/events`: event log and trigger surfaces.
+- `/schedules`: org and workspace schedules.
+- `/artifacts`: run artifact browser.
+- `/generation`: AI generation tools.
+- `/webhooks`: chain webhook triggers.
+- `/links`: peer collaboration.
+- `/settings`: account, auth, profiles, secrets, system, PTY, logs.
+- `/docs`: in-app documentation.
+
+Core server/runtime modules:
+
+- `web/lib/runs/chain-run-service.ts`: web chain launch service.
+- `web/lib/runs/job-runner-launch.ts`: detached job launch service.
+- `web/lib/pty/pty-client.ts`: PTY manager client/path resolution.
+- `web/lib/config.ts`: data/code root resolution.
+- `web/lib/auth/*`: better-auth and RBAC.
+- `web/lib/tasks/*`: task store.
+- `web/lib/decisions/*`: decision store and dispatch.
+- `web/lib/runner-v2/*`: typed runner-v2 migration modules.
+- `web/server/ws-terminal.ts`: terminal websocket bridge.
+- `web/server/background-worker.ts`: background worker process.
+
+## auth and permissions
+
+Auth uses better-auth with sqlite. Route-level permissions are documented in
+`docs/AUTH_COVERAGE.md` and checked by the auth coverage script.
+
+Common permission families:
+
+- `view_chains`
+- `manage_chains`
+- `manage_tasks`
+- `manage_settings`
+
+Internal ops routes use dedicated auth helpers and session-token validation.
+MCP/device recovery has its own auth flow under `/api/mentiko-mcp/auth/*`.
 
 ## chain format
 
-chains are json files defining agent pipelines:
+Chains are JSON files with agents, triggers, routing, and runtime config.
+
+Minimal example:
 
 ```json
 {
-  "name": "example-chain",
-  "version": "1.0",
-  "description": "does something",
+  "name": "research-and-review",
+  "description": "research a topic and review the result",
   "default_agent_profile": "default",
   "config": {
-    "max_rounds": 3,
     "project_root": "auto",
-    "session_prefix": "mentiko",
-    "on_complete": "stop",
-    "schedule": "0 9 * * *",
-    "timezone": "UTC",
+    "max_rounds": 3,
     "monitor": true,
     "monitor_interval": 60
   },
   "agents": [
     {
-      "id": "agent-1",
-      "name": "first agent",
-      "role": "researcher",
-      "triggers": ["chain:start"],
-      "emits": ["agent-1:complete"],
-      "spec": "path/to/spec.md"
+      "id": "researcher",
+      "name": "Researcher",
+      "triggers": ["manual-start"],
+      "emits": "research-complete",
+      "prompt": "Research {TASK} and write findings to artifacts."
     },
     {
-      "id": "agent-2",
-      "name": "second agent",
-      "role": "writer",
-      "triggers": ["agent-1:complete"],
-      "emits": ["chain:complete"],
-      "$ref": "agent-id"
+      "id": "reviewer",
+      "name": "Reviewer",
+      "triggers": ["research-complete"],
+      "emits": "review-complete",
+      "prompt": "Review the research and write recommendations."
     }
   ]
 }
 ```
 
-**trigger system:**
-  - chain:start    - chain starts
-  - agent:*        - agent events
-  - schedule:*     - scheduled events
-  - webhook:*      - webhook events
-  - file:*         - file system events
-  - email:*        - email events
+Agent references:
 
-**$ref syntax:**
-  - { "$ref": "agent-id" } loads from agents/{name}/agent.json
-  - enables standalone agent library + chain reuse
-  - supports org-level and marketplace agents
-
----
-
-## config profiles
-
-named profiles for reusable configuration:
-
-**profile types:**
-  - execution    - cli choice, rounds, timeout
-  - model        - model selection, parameters
-  - workspace    - local, ssh, docker
-  - retry        - retry policy, backoff
-  - gateway      - api gateway config
-
-**resolution order:**
-  1. inline agent config
-  2. agent profile
-  3. chain profile
-  4. defaults
-
-**location:** namespaces/{id}/config-profiles/{type}/{name}.json
-
----
-
-## event system
-
-file-based events in namespaces/{id}/events/:
-
-**event file format:**
-```
-event: chain_start
-source: chain-runner
-timestamp: 2024-03-04T10:00:00Z
-processed: false
-data: {...}
+```json
+{ "$ref": "agent-id" }
 ```
 
-**events flow:**
-  1. emit-event writes .event file
-  2. chain-runner watches for matching events
-  3. triggers agents when event matches
-  4. mark-processed updates file
-
----
-
-## web architecture
-
-next.js 16 app router structure:
-
-**web/app/** (60+ routes)
-  (auth)/              - login, signup, password reset
-  (workflows)/         - org-scoped workflow pages
-    chains/            - chain builder (visual + json editor)
-    agents/            - agent library
-    schedules/         - org-level schedules
-    events/            - event log viewer
-    artifacts/         - artifact browser
-    generation/        - AI generation tools
-    email/             - email routes (inbound/outbound)
-    webhooks/          - webhook management
-    links/             - agent links (peer collaboration)
-    map/               - workflow map / topology view
-  decisions/           - AI decision flow (3-round guided wizard)
-  marketplace/         - templates, chains, agents, artifacts
-  dashboard/          - home (activity feed, stats, quick actions)
-  activity/           - activity feed
-  code/               - file editor (workspace files)
-  workspaces/         - execution envs (local, ssh, docker)
-  orgs/               - org management
-  docs/               - guides, architecture, api reference
-  settings/           - 24 sub-pages (account, security, secrets, etc)
-  runs/               - run history (workspace-scoped)
-  tasks/              - task management (sqlite-backed)
-  conversations/      - ai sessions
-  api/                - rest + websocket routes
-
-**components/** (organized by feature)
-  ui/                 - gaia components (shadcn)
-  chain/              - chain editor components
-  run/                - run viewer components
-  decision/           - decision flow components
-  task/               - task tree view, type badges
-  editor/             - file tree, code editor
-
-**lib/** (shared utilities)
-  auth-*.ts           - better-auth integration
-  agent-loader.ts     - $ref resolution
-  config.ts           - path resolution (3-tier hierarchy)
-  types.ts            - shared types
-  pty-client.ts       - pty-manager client
-  task-store.ts       - sqlite task management
-  decision-types.ts   - decision flow types
-  releases.ts         - version history
-
-**state management:**
-  - zustand for component state
-  - server components for data fetching
-  - websocket for real-time updates
-
-**auth: better-auth + better-sqlite3**
-  - email + password
-  - oauth (github, google, microsoft)
-  - multi-tenant via org_id
-  - sqlite db: ~/.mentiko/data/auth.db
-
----
-
-## agent types
-
-supported agent runtimes:
-
-**claude code**
-  - cli tool for interacting with claude
-  - tool use, file editing, bash commands
-  - hosts claude sessions (not an agent itself)
-
-**codex**
-  - openai codex via cli
-  - code generation
-
-**antigravity**
-  - openai code interpreter
-
-**kollabor**
-  - custom agent framework
-  - specialized workflows
-
-**aider**
-  - ai pair programming
-  - git-integrated
-
-**custom**
-  - user-defined agent runtimes
-  - any cli that accepts prompt input
-
----
-
-## decision flow system
+The runner resolves refs before execution so reusable agents can live outside
+the chain file.
 
-AI-powered decision workflow with 3-round guided wizard:
+## profiles and secrets
 
-**modes:**
-  - guided: 3-round interactive wizard (default for new decisions)
-    - round 1: research (tradeoff questions, a/b choices)
-    - round 2: option generation (AI creates 2-3 approaches)
-    - round 3: plan generation (detailed implementation plan)
-  - classic: free-form decision creation
+Agent profiles define CLI, model, args, permission mode, environment, and
+runtime behavior. Chain agents run with interactive profile commands, not the
+pipe flags used by background jobs.
 
-**data storage:**
-  - sqlite db: namespaces/{id}/data/decisions.db
-  - tables: decisions, decision_options, decision_plans, decision_tasks
-  - state machine: pending → research → options → plan → approved → completed
+Profile resolution is layered:
 
-**routes:**
-  - /decisions - decision dashboard
-  - /api/decisions - crud + workflow transitions
-  - decision generation templates: decision_research, decision_guided_questions, decision_guided_options, decision_guided_plan
+1. agent-level profile
+2. chain default profile
+3. workspace default profile
+4. namespace default profile
+5. legacy inline fallback
 
-**resolution:**
-  - approved decisions auto-create task tree
-  - tasks link back to parent decision
-  - support for decision rollback and revision
+Secrets are stored encrypted under the org/namespace data root and resolved
+into child environments only when needed. Do not inline secrets in chain files,
+docs, or process configs.
 
----
+## task and decision flows
 
-## marketplace integration
+Tasks are sqlite-backed and can link to chains, decisions, workspaces, and runs.
+Task run-chain routes are wrappers around the same chain launch service.
 
-community-driven agent and chain templates:
+Decision flows use guided or classic modes. Approved decisions can create tasks
+or dispatch chains with decision metadata. Decision/generation import tokens are
+written into run-private `.internal/` files when needed.
 
-**entity types:**
-  - templates: bundles of chains + agents + artifacts (complete packages)
-  - chains: workflow definitions with agents
-  - agents: standalone agents with artifacts
-  - artifacts: documents that agents create (reports, schemas, docs)
+## marketplace and public repo boundary
 
-**location:**
-  - hosted at process.env.MARKETPLACE_URL (github.com/kollaborai/mentiko-marketplace)
-  - syncs to tenant namespaces daily
-  - routes: /marketplace/agents, /marketplace/chains, /marketplace/artifacts, /marketplace/templates
+Marketplace support installs and syncs reusable chains, agents, templates, and
+artifacts. The platform repo must remain generic and self-hoster safe.
 
-**usage:**
-  - install templates to org workspace
-  - customize installed agents/chains
-  - share to marketplace (export + submit)
+Keep in this repo:
 
----
+- product code
+- self-hosting docs
+- generic runtime docs
+- schemas, tests, and public examples
 
-## task store
+Keep out of this repo:
 
-sqlite-backed task management with dependencies:
+- customer or tenant details
+- private hostnames or IPs
+- billing/control-plane implementation details
+- deployment runbooks for a specific private environment
+- credentials, tokens, or environment-specific secret names
 
-**database:** ~/.mentiko/namespaces/{id}/data/tasks.db
+See `REPO_BOUNDARY.md`.
 
-**entities:**
-  - tasks: id, title, description, status, priority, parent_id, workspace_id
-  - task_dependencies: blocked_by relationships
-  - task_comments: discussion threads
-  - task_labels: categorization
+## deployment shape
 
-**features:**
-  - dependency graph (blocked_by, blocks)
-  - auto-resolution from parent task completion
-  - workspace-scoped queries
-  - task links to chains, decisions, runs
+Development:
 
-**routes:**
-  - /tasks - task dashboard (workspace-scoped)
-  - /api/tasks - crud + dependencies
+```bash
+cd web
+npm run dev
+```
 
----
+This runs doctor preflight and starts `web/lib/process-manager.ts`, which then
+starts the dev process set from `web/processes.dev.json`.
 
-## MCP auth recovery
+Production:
 
-self-service session recovery for standalone MCP clients:
+- build uses the platform release workflow and Dockerfile.
+- platform code is assembled under `/opt/mentiko`.
+- process manager runs the supervised process set from `web/processes.json`.
+- the container includes the web app, `bin/`, `lib/`, websocket bridge,
+  background worker, PTY manager, and supported agent CLIs.
 
-**problem:** Claude Code wired as `mentiko` MCP server loses auth when session expires
+Releases do not auto-deploy tenants. Tenant rollout is handled by the separate
+control plane.
 
-**solution:** device-authorization flow
-  1. `reconnect` MCP tool → magic link
-  2. user approves at /mcp-auth (cookie-authed)
-  3. bridge picks up revocable 90d refresh token
-  4. token stored in ~/.mentiko/mcp/session.json
-  5. auto-exchange on 401 (silent)
+## observability
 
-**routes:**
-  - /api/mentiko-mcp/auth/device/start - initiate flow
-  - /api/mentiko-mcp/auth/device/poll - check status
-  - /api/mentiko-mcp/auth/device/approve - user approve
-  - /api/account/mcp-tokens - manage connections
+Runtime observability comes from:
 
-**benefits:**
-  - kills ~/.claude.json clobber problem
-  - session.json precedence over MENTIKO_SESSION_TOKEN env
-  - 24h access-token expiry invisible after one reconnect
+- `run.json` status and agent state.
+- PTY session output.
+- `output.log` in run directories.
+- event files and archive.
+- watchdog diagnostics.
+- notifications.
+- audit log events.
+- web run detail and activity surfaces.
 
----
-
-## agent links / peer collaboration
-
-two-agent collaboration via live PTY sessions:
-
-**features:**
-  - link two agents in shared workspace
-  - live terminal bridge between agents
-  - file system sharing
-  - event coordination
-
-**cli tools:**
-  - peer-manager - orchestrate peer sessions
-  - peer-chain - execute chain in peer mode
-  - peer-send - send messages to peer sessions
-  - peer-swarm - multi-peer swarm launcher
-  - peer-watch - watch single peer session
-
-**routes:**
-  - /links - agent links dashboard
-  - /api/links - crud + session management
-
----
-
-## design system
-
-flat, borderless, apple music app aesthetic:
-
-**rules:**
-  - theme tokens: bg-card, bg-muted, bg-accent (NOT bg-white/5)
-  - rounded-sm or rounded-md max
-  - icons: @aliimam/icons ONLY (lucide-react DEPRECATED)
-  - page headers: ALWAYS use PageHeader component
-  - sidebar items: ALWAYS use WorkflowSidebarItem
-  - status colors: ALWAYS use status-colors.ts
-
-**tree/sidebar standards (established 2026-06-30):**
-  1. no depth-based indentation — flat small paddingLeft
-  2. real per-item ids go directly in badge (no group-hover reveal)
-  3. full keyboard nav (Up/Down/Right/Left)
-  4. extract shared pure helpers for visibility/filter logic
-
-**component library:**
-  - gaia ui (NOT an npm package): npx shadcn@latest add https://ui.heygaia.io/r/<component>.json
-  - installed: notification-card, goal-card, workflow-card, calendar-event-card, nested-menu
-  - full spec: docs/DESIGN_SYSTEM.md
-
----
-
-## multi-tenancy
-
-3-tier hierarchy: namespace > organization > project
-
-**path collapse:**
-  - "default" org/project collapse into parent (no nesting)
-  - default: ~/.mentiko/namespaces/default/chains/
-  - non-default: ~/.mentiko/namespaces/acme/orgs/engineering/chains/
-
-**scoping:**
-  - global: auth.db (single user database across namespaces)
-  - namespace: billing, settings, marketplace
-  - org: chains, agents, profiles, templates, webhooks
-  - project: runs, jobs, events, state, decisions
-
-**migration from single-tenant:**
-  - chains moved from chains/ to namespaces/{id}/chains/
-  - agents moved from agents/ to namespaces/{id}/agents/
-  - all paths resolved via lib/config.sh or web/lib/config.ts
-
----
-
-## deployment
-
-**development:**
-  - cd web && npm run dev
-  - localhost:3000
-
-**production:**
-  - container deployment (docker, podman)
-  - linode vps (debian 12)
-  - docker compose: postgres + next.js + caddy
-  - caddy reverse proxy (auto-tls)
-
-**image build pipeline:**
-  1. install web dependencies
-  2. run next.js standalone build
-  3. assemble standalone output with bin/, lib/, server/, public/
-  4. compile ws-terminal.ts with esbuild
-  5. compile process-manager.ts with tsc
-  6. build container image from Dockerfile
-  7. run smoke tests before publishing
-
-**container includes:**
-  - node 22, zsh, python3, git, sqlite3, rclone
-  - AI CLIs: claude, codex, antigravity, opencode
-  - kollabor, aider
-  - pty-mgr daemon
-
----
-
-## monitoring & observability
-
-**watchdog daemon:**
-  - detects stalled runs (>60s inactivity)
-  - sends notifications
-  - can auto-retry or escalate
-
-**metrics:**
-  - run duration tracking
-  - agent success rates
-  - event processing stats
-  - workspace health
-
-**audit log:**
-  - all chain executions
-  - agent state changes
-  - errors + retries
-  - auth events
-
----
-
-## schemas
-
-json schemas for validation:
-  - chain.schema.json    - chain definition validation
-  - agent.schema.json    - agent spec validation
-  - schedule.schema.json - schedule config validation
-  - task.schema.json     - task validation
-  - decision.schema.json - decision validation
-  - event.schema.json    - event validation
-
----
+For runtime claims, prefer exact run ids, paths, session names, logs, and route
+responses over task labels or stale docs.
 
 ## environment variables
 
-**path roots (critical):**
-  - MENTIKO_GLOBAL_ROOT - ~/.mentiko (DATA root, NOT code root)
-  - MENTIKO_CODE_ROOT - parent of process.cwd() (code root: bin/, lib/, web/)
-  - NAMESPACE_ID - "default" (billing entity)
-  - ORG_ID - "default" (team/department)
-  - PROJECT_ID - workspace-scoped
+Important roots:
 
-**auth (critical):**
-  - BETTER_AUTH_SECRET - randomized in production (session signing, vault encryption)
-  - BETTER_AUTH_URL - must match actual domain (OAuth redirects, cookie domain)
-  - DATABASE_URL - omit in dev = auto-login bypass
+- `MENTIKO_GLOBAL_ROOT`: data root, usually `~/.mentiko`.
+- `MENTIKO_CODE_ROOT`: code checkout root.
+- `MENTIKO_PROJECT_ROOT`: current org/project data root.
+- `MENTIKO_ORG_ROOT`: org data root.
+- `MENTIKO_NAMESPACE_ROOT`: namespace data root.
+- `NAMESPACE_ID`: namespace id, default `default`.
+- `ORG_ID`: org id, default `default`.
 
-**cli tools:**
-  - CLAUDECODE - set by claude code, MUST be unset in child processes
+Runner flags:
 
-full catalog: .kdex/articles/environment-variables.md
+- `MENTIKO_RUN_ID`: current run id.
+- `MENTIKO_CLI`: runtime CLI override.
+- `MENTIKO_RUNNER_V2`: opt-in initial runner-v2 launch.
+- `MENTIKO_RUNNER_V2_COMPLETION`: opt-in typed completion re-entry.
+- `MENTIKO_CAP_DISABLED`: disables concurrency gate when explicitly set.
+- `MENTIKO_CAP_MAX_WAIT_SECS`: max wait for chain capacity admission.
+
+Auth and app:
+
+- `BETTER_AUTH_SECRET`: auth/session/internal request secret.
+- `BETTER_AUTH_URL`: public auth URL.
+- `DATABASE_URL`: database connection when configured.
+- `INTERNAL_SERVICE_SECRET`: internal service auth for sidecar services.
+
+PTY:
+
+- `PTY_MGR_BIN`: explicit PTY manager binary override.
+- `MENTIKO_PTY_MGR_BIN`: Mentiko-specific PTY manager override.
+- `PTY_DAEMON`: daemon/socket name.
+
+Child process hygiene:
+
+- unset or override tool-specific parent-session vars when launching nested
+  agent CLIs if the child CLI refuses nested execution.
+
+See `docs/ENV_VARS.md` for the full catalog.

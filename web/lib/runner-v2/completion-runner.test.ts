@@ -4,6 +4,7 @@ import { join } from "path";
 import { completeAgent } from "@/lib/runner-v2/completion-runner";
 import { createFanGroupState } from "@/lib/runner-v2/fan-group";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
 
 function runPath() {
   return join(mkdtempSync(join(tmpdir(), "runner-v2-completion-runner-")), "run.json");
@@ -20,10 +21,25 @@ function seedRun(file: string) {
   }));
 }
 
+function seedSubmittedAttempt(file: string) {
+  const attempt = createAgentAttempt({ runJsonPath: file, runId: "run-123", agentId: "writer" });
+  transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to: "lease_acquired" });
+  transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to: "pty_allocated" });
+  transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to: "process_spawned" });
+  transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to: "ready_for_instructions" });
+  transitionAgentAttempt({ runJsonPath: file, attemptId: attempt.id, to: "instructions_submitted" });
+  return attempt;
+}
+
+function runnerV2Attempts(file: string) {
+  return (readRunJson(file).runnerV2 as { attempts?: Array<Record<string, unknown>> } | undefined)?.attempts || [];
+}
+
 describe("runner-v2 completion runner", () => {
   it("marks agent and run failed when the declared emits event is missing", () => {
     const file = runPath();
     seedRun(file);
+    seedSubmittedAttempt(file);
 
     const decision = completeAgent({
       runJsonPath: file,
@@ -39,6 +55,10 @@ describe("runner-v2 completion runner", () => {
       status: "failed",
       status_message: "agent writer completed without declared event: no matching completion event",
       agents: [{ id: "writer", status: "failed", completed: "2026-06-25T10:00:00.000Z" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
     });
   });
 
@@ -111,6 +131,7 @@ describe("runner-v2 completion runner", () => {
   it("stops the run when a declared emits event is missing and retries are exhausted", () => {
     const file = runPath();
     seedRun(file);
+    seedSubmittedAttempt(file);
 
     const decision = completeAgent({
       runJsonPath: file,
@@ -140,6 +161,10 @@ describe("runner-v2 completion runner", () => {
       status: "stopped",
       status_message: "agent writer completed without declared event; retries exhausted",
       agents: [{ id: "writer", status: "failed" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "retries_exhausted",
     });
   });
 
@@ -232,6 +257,7 @@ describe("runner-v2 completion runner", () => {
   it("marks agent complete and returns routing decision on a real event", () => {
     const file = runPath();
     seedRun(file);
+    seedSubmittedAttempt(file);
 
     const decision = completeAgent({
       runJsonPath: file,
@@ -255,6 +281,11 @@ describe("runner-v2 completion runner", () => {
       id: "writer",
       status: "complete",
       completed: "2026-06-25T10:00:00.000Z",
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_event",
+      terminalDetail: "matched completion event draft-ready",
     });
   });
 
@@ -322,6 +353,7 @@ describe("runner-v2 completion runner", () => {
   it("completes an empty-emits last agent instead of fabricating a missing event failure", () => {
     const file = runPath();
     seedRun(file);
+    seedSubmittedAttempt(file);
 
     const decision = completeAgent({
       runJsonPath: file,
@@ -345,6 +377,13 @@ describe("runner-v2 completion runner", () => {
     expect(readRunJson(file)).toMatchObject({
       status: "completed",
       agents: [{ id: "writer", status: "complete" }],
+      runnerV2: {
+        attempts: [{
+          phase: "completed",
+          terminalReason: "completed_empty_emits_last_agent",
+          terminalDetail: "empty emits last agent accepted as terminal completion",
+        }],
+      },
     });
   });
 

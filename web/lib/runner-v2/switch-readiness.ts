@@ -169,7 +169,16 @@ function watchedProofCheck(path: string): SwitchReadinessCheck {
       checks?: Array<{ id?: string; status?: string }>;
     };
     const checks = Array.isArray(proof.checks) ? proof.checks : [];
-    const required = ["launch-supported", "run-completed", "agent-complete", "event-written", "completion-session"];
+    const required = [
+      "launch-supported",
+      "run-completed",
+      "agent-complete",
+      "attempt-completed",
+      "attempt-terminal-reason",
+      "attempt-process-evidence",
+      "event-written",
+      "completion-session",
+    ];
     const passed = proof.schema_version === "runner-v2-watched-proof/v1"
       && proof.status === "passed"
       && required.every((id) => checks.find((check) => check.id === id)?.status === "pass");

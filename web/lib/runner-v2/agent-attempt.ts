@@ -10,6 +10,7 @@ export type AgentAttemptPhase =
   | "ready_for_instructions"
   | "instructions_submitted"
   | "completed"
+  | "completion_failed"
   | "startup_failed"
   | "human_action_required"
   | "stuck"
@@ -18,6 +19,9 @@ export type AgentAttemptPhase =
 export type AgentAttemptTerminalReason =
   | "completed_from_event"
   | "completed_from_generation_artifact"
+  | "completed_empty_emits_last_agent"
+  | "no_completion_event"
+  | "retries_exhausted"
   | "readiness_deadline_expired"
   | "auth_prompt_detected"
   | "invalid_transition"
@@ -98,8 +102,9 @@ const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
   pty_allocated: ["process_spawned", "startup_failed", "human_action_required", "released"],
   process_spawned: ["ready_for_instructions", "startup_failed", "human_action_required", "stuck", "released"],
   ready_for_instructions: ["instructions_submitted", "startup_failed", "human_action_required", "stuck", "released"],
-  instructions_submitted: ["completed", "startup_failed", "human_action_required", "stuck", "released"],
+  instructions_submitted: ["completed", "completion_failed", "startup_failed", "human_action_required", "stuck", "released"],
   completed: ["released"],
+  completion_failed: ["released"],
   startup_failed: ["released"],
   human_action_required: ["released"],
   stuck: ["released"],
@@ -108,6 +113,7 @@ const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
 
 const TERMINAL_PHASES = new Set<AgentAttemptPhase>([
   "completed",
+  "completion_failed",
   "startup_failed",
   "human_action_required",
   "stuck",
@@ -265,15 +271,61 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   detail?: string;
   now?: Date;
 }): AgentAttemptRecord | undefined {
-  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
-  if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
-  return transitionAgentAttempt({
-    runJsonPath: input.runJsonPath,
-    attemptId: attempt.id,
-    to: "completed",
+  return markLatestAttemptCompleted({
+    ...input,
     reason: "completed_from_generation_artifact",
-    detail: input.detail,
-    now: input.now,
+  });
+}
+
+export function markAgentAttemptCompletedFromEvent(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_event",
+  });
+}
+
+export function markAgentAttemptCompletedFromEmptyEmits(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_empty_emits_last_agent",
+  });
+}
+
+export function markAgentAttemptFailedNoCompletion(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptFailed({
+    ...input,
+    reason: "no_completion_event",
+  });
+}
+
+export function markAgentAttemptRetriesExhausted(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptFailed({
+    ...input,
+    reason: "retries_exhausted",
   });
 }
 
@@ -398,6 +450,51 @@ function findLatestAttempt(runJsonPath: string, runId: string, agentId: string):
   const attempts = readRunnerV2AttemptState(runJsonPath).attempts
     .filter((attempt) => attempt.runId === runId && attempt.agentId === agentId);
   return attempts[attempts.length - 1];
+}
+
+function markLatestAttemptCompleted(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  reason: AgentAttemptTerminalReason;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
+  return transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: attempt.id,
+    to: "completed",
+    reason: input.reason,
+    detail: input.detail,
+    now: input.now,
+  });
+}
+
+function markLatestAttemptFailed(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  reason: AgentAttemptTerminalReason;
+  detail?: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (!attempt) return undefined;
+  // completion failure only applies to an attempt that actually reached a running
+  // agent; leave already-terminal or pre-instructions attempts untouched instead
+  // of throwing an invalid-transition error into the live completion path.
+  if (TERMINAL_PHASES.has(attempt.phase)) return attempt;
+  if (!canTransition(attempt.phase, "completion_failed")) return attempt;
+  return transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: attempt.id,
+    to: "completion_failed",
+    reason: input.reason,
+    detail: input.detail,
+    now: input.now,
+  });
 }
 
 function writeAttempt(runJsonPath: string, attempt: AgentAttemptRecord): void {

@@ -340,6 +340,16 @@ export function BranchSelector({
   // ── lifecycle effects ─────────────────────────────────────────────────────
 
   /**
+   * Fetch the current branch + list on mount (and whenever the workspace
+   * changes). Without this the header label sits on "loading…" forever, because
+   * currentBranch is only ever populated by refreshBranches — which otherwise
+   * runs only after the dropdown is opened.
+   */
+  useEffect(() => {
+    refreshBranches();
+  }, [refreshBranches]);
+
+  /**
    * Fetch branches when dropdown first opens
    */
   useEffect(() => {

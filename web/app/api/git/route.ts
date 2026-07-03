@@ -640,6 +640,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     stashCommit?: string;
     stashMessage?: string;
     includeUntracked?: boolean;
+    commitHash?: string;
   };
 
   const { action, workspacePath } = body;
@@ -749,6 +750,21 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       } catch {
         // file doesn't exist at HEAD (new file)
         return apiSuccess({ content: "" });
+      }
+    }
+
+    case "show_commit": {
+      // full patch for a single commit — opened as a diff tab from the log view.
+      // hash is validated hex so it can never be read as a git option or path.
+      const commitHash = body.commitHash;
+      if (!commitHash || !/^[0-9a-f]{4,40}$/i.test(commitHash)) {
+        return apiSuccess({ content: "", error: "valid commitHash required" });
+      }
+      try {
+        const content = exec(["show", "--no-color", commitHash], gitRoot);
+        return apiSuccess({ content });
+      } catch (e) {
+        return apiSuccess({ content: "", error: String(e) });
       }
     }
 

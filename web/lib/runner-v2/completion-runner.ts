@@ -6,7 +6,13 @@ import { planTerminalCompletion, shouldCompleteEmptyEmitsAgent, type TerminalCom
 import { planNoEventRetry, type RetryNoEventPlan, type RetryPolicy } from "@/lib/runner-v2/retry-plan";
 import { completeFanGroupMember, type FanGroupCompletionPlan, type FanGroupState } from "@/lib/runner-v2/fan-group";
 import { applyLoopGuardToRoute, routeAgentIds, type LoopGuardDecision } from "@/lib/runner-v2/loop-guard";
-import { markAgentAttemptCompletedFromGeneration } from "@/lib/runner-v2/agent-attempt";
+import {
+  markAgentAttemptCompletedFromEmptyEmits,
+  markAgentAttemptCompletedFromEvent,
+  markAgentAttemptCompletedFromGeneration,
+  markAgentAttemptFailedNoCompletion,
+  markAgentAttemptRetriesExhausted,
+} from "@/lib/runner-v2/agent-attempt";
 
 export type CompletionRunnerDecision =
   | { action: "fail"; reason: string; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -89,6 +95,13 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     if (shouldCompleteEmptyEmitsAgent(input.agent.emits, hasDownstreamForAgent(input.chain, input.agent.id))) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
       const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);
+      markAgentAttemptCompletedFromEmptyEmits({
+        runJsonPath: input.runJsonPath,
+        runId: input.runId,
+        agentId: input.agent.id,
+        detail: "empty emits last agent accepted as terminal completion",
+        now: input.now,
+      });
       return {
         action: "terminal",
         reason: "empty-emits-last-agent",
@@ -133,6 +146,13 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         `agent ${input.agent.id} completed without declared event; retries exhausted`,
         input.now,
       );
+      markAgentAttemptRetriesExhausted({
+        runJsonPath: input.runJsonPath,
+        runId: input.runId,
+        agentId: input.agent.id,
+        detail: "declared completion event missing; retries exhausted",
+        now: input.now,
+      });
       return {
         action: "exhausted",
         reason: match.reason || "no matching completion event",
@@ -150,6 +170,13 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       `agent ${input.agent.id} completed without declared event: ${match.reason}`,
       input.now,
     );
+    markAgentAttemptFailedNoCompletion({
+      runJsonPath: input.runJsonPath,
+      runId: input.runId,
+      agentId: input.agent.id,
+      detail: `declared completion event missing: ${match.reason}`,
+      now: input.now,
+    });
     return {
       action: "fail",
       reason: match.reason || "no matching completion event",
@@ -160,6 +187,13 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
 
   const fanGroup = planFanGroupCompletion(input, "complete");
   updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
+  markAgentAttemptCompletedFromEvent({
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    agentId: input.agent.id,
+    detail: `matched completion event ${match.event.event}`,
+    now: input.now,
+  });
   const route = decideNextRoute(input.chain, match.event.event);
   const loopGuard = input.loopGuard ? applyLoopGuardToRoute({
     currentAgentId: input.agent.id,
