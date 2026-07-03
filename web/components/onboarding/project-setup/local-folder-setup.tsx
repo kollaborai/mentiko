@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft2Filled,
@@ -10,6 +10,7 @@ import {
 import { FolderBrowser } from "@/components/workspace/folder-browser";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { getApiErrorMessage } from "@/lib/api/api-client";
+import type { Workspace } from "@/lib/workspaces/workspace-storage";
 
 interface LocalFolderSetupProps {
   onComplete: (data: {
@@ -22,12 +23,40 @@ interface LocalFolderSetupProps {
   workspacesDir?: string;
 }
 
+function normalizePath(path: string): string {
+  return path.replace(/\/+$/, "") || "/";
+}
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function makeUniqueWorkspaceName(baseName: string, existingWorkspaces: Workspace[]): string {
+  const trimmed = baseName.trim() || "workspace";
+  const existingIds = new Set(existingWorkspaces.map((workspace) => workspace.id));
+
+  if (!existingIds.has(slugify(trimmed))) {
+    return trimmed;
+  }
+
+  let suffix = 2;
+  while (existingIds.has(slugify(`${trimmed} ${suffix}`))) {
+    suffix += 1;
+  }
+
+  return `${trimmed} ${suffix}`;
+}
+
 export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFolderSetupProps) {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [selectedPath, setSelectedPath] = useState(workspacesDir || "");
   const [pathManual, setPathManual] = useState(false);
   const [name, setName] = useState("");
   const [nameManual, setNameManual] = useState(false);
+  const [existingWorkspaces, setExistingWorkspaces] = useState<Workspace[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,11 +64,44 @@ export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFol
     ? name
     : selectedPath.split("/").filter(Boolean).pop() || "";
 
+  const selectedWorkspace = useMemo(() => {
+    if (!selectedPath) return null;
+    const normalizedSelected = normalizePath(selectedPath);
+    return existingWorkspaces.find((workspace) => normalizePath(workspace.path) === normalizedSelected) ?? null;
+  }, [existingWorkspaces, selectedPath]);
+
   useEffect(() => {
     if (workspacesDir && !pathManual) {
       setSelectedPath(workspacesDir);
     }
   }, [pathManual, workspacesDir]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadWorkspaces = async () => {
+      try {
+        const res = await fetchWithNamespace("/api/workspaces");
+        const raw = await res.json().catch(() => ({})) as {
+          data?: { workspaces?: Workspace[] };
+          workspaces?: Workspace[];
+        };
+        const data = raw.data ?? raw;
+        const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+        if (!cancelled) {
+          setExistingWorkspaces(workspaces);
+        }
+      } catch {
+        // keep the default empty state if the workspace index cannot be loaded
+      }
+    };
+
+    loadWorkspaces();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchWithNamespace]);
 
   const handleSelect = (path: string) => {
     setSelectedPath(path);
@@ -54,7 +116,7 @@ export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFol
     setNameManual(true);
   };
 
-  const handleSubmit = useCallback(async () => {
+  const submitWorkspace = useCallback(async (workspaceName: string) => {
     if (!selectedPath) {
       setError("select a folder first");
       return;
@@ -64,7 +126,7 @@ export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFol
     setError("");
 
     try {
-      const wsName = derivedName || "workspace";
+      const wsName = workspaceName.trim() || "workspace";
       const res = await fetchWithNamespace("/api/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -93,7 +155,25 @@ export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFol
     } finally {
       setCreating(false);
     }
-  }, [selectedPath, derivedName, fetchWithNamespace, onComplete]);
+  }, [selectedPath, fetchWithNamespace, onComplete]);
+
+  const handleSubmit = useCallback(() => {
+    void submitWorkspace(derivedName || "workspace");
+  }, [derivedName, submitWorkspace]);
+
+  const handleCreateAnother = useCallback(() => {
+    void submitWorkspace(makeUniqueWorkspaceName(derivedName || "workspace", existingWorkspaces));
+  }, [derivedName, existingWorkspaces, submitWorkspace]);
+
+  const handleReattach = useCallback(() => {
+    if (!selectedWorkspace) return;
+    onComplete({
+      workspaceId: selectedWorkspace.id,
+      workspaceName: selectedWorkspace.name,
+      workspacePath: selectedWorkspace.path,
+      method: "reattach",
+    });
+  }, [onComplete, selectedWorkspace]);
 
   return (
     <div className="space-y-5">
@@ -149,23 +229,56 @@ export function LocalFolderSetup({ onComplete, onBack, workspacesDir }: LocalFol
           <ArrowLeft2Filled className="h-3.5 w-3.5" />
           back
         </button>
-        <Button
-          onClick={handleSubmit}
-          disabled={creating || !selectedPath}
-          className="gap-2"
-        >
-          {creating ? (
-            <>
-              <RotateFilled className="h-4 w-4 animate-spin" />
-              creating...
-            </>
-          ) : (
-            <>
-              create workspace
-              <FolderOpenFilled className="h-4 w-4" />
-            </>
-          )}
-        </Button>
+        {!selectedWorkspace ? (
+          <Button
+            onClick={handleSubmit}
+            disabled={creating || !selectedPath}
+            className="gap-2"
+          >
+            {creating ? (
+              <>
+                <RotateFilled className="h-4 w-4 animate-spin" />
+                creating...
+              </>
+            ) : (
+              <>
+                create workspace
+                <FolderOpenFilled className="h-4 w-4" />
+              </>
+            )}
+          </Button>
+        ) : (
+          <div className="rounded-md bg-muted/30 px-3 py-3 space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-foreground/80">
+                this folder is already registered as
+                <span className="ml-1 font-mono text-foreground/60">{selectedWorkspace.name}</span>
+              </p>
+              <p className="text-[10px] font-mono text-foreground/40 truncate">
+                {selectedWorkspace.path}
+              </p>
+              <p className="text-[10px] text-foreground/40">
+                reattach it or create another instance from the same folder.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={handleReattach} disabled={creating} className="gap-2">
+                <FolderOpenFilled className="h-3.5 w-3.5" />
+                reattach existing
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCreateAnother}
+                loading={creating}
+                className="gap-2"
+              >
+                <RotateFilled className="h-3.5 w-3.5" />
+                create another instance
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

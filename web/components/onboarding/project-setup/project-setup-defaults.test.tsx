@@ -40,6 +40,7 @@ jest.mock("@aliimam/icons", () => {
   return {
     ArrowLeft2Filled: Icon,
     CommandSquareFilled: Icon,
+    Code1Filled: Icon,
     ExportFilled: Icon,
     FolderOpenFilled: Icon,
     GlobalFilled: Icon,
@@ -48,9 +49,21 @@ jest.mock("@aliimam/icons", () => {
   };
 });
 
+function jsonResponse(payload: unknown) {
+  return {
+    json: async () => payload,
+  };
+}
+
 describe("project setup workspace defaults", () => {
   beforeEach(() => {
     mockFetchWithNamespace.mockReset();
+    mockFetchWithNamespace.mockImplementation(async (url: string) => {
+      if (url === "/api/workspaces") {
+        return jsonResponse({ workspaces: [] });
+      }
+      return jsonResponse({});
+    });
   });
 
   it("updates clone destination to the workspaces folder when config arrives after render", () => {
@@ -95,5 +108,40 @@ describe("project setup workspace defaults", () => {
     expect(screen.getByText("/Users/test/workspaces")).toBeInTheDocument();
     expect(screen.getByDisplayValue("workspaces")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create workspace/i })).toBeEnabled();
+  });
+
+  it("shows a reattach-or-create panel when the selected folder already exists", async () => {
+    mockFetchWithNamespace.mockImplementation(async (url: string) => {
+      if (url === "/api/workspaces") {
+        return jsonResponse({
+          workspaces: [
+            {
+              id: "workspaces",
+              name: "workspaces",
+              path: "/Users/test/workspaces",
+              addedAt: "2026-07-02T00:00:00.000Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(
+      <ProjectSetupStep
+        onComplete={jest.fn()}
+        onBack={jest.fn()}
+        onSkip={jest.fn()}
+        workspacesDir="/Users/test/workspaces"
+      />,
+    );
+
+    const panelPromise = screen.findByText(/already registered/i);
+    fireEvent.click(screen.getByRole("button", { name: /use an existing folder/i }));
+
+    expect(await panelPromise).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reattach existing/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create another instance/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create workspace/i })).not.toBeInTheDocument();
   });
 });
