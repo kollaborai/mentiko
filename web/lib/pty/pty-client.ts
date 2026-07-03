@@ -21,29 +21,53 @@ const getSocketPath = (): string => {
 };
 const SOCKET_PATH = getSocketPath();
 
-// find pty-manager: production uses lib/pty-manager.mjs, dev uses bin/pty-mgr
-function findPtyMgr(): string {
-  // production: lib/pty-manager.mjs (bundled in standalone build)
-  // check codeRoot first (from config), then walk up from cwd
-  const codeRoot = config.codeRoot;
-  const libPath = join(codeRoot, "lib", "pty-manager.mjs");
-  if (existsSync(libPath)) return libPath;
-  const binPath = join(codeRoot, "bin", "pty-mgr");
-  if (existsSync(binPath)) return binPath;
+interface ResolvePtyMgrPathOptions {
+  codeRoot: string;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  exists?: (path: string) => boolean;
+}
 
-  // fallback: walk up from cwd (dev mode)
-  let dir = process.cwd();
+export function resolvePtyMgrPath({
+  codeRoot,
+  cwd = process.cwd(),
+  env = process.env,
+  exists = existsSync,
+}: ResolvePtyMgrPathOptions): string {
+  const libPath = join(codeRoot, "lib", "pty-manager.mjs");
+  const candidates = [
+    env.PTY_MGR_BIN,
+    env.MENTIKO_PTY_MGR_BIN,
+    "/usr/local/bin/pty-mgr",
+    join(codeRoot, "bin", "pty-mgr"),
+    libPath,
+  ].filter((path): path is string => Boolean(path));
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (exists(candidate)) return candidate;
+  }
+
+  let dir = cwd;
   for (let i = 0; i < 5; i++) {
-    const libCandidate = join(dir, "lib", "pty-manager.mjs");
     const binCandidate = join(dir, "bin", "pty-mgr");
-    if (existsSync(libCandidate)) return libCandidate;
-    if (existsSync(binCandidate)) return binCandidate;
+    const libCandidate = join(dir, "lib", "pty-manager.mjs");
+    if (!seen.has(binCandidate) && exists(binCandidate)) return binCandidate;
+    if (!seen.has(libCandidate) && exists(libCandidate)) return libCandidate;
+
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  // final fallback to codeRoot (may not exist, but that's ok)
+
   return libPath;
+}
+
+// find pty-manager for auto-start if the configured daemon is not running.
+function findPtyMgr(): string {
+  return resolvePtyMgrPath({ codeRoot: config.codeRoot });
 }
 
 const PTY_MGR_PATH = findPtyMgr();
