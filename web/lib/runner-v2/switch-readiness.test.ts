@@ -38,6 +38,7 @@ jest.mock("fs", () => ({
     || path.endsWith("agent-functions.sh")
     || path.endsWith("Dockerfile")
     || path.endsWith("launch-plan.ts")
+    || path.endsWith("background-worker.ts")
     || path.endsWith("runner-v2-runtime-proof.json")
     || path.endsWith("runner-v2-watched-proof.json")
     )
@@ -106,6 +107,12 @@ jest.mock("fs", () => ({
     if (path.endsWith("executor.ts")) {
       return 'case "generation-import": return effect;';
     }
+    if (path.endsWith("background-worker.ts")) {
+      return "import { drainRunnerV2ExternalEffects } from '../lib/runner-v2/external-effects'; setInterval(() => drainRunnerV2ExternalEffects(), 15_000);";
+    }
+    if (path.endsWith("external-effects.ts")) {
+      return "taskMergeMeta(context.orgId, operation.taskId, fields, context.namespaceId); function runPluginsViaShell() {}";
+    }
     return JSON.stringify({
       schema_version: "runner-contract/v1",
       migration_mode: "side-by-side",
@@ -116,6 +123,11 @@ jest.mock("fs", () => ({
         no_emit_salvage: "typed completion imports generation payload before failing no-emit generation completion",
         import_effect: "typed executor includes generation-import",
         prompt_policy: "core generation prompts do not require mandatory emit",
+      },
+      external_effects: {
+        outbox: "typed completion adapters queue external side effects to <stateDir>/external-effects.jsonl",
+        live_drain: "background worker drains outboxes via drainRunnerV2ExternalEffects",
+        handled_operations: ["notification", "webhook", "metadata-webhooks", "task-status", "plugin", "legacy-webhook"],
       },
       entrypoints: {
         completion_reentry: { v2: "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled" },
@@ -149,6 +161,10 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "watched-pty-proof", status: "pass" }),
       expect.objectContaining({ id: "initial-launch-typed", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-execution", status: "pass" }),
+      expect.objectContaining({ id: "external-effects-contract", status: "pass" }),
+      expect.objectContaining({ id: "external-drain-wired", status: "pass" }),
+      expect.objectContaining({ id: "external-dispatch-task-status", status: "pass" }),
+      expect.objectContaining({ id: "external-dispatch-plugins", status: "pass" }),
     ]));
     expect(report.blockers).toEqual([]);
   });

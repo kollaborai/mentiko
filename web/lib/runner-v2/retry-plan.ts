@@ -33,7 +33,7 @@ export type RetryExhaustedStep =
   | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }
   | { type: "rollback"; action: "plan-only"; agentId: string; startSha?: string }
   | { type: "run-status"; status: "stopped"; reason: string }
-  | { type: "task-status"; status: "stopped"; taskId?: string }
+  | { type: "task-status"; status: "stopped"; taskId?: string; runId?: string }
   | { type: "hook"; event: "run-error"; runId: string; details: Record<string, string> }
   | { type: "notification"; event: "agent-failed" | "chain-failed"; chainName: string; runId: string; agentId?: string; reason: string }
   | { type: "plugin"; event: "chain-stopped"; chainName: string; runId: string; agentId: string }
@@ -169,7 +169,7 @@ function buildRetryExhaustedSteps(input: RetryPlanInput): RetryExhaustedStep[] {
 
   steps.push(
     { type: "run-status", status: "stopped", reason },
-    { type: "task-status", status: "stopped", taskId: input.taskId },
+    { type: "task-status", status: "stopped", taskId: input.taskId, runId: input.runId },
     {
       type: "hook",
       event: "run-error",

@@ -18,7 +18,7 @@ describe("runner-v2 terminal completion plan", () => {
     expect(plan.reason).toBe("no-downstream");
     expect(plan.steps).toEqual(expect.arrayContaining([
       { type: "run-status", status: "completed" },
-      { type: "task-status", status: "completed", taskId: "task-1" },
+      { type: "task-status", status: "completed", taskId: "task-1", runId: "run-1" },
       { type: "schedule-mark", status: "success", chainPath: "/chains/build/chain.json" },
       expect.objectContaining({ type: "webhook", event: "chain_complete" }),
       expect.objectContaining({ type: "event", event: "chain-complete", source: "Build Chain" }),

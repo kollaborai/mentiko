@@ -55,6 +55,20 @@ async function main() {
       { id: "manual", name: "Manual", triggers: ["manual-start"] },
     ],
   }, null, 2));
+  // typed bootstrap persists AgentAttempt records into run.json; live launches
+  // create it in chain-run-service before bootstrap, so the proof must too.
+  writeFileSync(join(runDir, "run.json"), JSON.stringify({
+    id: "run-probe",
+    chain: "Typed Launch Proof",
+    chainId: "typed-launch-proof",
+    goal: "prove typed launch",
+    started: new Date().toISOString(),
+    status: "running",
+    debug: false,
+    agents: [{ id: "manual", name: "Manual", status: "pending", session: "" }],
+    sessions: [],
+    workspacePath: workspaceDir,
+  }, null, 2));
   const bootstrapPlan = buildAgentBootstrapPlan({
     chainPath: launchChainPath,
     runDir,

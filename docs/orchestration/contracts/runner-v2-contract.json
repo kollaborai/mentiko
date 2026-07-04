@@ -1,6 +1,6 @@
 {
   "schema_version": "runner-contract/v1",
-  "generated_at": "2026-06-25",
+  "generated_at": "2026-07-04",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -55,6 +55,15 @@
     "no_emit_salvage": "typed completion must import a compatible generation payload before failing a core generation agent that reached completion without its declared event",
     "import_effect": "typed completion executor must include a generation-import effect that invokes the existing mentiko generation import path",
     "prompt_policy": "core generation bootstrap instructions must not require mentiko emit as a mandatory final step"
+  },
+  "external_effects": {
+    "outbox": "typed completion adapters queue external side effects to <stateDir>/external-effects.jsonl (STATE_DIR when the engine exports it, else <runDir>/state); records carry namespaceId/orgId",
+    "dispatcher": "web/lib/runner-v2/external-effects.ts",
+    "live_drain": "web/server/background-worker.ts drains outboxes every 15s via drainRunnerV2ExternalEffects: claim-by-rename consumption, per-record tenant identity, bounded redelivery (3 attempts), audit to external-effects.dispatch.jsonl",
+    "handled_operations": ["notification", "webhook", "metadata-webhooks", "task-status", "plugin", "legacy-webhook"],
+    "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only — probe and proof dispatch never invoke real plugins",
+    "legacy_webhook_network": "live drain delivers legacy webhooks over the network (SSRF guards live in outbound-webhook-delivery); probe dispatch requires explicit opt-in",
+    "known_gap": "plain fail decisions (agent failed, no retry policy) emit run-terminal only — no task-status/notification/plugin failure signals; close before default switch"
   },
   "monitor_contract": {
     "completion": "OR-latched explicit AGENT_COMPLETE line or declared emits event match",

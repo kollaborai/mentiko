@@ -97,7 +97,7 @@ describe("runner-v2 completion phase plan", () => {
         reason: "explicit-stop",
         steps: expect.arrayContaining([
           { type: "run-status", status: "completed" },
-          { type: "task-status", status: "completed", taskId: "task-1" },
+          { type: "task-status", status: "completed", taskId: "task-1", runId: "run-1" },
           { type: "session-policy", policy: "stop", sessions: ["writer-run-1"] },
         ]),
       },

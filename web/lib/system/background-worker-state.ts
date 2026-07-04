@@ -11,6 +11,8 @@ export interface BackgroundWorkerStatus {
   checkCount?: number;
   lastReconcile?: string;
   lastReconcileCleaned?: number;
+  lastExternalDrain?: string;
+  lastExternalDispatched?: number;
   autoRun?: {
     status: "running" | "stopped";
     lastCheck?: string | null;

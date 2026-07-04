@@ -128,7 +128,7 @@ describe("runner-v2 synthetic probe", () => {
       mode: "live",
       externalDispatch: {
         handled: expect.any(Number),
-        dispatched: 2,
+        dispatched: 3,
         failed: 0,
       },
     });

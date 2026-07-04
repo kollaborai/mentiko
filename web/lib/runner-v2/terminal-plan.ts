@@ -21,7 +21,7 @@ export interface TerminalCompletionInput {
 
 export type TerminalCompletionStep =
   | { type: "run-status"; status: "completed" }
-  | { type: "task-status"; status: "completed"; taskId?: string }
+  | { type: "task-status"; status: "completed"; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: "success"; chainPath?: string }
   | { type: "webhook"; event: "chain_complete"; chainPath?: string; lastEvent?: string; lastAgentId?: string; lastAgentName?: string }
   | { type: "event"; event: "chain-complete"; source: string; data: string }
@@ -46,7 +46,7 @@ export function planTerminalCompletion(
   const onComplete = input.onComplete || "stop";
   const steps: TerminalCompletionStep[] = [
     { type: "run-status", status: "completed" },
-    { type: "task-status", status: "completed", taskId: input.taskId },
+    { type: "task-status", status: "completed", taskId: input.taskId, runId: input.runId },
   ];
 
   if (input.schedule) {

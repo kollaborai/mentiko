@@ -312,7 +312,7 @@ describe("chain-run-service runner-v2 guard", () => {
       status: "ok",
       mode: "live",
       externalDispatch: {
-        dispatched: 2,
+        dispatched: 3,
         failed: 0,
       },
     });

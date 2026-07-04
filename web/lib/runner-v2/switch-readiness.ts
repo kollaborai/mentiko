@@ -56,6 +56,16 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
         ? undefined
         : "runner-v2 contract must cover no-emit generation salvage before switch readiness",
     });
+    checks.push({
+      id: "external-effects-contract",
+      status: hasExternalEffectsContract(contract) ? "pass" : "fail",
+      evidence: hasExternalEffectsContract(contract)
+        ? "contract documents external_effects outbox + live drain + handled operations"
+        : "contract missing external_effects outbox/drain coverage",
+      blocker: hasExternalEffectsContract(contract)
+        ? undefined
+        : "runner-v2 contract must document external effects outbox and live drain before switch readiness",
+    });
   } catch (error) {
     checks.push({
       id: "contract-load",
@@ -85,6 +95,24 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     join(config.codeRoot, "lib/agent-functions.sh"),
     "runner-v2-complete.js",
     "shell completion handoff does not gate typed completion behind MENTIKO_RUNNER_V2_COMPLETION",
+  ));
+  checks.push(sourceContainsCheck(
+    "external-drain-wired",
+    join(config.codeRoot, "web/server/background-worker.ts"),
+    "drainRunnerV2ExternalEffects",
+    "background worker does not drain the runner-v2 external-effects outbox",
+  ));
+  checks.push(sourceContainsCheck(
+    "external-dispatch-task-status",
+    join(config.codeRoot, "web/lib/runner-v2/external-effects.ts"),
+    "taskMergeMeta",
+    "typed external dispatcher does not update linked task status",
+  ));
+  checks.push(sourceContainsCheck(
+    "external-dispatch-plugins",
+    join(config.codeRoot, "web/lib/runner-v2/external-effects.ts"),
+    "runPluginsViaShell",
+    "typed external dispatcher does not deliver plugin events",
   ));
   checks.push(sourceContainsCheck(
     "completion-runtime-compile",
@@ -150,6 +178,18 @@ function hasGenerationCompletionContract(contract: unknown): boolean {
   return typeof fields.no_emit_salvage === "string"
     && typeof fields.import_effect === "string"
     && typeof fields.prompt_policy === "string";
+}
+
+function hasExternalEffectsContract(contract: unknown): boolean {
+  if (!contract || typeof contract !== "object") return false;
+  const external = (contract as { external_effects?: unknown }).external_effects;
+  if (!external || typeof external !== "object") return false;
+  const fields = external as Record<string, unknown>;
+  return typeof fields.outbox === "string"
+    && typeof fields.live_drain === "string"
+    && Array.isArray(fields.handled_operations)
+    && fields.handled_operations.includes("task-status")
+    && fields.handled_operations.includes("plugin");
 }
 
 function watchedProofCheck(path: string): SwitchReadinessCheck {

@@ -152,6 +152,8 @@ export function runRunnerV2CompletionEntrypoint(
     const adapter = applyTypedExecutorPlan(plan, {
       runJsonPath,
       stateDir: resolveStateDir(env, runDir),
+      namespaceId: env.NAMESPACE_ID || "default",
+      orgId: env.ORG_ID || "default",
       eventsDir,
       eventsArchiveDir: join(eventsDir, "archive"),
       dryRun: input.dryRun,

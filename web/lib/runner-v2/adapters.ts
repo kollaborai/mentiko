@@ -12,7 +12,7 @@ import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
 import { updateRunStatus } from "@/lib/runner-v2/run-state";
 
 export type AdapterOperation =
-  | { type: "task-status"; status: string; taskId?: string }
+  | { type: "task-status"; status: string; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: string; chainPath?: string }
   | { type: "webhook"; event: string; chainPath?: string }
   | { type: "event"; event: string; source: string; data: string }
@@ -32,6 +32,8 @@ export type AdapterOperation =
 export interface AdapterContext {
   runJsonPath: string;
   stateDir: string;
+  namespaceId?: string;
+  orgId?: string;
   eventsArchiveDir?: string;
   eventsDir?: string;
   hooksDir?: string;
@@ -377,6 +379,8 @@ function queueExternalEffect(operation: AdapterOperation, context: AdapterContex
     type: operation.type,
     status: "queued",
     operation,
+    namespaceId: context.namespaceId,
+    orgId: context.orgId,
     reason: "typed runner records external side effects for replay/dispatch audit",
     timestamp: new Date().toISOString(),
   });

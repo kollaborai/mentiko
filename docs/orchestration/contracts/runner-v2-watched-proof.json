@@ -1,9 +1,9 @@
 {
   "schema_version": "runner-v2-watched-proof/v1",
-  "generated_at": "2026-07-03T07:05:09.865Z",
+  "generated_at": "2026-07-04T20:31:25.309Z",
   "status": "passed",
-  "temp_root": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-gnoKjd",
-  "pty_daemon": "mentiko-v2-proof-54484-1783062301974",
+  "temp_root": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-r8kZ3B",
+  "pty_daemon": "mentiko-v2-proof-9362-1783197077084",
   "checks": [
     {
       "id": "launch-supported",
@@ -34,38 +34,38 @@
       "id": "attempt-process-evidence",
       "status": "pass",
       "evidence": {
-        "processPid": 54898,
-        "processSpawnedAt": "2026-07-03T07:05:02.830Z",
-        "ptySessionId": "workspace-writer-run-1783062301974-d4d4"
+        "processPid": 9494,
+        "processSpawnedAt": "2026-07-04T20:31:17.758Z",
+        "ptySessionId": "workspace-writer-run-1783197077084-2492"
       }
     },
     {
       "id": "event-written",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-gnoKjd/data/namespaces/default/events"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-r8kZ3B/data/namespaces/default/events"
     },
     {
       "id": "completion-session",
       "status": "pass",
       "evidence": [
-        "workspace-writer-run-1783062301974-d4d4"
+        "workspace-writer-run-1783197077084-2492"
       ]
     },
     {
       "id": "typed-bootstrap-session",
       "status": "pass",
-      "evidence": "workspace-writer-run-1783062301974-d4d4"
+      "evidence": "workspace-writer-run-1783197077084-2492"
     },
     {
       "id": "monitor-session-alive-or-exited-with-output",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-gnoKjd/data/namespaces/default/runs/run-1783062301974-d4d4/monitor-capture.txt"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-watched-r8kZ3B/data/namespaces/default/runs/run-1783197077084-2492/monitor-capture.txt"
     },
     {
       "id": "completion-session-spawned",
       "status": "pass",
       "evidence": [
-        "complete-workspace-writer-run-1783062301974-d4d4-1783062308"
+        "complete-workspace-writer-run-1783197077084-2492-1783197083"
       ]
     }
   ]

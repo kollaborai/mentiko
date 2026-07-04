@@ -6,6 +6,7 @@ import {
   writeBackgroundWorkerStatusFile,
 } from "../lib/system/background-worker-state";
 import { reconcileOrphanedRuns } from "../lib/runs/run-reconciler";
+import { drainRunnerV2ExternalEffects } from "../lib/runner-v2/external-effects";
 import {
   getSchedulerStatus,
   startScheduler,
@@ -19,15 +20,23 @@ import {
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;
+const EXTERNAL_DRAIN_INTERVAL_MS = 15_000;
 
 let reconcileInterval: ReturnType<typeof setInterval> | null = null;
+let externalDrainInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let stopping = false;
+let externalDrainInFlight = false;
 
 const startedAt = new Date().toISOString();
 const reconcilerState: {
   lastRun?: string;
   lastCleaned?: number;
+  note?: string;
+} = {};
+const externalDrainState: {
+  lastRun?: string;
+  lastDispatched?: number;
   note?: string;
 } = {};
 
@@ -52,7 +61,9 @@ function currentStatus(note?: string) {
       lastTriggered: autoRun.lastTriggered,
       lastError: autoRun.lastError,
     },
-    note: note || reconcilerState.note,
+    lastExternalDrain: externalDrainState.lastRun,
+    lastExternalDispatched: externalDrainState.lastDispatched,
+    note: note || reconcilerState.note || externalDrainState.note,
   };
 }
 
@@ -81,6 +92,38 @@ async function runReconciler(label: string) {
   }
 }
 
+/**
+ * Deliver runner-v2 queued external effects (notifications, webhooks, task
+ * status, plugins). Typed completion records them in an outbox instead of
+ * firing them from the tenant runtime; this worker is the live dispatcher.
+ */
+async function runExternalDrain(label: string) {
+  if (externalDrainInFlight) return;
+  externalDrainInFlight = true;
+  try {
+    const result = await drainRunnerV2ExternalEffects();
+    externalDrainState.lastRun = new Date().toISOString();
+    externalDrainState.lastDispatched = result.dispatched;
+    externalDrainState.note = result.failed > 0
+      ? `external drain ${label}: ${result.failed} effects failed permanently`
+      : undefined;
+
+    if (result.handled > 0) {
+      console.log(
+        `[worker] external drain ${label}: ${result.dispatched} dispatched, ${result.skipped} skipped, `
+        + `${result.requeued} requeued, ${result.failed} failed (${result.outboxes} outboxes)`,
+      );
+    }
+  } catch (err) {
+    externalDrainState.lastRun = new Date().toISOString();
+    externalDrainState.note = err instanceof Error ? err.message : String(err);
+    console.warn(`[worker] external drain ${label} failed:`, err);
+  } finally {
+    externalDrainInFlight = false;
+    persistStatus();
+  }
+}
+
 async function start() {
   writeBackgroundWorkerPid(process.pid);
   persistStatus("worker booting");
@@ -91,10 +134,15 @@ async function start() {
 
   await new Promise((resolve) => setTimeout(resolve, RECONCILE_STARTUP_DELAY_MS));
   await runReconciler("startup");
+  await runExternalDrain("startup");
 
   reconcileInterval = setInterval(() => {
     void runReconciler("periodic");
   }, CHECK_INTERVAL_MS);
+
+  externalDrainInterval = setInterval(() => {
+    void runExternalDrain("periodic");
+  }, EXTERNAL_DRAIN_INTERVAL_MS);
 
   heartbeatInterval = setInterval(() => {
     persistStatus();
@@ -110,6 +158,10 @@ function shutdown(signal: string) {
   if (reconcileInterval) {
     clearInterval(reconcileInterval);
     reconcileInterval = null;
+  }
+  if (externalDrainInterval) {
+    clearInterval(externalDrainInterval);
+    externalDrainInterval = null;
   }
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
