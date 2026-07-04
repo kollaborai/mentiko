@@ -103,11 +103,10 @@ describe("runner-v2 synthetic probe", () => {
     });
     expect(readFileSync(join(dir, "events", "run-probe-writer-draft-ready.event"), "utf8")).toContain("processed: true");
     expect(spawn).toHaveBeenCalledWith(
-      "/bin/zsh",
+      "/bin/bash",
       ["-lc", expect.stringContaining("--start 'reviewer'")],
       expect.objectContaining({
         detached: false,
-        stdio: "ignore",
       }),
     );
   });

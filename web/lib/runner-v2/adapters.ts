@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import config from "@/lib/config";
@@ -144,14 +144,25 @@ function applyGenerationImport(plan: GenerationImportPlan, context: AdapterConte
 
 export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): ChildProcess | undefined {
   if (context.dryRun) return undefined;
-  const child = spawn("/bin/zsh", ["-lc", launch.command], {
+  // bash, not zsh: the engine is bash-flavored and interactive zsh profiles
+  // (readonly `status`, prompt frameworks) can kill a detached child. Capture
+  // output to a log next to the run so a dead launch is never invisible.
+  const logPath = launch.logPath || join(dirname(context.runJsonPath), "launches.log");
+  let logFd: number | undefined;
+  try {
+    logFd = openSync(logPath, "a");
+  } catch {
+    logFd = undefined;
+  }
+  const child = spawn("/bin/bash", ["-lc", launch.command], {
     detached: launch.detached,
-    stdio: "ignore",
+    stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
     env: {
       ...process.env,
       ...launch.env,
     },
   });
+  if (logFd !== undefined) closeSync(logFd);
   child.unref();
   return child;
 }
@@ -334,14 +345,23 @@ function launchNextChain(
   }
 
   const command = `bash ${shellEscape(join(config.codeRoot, "lib", "chain-runner.sh"))} ${shellEscape(resolved)}`;
-  const child = spawn("/bin/zsh", ["-lc", command], {
+  // bash + logged output for the same reason as startLaunch: a detached child
+  // must never die invisibly.
+  let logFd: number | undefined;
+  try {
+    logFd = openSync(join(dirname(context.runJsonPath), "launches.log"), "a");
+  } catch {
+    logFd = undefined;
+  }
+  const child = spawn("/bin/bash", ["-lc", command], {
     detached: true,
-    stdio: "ignore",
+    stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
     env: {
       ...process.env,
       MENTIKO_PARENT_RUN_ID: operation.parentRunId,
     },
   });
+  if (logFd !== undefined) closeSync(logFd);
   child.unref();
   appendJsonl(join(context.stateDir, "next-chain.jsonl"), {
     chainName: operation.chainName,

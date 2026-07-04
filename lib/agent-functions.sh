@@ -620,7 +620,12 @@ launch-chain-runner-complete() {
        [[ "${MENTIKO_RUNNER_V2_COMPLETION:-}" =~ ^(1|true|yes|on)$ ]]; then
         completion_cmd="if command -v node >/dev/null 2>&1; then if [[ -f $runner_v2_compiled_script_q ]]; then node $runner_v2_compiled_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; elif [[ -f $runner_v2_completion_script_q ]]; then node $runner_v2_completion_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; fi; fi; exec $completion_script_q $session_name_q $chain_file_q"
     fi
-    if [[ -n "${RUNS_DIR:-}" && -n "$run_id" ]]; then
+    # typed-bootstrap monitors export MENTIKO_RUN_DIR directly (their env has
+    # no RUNS_DIR); honor it first so the typed completion bridge can resolve
+    # the run instead of exiting unsupported.
+    if [[ -n "${MENTIKO_RUN_DIR:-}" ]]; then
+        completion_run_dir="${MENTIKO_RUN_DIR}"
+    elif [[ -n "${RUNS_DIR:-}" && -n "$run_id" ]]; then
         completion_run_dir="${RUNS_DIR}/${run_id}"
     fi
 

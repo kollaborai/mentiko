@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import config from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 
@@ -69,7 +69,10 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const agent = resolveAgent(chain, input.agentId);
   const projectRoot = input.workspacePath || chain.config?.project_root || input.env?.MENTIKO_PROJECT_ROOT || input.runDir;
   const artifactsDir = join(input.runDir, "artifacts");
-  const eventsDir = input.env?.EVENTS_DIR || join(input.runDir, "events");
+  // events are org-scoped by convention (lib/config.sh EVENTS_DIR); a run-dir
+  // default strands emitted events where the chain watcher and shell
+  // completion never look.
+  const eventsDir = input.env?.EVENTS_DIR || config.eventsDir || join(input.runDir, "events");
   const stateDir = input.env?.STATE_DIR || join(input.runDir, "state");
   const sessionPrefix = resolveSessionPrefix(chain, agent);
   const projectName = basename(projectRoot) || "workspace";
@@ -95,7 +98,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
-    RUNS_DIR: input.env?.RUNS_DIR || "",
+    RUNS_DIR: input.env?.RUNS_DIR || dirname(input.runDir),
     // completion resolves the run dir from env; without this a typed-spawned
     // monitor hands the completion session an empty MENTIKO_RUN_DIR and the
     // typed bridge exits unsupported (shell fallback) every time.

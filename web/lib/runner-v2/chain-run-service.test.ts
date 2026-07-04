@@ -272,9 +272,9 @@ describe("chain-run-service runner-v2 guard", () => {
     expect(mockStartRunnerV2Launch).not.toHaveBeenCalled();
     expect(mockSpawn).toHaveBeenCalledTimes(1);
     expect(mockSpawn).toHaveBeenCalledWith(
-      "/bin/zsh",
+      "/bin/bash",
       ["-lc", expect.stringContaining("--start reviewer")],
-      expect.objectContaining({ detached: false, stdio: "ignore" }),
+      expect.objectContaining({ detached: false }),
     );
 
     const { readFileSync } = await import("fs");

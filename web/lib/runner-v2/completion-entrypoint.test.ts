@@ -85,6 +85,65 @@ describe("runner-v2 completion entrypoint", () => {
     expect(readFileSync(eventPath, "utf8")).toContain("processed: false");
   });
 
+  it("matches an event emitted into the run-dir events dir when env EVENTS_DIR points elsewhere", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const orgEventsDir = join(root, "events");
+    const runEventsDir = join(runDir, "events");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(orgEventsDir, { recursive: true });
+    mkdirSync(runEventsDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [
+        { id: "writer", name: "Writer", emits: "draft-ready" },
+        { id: "reviewer", name: "Reviewer", triggers: ["draft-ready"] },
+      ],
+    });
+
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "running" }],
+      sessions: ["writer-run-123"],
+    }));
+    writeFileSync(join(runEventsDir, "run-123-writer-draft-ready.event"), [
+      "event: draft-ready",
+      "source: writer-run-123",
+      "run_id: run-123",
+      "processed: false",
+      "data: ready",
+      "",
+    ].join("\n"));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: orgEventsDir,
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+      },
+      dryRun: true,
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      agentId: "writer",
+      decision: "route",
+    });
+  });
+
   it("does not resolve agents by loose session substring", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");

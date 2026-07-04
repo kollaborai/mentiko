@@ -47,7 +47,10 @@ export function runRunnerV2CompletionEntrypoint(
   const run = readRunJson(runJsonPath);
   const agent = resolveAgent(input.sessionName, chain, run);
   const eventsDir = resolveEventsDir(env, input.chainPath);
-  const events = readEvents(eventsDir);
+  // env EVENTS_DIR and the per-run events dir can disagree across the
+  // shell/typed topology; the completion verdict must see events wherever the
+  // agent actually emitted them.
+  const events = readEventsFromDirs([eventsDir, join(runDir, "events")]);
   const runJsonSnapshot = readFileSync(runJsonPath, "utf8");
   const eventSnapshots = snapshotEvents(events);
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
@@ -369,6 +372,17 @@ function readEvents(eventsDir: string): RunnerEventRecord[] {
       const path = join(eventsDir, file);
       return { ...parseRunnerEvent(readFileSync(path, "utf8")), path };
     });
+}
+
+function readEventsFromDirs(eventsDirs: string[]): RunnerEventRecord[] {
+  const seen = new Set<string>();
+  const events: RunnerEventRecord[] = [];
+  for (const dir of eventsDirs) {
+    if (!dir || seen.has(dir)) continue;
+    seen.add(dir);
+    events.push(...readEvents(dir));
+  }
+  return events;
 }
 
 function resolveAgent(sessionName: string, chain: ChainFile, run: RunRecord): ChainAgent {

@@ -1,9 +1,9 @@
 {
   "schema_version": "runner-v2-runtime-proof/v1",
-  "generated_at": "2026-07-04T20:33:48.530Z",
+  "generated_at": "2026-07-04T21:29:53.824Z",
   "mode": "live",
   "flag": "MENTIKO_RUNNER_V2",
-  "temp_root": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq",
+  "temp_root": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w",
   "status": "passed",
   "checks": [
     {
@@ -19,17 +19,17 @@
     {
       "id": "event-processed",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/events/run-probe-writer-draft-ready.event"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/events/run-probe-writer-draft-ready.event"
     },
     {
       "id": "external-outbox",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/external-effects.jsonl"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/external-effects.jsonl"
     },
     {
       "id": "external-dispatch-audit",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/external-effects.dispatch.jsonl"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/external-effects.dispatch.jsonl"
     },
     {
       "id": "typed-bootstrap-session",
@@ -39,22 +39,22 @@
     {
       "id": "typed-bootstrap-no-shell-start",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/artifacts/manual-start.sh"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/artifacts/manual-start.sh"
     },
     {
       "id": "typed-bootstrap-no-secret-env",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/artifacts/manual-start.sh"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/artifacts/manual-start.sh"
     },
     {
       "id": "typed-bootstrap-instructions-written",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/artifacts/manual-instructions.md"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/artifacts/manual-instructions.md"
     },
     {
       "id": "typed-bootstrap-state-written",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/state/manual-run-probe.state"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/state/manual-run-probe.state"
     },
     {
       "id": "typed-bootstrap-monitor-started",
@@ -64,7 +64,7 @@
     {
       "id": "typed-bootstrap-start-before-pointer",
       "status": "pass",
-      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-VBS2Tq/run/typed-bootstrap-calls.json"
+      "evidence": "/var/folders/m2/9jqrk_yj05nc0tw10f9nv0t80000gn/T/mentiko-runner-v2-proof-87ll7w/run/typed-bootstrap-calls.json"
     }
   ],
   "probe_summary": {

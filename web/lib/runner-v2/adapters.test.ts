@@ -497,7 +497,7 @@ describe("runner-v2 adapters", () => {
       command: expect.stringContaining(join(deployChainDir, "chain.json")),
       pid: 4242,
     })]);
-    expect(spawn).toHaveBeenCalledWith("/bin/zsh", [
+    expect(spawn).toHaveBeenCalledWith("/bin/bash", [
       "-lc",
       expect.stringContaining(join(deployChainDir, "chain.json")),
     ], expect.objectContaining({
