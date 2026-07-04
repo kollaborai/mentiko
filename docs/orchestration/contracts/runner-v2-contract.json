@@ -63,7 +63,7 @@
     "handled_operations": ["notification", "webhook", "metadata-webhooks", "task-status", "plugin", "legacy-webhook"],
     "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only — probe and proof dispatch never invoke real plugins",
     "legacy_webhook_network": "live drain delivers legacy webhooks over the network (SSRF guards live in outbound-webhook-delivery); probe dispatch requires explicit opt-in",
-    "known_gap": "plain fail decisions (agent failed, no retry policy) emit run-terminal only — no task-status/notification/plugin failure signals; close before default switch"
+    "plain_fail_steps": "plain fail decisions (agent failed, no retry policy) emit terminal-failure steps mirroring the shell no-event failure path: task-status failed, circuit-breaker record-failure, agent-failed notification, failed metadata-webhooks; the shell fires no plugins on this path so neither does typed"
   },
   "monitor_contract": {
     "completion": "OR-latched explicit AGENT_COMPLETE line or declared emits event match",

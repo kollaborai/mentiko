@@ -352,6 +352,49 @@ describe("runner-v2 adapters", () => {
     });
   });
 
+  it("applies terminal-failure steps: queues external effects and records the circuit breaker", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+
+    const result = applyTypedExecutorPlan({
+      action: "fail",
+      effects: [{
+        type: "terminal-failure",
+        plan: {
+          reason: "no-completion-event",
+          steps: [
+            { type: "task-status", status: "failed", taskId: "task-1", runId: "run-123" },
+            { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300 },
+            { type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-123", agentId: "writer", reason: "no completion event" },
+            { type: "metadata-webhooks", event: "failed", chainName: "Build Chain", runId: "run-123" },
+          ],
+        },
+      }],
+      launches: [],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(result.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "task-status", status: "failed" }),
+      expect.objectContaining({ type: "circuit-breaker", action: "record-failure" }),
+      expect.objectContaining({ type: "notification", event: "agent-failed" }),
+      expect.objectContaining({ type: "metadata-webhooks", event: "failed" }),
+    ]));
+    const outbox = readFileSync(join(dir, "external-effects.jsonl"), "utf8");
+    expect(outbox).toContain("\"type\":\"task-status\"");
+    expect(outbox).toContain("agent-failed");
+    expect(outbox).toContain("\"namespaceId\":\"default\"");
+    expect(JSON.parse(readFileSync(join(dir, "retry", "circuit_Build Chain_writer.json"), "utf8"))).toMatchObject({
+      failure_count: 1,
+      threshold: 5,
+      timeout: 300,
+    });
+  });
+
   it("dispatches executable watchdog hooks with explicit argv", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);

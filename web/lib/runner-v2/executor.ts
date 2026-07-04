@@ -6,7 +6,7 @@ import { createFanGroupState, type FanGroupCompletionPlan, type FanGroupState } 
 import type { RunnerEventRecord } from "@/lib/runner-v2/events";
 import type { RetryNoEventPlan } from "@/lib/runner-v2/retry-plan";
 import { buildRoutedLaunchPlans, type RoutedLaunchContext, type RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
-import { planTerminalCompletion, type TerminalCompletionInput, type TerminalCompletionPlan } from "@/lib/runner-v2/terminal-plan";
+import { planTerminalCompletion, planTerminalFailure, type TerminalCompletionInput, type TerminalCompletionPlan, type TerminalFailurePlan } from "@/lib/runner-v2/terminal-plan";
 
 export type TypedExecutorEffect =
   | { type: "event-side-effects"; plan: EventSideEffectPlan }
@@ -16,6 +16,7 @@ export type TypedExecutorEffect =
   | { type: "retry"; plan: RetryNoEventPlan }
   | { type: "fan-group"; plan: FanGroupCompletionPlan }
   | { type: "terminal"; plan: TerminalCompletionPlan }
+  | { type: "terminal-failure"; plan: TerminalFailurePlan }
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
 
 export interface TypedExecutorPlan {
@@ -116,6 +117,17 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
     effects.push({ type: "run-terminal", status: "stopped", reason: decision.loopGuard.reason });
   } else if (decision.action === "fail") {
     effects.push({ type: "run-terminal", status: "failed", reason: decision.reason });
+    effects.push({
+      type: "terminal-failure",
+      plan: planTerminalFailure({
+        runId: input.terminal?.runId || input.routeContext.env?.MENTIKO_RUN_ID || "",
+        chainName: input.terminal?.chainName || "unknown",
+        chainPath: input.terminal?.chainPath || input.routeContext.chainPath,
+        taskId: input.terminal?.taskId ?? input.routeContext.taskId,
+        agentId: input.terminal?.lastAgentId,
+        reason: decision.reason,
+      }),
+    });
   }
 
   return {

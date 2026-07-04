@@ -104,6 +104,10 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
         launchesStarted.push(...applyOperation(step, context));
       }
     }
+  } else if (effect.type === "terminal-failure") {
+    for (const step of effect.plan.steps) {
+      launchesStarted.push(...applyOperation(step, context));
+    }
   }
   return { operations, launchesStarted };
 }
@@ -479,6 +483,9 @@ function plannedOperations(effect: TypedExecutorEffect): AdapterOperation[] {
     return effect.plan.steps
       .filter((step) => step.type !== "run-status")
       .map((step) => step as AdapterOperation);
+  }
+  if (effect.type === "terminal-failure") {
+    return effect.plan.steps.map((step) => step as AdapterOperation);
   }
   if (effect.type === "retry") {
     if (effect.plan.action === "retry") {

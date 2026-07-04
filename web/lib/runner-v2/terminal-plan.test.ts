@@ -1,4 +1,4 @@
-import { planTerminalCompletion, shouldCompleteEmptyEmitsAgent } from "@/lib/runner-v2/terminal-plan";
+import { planTerminalCompletion, planTerminalFailure, shouldCompleteEmptyEmitsAgent } from "@/lib/runner-v2/terminal-plan";
 
 describe("runner-v2 terminal completion plan", () => {
   it("plans run/task completion and chain-complete side effects for no downstream target", () => {
@@ -79,5 +79,29 @@ describe("runner-v2 terminal completion plan", () => {
     expect(shouldCompleteEmptyEmitsAgent(undefined, false)).toBe(true);
     expect(shouldCompleteEmptyEmitsAgent("", true)).toBe(false);
     expect(shouldCompleteEmptyEmitsAgent("done", false)).toBe(false);
+  });
+
+  it("plans failure side effects mirroring the shell no-event failure path", () => {
+    const plan = planTerminalFailure({
+      runId: "run-1",
+      chainName: "Build Chain",
+      chainPath: "/chains/build/chain.json",
+      taskId: "task-1",
+      agentId: "writer",
+      reason: "no matching completion event",
+    });
+
+    expect(plan.reason).toBe("no-completion-event");
+    expect(plan.steps).toEqual([
+      { type: "task-status", status: "failed", taskId: "task-1", runId: "run-1" },
+      { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300 },
+      { type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-1", agentId: "writer", reason: "no matching completion event" },
+      { type: "metadata-webhooks", event: "failed", chainPath: "/chains/build/chain.json", chainName: "Build Chain", runId: "run-1" },
+    ]);
+  });
+
+  it("omits the circuit breaker step when the failing agent is unknown", () => {
+    const plan = planTerminalFailure({ runId: "run-1", chainName: "Build Chain" });
+    expect(plan.steps.map((step) => step.type)).toEqual(["task-status", "notification", "metadata-webhooks"]);
   });
 });

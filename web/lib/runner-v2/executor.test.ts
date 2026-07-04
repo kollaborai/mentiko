@@ -211,6 +211,54 @@ describe("runner-v2 typed executor plan", () => {
     });
   });
 
+  it("emits failure side-effect steps for a plain fail decision", () => {
+    const dir = runDir();
+    const pipeline = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath: seedRun(dir),
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        name: "Build Chain",
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: [],
+    });
+
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      routeContext: routeContext(dir),
+      terminal: {
+        runId: "run-123",
+        chainName: "Build Chain",
+        chainPath: join(dir, "chain.json"),
+        taskId: "task-1",
+        lastAgentId: "writer",
+      },
+    });
+
+    expect(plan.action).toBe("fail");
+    expect(plan.launches).toEqual([]);
+    expect(plan.effects).toEqual(expect.arrayContaining([
+      { type: "run-terminal", status: "failed", reason: expect.any(String) },
+      expect.objectContaining({
+        type: "terminal-failure",
+        plan: expect.objectContaining({
+          reason: "no-completion-event",
+          steps: expect.arrayContaining([
+            { type: "task-status", status: "failed", taskId: "task-1", runId: "run-123" },
+            expect.objectContaining({ type: "circuit-breaker", action: "record-failure", agentId: "writer", threshold: 5, timeout: 300 }),
+            expect.objectContaining({ type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-123", agentId: "writer" }),
+            expect.objectContaining({ type: "metadata-webhooks", event: "failed", chainName: "Build Chain", runId: "run-123" }),
+          ]),
+        }),
+      }),
+    ]));
+  });
+
   it("uses all events for owned archive side effects", () => {
     const dir = runDir();
     const owner = parseRunnerEvent("event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n");

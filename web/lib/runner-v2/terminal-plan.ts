@@ -128,6 +128,70 @@ export function planTerminalCompletion(
   return { reason, steps };
 }
 
+export interface TerminalFailureInput {
+  runId: string;
+  chainName: string;
+  chainPath?: string;
+  taskId?: string;
+  agentId?: string;
+  reason?: string;
+}
+
+export type TerminalFailureStep =
+  | { type: "task-status"; status: "failed"; taskId?: string; runId?: string }
+  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }
+  | { type: "notification"; event: "agent-failed"; chainName: string; runId: string; agentId?: string; reason?: string }
+  | { type: "metadata-webhooks"; event: "failed"; chainPath?: string; chainName: string; runId: string };
+
+export interface TerminalFailurePlan {
+  reason: "no-completion-event";
+  steps: TerminalFailureStep[];
+}
+
+/**
+ * Failure counterpart of planTerminalCompletion for plain fail decisions
+ * (agent completed without its declared event and no retry policy applies).
+ * Mirrors the shell no-event failure path in chain-runner-complete.sh:
+ * task propagation, circuit breaker, agent-failed notification, failed
+ * webhooks. The shell fires no plugins on this path, so neither do we.
+ */
+export function planTerminalFailure(input: TerminalFailureInput): TerminalFailurePlan {
+  const steps: TerminalFailureStep[] = [
+    { type: "task-status", status: "failed", taskId: input.taskId, runId: input.runId },
+  ];
+
+  if (input.agentId) {
+    steps.push({
+      type: "circuit-breaker",
+      action: "record-failure",
+      chainName: input.chainName,
+      agentId: input.agentId,
+      threshold: 5,
+      timeout: 300,
+    });
+  }
+
+  steps.push(
+    {
+      type: "notification",
+      event: "agent-failed",
+      chainName: input.chainName,
+      runId: input.runId,
+      agentId: input.agentId,
+      reason: input.reason,
+    },
+    {
+      type: "metadata-webhooks",
+      event: "failed",
+      chainPath: input.chainPath,
+      chainName: input.chainName,
+      runId: input.runId,
+    },
+  );
+
+  return { reason: "no-completion-event", steps };
+}
+
 export function shouldCompleteEmptyEmitsAgent(emits: string | undefined, hasDownstream: boolean): boolean {
   return !emits && !hasDownstream;
 }
