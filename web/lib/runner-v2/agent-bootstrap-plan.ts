@@ -96,6 +96,10 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
     RUNS_DIR: input.env?.RUNS_DIR || "",
+    // completion resolves the run dir from env; without this a typed-spawned
+    // monitor hands the completion session an empty MENTIKO_RUN_DIR and the
+    // typed bridge exits unsupported (shell fallback) every time.
+    MENTIKO_RUN_DIR: input.runDir,
     STATE_DIR: stateDir,
     EVENTS_DIR: eventsDir,
     ARTIFACTS_DIR: artifactsDir,
@@ -106,6 +110,11 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     PTY_DAEMON: input.env?.PTY_DAEMON || "",
     PTY_MANAGER_SOCKET_DIR: input.env?.PTY_MANAGER_SOCKET_DIR || "",
     PTY_MANAGER_DIR: input.env?.PTY_MANAGER_DIR || "",
+    // the monitor inherits these exports and hands them to the completion
+    // session; without them a typed-launched run always falls back to shell
+    // completion because the pty daemon strips spawn env to its whitelist.
+    MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
+    MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
 

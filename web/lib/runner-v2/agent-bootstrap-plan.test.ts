@@ -59,6 +59,8 @@ describe("runner-v2 agent bootstrap plan", () => {
         EVENTS_DIR: join(root, "events"),
         STATE_DIR: join(root, "state"),
         PATH: "/bin",
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
       },
     });
 
@@ -74,6 +76,7 @@ describe("runner-v2 agent bootstrap plan", () => {
       PATH: "/repo/bin:/bin",
       MENTIKO_BIN: "/repo/bin/mentiko",
       MENTIKO_RUN_ID: "run-123",
+      MENTIKO_RUN_DIR: runDir,
       MENTIKO_AGENT_ID: "writer",
       MENTIKO_AGENT_EMITS: "draft-ready",
       EVENTS_DIR: join(root, "events"),
@@ -86,6 +89,14 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.localStartCommand).toContain("build_profile_command");
     expect(plan.localStartCommand).toContain(join(profilesDir, "stub-default.json"));
     expect(plan.monitorCommand).toContain("monitor-chain-agent 'workspace-build-writer-run-123'");
+    // the monitor must hand the runner-v2 flags to the completion session or
+    // typed-launched runs silently fall back to shell completion.
+    expect(plan.runContextExports).toMatchObject({
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1",
+    });
+    expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2='1'");
+    expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2_COMPLETION='1'");
   });
 
   it("does not inline profile secrets into the terminal command", () => {
