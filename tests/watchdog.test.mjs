@@ -617,6 +617,81 @@ test("get_active_run_sessions collects sessions from running runs", () => {
   assert(!result.stdout.includes("sess-old"), `should not include completed run sessions: ${result.stdout}`);
 });
 
+// REGRESSION: the reaper must spare a live session for EVERY non-terminal run,
+// not an allow-list of states it happens to know. It fails safe — reap only
+// definitively-terminal runs; spare running, pending (queued by the concurrency
+// cap), blocked, and any unknown/future status. An allow-list fails dangerous:
+// an active state it doesn't list gets its live agent killed (this bug).
+test("get_active_run_sessions spares pending-run sessions (queued / spinning up)", () => {
+  resetTmp();
+  setupDirs();
+  createRun("run-pending", {
+    status: "pending",
+    agents: [{ id: "a1", status: "pending", session: "mentiko-decision-research-decision-researcher-run-pending" }],
+  });
+  const result = runBash(`get_active_run_sessions`);
+  assert(
+    result.stdout.includes("mentiko-decision-research-decision-researcher-run-pending"),
+    `pending-run session must be spared: ${result.stdout}`,
+  );
+});
+
+test("get_active_run_sessions spares blocked-run sessions", () => {
+  resetTmp();
+  setupDirs();
+  createRun("run-blocked", {
+    status: "blocked",
+    agents: [{ id: "a1", status: "running", session: "blocked-live-sess" }],
+  });
+  const result = runBash(`get_active_run_sessions`);
+  assert(result.stdout.includes("blocked-live-sess"), `blocked-run session must be spared: ${result.stdout}`);
+});
+
+test("get_active_run_sessions spares an unknown/future status (fail-safe)", () => {
+  resetTmp();
+  setupDirs();
+  createRun("run-future", {
+    status: "paused",
+    agents: [{ id: "a1", status: "running", session: "future-state-sess" }],
+  });
+  const result = runBash(`get_active_run_sessions`);
+  assert(result.stdout.includes("future-state-sess"), `unknown-status session must be spared: ${result.stdout}`);
+});
+
+test("get_active_run_sessions still EXCLUDES terminal runs (reaper keeps working)", () => {
+  resetTmp();
+  setupDirs();
+  // every terminal spelling across the three RunStatus definitions
+  createRun("run-c1", { status: "completed", agents: [{ id: "a", status: "completed", session: "term-completed" }] });
+  createRun("run-c2", { status: "complete", agents: [{ id: "a", status: "completed", session: "term-complete" }] });
+  createRun("run-f", { status: "failed", agents: [{ id: "a", status: "failed", session: "term-failed" }] });
+  createRun("run-x", { status: "cancelled", agents: [{ id: "a", status: "cancelled", session: "term-cancelled" }] });
+  createRun("run-s", { status: "stopped", agents: [{ id: "a", status: "stopped", session: "term-stopped" }] });
+
+  const result = runBash(`get_active_run_sessions`);
+  for (const s of ["term-completed", "term-complete", "term-failed", "term-cancelled", "term-stopped"]) {
+    assert(!result.stdout.includes(s), `terminal-run session ${s} must NOT be spared: ${result.stdout}`);
+  }
+});
+
+test("cleanup_orphaned_sessions does not reap a pending run's live session, but reaps a completed one's", () => {
+  resetTmp();
+  setupDirs();
+  createRun("run-pending", { status: "pending", agents: [{ id: "a1", status: "pending", session: "pending-live-sess" }] });
+  createRun("run-done", { status: "completed", agents: [{ id: "b1", status: "completed", session: "done-orphan-sess" }] });
+
+  runBash(`
+active_sessions=$(get_active_run_sessions)
+live_sessions="pending-live-sess
+done-orphan-sess"
+cleanup_orphaned_sessions "$active_sessions" "$live_sessions"
+echo done
+`);
+  const killed = readFileLines(join(TMP, "mock-state", "killed_sessions"));
+  assert(!killed.includes("pending-live-sess"), `pending-run session must not be reaped: ${killed}`);
+  assert(killed.includes("done-orphan-sess"), `completed-run orphan session must still be reaped: ${killed}`);
+});
+
 test("completed field is set on stall", () => {
   resetTmp();
   setupDirs();

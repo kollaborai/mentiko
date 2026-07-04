@@ -12,6 +12,7 @@ import {
 import type { TaskListFilter, TaskRecord, TaskUpdateFields } from "@/lib/tasks/task-store-types";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 
 /**
  * /api/mentiko-mcp/ops/tasks
@@ -157,6 +158,45 @@ export async function POST(req: Request) {
       : resolveAuthorizedWorkspacePath(namespaceId, orgId, body.workspacePath, ctx.userId);
   if (body.workspacePath !== undefined && !authorizedWorkspacePath) {
     return new NextResponse("workspacePath is not authorized", { status: 403 });
+  }
+
+  // A decision is not a plain task. It needs a real Decision artifact plus the
+  // metadata.decision_id link, or the /tasks + /decisions UI render a hollow
+  // "DEC" shell with no options, tradeoff questions, or resolution flow. Route
+  // issue_type:"decision" through the canonical helper (the same path used by
+  // generate_tasks mode:"decision"), which creates the decision + linked task
+  // together — then apply the create_task fields the helper doesn't take so no
+  // caller input is silently dropped.
+  if (body.issue_type === "decision") {
+    const prompt = [body.subject, body.desc].filter(Boolean).join("\n\n");
+    const { decision, task } = await createTaskDecision({
+      namespaceId,
+      orgId,
+      prompt,
+      source: "mcp-create-task",
+      workspacePath: authorizedWorkspacePath || undefined,
+      parentTaskId: body.parentId,
+    });
+
+    const fields: TaskUpdateFields = {};
+    if (body.subject) fields.title = body.subject;
+    if (body.priority !== undefined) fields.priority = body.priority;
+    if (body.labels !== undefined) fields.labels = body.labels;
+    if (body.assignee !== undefined) fields.assignee = body.assignee;
+    if (body.acceptance_criteria !== undefined) fields.acceptance_criteria = body.acceptance_criteria;
+    if (body.design !== undefined) fields.design = body.design;
+    if (body.notes !== undefined) fields.notes = body.notes;
+    if (body.estimated_minutes !== undefined) fields.estimated_minutes = body.estimated_minutes;
+    if (body.due_at !== undefined) fields.due_at = body.due_at;
+    if (Object.keys(fields).length > 0) {
+      taskUpdate(orgId, task.id, fields, namespaceId);
+    }
+
+    return NextResponse.json({
+      task: taskGet(orgId, task.id, namespaceId) ?? task,
+      decisionId: decision.id,
+      routedTo: "decision",
+    });
   }
 
   const task = taskCreate(

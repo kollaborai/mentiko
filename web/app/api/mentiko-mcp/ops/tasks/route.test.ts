@@ -44,6 +44,20 @@ jest.mock("@/lib/tasks/task-store", () => ({
   }),
   taskList: jest.fn().mockReturnValue([]),
   taskClose: jest.fn(),
+  taskUpdate: jest.fn(),
+  taskGet: jest.fn().mockReturnValue({
+    id: "DEC-1",
+    issue_type: "decision",
+    metadata: { decision_id: "dec-uuid-1" },
+  }),
+}));
+
+// decision creation is delegated to this helper (same path as generate mode:decision)
+jest.mock("@/lib/tasks/task-decision-link", () => ({
+  createTaskDecision: jest.fn().mockResolvedValue({
+    decision: { id: "dec-uuid-1", status: "intake" },
+    task: { id: "DEC-1", issue_type: "decision" },
+  }),
 }));
 
 jest.mock("@/lib/auth/workspace-auth", () => ({
@@ -55,7 +69,8 @@ jest.mock("@/lib/auth/workspace-auth", () => ({
 }));
 
 import { POST } from "./route";
-import { taskCreate } from "@/lib/tasks/task-store";
+import { taskCreate, taskUpdate } from "@/lib/tasks/task-store";
+import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 
 function makeRequest(body: Record<string, unknown>): Request {
@@ -154,5 +169,49 @@ describe("POST /api/mentiko-mcp/ops/tasks", () => {
       workspace_id: "/workspace/path",
       created_by: "mentiko-mcp",
     });
+  });
+
+  // REGRESSION: issue_type:"decision" must build a REAL decision artifact via
+  // createTaskDecision, not a hollow DEC-typed task via plain taskCreate. A
+  // plain insert produces a "DEC" with no options/workflow/resolution flow.
+  test("routes issue_type:decision through createTaskDecision, not plain taskCreate", async () => {
+    const req = makeRequest({
+      subject: "wire or remove foo",
+      desc: "foo is never imported",
+      issue_type: "decision",
+      parentId: "EPIC-013",
+      labels: ["dead-code"],
+      priority: 2,
+      workspacePath: "/home/user/my-project",
+    });
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    // the decision path must NOT fall through to the plain task insert
+    expect(taskCreate).not.toHaveBeenCalled();
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
+
+    const arg = (createTaskDecision as jest.Mock).mock.calls[0][0];
+    expect(arg).toMatchObject({
+      namespaceId: "default",
+      orgId: "default",
+      source: "mcp-create-task",
+      workspacePath: "/home/user/my-project",
+      parentTaskId: "EPIC-013",
+    });
+    expect(arg.prompt).toContain("wire or remove foo");
+    expect(arg.prompt).toContain("foo is never imported");
+
+    // caller's task-level fields are applied to the linked decision task
+    expect(taskUpdate).toHaveBeenCalledTimes(1);
+    expect((taskUpdate as jest.Mock).mock.calls[0][2]).toMatchObject({
+      title: "wire or remove foo",
+      labels: ["dead-code"],
+      priority: 2,
+    });
+
+    // response surfaces the decision link
+    const body = await res.json();
+    expect(body).toMatchObject({ routedTo: "decision", decisionId: "dec-uuid-1" });
   });
 });

@@ -361,7 +361,16 @@ EOF
     fi
 }
 
-# collect all session names referenced in active runs (status=running)
+# collect all session names referenced in NON-TERMINAL runs (anything not
+# definitively finished). Fail-safe by design: we reap a live session only when
+# its run is in a known-terminal state; every other status — running, pending
+# (queued, added by the concurrency-cap feature), blocked, paused, waiting, a
+# runner-v2-only state, or an unrecognized/empty one — is treated as "still held"
+# and spared. An allow-list of active states fails dangerous (any state it does
+# not list gets its live agent killed — exactly this bug); a terminal deny-list
+# fails safe (an unknown state leaks at worst a dead session, never kills work).
+# Terminal set spans all three RunStatus definitions (schemas.ts uses "complete",
+# types.ts/runner-v2 use "completed"; runner-v2 adds "stopped").
 get_active_run_sessions() {
     local sessions=""
     for run_dir in "$RUNS_DIR"/run-*; do
@@ -369,7 +378,9 @@ get_active_run_sessions() {
         local run_file="$run_dir/run.json"
         [[ -f "$run_file" ]] || continue
         local status=$(jq -r '.status // ""' "$run_file" 2>/dev/null)
-        [[ "$status" == "running" ]] || continue
+        case "$status" in
+            completed|complete|failed|cancelled|stopped) continue ;;  # terminal — reap orphan session
+        esac
         # extract all session names from agents array
         local snames
         snames=$(jq -r '.agents[]?.session // empty' "$run_file" 2>/dev/null)
