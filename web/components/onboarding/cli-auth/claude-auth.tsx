@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft2Filled,
@@ -214,7 +214,7 @@ export function ClaudeAuth({ onSave, onBack, detectedVersion, initialAuthMethod,
   const showFooterSave = authOption === "login" || authOption === "gateway";
   const profileOptions = profiles.length > 0 ? profiles : claudeProfileOptions;
 
-  const options: { key: AuthOption; icon: typeof KeyFilled; label: string; desc: string }[] = [
+  const options: { key: AuthOption; icon: ComponentType<{ className?: string }>; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,

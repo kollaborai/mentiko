@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { motion } from "motion/react";
 import {
   ArrowLeft2Filled,
@@ -104,7 +104,7 @@ export function KollabAuth({
 
   const options: {
     key: AuthMethod;
-    icon: typeof TerminalIcon;
+    icon: ComponentType<{ className?: string }>;
     label: string;
     desc: string;
   }[] = [

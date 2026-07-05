@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft2Filled,
@@ -165,7 +165,7 @@ export function AntigravityAuth({ onSave, onBack, detectedVersion, initialAuthMe
   const showFooterSave = authOption === "login";
   const profileOptions = profiles.length > 0 ? profiles : antigravityProfileOptions;
 
-  const options: { key: AuthOption; icon: typeof Link2Filled; label: string; desc: string }[] = [
+  const options: { key: AuthOption; icon: ComponentType<{ className?: string }>; label: string; desc: string }[] = [
     {
       key: "api-key",
       icon: KeyFilled,
