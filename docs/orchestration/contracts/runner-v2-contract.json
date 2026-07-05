@@ -34,7 +34,9 @@
     "completion_reentry": {
       "current": "lib/chain-runner-complete.sh -> lib/chain-runner.sh --start/--parallel",
       "v2": "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled",
-      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported",
+      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported (exit 64); the bridge exits unsupported for members of a live fan group because typed fan-in accounting is not wired — the shell handler owns those completions",
+      "routed_coverage": "agents relaunched by the typed bridge (routed chain-runner --start/--parallel) complete through the typed pipeline too: shell chain-runner monitors carry the completion flags + run-dir context inline (pty daemon whitelists spawn env), and the completion entrypoint adopts an AgentAttempt record (origin routed-completion-adoption, created at instructions_submitted from completion-time evidence) before the verdict drives the normal completed/completion_failed edges",
+      "division_of_labor": "exactly one handler applies completion side effects: typed bridge exit != 64 means the shell handler never runs (typed queues external effects to the outbox); exit 64 means the shell handler applies everything inline",
       "reason": "completion owns fan-in, fan-out, retries, generation backstop, and event archiving; typed re-entry is opt-in until full branch parity is proven"
     },
     "daemon_watchers": {
@@ -87,11 +89,14 @@
     ],
     "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only \u2014 probe and proof dispatch never invoke real plugins",
     "legacy_webhook_network": "live drain delivers legacy webhooks over the network (SSRF guards live in outbound-webhook-delivery); probe dispatch requires explicit opt-in",
-    "plain_fail_steps": "plain fail decisions (agent failed, no retry policy) emit terminal-failure steps mirroring the shell no-event failure path: task-status failed, circuit-breaker record-failure, agent-failed notification, failed metadata-webhooks; the shell fires no plugins on this path so neither does typed"
+    "plain_fail_steps": "plain fail decisions (agent failed, no retry policy) emit terminal-failure steps mirroring the shell no-event failure path: task-status failed, circuit-breaker record-failure, agent-failed notification, failed metadata-webhooks; the shell fires no plugins on this path so neither does typed",
+    "agent_completion_steps": "every typed completion that marks the agent complete (route, loop-complete, max-rounds-stop, terminal, generation-terminal) queues per-agent effects mirroring the top of chain-runner-complete.sh: agent-completed plugin, agent-completed notification (agent_complete type, never chain-level), and chain-config agent_complete webhooks (config.webhooks enabled + subscribed, queued as legacy-webhook records per url); unlike the shell, typed does not fire agent-completed for verdicts that fail the agent",
+    "no_downstream_terminal": "a completion whose event has no downstream work plans the full terminal completion (task-status, chain_complete webhook, chain-complete event, plugins, notifications, run-completed hooks, metadata-webhooks, legacy webhook, on_complete policy) instead of only flipping run status; a wait with downstream still in flight (targets already active or blocked on prerequisites) applies no run-terminal effects at all, matching the shell's quiet exit"
   },
   "monitor_contract": {
     "completion": "OR-latched explicit AGENT_COMPLETE line or declared emits event match",
     "stale": "stale/idle only drives advisor nudges or diagnostics",
+    "env_carry": "the pty daemon whitelists spawn env, so every monitor spawner must inline-export the runner-v2 completion context (MENTIKO_RUNNER_V2, MENTIKO_RUNNER_V2_COMPLETION, MENTIKO_RUN_DIR/RUNS_DIR, NAMESPACE_ID/ORG_ID, EVENTS_DIR/STATE_DIR) into the monitor command; both spawners comply — the typed bootstrap (agent-bootstrap-plan runContextExports) and the shell chain-runner mon_script — otherwise routed completions cannot reach the typed bridge",
     "forbidden": [
       "idle implies complete",
       "dead without declared event implies success",
@@ -135,7 +140,7 @@
     "completion re-entry remains shell fallback-capable until parity tests cover every branch"
   ],
   "known_gaps": [
-    "typed completion coverage: agents relaunched by the typed bridge (routed chain-runner --start/--parallel) run under v1 monitors and complete through the v1 shell handler \u2014 no typed attempt record and no external-effects outbox for those completions; run-terminal side effects ride the v1 path (observed live: run-1783212849527 haiku-verifier, 2026-07-04)",
+    "fan-out member completions are intentionally shell-handled: the typed bridge exits unsupported (64) for members of a live fan group because typed fan-in accounting is not wired to the completion entrypoint; wiring the fan-group store into typed completion removes the last routed-coverage carve-out",
     "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
     "completed agents' PTY sessions can linger after typed completion handles their AGENT_COMPLETE (writer start script still alive minutes later; cleanup only kills the monitor session)"
   ]
