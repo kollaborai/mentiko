@@ -274,7 +274,7 @@ describe("chain-run-service runner-v2 guard", () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       "/bin/bash",
       ["-lc", expect.stringContaining("--start reviewer")],
-      expect.objectContaining({ detached: false }),
+      expect.objectContaining({ detached: true }),
     );
 
     const { readFileSync } = await import("fs");

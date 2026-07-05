@@ -106,7 +106,7 @@ describe("runner-v2 synthetic probe", () => {
       "/bin/bash",
       ["-lc", expect.stringContaining("--start 'reviewer'")],
       expect.objectContaining({
-        detached: false,
+        detached: true,
       }),
     );
   });

@@ -31,7 +31,7 @@ describe("runner-v2 routed launch plans", () => {
       kind: "single",
       command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start 'reviewer'",
       env: { MENTIKO_RUN_ID: "run-1" },
-      detached: false,
+      detached: true,
     }]);
   });
 
@@ -43,7 +43,7 @@ describe("runner-v2 routed launch plans", () => {
     }, context)[0]).toMatchObject({
       kind: "parallel",
       command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --parallel 'a' 'b'",
-      detached: false,
+      detached: true,
     });
   });
 

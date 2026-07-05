@@ -54,7 +54,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
           ...input.routeContext.env,
           ...decision.fanGroup.launch.env,
         },
-        detached: false,
+        detached: true,
       });
     }
   }
@@ -102,7 +102,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
       kind: "single",
       command: buildFanGroupLaunchCommand(input.routeContext, decision.retry.launch.agentId),
       env: { ...input.routeContext.env },
-      detached: false,
+      detached: true,
     });
   } else if (decision.action === "exhausted") {
     effects.push({ type: "retry", plan: decision.retry });

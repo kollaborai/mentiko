@@ -40,12 +40,15 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
     }));
   }
 
+  // always detached: the typed completion bridge exits as soon as launches
+  // are fired, and a non-detached child dies with the completion PTY before
+  // chain-runner can start the next agent.
   if (decision.agentIds.length > 1) {
     return [{
       kind: "parallel",
       command: runnerCommand(context, ["--parallel", ...decision.agentIds]),
       env: { ...context.env },
-      detached: false,
+      detached: true,
     }];
   }
 
@@ -53,7 +56,7 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
     kind: "single",
     command: runnerCommand(context, ["--start", decision.agentIds[0]]),
     env: { ...context.env },
-    detached: false,
+    detached: true,
   }];
 }
 
