@@ -194,12 +194,26 @@ export function adoptAgentAttemptForCompletion(input: {
   now?: Date;
 }): AgentAttemptRecord {
   const existing = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
-  if (existing) return existing;
+  // a completed latest attempt stays authoritative (duplicate completion events
+  // are idempotent downstream). A FAILURE-terminal latest must not wedge the
+  // agent forever: a false early completion (e.g. the monitor latching a
+  // rendered AGENT_COMPLETE from wrapped instruction text) marks the attempt
+  // completion_failed while the agent is still working — when the real
+  // completion evidence arrives, record it on a fresh adopted attempt instead
+  // of rejecting the legal-history transition and aborting the whole handoff.
+  if (existing && (existing.phase === "completed" || !TERMINAL_PHASES.has(existing.phase))) {
+    return existing;
+  }
 
   const at = iso(input.now);
-  const detail = `adopted at completion: agent launched by shell chain-runner (typed runtime did not observe startup)${input.sessionName ? `; session ${input.sessionName}` : ""}`;
+  const sequence = readRunnerV2AttemptState(input.runJsonPath).attempts
+    .filter((attempt) => attempt.runId === input.runId && attempt.agentId === input.agentId)
+    .length + 1;
+  const detail = existing
+    ? `adopted at completion: previous attempt ${existing.id} ended ${existing.phase}${existing.terminalReason ? ` (${existing.terminalReason})` : ""} but new completion evidence arrived for the same agent${input.sessionName ? `; session ${input.sessionName}` : ""}`
+    : `adopted at completion: agent launched by shell chain-runner (typed runtime did not observe startup)${input.sessionName ? `; session ${input.sessionName}` : ""}`;
   const attempt: AgentAttemptRecord = {
-    id: `${input.runId}:${input.agentId}:1`,
+    id: `${input.runId}:${input.agentId}:${sequence}`,
     runId: input.runId,
     agentId: input.agentId,
     phase: "instructions_submitted",
@@ -513,6 +527,11 @@ function markLatestAttemptCompleted(input: {
 }): AgentAttemptRecord | undefined {
   const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
+  // same guard as markLatestAttemptFailed: the ledger records evidence, it must
+  // never abort the live completion handoff with an invalid-transition throw
+  // (a falsely failure-terminal attempt otherwise wedges the agent's REAL
+  // completion — adoption creates a fresh attempt for that case upstream).
+  if (!canTransition(attempt.phase, "completed")) return attempt;
   return transitionAgentAttempt({
     runJsonPath: input.runJsonPath,
     attemptId: attempt.id,

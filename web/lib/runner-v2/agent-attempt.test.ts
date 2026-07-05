@@ -246,6 +246,52 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     expect(classifyReadinessFailure("install dependencies still running").phase).toBe("startup_failed");
   });
 
+  it("adopts a fresh attempt over a failure-terminal latest so real completion evidence can record", () => {
+    const path = runPath();
+    const first = adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      sessionName: "writer-run-1",
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: first.id,
+      to: "completion_failed",
+      reason: "retries_exhausted",
+      now: new Date("2026-07-04T00:01:00.000Z"),
+    });
+
+    const second = adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      sessionName: "writer-run-1",
+      now: new Date("2026-07-04T00:02:00.000Z"),
+    });
+
+    expect(second.id).toBe("run-1:writer:2");
+    expect(second.phase).toBe("instructions_submitted");
+    expect(second.transitions[0].detail).toContain("previous attempt run-1:writer:1 ended completion_failed");
+
+    // and a COMPLETED latest stays authoritative — no duplicate adoption
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: second.id,
+      to: "completed",
+      reason: "completed_from_event",
+      now: new Date("2026-07-04T00:03:00.000Z"),
+    });
+    const third = adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      now: new Date("2026-07-04T00:04:00.000Z"),
+    });
+    expect(third.id).toBe("run-1:writer:2");
+  });
+
   it("adopts a routed attempt at completion time with explicit provenance", () => {
     const path = runPath();
     const adopted = adoptAgentAttemptForCompletion({

@@ -650,4 +650,28 @@ describe("runner-v2 adapters", () => {
     expect(outbox.map((record) => record.type)).toEqual(["plugin", "notification", "legacy-webhook"]);
     expect(outbox.every((record) => record.status === "queued" && record.namespaceId === "ns-1" && record.orgId === "org-1")).toBe(true);
   });
+
+  it("kills the monitor session before the agent session via the shell transport", async () => {
+    const { killAgentSessions } = await import("@/lib/runner-v2/adapters");
+    (spawnSync as jest.Mock).mockClear();
+
+    const removed = killAgentSessions("workspace-writer-run-9");
+
+    expect(removed).toEqual(["monitor-workspace-writer-run-9", "workspace-writer-run-9"]);
+    const killCalls = (spawnSync as jest.Mock).mock.calls;
+    expect(killCalls).toHaveLength(2);
+    expect(killCalls[0][0]).toMatch(/bin\/p$/);
+    expect(killCalls[0][1]).toEqual(["kill", "monitor-workspace-writer-run-9"]);
+    expect(killCalls[1][1]).toEqual(["kill", "workspace-writer-run-9"]);
+  });
+
+  it("reports no removals when the transport kill fails", async () => {
+    const { killAgentSessions } = await import("@/lib/runner-v2/adapters");
+    (spawnSync as jest.Mock).mockClear();
+    (spawnSync as jest.Mock).mockReturnValue({ status: 1, stdout: "", stderr: "not found" });
+
+    expect(killAgentSessions("workspace-writer-run-9")).toEqual([]);
+
+    (spawnSync as jest.Mock).mockReturnValue({ status: 0, stdout: "import ok", stderr: "" });
+  });
 });

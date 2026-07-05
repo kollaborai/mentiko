@@ -332,6 +332,32 @@ function auditSessionPolicy(
   });
 }
 
+/**
+ * Mirror of the shell handler's phase 4 (chain-runner-complete.sh "kill
+ * sessions"): once the typed bridge handles a completion, the shell fallback
+ * never runs, so the bridge must tear down the agent session and its monitor
+ * itself. Left alive, the completed agent looks "stale" to the watchdog,
+ * which nudges it back awake — a zombie agent doing unrequested work.
+ * Best-effort via the same transport v1 uses (bin/p kill); errors ignored.
+ */
+export function killAgentSessions(sessionName: string): string[] {
+  const removed: string[] = [];
+  const transport = join(config.codeRoot, "bin", "p");
+  for (const name of [`monitor-${sessionName}`, sessionName]) {
+    try {
+      const result = spawnSync(transport, ["kill", name], {
+        timeout: 5_000,
+        stdio: "ignore",
+        env: process.env,
+      });
+      if (result.status === 0) removed.push(name);
+    } catch {
+      // best-effort, matches v1's `|| true`
+    }
+  }
+  return removed;
+}
+
 function launchNextChain(
   operation: Extract<AdapterOperation, { type: "next-chain" }>,
   context: AdapterContext,

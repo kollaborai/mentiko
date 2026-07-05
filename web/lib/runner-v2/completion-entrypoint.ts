@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
-import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
+import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
@@ -98,6 +98,10 @@ export function runRunnerV2CompletionEntrypoint(
   if (qualityGate) {
     if (input.dryRun) {
       restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    } else {
+      // shell phase-4 parity: the fallback handler never runs after a typed
+      // verdict, so the bridge tears down the agent + monitor sessions itself
+      killAgentSessions(input.sessionName);
     }
     return {
       status: "handled",
@@ -201,6 +205,12 @@ export function runRunnerV2CompletionEntrypoint(
 
     if (input.dryRun) {
       restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    } else {
+      // shell phase-4 parity: the fallback handler never runs after a typed
+      // verdict, so the bridge tears down the agent + monitor sessions itself.
+      // Runs for every handled verdict — v1 kills sessions unconditionally in
+      // phase 4 before its routing decisions; relaunches use fresh sessions.
+      killAgentSessions(input.sessionName);
     }
 
     return {
