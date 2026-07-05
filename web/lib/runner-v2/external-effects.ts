@@ -443,6 +443,22 @@ function notificationFromOperation(operation: Extract<AdapterOperation, { type: 
 } {
   const chainName = operation.chainName || "chain";
   const failed = operation.event.includes("failed") || operation.event.includes("stopped");
+  // agent-level events keep agent typing (dispatch route parity:
+  // agent-completed -> agent_complete, agent-failed -> agent_error) so a
+  // mid-chain agent completion never reads as a chain-level notification.
+  if (operation.event.startsWith("agent")) {
+    return {
+      type: failed ? "agent_error" : "agent_complete",
+      title: failed ? `Agent failed in ${chainName}` : `Agent completed in ${chainName}`,
+      message: operation.reason
+        || `An agent in chain '${chainName}' ${failed ? "failed" : "finished"}${operation.runId ? ` (run: ${operation.runId})` : ""}.`,
+      metadata: {
+        chainId: operation.chainName,
+        runId: operation.runId,
+        agentId: operation.agentId,
+      },
+    };
+  }
   return {
     type: failed ? "chain_failed" : "chain_complete",
     title: failed ? "Chain failed" : "Chain completed",

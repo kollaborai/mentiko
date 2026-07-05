@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
+import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
@@ -46,6 +47,19 @@ export function runRunnerV2CompletionEntrypoint(
 
   const run = readRunJson(runJsonPath);
   const agent = resolveAgent(input.sessionName, chain, run);
+  const stateDir = resolveStateDir(env, runDir);
+
+  // fan-out members must fall back to the shell handler: typed completion has
+  // no fan-group accounting wired, so handling one here would skip the member
+  // counter and the fan-in would never fire. The shell recovers membership
+  // from the durable fan-group state files for exactly this reason
+  // (chain-runner-complete.sh fallback membership resolution) — apply the same
+  // evidence to route these completions to the runner that owns them.
+  const fanGroupId = findLiveFanGroupMembership(stateDir, agent.id, runId);
+  if (fanGroupId) {
+    throw unsupported(`agent ${agent.id} is a member of live fan group ${fanGroupId}; typed fan-in accounting is not wired`);
+  }
+
   const eventsDir = resolveEventsDir(env, input.chainPath);
   // env EVENTS_DIR and the per-run events dir can disagree across the
   // shell/typed topology; the completion verdict must see events wherever the
@@ -53,6 +67,21 @@ export function runRunnerV2CompletionEntrypoint(
   const events = readEventsFromDirs([eventsDir, join(runDir, "events")]);
   const runJsonSnapshot = readFileSync(runJsonPath, "utf8");
   const eventSnapshots = snapshotEvents(events);
+
+  // routed/relaunched agents (launched by shell chain-runner.sh, including
+  // launches the typed bridge itself fired) have no AgentAttempt record —
+  // only the typed bootstrap creates them. Adopt one now so this completion
+  // produces the same typed lifecycle evidence as bootstrap-launched agents.
+  // Placed after the snapshot: a dry run or an unsupported/failed pipeline
+  // restores the snapshot, so the shell fallback never sees a half-typed record.
+  adoptAgentAttemptForCompletion({
+    runJsonPath,
+    runId,
+    agentId: agent.id,
+    sessionName: input.sessionName,
+    now: input.now,
+  });
+
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
   const maxRounds = numberValue(chain.config?.max_rounds);
   const qualityGate = maybeHandleQualityGateFailure({
@@ -135,6 +164,14 @@ export function runRunnerV2CompletionEntrypoint(
         taskId: run.taskId,
         lastAgentId: agent.id,
       },
+      agentCompletion: {
+        runId,
+        chainName: chain.name || chain.id || "unknown",
+        agentId: agent.id,
+        agentName: agent.name,
+        sessionName: input.sessionName,
+        chainWebhooks: parseChainWebhooks(chain.config?.webhooks),
+      },
       routeContext: {
         chainPath: input.chainPath,
         workspacePath,
@@ -154,7 +191,7 @@ export function runRunnerV2CompletionEntrypoint(
 
     const adapter = applyTypedExecutorPlan(plan, {
       runJsonPath,
-      stateDir: resolveStateDir(env, runDir),
+      stateDir,
       namespaceId: env.NAMESPACE_ID || "default",
       orgId: env.ORG_ID || "default",
       eventsDir,
@@ -315,6 +352,7 @@ interface ChainConfig {
   max_rounds?: unknown;
   retry?: unknown;
   session_prefix?: unknown;
+  webhooks?: unknown;
 }
 
 interface ChainFile extends RoutingChain {
@@ -362,6 +400,61 @@ function boundedStringArray(value: unknown, limit = 10): string[] {
 
 function resolveStateDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, runDir: string): string {
   return env.STATE_DIR || join(runDir, "state");
+}
+
+function parseChainWebhooks(value: unknown): { enabled?: boolean; urls?: string[]; events?: string[] } | undefined {
+  const raw = objectValue(value);
+  if (!raw) return undefined;
+  return {
+    enabled: raw.enabled === true || raw.enabled === "true",
+    urls: boundedStringArray(raw.urls, 20),
+    events: boundedStringArray(raw.events, 20),
+  };
+}
+
+/**
+ * Mirror of the shell fallback membership resolution in
+ * chain-runner-complete.sh: a live (status running) fan group whose member
+ * list contains this agent, scoped to this run when both sides know the run
+ * id. Reads both stores under <stateDir>/fan-groups: v1 .state key-value files
+ * and typed .json files.
+ */
+function findLiveFanGroupMembership(stateDir: string, agentId: string, runId: string): string | undefined {
+  const groupsDir = join(stateDir, "fan-groups");
+  if (!existsSync(groupsDir)) return undefined;
+  for (const file of readdirSync(groupsDir)) {
+    const path = join(groupsDir, file);
+    if (file.endsWith(".state")) {
+      const content = readOptionalFile(path);
+      if (!content) continue;
+      const status = matchKeyValue(content, "status");
+      if (status !== "running") continue;
+      const groupRunId = matchKeyValue(content, "run_id");
+      if (runId && groupRunId && groupRunId !== runId) continue;
+      const members = (matchKeyValue(content, "fan_out_agents") || "").split(/\s+/).filter(Boolean);
+      if (members.includes(agentId)) return file.slice(0, -".state".length);
+    } else if (file.endsWith(".json")) {
+      const group = readJsonObject(path);
+      if (!group || group.status !== "running") continue;
+      if (runId && typeof group.runId === "string" && group.runId && group.runId !== runId) continue;
+      const members = Array.isArray(group.fanOutAgents) ? group.fanOutAgents : [];
+      if (members.includes(agentId)) return file.slice(0, -".json".length);
+    }
+  }
+  return undefined;
+}
+
+function matchKeyValue(content: string, key: string): string | undefined {
+  const match = content.match(new RegExp(`^${key}:\\s*(.*)$`, "m"));
+  return match ? match[1].trim() : undefined;
+}
+
+function readOptionalFile(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 function readEvents(eventsDir: string): RunnerEventRecord[] {

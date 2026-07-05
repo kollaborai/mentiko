@@ -70,6 +70,18 @@ describe("runner-v2 routing decision", () => {
     }, "done")).toEqual({
       action: "wait",
       reason: "targets already active or complete",
+      pending: true,
+    });
+  });
+
+  it("keeps no-downstream waits non-pending so completion can finalize the run", () => {
+    expect(decideNextRoute({
+      agents: [
+        { id: "writer", emits: "done" },
+      ],
+    }, "done")).toEqual({
+      action: "wait",
+      reason: "no downstream target",
     });
   });
 
@@ -120,6 +132,7 @@ describe("runner-v2 routing decision", () => {
     expect(decideNextRoute(chain, "draft-ready")).toEqual({
       action: "wait",
       reason: "targets already active or complete",
+      pending: true,
     });
 
     expect(decideNextRoute({

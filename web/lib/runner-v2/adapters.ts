@@ -108,6 +108,10 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
     for (const step of effect.plan.steps) {
       launchesStarted.push(...applyOperation(step, context));
     }
+  } else if (effect.type === "agent-completion") {
+    for (const step of effect.plan.steps) {
+      launchesStarted.push(...applyOperation(step, context));
+    }
   }
   return { operations, launchesStarted };
 }
@@ -505,6 +509,9 @@ function plannedOperations(effect: TypedExecutorEffect): AdapterOperation[] {
       .map((step) => step as AdapterOperation);
   }
   if (effect.type === "terminal-failure") {
+    return effect.plan.steps.map((step) => step as AdapterOperation);
+  }
+  if (effect.type === "agent-completion") {
     return effect.plan.steps.map((step) => step as AdapterOperation);
   }
   if (effect.type === "retry") {

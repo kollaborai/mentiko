@@ -15,7 +15,10 @@ export interface RoutingChain {
 export type RoutingDecision =
   | { action: "stop"; reason: string }
   | { action: "launch"; agentIds: string[]; reason: string; fanIn?: string; waitFor?: string; quorum?: number; onError?: string }
-  | { action: "wait"; reason: string };
+  // pending=true means downstream work is still in flight (targets already
+  // running/complete or waiting on other prerequisites) — the run is NOT over.
+  // A wait without pending means the chain has no further work for this event.
+  | { action: "wait"; reason: string; pending?: boolean };
 
 const ACTIVE_OR_DONE = new Set(["running", "complete", "completed"]);
 
@@ -80,7 +83,13 @@ function decisionFromTargets(targets: string[], agents: RoutingAgent[], reason: 
   });
 
   if (runnable.length === 0) {
-    return { action: "wait", reason: targets.length > 0 ? "targets already active or complete" : "no downstream target" };
+    // targets exist but are running/complete or blocked on other prerequisites:
+    // v1 exits quietly here (chain-runner-complete.sh "downstream already
+    // active" / "waiting for prerequisites") — the run must stay running.
+    if (targets.length > 0) {
+      return { action: "wait", reason: "targets already active or complete", pending: true };
+    }
+    return { action: "wait", reason: "no downstream target" };
   }
 
   return { action: "launch", agentIds: Array.from(new Set(runnable)), reason };

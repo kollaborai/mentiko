@@ -308,6 +308,7 @@ describe("runner-v2 completion entrypoint", () => {
       plan: {
         action: "generation-terminal",
         effects: [
+          { type: "agent-completion", plan: { reason: "agent-complete" } },
           { type: "generation-import", plan: { jobId: "job-1", generationKind: "chain_recommendation" } },
           { type: "terminal" },
         ],
@@ -333,5 +334,355 @@ describe("runner-v2 completion entrypoint", () => {
       env: { MENTIKO_RUN_ID: "run-123" },
       dryRun: true,
     })).toThrow(RunnerV2CompletionUnsupportedError);
+  });
+
+  // ---------------------------------------------------------------
+  // routed-agent coverage: agents launched by shell chain-runner.sh
+  // (including relaunches the typed bridge itself fired) have no
+  // bootstrap-created AgentAttempt record.
+  // ---------------------------------------------------------------
+
+  function seedRoutedRun(root: string, options?: { downstream?: boolean; downstreamStatus?: string }) {
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [
+        { id: "verifier", name: "Verifier", emits: "verification-complete" },
+        ...(options?.downstream
+          ? [{
+            id: "publisher",
+            name: "Publisher",
+            triggers: ["verification-complete"],
+            ...(options.downstreamStatus ? { status: options.downstreamStatus } : {}),
+          }]
+          : []),
+      ],
+    });
+
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "verify" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      taskId: "TASK-173",
+      agents: [
+        { id: "verifier", name: "Verifier", session: "verifier-run-123", status: "running" },
+        ...(options?.downstream
+          ? [{ id: "publisher", name: "Publisher", session: "", status: options.downstreamStatus || "pending" }]
+          : []),
+      ],
+      sessions: ["verifier-run-123"],
+    }));
+    return { runDir, eventsDir, stateDir, chainPath, runJsonPath };
+  }
+
+  function emitVerifierEvent(eventsDir: string) {
+    writeFileSync(join(eventsDir, "run-123-verifier-verification-complete.event"), [
+      "event: verification-complete",
+      "source: verifier-run-123",
+      "run_id: run-123",
+      "processed: false",
+      "data: ok",
+      "",
+    ].join("\n"));
+  }
+
+  function routedEnv(fixture: { runDir: string; eventsDir: string; stateDir: string }) {
+    return {
+      MENTIKO_RUN_ID: "run-123",
+      MENTIKO_RUN_DIR: fixture.runDir,
+      EVENTS_DIR: fixture.eventsDir,
+      STATE_DIR: fixture.stateDir,
+      NAMESPACE_ID: "ns-1",
+      ORG_ID: "org-1",
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1",
+    };
+  }
+
+  it("adopts and completes a typed attempt for a routed agent's run-terminal completion, queuing external effects", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    emitVerifierEvent(fixture.eventsDir);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "route",
+      plan: { action: "route", launches: [] },
+    });
+
+    // typed attempt record adopted at completion time and completed from the event
+    const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(run.runnerV2?.attempts).toHaveLength(1);
+    expect(run.runnerV2?.attempts?.[0]).toMatchObject({
+      id: "run-123:verifier:1",
+      agentId: "verifier",
+      phase: "completed",
+      terminalReason: "completed_from_event",
+      origin: "routed-completion-adoption",
+      processEvidence: { ptySessionId: "verifier-run-123" },
+    });
+
+    // agent terminal status complete vs run status completed
+    expect(run.agents?.[0]).toMatchObject({ id: "verifier", status: "complete" });
+    expect(run.status).toBe("completed");
+
+    // run-terminal external side effects queued to the outbox with tenant identity
+    const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; namespaceId?: string; orgId?: string; operation?: { event?: string; taskId?: string } });
+    const types = outbox.map((record) => record.type);
+    expect(types).toEqual(expect.arrayContaining(["task-status", "webhook", "plugin", "notification", "metadata-webhooks"]));
+    expect(outbox.find((record) => record.type === "task-status")?.operation?.taskId).toBe("TASK-173");
+    expect(outbox.every((record) => record.namespaceId === "ns-1" && record.orgId === "org-1")).toBe(true);
+    // per-agent effects ride the same outbox
+    expect(outbox.some((record) => record.type === "plugin" && record.operation?.event === "agent-completed")).toBe(true);
+    expect(outbox.some((record) => record.type === "notification" && record.operation?.event === "agent-completed")).toBe(true);
+  });
+
+  it("adopts and fails the typed attempt when a routed agent completes without its event", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    // the entrypoint always provides retry context, so a no-event completion
+    // without a policy resolves as retries-exhausted (0 allowed attempts)
+    expect(result).toMatchObject({ status: "handled", decision: "exhausted" });
+
+    const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(run.runnerV2?.attempts?.[0]).toMatchObject({
+      agentId: "verifier",
+      phase: "completion_failed",
+      terminalReason: "retries_exhausted",
+      origin: "routed-completion-adoption",
+    });
+    expect(run.status).toBe("stopped");
+
+    // failure external side effects queued (exhausted-path parity)
+    const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; operation?: { event?: string; status?: string } });
+    expect(outbox.some((record) => record.type === "task-status" && record.operation?.status === "stopped")).toBe(true);
+    expect(outbox.some((record) => record.type === "notification" && record.operation?.event === "agent-failed")).toBe(true);
+    // no agent-completed effects for a failed verdict
+    expect(outbox.some((record) => record.operation?.event === "agent-completed")).toBe(false);
+  });
+
+  it("plans mid-chain routed completions with adoption, launches, and per-agent effects (dry run leaves no trace)", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { downstream: true });
+    emitVerifierEvent(fixture.eventsDir);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      dryRun: true,
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "route",
+      plan: {
+        action: "route",
+        launches: [{ kind: "single", detached: true }],
+      },
+    });
+    expect(result.plan.effects.some((effect) => effect.type === "agent-completion")).toBe(true);
+    // mid-chain completions do not plan run-terminal effects
+    expect(result.plan.effects.some((effect) => effect.type === "terminal" || effect.type === "run-terminal")).toBe(false);
+    expect(result.adapter.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "plugin", event: "agent-completed", agentId: "verifier" }),
+      expect.objectContaining({ type: "notification", event: "agent-completed", agentId: "verifier" }),
+    ]));
+
+    // dry run restored the snapshot: no adopted attempt persists
+    const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(run.runnerV2?.attempts || []).toHaveLength(0);
+    expect(run.status).toBe("running");
+  });
+
+  it("stays quiet when the routed completion's downstream target is already active", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { downstream: true, downstreamStatus: "running" });
+    emitVerifierEvent(fixture.eventsDir);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ status: "handled", decision: "route", plan: { launches: [] } });
+    const run = readRunJson(fixture.runJsonPath);
+    // run must NOT be finalized while the sibling is still running (v1 quiet-exit parity)
+    expect(run.status).toBe("running");
+    expect(run.agents?.[0]).toMatchObject({ id: "verifier", status: "complete" });
+  });
+
+  it("exits unsupported for members of a live fan group so the shell handler keeps fan-in accounting", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    emitVerifierEvent(fixture.eventsDir);
+
+    // v1-format fan-group state file listing this agent as a running member
+    const groupsDir = join(fixture.stateDir, "fan-groups");
+    mkdirSync(groupsDir, { recursive: true });
+    writeFileSync(join(groupsDir, "review-fan-1.state"), [
+      "status: running",
+      "started: 2026-07-04T00:00:00Z",
+      "event: fan-out-review",
+      "fan_out_agents: verifier other-agent",
+      "fan_in_agent: merger",
+      "wait_for: all",
+      "quorum: 0",
+      "on_error: ",
+      "completed: 0",
+      "failed: 0",
+      "total: 2",
+      "",
+    ].join("\n"));
+
+    const before = readFileSync(fixture.runJsonPath, "utf8");
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    })).toThrow(RunnerV2CompletionUnsupportedError);
+    // no mutation before the unsupported exit
+    expect(readFileSync(fixture.runJsonPath, "utf8")).toBe(before);
+  });
+
+  it("ignores fan groups that are no longer running or belong to another run", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    emitVerifierEvent(fixture.eventsDir);
+
+    const groupsDir = join(fixture.stateDir, "fan-groups");
+    mkdirSync(groupsDir, { recursive: true });
+    // triggered group: fan-in already claimed, completion must proceed typed
+    writeFileSync(join(groupsDir, "done-fan.state"), [
+      "status: triggered",
+      "fan_out_agents: verifier",
+      "",
+    ].join("\n"));
+    // typed-format group scoped to another run
+    writeJson(join(groupsDir, "other-run.json"), {
+      id: "other-run",
+      status: "running",
+      fanOutAgents: ["verifier"],
+      runId: "run-999",
+      completed: 0,
+      failed: 0,
+      total: 1,
+    });
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+    expect(result).toMatchObject({ status: "handled", decision: "route" });
+  });
+
+  it("gates typed completion on live typed-store fan groups too", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    emitVerifierEvent(fixture.eventsDir);
+
+    const groupsDir = join(fixture.stateDir, "fan-groups");
+    mkdirSync(groupsDir, { recursive: true });
+    writeJson(join(groupsDir, "typed-fan.json"), {
+      id: "typed-fan",
+      status: "running",
+      fanOutAgents: ["verifier", "other"],
+      runId: "run-123",
+      completed: 0,
+      failed: 0,
+      total: 2,
+    });
+
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    })).toThrow(RunnerV2CompletionUnsupportedError);
+  });
+
+  it("keeps bootstrap-created attempts untouched instead of adopting a second record", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    emitVerifierEvent(fixture.eventsDir);
+    updateRunJson(fixture.runJsonPath, (current) => ({
+      ...(current || {}),
+      runnerV2: {
+        attempts: [{
+          id: "run-123:verifier:1",
+          runId: "run-123",
+          agentId: "verifier",
+          phase: "instructions_submitted",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-04T00:00:00.000Z",
+          updatedAt: "2026-07-04T00:00:00.000Z",
+          transitions: [],
+        }],
+      },
+    } as Parameters<Parameters<typeof updateRunJson>[1]>[0] & object));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ status: "handled", decision: "route" });
+    const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(run.runnerV2?.attempts).toHaveLength(1);
+    expect(run.runnerV2?.attempts?.[0]).toMatchObject({
+      id: "run-123:verifier:1",
+      phase: "completed",
+      terminalReason: "completed_from_event",
+    });
+    expect(run.runnerV2?.attempts?.[0]?.origin).toBeUndefined();
   });
 });

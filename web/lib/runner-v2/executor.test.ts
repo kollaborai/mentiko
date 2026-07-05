@@ -188,7 +188,7 @@ describe("runner-v2 typed executor plan", () => {
     });
   });
 
-  it("keeps wait routes launchless and non-failed", () => {
+  it("plans full terminal completion for no-downstream waits", () => {
     const dir = runDir();
     const pipeline = runCompletionPipeline({
       runDir: dir,
@@ -201,14 +201,139 @@ describe("runner-v2 typed executor plan", () => {
       events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
     });
 
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      routeContext: routeContext(dir),
+      terminal: {
+        runId: "run-123",
+        chainName: "Test Chain",
+        taskId: "TASK-9",
+      },
+    });
+    expect(plan).toMatchObject({
+      action: "route",
+      effects: [
+        { type: "event-side-effects" },
+        { type: "terminal", plan: { reason: "no-downstream" } },
+      ],
+      launches: [],
+    });
+    const terminal = plan.effects.find((effect) => effect.type === "terminal");
+    const steps = terminal?.type === "terminal" ? terminal.plan.steps : [];
+    // shell parity: the no-downstream finalization carries the full external
+    // side-effect set, and last_event comes from the completion event.
+    expect(steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run-status", status: "completed" }),
+      expect.objectContaining({ type: "task-status", status: "completed", taskId: "TASK-9" }),
+      expect.objectContaining({ type: "webhook", event: "chain_complete", lastEvent: "draft-ready" }),
+      expect.objectContaining({ type: "plugin", event: "chain-completed" }),
+      expect.objectContaining({ type: "notification", event: "chain-completed" }),
+      expect.objectContaining({ type: "metadata-webhooks", event: "completed" }),
+    ]));
+  });
+
+  it("applies no run-terminal effects when downstream targets are still pending", () => {
+    const dir = runDir();
+    const pipeline = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath: seedRun(dir),
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"], status: "running" },
+        ],
+      },
+      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+    });
+
+    // v1 parity: the shell handler exits quietly when the downstream agent is
+    // already active — the run stays running and the sibling finalizes it.
     expect(buildTypedExecutorPlan({ pipeline, routeContext: routeContext(dir) })).toMatchObject({
       action: "route",
       effects: [
         { type: "event-side-effects" },
-        { type: "run-terminal", status: "completed", reason: "no downstream target" },
       ],
       launches: [],
     });
+  });
+
+  it("queues per-agent completion side effects for completions that mark the agent complete", () => {
+    const dir = runDir();
+    const pipeline = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath: seedRun(dir),
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+    });
+
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      routeContext: routeContext(dir),
+      agentCompletion: {
+        runId: "run-123",
+        chainName: "Test Chain",
+        agentId: "writer",
+        agentName: "Writer",
+        sessionName: "writer-run-123",
+        chainWebhooks: { enabled: true, urls: ["https://example.com/hook"], events: ["agent_complete"] },
+      },
+    });
+
+    const agentCompletion = plan.effects.find((effect) => effect.type === "agent-completion");
+    expect(agentCompletion?.type === "agent-completion" ? agentCompletion.plan.steps : []).toEqual([
+      { type: "plugin", event: "agent-completed", chainName: "Test Chain", runId: "run-123", agentId: "writer" },
+      { type: "notification", event: "agent-completed", chainName: "Test Chain", runId: "run-123", agentId: "writer" },
+      {
+        type: "legacy-webhook",
+        url: "https://example.com/hook",
+        payload: {
+          event: "agent_complete",
+          chain: "Test Chain",
+          agent_id: "writer",
+          agent_name: "Writer",
+          session: "writer-run-123",
+        },
+      },
+    ]);
+  });
+
+  it("skips per-agent completion side effects for verdicts that fail the agent", () => {
+    const dir = runDir();
+    const pipeline = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath: seedRun(dir),
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: [],
+    });
+
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      routeContext: routeContext(dir),
+      agentCompletion: {
+        runId: "run-123",
+        chainName: "Test Chain",
+        agentId: "writer",
+      },
+    });
+
+    expect(plan.action).toBe("fail");
+    expect(plan.effects.some((effect) => effect.type === "agent-completion")).toBe(false);
   });
 
   it("emits failure side-effect steps for a plain fail decision", () => {

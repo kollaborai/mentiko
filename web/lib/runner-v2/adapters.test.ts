@@ -613,4 +613,41 @@ describe("runner-v2 adapters", () => {
       reason: "destructive rollback requires explicit operator approval",
     });
   });
+
+  it("queues agent-completion steps to the external-effects outbox with tenant identity", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+
+    const result = applyTypedExecutorPlan({
+      action: "route",
+      effects: [{
+        type: "agent-completion",
+        plan: {
+          reason: "agent-complete",
+          steps: [
+            { type: "plugin", event: "agent-completed", chainName: "chain", runId: "run-123", agentId: "writer" },
+            { type: "notification", event: "agent-completed", chainName: "chain", runId: "run-123", agentId: "writer" },
+            { type: "legacy-webhook", url: "https://example.com/hook", payload: { event: "agent_complete", chain: "chain" } },
+          ],
+        },
+      }],
+      launches: [],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      namespaceId: "ns-1",
+      orgId: "org-1",
+    });
+
+    expect(result.effectsApplied).toEqual(["agent-completion"]);
+    expect(result.operations.map((operation) => operation.type)).toEqual(["plugin", "notification", "legacy-webhook"]);
+
+    const outbox = readFileSync(join(dir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(outbox).toHaveLength(3);
+    expect(outbox.map((record) => record.type)).toEqual(["plugin", "notification", "legacy-webhook"]);
+    expect(outbox.every((record) => record.status === "queued" && record.namespaceId === "ns-1" && record.orgId === "org-1")).toBe(true);
+  });
 });

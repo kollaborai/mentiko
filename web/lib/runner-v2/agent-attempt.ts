@@ -68,6 +68,11 @@ export interface AgentAttemptRecord {
   createdAt: string;
   updatedAt: string;
   transitions: AgentAttemptTransition[];
+  // absent for typed-bootstrap attempts (the typed runtime observed every
+  // startup phase). "routed-completion-adoption" marks attempts created at
+  // completion time for agents the shell chain-runner launched: their startup
+  // lifecycle ran outside the typed runtime and was not observed phase by phase.
+  origin?: "routed-completion-adoption";
 }
 
 export interface RunnerV2AttemptState {
@@ -162,6 +167,52 @@ export function createAgentAttempt(input: {
     createdAt: at,
     updatedAt: at,
     transitions: [],
+  };
+  writeAttempt(input.runJsonPath, attempt);
+  return attempt;
+}
+
+/**
+ * Adopt an attempt for an agent whose startup lifecycle ran outside the typed
+ * runtime (routed/relaunched agents launched by shell chain-runner.sh, which
+ * the typed completion bridge itself fires). The typed runtime never observed
+ * lease/PTY/spawn phases for these agents, so the record is created directly
+ * at instructions_submitted — the earliest phase supported by completion-time
+ * evidence (the agent ran and reached its completion handoff) — with a single
+ * adoption transition documenting that provenance instead of fabricated
+ * per-phase observations. The completion verdict then drives the normal
+ * instructions_submitted -> completed/completion_failed edges.
+ *
+ * No-op when any attempt already exists for (runId, agentId): typed-bootstrap
+ * and retry lifecycles keep their existing records.
+ */
+export function adoptAgentAttemptForCompletion(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  sessionName?: string;
+  now?: Date;
+}): AgentAttemptRecord {
+  const existing = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (existing) return existing;
+
+  const at = iso(input.now);
+  const detail = `adopted at completion: agent launched by shell chain-runner (typed runtime did not observe startup)${input.sessionName ? `; session ${input.sessionName}` : ""}`;
+  const attempt: AgentAttemptRecord = {
+    id: `${input.runId}:${input.agentId}:1`,
+    runId: input.runId,
+    agentId: input.agentId,
+    phase: "instructions_submitted",
+    desiredPhase: "completed",
+    observedPhase: "instructions_submitted",
+    leaseId: input.sessionName,
+    ...(input.sessionName ? { processEvidence: { ptySessionId: input.sessionName } } : {}),
+    instructionLedger: [],
+    recoveryDecisionCount: 0,
+    createdAt: at,
+    updatedAt: at,
+    transitions: [{ from: "created", to: "instructions_submitted", at, detail }],
+    origin: "routed-completion-adoption",
   };
   writeAttempt(input.runJsonPath, attempt);
   return attempt;

@@ -1,4 +1,4 @@
-import { planTerminalCompletion, planTerminalFailure, shouldCompleteEmptyEmitsAgent } from "@/lib/runner-v2/terminal-plan";
+import { planAgentCompletion, planTerminalCompletion, planTerminalFailure, shouldCompleteEmptyEmitsAgent } from "@/lib/runner-v2/terminal-plan";
 
 describe("runner-v2 terminal completion plan", () => {
   it("plans run/task completion and chain-complete side effects for no downstream target", () => {
@@ -103,5 +103,69 @@ describe("runner-v2 terminal completion plan", () => {
   it("omits the circuit breaker step when the failing agent is unknown", () => {
     const plan = planTerminalFailure({ runId: "run-1", chainName: "Build Chain" });
     expect(plan.steps.map((step) => step.type)).toEqual(["task-status", "notification", "metadata-webhooks"]);
+  });
+});
+
+describe("runner-v2 agent completion plan", () => {
+  it("plans agent-completed plugin and notification steps", () => {
+    const plan = planAgentCompletion({
+      runId: "run-1",
+      chainName: "Build Chain",
+      agentId: "writer",
+      agentName: "Writer",
+      sessionName: "writer-run-1",
+    });
+
+    expect(plan.reason).toBe("agent-complete");
+    expect(plan.steps).toEqual([
+      { type: "plugin", event: "agent-completed", chainName: "Build Chain", runId: "run-1", agentId: "writer" },
+      { type: "notification", event: "agent-completed", chainName: "Build Chain", runId: "run-1", agentId: "writer" },
+    ]);
+  });
+
+  it("plans chain-config agent_complete webhooks only when enabled and subscribed", () => {
+    const base = {
+      runId: "run-1",
+      chainName: "Build Chain",
+      agentId: "writer",
+      agentName: "Writer",
+      sessionName: "writer-run-1",
+    };
+
+    const subscribed = planAgentCompletion({
+      ...base,
+      chainWebhooks: { enabled: true, urls: ["https://a.example/hook", "https://b.example/hook"], events: ["agent_complete", "chain_complete"] },
+    });
+    expect(subscribed.steps.filter((step) => step.type === "legacy-webhook")).toEqual([
+      {
+        type: "legacy-webhook",
+        url: "https://a.example/hook",
+        payload: { event: "agent_complete", chain: "Build Chain", agent_id: "writer", agent_name: "Writer", session: "writer-run-1" },
+      },
+      {
+        type: "legacy-webhook",
+        url: "https://b.example/hook",
+        payload: { event: "agent_complete", chain: "Build Chain", agent_id: "writer", agent_name: "Writer", session: "writer-run-1" },
+      },
+    ]);
+
+    // shell parity: empty subscription list means every event fires
+    const allEvents = planAgentCompletion({
+      ...base,
+      chainWebhooks: { enabled: true, urls: ["https://a.example/hook"], events: [] },
+    });
+    expect(allEvents.steps.some((step) => step.type === "legacy-webhook")).toBe(true);
+
+    const notSubscribed = planAgentCompletion({
+      ...base,
+      chainWebhooks: { enabled: true, urls: ["https://a.example/hook"], events: ["chain_complete"] },
+    });
+    expect(notSubscribed.steps.some((step) => step.type === "legacy-webhook")).toBe(false);
+
+    const disabled = planAgentCompletion({
+      ...base,
+      chainWebhooks: { enabled: false, urls: ["https://a.example/hook"], events: ["agent_complete"] },
+    });
+    expect(disabled.steps.some((step) => step.type === "legacy-webhook")).toBe(false);
   });
 });

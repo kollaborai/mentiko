@@ -82,6 +82,40 @@ describe("runner-v2 external effects dispatcher", () => {
     expect(readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8")).toContain("\"status\":\"dispatched\"");
   });
 
+  it("keeps agent-level notification typing so mid-chain completions never read as chain-level", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [
+      {
+        type: "notification",
+        status: "queued",
+        operation: { type: "notification", event: "agent-completed", chainName: "Build Chain", runId: "run-123", agentId: "writer" },
+      },
+      {
+        type: "notification",
+        status: "queued",
+        operation: { type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-123", agentId: "writer", reason: "boom" },
+      },
+    ]);
+
+    const result = await dispatchExternalEffects({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(createNotification).toHaveBeenCalledWith("default", expect.objectContaining({
+      type: "agent_complete",
+      title: "Agent completed in Build Chain",
+      metadata: expect.objectContaining({ agentId: "writer" }),
+    }));
+    expect(createNotification).toHaveBeenCalledWith("default", expect.objectContaining({
+      type: "agent_error",
+      title: "Agent failed in Build Chain",
+      message: "boom",
+    }));
+    expect(result).toMatchObject({ handled: 2, dispatched: 2 });
+  });
+
   it("uses the tenant identity recorded on each queued record over the input default", async () => {
     const dir = tempDir();
     const outboxPath = writeOutbox(dir, [

@@ -3,8 +3,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   AgentAttemptTransitionError,
+  adoptAgentAttemptForCompletion,
   classifyReadinessFailure,
   createAgentAttempt,
+  markAgentAttemptCompletedFromEvent,
   markAgentAttemptFailedNoCompletion,
   markAgentAttemptRetriesExhausted,
   projectAgentAttemptsForStatus,
@@ -242,5 +244,83 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
   it("classifies auth prompts separately from generic install output", () => {
     expect(classifyReadinessFailure("Please log in to continue").phase).toBe("human_action_required");
     expect(classifyReadinessFailure("install dependencies still running").phase).toBe("startup_failed");
+  });
+
+  it("adopts a routed attempt at completion time with explicit provenance", () => {
+    const path = runPath();
+    const adopted = adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "verifier",
+      sessionName: "verifier-run-1",
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(adopted).toMatchObject({
+      id: "run-1:verifier:1",
+      phase: "instructions_submitted",
+      desiredPhase: "completed",
+      observedPhase: "instructions_submitted",
+      origin: "routed-completion-adoption",
+      leaseId: "verifier-run-1",
+      processEvidence: { ptySessionId: "verifier-run-1" },
+    });
+    expect(adopted.transitions).toHaveLength(1);
+    expect(adopted.transitions[0]).toMatchObject({ from: "created", to: "instructions_submitted" });
+    expect(adopted.transitions[0].detail).toContain("adopted at completion");
+
+    // the adopted record completes through the normal legal edge
+    const completed = markAgentAttemptCompletedFromEvent({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "verifier",
+      detail: "matched completion event verification-complete",
+    });
+    expect(completed).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_event",
+      origin: "routed-completion-adoption",
+    });
+  });
+
+  it("adoption is a no-op when any attempt already exists for the agent", () => {
+    const path = runPath();
+    const bootstrap = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+    });
+
+    const adopted = adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      sessionName: "writer-run-1",
+    });
+
+    expect(adopted.id).toBe(bootstrap.id);
+    expect(adopted.origin).toBeUndefined();
+    expect(readRun(path).runnerV2.attempts).toHaveLength(1);
+  });
+
+  it("adopted attempts can fail through the completion_failed edge", () => {
+    const path = runPath();
+    adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "verifier",
+    });
+
+    const failed = markAgentAttemptFailedNoCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "verifier",
+      detail: "declared completion event missing",
+    });
+    expect(failed).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
+      origin: "routed-completion-adoption",
+    });
   });
 });

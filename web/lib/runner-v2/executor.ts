@@ -6,7 +6,7 @@ import { createFanGroupState, type FanGroupCompletionPlan, type FanGroupState } 
 import type { RunnerEventRecord } from "@/lib/runner-v2/events";
 import type { RetryNoEventPlan } from "@/lib/runner-v2/retry-plan";
 import { buildRoutedLaunchPlans, type RoutedLaunchContext, type RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
-import { planTerminalCompletion, planTerminalFailure, type TerminalCompletionInput, type TerminalCompletionPlan, type TerminalFailurePlan } from "@/lib/runner-v2/terminal-plan";
+import { planAgentCompletion, planTerminalCompletion, planTerminalFailure, type AgentCompletionInput, type AgentCompletionPlan, type TerminalCompletionInput, type TerminalCompletionPlan, type TerminalFailurePlan } from "@/lib/runner-v2/terminal-plan";
 
 export type TypedExecutorEffect =
   | { type: "event-side-effects"; plan: EventSideEffectPlan }
@@ -15,6 +15,7 @@ export type TypedExecutorEffect =
   | { type: "fan-group-create"; group: FanGroupState }
   | { type: "retry"; plan: RetryNoEventPlan }
   | { type: "fan-group"; plan: FanGroupCompletionPlan }
+  | { type: "agent-completion"; plan: AgentCompletionPlan }
   | { type: "terminal"; plan: TerminalCompletionPlan }
   | { type: "terminal-failure"; plan: TerminalFailurePlan }
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
@@ -30,7 +31,16 @@ export interface TypedExecutorInput {
   routeContext: RoutedLaunchContext;
   allEvents?: RunnerEventRecord[];
   terminal?: TerminalCompletionInput;
+  agentCompletion?: AgentCompletionInput;
 }
+
+const AGENT_COMPLETE_ACTIONS = new Set([
+  "route",
+  "loop-complete",
+  "max-rounds-stop",
+  "terminal",
+  "generation-terminal",
+]);
 
 export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutorPlan {
   const { decision } = input.pipeline;
@@ -42,6 +52,14 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
       type: "event-side-effects",
       plan: planCompletionEventSideEffects(decision.event, input.allEvents || [decision.event]),
     });
+  }
+
+  // per-agent side effects (agent-completed plugin/notification + chain-config
+  // agent_complete webhook) mirror the shell handler for every completion that
+  // marks the agent complete. fail/retry/exhausted verdicts do not fire these;
+  // the failure paths carry their own agent-failed effects.
+  if (input.agentCompletion && AGENT_COMPLETE_ACTIONS.has(decision.action)) {
+    effects.push({ type: "agent-completion", plan: planAgentCompletion(input.agentCompletion) });
   }
 
   if ("fanGroup" in decision && decision.fanGroup) {
@@ -63,16 +81,25 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
     if (decision.route.action === "stop") {
       effects.push({
         type: "terminal",
-        plan: planTerminalCompletion(input.terminal || {
-          runId: input.routeContext.env?.MENTIKO_RUN_ID || "",
-          chainName: "unknown",
-          chainPath: input.routeContext.chainPath,
-          taskId: input.routeContext.taskId,
-          lastEvent: decision.event.event,
-        }, "explicit-stop"),
+        plan: planTerminalCompletion(terminalInputForRoute(input, decision.event.event), "explicit-stop"),
       });
     } else if (decision.route.action === "wait") {
-      effects.push({ type: "run-terminal", status: "completed", reason: "no downstream target" });
+      if (decision.route.pending) {
+        // downstream targets are already running or blocked on other
+        // prerequisites: shell parity is a quiet exit (chain-runner-complete.sh
+        // "downstream already active" / "waiting for prerequisites"). The run
+        // stays running; the in-flight sibling's completion finalizes it.
+      } else {
+        // no downstream work exists for this event: this is the run-terminal
+        // completion. Mirror the shell no-downstream finalization (task update,
+        // chain_complete webhook, chain-complete event, plugins, notifications,
+        // hooks, metadata webhooks, legacy webhook) instead of only flipping
+        // run status.
+        effects.push({
+          type: "terminal",
+          plan: planTerminalCompletion(terminalInputForRoute(input, decision.event.event), "no-downstream"),
+        });
+      }
     } else if (decision.route.action === "launch" && isFanOutRoute(decision.route)) {
       const fanGroupId = input.routeContext.fanGroupId || `${decision.event.event}-${Date.now()}`;
       effects.push({
@@ -139,6 +166,18 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
 
 function isFanOutRoute(route: { action: string; fanIn?: string; waitFor?: string; quorum?: number; onError?: string }): boolean {
   return Boolean(route.fanIn || route.waitFor || route.quorum || route.onError);
+}
+
+function terminalInputForRoute(input: TypedExecutorInput, eventName: string): TerminalCompletionInput {
+  const base = input.terminal || {
+    runId: input.routeContext.env?.MENTIKO_RUN_ID || "",
+    chainName: "unknown",
+    chainPath: input.routeContext.chainPath,
+    taskId: input.routeContext.taskId,
+  };
+  // shell parity: the terminal webhook/event carry last_event from the
+  // completion that ended the chain.
+  return { ...base, lastEvent: base.lastEvent ?? eventName };
 }
 
 function buildFanGroupLaunchCommand(context: RoutedLaunchContext, agentId: string): string {

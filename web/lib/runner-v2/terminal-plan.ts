@@ -192,6 +192,88 @@ export function planTerminalFailure(input: TerminalFailureInput): TerminalFailur
   return { reason: "no-completion-event", steps };
 }
 
+export interface AgentCompletionInput {
+  runId: string;
+  chainName: string;
+  agentId: string;
+  agentName?: string;
+  sessionName?: string;
+  // chain config.webhooks (v1 send-webhook source): direct-URL webhooks with a
+  // per-event subscription list. Only queued when enabled + subscribed, exactly
+  // like lib/webhook-sender.sh send-webhook.
+  chainWebhooks?: {
+    enabled?: boolean;
+    urls?: string[];
+    events?: string[];
+  };
+}
+
+export type AgentCompletionStep =
+  | { type: "plugin"; event: "agent-completed"; chainName: string; runId: string; agentId: string }
+  | { type: "notification"; event: "agent-completed"; chainName: string; runId: string; agentId: string }
+  | { type: "legacy-webhook"; url: string; payload: Record<string, string> };
+
+export interface AgentCompletionPlan {
+  reason: "agent-complete";
+  steps: AgentCompletionStep[];
+}
+
+/**
+ * Per-agent completion side effects mirroring the top of
+ * chain-runner-complete.sh (agent_complete webhook, agent-completed plugins,
+ * agent-completed notification). Unlike the shell — which fires these before
+ * the completion verdict, even for agents that then fail — the typed runner
+ * only plans them for completions that actually mark the agent complete.
+ */
+export function planAgentCompletion(input: AgentCompletionInput): AgentCompletionPlan {
+  const steps: AgentCompletionStep[] = [
+    {
+      type: "plugin",
+      event: "agent-completed",
+      chainName: input.chainName,
+      runId: input.runId,
+      agentId: input.agentId,
+    },
+    {
+      type: "notification",
+      event: "agent-completed",
+      chainName: input.chainName,
+      runId: input.runId,
+      agentId: input.agentId,
+    },
+  ];
+
+  if (chainWebhookSubscribed(input.chainWebhooks, "agent_complete")) {
+    for (const url of input.chainWebhooks?.urls || []) {
+      if (!url) continue;
+      steps.push({
+        type: "legacy-webhook",
+        url,
+        payload: {
+          event: "agent_complete",
+          chain: input.chainName,
+          agent_id: input.agentId,
+          agent_name: input.agentName || input.agentId,
+          session: input.sessionName || "",
+        },
+      });
+    }
+  }
+
+  return { reason: "agent-complete", steps };
+}
+
+function chainWebhookSubscribed(
+  webhooks: AgentCompletionInput["chainWebhooks"],
+  event: string,
+): boolean {
+  if (!webhooks?.enabled) return false;
+  if (!Array.isArray(webhooks.urls) || webhooks.urls.length === 0) return false;
+  // shell parity: an absent/empty subscription list means every event fires.
+  if (!Array.isArray(webhooks.events) || webhooks.events.length === 0) return true;
+  return webhooks.events.includes(event);
+}
+
 export function shouldCompleteEmptyEmitsAgent(emits: string | undefined, hasDownstream: boolean): boolean {
   return !emits && !hasDownstream;
 }
