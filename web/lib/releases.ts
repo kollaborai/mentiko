@@ -11,10 +11,10 @@ export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
     version: "v0.3.41",
-    date: "July 1, 2026",
+    date: "July 4, 2026",
     title: "Git Workflow in the Code Editor",
     description:
-      "The floating code editor's Git panel now covers the full loop. A branch selector views, creates, switches, and deletes branches with validation and keyboard navigation. Stash apply/drop is keyed to each stash's commit hash, so a shifting stash list can never apply or drop the wrong one. Peer review is built in: assign reviewers from your org, leave file- and line-level comments, and gate the commit button until every assigned reviewer approves. Reviews are org-scoped and tied to the signed-in session, not forgeable headers.",
+      "The floating code editor's Git panel now covers the full loop. A branch selector views, creates, switches, and deletes branches with validation and keyboard navigation. Stash apply/drop is keyed to each stash's commit hash, so a shifting stash list can never apply or drop the wrong one. Peer review is built in: assign reviewers from your org, leave file- and line-level comments, and gate the commit button until every assigned reviewer approves. Reviews are org-scoped and tied to the signed-in session, not forgeable headers. Also fixes task-triggered chain runs losing their workspace when started by schedulers or service callers, and internal task APIs now forward service credentials correctly.",
     category: "new",
     docsHref: "/docs/peer-review",
   },
