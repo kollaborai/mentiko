@@ -122,6 +122,67 @@ describe("POST /api/tasks/[id]/run-chain", () => {
     else process.env.MENTIKO_INTERNAL_WEB_ORIGIN = previous.internal;
   });
 
+  it("defaults the run workspace from the task when the caller sends none", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      title: "Smoke test suite",
+      description: "Create smoke tests",
+      issue_type: "feat",
+      priority: 1,
+      workspace_id: "/ws/from-task-record",
+      metadata: {
+        chain_id: "smoke-test-suite-generator",
+        chain_name: "smoke-test-suite-generator",
+        workspace_path: "/ws/from-metadata",
+      },
+    });
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "FEAT-001" }),
+    });
+
+    expect(res.status).toBe(200);
+    const runCall = (global.fetch as jest.Mock).mock.calls.find(([url]) =>
+      String(url).endsWith("/api/chains/run"),
+    );
+    expect(runCall).toBeDefined();
+    expect(JSON.parse(runCall![1].body as string)).toMatchObject({
+      workspacePath: "/ws/from-metadata",
+    });
+  });
+
+  it("keeps an explicit workspace override from the request body", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      title: "Smoke test suite",
+      description: "Create smoke tests",
+      issue_type: "feat",
+      priority: 1,
+      metadata: {
+        chain_id: "smoke-test-suite-generator",
+        chain_name: "smoke-test-suite-generator",
+        workspace_path: "/ws/from-metadata",
+      },
+    });
+
+    const req = new Request("https://marco.mentiko.com/api/tasks/FEAT-001/run-chain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: "session=test" },
+      body: JSON.stringify({ workspacePath: "/ws/explicit-override" }),
+    });
+    const res = await POST(req as never, {
+      params: Promise.resolve({ id: "FEAT-001" }),
+    });
+
+    expect(res.status).toBe(200);
+    const runCall = (global.fetch as jest.Mock).mock.calls.find(([url]) =>
+      String(url).endsWith("/api/chains/run"),
+    );
+    expect(JSON.parse(runCall![1].body as string)).toMatchObject({
+      workspacePath: "/ws/explicit-override",
+    });
+  });
+
   it("uses loopback for internal chain lookups from hosted tenant origins", async () => {
     const res = await POST(makeRequest() as never, {
       params: Promise.resolve({ id: "FEAT-001" }),
@@ -131,7 +192,13 @@ describe("POST /api/tasks/[id]/run-chain", () => {
     expect(global.fetch).toHaveBeenNthCalledWith(
       1,
       "http://127.0.0.1:3000/api/chains/smoke-test-suite-generator",
-      expect.objectContaining({ headers: { cookie: "session=test" } }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          cookie: "session=test",
+          "x-namespace-id": "marco",
+          "x-org-id": "default",
+        }),
+      }),
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,

@@ -644,6 +644,12 @@ launch-chain-runner-complete() {
     # Run completion in its own PTY session. The handler kills the monitor
     # session as part of cleanup, so it cannot be a child of that monitor PTY.
     if declare -f transport_new_session >/dev/null; then
+        # code root from this script's own location: the completion session's
+        # cwd lives in the data root, and the typed bridge derives every
+        # chain-runner.sh launch path from MENTIKO_CODE_ROOT (parent-of-cwd
+        # fallback would resolve it under ~/.mentiko).
+        local completion_code_root=""
+        completion_code_root="${MENTIKO_CODE_ROOT:-$(cd "$script_dir/.." && pwd)}"
         if transport_new_session "$completion_session" env \
             MENTIKO_RUN_ID="$run_id" \
             RUN_ID="$run_id" \
@@ -651,6 +657,7 @@ launch-chain-runner-complete() {
             ORG_ID="${ORG_ID:-default}" \
             WORKSPACE_TYPE="${WORKSPACE_TYPE:-local}" \
             MENTIKO_RUN_DIR="$completion_run_dir" \
+            MENTIKO_CODE_ROOT="$completion_code_root" \
             EVENTS_DIR="${EVENTS_DIR:-}" \
             STATE_DIR="${STATE_DIR:-}" \
             MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}" \

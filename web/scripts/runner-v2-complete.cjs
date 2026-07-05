@@ -16,6 +16,10 @@ try {
     baseUrl: resolve(__dirname, ".."),
     paths: { "@/*": ["*"] },
   });
+  // anchor MENTIKO_CODE_ROOT from this script's location BEFORE config loads:
+  // the completion PTY's cwd sits in the data root, so config's parent-of-cwd
+  // fallback would resolve chain-runner.sh under ~/.mentiko.
+  require("../lib/runner-v2/entry-code-root").anchorCodeRootEnv(__dirname);
   ({
     RunnerV2CompletionUnsupportedError,
     runRunnerV2CompletionEntrypoint,

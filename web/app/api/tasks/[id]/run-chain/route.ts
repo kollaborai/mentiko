@@ -10,7 +10,7 @@ import { createNotification } from "@/lib/notifications/notification-server";
 import { apiError } from "@/lib/api-response";
 import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { taskDetailHref } from "@/lib/tasks/task-routes";
-import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import type { TaskChainBinding } from "@/lib/tasks/task-types";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +51,23 @@ export const POST = requirePermission("manage_tasks")(async (
 
     if (!metadata?.chain_id) {
       return apiError(new BadRequest("No chain assigned to this task"));
+    }
+
+    // tied-run semantics: default to the task's own workspace when the caller
+    // doesn't override. Only the task UI sends workspace in the body — MCP and
+    // scheduler callers send none, and a run without a workspace loses its
+    // project root end-to-end (agents write to the org root, completion
+    // relaunches without --workspace and derives invalid session names).
+    if (!workspacePath && !workspaceId) {
+      const metaWorkspacePath =
+        typeof metadata.workspace_path === "string" && metadata.workspace_path
+          ? metadata.workspace_path
+          : undefined;
+      const taskWorkspaceId =
+        typeof issue.workspace_id === "string" && issue.workspace_id
+          ? issue.workspace_id
+          : undefined;
+      workspacePath = metaWorkspacePath || taskWorkspaceId;
     }
 
     // 2a. double-submit guard
@@ -117,7 +134,7 @@ export const POST = requirePermission("manage_tasks")(async (
     // 4. load the chain definition
     const chainUrl = internalApiUrl(`/api/chains/${encodeURIComponent(binding.chain_id)}`, request.url);
     const chainRes = await fetch(chainUrl, {
-      headers: { cookie: request.headers.get("cookie") || "" },
+      headers: forwardedHeaders(request, namespaceId, orgId),
     });
     if (!chainRes.ok) {
       return apiError(new NotFound("Chain", binding.chain_id));
@@ -141,10 +158,9 @@ export const POST = requirePermission("manage_tasks")(async (
     const runUrl = internalApiUrl("/api/chains/run", request.url);
     const runRes = await fetch(runUrl, {
       method: "POST",
-      headers: {
+      headers: forwardedHeaders(request, namespaceId, orgId, {
         "Content-Type": "application/json",
-        cookie: request.headers.get("cookie") || "",
-      },
+      }),
       body: JSON.stringify({
         chain: chainDef,
         chainId: binding.chain_id,

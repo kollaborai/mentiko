@@ -30,7 +30,7 @@ import {
   buildGenerationPromptFromTaskRecommendation,
   normalizeTaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
-import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 
@@ -307,24 +307,6 @@ async function resumeExistingRun(
     runId,
     action: "chain_resume",
   };
-}
-
-function forwardedHeaders(
-  request: NextRequest,
-  namespaceId: string,
-  orgId: string,
-  extra?: Record<string, string>
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "x-namespace-id": namespaceId,
-    "x-org-id": orgId,
-    ...(extra || {}),
-  };
-  const cookie = request.headers.get("cookie");
-  if (cookie) headers.cookie = cookie;
-  const authorization = request.headers.get("authorization");
-  if (authorization) headers.Authorization = authorization;
-  return headers;
 }
 
 function slugifyChainName(name: string): string {

@@ -5,13 +5,23 @@
   "default_runner": "shell",
   "flag": {
     "name": "MENTIKO_RUNNER_V2",
-    "enabled_values": ["1", "true", "yes", "on"],
+    "enabled_values": [
+      "1",
+      "true",
+      "yes",
+      "on"
+    ],
     "default": "off",
     "scope": "initial web chain launch; completion re-entry requires the separate completion flag"
   },
   "completion_flag": {
     "name": "MENTIKO_RUNNER_V2_COMPLETION",
-    "enabled_values": ["1", "true", "yes", "on"],
+    "enabled_values": [
+      "1",
+      "true",
+      "yes",
+      "on"
+    ],
     "default": "off",
     "scope": "opt-in typed completion re-entry bridge from monitor handoff"
   },
@@ -44,7 +54,14 @@
     },
     "event_file": {
       "format": "key-value text",
-      "fields": ["event", "source", "run_id", "timestamp", "processed", "data"],
+      "fields": [
+        "event",
+        "source",
+        "run_id",
+        "timestamp",
+        "processed",
+        "data"
+      ],
       "parser_rule": "split on first colon; data may contain more colons",
       "processed_default": "false",
       "source_of_truth": "body fields before filename fallback"
@@ -60,8 +77,15 @@
     "outbox": "typed completion adapters queue external side effects to <stateDir>/external-effects.jsonl (STATE_DIR when the engine exports it, else <runDir>/state); records carry namespaceId/orgId",
     "dispatcher": "web/lib/runner-v2/external-effects.ts",
     "live_drain": "web/server/background-worker.ts drains outboxes every 15s via drainRunnerV2ExternalEffects: claim-by-rename consumption, per-record tenant identity, bounded redelivery (3 attempts), audit to external-effects.dispatch.jsonl",
-    "handled_operations": ["notification", "webhook", "metadata-webhooks", "task-status", "plugin", "legacy-webhook"],
-    "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only — probe and proof dispatch never invoke real plugins",
+    "handled_operations": [
+      "notification",
+      "webhook",
+      "metadata-webhooks",
+      "task-status",
+      "plugin",
+      "legacy-webhook"
+    ],
+    "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only \u2014 probe and proof dispatch never invoke real plugins",
     "legacy_webhook_network": "live drain delivers legacy webhooks over the network (SSRF guards live in outbound-webhook-delivery); probe dispatch requires explicit opt-in",
     "plain_fail_steps": "plain fail decisions (agent failed, no retry policy) emit terminal-failure steps mirroring the shell no-event failure path: task-status failed, circuit-breaker record-failure, agent-failed notification, failed metadata-webhooks; the shell fires no plugins on this path so neither does typed"
   },
@@ -85,7 +109,12 @@
     "enabled": "trigger included unless enabled == false",
     "idempotency": "handled marker under runtime/chain-watcher/handled",
     "condition_policy": "fail closed on rejected shell metacharacters or malformed condition",
-    "launch_env": ["NAMESPACE_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT"]
+    "launch_env": [
+      "NAMESPACE_ID",
+      "CHAIN_TRIGGER_EVENT",
+      "CHAIN_TRIGGER_SOURCE",
+      "CHAIN_INPUT"
+    ]
   },
   "watchdog_contract": {
     "alive_source": "live PTY session wins over age/stale checks",
@@ -104,5 +133,10 @@
     "preserve chain-authored trigger configuration",
     "preserve namespace/org/root scoping for daemon sessions",
     "completion re-entry remains shell fallback-capable until parity tests cover every branch"
+  ],
+  "known_gaps": [
+    "typed completion coverage: agents relaunched by the typed bridge (routed chain-runner --start/--parallel) run under v1 monitors and complete through the v1 shell handler \u2014 no typed attempt record and no external-effects outbox for those completions; run-terminal side effects ride the v1 path (observed live: run-1783212849527 haiku-verifier, 2026-07-04)",
+    "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
+    "completed agents' PTY sessions can linger after typed completion handles their AGENT_COMPLETE (writer start script still alive minutes later; cleanup only kills the monitor session)"
   ]
 }

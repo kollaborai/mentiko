@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// anchor import MUST stay first: it pins MENTIKO_CODE_ROOT before config's
+// parent-of-cwd fallback runs (the completion PTY's cwd is in the data root).
+import "@/lib/runner-v2/entry-code-root-anchor";
 import { runRunnerV2CompletionEntrypoint, RunnerV2CompletionUnsupportedError } from "@/lib/runner-v2/completion-entrypoint";
 
 const sessionName = process.argv[2];
