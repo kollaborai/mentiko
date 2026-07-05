@@ -53,6 +53,16 @@ function plan(root: string): AgentBootstrapPlan {
 }
 
 describe("runner-v2 bootstrap executor", () => {
+  beforeAll(() => {
+    process.env.MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS = "5";
+    process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS = "200";
+  });
+
+  afterAll(() => {
+    delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS;
+    delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+  });
+
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
@@ -118,6 +128,13 @@ describe("runner-v2 bootstrap executor", () => {
       }),
     );
     expect(executor.sendKeys).toHaveBeenLastCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
+    // the pointer must NOT embed a trailing enter: multi-line text goes to the
+    // CLI as a bracketed paste and an embedded \r is swallowed into the paste;
+    // the pty daemon appends the enter after its paste settle delay.
+    const pointerSend = executor.sendKeys.mock.calls[executor.sendKeys.mock.calls.length - 1][1] as string;
+    expect(pointerSend.endsWith("\r")).toBe(false);
+    const happyAttempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(happyAttempts[0]?.phase).toBe("instructions_submitted");
     expect(JSON.parse(readFileSync(runJsonPath, "utf8"))).toMatchObject({
       sessions: ["workspace-writer-run-1"],
       agents: [{ id: "writer", status: "running", session: "workspace-writer-run-1" }],
@@ -127,6 +144,91 @@ describe("runner-v2 bootstrap executor", () => {
       "bash",
       ["-lc", "monitor-chain-agent workspace-writer-run-1"],
       expect.objectContaining({ cwd: join(root, "workspace") }),
+    );
+  });
+
+  it("retries bare enters until the composer accepts the pasted instructions", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = join(root, "run.json");
+    writeFileSync(runJsonPath, JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    // readiness poll sees a booted CLI; the first two post-send captures show
+    // the composer still holding the paste (enter swallowed during boot),
+    // then it clears after a bare-enter retry.
+    const captures = [
+      "claude ready >",
+      "❯ [Pasted text #1 +7 lines]\n  statusline",
+      "❯ Read instructions\n  statusline",
+      "❯ \n  statusline",
+      "❯ \n  statusline",
+    ];
+    const executor = {
+      remove: jest.fn(async () => {}),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async () => {}),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => captures.length > 1 ? captures.shift()! : captures[0]),
+    };
+
+    await executeLocalBootstrap(plan(root), {
+      chainPath: join(root, "chain.json"),
+      runDir: root,
+      runId: "run-1",
+      chainName: "Test Chain",
+      logFd: 1,
+      cwd: "/repo",
+      env: { NODE_ENV: "test", RUNS_DIR: root, PATH: "/bin" },
+    }, executor);
+
+    expect(executor.sendRaw).toHaveBeenCalledWith("workspace-writer-run-1", "\r");
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("marks the attempt stuck when the composer never accepts the paste", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = join(root, "run.json");
+    writeFileSync(runJsonPath, JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    let sent = false;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async (_name: string, text: string) => { if (text.includes("writer-instructions.md")) sent = true; }),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => sent ? "❯ [Pasted text #1 +7 lines]\n  statusline" : "claude ready >"),
+    };
+
+    await executeLocalBootstrap(plan(root), {
+      chainPath: join(root, "chain.json"),
+      runDir: root,
+      runId: "run-1",
+      chainName: "Test Chain",
+      logFd: 1,
+      cwd: "/repo",
+      env: { NODE_ENV: "test", RUNS_DIR: root, PATH: "/bin" },
+    }, executor);
+
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("stuck");
+    expect(executor.sendRaw.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(executor.sendRaw.mock.calls.length).toBeLessThanOrEqual(4);
+    // session must be left alive for monitor rescue, and the monitor must
+    // still be watching it
+    expect(executor.remove).toHaveBeenCalledTimes(2); // only the pre-spawn idempotent removes
+    expect(executor.spawn).toHaveBeenLastCalledWith(
+      "monitor-workspace-writer-run-1",
+      "bash",
+      ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+      expect.anything(),
     );
   });
 

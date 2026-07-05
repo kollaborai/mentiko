@@ -18,6 +18,8 @@ export interface RunnerV2BootstrapExecutor {
   remove(name: string): Promise<void>;
   spawn(name: string, cmd?: string, args?: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<{ name: string; pid: number }>;
   sendKeys(name: string, text: string): Promise<void>;
+  /** send raw bytes with no daemon-appended enter (used for bare enter retries) */
+  sendRaw?(name: string, text: string): Promise<void>;
   capture(name: string, lines?: number): Promise<string>;
 }
 
@@ -123,8 +125,25 @@ export async function executeLocalBootstrap(
       pointer: plan.instructionPointer,
     });
     if (submission.delivered) {
-      await executor.sendKeys(plan.sessionName, `${plan.instructionPointer}\r`);
-      transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
+      // no trailing \r: the pointer is multi-line, so the CLI receives it as a
+      // bracketed paste and an embedded enter is swallowed into the paste body.
+      // The pty daemon's non-raw send appends its own enter after the paste
+      // settle delay; confirmInstructionSubmission then verifies the composer
+      // actually accepted it (a CLI still running boot checks — e.g. MCP auth —
+      // renders the composer but drops enters) and retries bare enters.
+      await executor.sendKeys(plan.sessionName, plan.instructionPointer);
+      const confirmed = await confirmInstructionSubmission(plan, executor);
+      if (confirmed) {
+        transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
+      } else {
+        transitionAgentAttempt({
+          runJsonPath,
+          attemptId: attempt.id,
+          to: "stuck",
+          reason: "instruction_submission_unconfirmed",
+          detail: "composer still holds the pasted instructions after enter retries; session left alive for monitor rescue",
+        });
+      }
     }
     await startMonitorSession(plan, executor);
   } catch (error) {
@@ -235,6 +254,54 @@ async function waitForBootstrapReadiness(
     detail: failure.detail,
   });
   throw new Error(`runner-v2 typed bootstrap timed out waiting for agent CLI readiness; last_output=${lastOutput.slice(-500)}`);
+}
+
+/**
+ * Verify the pasted instructions were actually submitted, retrying bare enters
+ * while the composer still holds them. Evidence over hope: readiness heuristics
+ * can pass while the CLI is still initializing (it paints the composer during
+ * MCP/auth checks but drops enters), which strands the paste unsubmitted.
+ * Poll/deadline are env-tunable for tests.
+ */
+async function confirmInstructionSubmission(
+  plan: AgentBootstrapPlan,
+  executor: RunnerV2BootstrapExecutor,
+): Promise<boolean> {
+  const pollMs = Number(process.env.MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS) || 1_500;
+  const deadlineMs = Number(process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS) || 20_000;
+  const maxEnterRetries = 4;
+  const deadline = Date.now() + deadlineMs;
+  let enterRetries = 0;
+  // give the daemon's own delayed enter a beat before the first check
+  await sleep(pollMs);
+  while (Date.now() < deadline) {
+    const output = await executor.capture(plan.sessionName, 60);
+    if (!isComposerHoldingInput(output)) return true;
+    if (enterRetries < maxEnterRetries) {
+      enterRetries += 1;
+      if (executor.sendRaw) await executor.sendRaw(plan.sessionName, "\r");
+      else await executor.sendKeys(plan.sessionName, "");
+    }
+    await sleep(pollMs);
+  }
+  return false;
+}
+
+/**
+ * The composer is the LAST line containing the ❯ prompt; content after it
+ * means unsubmitted input (an accepted paste re-renders in history with a
+ * `>` prefix instead). Menus/dialogs also use ❯ as a selection caret — an
+ * enter retry there picks the default option, which the readiness failure
+ * classifier already treats as human_action_required territory.
+ */
+function isComposerHoldingInput(output: string): boolean {
+  const lines = output.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const idx = lines[i].indexOf("❯"); // ❯
+    if (idx === -1) continue;
+    return lines[i].slice(idx + 1).trim().length > 0;
+  }
+  return false;
 }
 
 function isLikelyAgentPrompt(output: string): boolean {
