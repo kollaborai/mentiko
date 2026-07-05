@@ -36,6 +36,7 @@ jest.mock("fs", () => ({
     || path.endsWith("bootstrap-executor.ts")
     || path.endsWith("controller.ts")
     || path.endsWith("agent-functions.sh")
+    || path.endsWith("chain-runner.sh")
     || path.endsWith("Dockerfile")
     || path.endsWith("launch-plan.ts")
     || path.endsWith("background-worker.ts")
@@ -79,6 +80,9 @@ jest.mock("fs", () => ({
     }
     if (path.endsWith("agent-functions.sh")) {
       return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-complete.js";
+    }
+    if (path.endsWith("chain-runner.sh")) {
+      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"';
     }
     if (path.endsWith("Dockerfile")) {
       return "runner-v2-complete.js";
@@ -148,6 +152,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "external-dispatcher", status: "pass" }),
       expect.objectContaining({ id: "completion-typed-bridge", status: "pass" }),
       expect.objectContaining({ id: "completion-shell-flag-gate", status: "pass" }),
+      expect.objectContaining({ id: "routed-monitor-flag-carry", status: "pass" }),
       expect.objectContaining({ id: "generation-completion-contract", status: "pass" }),
       expect.objectContaining({ id: "generation-import-entrypoint", status: "pass" }),
       expect.objectContaining({ id: "generation-import-effect", status: "pass" }),

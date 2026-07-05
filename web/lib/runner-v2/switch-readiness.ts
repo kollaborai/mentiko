@@ -97,6 +97,12 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "shell completion handoff does not gate typed completion behind MENTIKO_RUNNER_V2_COMPLETION",
   ));
   checks.push(sourceContainsCheck(
+    "routed-monitor-flag-carry",
+    join(config.codeRoot, "lib/chain-runner.sh"),
+    'export MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"',
+    "shell chain-runner monitors do not carry runner-v2 completion flags, so routed/relaunched agents always complete through the v1 handler",
+  ));
+  checks.push(sourceContainsCheck(
     "external-drain-wired",
     join(config.codeRoot, "web/server/background-worker.ts"),
     "drainRunnerV2ExternalEffects",

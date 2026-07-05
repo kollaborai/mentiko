@@ -2326,6 +2326,20 @@ export MENTIKO_MONITOR_PROFILE_ID="${monitor_advisor_profile}"
 export MENTIKO_MONITOR_MAX_NUDGES="${MENTIKO_MONITOR_MAX_NUDGES:-}"
 export MENTIKO_ADVISOR_STALE_COUNT="${MENTIKO_ADVISOR_STALE_COUNT:-}"
 export MENTIKO_MONITOR_MAX_STALE="${MENTIKO_MONITOR_MAX_STALE:-}"
+export NAMESPACE_ID="${NAMESPACE_ID:-default}"
+export ORG_ID="${ORG_ID:-default}"
+export RUNS_DIR="${RUNS_DIR:-}"
+export MENTIKO_RUN_DIR="${RUNS_DIR:+${RUNS_DIR}/${RUN_ID}}"
+export EVENTS_DIR="${EVENTS_DIR:-}"
+export STATE_DIR="${STATE_DIR:-}"
+export MENTIKO_CODE_ROOT="${MENTIKO_CODE_ROOT:-}"
+# runner-v2 completion context: the pty daemon whitelists spawn env, so this
+# monitor only sees what is exported here. Without these the completion
+# handoff (launch-chain-runner-complete) can never choose the typed bridge for
+# agents this shell runner launched — including relaunches the typed bridge
+# itself routed — and their completions silently fall back to the v1 handler.
+export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"
+export MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"
 MONEOF
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
             ai_gateway_append_local_proxy_control_exports "$mon_script"
