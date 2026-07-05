@@ -11,11 +11,11 @@ import { NextRequest } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
-import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import config from "@/lib/config";
 import { Unauthorized, NotFound, InternalServerError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +25,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const namespaceId = await getNamespaceIdFromRequest(request);
+  const orgId = await getOrgIdFromRequest(request);
   const body = await request.json() as { workspacePath?: string };
 
   // load the AI setup agent template
@@ -43,12 +44,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // call the chains/run endpoint internally
   const runRes = await fetch(internalApiUrl("/api/chains/run", request.url), {
     method: "POST",
-    headers: {
+    headers: forwardedHeaders(request, namespaceId, orgId, {
       "Content-Type": "application/json",
-      // forward cookies for auth
-      cookie: request.headers.get("cookie") || "",
-      "x-namespace-id": namespaceId,
-    },
+    }),
     body: JSON.stringify({
       chain,
       workspacePath: body.workspacePath,

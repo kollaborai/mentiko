@@ -13,7 +13,7 @@ import { normalizeScheduleTarget } from "@/lib/schedules/schedule-targets";
 import { dispatchScheduleTarget, type ScheduleDispatchAdapters } from "@/lib/schedules/schedule-dispatcher";
 import { mintSessionToken } from "@/lib/auth/session-token";
 import { getScheduledApplicationsFile, resolveScheduledApplicationRun } from "@/lib/schedules/scheduled-application-storage";
-import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import { startChainRun } from "@/lib/runs/chain-run-service";
 import { timingSafeEqual } from "@/lib/auth/security";
 import type { Chain } from "@/lib/types";
@@ -161,10 +161,9 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   try {
     const historyRes = await fetch(internalApiUrl("/api/schedules/history", req.url), {
       method: "POST",
-      headers: {
+      headers: forwardedHeaders(req, namespaceId, orgId, {
         "Content-Type": "application/json",
-        ...(req.headers.get("cookie") ? { cookie: req.headers.get("cookie")! } : {}),
-      },
+      }),
       body: JSON.stringify({
         chainId: target.chainId,
         chainName: schedule.chainName || target.chainId,
@@ -195,7 +194,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
         // increment run count + update history in background
         incrementRunCount(namespaceId, orgId, id).catch(() => {});
         if (executionId) {
-          updateExecutionHistory(req, target.chainId, executionId, "completed").catch(() => {});
+          updateExecutionHistory(req, namespaceId, orgId, target.chainId, executionId, "completed").catch(() => {});
         }
 
         return apiSuccess({
@@ -217,7 +216,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
       // don't retry on 4xx (client errors) - only on 5xx (server errors)
       if (status < 500) {
         if (executionId) {
-          updateExecutionHistory(req, target.chainId, executionId, "failed", error).catch(() => {});
+          updateExecutionHistory(req, namespaceId, orgId, target.chainId, executionId, "failed", error).catch(() => {});
         }
         // propagate 4xx errors as-is
         throw new BadRequest(error, { attempts: results });
@@ -245,7 +244,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   const lastError = results[results.length - 1]?.error || "All retry attempts failed";
   if (executionId) {
     updateExecutionHistory(
-      req, target.chainId, executionId, "failed",
+      req, namespaceId, orgId, target.chainId, executionId, "failed",
       `${lastError} (after ${maxAttempts} attempt${maxAttempts > 1 ? "s" : ""})`
     ).catch(() => {});
   }
@@ -334,6 +333,8 @@ function createManualRunAdapters(req: NextRequest, namespaceId: string, orgId: s
 
 async function updateExecutionHistory(
   req: NextRequest,
+  namespaceId: string,
+  orgId: string,
   chainId: string,
   executionId: string,
   status: string,
@@ -341,10 +342,9 @@ async function updateExecutionHistory(
 ) {
   await fetch(internalApiUrl("/api/schedules/history", req.url), {
     method: "PATCH",
-    headers: {
+    headers: forwardedHeaders(req, namespaceId, orgId, {
       "Content-Type": "application/json",
-      ...(req.headers.get("cookie") ? { cookie: req.headers.get("cookie")! } : {}),
-    },
+    }),
     body: JSON.stringify({ chainId, executionId, status, error }),
   });
 }

@@ -14,7 +14,7 @@
 
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
-import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import {
   isDockerAvailable,
   provisionContainer,
@@ -24,7 +24,7 @@ import {
 } from "@/lib/system/docker-provisioner";
 import { BadRequest, Unauthorized, ServiceUnavailable } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import { internalApiUrl } from "@/lib/auth/internal-web-origin";
+import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +56,7 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: Con
   }
 
   const namespaceId = await getNamespaceIdFromRequest(request);
+  const orgId = await getOrgIdFromRequest(request);
 
   if (!isDockerAvailable()) {
     throw new ServiceUnavailable("Docker daemon not available. Start Docker and try again.");
@@ -93,14 +94,11 @@ export const POST = withErrorHandling(async (request: NextRequest, _context: Con
 
   // optionally auto-create the workspace record
   if (body.createWorkspace) {
-    const { headers } = request;
     const wsRes = await fetch(internalApiUrl("/api/workspaces", request.url), {
       method: "POST",
-      headers: {
+      headers: forwardedHeaders(request, namespaceId, orgId, {
         "Content-Type": "application/json",
-        "x-namespace-id": namespaceId,
-        cookie: headers.get("cookie") || "",
-      },
+      }),
       body: JSON.stringify({
         name: body.name,
         path: info.workspacePath,
