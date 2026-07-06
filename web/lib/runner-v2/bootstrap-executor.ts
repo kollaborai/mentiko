@@ -19,6 +19,7 @@ import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface RunnerV2BootstrapExecutor {
+  has?(name: string): Promise<boolean>;
   remove(name: string): Promise<void>;
   spawn(name: string, cmd?: string, args?: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<{ name: string; pid: number }>;
   sendKeys(name: string, text: string): Promise<void>;
@@ -81,6 +82,7 @@ export async function executeLocalBootstrap(
   context: RunnerV2LaunchContext,
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
+  await ensureDaemonSingletons(plan, executor);
   const runJsonPath = join(context.runDir, "run.json");
   const attempt = createAgentAttempt({
     runJsonPath,
@@ -181,6 +183,65 @@ export async function executeLocalBootstrap(
     await executor.remove(plan.monitorSessionName).catch(() => undefined);
     releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     throw error;
+  }
+}
+
+async function ensureDaemonSingletons(
+  plan: AgentBootstrapPlan,
+  executor: RunnerV2BootstrapExecutor,
+): Promise<void> {
+  if (!executor.has) return;
+  const codeRoot = plan.runContextExports.MENTIKO_CODE_ROOT;
+  if (!codeRoot) return;
+
+  const env = sanitizePtyEnv({
+    PATH: plan.runContextExports.PATH || process.env.PATH || "",
+    MENTIKO_GLOBAL_ROOT: plan.runContextExports.MENTIKO_GLOBAL_ROOT || process.env.MENTIKO_GLOBAL_ROOT,
+    MENTIKO_ROOT: plan.runContextExports.MENTIKO_ROOT || process.env.MENTIKO_ROOT,
+    MENTIKO_CODE_ROOT: codeRoot,
+    MENTIKO_PROJECT_ROOT: plan.runContextExports.MENTIKO_PROJECT_ROOT,
+    MENTIKO_ORG_ROOT: plan.runContextExports.MENTIKO_ORG_ROOT,
+    MENTIKO_NAMESPACE_ROOT: plan.runContextExports.MENTIKO_NAMESPACE_ROOT,
+    NAMESPACE_ID: plan.runContextExports.NAMESPACE_ID || "default",
+    ORG_ID: plan.runContextExports.ORG_ID || "default",
+  });
+
+  await ensureDaemonSingleton({
+    executor,
+    name: "mentiko-watchdog",
+    cmd: "bash",
+    args: [join(codeRoot, "lib", "watchdog.sh")],
+    cwd: codeRoot,
+    env,
+  });
+  await ensureDaemonSingleton({
+    executor,
+    name: "mentiko-chain-watcher",
+    cmd: "bash",
+    args: [join(codeRoot, "lib", "chain-event-watcher.sh"), "--namespace", plan.runContextExports.NAMESPACE_ID || "default"],
+    cwd: codeRoot,
+    env,
+  });
+}
+
+async function ensureDaemonSingleton(input: {
+  executor: RunnerV2BootstrapExecutor;
+  name: string;
+  cmd: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<void> {
+  try {
+    if (input.executor.has && await input.executor.has(input.name)) return;
+    await input.executor.remove(input.name);
+    await input.executor.spawn(input.name, input.cmd, input.args, {
+      cwd: input.cwd,
+      env: input.env,
+    });
+  } catch {
+    // v1 shell startup treats daemon supervision as a best-effort early side
+    // effect (`|| true`): a daemon startup failure must not abort the agent run.
   }
 }
 

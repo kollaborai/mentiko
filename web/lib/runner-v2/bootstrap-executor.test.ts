@@ -148,6 +148,155 @@ describe("runner-v2 bootstrap executor", () => {
     );
   });
 
+  it("ensures watchdog and chain event watcher singletons before attempt creation and pty launch", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = join(root, "run.json");
+    writeFileSync(runJsonPath, JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const calls: Array<{ op: string; name: string; args?: unknown[] }> = [];
+    const singletonAwarePlan = {
+      ...plan(root),
+      runContextExports: {
+        ...plan(root).runContextExports,
+        MENTIKO_CODE_ROOT: "/repo",
+        NAMESPACE_ID: "acme",
+      },
+    };
+    const executor = {
+      has: jest.fn(async (name: string) => {
+        calls.push({ op: "has", name });
+        return false;
+      }),
+      remove: jest.fn(async (name: string) => {
+        calls.push({ op: "remove", name });
+      }),
+      spawn: jest.fn(async (name: string, cmd?: string, args?: string[]) => {
+        calls.push({ op: "spawn", name, args: [cmd, args] });
+        return { name, pid: name === "workspace-writer-run-1" ? 123 : 456 };
+      }),
+      sendKeys: jest.fn(async (name: string) => {
+        calls.push({ op: "sendKeys", name });
+      }),
+      capture: jest.fn(async () => "claude ready >"),
+    };
+
+    await executeLocalBootstrap(singletonAwarePlan, context(root), executor);
+
+    expect(calls.slice(0, 7).map((call) => `${call.op}:${call.name}`)).toEqual([
+      "has:mentiko-watchdog",
+      "remove:mentiko-watchdog",
+      "spawn:mentiko-watchdog",
+      "has:mentiko-chain-watcher",
+      "remove:mentiko-chain-watcher",
+      "spawn:mentiko-chain-watcher",
+      "remove:workspace-writer-run-1",
+    ]);
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "mentiko-watchdog",
+      "bash",
+      ["/repo/lib/watchdog.sh"],
+      expect.objectContaining({
+        cwd: "/repo",
+        env: expect.objectContaining({
+          MENTIKO_CODE_ROOT: "/repo",
+          NAMESPACE_ID: "acme",
+        }),
+      }),
+    );
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "mentiko-chain-watcher",
+      "bash",
+      ["/repo/lib/chain-event-watcher.sh", "--namespace", "acme"],
+      expect.objectContaining({
+        cwd: "/repo",
+        env: expect.objectContaining({
+          MENTIKO_CODE_ROOT: "/repo",
+          NAMESPACE_ID: "acme",
+        }),
+      }),
+    );
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("does not duplicate live watchdog and chain event watcher sessions", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = {
+      has: jest.fn(async (name: string) => name === "mentiko-watchdog" || name === "mentiko-chain-watcher"),
+      remove: jest.fn(async () => {}),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async () => {}),
+      capture: jest.fn(async () => "claude ready >"),
+    };
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(executor.remove).not.toHaveBeenCalledWith("mentiko-watchdog");
+    expect(executor.remove).not.toHaveBeenCalledWith("mentiko-chain-watcher");
+    expect(executor.spawn).not.toHaveBeenCalledWith(
+      "mentiko-watchdog",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(executor.spawn).not.toHaveBeenCalledWith(
+      "mentiko-chain-watcher",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "workspace-writer-run-1",
+      "zsh",
+      [],
+      expect.anything(),
+    );
+  });
+
+  it("keeps launch best-effort when singleton startup fails like v1", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = {
+      has: jest.fn(async (name: string) => {
+        if (name === "mentiko-watchdog") throw new Error("daemon lookup failed");
+        return false;
+      }),
+      remove: jest.fn(async () => {}),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async () => {}),
+      capture: jest.fn(async () => "claude ready >"),
+    };
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "workspace-writer-run-1",
+      "zsh",
+      [],
+      expect.anything(),
+    );
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      sessions: ["workspace-writer-run-1"],
+      agents: [expect.objectContaining({ id: "writer", status: "running" })],
+    });
+  });
+
   it("blocks before pty launch when chain concurrency cap is full", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));

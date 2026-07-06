@@ -20,17 +20,9 @@ describe("implementation contract binding (real repo contracts)", () => {
     }
   });
 
-  it("carries every known parity gap as a named blocker (switch stays honest-red)", () => {
+  it("has no remaining parity gaps after every contract line is covered or shell-owned", () => {
     const summaries = assessImplementationContractBinding();
     const gaps = summaries.flatMap((summary) => summary.gaps.map((gap) => ({ ...gap, file: summary.file })));
-    // runner-v2 is not at parity yet; the gate must say so instead of passing quietly
-    expect(gaps.length).toBeGreaterThan(0);
-    for (const gap of gaps) {
-      expect(gap.blocker.length).toBeGreaterThan(20);
-    }
-    expect(gaps.map((gap) => gap.key)).toEqual(expect.arrayContaining([
-      "owns:watchdog and chain event watcher singleton startup",
-      "invariant:watchdog and chain event watcher startup remains early side effect",
-    ]));
+    expect(gaps).toEqual([]);
   });
 });
