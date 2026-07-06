@@ -34,6 +34,7 @@
     "add-run-session is canonical running promotion",
     "event body fields are authoritative",
     "archive scope is run plus source/agent",
-    "schemas are not trusted over actual disk format"
+    "schemas are not trusted over actual disk format",
+    "exported functions avoid heredoc bodies (export -f serialization hazard); run/event JSON is built via printf or jq -n (0c96b73, ebda700)"
   ]
 }

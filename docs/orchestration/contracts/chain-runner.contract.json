@@ -1,6 +1,6 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_file": "lib/chain-runner.sh",
+  "source_files": ["lib/chain-runner.sh", "lib/cli-readiness.sh"],
   "role": "one-step chain launch/admission/state writer",
   "entrypoint": "chain-runner.sh <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel <ids...>] [--dry-run] [--debug]",
   "owns": [
@@ -45,7 +45,14 @@
     "MENTIKO_ADVISOR_STALE_COUNT",
     "MENTIKO_MONITOR_MAX_STALE",
     "MENTIKO_CAP_DISABLED",
-    "MENTIKO_CAP_MAX_WAIT_SECS"
+    "MENTIKO_CAP_MAX_WAIT_SECS",
+    "MENTIKO_CLI_READY_TIMEOUT",
+    "MENTIKO_CLI_READY_POLL",
+    "MENTIKO_READINESS_FAIL_CLOSED",
+    "MENTIKO_STARTUP_RECOVERY",
+    "MENTIKO_STARTUP_RECOVERY_MAX",
+    "MENTIKO_RUNNER_V2",
+    "MENTIKO_RUNNER_V2_COMPLETION"
   ],
   "run_json": {
     "cli_created_status": "pending",
@@ -56,15 +63,27 @@
   },
   "session_contract": {
     "agent_session": "remove existing session, transport_new_session, send start script",
-    "monitor_session": "monitor-<agent-session>",
+    "monitor_session": "monitor-<agent-session>; mon_script inline-exports the full completion context (runner-v2 flags, MENTIKO_RUN_DIR, RUNS_DIR, NAMESPACE_ID, ORG_ID, EVENTS_DIR, STATE_DIR, MENTIKO_CODE_ROOT) because the pty daemon whitelists spawn env (3c0b305)",
     "instructions": "write artifact instructions file and send short pointer to TUI",
-    "readiness": "must pass before task instructions are sent",
+    "readiness": {
+      "gate": "wait_for_profile_readiness (lib/chain-runner.sh) classifying via cli_readiness_check (lib/cli-readiness.sh); must pass before task instructions are sent",
+      "statuses": ["ready", "blocked", "recover", "retry", "no_ready_signal", "unknown"],
+      "classification_order": "blocked_patterns, recoverable_patterns, retry_patterns, ready_patterns; first enabled match wins; text = literal substring (grep -F), regex = case-insensitive ERE (grep -Ei)",
+      "legacy_default": "flag off is permissive: readiness disabled, unknown, or no ready_patterns proceeds, so pattern catalogs roll out profile-by-profile without changing behavior",
+      "fail_closed": "MENTIKO_READINESS_FAIL_CLOSED=1: disabled policy or zero ready_patterns is no_ready_signal (never inject); unknown keeps polling and blocks at the deadline",
+      "knobs": "MENTIKO_CLI_READY_TIMEOUT default 90s, MENTIKO_CLI_READY_POLL default 2s",
+      "startup_recovery": "bounded advisor recovery for blocked/recover/retry (MENTIKO_STARTUP_RECOVERY default on, MENTIKO_STARTUP_RECOVERY_MAX default 2 actions per startup); no_ready_signal escalates immediately (config error the advisor cannot fix)",
+      "terminal_effects": "write <agent>-startup-capture.txt + <agent>-startup-readiness.json (+ <agent>-startup-recovery-prompt.txt), mark state file and run agent blocked, send no instructions, leave the session alive",
+      "exited": "session with no active command classifies exited; agent/run marked failed (CLI exited before instructions were sent)"
+    },
     "local_remote_split": "local, ssh, and docker launch paths remain distinct"
   },
   "invariants": [
     "run ids stay run-<millis>-<hex>",
     "run.json writers use the shared lock protocol",
     "startup failure must not paste instructions into idle shell",
+    "readiness classification is profile-driven data, never hardcoded prompt heuristics (a7956d9, 20ce3b1)",
+    "best-effort observability writers (perf/metrics/profiler) must never abort a live run under set -e + ERR trap (23bdfe7)",
     "diagnostic monitor events must not look like successful handoff events",
     "watchdog and chain event watcher startup remains early side effect",
     "completion/routing stays delegated to chain-runner-complete"

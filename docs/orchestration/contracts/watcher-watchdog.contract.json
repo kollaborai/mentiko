@@ -12,15 +12,16 @@
     "chain_event_watcher": {
       "session": "mentiko-chain-watcher",
       "command": "bash lib/chain-event-watcher.sh --namespace $NAMESPACE_ID",
-      "loop": "scan events and chain config.event_triggers",
-      "interval": "CHAIN_WATCHER_INTERVAL default 10"
+      "singleton": "per-namespace mkdir lock with stale-lock reclaim and trap cleanup; duplicate watchers must not accumulate (7816b0f)",
+      "loop": "blocking inotifywait/fswatch wait on the events dir (no busy poll; idle watcher is ~0% CPU), then scan events and chain config.event_triggers (7816b0f)",
+      "interval": "CHAIN_WATCHER_INTERVAL default 10 (fallback poll cadence when no fs-watch backend exists)"
     }
   },
   "event_triggers": {
     "source": "$CHAINS_DIR/*/chain.json .config.event_triggers[]",
     "enabled": "included unless enabled == false",
     "idempotency": "handled marker under runtime/chain-watcher/handled",
-    "condition_policy": "reject shell metacharacters and fail closed",
+    "condition_policy": "safe_trigger_condition hard-rejects command substitution, backticks, ; | &, [[ ]] breakout, process substitution, and newlines before evaluating the remaining simple comparison; rejected or malformed conditions do not match (fail-closed); empty condition always matches (2b65e43)",
     "launch": "nohup bash lib/chain-runner.sh <chain_path>",
     "env": ["NAMESPACE_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT"]
   },
@@ -31,6 +32,7 @@
     "event": "diagnostic run-stalled event, not canonical agent handoff"
   },
   "session_liveness": {
+    "reap_scope": "deny-list of terminal run states: only runs in completed/failed/stopped territory are reap-eligible; unknown or non-terminal statuses (pending, blocked, paused, future values) are spared (e289ea8)",
     "source_of_truth": "live PTY session means alive",
     "foreign_scope": "skip sessions from another MENTIKO_GLOBAL_ROOT/NAMESPACE_ID/ORG_ID",
     "skip_prefixes": ["mentiko-watchdog", "mentiko-chain-watcher", "monitor-", "complete-", "term-", "link-", "peer-"]
@@ -41,6 +43,8 @@
     "watchdog diagnostic events do not use canonical agent handoff shape",
     "condition evaluation remains fail-closed",
     "watcher idempotency uses handled markers, not processed mutation",
+    "run-session reaping is deny-list based: unknown or non-terminal run status is never reaped (e289ea8)",
+    "spawned shells inherit sanitized env: BASH_FUNC_* stripped at the spawn layer (7816b0f)",
     "scheduler state ids are path-derived"
   ]
 }

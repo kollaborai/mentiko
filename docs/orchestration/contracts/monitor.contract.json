@@ -13,6 +13,7 @@
     "advisor_threshold": "MENTIKO_ADVISOR_STALE_COUNT default 3",
     "max_stale": "MENTIKO_MONITOR_MAX_STALE or DEFAULT_MAX_STALE_COUNT default 5",
     "effect": "advisor nudge, blocked diagnostic, or failure classification",
+    "nudge_budget": "durable ceiling MENTIKO_MONITOR_MAX_NUDGES tracked in ${session}_nudges; survives screen-echo stale resets and monitor restarts; an exhausted budget escalates instead of nudging forever (20ce3b1)",
     "never": "stale output does not imply completion"
   },
   "death_behavior": {
@@ -23,6 +24,8 @@
   },
   "launches": {
     "completion": "chain-runner-complete in separate pty when chain.json exists",
+    "typed_bridge": "when MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are enabled, the completion pty runs node runner-v2-complete.js first; exit != 64 is terminal (typed pipeline handled completion), exit 64 execs the shell completion script (20ce3b1)",
+    "completion_env": "completion session carries MENTIKO_RUN_DIR ($RUNS_DIR/$run_id), EVENTS_DIR, STATE_DIR, both runner-v2 flags, and MENTIKO_CODE_ROOT anchored from the engine location (20ce3b1, 5e79030, 6504637)",
     "legacy": "complete-agent.sh only when monitor has no chain.json"
   },
   "invariants": [
@@ -31,6 +34,8 @@
     "completion matcher never accepts monitor diagnostic events",
     "AGENT_COMPLETE must be standalone line",
     "event match respects agent id and run id",
-    "completion handler runs outside monitor pty"
+    "completion handler runs outside monitor pty",
+    "screen-echo repaints never grant more nudges: the nudge budget is durable (20ce3b1)",
+    "exported-fn bodies avoid heredocs (export -f serialization hazard, 0c96b73)"
   ]
 }

@@ -21,7 +21,7 @@
     "formats": ["key-value event/source/run_id", "source alias agent", "AGENT EVENT line", "simple json fields"],
     "requires_run_id_match_when_present": true,
     "unexpected_same_agent_event": "ignored",
-    "declared_emits_missing": "failed, diagnostic agent-error, no downstream launch",
+    "declared_emits_missing": "failed, diagnostic agent-error, no downstream launch; exception: core generation chains (chain metadata.coreGenerationChain) complete via the generation import backstop when the payload imports cleanly (7217baa)",
     "diagnostic_source": "chain-runner-complete"
   },
   "routing": {
@@ -41,9 +41,17 @@
     "<agent>-summary.md",
     "<agent>-quality-gate.json"
   ],
+  "event_artifact_triage": {
+    "trigger": "quality_gate_fail_chain invokes the triage helper on quality-gate failure (8622d7e)",
+    "helper": "web/scripts/event-artifact-quality-gate.cjs, best-effort node invocation (failure logged, never fatal)",
+    "artifacts": ["triage-result.json", "draft-child-tasks.json", "event-artifact-executions.jsonl (ledger)"],
+    "env": ["ARTIFACTS_DIR", "MENTIKO_RUN_ID", "RUN_ID", "MENTIKO_RUN_JSON", "MENTIKO_AGENT_ID", "MENTIKO_QUALITY_GATE_ARTIFACT", "MENTIKO_QUALITY_GATE_REASON", "MENTIKO_QUALITY_GATE_DETAILS", "NAMESPACE_ID", "ORG_ID"],
+    "spec": "docs/orchestration/event-template-artifact-contract.md"
+  },
   "invariants": [
     "never fabricate the declared emits event",
     "diagnostic events never satisfy success handoff matching",
+    "a missing agent summary stubs as status unknown; an all-stub completed run resolves needs_review with decision_required, never complete (0c96b73)",
     "archive only events owned by run id plus source or agent",
     "quality gates run before generation import and downstream routing",
     "fan-in launches exactly once under fan-group lock",
