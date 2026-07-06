@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
 import { getRunnerV2TypedExecutorSupport } from "@/lib/runner-v2/controller";
-import { loadRunnerV2Contract } from "@/lib/runner-v2/contracts";
+import { loadImplementationContracts, loadRunnerV2Contract } from "@/lib/runner-v2/contracts";
+import type { RunnerV2Contract } from "@/lib/runner-v2/types";
 
 export type SwitchReadinessStatus = "ready" | "blocked";
 
@@ -66,6 +67,7 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
         ? undefined
         : "runner-v2 contract must document external effects outbox and live drain before switch readiness",
     });
+    checks.push(...implementationContractBindingChecks(contract));
   } catch (error) {
     checks.push({
       id: "contract-load",
@@ -306,14 +308,15 @@ function typedBootstrapExecutionCheck(paths: { controllerPath: string; executorP
     && executor.includes("executeLocalBootstrap")
     && executor.includes("executor.spawn")
     && executor.includes("waitForBootstrapReadiness")
+    && executor.includes("classifyCliReadiness")
     && executor.includes("startMonitorSession");
   return {
     id: "typed-bootstrap-execution",
     status: usesTypedExecutor ? "pass" : "fail",
     evidence: usesTypedExecutor
-      ? "controller uses bootstrap-executor local PTY path without chain-runner.sh"
-      : "typed bootstrap still lacks a local PTY executor",
-    blocker: usesTypedExecutor ? undefined : "typed runner-v2 bootstrap must own profile env and instruction delivery before switch",
+      ? "controller uses bootstrap-executor local PTY path with profile readiness policy gate"
+      : "typed bootstrap still lacks a local PTY executor or profile readiness policy gate",
+    blocker: usesTypedExecutor ? undefined : "typed runner-v2 bootstrap must own profile env, profile readiness, and instruction delivery before switch",
   };
 }
 
@@ -364,4 +367,93 @@ function runtimeProofCheck(path: string): SwitchReadinessCheck {
       blocker: "runtime proof artifact must parse",
     };
   }
+}
+
+export interface ImplementationBindingSummary {
+  file: string;
+  covered: number;
+  shellOwned: number;
+  gaps: Array<{ key: string; blocker: string }>;
+  unbound: string[];
+  malformed: string[];
+}
+
+/**
+ * The binding gate: every owns/invariants line of every per-implementation
+ * contract (docs/orchestration/contracts/*.contract.json — the migration
+ * source of truth) must be bound in runner-v2-contract.json
+ * implementation_coverage as covered-with-evidence, a named gap blocker, or
+ * shell-owned-with-reason. Unbound or malformed lines fail the binding check;
+ * gap lines become switch blockers. This exists because the readiness gate
+ * sat in chain-runner.contract.json for nine days while nothing enforced it.
+ */
+export function assessImplementationContractBinding(contract?: RunnerV2Contract): ImplementationBindingSummary[] {
+  const resolved = contract ?? loadRunnerV2Contract();
+  const coverage = resolved.implementation_coverage ?? {};
+  return loadImplementationContracts().map(({ file, lines }) => {
+    const fileCoverage = coverage[file] ?? {};
+    const summary: ImplementationBindingSummary = { file, covered: 0, shellOwned: 0, gaps: [], unbound: [], malformed: [] };
+    const lineKeys = new Set(lines.map((line) => line.key));
+    for (const line of lines) {
+      const entry = fileCoverage[line.key];
+      if (!entry) {
+        summary.unbound.push(line.key);
+        continue;
+      }
+      if (entry.status === "covered") {
+        if (!entry.evidence) summary.malformed.push(`${line.key}: covered without evidence`);
+        else summary.covered += 1;
+      } else if (entry.status === "gap") {
+        if (!entry.blocker) summary.malformed.push(`${line.key}: gap without blocker`);
+        else summary.gaps.push({ key: line.key, blocker: entry.blocker });
+      } else if (entry.status === "shell-owned") {
+        if (!entry.reason) summary.malformed.push(`${line.key}: shell-owned without reason`);
+        else summary.shellOwned += 1;
+      } else {
+        summary.malformed.push(`${line.key}: unknown status ${(entry as { status?: string }).status ?? "missing"}`);
+      }
+    }
+    for (const key of Object.keys(fileCoverage)) {
+      if (!lineKeys.has(key)) {
+        summary.malformed.push(`${key}: coverage key matches no contract line (stale after a contract edit)`);
+      }
+    }
+    return summary;
+  });
+}
+
+function implementationContractBindingChecks(contract: RunnerV2Contract): SwitchReadinessCheck[] {
+  let summaries: ImplementationBindingSummary[];
+  try {
+    summaries = assessImplementationContractBinding(contract);
+  } catch (error) {
+    return [{
+      id: "implementation-contract-binding",
+      status: "fail",
+      evidence: error instanceof Error ? error.message : "implementation contracts failed to load",
+      blocker: "per-implementation contracts must load and enumerate before switch",
+    }];
+  }
+  const checks: SwitchReadinessCheck[] = [];
+  for (const summary of summaries) {
+    const shortName = summary.file.replace(/\.contract\.json$/, "");
+    const bound = summary.unbound.length === 0 && summary.malformed.length === 0;
+    checks.push({
+      id: `contract-binding-${shortName}`,
+      status: bound ? "pass" : "fail",
+      evidence: `${summary.covered} covered, ${summary.shellOwned} shell-owned, ${summary.gaps.length} gaps; unbound=${summary.unbound.length}, malformed=${summary.malformed.length}`,
+      blocker: bound
+        ? undefined
+        : `unbound or malformed contract lines in ${summary.file}: ${[...summary.unbound, ...summary.malformed].slice(0, 3).join("; ")}`,
+    });
+    summary.gaps.forEach((gap, index) => {
+      checks.push({
+        id: `contract-parity-gap-${shortName}-${index + 1}`,
+        status: "fail",
+        evidence: gap.key,
+        blocker: `${summary.file} ${gap.key}: ${gap.blocker}`,
+      });
+    });
+  }
+  return checks;
 }

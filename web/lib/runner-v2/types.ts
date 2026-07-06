@@ -54,4 +54,22 @@ export interface RunnerV2Contract {
     };
   };
   invariants: string[];
+  implementation_coverage?: Record<string, Record<string, ImplementationCoverageEntry>>;
+}
+
+/**
+ * Binding of one per-implementation contract line (docs/orchestration/contracts/
+ * *.contract.json owns[]/invariants[]) to its typed-parity status. Every line
+ * must be bound — the switch-readiness binding gate fails on unbound lines so
+ * contract behavior can never again be silently skipped during migration.
+ */
+export interface ImplementationCoverageEntry {
+  /** covered: typed parity with evidence; gap: named parity blocker; shell-owned: v1 keeps owning it under side-by-side */
+  status: "covered" | "gap" | "shell-owned";
+  /** required for covered: file/proof/run evidence */
+  evidence?: string;
+  /** required for gap: the blocker that must clear before switch */
+  blocker?: string;
+  /** required for shell-owned: why the shell keeps owning it */
+  reason?: string;
 }

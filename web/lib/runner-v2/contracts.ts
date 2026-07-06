@@ -5,6 +5,44 @@ import type { RunnerV2Contract } from "@/lib/runner-v2/types";
 
 const CONTRACT_PATH = join(config.codeRoot, "docs", "orchestration", "contracts", "runner-v2-contract.json");
 
+/** the per-implementation migration source-of-truth contracts (docs/orchestration/contracts/README.md) */
+export const IMPLEMENTATION_CONTRACT_FILES = [
+  "chain-runner.contract.json",
+  "chain-runner-complete.contract.json",
+  "monitor.contract.json",
+  "run-event.contract.json",
+  "watcher-watchdog.contract.json",
+] as const;
+
+export interface ImplementationContractLines {
+  file: string;
+  /** key = "owns:<text>" | "invariant:<text>", text verbatim from the contract */
+  lines: Array<{ key: string; text: string }>;
+}
+
+/**
+ * Enumerate every owns/invariants line of every per-implementation contract.
+ * These lines are the migration requirements; the switch-readiness binding
+ * gate refuses unbound lines so none can be silently dropped again.
+ */
+export function loadImplementationContracts(): ImplementationContractLines[] {
+  return IMPLEMENTATION_CONTRACT_FILES.map((file) => {
+    const path = join(config.codeRoot, "docs", "orchestration", "contracts", file);
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as { owns?: unknown; invariants?: unknown };
+    const lines: Array<{ key: string; text: string }> = [];
+    for (const text of asStringArray(parsed.owns)) lines.push({ key: `owns:${text}`, text });
+    for (const text of asStringArray(parsed.invariants)) lines.push({ key: `invariant:${text}`, text });
+    if (lines.length === 0) {
+      throw new Error(`implementation contract ${file} declares no owns/invariants lines`);
+    }
+    return { file, lines };
+  });
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 export function loadRunnerV2Contract(): RunnerV2Contract {
   const contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf-8")) as RunnerV2Contract;
   validateRunnerV2Contract(contract);

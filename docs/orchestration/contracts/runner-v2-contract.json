@@ -1,6 +1,6 @@
 {
   "schema_version": "runner-contract/v1",
-  "generated_at": "2026-07-04",
+  "generated_at": "2026-07-05",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -28,7 +28,7 @@
   "entrypoints": {
     "web_initial_launch": {
       "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>'",
-      "v2": "web/lib/runner-v2/controller.ts -> web/lib/runner-v2/agent-bootstrap-plan.ts validates first-agent/profile context, then typed-plan still delegates PTY startup to lib/chain-runner.sh --start",
+      "v2": "web/lib/runner-v2/controller.ts -> startRunnerV2Bootstrap: agent-bootstrap-plan resolves first-agent/profile context and bootstrap-executor spawns the agent PTY directly, gates readiness, and submits instructions (typed-plan; no shell chain-runner --start — enforced by the typed-bootstrap-no-shell-start runtime proof)",
       "fallback": "shell launch when v2 is disabled or when v2 returns unsupported before typed bootstrap side effects; do not shell-fallback after v2 allocates sessions or mutates run state"
     },
     "completion_reentry": {
@@ -141,7 +141,64 @@
   ],
   "known_gaps": [
     "fan-out member completions are intentionally shell-handled: the typed bridge exits unsupported (64) for members of a live fan group because typed fan-in accounting is not wired to the completion entrypoint; wiring the fan-group store into typed completion removes the last routed-coverage carve-out",
-    "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
-    "completed agents' PTY sessions can linger after typed completion handles their AGENT_COMPLETE (writer start script still alive minutes later; cleanup only kills the monitor session)"
-  ]
+    "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)"
+  ],
+  "implementation_coverage": {
+    "chain-runner.contract.json": {
+      "owns:chain json validation and agent ref resolution": { "status": "covered", "evidence": "web/lib/runner-v2/agent-bootstrap-plan.ts buildAgentBootstrapPlan reads the chain and resolves the agent (typed initial launch scope: first agent)" },
+      "owns:run creation or run reuse": { "status": "shell-owned", "reason": "run.json is created upstream (web chain-run-service or shell); typed bootstrap requires an existing run" },
+      "owns:concurrency admission": { "status": "gap", "blocker": "typed bootstrap performs no cap admission (pending -> running or blocked); shell cap logic is not ported" },
+      "owns:agent pty launch": { "status": "covered", "evidence": "bootstrap-executor executeLocalBootstrap + runtime proof typed-bootstrap-session/typed-bootstrap-no-shell-start (local workspaces; non-local returns unsupported to shell)" },
+      "owns:monitor pty launch": { "status": "covered", "evidence": "runtime proof typed-bootstrap-monitor-started; monitorCommand built by agent-bootstrap-plan" },
+      "owns:watchdog and chain event watcher singleton startup": { "status": "gap", "blocker": "typed initial launch does not ensure watchdog/chain-event-watcher singletons; it relies on shell paths having started them" },
+      "owns:startup readiness before instruction submission": { "status": "gap", "blocker": "profile readiness port incomplete: typed gate keeps a 15s default (v1 90s), maps recover/retry/blocked to a terminal throw that removes the session (v1 marks blocked, writes startup artifacts, keeps the session), and writes no startup artifacts" },
+      "invariant:run ids stay run-<millis>-<hex>": { "status": "shell-owned", "reason": "run ids are minted by upstream creators (chain-run-service/shell); the typed path never mints run ids" },
+      "invariant:run.json writers use the shared lock protocol": { "status": "gap", "blocker": "typed run-state updateRunJson lock parity with the run-lib lock protocol is unverified" },
+      "invariant:startup failure must not paste instructions into idle shell": { "status": "gap", "blocker": "depends on the completed profile-readiness port; the hardcoded-heuristic gate allowed premature instruction paste (2026-07-04 incident)" },
+      "invariant:readiness classification is profile-driven data, never hardcoded prompt heuristics (a7956d9, 20ce3b1)": { "status": "gap", "blocker": "typed gate consumes readiness-policy for profiles with a policy but retains the isLikelyAgentPrompt heuristic for profile-less sessions and non-v1 defaults" },
+      "invariant:best-effort observability writers (perf/metrics/profiler) must never abort a live run under set -e + ERR trap (23bdfe7)": { "status": "shell-owned", "reason": "perf/metrics/profiler writers exist only in the shell launch path; the typed path runs none of them" },
+      "invariant:diagnostic monitor events must not look like successful handoff events": { "status": "shell-owned", "reason": "monitors remain v1 shell under typed launches; the typed completion matcher enforces its own diagnostic rejection (see chain-runner-complete binding)" },
+      "invariant:watchdog and chain event watcher startup remains early side effect": { "status": "gap", "blocker": "same as the watchdog/watcher singleton startup gap: typed initial launch does not perform the early singleton side effect" },
+      "invariant:completion/routing stays delegated to chain-runner-complete": { "status": "covered", "evidence": "typed completion re-entry bridge with exit-64 division of labor (completion_reentry entrypoint; lib/agent-functions.sh gate)" }
+    },
+    "chain-runner-complete.contract.json": {
+      "invariant:never fabricate the declared emits event": { "status": "gap", "blocker": "BUG-022: shell ensure-event-file can fabricate a success event off a rendered AGENT_COMPLETE marker; the durable-evidence guard is not landed" },
+      "invariant:diagnostic events never satisfy success handoff matching": { "status": "covered", "evidence": "typed completion event resolution matches declared emits + run id only (5e79030; completion-entrypoint)" },
+      "invariant:a missing agent summary stubs as status unknown; an all-stub completed run resolves needs_review with decision_required, never complete (0c96b73)": { "status": "shell-owned", "reason": "verdict/stub logic lives in shell build-run-summary-json; the typed quality gate honors the summary status it reads (run-1783231933089 status_message)" },
+      "invariant:archive only events owned by run id plus source or agent": { "status": "gap", "blocker": "typed completion event-archiving scope parity with the shell archive rules is unverified" },
+      "invariant:quality gates run before generation import and downstream routing": { "status": "covered", "evidence": "typed completion pipeline runs the quality gate before routing (completion-entrypoint quality-gate branch; run-1783231933089)" },
+      "invariant:fan-in launches exactly once under fan-group lock": { "status": "shell-owned", "reason": "typed bridge exits 64 for members of a live fan group by contract; shell completion owns fan-in accounting" },
+      "invariant:fan-out launches detached with nohup/disown semantics": { "status": "covered", "evidence": "4452b91 detached all typed routed and executor launches; output captured to launches.log (5e79030)" },
+      "invariant:task status propagation happens on completed, failed, and stopped": { "status": "covered", "evidence": "external-effects task-status operations dispatched on typed completions (dispatch ledger run-1783232579797; plain-fail steps 0dbf677)" }
+    },
+    "monitor.contract.json": {
+      "invariant:stale is not complete": { "status": "shell-owned", "reason": "the v1 shell monitor remains the monitor under typed launches (typed bootstrap spawns the shell monitorCommand)" },
+      "invariant:dead without declared event is not success": { "status": "shell-owned", "reason": "v1 shell monitor owns death classification under typed launches" },
+      "invariant:completion matcher never accepts monitor diagnostic events": { "status": "shell-owned", "reason": "v1 monitor emits diagnostics; the typed completion matcher rejects them independently (chain-runner-complete binding)" },
+      "invariant:AGENT_COMPLETE must be standalone line": { "status": "gap", "blocker": "BUG-022: pty resize re-wraps the instruction echo so the monitor false-latches a rendered AGENT_COMPLETE; durable-evidence latch fix pending" },
+      "invariant:event match respects agent id and run id": { "status": "shell-owned", "reason": "v1 monitor event matching unchanged; typed completion applies the same match rules on re-entry" },
+      "invariant:completion handler runs outside monitor pty": { "status": "covered", "evidence": "monitor spawns completion in a separate pty; the typed bridge runs inside that completion session (lib/agent-functions.sh launch-chain-runner-complete)" },
+      "invariant:screen-echo repaints never grant more nudges: the nudge budget is durable (20ce3b1)": { "status": "shell-owned", "reason": "nudge budget is a shell monitor mechanism; typed path does not nudge" },
+      "invariant:exported-fn bodies avoid heredocs (export -f serialization hazard, 0c96b73)": { "status": "shell-owned", "reason": "shell-source hygiene invariant with no typed analogue" }
+    },
+    "run-event.contract.json": {
+      "invariant:agent success status is complete, run success status is completed": { "status": "covered", "evidence": "typed completion writes agent complete / run completed (run-1783232579797 run.json)" },
+      "invariant:create-run starts pending": { "status": "shell-owned", "reason": "run creation happens upstream of the typed path" },
+      "invariant:add-run-session is canonical running promotion": { "status": "covered", "evidence": "bootstrap-executor registerRunSession upserts the session and promotes pending -> running" },
+      "invariant:event body fields are authoritative": { "status": "covered", "evidence": "typed completion parses event body fields for matching (completion event resolution, 5e79030)" },
+      "invariant:archive scope is run plus source/agent": { "status": "gap", "blocker": "same as the typed event-archiving parity gap (chain-runner-complete binding)" },
+      "invariant:schemas are not trusted over actual disk format": { "status": "covered", "evidence": "typed run/event readers parse the on-disk formats directly (run-state.ts, completion event resolution); no schema layer inserted" },
+      "invariant:exported functions avoid heredoc bodies (export -f serialization hazard); run/event JSON is built via printf or jq -n (0c96b73, ebda700)": { "status": "shell-owned", "reason": "shell-source hygiene invariant with no typed analogue" }
+    },
+    "watcher-watchdog.contract.json": {
+      "invariant:do not treat stale age as dead if PTY session is live": { "status": "shell-owned", "reason": "watchdog/chain-event-watcher/scheduler daemons are not replaced by runner-v2 side-by-side; shell remains the owner" },
+      "invariant:do not kill live monitor sessions": { "status": "shell-owned", "reason": "watchdog daemon is not replaced by runner-v2 side-by-side" },
+      "invariant:watchdog diagnostic events do not use canonical agent handoff shape": { "status": "shell-owned", "reason": "watchdog daemon is not replaced by runner-v2 side-by-side" },
+      "invariant:condition evaluation remains fail-closed": { "status": "shell-owned", "reason": "chain-event-watcher daemon is not replaced by runner-v2 side-by-side (safe_trigger_condition, 2b65e43)" },
+      "invariant:watcher idempotency uses handled markers, not processed mutation": { "status": "shell-owned", "reason": "chain-event-watcher daemon is not replaced by runner-v2 side-by-side" },
+      "invariant:run-session reaping is deny-list based: unknown or non-terminal run status is never reaped (e289ea8)": { "status": "shell-owned", "reason": "watchdog daemon is not replaced by runner-v2 side-by-side" },
+      "invariant:spawned shells inherit sanitized env: BASH_FUNC_* stripped at the spawn layer (7816b0f)": { "status": "shell-owned", "reason": "pty-manager spawn layer owns env sanitization for both runners" },
+      "invariant:scheduler state ids are path-derived": { "status": "shell-owned", "reason": "scheduler daemon is not replaced by runner-v2 side-by-side" }
+    }
+  }
 }
