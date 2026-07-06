@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { basename, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
-import { updateRunJson, type RunAgentRecord } from "@/lib/runner-v2/run-state";
+import { updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
   type AgentAttemptTerminalReason,
@@ -88,6 +88,22 @@ export async function executeLocalBootstrap(
     agentId: plan.agentId,
     leaseId: plan.sessionName,
   });
+  const admission = await acquireChainAdmission({
+    runJsonPath,
+    runId: context.runId,
+    agentId: plan.agentId,
+    env: context.env,
+  });
+  if (!admission.admitted) {
+    transitionAgentAttempt({
+      runJsonPath,
+      attemptId: attempt.id,
+      to: "human_action_required",
+      reason: "concurrency_cap_blocked",
+      detail: admission.reason,
+    });
+    return;
+  }
   transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
 
   mkdirSync(plan.artifactsDir, { recursive: true });
@@ -441,6 +457,128 @@ function markRunAgentBlocked(runJsonPath: string, agentId: string, reason: strin
           ],
     };
   });
+}
+
+async function acquireChainAdmission(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  env: Record<string, string | undefined>;
+}): Promise<{ admitted: true } | { admitted: false; reason: string }> {
+  if (input.env.MENTIKO_CAP_DISABLED === "1") {
+    updateRunStatus(input.runJsonPath, "running");
+    return { admitted: true };
+  }
+
+  const cap = Number(input.env.MENTIKO_MAX_CONCURRENT_CHAINS ?? 4);
+  if (!Number.isFinite(cap) || cap <= 0) {
+    updateRunStatus(input.runJsonPath, "running");
+    return { admitted: true };
+  }
+
+  updateRunStatus(input.runJsonPath, "pending");
+  const maxWaitMs = secondsEnv(input.env.MENTIKO_CAP_MAX_WAIT_SECS, 300) * 1000;
+  const pollMaxMs = secondsEnv(input.env.MENTIKO_CAP_POLL_MAX_SECS, 15) * 1000;
+  const started = Date.now();
+  let pollMs = secondsEnv(input.env.MENTIKO_CAP_POLL_SECS, 2) * 1000;
+  let queued = false;
+
+  while (true) {
+    const release = acquireCapLock(input.runJsonPath, input.env);
+    if (release) {
+      try {
+        const active = countRunningChains(input.runJsonPath, input.runId);
+        if (active < cap) {
+          updateRunStatus(
+            input.runJsonPath,
+            "running",
+            queued ? `admitted from queue (${active + 1}/${cap} chains active)` : undefined,
+          );
+          return { admitted: true };
+        }
+      } finally {
+        release();
+      }
+    }
+
+    const elapsedMs = Date.now() - started;
+    if (elapsedMs >= maxWaitMs) {
+      const elapsedSeconds = Math.floor(elapsedMs / 1000);
+      const reason = `concurrency cap: waited ${elapsedSeconds}s for a chain slot (limit ${cap}); blocked`;
+      markRunAgentBlocked(input.runJsonPath, input.agentId, reason);
+      updateRunStatus(input.runJsonPath, "blocked", reason);
+      return { admitted: false, reason };
+    }
+
+    if (!queued) {
+      queued = true;
+      updateRunStatus(input.runJsonPath, "pending", `queued: waiting for a chain slot (limit ${cap})`);
+    }
+    await sleep(pollMs);
+    pollMs = Math.min(pollMs * 2, pollMaxMs);
+  }
+}
+
+function secondsEnv(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function acquireCapLock(runJsonPath: string, env: Record<string, string | undefined>): (() => void) | null {
+  const lockDir = join(runsRootFor(runJsonPath), ".cap.lock");
+  try {
+    mkdirSync(lockDir, { recursive: false });
+    writeFileSync(join(lockDir, "pid"), String(process.pid));
+    return () => {
+      rmSync(lockDir, { recursive: true, force: true });
+    };
+  } catch {
+    if (capLockIsBreakable(lockDir, env)) {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+    return null;
+  }
+}
+
+function capLockIsBreakable(lockDir: string, env: Record<string, string | undefined>): boolean {
+  try {
+    const pid = Number(readFileSync(join(lockDir, "pid"), "utf8").trim());
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return true;
+      }
+    }
+    const staleMs = secondsEnv(env.CAP_LOCK_STALE_SECS, 60) * 1000;
+    return Date.now() - statSync(lockDir).mtimeMs >= staleMs;
+  } catch {
+    return true;
+  }
+}
+
+function countRunningChains(runJsonPath: string, currentRunId: string): number {
+  const root = runsRootFor(runJsonPath);
+  if (!existsSync(root)) return 0;
+  let count = 0;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith("run-") || entry.name === currentRunId) continue;
+    const siblingRunJson = join(root, entry.name, "run.json");
+    if (siblingRunJson === runJsonPath || !existsSync(siblingRunJson)) continue;
+    try {
+      const status = JSON.parse(readFileSync(siblingRunJson, "utf8")).status;
+      if (status === "running") count += 1;
+    } catch {
+      // Malformed run records do not occupy a cap slot; the v1 counter's jq
+      // failure path similarly treats them as empty.
+    }
+  }
+  return count;
+}
+
+function runsRootFor(runJsonPath: string): string {
+  const runDir = dirname(runJsonPath);
+  return basename(runDir).startsWith("run-") ? dirname(runDir) : runDir;
 }
 
 function readinessTimeoutMs(plan: AgentBootstrapPlan): number {

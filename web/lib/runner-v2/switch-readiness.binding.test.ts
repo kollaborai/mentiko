@@ -29,8 +29,8 @@ describe("implementation contract binding (real repo contracts)", () => {
       expect(gap.blocker.length).toBeGreaterThan(20);
     }
     expect(gaps.map((gap) => gap.key)).toEqual(expect.arrayContaining([
-      "owns:concurrency admission",
       "owns:watchdog and chain event watcher singleton startup",
+      "invariant:watchdog and chain event watcher startup remains early side effect",
     ]));
   });
 });

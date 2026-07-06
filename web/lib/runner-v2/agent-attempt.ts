@@ -27,6 +27,7 @@ export type AgentAttemptTerminalReason =
   | "readiness_policy_recoverable"
   | "readiness_policy_retry"
   | "readiness_no_ready_signal"
+  | "concurrency_cap_blocked"
   | "auth_prompt_detected"
   | "instruction_submission_unconfirmed"
   | "invalid_transition"

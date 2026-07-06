@@ -124,6 +124,7 @@ async function main() {
   const startSend = calls.find((call) => call.op === "sendKeys" && String(call.text).includes(startScriptPath));
   const sessionEnv = sessionSpawn && sessionSpawn.opts ? sessionSpawn.opts.env || {} : {};
   const flattenedCalls = JSON.stringify(calls);
+  const admittedRun = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
   writeFileSync(join(runDir, "typed-bootstrap-calls.json"), JSON.stringify(calls, null, 2));
 
   // --- readiness block scenario: a matched blocked_pattern must block startup
@@ -200,6 +201,84 @@ async function main() {
   const blockSessionRemoves = blockCalls.filter((call) => call.op === "remove" && call.name === blockPlan.sessionName).length;
   const blockMonitorSpawn = blockCalls.find((call) => call.op === "spawn" && call.name === blockPlan.monitorSessionName);
 
+  // --- cap admission block scenario: when all chain slots are occupied, typed
+  // bootstrap must mirror v1 cap_acquire_chain_slot by marking the run/agent
+  // blocked before any PTY allocation or instruction submission.
+  const capRunDir = join(tempRoot, "cap-run");
+  const capProfilesDir = join(tempRoot, "cap-profiles");
+  const capWorkspace = join(tempRoot, "cap-workspace");
+  const capChainPath = join(capRunDir, "typed-cap-chain.json");
+  mkdirSync(capRunDir, { recursive: true });
+  mkdirSync(capProfilesDir, { recursive: true });
+  mkdirSync(capWorkspace, { recursive: true });
+  writeFileSync(join(capProfilesDir, "stub.json"), JSON.stringify({
+    id: "stub",
+    cli: "claude",
+    readiness: { enabled: true, ready_patterns: [{ name: "ready", value: "claude ready" }] },
+  }, null, 2));
+  writeFileSync(capChainPath, JSON.stringify({
+    id: "typed-cap-proof",
+    name: "Typed Cap Proof",
+    default_agent_profile: "stub",
+    agents: [{ id: "manual", name: "Manual", triggers: ["manual-start"] }],
+  }, null, 2));
+  writeFileSync(join(capRunDir, "run.json"), JSON.stringify({
+    id: "run-cap",
+    chain: "Typed Cap Proof",
+    chainId: "typed-cap-proof",
+    status: "running",
+    agents: [{ id: "manual", name: "Manual", status: "pending", session: "" }],
+    sessions: [],
+    workspacePath: capWorkspace,
+  }, null, 2));
+  mkdirSync(join(capRunDir, "run-existing"), { recursive: true });
+  writeFileSync(join(capRunDir, "run-existing", "run.json"), JSON.stringify({
+    id: "run-existing",
+    status: "running",
+    agents: [{ id: "other", name: "Other", status: "running", session: "other-session" }],
+    sessions: ["other-session"],
+  }, null, 2));
+  const capPlan = buildAgentBootstrapPlan({
+    chainPath: capChainPath,
+    runDir: capRunDir,
+    runId: "run-cap",
+    workspacePath: capWorkspace,
+    env: {
+      AGENT_PROFILES_DIR: capProfilesDir,
+      MENTIKO_RUN_ID: "run-cap",
+      MENTIKO_RUNNER_V2: "1",
+      PATH: process.env.PATH || "",
+    },
+  });
+  const capCalls = [];
+  const capExecutor = {
+    async remove(name) { capCalls.push({ op: "remove", name }); },
+    async spawn(name, cmd, args, opts) { capCalls.push({ op: "spawn", name, cmd, args, opts }); return { name, pid: 789 }; },
+    async sendKeys(name, text) { capCalls.push({ op: "sendKeys", name, text }); },
+    async capture() { return "claude ready >"; },
+  };
+  await executeLocalBootstrap(capPlan, {
+    chainPath: capChainPath,
+    runDir: capRunDir,
+    runId: "run-cap",
+    chainName: "Typed Cap Proof",
+    workspacePath: capWorkspace,
+    logFd: 1,
+    cwd: codeRoot,
+    env: {
+      NODE_ENV: "test",
+      MENTIKO_RUN_ID: "run-cap",
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_MAX_CONCURRENT_CHAINS: "1",
+      MENTIKO_CAP_MAX_WAIT_SECS: "0",
+      MENTIKO_CAP_POLL_SECS: "0.01",
+      PATH: process.env.PATH || "",
+    },
+  }, capExecutor);
+  writeFileSync(join(capRunDir, "typed-cap-calls.json"), JSON.stringify(capCalls, null, 2));
+  const capRun = JSON.parse(readFileSync(join(capRunDir, "run.json"), "utf8"));
+  const capAttempt = ((capRun.runnerV2 || {}).attempts || [])[0] || {};
+
   const result = await runSyntheticRunnerV2ProbeWithDispatch({
     runDir,
     env: { MENTIKO_RUNNER_V2: "1" },
@@ -225,6 +304,9 @@ async function main() {
     check("typed-bootstrap-state-written", stateText.includes("status: running") && stateText.includes("agent_id: manual"), bootstrapPlan.statePath),
     check("typed-bootstrap-monitor-started", !!monitorSpawn && String(monitorSpawn.args || "").includes("-lc"), bootstrapPlan.monitorSessionName),
     check("typed-bootstrap-start-before-pointer", calls.indexOf(startSend) >= 0 && calls.indexOf(pointerSend) > calls.indexOf(startSend), join(runDir, "typed-bootstrap-calls.json")),
+    check("typed-cap-admitted-running", admittedRun.status === "running" && (admittedRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "running"), join(runDir, "run.json")),
+    check("typed-cap-blocked-no-spawn", capRun.status === "blocked" && capCalls.length === 0 && (capRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "blocked"), join(capRunDir, "run.json")),
+    check("typed-cap-attempt-human-action", capAttempt.phase === "human_action_required" && capAttempt.terminalReason === "concurrency_cap_blocked", capAttempt.phase || null),
     check("typed-block-no-instructions", !blockInstructionSend, blockPlan.instructionPath),
     check("typed-block-run-blocked", blockRun.status === "blocked" && (blockRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "blocked"), join(blockRunDir, "run.json")),
     check("typed-block-state-blocked", blockState.includes("status: blocked") && blockState.includes("blocked_reason:"), blockPlan.statePath),

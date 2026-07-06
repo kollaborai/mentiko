@@ -148,6 +148,89 @@ describe("runner-v2 bootstrap executor", () => {
     );
   });
 
+  it("blocks before pty launch when chain concurrency cap is full", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      status: "running",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    mkdirSync(join(root, "run-existing"), { recursive: true });
+    writeFileSync(join(root, "run-existing", "run.json"), JSON.stringify({
+      id: "run-existing",
+      status: "running",
+      sessions: ["other-agent"],
+      agents: [{ id: "other", status: "running" }],
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), {
+      ...context(root),
+      env: {
+        ...context(root).env,
+        MENTIKO_MAX_CONCURRENT_CHAINS: "1",
+        MENTIKO_CAP_MAX_WAIT_SECS: "0",
+        MENTIKO_CAP_POLL_SECS: "0.01",
+      },
+    }, executor);
+
+    expect(executor.remove).not.toHaveBeenCalled();
+    expect(executor.spawn).not.toHaveBeenCalled();
+    expect(executor.sendKeys).not.toHaveBeenCalled();
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      status_message: expect.stringContaining("concurrency cap: waited"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    const attempts = (run.runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({
+      phase: "human_action_required",
+      terminalReason: "concurrency_cap_blocked",
+    });
+  });
+
+  it("promotes pending to running before pty launch when a chain cap slot is available", async () => {
+    const root = tempDir();
+    writeProfile(root, { enabled: true, ready_patterns: [{ name: "ready", value: "claude ready" }] });
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      status: "pending",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), {
+      ...context(root),
+      env: {
+        ...context(root).env,
+        MENTIKO_MAX_CONCURRENT_CHAINS: "1",
+      },
+    }, executor);
+
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "workspace-writer-run-1",
+      "zsh",
+      [],
+      expect.objectContaining({ cwd: join(root, "workspace") }),
+    );
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      status: "running",
+      sessions: ["workspace-writer-run-1"],
+      agents: [expect.objectContaining({ id: "writer", status: "running" })],
+    });
+    const attempts = (run.runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ to: "lease_acquired" }),
+      expect.objectContaining({ to: "pty_allocated" }),
+    ]));
+  });
+
   it("retries bare enters until the composer accepts the pasted instructions", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
