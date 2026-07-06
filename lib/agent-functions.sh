@@ -204,6 +204,17 @@ ensure-event-file() {
         fi
     done
 
+    # BUG-022 guard: never synthesize a success event off a rendered marker. The
+    # fallback is only legitimate when the agent's DURABLE transcript shows it
+    # actually finished (standalone AGENT_COMPLETE in its recorded output). A
+    # pty-resize re-wrap can forge the marker on screen but not in the transcript,
+    # so an unresolvable transcript refuses fabrication rather than reporting a
+    # failure (missing handoff) as a success.
+    if ! agent-complete-marker-durable "$session_name"; then
+        echo "  no durable completion evidence for $session_name; refusing to fabricate ${EXPECTED_EVENT:-emits} event"
+        return 1
+    fi
+
     echo "  no event file found. writing fallback from spec..."
 
     # extract spec path from agent_context
@@ -260,6 +271,71 @@ agent-complete-marker-seen() {
 }
 
 # -------------------------------------------------------------------
+# durable completion evidence (BUG-022)
+#
+# The rendered pty screen is NOT trustworthy for AGENT_COMPLETE. A UI attach
+# resizes the pty and re-wraps the instruction echo ("...make the final
+# non-empty line exactly AGENT_COMPLETE.") so the marker lands on its own
+# rendered line and agent-complete-marker-seen false-latches while the agent is
+# still working (2026-07-04 incident, a9b4cbf). Durable evidence cannot be
+# re-wrapped: the agent's declared emits event file (signal 2 in the latch), or
+# the session transcript JSONL, where every message is stored as one logical
+# string. This checks the transcript for a standalone AGENT_COMPLETE line in the
+# agent's OWN output. The pasted instruction is a separate (user-role) message
+# whose text keeps AGENT_COMPLETE mid-sentence with a trailing period, so the
+# standalone-line anchor rejects it regardless of role.
+# -------------------------------------------------------------------
+
+# resolve the durable session transcript JSONL for a pty session, cwd-slug and
+# CLI independent. Uses the session UUID printed in the pane (the same handle
+# resolve_session_log uses) matched against the known CLI transcript roots. A
+# UUID that is not an actual transcript filename simply does not match, so a
+# stray UUID in agent output cannot mis-resolve. Emits nothing (degraded, not an
+# error) when unresolvable, so callers fail closed to the durable event file.
+_agent_transcript_jsonl() {
+    local session_name="$1"
+
+    # test/caller seam: an explicit transcript path skips live resolution.
+    if [[ -n "${MENTIKO_TRANSCRIPT_JSONL:-}" ]]; then
+        [[ -f "$MENTIKO_TRANSCRIPT_JSONL" ]] && echo "$MENTIKO_TRANSCRIPT_JSONL"
+        return 0
+    fi
+
+    local uuid
+    uuid=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null \
+        | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+    [[ -z "$uuid" ]] && return 0
+
+    local root hit
+    for root in "$HOME/.claude/projects" "$HOME/.kollab/projects" "$HOME/.codex/sessions" \
+                "$HOME/.config/opencode" "$HOME/.gemini/antigravity-cli"; do
+        [[ -d "$root" ]] || continue
+        hit=$(find "$root" -maxdepth 4 -name "*${uuid}*.jsonl" -type f 2>/dev/null | head -1)
+        [[ -n "$hit" ]] && { echo "$hit"; return 0; }
+    done
+    return 0
+}
+
+# durable standalone AGENT_COMPLETE: the marker on its own line in the agent's
+# recorded transcript output. Returns 0 iff durably present; fails closed (1)
+# when the transcript is unresolvable or jq is unavailable, so completion falls
+# back to the declared event file rather than trusting the rendered screen.
+agent-complete-marker-durable() {
+    local session_name="$1"
+    local jsonl
+    jsonl="$(_agent_transcript_jsonl "$session_name")"
+    [[ -n "$jsonl" && -f "$jsonl" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    jq -r '
+        ( select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text ),
+        ( select((.type=="message" or .type=="response_item") and .role=="assistant")
+          | ((.content // .payload.content // [])[]? | (.text // empty)) )
+    ' "$jsonl" 2>/dev/null \
+        | grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
+}
+
+# -------------------------------------------------------------------
 # agent-completion-latched: authoritative "agent is done" signal.
 #
 # Completion comes from durable signals, never from re-scanning a fixed
@@ -289,8 +365,14 @@ agent-completion-latched() {
         return 0
     fi
 
-    # signal 1: AGENT_COMPLETE marker on its own line in the recent tail
-    if agent-complete-marker-seen "$session_name" "$tail_lines"; then
+    # signal 1: AGENT_COMPLETE marker, DURABLY confirmed. The rendered screen is
+    # only a cheap trigger; a pty resize can re-wrap the instruction echo into a
+    # standalone marker line (BUG-022), so the latch also requires the marker in
+    # the durable session transcript, which cannot be re-wrapped. Fail-closed
+    # transcript resolution means we simply keep waiting for the event file
+    # (signal 2) instead of latching a still-working agent off the screen.
+    if agent-complete-marker-seen "$session_name" "$tail_lines" \
+        && agent-complete-marker-durable "$session_name"; then
         [[ -n "$latch_file" ]] && : > "$latch_file" 2>/dev/null || true
         return 0
     fi
@@ -1168,6 +1250,8 @@ export -f new-agent-from-spec
 export -f peek-session
 export -f ensure-event-file
 export -f agent-complete-marker-seen
+export -f _agent_transcript_jsonl
+export -f agent-complete-marker-durable
 export -f agent-completion-latched
 export -f monitor-agent-stalled
 export -f monitor-agent-died

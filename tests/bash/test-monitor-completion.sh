@@ -359,12 +359,13 @@ assert_not_contains "$chain_runner_source" \
   'transport_send_keys "$monitor_session" "bash' \
   "chain monitor starts script directly instead of typing command into shell"
 
-agent_functions_source="$(sed -n '108,132p' "$PROJECT_ROOT/lib/agent-functions.sh")"
-assert_not_contains "$agent_functions_source" \
+# function-anchored (not line numbers) so these survive edits to agent-functions.sh.
+spec_monitor_launcher_source="$(sed -n '/^new-agent-from-spec() {/,/^ensure-event-file() {/p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+assert_not_contains "$spec_monitor_launcher_source" \
   'send-message "$monitor_session"' \
   "spec monitor starts script directly instead of typing command into shell"
 
-chain_monitor_source="$(sed -n '220,620p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+chain_monitor_source="$(sed -n '/^launch-chain-runner-complete() {/,/^monitor-with-ai() {/p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_contains "$chain_monitor_source" \
   'launch-chain-runner-complete()' \
   "chain monitor uses a dedicated completion launcher"
@@ -373,12 +374,14 @@ assert_contains "$chain_monitor_source" \
   'transport_new_session "$completion_session" env' \
   "chain completion handler starts in a separate pty session"
 
-chain_monitor_body="$(sed -n '430,620p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+# the monitor loops delegate to launch-chain-runner-complete; they must not nohup
+# the completion script themselves (the nohup fallback lives inside the launcher).
+chain_monitor_body="$(sed -n '/^monitor-with-ai() {/,$p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_not_contains "$chain_monitor_body" \
   'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
   "chain monitor does not launch completion as a monitor-child nohup job"
 
-chain_completion_gate_source="$(sed -n '520,675p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+chain_completion_gate_source="$(sed -n '/^monitor-chain-agent() {/,$p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_contains "$chain_completion_gate_source" \
   "completion event observed" \
   "chain monitor observes event files without treating them as completion"
@@ -408,12 +411,11 @@ assert_contains "$launch_agent_source" \
   'MENTIKO_MONITOR_PROFILE_ID' \
   "launch-agent monitor carries advisor profile selection"
 
-spec_monitor_source="$(sed -n '116,132p' "$PROJECT_ROOT/lib/agent-functions.sh")"
-assert_contains "$spec_monitor_source" \
+assert_contains "$spec_monitor_launcher_source" \
   'MENTIKO_MONITOR_PROFILE_ID' \
   "spec monitor carries advisor profile selection"
 
-chain_complete_cleanup_source="$(sed -n '440,460p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
+chain_complete_cleanup_source="$(cat "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
 assert_contains "$chain_complete_cleanup_source" \
   'transport_session_exists "$MONITOR_SESSION"' \
   "chain completion removes exited monitor sessions"

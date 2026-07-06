@@ -30,7 +30,7 @@ describe("implementation contract binding (real repo contracts)", () => {
     }
     expect(gaps.map((gap) => gap.key)).toEqual(expect.arrayContaining([
       "owns:concurrency admission",
-      "invariant:AGENT_COMPLETE must be standalone line",
+      "owns:watchdog and chain event watcher singleton startup",
     ]));
   });
 });
