@@ -126,6 +126,80 @@ async function main() {
   const flattenedCalls = JSON.stringify(calls);
   writeFileSync(join(runDir, "typed-bootstrap-calls.json"), JSON.stringify(calls, null, 2));
 
+  // --- readiness block scenario: a matched blocked_pattern must block startup
+  // before instructions, mirroring v1 wait_for_profile_readiness (blocked ->
+  // write_startup_recovery_artifacts + mark_state_blocked + mark_run_agent_blocked
+  // + return 1, session left alive, no instruction paste). Same typed
+  // executeLocalBootstrap, real disk, deterministic mocked capture.
+  const blockRunDir = join(tempRoot, "block-run");
+  const blockProfilesDir = join(tempRoot, "block-profiles");
+  const blockWorkspace = join(tempRoot, "block-workspace");
+  const blockChainPath = join(blockRunDir, "typed-block-chain.json");
+  mkdirSync(blockRunDir, { recursive: true });
+  mkdirSync(blockProfilesDir, { recursive: true });
+  mkdirSync(blockWorkspace, { recursive: true });
+  writeFileSync(join(blockProfilesDir, "blocker.json"), JSON.stringify({
+    id: "blocker",
+    cli: "claude",
+    readiness: {
+      enabled: true,
+      blocked_patterns: [{ name: "auth-required", type: "text", value: "Log in required", action: "block", risk: "high" }],
+    },
+  }, null, 2));
+  writeFileSync(blockChainPath, JSON.stringify({
+    id: "typed-block-proof",
+    name: "Typed Block Proof",
+    default_agent_profile: "blocker",
+    agents: [{ id: "manual", name: "Manual", triggers: ["manual-start"] }],
+  }, null, 2));
+  writeFileSync(join(blockRunDir, "run.json"), JSON.stringify({
+    id: "run-block",
+    chain: "Typed Block Proof",
+    chainId: "typed-block-proof",
+    status: "running",
+    agents: [{ id: "manual", name: "Manual", status: "pending", session: "" }],
+    sessions: [],
+    workspacePath: blockWorkspace,
+  }, null, 2));
+  const blockPlan = buildAgentBootstrapPlan({
+    chainPath: blockChainPath,
+    runDir: blockRunDir,
+    runId: "run-block",
+    workspacePath: blockWorkspace,
+    env: {
+      AGENT_PROFILES_DIR: blockProfilesDir,
+      MENTIKO_RUN_ID: "run-block",
+      MENTIKO_RUNNER_V2: "1",
+      PATH: process.env.PATH || "",
+    },
+  });
+  const blockCalls = [];
+  const blockExecutor = {
+    async remove(name) { blockCalls.push({ op: "remove", name }); },
+    async spawn(name, cmd, args, opts) { blockCalls.push({ op: "spawn", name, cmd, args, opts }); return { name, pid: 456 }; },
+    async sendKeys(name, text) { blockCalls.push({ op: "sendKeys", name, text }); },
+    async capture() { return "Log in required\nclaude ready >"; },
+  };
+  await executeLocalBootstrap(blockPlan, {
+    chainPath: blockChainPath,
+    runDir: blockRunDir,
+    runId: "run-block",
+    chainName: "Typed Block Proof",
+    workspacePath: blockWorkspace,
+    logFd: 1,
+    cwd: codeRoot,
+    env: { NODE_ENV: "test", MENTIKO_RUN_ID: "run-block", MENTIKO_RUNNER_V2: "1", PATH: process.env.PATH || "" },
+  }, blockExecutor);
+  writeFileSync(join(blockRunDir, "typed-block-calls.json"), JSON.stringify(blockCalls, null, 2));
+  const blockRun = JSON.parse(readFileSync(join(blockRunDir, "run.json"), "utf8"));
+  const blockState = readFileSync(blockPlan.statePath, "utf8");
+  const blockCaptureArtifact = join(blockRunDir, "artifacts", "manual-startup-capture.txt");
+  const blockReadinessArtifact = join(blockRunDir, "artifacts", "manual-startup-readiness.json");
+  const blockAttempt = ((blockRun.runnerV2 || {}).attempts || [])[0] || {};
+  const blockInstructionSend = blockCalls.find((call) => call.op === "sendKeys" && String(call.text).includes(blockPlan.instructionPath));
+  const blockSessionRemoves = blockCalls.filter((call) => call.op === "remove" && call.name === blockPlan.sessionName).length;
+  const blockMonitorSpawn = blockCalls.find((call) => call.op === "spawn" && call.name === blockPlan.monitorSessionName);
+
   const result = await runSyntheticRunnerV2ProbeWithDispatch({
     runDir,
     env: { MENTIKO_RUNNER_V2: "1" },
@@ -151,6 +225,12 @@ async function main() {
     check("typed-bootstrap-state-written", stateText.includes("status: running") && stateText.includes("agent_id: manual"), bootstrapPlan.statePath),
     check("typed-bootstrap-monitor-started", !!monitorSpawn && String(monitorSpawn.args || "").includes("-lc"), bootstrapPlan.monitorSessionName),
     check("typed-bootstrap-start-before-pointer", calls.indexOf(startSend) >= 0 && calls.indexOf(pointerSend) > calls.indexOf(startSend), join(runDir, "typed-bootstrap-calls.json")),
+    check("typed-block-no-instructions", !blockInstructionSend, blockPlan.instructionPath),
+    check("typed-block-run-blocked", blockRun.status === "blocked" && (blockRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "blocked"), join(blockRunDir, "run.json")),
+    check("typed-block-state-blocked", blockState.includes("status: blocked") && blockState.includes("blocked_reason:"), blockPlan.statePath),
+    check("typed-block-startup-artifacts", existsSync(blockCaptureArtifact) && existsSync(blockReadinessArtifact) && JSON.parse(readFileSync(blockReadinessArtifact, "utf8")).status === "blocked", blockReadinessArtifact),
+    check("typed-block-attempt-human-action", blockAttempt.phase === "human_action_required" && blockAttempt.terminalReason === "readiness_policy_blocked", blockAttempt.phase || null),
+    check("typed-block-session-alive", blockSessionRemoves === 1 && !blockMonitorSpawn, join(blockRunDir, "typed-block-calls.json")),
   ];
 
   const status = checks.every((item) => item.status === "pass") ? "passed" : "failed";

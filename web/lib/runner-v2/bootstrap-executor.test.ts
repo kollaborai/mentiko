@@ -233,20 +233,46 @@ describe("runner-v2 bootstrap executor", () => {
     );
   });
 
-  it("does not send instructions when the agent cli readiness never appears", async () => {
-    jest.useFakeTimers();
+  it("submits instructions for a profile-less agent in legacy mode (v1: missing profile is unknown, not blocked)", async () => {
+    const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
+    delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
     const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
     writeFileSync(join(root, "run.json"), JSON.stringify({
       id: "run-1",
       sessions: [],
       agents: [{ id: "writer", status: "pending" }],
     }));
-    const executor = {
-      remove: jest.fn(async () => {}),
-      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
-      sendKeys: jest.fn(async () => {}),
-      capture: jest.fn(async () => "plain zsh shell"),
-    };
+    // no readiness glyph, no known prompt token: the killed isLikelyAgentPrompt
+    // heuristic would have polled to a timeout here; v1 treats a missing profile
+    // as unknown -> legacy proceeds.
+    const executor = executorWithCapture("plain zsh shell with no ready glyph");
+
+    try {
+      const noProfilePlan = { ...plan(root) };
+      delete noProfilePlan.profileId;
+      delete noProfilePlan.profilePath;
+      await executeLocalBootstrap(noProfilePlan, context(root), executor);
+    } finally {
+      if (previous !== undefined) process.env.MENTIKO_READINESS_FAIL_CLOSED = previous;
+    }
+
+    expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
+    const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("blocks a profile-less agent at the readiness deadline under fail-closed (no instructions)", async () => {
+    const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
+    process.env.MENTIKO_READINESS_FAIL_CLOSED = "1";
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture("plain zsh shell");
 
     try {
       const noProfilePlan = { ...plan(root) };
@@ -254,24 +280,33 @@ describe("runner-v2 bootstrap executor", () => {
       delete noProfilePlan.profilePath;
       noProfilePlan.runContextExports = {
         ...noProfilePlan.runContextExports,
-        MENTIKO_CLI_READY_TIMEOUT: "15",
+        MENTIKO_CLI_READY_TIMEOUT: "0.1",
+        MENTIKO_CLI_READY_POLL: "0.02",
       };
-      const promise = expect(executeLocalBootstrap(noProfilePlan, {
-        chainPath: join(root, "chain.json"),
-        runDir: root,
-        runId: "run-1",
-        chainName: "Test Chain",
-        logFd: 1,
-        cwd: "/repo",
-        env: { NODE_ENV: "test", PATH: "/bin" },
-      }, executor)).rejects.toThrow("timed out waiting for agent CLI readiness");
-      await jest.advanceTimersByTimeAsync(16_000);
-      await promise;
+      await executeLocalBootstrap(noProfilePlan, context(root), executor);
     } finally {
-      jest.useRealTimers();
+      if (previous === undefined) delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
+      else process.env.MENTIKO_READINESS_FAIL_CLOSED = previous;
     }
 
     expect(executor.sendKeys).toHaveBeenCalledTimes(1);
+    expect(executor.remove).toHaveBeenCalledTimes(1);
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("startup_recovery:unknown"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    expect(readFileSync(join(root, "state", "writer-run-1.state"), "utf8")).toContain("status: blocked");
+    expect(readFileSync(join(root, "artifacts", "writer-startup-capture.txt"), "utf8")).toBe("plain zsh shell");
+    expect(JSON.parse(readFileSync(join(root, "artifacts", "writer-startup-readiness.json"), "utf8"))).toMatchObject({
+      status: "unknown",
+    });
+    const attempts = (run.runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({ terminalReason: "readiness_deadline_expired" });
+    expect(attempts[0]?.transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ to: "startup_failed", reason: "readiness_deadline_expired" }),
+    ]));
   });
 
   it("uses the selected profile ready pattern instead of generic prompt heuristics", async () => {

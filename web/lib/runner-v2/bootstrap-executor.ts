@@ -240,7 +240,12 @@ async function waitForBootstrapReadiness(
   attemptId: string,
   runJsonPath: string,
 ): Promise<void> {
+  // Profile-driven classification is the only readiness gate — no hardcoded
+  // prompt heuristics. A profile-less session mirrors v1 cli_readiness_check's
+  // missing-profile arm ("unknown"), so resolvePlanReadinessPolicy always yields
+  // a policy and classifyCliReadiness decides every case.
   const readinessPolicy = resolvePlanReadinessPolicy(plan);
+  const failClosed = planReadinessFailClosed(plan);
   const deadline = Date.now() + readinessTimeoutMs(plan);
   const pollMs = readinessPollMs(plan);
   let lastOutput = "";
@@ -258,69 +263,59 @@ async function waitForBootstrapReadiness(
       });
       throw new Error("runner-v2 bootstrap command echoed without starting agent CLI");
     }
-    if (readinessPolicy) {
-      const readiness = classifyCliReadiness({
-        readiness: readinessPolicy.readiness,
-        profileMissing: readinessPolicy.profileMissing,
+    const readiness = classifyCliReadiness({
+      readiness: readinessPolicy.readiness,
+      profileMissing: readinessPolicy.profileMissing,
+      output,
+      failClosed,
+    });
+    if (readiness.status === "ready") return;
+    if (isTerminalReadinessStatus(readiness.status)) {
+      const failure = classifyPolicyReadinessFailure(readiness, output);
+      blockStartupForReadiness({
+        plan,
+        runJsonPath,
         output,
-        failClosed: planReadinessFailClosed(plan),
+        readiness,
+        reason: `startup_recovery:${readiness.status}: ${readiness.reason}`,
       });
-      if (readiness.status === "ready") return;
-      if (isTerminalReadinessStatus(readiness.status)) {
-        const failure = classifyPolicyReadinessFailure(readiness, output);
-        blockStartupForReadiness({
-          plan,
-          runJsonPath,
-          output,
-          readiness,
-          reason: `startup_recovery:${readiness.status}: ${readiness.reason}`,
-        });
-        transitionAgentAttempt({
-          runJsonPath,
-          attemptId,
-          to: failure.phase,
-          reason: failure.reason,
-          detail: failure.detail,
-        });
-        throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap readiness ${readiness.status}: ${readiness.reason}`);
-      }
-      if (!planReadinessFailClosed(plan)) return;
-    } else if (isLikelyAgentPrompt(output)) {
-      return;
+      transitionAgentAttempt({
+        runJsonPath,
+        attemptId,
+        to: failure.phase,
+        reason: failure.reason,
+        detail: failure.detail,
+      });
+      throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap readiness ${readiness.status}: ${readiness.reason}`);
     }
+    // unknown / not-yet-ready: v1 legacy proceeds immediately (return 0);
+    // fail-closed keeps polling through the grace window and blocks at the deadline.
+    if (!failClosed) return;
     await sleep(pollMs);
   }
-  if (readinessPolicy) {
-    const timeoutSeconds = Math.floor(readinessTimeoutMs(plan) / 1000);
-    const readiness: CliReadinessResult = {
-      status: "unknown",
-      reason: `CLI readiness unresolved after ${timeoutSeconds}s`,
-    };
-    blockStartupForReadiness({
-      plan,
-      runJsonPath,
-      output: lastOutput,
-      readiness,
-      reason: `startup_recovery:unknown: ${readiness.reason}`,
-    });
-    transitionAgentAttempt({
-      runJsonPath,
-      attemptId,
-      to: "startup_failed",
-      reason: "readiness_deadline_expired",
-      detail: lastOutput.slice(-500),
-    });
-    throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap timed out waiting for profile readiness; last_output=${lastOutput.slice(-500)}`);
-  }
-  const failure = classifyReadinessFailure(lastOutput);
+  // fail-closed deadline: nothing ever proved readiness. Mirror v1's post-loop
+  // mark_state_blocked + mark_run_agent_blocked (return 1) — write artifacts,
+  // keep the session alive, submit no instructions.
+  const timeoutSeconds = Math.floor(readinessTimeoutMs(plan) / 1000);
+  const readiness: CliReadinessResult = {
+    status: "unknown",
+    reason: `CLI readiness unresolved after ${timeoutSeconds}s`,
+  };
+  blockStartupForReadiness({
+    plan,
+    runJsonPath,
+    output: lastOutput,
+    readiness,
+    reason: `startup_recovery:unknown: ${readiness.reason}`,
+  });
   transitionAgentAttempt({
     runJsonPath,
     attemptId,
-    to: failure.phase,
-    reason: failure.reason,
-    detail: failure.detail,
+    to: "startup_failed",
+    reason: "readiness_deadline_expired",
+    detail: lastOutput.slice(-500),
   });
-  throw new Error(`runner-v2 typed bootstrap timed out waiting for agent CLI readiness; last_output=${lastOutput.slice(-500)}`);
+  throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap timed out waiting for profile readiness; last_output=${lastOutput.slice(-500)}`);
 }
 
 class BootstrapReadinessBlockedError extends Error {}
@@ -328,12 +323,13 @@ class BootstrapReadinessBlockedError extends Error {}
 function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
   readiness?: AgentProfileReadinessConfig | null;
   profileMissing?: boolean;
-} | undefined {
+} {
   if (plan.profileReadiness) {
     return { readiness: plan.profileReadiness };
   }
-  if (!plan.profilePath) return undefined;
-  if (!existsSync(plan.profilePath)) {
+  // No resolvable profile path -> v1 cli_readiness_check treats a missing profile
+  // as "unknown" (profileMissing), never a prompt-shape guess.
+  if (!plan.profilePath || !existsSync(plan.profilePath)) {
     return { profileMissing: true };
   }
   try {
@@ -454,7 +450,8 @@ function readinessTimeoutMs(plan: AgentBootstrapPlan): number {
 
 function readinessPollMs(plan: AgentBootstrapPlan): number {
   const configured = Number(envValue(plan, "MENTIKO_CLI_READY_POLL"));
-  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 500;
+  // v1 default: MENTIKO_CLI_READY_POLL seconds, 2s (lib/chain-runner.sh wait_for_profile_readiness)
+  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 2000;
 }
 
 function planReadinessFailClosed(plan: AgentBootstrapPlan): boolean {
@@ -511,18 +508,6 @@ function isComposerHoldingInput(output: string): boolean {
     return lines[i].slice(idx + 1).trim().length > 0;
   }
   return false;
-}
-
-function isLikelyAgentPrompt(output: string): boolean {
-  const normalized = output.toLowerCase();
-  return normalized.includes("claude")
-    || normalized.includes("codex")
-    || normalized.includes("aider")
-    || normalized.includes("kollab")
-    || normalized.includes(">")
-    || normalized.includes("how can i help")
-    || normalized.includes("repl")
-    || normalized.includes("ready");
 }
 
 async function startMonitorSession(

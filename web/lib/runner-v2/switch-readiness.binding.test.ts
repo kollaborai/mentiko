@@ -29,7 +29,7 @@ describe("implementation contract binding (real repo contracts)", () => {
       expect(gap.blocker.length).toBeGreaterThan(20);
     }
     expect(gaps.map((gap) => gap.key)).toEqual(expect.arrayContaining([
-      "owns:startup readiness before instruction submission",
+      "owns:concurrency admission",
       "invariant:AGENT_COMPLETE must be standalone line",
     ]));
   });
