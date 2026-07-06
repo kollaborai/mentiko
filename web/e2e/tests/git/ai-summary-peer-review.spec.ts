@@ -414,8 +414,8 @@ test.describe("Peer Review", () => {
     await expect(gitPanel.assignReviewersButton).toBeVisible({ timeout: 8000 });
     await gitPanel.assignReviewersButton.click();
 
-    // Assignment dialog opens
-    const dialog = page.locator('[role="dialog"]').filter({ hasText: /assign/i });
+    // Assignment view opens as an editor tab (PeerReviewView)
+    const dialog = page.locator('[data-editor-view="peer-review"]');
     await expect(dialog).toBeVisible({ timeout: 3000 });
 
     // Fill in the review title

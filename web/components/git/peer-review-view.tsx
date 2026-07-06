@@ -8,36 +8,30 @@ import {
   CloseCircleFilled as XFilled,
 } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 /**
- * Props for ReviewAssignmentDialog component
+ * Props for PeerReviewView.
+ *
+ * Rendered as a first-class editor tab (not a modal) so it lives inside the
+ * editor's own stacking context — this is what fixes the "assign reviewers
+ * opens behind / closes the floating code editor" bug that a Radix Dialog
+ * (portaled to document.body at z-50, below the pill's z-12000) caused.
  */
-interface ReviewAssignmentDialogProps {
-  /** Whether the dialog is open */
-  open: boolean;
-  /** Callback when dialog closes */
-  onOpenChange: (open: boolean) => void;
+interface PeerReviewViewProps {
   /** Selected files for review */
   selectedFiles: string[];
   /** Workspace path for Git operations */
   workspacePath: string;
   /** Branch the review is for (the currently checked-out branch) */
   sourceBranch: string;
-  /** Callback when review is successfully created */
+  /** Close this tab (Cancel or after a successful create) */
+  onClose: () => void;
+  /** Called after a review is successfully created */
   onReviewCreated?: (reviewId: string) => void;
 }
 
-/**
- * Org member for reviewer selection
- */
+/** Org member for reviewer selection */
 interface OrgMember {
   id: string;
   name: string;
@@ -59,17 +53,18 @@ async function unwrap(res: Response): Promise<Record<string, unknown>> {
 }
 
 /**
- * Review assignment dialog component
- * Enables users to assign reviewers to Git changes with context and criteria
+ * Peer-review assignment view.
+ * Enables users to assign reviewers to Git changes with context and criteria.
+ * Same form + endpoints as the former ReviewAssignmentDialog, laid out as a
+ * full editor tab instead of a portaled modal.
  */
-export function ReviewAssignmentDialog({
-  open,
-  onOpenChange,
+export function PeerReviewView({
   selectedFiles,
   workspacePath,
   sourceBranch,
+  onClose,
   onReviewCreated,
-}: ReviewAssignmentDialogProps) {
+}: PeerReviewViewProps) {
   // ── state management ──────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +77,7 @@ export function ReviewAssignmentDialog({
   const [dueDate, setDueDate] = useState("");
   const [targetBranch, setTargetBranch] = useState("");
 
-  // Org members (fetched when the dialog opens)
+  // Org members (fetched on mount)
   const [availableMembers, setAvailableMembers] = useState<OrgMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
@@ -90,7 +85,6 @@ export function ReviewAssignmentDialog({
   // ── data loading ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
 
     // Reviewer candidates come from the org member list.
@@ -141,7 +135,7 @@ export function ReviewAssignmentDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, workspacePath]);
+  }, [workspacePath]);
 
   // ── derived state ─────────────────────────────────────────────────────────
   const canSubmit =
@@ -154,9 +148,6 @@ export function ReviewAssignmentDialog({
 
   // ── handlers ───────────────────────────────────────────────────────────────
 
-  /**
-   * Toggle reviewer selection
-   */
   const toggleReviewer = useCallback((memberId: string) => {
     setSelectedReviewers(prev =>
       prev.includes(memberId)
@@ -165,9 +156,6 @@ export function ReviewAssignmentDialog({
     );
   }, []);
 
-  /**
-   * Update a specific criterion
-   */
   const updateCriterion = useCallback((index: number, value: string) => {
     setCriteria(prev => {
       const newCriteria = [...prev];
@@ -176,23 +164,14 @@ export function ReviewAssignmentDialog({
     });
   }, []);
 
-  /**
-   * Add a new criterion
-   */
   const addCriterion = useCallback(() => {
     setCriteria(prev => [...prev, ""]);
   }, []);
 
-  /**
-   * Remove a criterion
-   */
   const removeCriterion = useCallback((index: number) => {
     setCriteria(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  /**
-   * Submit the review assignment
-   */
   const handleSubmit = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -228,37 +207,45 @@ export function ReviewAssignmentDialog({
         throw new Error(data?.error?.message ?? "Failed to create review");
       }
 
-      // Success callback
       onReviewCreated?.(reviewId);
-
-      // Reset and close
-      setTitle("");
-      setDescription("");
-      setSelectedReviewers([]);
-      setCriteria([""]);
-      setDueDate("");
-      onOpenChange(false);
-
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create review");
     } finally {
       setLoading(false);
     }
-  }, [title, description, selectedReviewers, criteria, dueDate, sourceBranch, targetBranch, workspacePath, selectedFiles, onReviewCreated, onOpenChange]);
+  }, [title, description, selectedReviewers, criteria, dueDate, sourceBranch, targetBranch, workspacePath, selectedFiles, onReviewCreated, onClose]);
 
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <PeopleFilled className="w-5 h-5" />
-            Assign Reviewers
-          </DialogTitle>
-        </DialogHeader>
+    <div
+      data-editor-view="peer-review"
+      role="region"
+      aria-label="Assign Reviewers"
+      className="flex flex-col h-full bg-background"
+    >
+      {/* header */}
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3 shrink-0 border-b border-border">
+        <h2 className="text-base font-black tracking-tighter flex items-center gap-2">
+          <PeopleFilled className="w-5 h-5" />
+          Assign Reviewers
+        </h2>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={loading}
+          title="Close"
+          className="flex items-center justify-center w-7 h-7 rounded-md text-foreground/40 hover:text-foreground/70 hover:bg-muted transition-colors disabled:opacity-40"
+        >
+          <XFilled className="w-4 h-4" />
+          <span className="sr-only">Close</span>
+        </button>
+      </div>
 
-        <div className="space-y-6">
+      {/* body (scrolls) */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-6 space-y-6">
           {/* Error banner */}
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-md">
@@ -429,24 +416,25 @@ export function ReviewAssignmentDialog({
             />
           </div>
         </div>
+      </div>
 
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!canSubmit || loading}
-            className="min-w-[120px]"
-          >
-            {loading ? "Creating..." : "Assign Reviewers"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {/* footer actions */}
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end px-4 sm:px-6 py-3 shrink-0 border-t border-border">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          disabled={loading}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSubmit}
+          disabled={!canSubmit || loading}
+          className="min-w-[120px]"
+        >
+          {loading ? "Creating..." : "Assign Reviewers"}
+        </Button>
+      </div>
+    </div>
   );
 }

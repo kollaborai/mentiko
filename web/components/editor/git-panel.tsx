@@ -208,6 +208,9 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   const openFile = useEditorStore((s) => s.openFile);
   const setFileLoading = useEditorStore((s) => s.setFileLoading);
   const activePaneId = useEditorStore((s) => s.activePaneId);
+  // bumped by the detached peer-review tab when a review is created, so the
+  // tracker below refreshes without the review UI being a child of this panel.
+  const reviewsRevision = useEditorStore((s) => s.reviewsRevision);
 
   const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([]);
@@ -301,10 +304,11 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     [workspacePath]
   );
 
-  // Reload reviewers whenever the checked-out branch changes.
+  // Reload reviewers whenever the checked-out branch changes OR a review is
+  // created from the peer-review editor tab (reviewsRevision bump).
   useEffect(() => {
     if (status?.branch) refreshReviewers(status.branch);
-  }, [status?.branch, refreshReviewers]);
+  }, [status?.branch, reviewsRevision, refreshReviewers]);
 
   // A reviewer changing their status → PATCH the assignment, then reload.
   const handleReviewerStatusChange = useCallback(
@@ -648,9 +652,6 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
             selectedFiles={status?.files.map((f) => f.path) ?? []}
             workspacePath={workspacePath}
             sourceBranch={status?.branch ?? ""}
-            onReviewCreated={() =>
-              status?.branch && refreshReviewers(status.branch)
-            }
           />
           {reviewers.length > 0 && (
             <div className="px-2 pb-3">

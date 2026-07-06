@@ -221,6 +221,16 @@ export function FloatingCodePill() {
       if (overlay.contains(e.target as Node)) return;
       const target = e.target as HTMLElement;
       if (target.closest("[data-pill-nav]") || target.closest("[data-terminal-panel]")) return;
+      // Portaled Radix surfaces (dialogs, dropdown/menu/select content) mount
+      // outside overlayRef in the DOM but are part of the editor interaction —
+      // clicking one must not dismiss the pill. Without this, opening any
+      // dropdown/dialog over the editor closes the whole editor.
+      if (
+        target.closest(
+          '[role="dialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper], [data-editor-overlay]'
+        )
+      )
+        return;
       closeOverlay();
     };
     const timer = setTimeout(() => {

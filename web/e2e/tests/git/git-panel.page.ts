@@ -9,7 +9,7 @@ import { Page, Locator, expect } from '@playwright/test';
  *   web/components/editor/branch-selector.tsx
  *   web/components/editor/stash-selector.tsx
  *   web/components/git/review-panel-section.tsx
- *   web/components/git/review-assignment-dialog.tsx
+ *   web/components/git/peer-review-view.tsx
  *   web/components/git/review-status-badge.tsx
  *
  * SELECTOR MAP
@@ -65,10 +65,10 @@ import { Page, Locator, expect } from '@playwright/test';
  *   drop dialog        [role="dialog"][aria-labelledby="drop-stash-dialog-title"]
  *   drop confirm       button:has-text("Delete") inside drop dialog
  *
- * Review panel (review-panel-section.tsx + review-assignment-dialog.tsx)
+ * Review panel (review-panel-section.tsx + peer-review-view.tsx)
  *   panel heading      text=Peer Review
  *   assign reviewers   button:has-text("Assign Reviewers")
- *   assign dialog      [role="dialog"]:has-text("Assign")
+ *   assign view        [data-editor-view="peer-review"]  (editor tab, not a modal)
  *   review card        div.p-3.rounded-md.border (keyed by review.id)
  *   status badge       div.inline-flex.items-center with text: Pending|In Review|Approved|Changes Requested
  * ──────────────────────────────────────────────────────────────────────────
@@ -380,20 +380,20 @@ export class GitPanelPage {
   }
 
   /**
-   * Click "Assign Reviewers" to open the assignment dialog.
+   * Click "Assign Reviewers" to open the assignment view.
    * Optionally fill in title and reviewer name before submitting.
    *
-   * Note: ReviewAssignmentDialog uses Radix [role="dialog"]; selectors for
-   * the reviewer-search input depend on the final form implementation in
-   * web/components/git/review-assignment-dialog.tsx (not fully expanded in
-   * this audit). Update these selectors after inspecting the rendered form.
+   * Note: the assignment UI is now a full editor tab (PeerReviewView,
+   * web/components/git/peer-review-view.tsx), not a Radix modal — it is
+   * located via [data-editor-view="peer-review"]. The form fields are
+   * unchanged, so the inner selectors below still hold.
    */
   async assignReviewer(opts: { reviewerName?: string; title?: string } = {}) {
     await this.reviewTab.click();
     await expect(this.assignReviewersButton).toBeVisible({ timeout: 5000 });
     await this.assignReviewersButton.click();
 
-    const dialog = this.page.locator('[role="dialog"]').filter({ hasText: /assign/i });
+    const dialog = this.page.locator('[data-editor-view="peer-review"]');
     await expect(dialog).toBeVisible({ timeout: 3000 });
 
     if (opts.title) {

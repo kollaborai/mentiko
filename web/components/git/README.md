@@ -6,32 +6,34 @@ See `web/docs/peer-review.md` for the end-to-end review workflow. The commit-rel
 
 ## Review components — how they wire in
 
-The Git panel (`web/components/editor/git-panel.tsx`) composes these directly: `ReviewPanelSection` and `ReviewStatusTracker` render in the review tab, and `ReviewApprovalGate` wraps the commit button. `ReviewAssignmentDialog` is opened by `ReviewPanelSection`. `ReviewStatusBadge` is a shared pill used by the tracker and the panel section.
+The Git panel (`web/components/editor/git-panel.tsx`) composes these directly: `ReviewPanelSection` and `ReviewStatusTracker` render in the review tab, and `ReviewApprovalGate` wraps the commit button. `ReviewPanelSection` opens `PeerReviewView` as a **full editor tab** (not a modal). `ReviewStatusBadge` is a shared pill used by the tracker and the panel section.
 
 ```
-Git panel
-├── review tab (activeView === "review")
-│     ├── ReviewPanelSection
-│     │     └── "Assign Reviewers"  → ReviewAssignmentDialog
-│     │                                    └── POST /api/reviews
+Git panel                                    editor pane
+├── review tab (activeView === "review")     └── "Peer Review" tab (openView)
+│     ├── ReviewPanelSection                        └── PeerReviewView
+│     │     └── "Assign Reviewers" ─────openView──────────┘  → POST /api/reviews
+│     │                                                         → notifyReviewsChanged() (store)
 │     └── ReviewStatusTracker   (per-reviewer approve → PATCH /api/reviews/[id]/assignments/[assignmentId])
 └── commit area
       └── ReviewApprovalGate  (disabled until every assignment is `approved`)
 ```
 
+Why a tab and not a modal: the Git panel renders inside the floating code editor (`floating-code-pill.tsx`), a `fixed` overlay at `z-12000` with a click-outside-to-close handler. A Radix `Dialog` portals to `document.body` at `z-50`, so it opened *behind* the pill and its click-outside handler treated the portaled dialog as an outside click and closed the whole editor. Rendering the review UI as an editor tab keeps it inside the editor's own stacking context, so it can't render behind or dismiss the pill. See `web/lib/ui/editor-store.ts` (`openView`, `FileData.view`).
+
 ### ReviewPanelSection
 
-Renders in the Git panel's review tab. Shows the currently selected files, an "Assign Reviewers" button that opens `ReviewAssignmentDialog`, and any existing reviews with a status badge and progress bar. This is the entry point for creating a review from the panel.
+Renders in the Git panel's review tab. Shows the currently selected files, an "Assign Reviewers" button that opens the `PeerReviewView` editor tab (`useEditorStore().openView` on the active pane), and any existing reviews with a status badge and progress bar. This is the entry point for creating a review from the panel.
 
 **File**: `review-panel-section.tsx`
-**Props**: `selectedFiles: string[]`, `workspacePath: string`, `existingReviews?: ReviewSummary[]`, `onReviewCreated?: (id: string) => void`.
+**Props**: `selectedFiles: string[]`, `workspacePath: string`, `sourceBranch: string`, `existingReviews?: ReviewSummary[]`.
 
-### ReviewAssignmentDialog
+### PeerReviewView
 
-Dialog opened by `ReviewPanelSection`. Loads org members via `/api/orgs` then `/api/orgs/[id]/members`, lets the user choose reviewers and add criteria, and creates the review with one `pending` assignment per reviewer via `POST /api/reviews`. The selected files ride along as a review label. Requires a title, description, at least one reviewer, at least one criterion, and a target branch before the submit button enables.
+The assignment form, rendered as a first-class editor tab by `EditorPane` when a pane's active tab is a `peer-review` view (`FileData.view`). Loads org members via `/api/orgs` then `/api/orgs/[id]/members`, lets the user choose reviewers and add criteria, and creates the review with one `pending` assignment per reviewer via `POST /api/reviews`. The selected files ride along as a review label. Requires a title, description, at least one reviewer, at least one criterion, and a target branch before the submit button enables. On success it calls `notifyReviewsChanged()` (so the Git panel's tracker refreshes) and closes its own tab. Located in tests/DOM via `[data-editor-view="peer-review"]`.
 
-**File**: `review-assignment-dialog.tsx`
-**Props**: `open`, `onOpenChange`, `selectedFiles`, `workspacePath`, `sourceBranch`, `onReviewCreated?`.
+**File**: `peer-review-view.tsx`
+**Props**: `selectedFiles`, `workspacePath`, `sourceBranch`, `onClose`, `onReviewCreated?`.
 
 ### ReviewApprovalGate
 

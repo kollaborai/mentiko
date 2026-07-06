@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { PeopleFilled, CheckFilled, InfoCircleFilled } from "@aliimam/icons";
+import { PeopleFilled, InfoCircleFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { ReviewStatusBadge, type ReviewStatus } from "./review-status-badge";
-import { ReviewAssignmentDialog } from "./review-assignment-dialog";
+import { useEditorStore } from "@/lib/ui/editor-store";
 import { cn } from "@/lib/utils";
+
+/** stable synthetic tab key so re-opening focuses the existing review tab */
+const PEER_REVIEW_VIEW_KEY = "mentiko-view://peer-review";
 
 /**
  * Review summary data structure
@@ -32,8 +34,6 @@ interface ReviewPanelSectionProps {
   sourceBranch: string;
   /** Existing reviews for these files */
   existingReviews?: ReviewSummary[];
-  /** Callback when a review is created */
-  onReviewCreated?: (reviewId: string) => void;
 }
 
 /**
@@ -46,7 +46,7 @@ interface ReviewPanelSectionProps {
  * <ReviewPanelSection
  *   selectedFiles={["src/app.tsx"]}
  *   workspacePath="/path/to/repo"
- *   onReviewCreated={(id) => console.log("Review created:", id)}
+ *   sourceBranch="feature/x"
  * />
  * ```
  */
@@ -55,9 +55,9 @@ export function ReviewPanelSection({
   workspacePath,
   sourceBranch,
   existingReviews = [],
-  onReviewCreated,
 }: ReviewPanelSectionProps) {
-  const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
+  const openView = useEditorStore((s) => s.openView);
+  const activePaneId = useEditorStore((s) => s.activePaneId);
 
   const hasSelection = selectedFiles.length > 0;
   const hasReviews = existingReviews.length > 0;
@@ -75,7 +75,14 @@ export function ReviewPanelSection({
         {hasSelection && (
           <Button
             size="sm"
-            onClick={() => setShowAssignmentDialog(true)}
+            onClick={() =>
+              openView(activePaneId, PEER_REVIEW_VIEW_KEY, "Peer Review", {
+                type: "peer-review",
+                workspacePath,
+                selectedFiles,
+                sourceBranch,
+              })
+            }
             className="h-6 px-2 text-xs"
           >
             Assign Reviewers
@@ -161,18 +168,6 @@ export function ReviewPanelSection({
         </div>
       )}
 
-      {/* Assignment dialog */}
-      <ReviewAssignmentDialog
-        open={showAssignmentDialog}
-        onOpenChange={setShowAssignmentDialog}
-        selectedFiles={selectedFiles}
-        workspacePath={workspacePath}
-        sourceBranch={sourceBranch}
-        onReviewCreated={(reviewId: string) => {
-          onReviewCreated?.(reviewId);
-          setShowAssignmentDialog(false);
-        }}
-      />
     </div>
   );
 }

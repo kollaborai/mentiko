@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { CloseCircleFilled, ArrowRight1Filled } from "@aliimam/icons";
+import { CloseCircleFilled, ArrowRight1Filled, PeopleFilled } from "@aliimam/icons";
 import { useEditorStore, usePane, isDirty } from "@/lib/ui/editor-store";
 import { getFileAccentColor } from "./file-tree";
 
@@ -95,8 +95,9 @@ export function TabBar({ paneId, rootPath }: TabBarProps) {
     >
       {openFiles.map((file, index) => {
         const isActive = activeFile?.path === file.path;
+        const isView = !!file.view;
         const dirty = isDirty(file);
-        const accent = getFileAccentColor(file.path, rootPath);
+        const accent = isView ? "#22d3ee" : getFileAccentColor(file.path, rootPath);
         const isDragging = dragIndex === index;
         const showDropBefore = dropTarget === index;
         const showDropAfter =
@@ -149,29 +150,36 @@ export function TabBar({ paneId, rootPath }: TabBarProps) {
             {dirty && (
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 shrink-0" />
             )}
-            <span
-              className={`flex items-center gap-0.5 font-mono ${!file.pinned ? "italic" : ""}`}
-            >
-              {display.split("/").map((seg, si, arr) => (
-                <span
-                  key={si}
-                  className="flex items-center gap-0.5 shrink-0"
-                >
-                  {si > 0 && (
-                    <ArrowRight1Filled className="h-2 w-2 text-white/15 shrink-0" />
-                  )}
+            {isView ? (
+              <span className="flex items-center gap-1 font-mono shrink-0">
+                <PeopleFilled className="h-2.5 w-2.5 shrink-0" style={{ color: accent }} />
+                <span className="text-white/70">{file.name}</span>
+              </span>
+            ) : (
+              <span
+                className={`flex items-center gap-0.5 font-mono ${!file.pinned ? "italic" : ""}`}
+              >
+                {display.split("/").map((seg, si, arr) => (
                   <span
-                    className={
-                      si === arr.length - 1
-                        ? "text-white/70"
-                        : "text-white/30"
-                    }
+                    key={si}
+                    className="flex items-center gap-0.5 shrink-0"
                   >
-                    {seg}
+                    {si > 0 && (
+                      <ArrowRight1Filled className="h-2 w-2 text-white/15 shrink-0" />
+                    )}
+                    <span
+                      className={
+                        si === arr.length - 1
+                          ? "text-white/70"
+                          : "text-white/30"
+                      }
+                    >
+                      {seg}
+                    </span>
                   </span>
-                </span>
-              ))}
-            </span>
+                ))}
+              </span>
+            )}
             {dirty && (
               <button
                 onClick={(e) => {

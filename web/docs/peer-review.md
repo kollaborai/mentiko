@@ -7,10 +7,11 @@ All review routes are org-scoped via `getOrgIdFromRequest` and authorize through
 ## How the pieces fit together
 
 ```
-Git panel (web/components/editor/git-panel.tsx)
-├── review tab  ── ReviewPanelSection
-│                   └── "Assign Reviewers" button opens ReviewAssignmentDialog
-│                         └── POST /api/reviews  (creates review + assignments)
+Git panel (web/components/editor/git-panel.tsx)          editor pane
+├── review tab  ── ReviewPanelSection                     └── "Peer Review" tab
+│                   └── "Assign Reviewers" ──openView──────────→ PeerReviewView
+│                                                                  └── POST /api/reviews  (creates review + assignments)
+│                                                                  └── notifyReviewsChanged() → git panel refreshes tracker
 └── commit area ── ReviewApprovalGate  (disabled until every assignment is `approved`)
                     └── calls the panel's onCommit (the normal git commit path)
 
@@ -21,9 +22,11 @@ Standalone building blocks (not rendered by the git panel directly):
   ReviewAssignmentPanel — lower-level reviewer picker (no review creation)
 ```
 
+The assignment UI is a **full editor tab** (`PeerReviewView`), not a modal. The Git panel renders inside the floating code editor (`floating-code-pill.tsx`), a `fixed` overlay at `z-12000` with a click-outside-to-close handler; a Radix `Dialog` portals to `document.body` at `z-50`, so it rendered *behind* the pill and the click-outside handler dismissed the whole editor when the dialog was clicked. An editor tab lives in the editor's own stacking context, avoiding both. The tab is opened via `useEditorStore().openView` and rendered by `EditorPane` from `FileData.view`.
+
 ## ReviewPanelSection — review tab entry point
 
-Renders in the Git panel's review tab (`activeView === "review"`). Shows the currently selected files, an "Assign Reviewers" button that opens `ReviewAssignmentDialog`, and a list of existing reviews with status badges and progress bars.
+Renders in the Git panel's review tab (`activeView === "review"`). Shows the currently selected files, an "Assign Reviewers" button that opens the `PeerReviewView` editor tab, and a list of existing reviews with status badges and progress bars.
 
 **Props**
 
@@ -31,12 +34,12 @@ Renders in the Git panel's review tab (`activeView === "review"`). Shows the cur
 |------|------|-------------|
 | `selectedFiles` | `string[]` | Files currently selected in the Git panel. |
 | `workspacePath` | `string` | Absolute workspace path. |
+| `sourceBranch` | `string` | Currently checked-out branch (becomes the review's source branch). |
 | `existingReviews` | `ReviewSummary[]` | Optional list of prior reviews to display. |
-| `onReviewCreated` | `(reviewId: string) => void` | Fired after a review is created. |
 
-## ReviewAssignmentDialog — creates reviews
+## PeerReviewView — creates reviews
 
-Opened by `ReviewPanelSection`. Fetches reviewer candidates from `/api/orgs` then `/api/orgs/[id]/members`, lets the user pick reviewers and add review criteria, then POSTs to `/api/reviews`:
+Opened by `ReviewPanelSection` as an editor tab. Fetches reviewer candidates from `/api/orgs` then `/api/orgs/[id]/members`, lets the user pick reviewers and add review criteria, then POSTs to `/api/reviews`:
 
 ```json
 {
@@ -60,11 +63,10 @@ The server creates the review plus one `pending` assignment per reviewer. Select
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `open` | `boolean` | Dialog open state. |
-| `onOpenChange` | `(open: boolean) => void` | Dialog close callback. |
 | `selectedFiles` | `string[]` | Files under review. |
 | `workspacePath` | `string` | Absolute workspace path. |
 | `sourceBranch` | `string` | Currently checked-out branch (the branch under review). |
+| `onClose` | `() => void` | Closes the tab (Cancel or after a successful create). |
 | `onReviewCreated` | `(reviewId: string) => void` | Fired with the new review id. |
 
 ## ReviewStatusTracker — shows and updates reviewer status

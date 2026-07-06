@@ -1,5 +1,15 @@
 import { create } from "zustand";
 
+// a non-file editor tab that renders a React view instead of Monaco.
+// keeps Git surfaces (peer review, etc.) inside the editor's own stacking
+// context so they never portal out behind the floating code pill.
+export type EditorView = {
+  type: "peer-review";
+  workspacePath: string;
+  selectedFiles: string[];
+  sourceBranch: string;
+};
+
 // shared file data (content is synced across panes showing same file)
 export interface FileData {
   path: string;
@@ -10,6 +20,7 @@ export interface FileData {
   loading: boolean;
   pinned: boolean;
   originalContent?: string; // HEAD content for diff view
+  view?: EditorView; // when set, this tab renders a React view (not a file)
 }
 
 // a single pane's view state (paths only, content from fileCache)
@@ -79,6 +90,12 @@ interface EditorStore {
   pendingReveal: { path: string; line: number; column: number } | null;
   setPendingReveal: (reveal: { path: string; line: number; column: number } | null) => void;
 
+  // cross-panel signal: bumped when a peer review is created/changed so the
+  // Git panel can refresh its reviewer tracker even though the review UI now
+  // lives in a detached editor tab (not a child of the panel).
+  reviewsRevision: number;
+  notifyReviewsChanged: () => void;
+
   // editor config
   editorConfig: EditorConfig;
   updateEditorConfig: (partial: Partial<EditorConfig>) => void;
@@ -94,6 +111,10 @@ interface EditorStore {
 
   // diff view
   openDiffFile: (paneId: string, path: string, name: string, ext: string, modified: string, original: string) => void;
+
+  // non-file view tab (peer review, etc.) — keyed by a synthetic path so it
+  // participates in the normal tab lifecycle (activate/close/reorder).
+  openView: (paneId: string, key: string, name: string, view: EditorView) => void;
 
   // reorder tabs
   reorderFiles: (paneId: string, fromIndex: number, toIndex: number) => void;
@@ -175,6 +196,8 @@ export const useEditorStore = create<EditorStore>((set, get) => {
       };
     }),
     setPendingReveal: (reveal) => set({ pendingReveal: reveal }),
+    reviewsRevision: 0,
+    notifyReviewsChanged: () => set((s) => ({ reviewsRevision: s.reviewsRevision + 1 })),
     editorConfig: loadEditorConfig(),
     updateEditorConfig: (partial) => set((s) => {
       const next = { ...s.editorConfig, ...partial };
@@ -253,6 +276,35 @@ export const useEditorStore = create<EditorStore>((set, get) => {
           newOpenPaths.push(path);
         }
         return { ...p, openPaths: newOpenPaths, activePath: path };
+      });
+
+      set({ fileCache: newCache, panes: newPanes });
+    },
+
+    openView: (paneId, key, name, view) => {
+      const store = get();
+      const pane = store.panes.find((p) => p.id === paneId);
+      if (!pane) return;
+
+      // upsert the view tab (refreshes its payload if already open). pinned so
+      // opening files never replaces it as a preview tab.
+      const fileData: FileData = {
+        path: key,
+        name,
+        ext: "",
+        content: "",
+        savedContent: "",
+        loading: false,
+        pinned: true,
+        view,
+      };
+      const newCache = new Map(store.fileCache);
+      newCache.set(key, fileData);
+
+      const newPanes = store.panes.map((p) => {
+        if (p.id !== paneId) return p;
+        if (p.openPaths.includes(key)) return { ...p, activePath: key };
+        return { ...p, openPaths: [...p.openPaths, key], activePath: key };
       });
 
       set({ fileCache: newCache, panes: newPanes });

@@ -8,6 +8,7 @@ import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { StatusBar } from "./status-bar";
 import { getFileAccentColor } from "./file-tree";
 import { Markdown } from "@/components/ui/markdown";
+import { PeerReviewView } from "@/components/git/peer-review-view";
 import type { editor } from "monaco-editor";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
@@ -138,6 +139,7 @@ export function EditorPane({ paneId, rootPath }: EditorPaneProps) {
   const updateContent = useEditorStore((s) => s.updateContent);
   const markSaved = useEditorStore((s) => s.markSaved);
   const closeFileAction = useEditorStore((s) => s.closeFile);
+  const notifyReviewsChanged = useEditorStore((s) => s.notifyReviewsChanged);
   const setActiveFileAction = useEditorStore((s) => s.setActiveFile);
   const pendingReveal = useEditorStore((s) => s.pendingReveal);
   const setPendingReveal = useEditorStore((s) => s.setPendingReveal);
@@ -313,6 +315,24 @@ export function EditorPane({ paneId, rootPath }: EditorPaneProps) {
         </div>
       </div>
     );
+  }
+
+  // view tabs render a React surface (peer review, etc.) instead of Monaco.
+  // rendering here keeps them inside the editor's stacking context so they
+  // never portal out behind the floating code pill.
+  if (file.view) {
+    if (file.view.type === "peer-review") {
+      return (
+        <PeerReviewView
+          workspacePath={file.view.workspacePath}
+          selectedFiles={file.view.selectedFiles}
+          sourceBranch={file.view.sourceBranch}
+          onClose={() => closeFileAction(paneId, file.path)}
+          onReviewCreated={() => notifyReviewsChanged()}
+        />
+      );
+    }
+    return null;
   }
 
   if (file.loading) {
