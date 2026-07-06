@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import type { AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import type { RunnerV2LaunchContext } from "@/lib/runner-v2/types";
 
 jest.mock("@/lib/api/audit-exec", () => ({
   shellEscape: (value: string) => `'${value.replace(/'/g, "'\\''")}'`,
@@ -247,19 +248,201 @@ describe("runner-v2 bootstrap executor", () => {
       capture: jest.fn(async () => "plain zsh shell"),
     };
 
-    const promise = expect(executeLocalBootstrap(plan(root), {
-      chainPath: join(root, "chain.json"),
-      runDir: root,
-      runId: "run-1",
-      chainName: "Test Chain",
-      logFd: 1,
-      cwd: "/repo",
-      env: { NODE_ENV: "test", PATH: "/bin" },
-    }, executor)).rejects.toThrow("timed out waiting for agent CLI readiness");
-    await jest.advanceTimersByTimeAsync(16_000);
-    await promise;
-    jest.useRealTimers();
+    try {
+      const noProfilePlan = { ...plan(root) };
+      delete noProfilePlan.profileId;
+      delete noProfilePlan.profilePath;
+      noProfilePlan.runContextExports = {
+        ...noProfilePlan.runContextExports,
+        MENTIKO_CLI_READY_TIMEOUT: "15",
+      };
+      const promise = expect(executeLocalBootstrap(noProfilePlan, {
+        chainPath: join(root, "chain.json"),
+        runDir: root,
+        runId: "run-1",
+        chainName: "Test Chain",
+        logFd: 1,
+        cwd: "/repo",
+        env: { NODE_ENV: "test", PATH: "/bin" },
+      }, executor)).rejects.toThrow("timed out waiting for agent CLI readiness");
+      await jest.advanceTimersByTimeAsync(16_000);
+      await promise;
+    } finally {
+      jest.useRealTimers();
+    }
 
     expect(executor.sendKeys).toHaveBeenCalledTimes(1);
   });
+
+  it("uses the selected profile ready pattern instead of generic prompt heuristics", async () => {
+    const root = tempDir();
+    writeProfile(root, {
+      enabled: true,
+      ready_patterns: [{ name: "provider-ready", type: "text", value: "Provider boot complete" }],
+    });
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture("Provider boot complete\nno prompt glyph yet");
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
+    const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it.each([
+    {
+      label: "blocked",
+      readiness: { enabled: true, blocked_patterns: [{ name: "auth-required", value: "Log in required", action: "block" }] },
+      output: "Log in required\nclaude ready >",
+      terminalPhase: "human_action_required",
+      reason: "readiness_policy_blocked",
+    },
+    {
+      label: "recover",
+      readiness: { enabled: true, recoverable_patterns: [{ name: "mcp-auth", value: "MCP auth refresh needed", action: "recover" }] },
+      output: "MCP auth refresh needed\nclaude ready >",
+      terminalPhase: "startup_failed",
+      reason: "readiness_policy_recoverable",
+    },
+    {
+      label: "retry",
+      readiness: { enabled: true, retry_patterns: [{ name: "rate-limit", value: "Rate limit exceeded", action: "retry" }] },
+      output: "Rate limit exceeded\nclaude ready >",
+      terminalPhase: "startup_failed",
+      reason: "readiness_policy_retry",
+    },
+  ])("blocks without killing the session when the selected profile reports $label readiness", async ({ readiness, output, terminalPhase, reason }) => {
+    const root = tempDir();
+    writeProfile(root, readiness);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture(output);
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(executor.sendKeys).toHaveBeenCalledTimes(1);
+    expect(executor.remove).toHaveBeenCalledTimes(1);
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("startup_recovery:"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    expect(readFileSync(join(root, "state", "writer-run-1.state"), "utf8")).toContain("status: blocked");
+    expect(readFileSync(join(root, "artifacts", "writer-startup-capture.txt"), "utf8")).toBe(output);
+    expect(JSON.parse(readFileSync(join(root, "artifacts", "writer-startup-readiness.json"), "utf8"))).toMatchObject({
+      status: readiness.recoverable_patterns ? "recover" : readiness.retry_patterns ? "retry" : "blocked",
+    });
+    const attempts = (run.runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({ terminalReason: reason });
+    expect(attempts[0]?.transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ to: terminalPhase, reason }),
+    ]));
+  });
+
+  it("does not inject instructions when fail-closed is on and the selected profile has no ready signal", async () => {
+    const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
+    process.env.MENTIKO_READINESS_FAIL_CLOSED = "1";
+    const root = tempDir();
+    writeProfile(root, { enabled: true, blocked_patterns: [{ name: "blocked", value: "blocked" }] });
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    try {
+      await executeLocalBootstrap(plan(root), context(root), executor);
+    } finally {
+      if (previous === undefined) delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
+      else process.env.MENTIKO_READINESS_FAIL_CLOSED = previous;
+    }
+
+    expect(executor.sendKeys).toHaveBeenCalledTimes(1);
+    expect(executor.remove).toHaveBeenCalledTimes(1);
+    const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("startup_recovery:no_ready_signal"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    expect(readFileSync(join(root, "state", "writer-run-1.state"), "utf8")).toContain("status: blocked");
+    expect(readFileSync(join(root, "artifacts", "writer-startup-capture.txt"), "utf8")).toBe("claude ready >");
+    expect(JSON.parse(readFileSync(join(root, "artifacts", "writer-startup-readiness.json"), "utf8"))).toMatchObject({
+      status: "no_ready_signal",
+    });
+    const attempts = (run.runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({ terminalReason: "readiness_no_ready_signal" });
+    expect(attempts[0]?.transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ to: "startup_failed", reason: "readiness_no_ready_signal" }),
+    ]));
+  });
+
+  it("preserves legacy permissive readiness when the selected profile policy is disabled and fail-closed is off", async () => {
+    const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
+    delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
+    const root = tempDir();
+    writeProfile(root, { enabled: false });
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    writeFileSync(join(root, "run.json"), JSON.stringify({
+      id: "run-1",
+      sessions: [],
+      agents: [{ id: "writer", status: "pending" }],
+    }));
+    const executor = executorWithCapture("plain startup text with no generic prompt");
+
+    try {
+      await executeLocalBootstrap(plan(root), context(root), executor);
+    } finally {
+      if (previous !== undefined) process.env.MENTIKO_READINESS_FAIL_CLOSED = previous;
+    }
+
+    expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
+    const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
 });
+
+function context(root: string): RunnerV2LaunchContext {
+  return {
+    chainPath: join(root, "chain.json"),
+    runDir: root,
+    runId: "run-1",
+    chainName: "Test Chain",
+    logFd: 1,
+    cwd: "/repo",
+    env: { NODE_ENV: "test" as const, RUNS_DIR: root, PATH: "/bin" },
+  };
+}
+
+function writeProfile(root: string, readiness: unknown) {
+  mkdirSync(join(root, "profiles"), { recursive: true });
+  writeFileSync(join(root, "profiles", "default.json"), JSON.stringify({
+    id: "default",
+    name: "Default",
+    cli: "claude",
+    readiness,
+  }));
+}
+
+function executorWithCapture(output: string) {
+  return {
+    remove: jest.fn(async () => {}),
+    spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+    sendKeys: jest.fn(async () => {}),
+    sendRaw: jest.fn(async () => {}),
+    capture: jest.fn(async () => output),
+  };
+}

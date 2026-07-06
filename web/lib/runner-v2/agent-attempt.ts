@@ -23,7 +23,12 @@ export type AgentAttemptTerminalReason =
   | "no_completion_event"
   | "retries_exhausted"
   | "readiness_deadline_expired"
+  | "readiness_policy_blocked"
+  | "readiness_policy_recoverable"
+  | "readiness_policy_retry"
+  | "readiness_no_ready_signal"
   | "auth_prompt_detected"
+  | "instruction_submission_unconfirmed"
   | "invalid_transition"
   | "reconciliation_window_expired"
   | "released";

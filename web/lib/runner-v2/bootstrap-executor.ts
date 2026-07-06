@@ -1,10 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
-import { updateRunJson } from "@/lib/runner-v2/run-state";
+import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import { updateRunJson, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
+  type AgentAttemptPhase,
+  type AgentAttemptTerminalReason,
   classifyReadinessFailure,
   createAgentAttempt,
   recordAgentAttemptProcess,
@@ -13,6 +16,7 @@ import {
   transitionAgentAttempt,
 } from "@/lib/runner-v2/agent-attempt";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
+import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface RunnerV2BootstrapExecutor {
   remove(name: string): Promise<void>;
@@ -57,6 +61,13 @@ export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Pr
       sessionName: plan.sessionName,
     };
   } catch (error) {
+    if (error instanceof BootstrapReadinessBlockedError) {
+      return {
+        support: "supported",
+        mode: "typed-plan",
+        sessionName: plan.sessionName,
+      };
+    }
     return {
       support: "unsupported",
       reason: error instanceof Error ? error.message : "runner-v2 typed bootstrap failed",
@@ -147,6 +158,9 @@ export async function executeLocalBootstrap(
     }
     await startMonitorSession(plan, executor);
   } catch (error) {
+    if (error instanceof BootstrapReadinessBlockedError) {
+      return;
+    }
     await executor.remove(plan.sessionName).catch(() => undefined);
     await executor.remove(plan.monitorSessionName).catch(() => undefined);
     releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
@@ -226,7 +240,9 @@ async function waitForBootstrapReadiness(
   attemptId: string,
   runJsonPath: string,
 ): Promise<void> {
-  const deadline = Date.now() + 15_000;
+  const readinessPolicy = resolvePlanReadinessPolicy(plan);
+  const deadline = Date.now() + readinessTimeoutMs(plan);
+  const pollMs = readinessPollMs(plan);
   let lastOutput = "";
   while (Date.now() < deadline) {
     const output = await executor.capture(plan.sessionName, 80);
@@ -242,8 +258,59 @@ async function waitForBootstrapReadiness(
       });
       throw new Error("runner-v2 bootstrap command echoed without starting agent CLI");
     }
-    if (isLikelyAgentPrompt(output)) return;
-    await sleep(500);
+    if (readinessPolicy) {
+      const readiness = classifyCliReadiness({
+        readiness: readinessPolicy.readiness,
+        profileMissing: readinessPolicy.profileMissing,
+        output,
+        failClosed: planReadinessFailClosed(plan),
+      });
+      if (readiness.status === "ready") return;
+      if (isTerminalReadinessStatus(readiness.status)) {
+        const failure = classifyPolicyReadinessFailure(readiness, output);
+        blockStartupForReadiness({
+          plan,
+          runJsonPath,
+          output,
+          readiness,
+          reason: `startup_recovery:${readiness.status}: ${readiness.reason}`,
+        });
+        transitionAgentAttempt({
+          runJsonPath,
+          attemptId,
+          to: failure.phase,
+          reason: failure.reason,
+          detail: failure.detail,
+        });
+        throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap readiness ${readiness.status}: ${readiness.reason}`);
+      }
+      if (!planReadinessFailClosed(plan)) return;
+    } else if (isLikelyAgentPrompt(output)) {
+      return;
+    }
+    await sleep(pollMs);
+  }
+  if (readinessPolicy) {
+    const timeoutSeconds = Math.floor(readinessTimeoutMs(plan) / 1000);
+    const readiness: CliReadinessResult = {
+      status: "unknown",
+      reason: `CLI readiness unresolved after ${timeoutSeconds}s`,
+    };
+    blockStartupForReadiness({
+      plan,
+      runJsonPath,
+      output: lastOutput,
+      readiness,
+      reason: `startup_recovery:unknown: ${readiness.reason}`,
+    });
+    transitionAgentAttempt({
+      runJsonPath,
+      attemptId,
+      to: "startup_failed",
+      reason: "readiness_deadline_expired",
+      detail: lastOutput.slice(-500),
+    });
+    throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap timed out waiting for profile readiness; last_output=${lastOutput.slice(-500)}`);
   }
   const failure = classifyReadinessFailure(lastOutput);
   transitionAgentAttempt({
@@ -254,6 +321,148 @@ async function waitForBootstrapReadiness(
     detail: failure.detail,
   });
   throw new Error(`runner-v2 typed bootstrap timed out waiting for agent CLI readiness; last_output=${lastOutput.slice(-500)}`);
+}
+
+class BootstrapReadinessBlockedError extends Error {}
+
+function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
+  readiness?: AgentProfileReadinessConfig | null;
+  profileMissing?: boolean;
+} | undefined {
+  if (plan.profileReadiness) {
+    return { readiness: plan.profileReadiness };
+  }
+  if (!plan.profilePath) return undefined;
+  if (!existsSync(plan.profilePath)) {
+    return { profileMissing: true };
+  }
+  try {
+    const profile = JSON.parse(readFileSync(plan.profilePath, "utf8")) as {
+      readiness?: AgentProfileReadinessConfig;
+    };
+    return { readiness: profile.readiness ?? null };
+  } catch {
+    return { profileMissing: true };
+  }
+}
+
+function isTerminalReadinessStatus(status: CliReadinessResult["status"]): boolean {
+  return status === "blocked" || status === "recover" || status === "retry" || status === "no_ready_signal";
+}
+
+function classifyPolicyReadinessFailure(readiness: CliReadinessResult, output: string): {
+  phase: Extract<AgentAttemptPhase, "startup_failed" | "human_action_required">;
+  reason: AgentAttemptTerminalReason;
+  detail: string;
+} {
+  const suffix = output.slice(-500);
+  const detail = `${readiness.reason}${readiness.pattern ? ` (${readiness.pattern})` : ""}${suffix ? `; last_output=${suffix}` : ""}`;
+  if (readiness.status === "blocked") {
+    return { phase: "human_action_required", reason: "readiness_policy_blocked", detail };
+  }
+  if (readiness.status === "recover") {
+    return { phase: "startup_failed", reason: "readiness_policy_recoverable", detail };
+  }
+  if (readiness.status === "retry") {
+    return { phase: "startup_failed", reason: "readiness_policy_retry", detail };
+  }
+  return { phase: "startup_failed", reason: "readiness_no_ready_signal", detail };
+}
+
+function blockStartupForReadiness(input: {
+  plan: AgentBootstrapPlan;
+  runJsonPath: string;
+  output: string;
+  readiness: CliReadinessResult;
+  reason: string;
+}): void {
+  writeStartupReadinessArtifacts(input.plan, input.output, input.readiness);
+  markStateBlocked(input.plan.statePath, input.reason);
+  markRunAgentBlocked(input.runJsonPath, input.plan.agentId, input.reason);
+}
+
+function writeStartupReadinessArtifacts(
+  plan: AgentBootstrapPlan,
+  output: string,
+  readiness: CliReadinessResult,
+): void {
+  mkdirSync(plan.artifactsDir, { recursive: true });
+  writeFileSync(join(plan.artifactsDir, `${plan.agentId}-startup-capture.txt`), output);
+  writeFileSync(join(plan.artifactsDir, `${plan.agentId}-startup-readiness.json`), `${JSON.stringify(readiness, null, 2)}\n`);
+}
+
+function markStateBlocked(statePath: string, reason: string): void {
+  const at = new Date().toISOString();
+  const current = existsSync(statePath) ? readFileSync(statePath, "utf8").split(/\r?\n/) : [];
+  const next: string[] = [];
+  let wroteStatus = false;
+  for (const line of current) {
+    if (line.startsWith("status:")) {
+      next.push("status: blocked");
+      wroteStatus = true;
+    } else if (line.startsWith("blocked_reason:") || line.startsWith("blocked_at:")) {
+      continue;
+    } else if (line.length > 0) {
+      next.push(line);
+    }
+  }
+  if (!wroteStatus) next.push("status: blocked");
+  next.push(`blocked_reason: ${reason}`);
+  next.push(`blocked_at: ${at}`);
+  writeFileSync(statePath, `${next.join("\n")}\n`);
+}
+
+function markRunAgentBlocked(runJsonPath: string, agentId: string, reason: string): void {
+  const now = new Date().toISOString();
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const agents: RunAgentRecord[] = Array.isArray(current.agents) ? current.agents : [];
+    const hasAgent = agents.some((agent) => agent.id === agentId);
+    return {
+      ...current,
+      status: "blocked",
+      blockedAt: typeof current.blockedAt === "string" ? current.blockedAt : now,
+      blockedReason: reason,
+      agents: hasAgent
+        ? agents.map((agent) => agent.id === agentId
+          ? {
+              ...agent,
+              status: "blocked",
+              lastHeartbeat: now,
+              lastMessage: reason,
+            }
+          : agent)
+        : [
+            ...agents,
+            {
+              id: agentId,
+              name: agentId,
+              session: "",
+              status: "blocked",
+              lastHeartbeat: now,
+              lastMessage: reason,
+            },
+          ],
+    };
+  });
+}
+
+function readinessTimeoutMs(plan: AgentBootstrapPlan): number {
+  const configured = Number(envValue(plan, "MENTIKO_CLI_READY_TIMEOUT"));
+  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 90_000;
+}
+
+function readinessPollMs(plan: AgentBootstrapPlan): number {
+  const configured = Number(envValue(plan, "MENTIKO_CLI_READY_POLL"));
+  return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 500;
+}
+
+function planReadinessFailClosed(plan: AgentBootstrapPlan): boolean {
+  return envValue(plan, "MENTIKO_READINESS_FAIL_CLOSED") === "1";
+}
+
+function envValue(plan: AgentBootstrapPlan, key: string): string | undefined {
+  return plan.runContextExports[key] || process.env[key];
 }
 
 /**

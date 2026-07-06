@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import config from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
+import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface BootstrapChainAgent {
   id?: string;
@@ -57,6 +58,7 @@ export interface AgentBootstrapPlan {
   projectRoot: string;
   profileId?: string;
   profilePath?: string;
+  profileReadiness?: AgentProfileReadinessConfig;
   runContextExports: Record<string, string>;
   instructionPath: string;
   instructionPointer: string;
@@ -113,6 +115,9 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     PTY_DAEMON: input.env?.PTY_DAEMON || "",
     PTY_MANAGER_SOCKET_DIR: input.env?.PTY_MANAGER_SOCKET_DIR || "",
     PTY_MANAGER_DIR: input.env?.PTY_MANAGER_DIR || "",
+    MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
+    MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
+    MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
     // the monitor inherits these exports and hands them to the completion
     // session; without them a typed-launched run always falls back to shell
     // completion because the pty daemon strips spawn env to its whitelist.
@@ -133,6 +138,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     projectRoot,
     ...(profile.id ? { profileId: profile.id } : {}),
     ...(profile.path ? { profilePath: profile.path } : {}),
+    ...(profile.readiness ? { profileReadiness: profile.readiness } : {}),
     runContextExports,
     instructionPath,
     instructionPointer,
@@ -181,6 +187,7 @@ interface ProfileResolutionInput {
 interface ProfileResolution {
   id?: string;
   path?: string;
+  readiness?: AgentProfileReadinessConfig;
 }
 
 function resolveAgentProfile(input: ProfileResolutionInput): ProfileResolution {
@@ -196,7 +203,7 @@ function resolveAgentProfile(input: ProfileResolutionInput): ProfileResolution {
   for (const id of candidates) {
     const path = profilePathForId(profilesDir, id);
     if (path && existsSync(path)) {
-      return { id, path };
+      return { id, path, readiness: readProfileReadiness(path) };
     }
   }
 
@@ -204,6 +211,17 @@ function resolveAgentProfile(input: ProfileResolutionInput): ProfileResolution {
     throw new Error(`requested agent profile '${requested[0]}' was not found and no valid fallback profile exists`);
   }
   return {};
+}
+
+function readProfileReadiness(path: string): AgentProfileReadinessConfig | undefined {
+  try {
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      readiness?: AgentProfileReadinessConfig;
+    };
+    return profile.readiness;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveProfilesDir(env: Record<string, string | undefined> | undefined): string {
