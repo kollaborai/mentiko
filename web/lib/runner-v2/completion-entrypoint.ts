@@ -64,8 +64,15 @@ export function runRunnerV2CompletionEntrypoint(
   const eventsDir = resolveEventsDir(env, input.chainPath);
   // env EVENTS_DIR and the per-run events dir can disagree across the
   // shell/typed topology; the completion verdict must see events wherever the
-  // agent actually emitted them.
-  const events = readEventsFromDirs([eventsDir, join(runDir, "events")]);
+  // agent actually emitted them. Always include the project/namespace events
+  // dir (dirname(chainPath)/events) — not only when EVENTS_DIR is unset — so a
+  // slow agent whose event lands there is still matched. TASK-093 regressed
+  // exactly here: the valid event lived only in the project dir while
+  // EVENTS_DIR pointed elsewhere and runDir/events did not exist, so completion
+  // depended entirely on EVENTS_DIR being correct. readEventsFromDirs dedups by
+  // directory, so an EVENTS_DIR that already equals the project dir is a no-op.
+  const projectEventsDir = join(dirname(input.chainPath), "events");
+  const events = readEventsFromDirs([eventsDir, projectEventsDir, join(runDir, "events")]);
   const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId });
   if (duplicate) {
     return {

@@ -22,7 +22,7 @@ export type TypedExecutorEffect =
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
 
 export interface TypedExecutorPlan {
-  action: "already-completed" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop";
+  action: "already-completed" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop";
   launches: RoutedLaunchPlan[];
   effects: TypedExecutorEffect[];
 }

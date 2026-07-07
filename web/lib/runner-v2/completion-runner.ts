@@ -17,6 +17,7 @@ import {
 } from "@/lib/runner-v2/agent-attempt";
 
 export type CompletionRunnerDecision =
+  | { action: "await-liveness"; reason: string; liveness: AgentLivenessDecision; run: RunRecord }
   | { action: "fail"; reason: string; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "retry"; reason: string; retry: Extract<RetryNoEventPlan, { action: "retry" }>; run: RunRecord }
   | { action: "exhausted"; reason: string; retry: Extract<RetryNoEventPlan, { action: "exhausted" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -51,7 +52,21 @@ export interface CompleteAgentInput {
     currentRound?: number;
     maxRounds?: number;
   };
+  liveness?: AgentLivenessInput;
   now?: Date;
+}
+
+export interface AgentLivenessInput {
+  sessionAlive?: boolean;
+  processAlive?: boolean;
+  outputChanged?: boolean;
+  extensionCount?: number;
+  maxExtensions?: number;
+}
+
+export interface AgentLivenessDecision {
+  disposition: "working" | "silent-timeout" | "dead";
+  reason: string;
 }
 
 export interface GenerationImportPlan {
@@ -62,6 +77,24 @@ export interface GenerationImportPlan {
   namespaceId?: string;
   orgId?: string;
   webUrl?: string;
+}
+
+export function evaluateAgentLiveness(input?: AgentLivenessInput): AgentLivenessDecision {
+  if (!input || input.sessionAlive === false) {
+    return { disposition: "dead", reason: "no live completion session" };
+  }
+
+  const extensionCount = input.extensionCount ?? 0;
+  const maxExtensions = input.maxExtensions ?? 6;
+  if (extensionCount >= maxExtensions) {
+    return { disposition: "silent-timeout", reason: "completion liveness extension cap reached" };
+  }
+
+  if (input.processAlive || input.outputChanged) {
+    return { disposition: "working", reason: "completion session still active" };
+  }
+
+  return { disposition: "silent-timeout", reason: "completion session alive but silent" };
 }
 
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
@@ -79,6 +112,16 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   if (!match.matched || !match.event) {
+    const liveness = evaluateAgentLiveness(input.liveness);
+    if (liveness.disposition === "working") {
+      return {
+        action: "await-liveness",
+        reason: match.reason || "no matching completion event",
+        liveness,
+        run: readCurrentRun(input.runJsonPath),
+      };
+    }
+
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
       const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);
