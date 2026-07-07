@@ -54,10 +54,10 @@ That producer is currently unreliable. Verified live on `TASK-093` / `run-178337
 These close blockers found in review. The reducer types in Task 1 and the spec (`docs/orchestration/task-lifecycle-reducer-spec.md`) must both reflect them.
 
 - **C1 — retry counter (B3).** Use one dedicated counter `executionRetryCount` backed by a new metadata key `execution_retries`, **separate from `auto_run_retries`** (which is also incremented on generation/analysis failures — `web/lib/runs/auto-run.ts:573,594,628,650,822,917,974`). Pin the same comparison on both the failure path and the summary-retry path. **Keep the budget at 2 retries** (parity with current `RETRY_CAP = 2`, `completion-audit-apply.ts:16`, used as `retryCount(metadata) >= RETRY_CAP` at `:233`). Do **not** silently move to 3. `MIN_EXECUTION_RETRIES_BEFORE_SUMMARY` is renamed for honesty — see C2.
-- **C2 — bounded summary-retry (B1-machine).** `summary.completed` verdict `retry` **increments `executionRetryCount`** before the budget check; otherwise success→summary→retry loops forever (nothing else increments it on the success path). Reset `executionRetryCount` on `execution.started`.
+- **C2 — bounded summary-retry (B1-machine).** `summary.completed` verdict `retry` **increments `executionRetryCount`** before the budget check; otherwise success→summary→retry loops forever (nothing else increments it on the success path). Do **not** reset `executionRetryCount` on retry starts; reset only when a genuinely new execution series begins.
 - **C3 — state hydration (B5).** The reducer is pure; its `TaskLifecycleState` must be built from task metadata on every adapter entry via `hydrateLifecycleState(taskMetadata)`. Without it, every call rebuilds a near-default state (`retryCount = 0`, empty fingerprints) and all capping/dedup silently void in production despite green unit tests. This is the first deliverable of Task 3.
 - **C4 — dedup by set, not single field (B7).** State carries `summarizedFingerprints: string[]` and `gatedFingerprints: string[]` (not single-valued `summaryRunId`/`decisionTaskId`). `execution.completed` **and** `execution.failed` dedup on `(runId, fingerprint)`. Gate creation records the fingerprint in `gatedFingerprints` in the **same** transition that emits `create_decision_gate`; `decision.created` only backfills `decisionTaskId` and emits `block_on_decision`.
-- **C5 — no dead states (B5-machine).** Implement all 12 events. `analysis.completed → chain_ready`; `chain.generated → chain_ready`; `execution.started → executing` (set `currentRunId`, reset `executionRetryCount`); `task.closed → closed`. Otherwise delete `analyzing`/`chain_ready`/`closing` from the phase union. Do not ship declared-but-unreachable phases.
+- **C5 — no dead states (B5-machine).** Implement all 12 events. `analysis.completed → chain_ready`; `chain.generated → chain_ready`; `execution.started → executing` (set `currentRunId`; preserve retry counter for same-series retries); `task.closed → closed`. Otherwise delete `analyzing`/`chain_ready`/`closing` from the phase union. Do not ship declared-but-unreachable phases.
 - **C6 — no-follow-up resume (B6).** `decision.resolved` with no follow-ups sets `phase = resuming` and emits `resume_original_task` (+ `scan_unblocked_auto_run_tasks`), mirroring `followups.completed`. Otherwise the common approve-and-continue case parks forever.
 - **C7 — concurrent-execution guard (M6).** `start_execution` is a no-op when `currentRunStatus === "running"`.
 - **C8 — auto_run_tick scope (m7/M1).** For v1, **drop `task.auto_run_tick` from the reducer.** Reconcile/auto-run keep owning admission (the reducer's job is post-execution lifecycle). The real `triggerAutoRun` has resume-vs-restart, in-flight-job guards, and a concurrency ceiling (`auto-run.ts:143-167,227-255`) that the 6-branch tick model omits; modeling it now is divergent duplication, not consolidation. Revisit in a follow-up if consolidation is wanted.
@@ -71,9 +71,10 @@ These close blockers found in review. The reducer types in Task 1 and the spec (
 Root cause (verified, see "Producer dependency" above): the no-event retry budget can exhaust **before** a slow agent emits its declared completion event; the agent is then falsely marked `completion_failed / "declared completion event missing"` while a valid event later lands `processed: false` in the events dir.
 
 - [ ] **Step 1: Liveness-aware exhaustion.** Do not terminalize as "completion event missing; retries exhausted" while the agent **process is alive and producing output**. Parity target: `lib/agent-functions.sh` already checks for a genuine completion event before declaring an agent dead ("process gone but ln exists … completing normally"). Reset/extend the no-event retry budget on observed liveness in the typed path.
-- [ ] **Step 2: Late-event recovery.** Add a pass that adopts an unprocessed valid completion event matching a `completion_failed` attempt and re-completes it. This recovers `TASK-093` and any already-stuck task. Test: seed a `completion_failed` attempt + a matching `processed:false` event → attempt recovers to complete and routes downstream.
+- [ ] **Step 1a: Define the liveness oracle before coding.** Liveness is true only when the monitored agent session exists **and** either the child process is alive or terminal output changed since the last typed completion check. A live-but-silent session gets a bounded grace window, then becomes a timeout diagnostic. Add an explicit max extension so a chatty-but-never-completing agent cannot run forever.
+- [ ] **Step 2: Late-event recovery belongs to runner-v2.** Add `recoverLateCompletionEvents(runId)` in runner-v2, and call it before reconcile treats `completion_failed` / `stopped` as final. Reconcile may invoke this function, but it must not implement typed event matching itself. This recovers `TASK-093` and any already-stuck task. Test: seed a `completion_failed` attempt + a matching `processed:false` event → attempt recovers to complete and routes downstream.
 - [ ] **Step 3: Harden events-dir resolution.** The matcher must always include the project/namespace events dir, not rely solely on `env.EVENTS_DIR` (`runDir/events` does not exist). Test: event present **only** in the project events dir → matches.
-- [ ] **Step 4: Regression test.** Valid-but-late event (emitted after the first no-event check) → agent completes, not failed.
+- [ ] **Step 4: Regression tests.** Valid-but-late event (emitted after the first no-event check) → agent completes, not failed. Alive + changing output + no event → no exhausted terminal state yet. Alive + silent past bounded grace → timeout/failure diagnostic. Dead + no event → failure.
 
 **Gate:** do not start Task 4 rollout until Task 0 tests pass and re-running `TASK-093`'s pipeline recovers (or the late-event pass recovers the existing stuck run).
 
@@ -236,12 +237,12 @@ test("duplicate execution.completed for same fingerprint does not re-summarize",
   expect(r.effects).toEqual([]);                        // C4: idempotent
 });
 
-test("execution.started resets the execution retry counter and sets executing", () => {
+test("execution.started for same-series retry preserves the execution retry counter", () => {
   const r = reduceTaskLifecycle(baseState({ phase: "resuming", executionRetryCount: 2 }), {
     type: "execution.started", taskId: "TASK-093", runId: "run-9", chainId: "c",
   });
   expect(r.state.phase).toBe("executing");
-  expect(r.state.executionRetryCount).toBe(0);         // C2/C5
+  expect(r.state.executionRetryCount).toBe(2);         // C2/C5: retry starts must not erase budget
   expect(r.state.currentRunId).toBe("run-9");
 });
 
@@ -258,6 +259,7 @@ test("decision.resolved with no follow-ups resumes the task", () => {
   - failure + summary-retry sharing `executionRetryCount` and one operator (C1/C2)
   - fingerprint-set dedup on completed **and** failed (C4)
   - no-follow-up resume (C6) and concurrent-execution guard (C7)
+  - retry starts preserving `executionRetryCount`; only a new execution series resets it
 
 - [ ] **Step 3: Run reducer tests** — expected: pass.
 
@@ -268,12 +270,12 @@ test("decision.resolved with no follow-ups resumes the task", () => {
 - Create: `web/lib/orchestration/task-lifecycle-service.ts`
 - Create: `web/lib/orchestration/__tests__/task-lifecycle-service.test.ts`
 
-- [ ] **Step 1: Implement `hydrateLifecycleState(taskMetadata)` FIRST (C3).** Map real metadata → `TaskLifecycleState`: `execution_retries → executionRetryCount`, `last_run_id → currentRunId`, `last_run_status → currentRunStatus`, `last_run_decision_required`/`decision_subtask_id → decisionTaskId`, `completion_audit_run_fingerprint`/`task_outcome_summary_run_fingerprint → summarizedFingerprints`. Add a test: hydrating `TASK-093`'s stuck metadata (open, 3 stopped runs) yields a sane phase, not default.
+- [ ] **Step 1: Implement `hydrateLifecycleState(taskMetadata)` FIRST (C3).** Map real metadata → `TaskLifecycleState`: `execution_retries → executionRetryCount`, `last_run_id → currentRunId`, `last_run_status → currentRunStatus`, `last_run_decision_required`/`decision_subtask_id → decisionTaskId`, `summarized_run_fingerprints → summarizedFingerprints`, `gated_run_fingerprints → gatedFingerprints`, legacy `completion_audit_run_fingerprint`/`task_outcome_summary_run_fingerprint → summarizedFingerprints` as compatibility fallback only, `followup_task_ids → followUpTaskIds`, and `lifecycle_phase → phase`. Add a test: hydrating `TASK-093`'s stuck metadata (open, 3 stopped runs) yields a sane phase, not default.
 
 - [ ] **Step 2: Service interface.** Accepts a hydrated `TaskLifecycleState`, an event, and injectable dependency functions. Note the **`Request` boundary (M5):** the "pure" boundary stops at the reducer. Effect application needs a live `Request` — `startTaskOutcomeAudit` (`task-outcome-audit.ts:147`) and `applyCompletionAudit → createDecisionSubtask → startDecisionResearch` (`completion-audit-apply.ts:116`) all require one. Reconcile/auto-run have a `NextRequest`; specify a shim for the delete/decision-resolution entry points.
 
 - [ ] **Step 3: Effect → real function mapping (M4).** Document exact signatures:
-  - `start_outcome_summary` → `startTaskOutcomeAudit({ request, namespaceId, orgId, taskId })`. The effect's `sourceRunId`/`fingerprint` are **advisory** — the fn derives `sourceRunId` from `metadata.last_run_id` (`:51`) and computes the fingerprint itself (`:54`). If summarizing a run other than `last_run_id` is ever required, add an explicit `sourceRunId` param to `startTaskOutcomeAudit` as its own step.
+  - `start_outcome_summary` → `startTaskOutcomeAudit({ request, namespaceId, orgId, taskId, sourceRunId, runFingerprint })`. The effect's `sourceRunId`/`fingerprint` are authoritative; update `startTaskOutcomeAudit` to accept them instead of silently replacing them with `metadata.last_run_id`.
   - `close_task` → `taskClose(orgId, id, reason?, namespaceId?)` (`web/lib/tasks/task-store.ts:528`), then `scan_unblocked_auto_run_tasks`.
   - `block_on_decision` / `create_followup_dependencies` → `taskAddDep(orgId, taskId, dependsOnId, namespaceId?, workspaceId?)` (`task-store.ts:557`).
   - `scan_unblocked_auto_run_tasks` → `getAutoRunCandidates` + start path (`web/lib/runs/auto-run.ts:232`), or document as a nudge to the existing 60s poller (`web/lib/runs/auto-run-service.ts:49`).
@@ -294,6 +296,8 @@ test("decision.resolved with no follow-ups resumes the task", () => {
 - [ ] **Step 2: Branch + fingerprint + route.** Reconcile currently lumps all terminals together and lets `startTaskOutcomeAudit` compute the fingerprint. It must now (a) branch on `run.status` to emit `execution.completed` vs `execution.failed`, and (b) compute `currentRunTerminalFingerprint(namespaceId, orgId, runId)` (`web/lib/tasks/run-outcome-evidence.ts:43`) **itself** before emitting, so the reducer's dedup has a real key (C4).
 
 - [ ] **Step 3: Reconcile the two retry loops.** The reducer's execution-level `retry_execution` and the auditor's verdict-level `retry` must not both fire on one counter. Route failed/stopped execution runs through the reducer; ensure the auditor no longer independently retries the same run (single `executionRetryCount`, C1).
+
+- [ ] **Step 3a: Preserve retry count across retry starts.** `execution.started` for a retry attempt must not reset `executionRetryCount`; reset only for a new execution series. Test: fail → retry start → fail → retry start → fail reaches summary on the third attempt.
 
 - [ ] **Step 4: Rewrite `route.test.ts:530-589`** to the new contract, and run:
 `npm test -- --runTestsByPath web/app/api/tasks/reconcile/route.test.ts web/lib/orchestration/__tests__/task-lifecycle-reducer.test.ts --runInBand`
@@ -337,7 +341,8 @@ Verified: the route-local cascade at `decisions/[id]/route.ts:147-221` (JSON del
 
 - [ ] **Step 1: Failing tests** — resolving with follow-ups adds deps from the **original task** to the follow-ups; original stays blocked while any follow-up is open; original clears `last_run_decision_required` and resumes only after follow-ups close.
 - [ ] **Step 2: Implement.** Pin "original task" = `decision.parentTaskId` (the completion-audit parent where the gate was set), **not** the epic ancestor tasks are re-parented under (`:181-183` vs `:313` — this ambiguity is real). Emit `decision.resolved` then `followups.completed` through the service.
-- [ ] **Step 3: Run** `npm test -- --runTestsByPath web/lib/decisions/decision-resolution.test.ts web/lib/orchestration/__tests__/task-lifecycle-reducer.test.ts --runInBand`.
+- [ ] **Step 3: Add reconcile-owned follow-up completion detection.** Reconcile scans original tasks in `followup_blocked` phase, reads `followup_task_ids`, and emits `followups.completed` only after every follow-up is closed/resolved/done/complete. Add tests for one follow-up still open and all follow-ups closed.
+- [ ] **Step 4: Run** `npm test -- --runTestsByPath web/lib/decisions/decision-resolution.test.ts web/app/api/tasks/reconcile/route.test.ts web/lib/orchestration/__tests__/task-lifecycle-reducer.test.ts --runInBand`.
 
 ## Task 9: Shared Hidden Decision Gate Visibility
 
