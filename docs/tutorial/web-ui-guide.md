@@ -12,7 +12,7 @@ cd mentiko
 cd web && npm install && npm run dev
 ```
 
-open: http://localhost:3000
+open: http://localhost:3200
 
 features:
   - dashboard: overview of active sessions
@@ -34,7 +34,7 @@ sign in at /login (email/password or OAuth) before using protected pages.
 
 api authentication:
 ```bash
-curl -b cookie.txt http://localhost:3000/api/chains/list
+curl -b cookie.txt http://localhost:3200/api/chains/list
 ```
 
 see docs/auth-setup.md for details.
@@ -330,18 +330,18 @@ api access
 ---------------------------------------------------------------
 all ui features available via rest api.
 
-base url: http://localhost:3000/api
+base url: http://localhost:3200/api
 
 examples:
 
 list chains:
 ```bash
-curl http://localhost:3000/api/chains/list
+curl http://localhost:3200/api/chains/list
 ```
 
 run chain:
 ```bash
-curl -X POST http://localhost:3000/api/chains/run \
+curl -X POST http://localhost:3200/api/chains/run \
   -H "Content-Type: application/json" \
   -d '{
     "chain": {...},
@@ -351,12 +351,12 @@ curl -X POST http://localhost:3000/api/chains/run \
 
 get run status:
 ```bash
-curl http://localhost:3000/api/runs/run-1740500000
+curl http://localhost:3200/api/runs/run-1740500000
 ```
 
 send message to agent:
 ```bash
-curl -X POST http://localhost:3000/api/agents/session-name/message \
+curl -X POST http://localhost:3200/api/agents/session-name/message \
   -H "Content-Type: application/json" \
   -d '{"message": "please focus on x"}'
 ```
@@ -367,7 +367,7 @@ troubleshooting
 ---------------------------------------------------------------
 web ui not loading?
   - check npm run dev is running
-  - verify port 3000 is available
+  - verify port 3200 is available
   - check browser console for errors
   - try clearing browser cache
 

@@ -164,10 +164,11 @@ build_profile_command() {
         local resolve_script="$MENTIKO_CODE_ROOT/bin/secrets-resolve.mjs"
         if [[ -x "$resolve_script" || -f "$resolve_script" ]]; then
             node "$resolve_script" "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" "$profile_file" > "$env_file" 2>/dev/null || \
-            jq -r '.env // {} | to_entries[] | "export " + .key + "=" + (.value | @sh)' "$profile_file" > "$env_file" 2>/dev/null
+            jq -r '.env // {} | to_entries[] | select((.value | tostring | test("^\\{secret:[^}]+\\}$")) | not) | "export " + .key + "=" + (.value | @sh)' "$profile_file" > "$env_file" 2>/dev/null
         else
-            # no helper available, use raw values (legacy behavior)
-            jq -r '.env // {} | to_entries[] | "export " + .key + "=" + (.value | @sh)' "$profile_file" > "$env_file" 2>/dev/null
+            # no helper available, use raw non-secret values only. Unresolved
+            # {secret:NAME} placeholders must not be exported to provider CLIs.
+            jq -r '.env // {} | to_entries[] | select((.value | tostring | test("^\\{secret:[^}]+\\}$")) | not) | "export " + .key + "=" + (.value | @sh)' "$profile_file" > "$env_file" 2>/dev/null
         fi
     fi
 

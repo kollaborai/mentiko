@@ -32,8 +32,11 @@ export function useTerminalWsConnection(
 
   const refreshToken = useCallback(async () => {
     const freshToken = await fetchToken();
+    if (!freshToken) {
+      return null;
+    }
     setToken(freshToken);
-    setStatus(freshToken ? "running" : "down");
+    setStatus("running");
     return freshToken;
   }, [fetchToken]);
 

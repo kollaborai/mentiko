@@ -15,7 +15,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { readSidecar, writeSidecar, readPending, clearPending } from "./session-store.js";
 
-const WEB_URL     = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
+const WEB_URL     = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
 const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
 const SESSION_ID  = process.env.MENTIKO_SESSION_ID || "";
 const FETCH_TIMEOUT_MS = 15000;

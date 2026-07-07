@@ -134,6 +134,7 @@ export function statusBadge(status: string) {
     in_progress: "bg-violet-500/15 text-violet-200",
     done: "bg-emerald-500/15 text-emerald-200",
     skipped: "bg-muted text-muted-foreground",
+    superseded: "bg-muted text-muted-foreground",
   };
 
   return (

@@ -4,13 +4,17 @@
 // a triage verdict (consumed in /api/jobs/[id]/complete). Called on-demand from
 // /api/tasks/[id]/outcome-summary and autonomously from the reconcile sweep.
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getTemplate, DEFAULT_TASK_RUN_SUMMARY_TEMPLATE } from "@/lib/generation/generation-template-storage";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { createJob, listJobs } from "@/lib/runs/job-store";
-import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { taskGet, taskUpdate, validateTaskId } from "@/lib/tasks/task-store";
+import {
+  currentRunArtifacts,
+  currentRunSummary,
+  currentRunTerminalFingerprint,
+  isOutcomeSummaryExecutionSource,
+  metadataRecord,
+} from "@/lib/tasks/run-outcome-evidence";
 
 export interface StartTaskOutcomeAuditInput {
   request: Request;
@@ -28,49 +32,11 @@ export interface StartTaskOutcomeAuditResult {
   sourceRunId?: string;
 }
 
-function metadataRecord(value: unknown): Record<string, unknown> {
-  if (!value) return {};
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function readJsonFile(filePath: string): unknown {
-  if (!existsSync(filePath)) return null;
-  try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function currentRunSummary(namespaceId: string, orgId: string, runId: string, fallback: unknown): unknown {
-  const p = join(resolveLinkRunsDir(namespaceId, orgId), runId, "artifacts", "run-summary.json");
-  return readJsonFile(p) || fallback || null;
-}
-
-function currentRunArtifacts(namespaceId: string, orgId: string, runId: string, fallback: unknown): unknown {
-  const run = readJsonFile(join(resolveLinkRunsDir(namespaceId, orgId), runId, "run.json"));
-  if (run && typeof run === "object" && !Array.isArray(run)) {
-    return (run as Record<string, unknown>).artifacts || fallback || [];
-  }
-  return fallback || [];
-}
-
 /**
  * Kick off (or no-op) the run-summary/audit agent for a task's latest execution
- * run. Idempotent per source run: if an audit already exists or is running for
- * that run, returns without starting a new one.
+ * run. Idempotent per source run terminal fingerprint: if a partial audit was
+ * made before the run reached terminal/artifact-backed state, the final state
+ * still gets audited.
  */
 export async function startTaskOutcomeAudit(
   input: StartTaskOutcomeAuditInput,
@@ -84,12 +50,24 @@ export async function startTaskOutcomeAudit(
   const metadata = metadataRecord(task.metadata);
   const sourceRunId = typeof metadata.last_run_id === "string" ? metadata.last_run_id : "";
   if (!sourceRunId) return { status: "no_run" };
+  if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) return { status: "no_run" };
+  const runFingerprint = currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId);
+  const auditedFingerprint =
+    typeof metadata.task_outcome_summary_run_fingerprint === "string"
+      ? metadata.task_outcome_summary_run_fingerprint
+      : typeof metadata.completion_audit_run_fingerprint === "string"
+        ? metadata.completion_audit_run_fingerprint
+        : "";
 
   // Already audited this run.
-  if (metadata.task_outcome_summary_source_run_id === sourceRunId && metadata.task_outcome_summary) {
+  if (
+    metadata.task_outcome_summary_source_run_id === sourceRunId &&
+    auditedFingerprint === runFingerprint &&
+    metadata.task_outcome_summary
+  ) {
     return { status: "already_exists", sourceRunId };
   }
-  if (metadata.completion_audit_run_id === sourceRunId) {
+  if (metadata.completion_audit_run_id === sourceRunId && auditedFingerprint === runFingerprint) {
     return { status: "already_exists", sourceRunId };
   }
 
@@ -143,7 +121,7 @@ export async function startTaskOutcomeAudit(
 
   const job = createJob(
     "task_run_summary",
-    { prompt, taskId, sourceRunId, workspacePath, namespaceId, orgId },
+    { prompt, taskId, sourceRunId, runFingerprint, workspacePath, namespaceId, orgId },
     taskId,
     undefined,
     userId,
@@ -156,6 +134,9 @@ export async function startTaskOutcomeAudit(
       task_outcome_summary_job_id: job.id,
       task_outcome_summary_status: "running",
       task_outcome_summary_source_run_id: sourceRunId,
+      task_outcome_summary_run_fingerprint: runFingerprint,
+      task_outcome_summary: undefined,
+      task_outcome_summary_completed_at: undefined,
       task_outcome_summary_error: undefined,
     },
   }, namespaceId);
@@ -184,6 +165,9 @@ export async function startTaskOutcomeAudit(
         task_outcome_summary_run_id: run.runId,
         task_outcome_summary_chain_id: run.chainId,
         task_outcome_summary_source_run_id: sourceRunId,
+        task_outcome_summary_run_fingerprint: runFingerprint,
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
       },
     }, namespaceId);
 
@@ -196,6 +180,9 @@ export async function startTaskOutcomeAudit(
         task_outcome_summary_job_id: job.id,
         task_outcome_summary_status: "failed",
         task_outcome_summary_source_run_id: sourceRunId,
+        task_outcome_summary_run_fingerprint: runFingerprint,
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
         task_outcome_summary_error: error instanceof Error ? error.message : String(error),
       },
     }, namespaceId);

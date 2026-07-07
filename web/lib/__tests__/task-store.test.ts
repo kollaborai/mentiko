@@ -279,6 +279,18 @@ describe("task-store", () => {
       expect(fetched.closed_at).toBeTruthy();
     });
 
+    it("clears closed_at when a closed task is reopened", () => {
+      const t = taskCreate("upd", { title: "To reopen" });
+      taskUpdate("upd", t.id, { status: "closed" });
+      expect(taskGet("upd", t.id)!.closed_at).toBeTruthy();
+
+      taskUpdate("upd", t.id, { status: "open" });
+
+      const fetched = taskGet("upd", t.id)!;
+      expect(fetched.status).toBe("open");
+      expect(fetched.closed_at).toBeNull();
+    });
+
     it("replaces metadata entirely", () => {
       const t = taskCreate("upd", { title: "Meta", metadata: { a: 1, b: 2 } });
       taskUpdate("upd", t.id, { metadata: { c: 3 } });

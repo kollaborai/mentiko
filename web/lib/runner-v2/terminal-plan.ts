@@ -7,6 +7,7 @@ export type OnCompletePolicy =
 
 export interface TerminalCompletionInput {
   runId: string;
+  chainId?: string;
   chainName: string;
   chainPath?: string;
   taskId?: string;
@@ -23,12 +24,12 @@ export type TerminalCompletionStep =
   | { type: "run-status"; status: "completed" }
   | { type: "task-status"; status: "completed"; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: "success"; chainPath?: string }
-  | { type: "webhook"; event: "chain_complete"; chainPath?: string; lastEvent?: string; lastAgentId?: string; lastAgentName?: string }
+  | { type: "webhook"; event: "chain_complete"; chainId?: string; chainPath?: string; lastEvent?: string; lastAgentId?: string; lastAgentName?: string }
   | { type: "event"; event: "chain-complete"; source: string; data: string }
   | { type: "plugin"; event: "chain-completed"; chainName: string; runId: string; agentId?: string }
   | { type: "notification"; event: "chain-completed"; chainName: string; runId: string; agentId?: string }
   | { type: "hook"; event: "run-completed"; runId: string; details: Record<string, string> }
-  | { type: "metadata-webhooks"; event: "completed"; chainPath?: string; chainName: string; runId: string }
+  | { type: "metadata-webhooks"; event: "completed"; chainId?: string; chainPath?: string; chainName: string; runId: string }
   | { type: "legacy-webhook"; url: string; payload: Record<string, string> }
   | { type: "session-policy"; policy: "stop"; sessions: string[] }
   | { type: "session-policy"; policy: "keep" | "archive" }
@@ -57,6 +58,7 @@ export function planTerminalCompletion(
     {
       type: "webhook",
       event: "chain_complete",
+      chainId: input.chainId,
       chainPath: input.chainPath,
       lastEvent: input.lastEvent,
       lastAgentId: input.lastAgentId,
@@ -97,6 +99,7 @@ export function planTerminalCompletion(
     {
       type: "metadata-webhooks",
       event: "completed",
+      chainId: input.chainId,
       chainPath: input.chainPath,
       chainName: input.chainName,
       runId: input.runId,
@@ -130,6 +133,7 @@ export function planTerminalCompletion(
 
 export interface TerminalFailureInput {
   runId: string;
+  chainId?: string;
   chainName: string;
   chainPath?: string;
   taskId?: string;
@@ -141,7 +145,7 @@ export type TerminalFailureStep =
   | { type: "task-status"; status: "failed"; taskId?: string; runId?: string }
   | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }
   | { type: "notification"; event: "agent-failed"; chainName: string; runId: string; agentId?: string; reason?: string }
-  | { type: "metadata-webhooks"; event: "failed"; chainPath?: string; chainName: string; runId: string };
+  | { type: "metadata-webhooks"; event: "failed"; chainId?: string; chainPath?: string; chainName: string; runId: string };
 
 export interface TerminalFailurePlan {
   reason: "no-completion-event";
@@ -183,6 +187,7 @@ export function planTerminalFailure(input: TerminalFailureInput): TerminalFailur
     {
       type: "metadata-webhooks",
       event: "failed",
+      chainId: input.chainId,
       chainPath: input.chainPath,
       chainName: input.chainName,
       runId: input.runId,

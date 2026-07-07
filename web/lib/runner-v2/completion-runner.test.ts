@@ -1,4 +1,4 @@
-import { mkdtempSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { completeAgent } from "@/lib/runner-v2/completion-runner";
@@ -119,12 +119,68 @@ describe("runner-v2 completion runner", () => {
       retry: {
         nextAttempt: 1,
         launch: { agentId: "writer", reason: "missing-event" },
-        steps: [{ type: "circuit-breaker", action: "record-failure" }],
+        steps: [
+          { type: "circuit-breaker", action: "record-failure" },
+          { type: "retry-state", action: "set", agentId: "writer", attempt: 1 },
+        ],
       },
     });
     expect(readRunJson(file)).toMatchObject({
       status: "running",
       agents: [{ id: "writer", status: "running" }],
+    });
+  });
+
+  it("routes from agent handoff artifacts when the declared completion event is missing", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+    const artifactsDir = join(file, "..", "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(join(artifactsDir, "writer-summary.json"), JSON.stringify({
+      status: "complete",
+      artifactsProduced: ["draft.md"],
+    }));
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", name: "Writer", emits: "draft-ready" },
+      chain: {
+        id: "build-chain",
+        name: "Build Chain",
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: [],
+      retry: {
+        policy: { max_retries: 1 },
+        currentAttempt: 1,
+      },
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "route",
+      event: {
+        event: "draft-ready",
+        source: "writer",
+        data: "salvaged-from-agent-handoff-artifacts",
+      },
+      route: {
+        action: "launch",
+        agentIds: ["reviewer"],
+      },
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "running",
+      agents: [{ id: "writer", status: "complete" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_event",
     });
   });
 

@@ -39,7 +39,7 @@ jest.mock("@/lib/namespace-config", () => ({
 
 
 import { GET } from "./route";
-import { createJob, updateJob, getJob, deleteJob } from "@/lib/runs/job-store";
+import { createJob, updateJob, getJob, listJobs, deleteJob } from "@/lib/runs/job-store";
 import { taskCreate, taskDelete, taskGet } from "@/lib/tasks/task-store";
 
 function createMockRequest() {
@@ -321,6 +321,98 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
         recommendation_run_id: "run-stale-recommend",
         recommendation_chain_id: "chain-recommendation",
       });
+    });
+
+    test("should fail a running recommendation job when its run is already blocked", async () => {
+      const job = createJob("recommend", { prompt: "blocked run test" });
+      testJobIds.push(job.id);
+
+      const task = taskCreate("default", {
+        title: "blocked recommendation task",
+        metadata: {
+          analysis_job_id: job.id,
+          analysis_status: "running",
+        },
+      });
+      testTaskIds.push(task.id);
+
+      const runId = `run-blocked-${Date.now()}`;
+      updateJob(job.id, {
+        taskId: task.id,
+        status: "running",
+        startedAt: new Date().toISOString(),
+        runId,
+        chainId: "chain-recommendation",
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require("node:fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require("node:path");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { nsPath } = require("@/lib/config");
+      const runDir = nsPath("default", "runs", runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({
+        id: runId,
+        status: "blocked",
+        status_message: "concurrency cap: waited for a chain slot; blocked",
+        chainId: "chain-recommendation",
+        taskId: task.id,
+      }, null, 2));
+
+      const request = createMockRequest();
+      const response = await GET(request, {
+        params: Promise.resolve({ id: job.id })
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.data.status).toBe("failed");
+      expect(data.data.error).toContain("concurrency cap");
+
+      const updatedTask = taskGet("default", task.id);
+      expect(updatedTask?.metadata).toMatchObject({
+        analysis_job_id: job.id,
+        analysis_status: "failed",
+        recommendation_run_id: runId,
+        recommendation_chain_id: "chain-recommendation",
+      });
+    });
+
+    test("should reconcile stopped runs before returning running job lists", async () => {
+      const job = createJob("recommend", { prompt: "stopped list test" }, "task-stopped-list");
+      testJobIds.push(job.id);
+
+      const runId = `run-stopped-list-${Date.now()}`;
+      updateJob(job.id, {
+        status: "running",
+        startedAt: new Date().toISOString(),
+        runId,
+        chainId: "chain-recommendation",
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require("node:fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require("node:path");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { nsPath } = require("@/lib/config");
+      const runDir = nsPath("default", "runs", runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({
+        id: runId,
+        status: "stopped",
+        chainId: "chain-recommendation",
+      }, null, 2));
+
+      const runningJobs = listJobs({ taskId: "task-stopped-list", status: "running" });
+      expect(runningJobs).toEqual([]);
+
+      const failedJobs = listJobs({ taskId: "task-stopped-list", status: "failed" });
+      expect(failedJobs).toHaveLength(1);
+      expect(failedJobs[0].id).toBe(job.id);
+      expect(failedJobs[0].error).toBe(`Run ${runId} stopped`);
     });
   });
 

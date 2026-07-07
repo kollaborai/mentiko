@@ -282,7 +282,7 @@ function createSchedulerAdapters(nsId: string, orgId: string, schedule: Schedule
           org: orgId,
           scopes: ["tasks:generate"],
         });
-        const port = process.env.PORT || 3000;
+        const port = process.env.WEB_PORT || process.env.PORT || 3000;
         const res = await fetch(`http://localhost:${port}/api/mentiko-mcp/ops/tasks/generate`, {
           method: "POST",
           headers: {
@@ -312,7 +312,7 @@ function createSchedulerAdapters(nsId: string, orgId: string, schedule: Schedule
       try {
         const secret = process.env.BETTER_AUTH_SECRET;
         if (!secret) return { success: false, error: "BETTER_AUTH_SECRET is required to run scheduled tasks" };
-        const port = process.env.PORT || 3000;
+        const port = process.env.WEB_PORT || process.env.PORT || 3000;
         const res = await fetch(`http://localhost:${port}/api/tasks/${encodeURIComponent(taskId)}/run-chain`, {
           method: "POST",
           headers: {

@@ -110,10 +110,40 @@ describe("validateChain", () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(expect.arrayContaining([
-      "branches.made-up-event: must match an event emitted by an agent",
+      "branches.made-up-event: must match an event emitted or consumed by an agent",
       "branches.made-up-event: targets missing agent id: missing-worker",
       "branches.made-up-event: targets missing agent id: missing-validator",
     ]));
+  });
+
+  it("accepts a conditional branch key that an agent consumes but no agent statically emits", () => {
+    // A verifier declares emits: "verification-passed" (its success event) but at runtime
+    // also emits "verification-failed" on failure. That failure event is not in any static
+    // `emits`; it is wired into the fixer's triggers and routed by a branch. This is the
+    // review-loop / conditional pattern the chain generator produces, and it must save.
+    const chain = {
+      ...chainWithTimeout(0),
+      agents: [
+        {
+          id: "fixer",
+          name: "Fixer",
+          triggers: ["chain_start", "verification-failed"],
+          emits: "fix-implemented",
+        },
+        {
+          id: "verifier",
+          name: "Verifier",
+          triggers: ["fix-implemented"],
+          emits: "verification-passed",
+        },
+      ],
+      branches: {
+        "verification-passed": "stop",
+        "verification-failed": "fixer",
+      },
+    };
+
+    expect(validateChain(chain).valid).toBe(true);
   });
 
   it("allows stop as an explicit terminal branch target", () => {

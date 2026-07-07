@@ -204,6 +204,22 @@ function rowToTaskRecord(row: RawTaskRow): TaskRecord {
   return { ...row, labels, metadata };
 }
 
+function parseMetadata(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -437,6 +453,7 @@ export function taskUpdate(
   if (fields.status !== undefined) {
     sets.push("status = ?"); params.push(fields.status);
     if (fields.status === "closed") { sets.push("closed_at = ?"); params.push(now()); }
+    else { sets.push("closed_at = NULL"); }
   }
   if (fields.priority !== undefined) { sets.push("priority = ?"); params.push(fields.priority); }
   if (fields.assignee !== undefined) { sets.push("assignee = ?"); params.push(fields.assignee); }
@@ -451,6 +468,41 @@ export function taskUpdate(
 
   params.push(id, orgId);
   db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
+}
+
+export function taskClaimMetadataKeyIfUnset(
+  orgId: string,
+  id: string,
+  key: string,
+  metadata: Record<string, unknown>,
+  namespaceId?: string
+): boolean {
+  const db = getDb(namespaceId);
+  const existing = taskGet(orgId, id, namespaceId);
+  if (!existing) return false;
+
+  const existingMetadata = parseMetadata(existing.metadata);
+  if (existingMetadata[key] !== undefined && existingMetadata[key] !== null) {
+    return false;
+  }
+
+  const result = db.prepare(`
+    UPDATE tasks
+    SET metadata = ?, updated_at = ?
+    WHERE id = ?
+      AND org_id = ?
+      AND (
+        json_extract(metadata, ?) IS NULL
+      )
+  `).run(
+    JSON.stringify({ ...existingMetadata, ...metadata }),
+    now(),
+    id,
+    orgId,
+    `$.${key}`
+  );
+
+  return result.changes > 0;
 }
 
 /**

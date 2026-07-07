@@ -287,7 +287,7 @@ start the web dashboard:
 cd web && npm install && npm run dev
 ```
 
-open http://localhost:3000 in your browser.
+open http://localhost:3200 in your browser.
 
 from the web ui you can:
   - view all your chains

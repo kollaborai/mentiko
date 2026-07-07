@@ -6,7 +6,8 @@ export type DecisionStatus =
   | "approved"
   | "in_progress"
   | "done"
-  | "skipped";
+  | "skipped"
+  | "superseded";
 
 export interface Option {
   id: string;

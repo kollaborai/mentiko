@@ -97,7 +97,7 @@ wait_for_approval() {
     echo ""
 
     # construct web UI URL
-    local base_url="${BETTER_AUTH_URL:-http://localhost:3000}"
+    local base_url="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
     echo "  approve at: ${base_url}/approvals"
     echo "  (or via API: POST ${base_url}/api/approvals/${request_id} )"
     echo ""

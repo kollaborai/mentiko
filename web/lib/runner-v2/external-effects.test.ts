@@ -63,7 +63,14 @@ describe("runner-v2 external effects dispatcher", () => {
       {
         type: "metadata-webhooks",
         status: "queued",
-        operation: { type: "metadata-webhooks", event: "completed", chainName: "Build Chain", runId: "run-123" },
+        operation: {
+          type: "metadata-webhooks",
+          event: "completed",
+          chainId: "build-chain",
+          chainPath: "/data/runs/run-123/chain.json",
+          chainName: "Build Chain",
+          runId: "run-123",
+        },
       },
     ]);
 
@@ -77,9 +84,60 @@ describe("runner-v2 external effects dispatcher", () => {
       type: "chain_complete",
       metadata: expect.objectContaining({ chainId: "Build Chain", runId: "run-123", agentId: "writer" }),
     }));
-    expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "Build Chain", "completed", { runId: "run-123" });
+    expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "build-chain", "completed", { runId: "run-123" });
     expect(result).toMatchObject({ handled: 2, dispatched: 2, skipped: 0, failed: 0 });
     expect(readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8")).toContain("\"status\":\"dispatched\"");
+  });
+
+  it("does not derive metadata webhook chain ids from run-local chain snapshots", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [
+      {
+        type: "metadata-webhooks",
+        status: "queued",
+        operation: {
+          type: "metadata-webhooks",
+          event: "completed",
+          chainId: "run-summary-generation",
+          chainPath: "/data/runs/run-1783372176742-1dfead7e/chain.json",
+          chainName: "Run Summary Generation",
+          runId: "run-1783372176742-1dfead7e",
+        },
+      },
+    ]);
+
+    await dispatchExternalEffects({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(fireWebhooks).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "run-summary-generation",
+      "completed",
+      { runId: "run-1783372176742-1dfead7e" }
+    );
+  });
+
+  it("falls back to the display chain name when a metadata webhook has no chain path", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [
+      {
+        type: "metadata-webhooks",
+        status: "queued",
+        operation: { type: "metadata-webhooks", event: "completed", chainName: "Build Chain", runId: "run-123" },
+      },
+    ]);
+
+    await dispatchExternalEffects({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "Build Chain", "completed", { runId: "run-123" });
   });
 
   it("keeps agent-level notification typing so mid-chain completions never read as chain-level", async () => {
@@ -169,6 +227,27 @@ describe("runner-v2 external effects dispatcher", () => {
     expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "Build Chain", "completed");
     expect(result).toMatchObject({ handled: 1, dispatched: 1, skipped: 0, failed: 0 });
     expect(readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8")).toContain("\"status\":\"dispatched\"");
+  });
+
+  it("dispatches webhook operations with explicit chainId before path fallback", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [
+      {
+        type: "webhook",
+        status: "queued",
+        operation: {
+          type: "webhook",
+          event: "chain-completed",
+          chainId: "run-summary-generation",
+          chainPath: "/data/runs/run-1/chain.json",
+        },
+      },
+    ]);
+
+    const result = await dispatchExternalEffects({ outboxPath, namespaceId: "default", orgId: "default" });
+
+    expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "run-summary-generation", "completed");
+    expect(result).toMatchObject({ handled: 1, dispatched: 1, skipped: 0, failed: 0 });
   });
 
   it("skips a webhook event whose chain path cannot be resolved", async () => {

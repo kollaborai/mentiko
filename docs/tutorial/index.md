@@ -137,7 +137,7 @@ chain stuck?
 
 web ui not loading?
   - ensure npm run dev is running
-  - check port 3000 is available
+  - check port 3200 is available
   - verify browser console for errors
 
 next steps

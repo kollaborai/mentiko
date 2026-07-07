@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
-export const WEB_URL = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
+export const WEB_URL = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
 
 function mcpDir(): string {
   const root = process.env.MENTIKO_GLOBAL_ROOT || join(homedir(), ".mentiko");

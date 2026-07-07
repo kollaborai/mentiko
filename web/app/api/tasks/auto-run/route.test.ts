@@ -48,9 +48,11 @@ jest.mock("@/lib/runs/auto-run", () => ({
 
 const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
+const mockTaskClaimMetadataKeyIfUnset = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
+  taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
 }));
 
 jest.mock("@/lib/workspaces/workspace-storage", () => ({
@@ -127,6 +129,7 @@ describe("POST /api/tasks/auto-run", () => {
     mockReconcileActiveAutoRunTasks.mockReturnValue(0);
     mockReconcileTaskActiveRun.mockReturnValue({ activeRun: null, reconciled: false });
     mockGetJob.mockReturnValue(null);
+    mockTaskClaimMetadataKeyIfUnset.mockReturnValue(true);
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
     mockReadFileSync.mockReturnValue("{}");
@@ -215,6 +218,51 @@ describe("POST /api/tasks/auto-run", () => {
           analysis_job_id: undefined,
           analysis_status: "missing",
           auto_run_retries: 1,
+        }),
+      },
+      "default",
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("increments retries when an analysis job failed", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Analyze failed",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-failed",
+        analysis_status: "running",
+        auto_run_retries: 2,
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-failed",
+      type: "recommend",
+      status: "failed",
+      error: "Run blocked",
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      error: "Analysis job failed: Run blocked",
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      {
+        metadata: expect.objectContaining({
+          analysis_job_id: undefined,
+          analysis_status: "failed",
+          auto_run_retries: 3,
         }),
       },
       "default",
@@ -653,6 +701,17 @@ describe("POST /api/tasks/auto-run", () => {
         body: expect.stringContaining('"type":"generate"'),
       }),
     );
+    expect(mockTaskClaimMetadataKeyIfUnset).toHaveBeenCalledWith(
+      "default",
+      "TASK-3",
+      "generation_job_id",
+      expect.objectContaining({
+        generation_job_id: expect.stringMatching(/^claim-/),
+        generation_status: "starting",
+        analysis_status: "accepted",
+      }),
+      "default",
+    );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
       "TASK-3",
@@ -661,6 +720,56 @@ describe("POST /api/tasks/auto-run", () => {
           generation_job_id: "job-generation",
           generation_status: "running",
           analysis_status: "accepted",
+        }),
+      }),
+      "default",
+    );
+  });
+
+  it("does not start duplicate generation when another request already claimed it", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-3",
+      title: "Run smoke tests",
+      description: "Run local smoke tests and fix failures",
+      issue_type: "task",
+      priority: 2,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis",
+      type: "recommend",
+      status: "complete",
+      result: {
+        recommendation: {
+          chain_id: null,
+          confidence: "none",
+          rationale: "No existing chain handles smoke testing plus code repair.",
+          suggested_approach: "Execute directly in one session.",
+        },
+      },
+    });
+    mockTaskClaimMetadataKeyIfUnset.mockReturnValue(false);
+
+    const res = await POST(makeRequest({ taskId: "TASK-3" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-3",
+      action: "generation_pending",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalledWith(
+      "default",
+      "TASK-3",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          generation_status: "running",
         }),
       }),
       "default",

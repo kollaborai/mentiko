@@ -175,6 +175,34 @@ describe("getAutoRunCandidates", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  it("does not classify run-summary chains as active task execution when metadata is missing", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(["run-summary"] as never);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-summary",
+      taskId: "TASK-093",
+      status: "running",
+      chainId: "run-summary-generation",
+      chain: "run-summary-generation",
+      started: "2026-07-06T22:35:09.144Z",
+    }));
+
+    expect(findActiveRunForTask("TASK-093", "default")).toBeNull();
+
+    const result = reconcileTaskActiveRun("default", {
+      id: "TASK-093",
+      title: "Build backend lead-capture function",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+      },
+    } as never, "default");
+
+    expect(result).toEqual({ activeRun: null, reconciled: false });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
   it("does not classify decision runs as active task runs", () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue(["run-decision"] as never);
@@ -191,6 +219,42 @@ describe("getAutoRunCandidates", () => {
     }));
 
     expect(findActiveRunForTask("TASK-044", "default")).toBeNull();
+  });
+
+  it("does not classify runner-v2 completion_failed attempts as active task runs", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(["run-failed-typed"] as never);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-failed-typed",
+      taskId: "TASK-093",
+      status: "running",
+      chain: "nextjs-lead-capture-api-pipeline",
+      started: "2026-07-06T22:29:16.924Z",
+      runnerV2: {
+        attempts: [
+          {
+            id: "run-failed-typed:api-route-architect:1",
+            phase: "completion_failed",
+            terminalReason: "retries_exhausted",
+          },
+        ],
+      },
+    }));
+
+    expect(findActiveRunForTask("TASK-093", "default")).toBeNull();
+
+    const result = reconcileTaskActiveRun("default", {
+      id: "TASK-093",
+      title: "Build backend lead-capture function",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+      },
+    } as never, "default");
+
+    expect(result).toEqual({ activeRun: null, reconciled: false });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
   it("reconciles stale task metadata from active run state", () => {

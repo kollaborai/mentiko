@@ -12,7 +12,7 @@ SEND_AFTER="${PLUGIN_SEND_AFTER_EVENTS:-10}"
 EVENT_TYPE="${PLUGIN_EVENT_TYPE:-unknown}"
 CHAIN_ID="${PLUGIN_CHAIN_ID:-unknown}"
 RUN_ID="${PLUGIN_RUN_ID:-}"
-BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
 
 if [[ -z "$TO" ]]; then
     echo "  [email-digest] error: PLUGIN_TO not set"

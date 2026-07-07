@@ -196,7 +196,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). On first run, choose
+Open [http://localhost:3200](http://localhost:3200). On first run, choose
 **Sign up** and create the first local account. That first account becomes the
 workspace owner for this Mentiko instance, takes you to the dashboard, and opens
 the setup wizard. After that, use **Sign in** with the same email and password.

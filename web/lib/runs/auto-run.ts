@@ -27,6 +27,14 @@ export type ReadyCheckResult = {
 const DONE_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 const RETRYABLE_RUN_STATUSES = new Set(["stopped", "failed", "deleted", "unknown", "cancelled"]);
 const ACTIVE_RUN_STATUSES = new Set(["running", "pending"]);
+const TERMINAL_RUNNER_V2_ATTEMPT_PHASES = new Set(["completion_failed"]);
+const NON_EXECUTION_CHAIN_IDS = new Set([
+  "run-summary-generation",
+  "chain-recommendation",
+  "chain-generation",
+  "task-generation",
+  "decision-research",
+]);
 
 export interface ActiveTaskRun {
   id: string;
@@ -105,6 +113,24 @@ function parseTime(value?: string): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+function hasTerminalRunnerV2Attempt(run: { runnerV2?: unknown }): boolean {
+  const runnerV2 = run.runnerV2;
+  if (!runnerV2 || typeof runnerV2 !== "object" || Array.isArray(runnerV2)) return false;
+  const attempts = (runnerV2 as { attempts?: unknown }).attempts;
+  if (!Array.isArray(attempts)) return false;
+  return attempts.some((attempt) => {
+    if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return false;
+    const phase = (attempt as { phase?: unknown }).phase;
+    return typeof phase === "string" && TERMINAL_RUNNER_V2_ATTEMPT_PHASES.has(phase);
+  });
+}
+
+function hasNonExecutionChainId(run: { chain?: unknown; chainId?: unknown }): boolean {
+  const chainId = typeof run.chainId === "string" ? run.chainId : "";
+  const chain = typeof run.chain === "string" ? run.chain : "";
+  return NON_EXECUTION_CHAIN_IDS.has(chainId) || NON_EXECUTION_CHAIN_IDS.has(chain);
+}
+
 export function findActiveRunForTask(taskId: string, namespaceId?: string): ActiveTaskRun | null {
   const runsDir = nsPath(namespaceId || "default", "runs");
   if (!existsSync(runsDir)) return null;
@@ -125,10 +151,13 @@ export function findActiveRunForTask(taskId: string, namespaceId?: string): Acti
         started?: string;
         agents?: Array<{ id?: string; status?: string; completed?: string }>;
         metadata?: unknown;
+        runnerV2?: unknown;
       };
       if (run.taskId !== taskId) continue;
+      if (hasNonExecutionChainId(run)) continue;
       if (isNonExecutionRun(run)) continue;
       if (!run.status || !ACTIVE_RUN_STATUSES.has(run.status)) continue;
+      if (hasTerminalRunnerV2Attempt(run)) continue;
       if (allDeclaredAgentsComplete(run, join(runsDir, dir))) continue;
       activeRuns.push({
         id: run.id || dir,

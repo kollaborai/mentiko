@@ -42,12 +42,12 @@ cd web && npx tsc --noEmit 2>&1 | head -60
           <div>
             <h2 className="text-sm font-medium text-foreground mb-1">Dev Server Crashes</h2>
             <p className="text-xs text-foreground/60 leading-relaxed">
-              port 3000 already in use, usually from a tglm agent starting its own server.
+              port 3200 already in use, usually from a tglm agent starting its own server.
             </p>
           </div>
           <div className="bg-muted rounded-md p-3 font-mono text-[11px] text-foreground/70 whitespace-pre overflow-x-auto">
-{`# check what's using port 3000
-lsof -i :3000
+{`# check what's using port 3200
+lsof -i :3200
 
 # kill the process
 kill -9 <PID>

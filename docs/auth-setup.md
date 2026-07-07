@@ -26,7 +26,7 @@ for production:
 
 ## signup flow
 
-1. navigate to http://localhost:3000
+1. navigate to http://localhost:3200
 2. choose "sign up" or "create first account"
 3. enter name, email, and a password with at least 12 characters
 4. the first user becomes owner/admin of the default workspace
@@ -50,7 +50,7 @@ oauth (github/google):
 variable              required  default                    description
 DATABASE_URL          no        file:~/.mentiko/data/auth.db    better-auth sqlite db
 BETTER_AUTH_SECRET    no        auto-generated           secret for session tokens
-BETTER_AUTH_URL       no        http://localhost:3000     canonical url of app
+BETTER_AUTH_URL       no        http://localhost:3200     canonical url of app
 
 development:
   - DATABASE_URL not required (uses sqlite by default)
@@ -128,7 +128,7 @@ web/.env.local:
 ```
 DATABASE_URL="file:~/.mentiko/data/auth.db"
 BETTER_AUTH_SECRET="your-super-secret-key-32-chars-min"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="http://localhost:3200"
 ```
 
 ## example: production env

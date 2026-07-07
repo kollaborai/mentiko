@@ -12,15 +12,18 @@ const taskClose = jest.fn();
 const taskUpdate = jest.fn();
 const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
+const taskList = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
 const startDecisionResearch = jest.fn();
+const updateDecision = jest.fn();
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskClose: (...a: unknown[]) => taskClose(...a),
   taskUpdate: (...a: unknown[]) => taskUpdate(...a),
   taskMergeMeta: (...a: unknown[]) => taskMergeMeta(...a),
   taskAddComment: (...a: unknown[]) => taskAddComment(...a),
+  taskList: (...a: unknown[]) => taskList(...a),
 }));
 
 jest.mock("@/lib/tasks/task-decision-link", () => ({
@@ -29,6 +32,10 @@ jest.mock("@/lib/tasks/task-decision-link", () => ({
 
 jest.mock("@/lib/notifications/notification-server", () => ({
   createNotification: (...a: unknown[]) => createNotification(...a),
+}));
+
+jest.mock("@/lib/decisions/decision-storage", () => ({
+  updateDecision: (...a: unknown[]) => updateDecision(...a),
 }));
 
 // Covers the `await import("@/lib/decisions/decision-chain-dispatch")` inside
@@ -96,12 +103,14 @@ function makeInput(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  taskList.mockReturnValue([]);
   // Default: createTaskDecision returns a fake {decision, task}.
   createTaskDecision.mockResolvedValue({
     decision: { id: "decision-x1" },
     task: { id: "DEC-1" },
   });
   startDecisionResearch.mockResolvedValue(undefined);
+  updateDecision.mockResolvedValue({ id: "decision-024", status: "superseded" });
 });
 
 // ---------------------------------------------------------------------------
@@ -250,12 +259,19 @@ describe("applyCompletionAudit", () => {
   });
 
   // 5. idempotency
-  it("skips entirely when completion_audit_run_id already matches the current runId", async () => {
+  it("skips entirely when completion_audit_run_id already matches the current applied run fingerprint", async () => {
     const task = makeTask();
     const audit: CompletionAudit = { verdict: "close", reason: "Done." };
     // metadata already records this run as processed
     const result = await applyCompletionAudit(
-      makeInput(task, audit, { completion_audit_run_id: "run-abc" }, "run-abc"),
+      {
+        ...makeInput(task, audit, {
+          completion_audit_run_id: "run-abc",
+          completion_audit_run_fingerprint: "completed:t1",
+          completion_audit_apply_status: "applied",
+        }, "run-abc"),
+        runFingerprint: "completed:t1",
+      },
     );
 
     expect(result.action).toBe("skipped");
@@ -325,5 +341,82 @@ describe("applyCompletionAudit", () => {
     await applyCompletionAudit(makeInput(task, audit));
 
     expect(taskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("does not skip when only an audit claim exists for the same run", async () => {
+    const task = makeTask();
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which path should we take?" },
+    };
+
+    const result = await applyCompletionAudit(
+      {
+        ...makeInput(task, audit, {
+          completion_audit_claimed_run_id: "run-abc",
+          completion_audit_claimed_run_fingerprint: "completed:t1",
+        }, "run-abc"),
+        runFingerprint: "completed:t1",
+      },
+    );
+
+    expect(result.action).toBe("decision_created");
+    expect(createTaskDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it("close: closes stale completion-audit decision subtasks as superseded", async () => {
+    taskList.mockReturnValue([
+      makeTask({
+        id: "DEC-024",
+        parent_id: "TASK-42",
+        issue_type: "decision",
+        status: "open",
+        metadata: { decision_source: "completion-audit", decision_id: "decision-024" },
+      }),
+      makeTask({
+        id: "DEC-other",
+        parent_id: "TASK-99",
+        issue_type: "decision",
+        status: "open",
+        metadata: { decision_source: "completion-audit" },
+      }),
+    ]);
+    const task = makeTask();
+    const audit: CompletionAudit = { verdict: "close", reason: "Later run produced files." };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t2",
+    });
+
+    expect(result.action).toBe("closed");
+    expect(taskClose).toHaveBeenCalledWith(
+      "default",
+      "DEC-024",
+      "Superseded by later completion audit evidence.",
+      "default",
+    );
+    expect(taskClose).not.toHaveBeenCalledWith(
+      "default",
+      "DEC-other",
+      expect.anything(),
+      "default",
+    );
+    expect(updateDecision).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "decision-024",
+      { status: "superseded" },
+    );
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        superseded_decision_subtask_ids: ["DEC-024"],
+        completion_audit_run_fingerprint: "completed:t2",
+      }),
+      "default",
+    );
   });
 });

@@ -1,5 +1,6 @@
 import type { CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { RunQualityGateEventArtifactInput } from "@/lib/event-artifacts/event-artifact-runner";
+import { shellEscape } from "@/lib/api/audit-exec";
 import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { planCompletionEventSideEffects, type EventSideEffectPlan } from "@/lib/runner-v2/event-side-effects";
 import { createFanGroupState, type FanGroupCompletionPlan, type FanGroupState } from "@/lib/runner-v2/fan-group";
@@ -21,7 +22,7 @@ export type TypedExecutorEffect =
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
 
 export interface TypedExecutorPlan {
-  action: "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop";
+  action: "already-completed" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop";
   launches: RoutedLaunchPlan[];
   effects: TypedExecutorEffect[];
 }
@@ -127,8 +128,12 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
     effects.push({ type: "retry", plan: decision.retry });
     launches.push({
       kind: "single",
-      command: buildFanGroupLaunchCommand(input.routeContext, decision.retry.launch.agentId),
-      env: { ...input.routeContext.env },
+      command: buildRetryLaunchCommand(input.routeContext, decision.retry.launch.agentId, decision.retry.delaySeconds),
+      env: {
+        ...input.routeContext.env,
+        MENTIKO_RETRY_ATTEMPT: String(decision.retry.nextAttempt),
+        RETRY_ATTEMPT: String(decision.retry.nextAttempt),
+      },
       detached: true,
     });
   } else if (decision.action === "exhausted") {
@@ -148,6 +153,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
       type: "terminal-failure",
       plan: planTerminalFailure({
         runId: input.terminal?.runId || input.routeContext.env?.MENTIKO_RUN_ID || "",
+        chainId: input.terminal?.chainId || input.routeContext.env?.MENTIKO_CHAIN_ID,
         chainName: input.terminal?.chainName || "unknown",
         chainPath: input.terminal?.chainPath || input.routeContext.chainPath,
         taskId: input.terminal?.taskId ?? input.routeContext.taskId,
@@ -171,6 +177,7 @@ function isFanOutRoute(route: { action: string; fanIn?: string; waitFor?: string
 function terminalInputForRoute(input: TypedExecutorInput, eventName: string): TerminalCompletionInput {
   const base = input.terminal || {
     runId: input.routeContext.env?.MENTIKO_RUN_ID || "",
+    chainId: input.routeContext.env?.MENTIKO_CHAIN_ID,
     chainName: "unknown",
     chainPath: input.routeContext.chainPath,
     taskId: input.routeContext.taskId,
@@ -187,4 +194,10 @@ function buildFanGroupLaunchCommand(context: RoutedLaunchContext, agentId: strin
     reason: "typed executor single launch",
   }, context);
   return plan.command;
+}
+
+function buildRetryLaunchCommand(context: RoutedLaunchContext, agentId: string, delaySeconds: number): string {
+  const command = buildFanGroupLaunchCommand(context, agentId);
+  const delay = Number.isFinite(delaySeconds) && delaySeconds > 0 ? delaySeconds : 0;
+  return delay > 0 ? `sleep ${shellEscape(String(delay))}; ${command}` : command;
 }

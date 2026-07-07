@@ -5,6 +5,7 @@ import {
   RunnerV2CompletionUnsupportedError,
   runRunnerV2CompletionEntrypoint,
 } from "@/lib/runner-v2/completion-entrypoint";
+import { shellLoopStatePath } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 
 function tempRoot() {
@@ -342,7 +343,7 @@ describe("runner-v2 completion entrypoint", () => {
   // bootstrap-created AgentAttempt record.
   // ---------------------------------------------------------------
 
-  function seedRoutedRun(root: string, options?: { downstream?: boolean; downstreamStatus?: string }) {
+  function seedRoutedRun(root: string, options?: { downstream?: boolean; downstreamStatus?: string; omitChainId?: boolean; runChainId?: string }) {
     const runDir = join(root, "runs", "run-123");
     const eventsDir = join(root, "events");
     const stateDir = join(root, "state");
@@ -352,7 +353,7 @@ describe("runner-v2 completion entrypoint", () => {
 
     const chainPath = join(root, "chain.json");
     writeJson(chainPath, {
-      id: "chain",
+      ...(options?.omitChainId ? {} : { id: "chain" }),
       name: "Build Chain",
       config: { project_root: root },
       agents: [
@@ -373,6 +374,7 @@ describe("runner-v2 completion entrypoint", () => {
     updateRunJson(runJsonPath, () => ({
       ...run,
       id: "run-123",
+      ...(options?.runChainId ? { chainId: options.runChainId } : {}),
       status: "running",
       taskId: "TASK-173",
       agents: [
@@ -450,7 +452,7 @@ describe("runner-v2 completion entrypoint", () => {
     const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; namespaceId?: string; orgId?: string; operation?: { event?: string; taskId?: string } });
+      .map((line) => JSON.parse(line) as { type: string; namespaceId?: string; orgId?: string; operation?: { event?: string; taskId?: string; chainId?: string } });
     const types = outbox.map((record) => record.type);
     expect(types).toEqual(expect.arrayContaining(["task-status", "webhook", "plugin", "notification", "metadata-webhooks"]));
     expect(outbox.find((record) => record.type === "task-status")?.operation?.taskId).toBe("TASK-173");
@@ -458,6 +460,27 @@ describe("runner-v2 completion entrypoint", () => {
     // per-agent effects ride the same outbox
     expect(outbox.some((record) => record.type === "plugin" && record.operation?.event === "agent-completed")).toBe(true);
     expect(outbox.some((record) => record.type === "notification" && record.operation?.event === "agent-completed")).toBe(true);
+  });
+
+  it("uses run.chainId for terminal external effects when run-local chain.json has no id", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { omitChainId: true, runChainId: "e2e-fixture-execution-stream" });
+    emitVerifierEvent(fixture.eventsDir);
+
+    runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; operation?: { chainId?: string } });
+
+    expect(outbox.find((record) => record.type === "metadata-webhooks")?.operation?.chainId)
+      .toBe("e2e-fixture-execution-stream");
   });
 
   it("adopts and fails the typed attempt when a routed agent completes without its event", () => {
@@ -532,6 +555,46 @@ describe("runner-v2 completion entrypoint", () => {
     };
     expect(run.runnerV2?.attempts || []).toHaveLength(0);
     expect(run.status).toBe("running");
+    expect(existsSync(join(fixture.runDir, "chain-loop-state.json"))).toBe(false);
+    expect(existsSync(shellLoopStatePath(fixture.runDir))).toBe(false);
+  });
+
+  it("treats duplicate processed completions as idempotent no-ops", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { downstream: true, downstreamStatus: "running" });
+    const runBefore = readRunJson(fixture.runJsonPath);
+    updateRunJson(fixture.runJsonPath, () => ({
+      ...runBefore,
+      agents: [
+        { id: "verifier", name: "Verifier", session: "verifier-run-123", status: "complete" },
+        { id: "publisher", name: "Publisher", session: "publisher-run-123", status: "running" },
+      ],
+      sessions: ["verifier-run-123", "publisher-run-123"],
+    }));
+    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), [
+      "event: verification-complete",
+      "source: verifier-run-123",
+      "run_id: run-123",
+      "processed: true",
+      "data: ok",
+      "",
+    ].join("\n"));
+
+    const before = readFileSync(fixture.runJsonPath, "utf8");
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "already-completed",
+      plan: { action: "already-completed", launches: [], effects: [] },
+      adapter: { effectsApplied: [], operations: [], launchesStarted: [] },
+    });
+    expect(readFileSync(fixture.runJsonPath, "utf8")).toBe(before);
   });
 
   it("stays quiet when the routed completion's downstream target is already active", () => {

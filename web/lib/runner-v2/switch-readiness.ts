@@ -129,6 +129,18 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "tenant image does not compile the runner-v2 completion bridge",
   ));
   checks.push(sourceContainsCheck(
+    "profile-secret-placeholder-skip",
+    join(config.codeRoot, "bin/secrets-resolve.mjs"),
+    "unresolved secret reference skipped",
+    "secret resolution can still export raw {secret:NAME} placeholders into runtime env",
+  ));
+  checks.push(sourceContainsCheck(
+    "profile-fallback-secret-filter",
+    join(config.codeRoot, "lib/agent-profile.sh"),
+    "secret:[^}]+",
+    "agent profile fallback can still export raw {secret:NAME} placeholders when the resolver fails",
+  ));
+  checks.push(sourceContainsCheck(
     "initial-launch-typed",
     join(config.codeRoot, "web/lib/runner-v2/launch-plan.ts"),
     'MENTIKO_RUNNER_V2_MODE: "typed-plan"',
@@ -157,6 +169,78 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     join(config.codeRoot, "web/lib/runner-v2/completion-runner.ts"),
     "generation-terminal",
     "typed completion does not salvage no-emit core generation runs",
+  ));
+  checks.push(sourceContainsCheck(
+    "loop-state-shell-typed-interop",
+    join(config.codeRoot, "web/lib/runner-v2/loop-state.ts"),
+    "chain_loop_tracker.txt",
+    "typed loop detection does not read/write the shell chain_loop_tracker.txt state",
+  ));
+  checks.push(sourceContainsCheck(
+    "completion-dry-run-shell-loop-restore",
+    join(config.codeRoot, "web/lib/runner-v2/completion-entrypoint.ts"),
+    "shellLoopStatePath",
+    "typed completion dry-run/failure restore does not cover the shell loop tracker",
+  ));
+  checks.push(sourceContainsCheck(
+    "completion-idempotent-duplicate",
+    join(config.codeRoot, "web/lib/runner-v2/completion-entrypoint.ts"),
+    "already-completed",
+    "typed completion can re-apply effects for an already processed agent completion",
+  ));
+  checks.push(sourceContainsCheck(
+    "task-audit-run-fingerprint",
+    join(config.codeRoot, "web/lib/tasks/task-outcome-audit.ts"),
+    "task_outcome_summary_run_fingerprint",
+    "task outcome audit idempotency is keyed only by run id, so stale partial audits can suppress terminal audits",
+  ));
+  checks.push(sourceContainsCheck(
+    "task-audit-clears-stale-summary",
+    join(config.codeRoot, "web/lib/tasks/task-outcome-audit.ts"),
+    "task_outcome_summary: undefined",
+    "task outcome re-audit does not clear stale summary payloads before marking the newer run fingerprint running",
+  ));
+  checks.push(sourceContainsCheck(
+    "completion-audit-claimed-vs-applied",
+    join(config.codeRoot, "web/lib/tasks/completion-audit-apply.ts"),
+    "completion_audit_claimed_run_id",
+    "completion audit still uses one run id marker for both claim and applied side effects",
+  ));
+  checks.push(sourceContainsCheck(
+    "task-reopen-clears-closed-at",
+    join(config.codeRoot, "web/lib/tasks/task-store.ts"),
+    "closed_at = NULL",
+    "task status can be reopened while closed_at remains populated, splitting UI receipts from dependency readiness",
+  ));
+  checks.push(sourceContainsCheck(
+    "completion-audit-disk-artifacts",
+    join(config.codeRoot, "web/lib/tasks/run-outcome-evidence.ts"),
+    "listArtifactFiles",
+    "completion audit still trusts run.json artifacts without scanning disk artifact evidence",
+  ));
+  checks.push(sourceContainsCheck(
+    "chain-generation-dynamic-port-proof",
+    join(config.codeRoot, "web/lib/generation/chain-generation-required-rules.ts"),
+    "DYNAMIC_PORT_RUNTIME_PROOF",
+    "chain generation prompts can still verify generated apps by accidentally curling Mentiko on port 3000",
+  ));
+  checks.push(sourceContainsCheck(
+    "retry-delay-command",
+    join(config.codeRoot, "web/lib/runner-v2/executor.ts"),
+    "buildRetryLaunchCommand",
+    "typed retry launch does not preserve configured retry delay",
+  ));
+  checks.push(sourceContainsCheck(
+    "retry-attempt-env",
+    join(config.codeRoot, "web/lib/runner-v2/executor.ts"),
+    "MENTIKO_RETRY_ATTEMPT",
+    "typed retry launch does not pass retry attempt state to the relaunched shell/typed path",
+  ));
+  checks.push(sourceContainsCheck(
+    "retry-state-adapter",
+    join(config.codeRoot, "web/lib/runner-v2/adapters.ts"),
+    "applyRetryState",
+    "typed retry effects do not persist/clear shell-compatible retry state",
   ));
   checks.push(coreGenerationEmitPromptCheck(join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts")));
   checks.push(typedBootstrapExecutionCheck({

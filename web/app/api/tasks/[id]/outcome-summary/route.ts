@@ -1,60 +1,24 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { apiSuccess, withErrorHandling } from "@/lib/api-response";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { getTemplate, DEFAULT_TASK_RUN_SUMMARY_TEMPLATE } from "@/lib/generation/generation-template-storage";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { createJob, listJobs } from "@/lib/runs/job-store";
-import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { taskGet, taskUpdate, validateTaskId } from "@/lib/tasks/task-store";
+import {
+  currentRunArtifacts,
+  currentRunSummary,
+  currentRunTerminalFingerprint,
+  isOutcomeSummaryExecutionSource,
+  metadataRecord,
+} from "@/lib/tasks/run-outcome-evidence";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-function metadataRecord(value: unknown): Record<string, unknown> {
-  if (!value) return {};
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function readJsonFile(filePath: string): unknown {
-  if (!existsSync(filePath)) return null;
-  try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function currentRunSummary(namespaceId: string, orgId: string, runId: string, fallback: unknown): unknown {
-  const runSummaryPath = join(resolveLinkRunsDir(namespaceId, orgId), runId, "artifacts", "run-summary.json");
-  return readJsonFile(runSummaryPath) || fallback || null;
-}
-
-function currentRunArtifacts(namespaceId: string, orgId: string, runId: string, fallback: unknown): unknown {
-  const runPath = join(resolveLinkRunsDir(namespaceId, orgId), runId, "run.json");
-  const run = readJsonFile(runPath);
-  if (run && typeof run === "object" && !Array.isArray(run)) {
-    return (run as Record<string, unknown>).artifacts || fallback || [];
-  }
-  return fallback || [];
-}
 
 export const POST = requirePermission("manage_tasks")(
   withErrorHandling(async (
@@ -74,13 +38,21 @@ export const POST = requirePermission("manage_tasks")(
     if (!sourceRunId) {
       throw new BadRequest("Task has no execution run to summarize");
     }
+    if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) {
+      throw new BadRequest("Task outcome summary source must be an execution run");
+    }
+    const runFingerprint = currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId);
 
     const currentSummary = metadata.task_outcome_summary;
     const currentSourceRunId = typeof metadata.task_outcome_summary_source_run_id === "string"
       ? metadata.task_outcome_summary_source_run_id
       : "";
+    const currentFingerprint = typeof metadata.task_outcome_summary_run_fingerprint === "string"
+      ? metadata.task_outcome_summary_run_fingerprint
+      : "";
     if (
       currentSourceRunId === sourceRunId &&
+      currentFingerprint === runFingerprint &&
       currentSummary &&
       typeof currentSummary === "object" &&
       !Array.isArray(currentSummary)
@@ -119,7 +91,10 @@ export const POST = requirePermission("manage_tasks")(
     };
 
     const template = getTemplate(namespaceId, orgId, "task_run_summary");
-    const prompt = resolveTemplate(template.content, {
+    const templateContent = template.content.includes("COMPLETION AUDIT")
+      ? template.content
+      : DEFAULT_TASK_RUN_SUMMARY_TEMPLATE;
+    const prompt = resolveTemplate(templateContent, {
       TASK_DATA: JSON.stringify({
         id: task.id,
         title: task.title,
@@ -143,6 +118,7 @@ export const POST = requirePermission("manage_tasks")(
         prompt,
         taskId,
         sourceRunId,
+        runFingerprint,
         workspacePath,
         namespaceId,
         orgId,
@@ -159,6 +135,9 @@ export const POST = requirePermission("manage_tasks")(
         task_outcome_summary_job_id: job.id,
         task_outcome_summary_status: "running",
         task_outcome_summary_source_run_id: sourceRunId,
+        task_outcome_summary_run_fingerprint: runFingerprint,
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
         task_outcome_summary_error: undefined,
       },
     }, namespaceId);
@@ -187,6 +166,9 @@ export const POST = requirePermission("manage_tasks")(
           task_outcome_summary_job_id: job.id,
           task_outcome_summary_status: "failed",
           task_outcome_summary_source_run_id: sourceRunId,
+          task_outcome_summary_run_fingerprint: runFingerprint,
+          task_outcome_summary: undefined,
+          task_outcome_summary_completed_at: undefined,
           task_outcome_summary_error: error instanceof Error ? error.message : String(error),
         },
       }, namespaceId);
@@ -202,6 +184,9 @@ export const POST = requirePermission("manage_tasks")(
         task_outcome_summary_run_id: run.runId,
         task_outcome_summary_chain_id: run.chainId,
         task_outcome_summary_source_run_id: sourceRunId,
+        task_outcome_summary_run_fingerprint: runFingerprint,
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
       },
     }, namespaceId);
 

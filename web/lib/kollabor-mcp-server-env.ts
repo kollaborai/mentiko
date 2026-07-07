@@ -5,7 +5,7 @@
  */
 
 export function getKollabMentikoMcpServerEnv(): Record<string, string> {
-  const port = process.env.PORT || "3000";
+  const port = process.env.WEB_PORT || process.env.PORT || "3000";
   const webUrl =
     (process.env.MENTIKO_WEB_URL && process.env.MENTIKO_WEB_URL.trim()) ||
     `http://127.0.0.1:${port}`;

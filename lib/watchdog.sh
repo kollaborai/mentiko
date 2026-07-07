@@ -503,8 +503,9 @@ while true; do
     fi
 
     # reconcile task metadata (catches deleted runs, missed updates)
+    web_url="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}"
     curl -s -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \
-        "http://localhost:3000/api/tasks/reconcile" >/dev/null 2>&1 &
+        "${web_url%/}/api/tasks/reconcile" >/dev/null 2>&1 &
 
     sleep "$INTERVAL"
 done

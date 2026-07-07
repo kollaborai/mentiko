@@ -13,7 +13,7 @@
 
 import { readUiControl } from "./handlers/session-store.js";
 
-const WEB_URL = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
+const WEB_URL = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
 const FETCH_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 500;
 const DELIVERY_POLL_INTERVAL_MS = 500;

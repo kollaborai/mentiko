@@ -7,6 +7,7 @@ export interface RunnerV2LaunchContext {
   chainPath: string;
   runDir: string;
   runId: string;
+  chainId: string;
   chainName: string;
   workspacePath?: string;
   taskId?: string;

@@ -109,7 +109,7 @@ export default function McpDocPage() {
           The Mentiko runtime injects these automatically when the MCP server is
           registered through the app. For manual MCP clients, set them yourself:
         </p>
-        <CodeBlock>{`MENTIKO_WEB_URL        # required - Mentiko web URL. Default: http://127.0.0.1:3000
+        <CodeBlock>{`MENTIKO_WEB_URL        # required - Mentiko web URL. Default: http://127.0.0.1:3200
 MENTIKO_SESSION_ID     # session-scoped UI effects and token-refresh identity
 MENTIKO_SESSION_TOKEN  # optional - bootstrap access token; superseded by the
                        #   sidecar session file once you reconnect
@@ -133,7 +133,7 @@ MENTIKO_MCP_TOOL_SCOPE # optional - set to "bar" to expose only floating bar too
       "command": "npx",
       "args": ["-y", "@mentiko/mentiko-mcp@latest"],
       "env": {
-        "MENTIKO_WEB_URL": "http://127.0.0.1:3000",
+        "MENTIKO_WEB_URL": "http://127.0.0.1:3200",
         "MENTIKO_SESSION_ID": "your-session-id"
       }
     }
@@ -147,7 +147,7 @@ MENTIKO_MCP_TOOL_SCOPE # optional - set to "bar" to expose only floating bar too
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">Claude Code</h2>
         <CodeBlock>{`claude mcp add mentiko -- env \\
-  MENTIKO_WEB_URL=http://127.0.0.1:3000 \\
+  MENTIKO_WEB_URL=http://127.0.0.1:3200 \\
   MENTIKO_SESSION_ID=your-session-id \\
   npx -y @mentiko/mentiko-mcp@latest`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">

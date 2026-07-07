@@ -2,9 +2,10 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 export interface TimeAgoProps extends React.HTMLAttributes<HTMLTimeElement> {
-  date: Date | string | number
+  date?: Date | string | number | null
   suffix?: boolean
   format?: "short" | "long" | "relative"
+  fallback?: string
 }
 
 const timeFormats = {
@@ -37,9 +38,25 @@ const timeFormats = {
   },
 }
 
+function parseTimeAgoDate(date: TimeAgoProps["date"]): Date | null {
+  if (date == null) {
+    return null
+  }
+
+  const dateObj = typeof date === "string" || typeof date === "number"
+    ? new Date(date)
+    : date
+
+  if (!(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) {
+    return null
+  }
+
+  return dateObj
+}
+
 function getTimeDifference(date: Date): { value: number; unit: keyof typeof timeFormats.long } {
   const now = new Date()
-  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+  const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000))
 
   if (diffInSeconds < 60) {
     return { value: diffInSeconds, unit: "second" }
@@ -87,12 +104,22 @@ export function TimeAgo({
   date,
   suffix = true,
   format = "long",
+  fallback = "unknown",
   className,
   ...props
 }: TimeAgoProps) {
-  const dateObj = typeof date === "string" || typeof date === "number"
-    ? new Date(date)
-    : date
+  const dateObj = parseTimeAgoDate(date)
+
+  if (!dateObj) {
+    return (
+      <time
+        className={cn("text-muted-foreground text-sm tabular-nums", className)}
+        {...props}
+      >
+        {fallback}
+      </time>
+    )
+  }
 
   const diff = getTimeDifference(dateObj)
   const formatted = formatTime(diff, format, suffix)

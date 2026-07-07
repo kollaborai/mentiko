@@ -112,7 +112,7 @@ extract-tokens-from-output() {
 
     # only record if we extracted something
     if [[ "${input_tokens:-0}" -gt 0 || "${output_tokens:-0}" -gt 0 ]]; then
-        local BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+        local BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
         local NS="${NAMESPACE_ID:-default}"
 
         curl -s -X POST "${BASE_URL}/api/tokens/record" \

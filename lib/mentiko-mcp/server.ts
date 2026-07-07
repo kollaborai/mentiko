@@ -750,7 +750,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- notify ----------
     if (name === "notify") {
-      const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
+      const webUrl = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
       const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
       await fetch(`${webUrl}/api/mentiko-mcp/ops/notify`, {
         method: "POST",
@@ -934,7 +934,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    `[mentiko-mcp] stdio server ready v${SERVER_VERSION} (INBOX_KEY=${process.env.MENTIKO_INBOX_KEY ? "set" : "MISSING"}, WEB_URL=${process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000"})`,
+    `[mentiko-mcp] stdio server ready v${SERVER_VERSION} (INBOX_KEY=${process.env.MENTIKO_INBOX_KEY ? "set" : "MISSING"}, WEB_URL=${process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`})`,
   );
 }
 

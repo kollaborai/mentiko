@@ -444,7 +444,7 @@ guest users:
    - filter context provider
 
 5. **testing**
-   - puppeteer QA: localhost:3000/dashboard
+   - puppeteer QA: localhost:3200/dashboard
    - verify attention queue loads
    - verify health panel shows trends
    - verify workspace filter works

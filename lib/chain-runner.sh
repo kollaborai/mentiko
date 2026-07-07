@@ -2464,7 +2464,7 @@ send-webhook "chain_started" "$CHAIN_FILE" "agent_id=$FIRST_AGENT" "round=1" 2>/
 send-slack-chain-start "$CHAIN_FILE" "${GOAL:-}" 2>/dev/null || true
 
 # dispatch notifications: chain-started
-BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
 curl -s -X POST "${BASE_URL}/api/notifications/dispatch" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \

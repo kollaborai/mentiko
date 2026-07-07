@@ -7,7 +7,7 @@
  * profile env var injection, error handling.
  */
 
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import { writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -54,6 +54,19 @@ function runResolve(namespaceId, orgId, profileFile, env = {}) {
     encoding: "utf-8",
     timeout: 5000,
   });
+}
+
+function runResolveWithStderr(namespaceId, orgId, profileFile, env = {}) {
+  const result = spawnSync("node", [SCRIPT, namespaceId, orgId, profileFile], {
+    env: { ...process.env, MENTIKO_GLOBAL_ROOT: TMP, ...env, BETTER_AUTH_SECRET: TEST_SECRET },
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`secrets-resolve exited ${result.status}: ${result.stderr || result.stdout}`);
+  }
+  return { stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
 function makeSecretFile(dir, name, envVar, value) {
@@ -135,10 +148,11 @@ test("leaves literal values untouched", () => {
   assert(output.includes("export ANOTHER='/usr/local/bin'"), `got: ${output.trim()}`);
 });
 
-test("leaves unresolved {secret:NAME} as-is when secret not found", () => {
+test("skips unresolved {secret:NAME} when secret not found", () => {
   const profile = makeProfile(TMP, { MISSING: "{secret:nonexistent-key}" });
-  const output = runResolve("test-ns", "default", profile);
-  assert(output.includes("export MISSING='{secret:nonexistent-key}'"), `got: ${output.trim()}`);
+  const result = runResolveWithStderr("test-ns", "default", profile);
+  assert(!result.stdout.includes("export MISSING="), `got stdout: ${result.stdout.trim()}`);
+  assert(result.stderr.includes("unresolved secret reference skipped: MISSING={secret:nonexistent-key}"), `got stderr: ${result.stderr.trim()}`);
 });
 
 test("handles empty profile env", () => {
@@ -183,16 +197,18 @@ test("exits 1 when profile file does not exist", () => {
   }
 });
 
-test("leaves secret unresolved when no auth secret available", () => {
+test("skips secret when no auth secret is available", () => {
   makeSecretFile(nsDir, "needs-decrypt", "NEEDS_DECRYPT", "value");
   const profile = makeProfile(TMP, { X: "{secret:needs-decrypt}" });
   const env = { ...process.env, MENTIKO_GLOBAL_ROOT: TMP };
   delete env.BETTER_AUTH_SECRET;
   delete env.SECRET_KEY;
   delete env.VAULT_ENCRYPTION_KEY;
-  const output = execFileSync("node", [SCRIPT, "test-ns", "default", profile], { env, encoding: "utf-8", timeout: 5000 });
-  // decryption fails silently, leaves reference as-is
-  assert(output.includes("export X='{secret:needs-decrypt}'"), `got: ${output.trim()}`);
+  const result = spawnSync("node", [SCRIPT, "test-ns", "default", profile], { env, encoding: "utf-8", timeout: 5000 });
+  if (result.error) throw result.error;
+  assert(result.status === 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+  assert(!result.stdout.includes("export X="), `got stdout: ${result.stdout.trim()}`);
+  assert(result.stderr.includes("unresolved secret reference skipped: X={secret:needs-decrypt}"), `got stderr: ${result.stderr.trim()}`);
 });
 
 test("uses VAULT_ENCRYPTION_KEY when set", () => {

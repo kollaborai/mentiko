@@ -19,7 +19,7 @@ import {
   reconcileActiveAutoRunTasks,
   reconcileTaskActiveRun,
 } from "@/lib/runs/auto-run";
-import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getWorkspace, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
 import { getJob } from "@/lib/runs/job-store";
 import config, { nsPath } from "@/lib/config";
@@ -541,6 +541,15 @@ async function triggerAutoRun(
   // case 2: generation job already running — check if it completed and auto-save/assign
   const generationJobId = metadata.generation_job_id as string | undefined;
   if (generationJobId) {
+    if (generationJobId.startsWith("claim-")) {
+      return {
+        triggered: false,
+        taskId,
+        action: "generation_pending",
+        jobId: generationJobId,
+      };
+    }
+
     const job = getJob(generationJobId, namespaceId);
     if (!job) {
       const recovered = recoverGeneratedChainFromRunArtifacts(metadata, namespaceId);
@@ -638,6 +647,7 @@ async function triggerAutoRun(
           ...metadata,
           analysis_job_id: undefined,
           analysis_status: "failed",
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
         },
       }, namespaceId);
       return {
@@ -869,6 +879,21 @@ async function startGenerationJob(
   request: NextRequest,
   workspacePath?: string
 ): Promise<TriggerResult> {
+  const claimId = `claim-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "generation_job_id", {
+    generation_job_id: claimId,
+    generation_status: "starting",
+    analysis_status: "accepted",
+  }, namespaceId);
+
+  if (!claimed) {
+    return {
+      triggered: false,
+      taskId,
+      action: "generation_pending",
+    };
+  }
+
   const jobRes = await fetch(internalApiUrl("/api/jobs", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
@@ -883,6 +908,15 @@ async function startGenerationJob(
 
   if (!jobRes.ok) {
     const err = await jobRes.json().catch(() => ({}));
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...metadata,
+        generation_job_id: undefined,
+        generation_status: "failed",
+        analysis_status: "accepted",
+        auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+      },
+    }, namespaceId);
     return { triggered: false, taskId, error: (err as { error?: string }).error || "Failed to start generation" };
   }
 

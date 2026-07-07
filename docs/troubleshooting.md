@@ -149,7 +149,7 @@ auth errors (401 unauthorized)
     echo $BETTER_AUTH_URL
 
     # confirm session status
-    curl -s http://localhost:3000/api/auth/me
+    curl -s http://localhost:3200/api/auth/me
 
 ---
 
@@ -181,7 +181,7 @@ api returns 500 errors
     echo $MENTIKO_ROOT
 
     # test endpoint directly
-    curl http://localhost:3000/api/health
+    curl http://localhost:3200/api/health
 
 ---
 
@@ -191,7 +191,7 @@ real-time updates not working
 
   solutions:
     # check sse endpoint
-    curl http://localhost:3000/api/events/stream
+    curl http://localhost:3200/api/events/stream
 
     # verify browser supports eventsource
     # check console for errors

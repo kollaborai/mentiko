@@ -3,6 +3,7 @@ import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mc
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
 import { pty } from "@/lib/pty/pty-client";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // Proxy to /api/system/cli-auth with inbox-key bypass
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
   const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
 
-  const response = await fetch(`${webUrl}/api/system/cli-auth`, {
+  const response = await fetch(internalApiUrl("/api/system/cli-auth", request.url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

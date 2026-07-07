@@ -88,16 +88,16 @@ find namespaces/default/runs/ -name 'run.json' -mtime +30 -delete
 api endpoints
 ------------------------------------------------------------
 # list runs
-curl http://localhost:3000/api/runs
+curl http://localhost:3200/api/runs
 
 # filter by chain
-curl http://localhost:3000/api/runs?chain=Client%20Engagement%20Pipeline
+curl http://localhost:3200/api/runs?chain=Client%20Engagement%20Pipeline
 
 # filter by status
-curl http://localhost:3000/api/runs?status=running
+curl http://localhost:3200/api/runs?status=running
 
 # get single run
-curl http://localhost:3000/api/runs/run-1740500000
+curl http://localhost:3200/api/runs/run-1740500000
 
 example usage
 ------------------------------------------------------------

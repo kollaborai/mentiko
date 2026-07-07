@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +30,10 @@ export async function POST(req: Request) {
     ? `${body.message || ""} → ${body.linkRoute}`
     : (body.message || "");
 
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
   const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
 
   // dispatch a show_toast effect to the bar
-  const res = await fetch(`${webUrl}/api/mentiko-mcp/dispatch`, {
+  const res = await fetch(internalApiUrl("/api/mentiko-mcp/dispatch", req.url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -180,12 +180,18 @@ export function TerminalViewer({
         let url = wsUrl;
         // tokens are single-use -- only fetch a fresh one on reconnect
         if (!isFirst && onRefreshToken) {
-          const freshToken = await onRefreshToken();
+          const freshToken = await onRefreshToken().catch(() => null);
           if (!mounted || !term) return; // unmounted during async fetch
-          if (freshToken) {
-            const base = wsUrl.split("?")[0];
-            url = `${base}?token=${freshToken}`;
+          if (!freshToken) {
+            updateStatus("connecting", "waiting for terminal token");
+            reconnectTimer = setTimeout(() => {
+              if (mounted && !sessionExited) connectWs(false);
+            }, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+            return;
           }
+          const base = wsUrl.split("?")[0];
+          url = `${base}?token=${freshToken}`;
         }
         if (!mounted || !term) return;
         const newWs = new WebSocket(url);

@@ -1,13 +1,14 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
-import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import { eventMatchesRunId, parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
+import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 
 export interface RunnerV2CompletionEntrypointInput {
@@ -65,8 +66,33 @@ export function runRunnerV2CompletionEntrypoint(
   // shell/typed topology; the completion verdict must see events wherever the
   // agent actually emitted them.
   const events = readEventsFromDirs([eventsDir, join(runDir, "events")]);
+  const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId });
+  if (duplicate) {
+    return {
+      status: "handled",
+      runId,
+      agentId: agent.id,
+      decision: "already-completed",
+      plan: {
+        action: "already-completed",
+        launches: [],
+        effects: [],
+      },
+      adapter: {
+        effectsApplied: [],
+        operations: [],
+        launchesStarted: [],
+      },
+      runJsonPath,
+      eventsDir,
+    };
+  }
   const runJsonSnapshot = readFileSync(runJsonPath, "utf8");
   const eventSnapshots = snapshotEvents(events);
+  const loopStateSnapshots = [
+    snapshotOptionalFile(loopStatePath(runDir)),
+    snapshotOptionalFile(shellLoopStatePath(runDir)),
+  ];
 
   // routed/relaunched agents (launched by shell chain-runner.sh, including
   // launches the typed bridge itself fired) have no AgentAttempt record —
@@ -83,6 +109,8 @@ export function runRunnerV2CompletionEntrypoint(
   });
 
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
+  const completionChainId = resolveCompletionChainId(run, chain);
+  const completionChainName = chain.name || completionChainId || "unknown";
   const maxRounds = numberValue(chain.config?.max_rounds);
   const qualityGate = maybeHandleQualityGateFailure({
     run,
@@ -94,10 +122,10 @@ export function runRunnerV2CompletionEntrypoint(
     orgId: env.ORG_ID || "default",
     now: input.now,
     dryRun: input.dryRun,
-  });
+    });
   if (qualityGate) {
     if (input.dryRun) {
-      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
@@ -141,7 +169,8 @@ export function runRunnerV2CompletionEntrypoint(
       now: input.now,
       terminal: {
         runId,
-        chainName: chain.name || chain.id || "unknown",
+        chainId: completionChainId,
+        chainName: completionChainName,
         chainPath: input.chainPath,
         taskId: run.taskId,
         lastAgentId: agent.id,
@@ -150,6 +179,7 @@ export function runRunnerV2CompletionEntrypoint(
       retry: {
         policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
         currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,
+        chainId: completionChainId,
         chainPath: input.chainPath,
         workspacePath,
         taskId: run.taskId,
@@ -163,14 +193,15 @@ export function runRunnerV2CompletionEntrypoint(
       allEvents: events,
       terminal: {
         runId,
-        chainName: chain.name || chain.id || "unknown",
+        chainId: completionChainId,
+        chainName: completionChainName,
         chainPath: input.chainPath,
         taskId: run.taskId,
         lastAgentId: agent.id,
       },
       agentCompletion: {
         runId,
-        chainName: chain.name || chain.id || "unknown",
+        chainName: completionChainName,
         agentId: agent.id,
         agentName: agent.name,
         sessionName: input.sessionName,
@@ -204,7 +235,7 @@ export function runRunnerV2CompletionEntrypoint(
     });
 
     if (input.dryRun) {
-      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself.
@@ -224,9 +255,28 @@ export function runRunnerV2CompletionEntrypoint(
       eventsDir,
     };
   } catch (error) {
-    restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots);
+    restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
     throw error;
   }
+}
+
+function alreadyCompletedVerdict(input: {
+  run: RunRecord;
+  agent: ChainAgent;
+  sessionName: string;
+  events: RunnerEventRecord[];
+  runId: string;
+}): boolean {
+  const runAgent = (input.run.agents || []).find((candidate) => candidate.id === input.agent.id);
+  if (!runAgent || !["complete", "completed"].includes(runAgent.status || "")) return false;
+  const emitted = input.agent.emits;
+  if (!emitted) return false;
+  return input.events.some((event) => (
+    event.processed
+    && event.event === emitted
+    && eventMatchesRunId(event, input.runId)
+    && (!event.source || event.source === input.sessionName)
+  ));
 }
 
 function maybeHandleQualityGateFailure(input: {
@@ -269,7 +319,7 @@ function maybeHandleQualityGateFailure(input: {
       org: { id: input.orgId },
       run: {
         id: input.run.id,
-        chainId: input.chain.id,
+        chainId: resolveCompletionChainId(input.run, input.chain),
         chainName: input.chain.name,
         status: "failed",
         artifactsDir,
@@ -524,6 +574,12 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function resolveCompletionChainId(run: RunRecord, chain: Pick<ChainFile, "id" | "name">): string | undefined {
+  return stringValue(run.chainId)
+    || stringValue(chain.id)
+    || stringValue(chain.name)?.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
+}
+
 function numberValue(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {
@@ -547,9 +603,37 @@ function snapshotEvents(events: RunnerEventRecord[]): Map<string, string> {
   return snapshots;
 }
 
-function restoreSnapshots(runJsonPath: string, runJsonSnapshot: string, eventSnapshots: Map<string, string>): void {
+interface OptionalFileSnapshot {
+  path: string;
+  existed: boolean;
+  content?: string;
+}
+
+function snapshotOptionalFile(path: string): OptionalFileSnapshot {
+  return existsSync(path)
+    ? { path, existed: true, content: readFileSync(path, "utf8") }
+    : { path, existed: false };
+}
+
+function restoreOptionalFile(snapshot: OptionalFileSnapshot): void {
+  if (snapshot.existed) {
+    writeFileSync(snapshot.path, snapshot.content || "");
+  } else {
+    rmSync(snapshot.path, { force: true });
+  }
+}
+
+function restoreSnapshots(
+  runJsonPath: string,
+  runJsonSnapshot: string,
+  eventSnapshots: Map<string, string>,
+  loopStateSnapshots: OptionalFileSnapshot[],
+): void {
   writeFileSync(runJsonPath, runJsonSnapshot);
   for (const [path, content] of eventSnapshots) {
     writeFileSync(path, content);
+  }
+  for (const snapshot of loopStateSnapshots) {
+    restoreOptionalFile(snapshot);
   }
 }

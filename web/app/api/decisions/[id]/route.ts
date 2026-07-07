@@ -10,7 +10,7 @@ import { NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { applyDecisionRunResult } from "@/lib/decisions/decision-run-results";
-import { taskUpdate } from "@/lib/tasks/task-store";
+import { taskDelete, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 
 export const dynamic = "force-dynamic";
 
@@ -142,6 +142,80 @@ export const DELETE = withErrorHandling(async (
   const nsId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const workspacePath = getWorkspacePath(request);
+  const decision = getDecision(nsId, orgId, id, workspacePath);
+
   deleteDecision(nsId, orgId, id, workspacePath);
+
+  const decisionTaskId = typeof decision?.taskId === "string" ? decision.taskId : undefined;
+  const parentTaskId = typeof decision?.parentTaskId === "string" ? decision.parentTaskId : undefined;
+  const decisionTask = decisionTaskId ? taskGet(orgId, decisionTaskId, nsId) : null;
+  const effectiveParentTaskId = parentTaskId || decisionTask?.parent_id || undefined;
+
+  if (decisionTaskId) {
+    taskDelete(orgId, decisionTaskId, nsId);
+  }
+
+  if (effectiveParentTaskId) {
+    const parentTask = taskGet(orgId, effectiveParentTaskId, nsId);
+    const metadata = parentTask?.metadata && typeof parentTask.metadata === "object" && !Array.isArray(parentTask.metadata)
+      ? { ...parentTask.metadata as Record<string, unknown> }
+      : {};
+    const changed = removeDeletedDecisionReferences(metadata, id, decisionTaskId);
+    if (changed) {
+      taskUpdate(orgId, effectiveParentTaskId, { metadata }, nsId);
+    }
+  }
+
   return apiSuccess({ success: true });
 });
+
+function removeDeletedDecisionReferences(
+  metadata: Record<string, unknown>,
+  decisionId: string,
+  decisionTaskId?: string,
+): boolean {
+  let changed = false;
+  const matchesDecisionTask = (value: unknown) => (
+    typeof decisionTaskId === "string" && value === decisionTaskId
+  );
+  const matchesDecision = (value: unknown) => value === decisionId;
+
+  for (const key of [
+    "decision_subtask_id",
+    "last_decision_subtask_id",
+  ]) {
+    if (matchesDecisionTask(metadata[key])) {
+      delete metadata[key];
+      changed = true;
+    }
+  }
+
+  for (const key of [
+    "decision_id",
+    "last_decision_id",
+  ]) {
+    if (matchesDecision(metadata[key])) {
+      delete metadata[key];
+      changed = true;
+    }
+  }
+
+  for (const key of [
+    "superseded_decision_subtask_ids",
+    "duplicate_decision_subtask_ids",
+  ]) {
+    if (!Array.isArray(metadata[key])) continue;
+    const next = metadata[key].filter((item) => !matchesDecisionTask(item));
+    if (next.length !== metadata[key].length) {
+      if (next.length > 0) metadata[key] = next;
+      else delete metadata[key];
+      changed = true;
+    }
+  }
+
+  if (changed && metadata.last_run_decision_required === true && !metadata.decision_subtask_id) {
+    metadata.last_run_decision_required = false;
+  }
+
+  return changed;
+}

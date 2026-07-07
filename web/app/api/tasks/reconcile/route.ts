@@ -33,14 +33,21 @@ interface ReconcileResult {
   reason: string;
 }
 
-// A completed auto-run is eligible for a completion audit once per run, as long
-// as it hasn't already been audited and isn't a generation/meta run.
+// A completed auto-run is eligible for a completion audit when it points at an
+// execution chain. The audit helper owns idempotency by run terminal
+// fingerprint; reconcile must not suppress a later terminal audit from a stale
+// completion_audit_run_id alone.
 function shouldAuditCompletedAutoRun(meta: Record<string, unknown>): boolean {
+  const generatedTaskHasExecutionChain =
+    !meta.generation_job_id ||
+    typeof meta.chain_id === "string" ||
+    typeof meta.chain_name === "string" ||
+    typeof meta.last_run_chain === "string";
+
   return (
     meta.auto_run === true &&
-    !meta.generation_job_id &&
     !!meta.last_run_id &&
-    meta.completion_audit_run_id !== meta.last_run_id
+    generatedTaskHasExecutionChain
   );
 }
 

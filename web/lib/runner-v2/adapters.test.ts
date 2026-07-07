@@ -352,6 +352,47 @@ describe("runner-v2 adapters", () => {
     });
   });
 
+  it("applies retryable failure accounting and persists the next retry attempt", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+
+    const result = applyTypedExecutorPlan({
+      action: "retry",
+      effects: [{
+        type: "retry",
+        plan: {
+          action: "retry",
+          nextAttempt: 1,
+          maxRetries: 2,
+          delayMs: 1000,
+          delaySeconds: 1,
+          strategy: "exponential",
+          circuitBreaker: { threshold: 5, timeout: 300 },
+          steps: [
+            { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300 },
+            { type: "retry-state", action: "set", agentId: "writer", attempt: 1 },
+          ],
+          launch: { agentId: "writer", reason: "missing-event" },
+        },
+      }],
+      launches: [],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+    });
+
+    expect(result.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "circuit-breaker", action: "record-failure" }),
+      expect.objectContaining({ type: "retry-state", action: "set", agentId: "writer", attempt: 1 }),
+    ]));
+    expect(readFileSync(join(dir, "retry", "retry_writer.count"), "utf8").trim()).toBe("1");
+    expect(JSON.parse(readFileSync(join(dir, "retry", "circuit_Build Chain_writer.json"), "utf8"))).toMatchObject({
+      failure_count: 1,
+      threshold: 5,
+      timeout: 300,
+    });
+  });
+
   it("applies terminal-failure steps: queues external effects and records the circuit breaker", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);
@@ -550,10 +591,10 @@ describe("runner-v2 adapters", () => {
           steps: [
             { type: "run-status", status: "completed" },
             { type: "task-status", status: "completed", taskId: "task-1" },
-            { type: "webhook", event: "chain_complete", chainPath: join(dir, "chain.json"), lastEvent: "done", lastAgentId: "writer" },
+            { type: "webhook", event: "chain_complete", chainId: "build-chain", chainPath: join(dir, "chain.json"), lastEvent: "done", lastAgentId: "writer" },
             { type: "plugin", event: "chain-completed", chainName: "Build Chain", runId: "run-123", agentId: "writer" },
             { type: "notification", event: "chain-completed", chainName: "Build Chain", runId: "run-123", agentId: "writer" },
-            { type: "metadata-webhooks", event: "completed", chainPath: join(dir, "chain.json"), chainName: "Build Chain", runId: "run-123" },
+            { type: "metadata-webhooks", event: "completed", chainId: "build-chain", chainPath: join(dir, "chain.json"), chainName: "Build Chain", runId: "run-123" },
             { type: "legacy-webhook", url: "https://hooks.example.test/chain", payload: { chain: "Build Chain", status: "complete" } },
           ],
         },
@@ -571,10 +612,10 @@ describe("runner-v2 adapters", () => {
 
     expect(records).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "task-status", status: "queued", operation: expect.objectContaining({ taskId: "task-1" }) }),
-      expect.objectContaining({ type: "webhook", status: "queued", operation: expect.objectContaining({ event: "chain_complete" }) }),
+      expect.objectContaining({ type: "webhook", status: "queued", operation: expect.objectContaining({ event: "chain_complete", chainId: "build-chain" }) }),
       expect.objectContaining({ type: "plugin", status: "queued", operation: expect.objectContaining({ event: "chain-completed" }) }),
       expect.objectContaining({ type: "notification", status: "queued", operation: expect.objectContaining({ event: "chain-completed" }) }),
-      expect.objectContaining({ type: "metadata-webhooks", status: "queued", operation: expect.objectContaining({ event: "completed" }) }),
+      expect.objectContaining({ type: "metadata-webhooks", status: "queued", operation: expect.objectContaining({ event: "completed", chainId: "build-chain" }) }),
       expect.objectContaining({ type: "legacy-webhook", status: "queued", operation: expect.objectContaining({ url: "https://hooks.example.test/chain" }) }),
     ]));
   });

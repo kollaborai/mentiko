@@ -74,11 +74,21 @@ const ALLOWED_ORIGINS = new Set<string>([
   `http://127.0.0.1:${WS_PORT}`,
 ]);
 
+const WEB_PORT = process.env.WEB_PORT || process.env.PORT;
+if (WEB_PORT) {
+  ALLOWED_ORIGINS.add(`http://localhost:${WEB_PORT}`);
+  ALLOWED_ORIGINS.add(`http://127.0.0.1:${WEB_PORT}`);
+}
+
 // Auto-allow the operator's public URL. BETTER_AUTH_URL is required
 // configuration anyway (cookie domain), so this avoids forcing operators
 // to also set WS_ALLOWED_ORIGINS just to whitelist their own public host.
 try {
   const u = new URL(process.env.BETTER_AUTH_URL || "");
+  if (u.origin) ALLOWED_ORIGINS.add(u.origin);
+} catch {}
+try {
+  const u = new URL(process.env.MENTIKO_WEB_URL || "");
   if (u.origin) ALLOWED_ORIGINS.add(u.origin);
 } catch {}
 

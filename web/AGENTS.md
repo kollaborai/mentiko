@@ -7,23 +7,23 @@ Tasks are managed via the web UI and REST API (web/lib/task-store.ts).
 
 ```bash
 # list open tasks
-curl -s http://localhost:3000/api/tasks?status=open | jq .
+curl -s http://localhost:3200/api/tasks?status=open | jq .
 
 # view task details (includes dependencies + dependents)
-curl -s http://localhost:3000/api/tasks/<id> | jq .
+curl -s http://localhost:3200/api/tasks/<id> | jq .
 
 # create task
-curl -s -X POST http://localhost:3000/api/tasks \
+curl -s -X POST http://localhost:3200/api/tasks \
   -H "Content-Type: application/json" \
   -d '{"title":"Issue title","description":"Details","issue_type":"task","priority":2}'
 
 # update task (claim, change priority, etc.)
-curl -s -X PATCH http://localhost:3000/api/tasks/<id> \
+curl -s -X PATCH http://localhost:3200/api/tasks/<id> \
   -H "Content-Type: application/json" \
   -d '{"assignee":"agent","status":"in_progress"}'
 
 # close task
-curl -s -X POST http://localhost:3000/api/tasks/<id>/close
+curl -s -X POST http://localhost:3200/api/tasks/<id>/close
 ```
 
 ## Non-Interactive Shell Commands
@@ -74,12 +74,12 @@ Tasks are stored in SQLite (web/lib/task-store.ts) with full CRUD, dependencies,
 
 ```bash
 # add dependency (task A depends on task B)
-curl -s -X POST http://localhost:3000/api/tasks/deps \
+curl -s -X POST http://localhost:3200/api/tasks/deps \
   -H "Content-Type: application/json" \
   -d '{"taskId":"task-A","dependsOn":"task-B"}'
 
 # view dependencies
-curl -s http://localhost:3000/api/tasks/<id>/deps | jq .
+curl -s http://localhost:3200/api/tasks/<id>/deps | jq .
 ```
 
 ### Workflow for AI Agents

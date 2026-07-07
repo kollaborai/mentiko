@@ -83,7 +83,7 @@ describe("runner-v2 typed executor plan", () => {
       chain: { agents: [{ id: "writer", emits: "draft-ready" }] },
       events: [],
       retry: {
-        policy: { max_retries: 2 },
+        policy: { max_retries: 2, base_delay_ms: 1500 },
         currentAttempt: 0,
       },
     });
@@ -93,7 +93,11 @@ describe("runner-v2 typed executor plan", () => {
       effects: [{ type: "retry" }],
       launches: [{
         kind: "single",
-        command: expect.stringContaining("--start 'writer'"),
+        command: expect.stringMatching(/^sleep '1\.5'; .*--start 'writer'/),
+        env: expect.objectContaining({
+          MENTIKO_RETRY_ATTEMPT: "1",
+          RETRY_ATTEMPT: "1",
+        }),
       }],
     });
   });
@@ -206,6 +210,7 @@ describe("runner-v2 typed executor plan", () => {
       routeContext: routeContext(dir),
       terminal: {
         runId: "run-123",
+        chainId: "build-chain",
         chainName: "Test Chain",
         taskId: "TASK-9",
       },
@@ -228,7 +233,7 @@ describe("runner-v2 typed executor plan", () => {
       expect.objectContaining({ type: "webhook", event: "chain_complete", lastEvent: "draft-ready" }),
       expect.objectContaining({ type: "plugin", event: "chain-completed" }),
       expect.objectContaining({ type: "notification", event: "chain-completed" }),
-      expect.objectContaining({ type: "metadata-webhooks", event: "completed" }),
+      expect.objectContaining({ type: "metadata-webhooks", event: "completed", chainId: "build-chain" }),
     ]));
   });
 
@@ -358,6 +363,7 @@ describe("runner-v2 typed executor plan", () => {
       routeContext: routeContext(dir),
       terminal: {
         runId: "run-123",
+        chainId: "build-chain",
         chainName: "Build Chain",
         chainPath: join(dir, "chain.json"),
         taskId: "task-1",
@@ -377,7 +383,7 @@ describe("runner-v2 typed executor plan", () => {
             { type: "task-status", status: "failed", taskId: "task-1", runId: "run-123" },
             expect.objectContaining({ type: "circuit-breaker", action: "record-failure", agentId: "writer", threshold: 5, timeout: 300 }),
             expect.objectContaining({ type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-123", agentId: "writer" }),
-            expect.objectContaining({ type: "metadata-webhooks", event: "failed", chainName: "Build Chain", runId: "run-123" }),
+            expect.objectContaining({ type: "metadata-webhooks", event: "failed", chainId: "build-chain", chainName: "Build Chain", runId: "run-123" }),
           ]),
         }),
       }),

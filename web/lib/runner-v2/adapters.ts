@@ -14,16 +14,16 @@ import { updateRunStatus } from "@/lib/runner-v2/run-state";
 export type AdapterOperation =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: string; chainPath?: string }
-  | { type: "webhook"; event: string; chainPath?: string }
+  | { type: "webhook"; event: string; chainId?: string; chainPath?: string }
   | { type: "event"; event: string; source: string; data: string }
   | { type: "plugin"; event: string; chainName: string; runId: string; agentId?: string }
   | { type: "notification"; event: string; chainName: string; runId: string; agentId?: string; reason?: string }
   | { type: "hook"; event: string; runId: string; details: Record<string, string> }
-  | { type: "metadata-webhooks"; event: string; chainPath?: string; chainName: string; runId: string }
+  | { type: "metadata-webhooks"; event: string; chainId?: string; chainPath?: string; chainName: string; runId: string }
   | { type: "legacy-webhook"; url: string; payload: Record<string, string> }
   | { type: "session-policy"; policy: string; sessions?: string[] }
   | { type: "next-chain"; chainName: string; parentRunId: string }
-  | { type: "retry-state"; action: string; agentId: string }
+  | { type: "retry-state"; action: string; agentId: string; attempt?: number }
   | { type: "event-artifact"; runId: string; status: string; executionId?: string; artifactPath?: string }
   | ({ type: "generation-import" } & GenerationImportPlan)
   | { type: "circuit-breaker"; action: string; chainName: string; agentId: string; threshold: number; timeout: number }
@@ -96,7 +96,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
         launchesStarted.push(...applyOperation(step, context));
       }
     }
-  } else if (effect.type === "retry" && effect.plan.action === "exhausted") {
+  } else if (effect.type === "retry") {
     for (const step of effect.plan.steps) {
       if (step.type === "run-status") {
         updateRunStatus(context.runJsonPath, step.status, step.reason);
@@ -205,8 +205,8 @@ function applyOperation(operation: AdapterOperation, context: AdapterContext): A
     emitTypedEvent(operation, context);
   } else if (operation.type === "schedule-mark") {
     markSchedule(operation, context);
-  } else if (operation.type === "retry-state" && operation.action === "clear") {
-    clearRetryState(operation.agentId, context);
+  } else if (operation.type === "retry-state") {
+    applyRetryState(operation, context);
   } else if (operation.type === "circuit-breaker" && operation.action === "record-failure") {
     recordCircuitFailure(operation, context);
   } else if (operation.type === "hook") {
@@ -263,11 +263,28 @@ function markSchedule(
   writeFileAtomic(historyPath, `${readOptionalFile(historyPath)}[${new Date().toISOString()}] ${operation.status}\n`);
 }
 
+function applyRetryState(
+  operation: Extract<AdapterOperation, { type: "retry-state" }>,
+  context: AdapterContext,
+): void {
+  if (operation.action === "clear") {
+    clearRetryState(operation.agentId, context);
+  } else if (operation.action === "set" && typeof operation.attempt === "number") {
+    writeRetryState(operation.agentId, operation.attempt, context);
+  }
+}
+
 function clearRetryState(agentId: string, context: AdapterContext): void {
   const retryPath = join(retryDir(context), `retry_${sanitizeFilePart(agentId)}.count`);
   if (existsSync(retryPath)) {
     unlinkSync(retryPath);
   }
+}
+
+function writeRetryState(agentId: string, attempt: number, context: AdapterContext): void {
+  const dir = retryDir(context);
+  mkdirSync(dir, { recursive: true });
+  writeFileAtomic(join(dir, `retry_${sanitizeFilePart(agentId)}.count`), `${Math.max(0, Math.floor(attempt))}\n`);
 }
 
 function recordCircuitFailure(

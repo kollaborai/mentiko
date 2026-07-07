@@ -396,6 +396,53 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
+  it("audits a generated task when its terminal run points at the execution chain", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-092",
+      status: "completed",
+      chainId: "nextjs-realtor-website-initializer",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-092",
+        title: "Initialize Next.js project",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          generation_job_id: "job-generation",
+          generation_status: "complete",
+          chain_id: "nextjs-realtor-website-initializer",
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+          completion_audit_run_id: "run-exec",
+          completion_audit_run_fingerprint: "running:no-terminal-time",
+          completion_audit_apply_status: "applied",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-092",
+          runId: "run-exec",
+          newStatus: "audit_started",
+        }),
+      ],
+    });
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-092" }),
+    );
+  });
+
   it("does not mark a young real run stopped before its first session launches", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",

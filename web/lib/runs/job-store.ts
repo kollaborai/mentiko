@@ -33,6 +33,7 @@ export interface Job {
 
 // stale detection: generation chains can run up to 8min; leave room for import.
 const STALE_MS = 10 * 60 * 1000;
+const FAILED_RUN_STATUSES = new Set(["blocked", "cancelled", "failed", "stopped"]);
 
 function getJobPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.json`);
@@ -40,6 +41,44 @@ function getJobPath(id: string, namespaceId?: string): string {
 
 function getTmpPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.tmp`);
+}
+
+function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
+  if (job.status !== "running" || !job.runId) return false;
+
+  const nsId = namespaceId || config.namespaceId;
+  const runPath = join(nsPath(nsId, "runs", job.runId), "run.json");
+  if (!existsSync(runPath)) return false;
+
+  try {
+    const run = JSON.parse(readFileSync(runPath, "utf-8")) as { status?: string; status_message?: string; error?: string };
+    if (!run.status || !FAILED_RUN_STATUSES.has(run.status)) return false;
+
+    job.status = "failed";
+    job.error = run.error || run.status_message || `Run ${job.runId} ${run.status}`;
+    job.completedAt = new Date().toISOString();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function syncJobStatus(job: Job, namespaceId?: string): boolean {
+  if (syncRunningJobFromRun(job, namespaceId)) {
+    return true;
+  }
+
+  if (job.status === "running" && job.startedAt) {
+    const started = new Date(job.startedAt).getTime();
+    if (Date.now() - started > STALE_MS) {
+      job.status = "failed";
+      job.error = "Job timed out (stale)";
+      job.completedAt = new Date().toISOString();
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // atomic write: write to .tmp then rename (rename is atomic on POSIX)
@@ -87,15 +126,8 @@ export function getJob(id: string, namespaceId?: string): Job | null {
     const content = readFileSync(path, "utf-8");
     const job = JSON.parse(content) as Job;
 
-    // stale detection: if running > 5min, mark as failed
-    if (job.status === "running" && job.startedAt) {
-      const started = new Date(job.startedAt).getTime();
-      if (Date.now() - started > STALE_MS) {
-        job.status = "failed";
-        job.error = "Job timed out (stale)";
-        job.completedAt = new Date().toISOString();
-        writeJobAtomic(id, job, namespaceId);
-      }
+    if (syncJobStatus(job, namespaceId)) {
+      writeJobAtomic(id, job, namespaceId);
     }
 
     return job;
@@ -133,6 +165,9 @@ export function listJobs(opts: ListOptions = {}, namespaceId?: string): Job[] {
     try {
       const content = readFileSync(join(jobsDir, file), "utf-8");
       const job = JSON.parse(content) as Job;
+      if (syncJobStatus(job, namespaceId)) {
+        writeJobAtomic(job.id, job, namespaceId);
+      }
       jobs.push(job);
     } catch {
       // skip corrupt files

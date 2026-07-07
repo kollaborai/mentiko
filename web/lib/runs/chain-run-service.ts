@@ -493,6 +493,7 @@ export async function startChainRun({
     NAMESPACE_ID: namespaceId,
     ORG_ID: orgId,
     MENTIKO_RUN_ID: runId,
+    MENTIKO_CHAIN_ID: runObject.chainId as string,
     ...(executor && typeof executor === "string" && EXECUTOR_MAP[executor]
       ? { MENTIKO_CLI: EXECUTOR_MAP[executor] }
       : {}),
@@ -531,6 +532,7 @@ export async function startChainRun({
       chainPath: validatedChainPath,
       runDir,
       runId,
+      chainId: runObject.chainId as string,
       chainName: validChainName,
       workspacePath: authorizedWorkspacePath,
       taskId: executionTaskId,

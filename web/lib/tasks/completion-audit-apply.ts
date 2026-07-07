@@ -4,9 +4,10 @@
 // retry. All actions are idempotent on the audited run id and bounded by a
 // retry cap so audit-driven retries can't loop forever.
 
-import { taskClose, taskUpdate, taskMergeMeta, taskAddComment } from "@/lib/tasks/task-store";
+import { taskClose, taskUpdate, taskMergeMeta, taskAddComment, taskList } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
+import { updateDecision } from "@/lib/decisions/decision-storage";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { CompletionAudit } from "@/lib/tasks/completion-audit-schema";
 
@@ -35,6 +36,8 @@ interface ApplyCompletionAuditInput {
   audit: CompletionAudit;
   /** The execution run that was audited. */
   runId: string;
+  /** Terminal-state fingerprint for the execution run. */
+  runFingerprint?: string;
   workspacePath?: string;
   /** Current parent-task metadata (already parsed). */
   metadata: Record<string, unknown>;
@@ -70,7 +73,7 @@ async function createDecisionSubtask(
   input: ApplyCompletionAuditInput,
   escalated: boolean,
 ): Promise<ApplyCompletionAuditResult> {
-  const { request, namespaceId, orgId, task, audit, runId, workspacePath } = input;
+  const { request, namespaceId, orgId, task, audit, runId, runFingerprint, workspacePath } = input;
 
   // A "decision" verdict means the run's outcome is NOT settled — the task is
   // not actually done until a human resolves the decision. If the task is
@@ -84,11 +87,13 @@ async function createDecisionSubtask(
     taskUpdate(orgId, task.id, { status: "blocked" }, namespaceId);
   }
 
-  // Claim the run BEFORE creating the decision. If createTaskDecision throws,
-  // the run is still marked audited, so the next reconcile sweep's idempotency
-  // check (completion_audit_run_id === runId) skips it instead of creating a
-  // DUPLICATE decision subtask. (Bug surfaced by the apply integration tests.)
-  taskMergeMeta(orgId, task.id, { completion_audit_run_id: runId }, namespaceId);
+  // Claim the attempt before creating the decision, but do not set the durable
+  // completion_audit_run_id until side effects exist. Otherwise a thrown
+  // createTaskDecision permanently suppresses the human gate on the next sweep.
+  taskMergeMeta(orgId, task.id, {
+    completion_audit_claimed_run_id: runId,
+    ...(runFingerprint ? { completion_audit_claimed_run_fingerprint: runFingerprint } : {}),
+  }, namespaceId);
 
   const prompt = buildDecisionPrompt(task, audit);
   const { decision, task: decisionTask } = await createTaskDecision({
@@ -125,6 +130,8 @@ async function createDecisionSubtask(
     last_run_decision_required: true,
     decision_subtask_id: decisionTask.id,
     completion_audit_run_id: runId,
+    completion_audit_apply_status: "applied",
+    ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
   }, namespaceId);
 
   createNotification(namespaceId, {
@@ -141,22 +148,76 @@ async function createDecisionSubtask(
   };
 }
 
+async function closeSupersededDecisionSubtasks(input: ApplyCompletionAuditInput): Promise<string[]> {
+  const { namespaceId, orgId, task, runId } = input;
+  const candidates = taskList(orgId, { status: "all" }, undefined, namespaceId);
+  const superseded = candidates.filter((candidate) => {
+    if (candidate.parent_id !== task.id) return false;
+    if (candidate.issue_type !== "decision") return false;
+    if (candidate.status === "closed") return false;
+    const meta = candidate.metadata && typeof candidate.metadata === "object"
+      ? candidate.metadata as Record<string, unknown>
+      : {};
+    return meta.decision_source === "completion-audit";
+  });
+
+  for (const decision of superseded) {
+    const meta = decision.metadata && typeof decision.metadata === "object"
+      ? decision.metadata as Record<string, unknown>
+      : {};
+    taskClose(orgId, decision.id, "Superseded by later completion audit evidence.", namespaceId);
+    taskMergeMeta(orgId, decision.id, {
+      decision_status: "superseded",
+      superseded_by_run_id: runId,
+      superseded_reason: "Later audit evidence closed the parent task.",
+    }, namespaceId);
+    taskAddComment(
+      orgId,
+      decision.id,
+      "completion-auditor",
+      `Superseded by later completion audit for ${task.id} on run ${runId}.`,
+      namespaceId,
+    );
+    const decisionId = typeof meta.decision_id === "string" ? meta.decision_id : undefined;
+    if (decisionId) {
+      try {
+        await updateDecision(namespaceId, orgId, decisionId, { status: "superseded" });
+      } catch (error) {
+        console.error(`completion-auditor: failed to supersede decision ${decisionId}:`, error);
+      }
+    }
+  }
+
+  return superseded.map((decision) => decision.id);
+}
+
 export async function applyCompletionAudit(
   input: ApplyCompletionAuditInput,
 ): Promise<ApplyCompletionAuditResult> {
-  const { namespaceId, orgId, task, audit, runId, metadata } = input;
+  const { namespaceId, orgId, task, audit, runId, runFingerprint, metadata } = input;
 
   // Idempotency: never act twice on the same audited run.
-  if (metadata.completion_audit_run_id === runId) {
+  const appliedFingerprint = typeof metadata.completion_audit_run_fingerprint === "string"
+    ? metadata.completion_audit_run_fingerprint
+    : "";
+  const sameAppliedRun = metadata.completion_audit_run_id === runId;
+  const sameAppliedFingerprint = runFingerprint ? appliedFingerprint === runFingerprint : true;
+  if (sameAppliedRun && sameAppliedFingerprint && metadata.completion_audit_apply_status === "applied") {
     return { action: "skipped", detail: "audit already applied for this run" };
   }
 
   if (audit.verdict === "close") {
+    const supersededDecisionSubtaskIds = await closeSupersededDecisionSubtasks(input);
     taskClose(orgId, task.id, audit.reason, namespaceId);
     taskMergeMeta(orgId, task.id, {
       last_audit_verdict: "close",
       last_run_decision_required: false,
       completion_audit_run_id: runId,
+      completion_audit_apply_status: "applied",
+      ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
+      ...(supersededDecisionSubtaskIds.length
+        ? { superseded_decision_subtask_ids: supersededDecisionSubtaskIds }
+        : {}),
     }, namespaceId);
     createNotification(namespaceId, {
       type: "success",
@@ -209,6 +270,8 @@ export async function applyCompletionAudit(
       reopened_reason: audit.reason,
       auto_run_retries: retryCount(metadata) + 1,
       completion_audit_run_id: runId,
+      completion_audit_apply_status: "applied",
+      ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
     }, namespaceId);
 
     createNotification(namespaceId, {

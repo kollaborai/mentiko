@@ -105,4 +105,46 @@ describe("buildTaskAttempts", () => {
       }),
     ]);
   });
+
+  it("hides duplicate outcome summary runs marked in task metadata", () => {
+    const attempts = buildTaskAttempts({
+      taskId: "TASK-1",
+      metadata: {
+        last_run_id: "run-exec",
+        task_outcome_summary_run_id: "run-summary-latest",
+        duplicate_outcome_summary_run_ids: ["run-summary-old", "run-summary-recursive"],
+      },
+      runs: [
+        baseRun({
+          id: "run-exec",
+          chain: "Lead Capture Pipeline",
+          chainId: "nextjs-lead-capture-api-pipeline",
+          started: "2026-06-21T10:10:00.000Z",
+        }),
+        baseRun({
+          id: "run-summary-old",
+          chain: "Run Summary Generation",
+          chainId: "run-summary-generation",
+          started: "2026-06-21T10:15:00.000Z",
+          metadata: { generationKind: "run_summary", taskOutcomeSourceRunId: "run-exec" },
+        }),
+        baseRun({
+          id: "run-summary-latest",
+          chain: "Run Summary Generation",
+          chainId: "run-summary-generation",
+          started: "2026-06-21T10:20:00.000Z",
+          metadata: { generationKind: "run_summary", taskOutcomeSourceRunId: "run-exec" },
+        }),
+        baseRun({
+          id: "run-summary-recursive",
+          chain: "Run Summary Generation",
+          chainId: "run-summary-generation",
+          started: "2026-06-21T10:25:00.000Z",
+          metadata: { generationKind: "run_summary", taskOutcomeSourceRunId: "run-summary-latest" },
+        }),
+      ],
+    });
+
+    expect(attempts.map((attempt) => attempt.runId)).toEqual(["run-exec", "run-summary-latest"]);
+  });
 });

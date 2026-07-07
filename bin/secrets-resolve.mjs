@@ -153,8 +153,10 @@ function resolveProfileEnvVars(profileEnv) {
       if (secretValue !== null) {
         result[key] = secretValue;
       } else {
-        // secret not found - leave reference as-is (will fail at runtime)
-        result[key] = value;
+        // Missing/corrupt secrets must not poison runtime env. Leaving the
+        // literal reference exports values like ANTHROPIC_BASE_URL={secret:...},
+        // which breaks provider CLIs before the agent can recover.
+        console.error(`# unresolved secret reference skipped: ${key}={secret:${secretName}}`);
       }
     } else {
       result[key] = value;

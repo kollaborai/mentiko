@@ -4,6 +4,7 @@ describe("runner-v2 terminal completion plan", () => {
   it("plans run/task completion and chain-complete side effects for no downstream target", () => {
     const plan = planTerminalCompletion({
       runId: "run-1",
+      chainId: "build-chain",
       chainName: "Build Chain",
       chainPath: "/chains/build/chain.json",
       taskId: "task-1",
@@ -20,12 +21,12 @@ describe("runner-v2 terminal completion plan", () => {
       { type: "run-status", status: "completed" },
       { type: "task-status", status: "completed", taskId: "task-1", runId: "run-1" },
       { type: "schedule-mark", status: "success", chainPath: "/chains/build/chain.json" },
-      expect.objectContaining({ type: "webhook", event: "chain_complete" }),
+      expect.objectContaining({ type: "webhook", event: "chain_complete", chainId: "build-chain" }),
       expect.objectContaining({ type: "event", event: "chain-complete", source: "Build Chain" }),
       expect.objectContaining({ type: "plugin", event: "chain-completed" }),
       expect.objectContaining({ type: "notification", event: "chain-completed" }),
       expect.objectContaining({ type: "hook", event: "run-completed" }),
-      expect.objectContaining({ type: "metadata-webhooks", event: "completed" }),
+      expect.objectContaining({ type: "metadata-webhooks", event: "completed", chainId: "build-chain" }),
       { type: "session-policy", policy: "stop", sessions: ["writer-run-1", "monitor-writer-run-1"] },
     ]));
   });
@@ -84,6 +85,7 @@ describe("runner-v2 terminal completion plan", () => {
   it("plans failure side effects mirroring the shell no-event failure path", () => {
     const plan = planTerminalFailure({
       runId: "run-1",
+      chainId: "build-chain",
       chainName: "Build Chain",
       chainPath: "/chains/build/chain.json",
       taskId: "task-1",
@@ -96,7 +98,7 @@ describe("runner-v2 terminal completion plan", () => {
       { type: "task-status", status: "failed", taskId: "task-1", runId: "run-1" },
       { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300 },
       { type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-1", agentId: "writer", reason: "no matching completion event" },
-      { type: "metadata-webhooks", event: "failed", chainPath: "/chains/build/chain.json", chainName: "Build Chain", runId: "run-1" },
+      { type: "metadata-webhooks", event: "failed", chainId: "build-chain", chainPath: "/chains/build/chain.json", chainName: "Build Chain", runId: "run-1" },
     ]);
   });
 

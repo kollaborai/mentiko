@@ -325,7 +325,8 @@ async function dispatchOperation(
   }
 
   if (operation.type === "metadata-webhooks") {
-    await fireWebhooks(context.namespaceId, context.orgId, operation.chainName, normalizeWebhookEvent(operation.event), {
+    const chainId = operation.chainId || persistentChainIdFromPath(operation.chainPath) || operation.chainName;
+    await fireWebhooks(context.namespaceId, context.orgId, chainId, normalizeWebhookEvent(operation.event), {
       runId: operation.runId,
     });
     return { status: "dispatched" };
@@ -352,7 +353,7 @@ async function dispatchOperation(
   }
 
   if (operation.type === "webhook") {
-    const chainId = chainIdFromPath(operation.chainPath);
+    const chainId = operation.chainId || persistentChainIdFromPath(operation.chainPath);
     if (!chainId) {
       return { status: "skipped", reason: "webhook operation missing chain path" };
     }
@@ -484,6 +485,11 @@ function chainIdFromPath(chainPath?: string): string | undefined {
   const chainDir = normalized.endsWith("/chain.json") ? dirname(normalized) : normalized;
   const id = basename(chainDir);
   return id && id !== "." && id !== ".." ? id : undefined;
+}
+
+function persistentChainIdFromPath(chainPath?: string): string | undefined {
+  const id = chainIdFromPath(chainPath);
+  return id && !id.startsWith("run-") ? id : undefined;
 }
 
 function readQueuedEffects(path: string): QueuedExternalEffect[] {

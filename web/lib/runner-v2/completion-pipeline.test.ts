@@ -1,8 +1,8 @@
-import { mkdtempSync } from "fs";
+import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
-import { readLoopState, writeLoopState } from "@/lib/runner-v2/loop-state";
+import { readLoopState, shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 
 function runDir() {
@@ -58,6 +58,38 @@ describe("runner-v2 completion pipeline", () => {
     const dir = runDir();
     const runJsonPath = seedRun(dir);
     writeLoopState(dir, { visited: ["writer:draft-ready"], round: 1 });
+
+    const result = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      maxRounds: 3,
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      decision: {
+        action: "loop-complete",
+        loopGuard: { visitKey: "writer:draft-ready" },
+      },
+      loopStateBefore: { visited: ["writer:draft-ready"], round: 1 },
+    });
+    expect(result.loopStateAfter).toBeUndefined();
+    expect(readRunJson(runJsonPath).status).toBe("completed");
+  });
+
+  it("uses shell loop tracker visits to complete repeated agent/event visits", () => {
+    const dir = runDir();
+    const runJsonPath = seedRun(dir);
+    writeFileSync(shellLoopStatePath(dir), "writer:draft-ready\n");
 
     const result = runCompletionPipeline({
       runDir: dir,

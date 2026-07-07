@@ -756,8 +756,12 @@ async function housekeep() {
       : crypto.randomBytes(32).toString('hex');
     log(`internal service secret: ${isDev ? 'using dev default' : 'generated'} (len=${process.env.INTERNAL_SERVICE_SECRET.length})`);
   }
+  const webPort = process.env.WEB_PORT || process.env.PORT || '3000';
+  if (!process.env.WEB_PORT) process.env.WEB_PORT = webPort;
+  if (!process.env.PORT && isDev) process.env.PORT = webPort;
+  if (!process.env.BETTER_AUTH_URL && isDev) process.env.BETTER_AUTH_URL = `http://localhost:${webPort}`;
   if (!process.env.MENTIKO_WEB_URL) {
-    process.env.MENTIKO_WEB_URL = 'http://127.0.0.1:3000';
+    process.env.MENTIKO_WEB_URL = `http://127.0.0.1:${webPort}`;
   }
   if (!process.env.MENTIKO_NAMESPACE_ID) {
     process.env.MENTIKO_NAMESPACE_ID = process.env.NAMESPACE_ID || 'default';
@@ -805,7 +809,7 @@ async function housekeep() {
 
   // dev mode: kill stale processes on ports we need, then wait for ports to free
   if (isDev) {
-    for (const port of [3000, 3099, 7433]) {
+    for (const port of [Number(webPort), 3099, 7433].filter((p) => Number.isFinite(p))) {
       try {
         const pids = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
         if (!pids) continue;

@@ -262,7 +262,7 @@ decision API: docs/DECISIONS_API.md
 
 ```bash
 # web dev
-cd web && npm run dev       # localhost:3000
+cd web && npm run dev       # localhost:3200
 npm run build | lint | test
 npm run test:e2e            # playwright
 
@@ -343,7 +343,7 @@ creds: use the local test account configured for your development database.
 ### login flow
 
 ```
-1. navigate to http://localhost:3000/login
+1. navigate to http://localhost:3200/login
 2. screenshot to verify login page loaded
 3. fill email: puppeteer_fill('input[name="email"]', '<test-email>')
 4. fill password: puppeteer_fill('input[name="password"]', '<test-password>')
@@ -356,7 +356,7 @@ creds: use the local test account configured for your development database.
 after login, test any page by navigating directly:
 
 ```
-puppeteer_navigate("http://localhost:3000/chains")
+puppeteer_navigate("http://localhost:3200/chains")
 puppeteer_screenshot()    # verify it loaded, check for errors
 ```
 
@@ -433,7 +433,7 @@ when something doesn't work, check in this order:
 
 1. puppeteer screenshot -- see what the user sees, check for errors
 2. curl the API -- verify response matches what frontend expects
-   curl -s "http://localhost:3000/api/chains" | jq . | head -20
+   curl -s "http://localhost:3200/api/chains" | jq . | head -20
 3. read the code -- find where data transforms, check for logic bugs
 
 always screenshot AFTER every action. don't assume it worked.

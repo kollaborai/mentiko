@@ -34,7 +34,7 @@ SMOKE_BASE_URL=https://<your-qa-host> node scripts/smoke-test-advanced.mjs
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| SMOKE_BASE_URL | `http://localhost:3000` | Target URL to test |
+| SMOKE_BASE_URL | `http://localhost:3200` | Target URL to test |
 | SMOKE_EMAIL | (none — set for your env) | Login email |
 | SMOKE_PASSWORD | (none — set for your env) | Login password |
 | SMOKE_OUTPUT_DIR | `./smoke-test-results` | Results directory |

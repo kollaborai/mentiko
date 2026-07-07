@@ -1,3 +1,5 @@
+import { existsSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { findCompletionEvent, type CompletionAgentRef } from "@/lib/runner-v2/completion";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 import { decideNextRoute, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
@@ -35,6 +37,7 @@ export interface CompleteAgentInput {
     policy?: RetryPolicy;
     currentAttempt?: number;
     onError?: string;
+    chainId?: string;
     chainPath?: string;
     workspacePath?: string;
     taskId?: string;
@@ -62,11 +65,18 @@ export interface GenerationImportPlan {
 }
 
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
-  const match = findCompletionEvent({
+  let match = findCompletionEvent({
     agent: input.agent,
     runId: input.runId,
     events: input.events,
   });
+
+  if (!match.matched) {
+    const salvaged = synthesizeCompletionEventFromHandoff(input);
+    if (salvaged) {
+      match = { matched: true, event: salvaged };
+    }
+  }
 
   if (!match.matched || !match.event) {
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
@@ -85,6 +95,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         generation: input.generation,
         terminal: planTerminalCompletion(input.terminal || {
           runId: input.runId,
+          chainId: input.chain.id,
           chainName: input.chain.name || input.chain.id || "unknown",
           lastAgentId: input.agent.id,
         }, "explicit-stop"),
@@ -107,6 +118,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         reason: "empty-emits-last-agent",
         terminal: planTerminalCompletion(input.terminal || {
           runId: input.runId,
+          chainId: input.chain.id,
           chainName: input.chain.name || input.chain.id || "unknown",
           lastAgentId: input.agent.id,
         }, "empty-emits-last-agent"),
@@ -117,6 +129,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     if (input.retry) {
       const retry = planNoEventRetry({
         runId: input.runId,
+        chainId: input.chain.id,
         chainName: input.chain.name || input.chain.id || "unknown",
         chainPath: input.retry.chainPath,
         workspacePath: input.retry.workspacePath,
@@ -241,6 +254,43 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     loopGuard,
     fanGroup,
     run,
+  };
+}
+
+function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): RunnerEventRecord | null {
+  if (!input.agent.emits) return null;
+  const runDir = dirname(input.runJsonPath);
+  const artifactsDir = join(runDir, "artifacts");
+  const candidates = [
+    join(artifactsDir, `${input.agent.id}-summary.json`),
+    join(artifactsDir, `${input.agent.id}-summary.md`),
+  ];
+  const artifactPath = candidates.find((candidate) => {
+    try {
+      return existsSync(candidate) && statSync(candidate).size > 0;
+    } catch {
+      return false;
+    }
+  });
+  if (!artifactPath) return null;
+
+  return {
+    event: input.agent.emits,
+    source: input.agent.id,
+    runId: input.runId,
+    timestamp: (input.now || new Date()).toISOString(),
+    processed: false,
+    data: "salvaged-from-agent-handoff-artifacts",
+    fields: {
+      event: input.agent.emits,
+      source: input.agent.id,
+      run_id: input.runId,
+      timestamp: (input.now || new Date()).toISOString(),
+      processed: "false",
+      data: "salvaged-from-agent-handoff-artifacts",
+      artifact_path: artifactPath,
+    },
+    path: artifactPath,
   };
 }
 

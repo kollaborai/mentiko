@@ -109,6 +109,12 @@ function metadataRunRefs(metadata: Record<string, unknown>) {
   return refs;
 }
 
+function duplicateOutcomeSummaryRunIds(metadata: Record<string, unknown>): Set<string> {
+  const value = metadata.duplicate_outcome_summary_run_ids;
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0));
+}
+
 function toAttempt(
   run: TaskAttemptRun,
   kind: TaskAttemptKind,
@@ -196,12 +202,14 @@ export function buildTaskAttempts({
   const metadataRecord = maybeJsonRecord(metadata);
   const currentExecutionRunId = stringValue(metadataRecord.last_run_id);
   const refs = metadataRunRefs(metadataRecord);
+  const duplicateOutcomeSummaries = duplicateOutcomeSummaryRunIds(metadataRecord);
   const attempts: TaskAttempt[] = [];
   const seen = new Set<string>();
 
   for (const run of runs) {
     const runId = stringValue(run.id);
     if (!runId) continue;
+    if (duplicateOutcomeSummaries.has(runId)) continue;
     const metadataKind = refs.get(runId);
     if (run.taskId !== taskId && !metadataKind) continue;
 

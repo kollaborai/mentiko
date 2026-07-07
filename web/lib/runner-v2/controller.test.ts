@@ -32,6 +32,7 @@ function launchContext() {
     chainPath: "/tmp/run/chain.json",
     runDir: "/tmp/run",
     runId: "run-1",
+    chainId: "test-chain",
     chainName: "Test Chain",
     logFd: 1,
     cwd: "/repo",

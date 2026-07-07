@@ -43,7 +43,7 @@ cd mentiko
 cd web && npm install
 npm run dev`}</CodeBlock>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          The web UI starts at <code className="text-foreground/70 bg-muted px-1 rounded">localhost:3000</code>.
+          The web UI starts at <code className="text-foreground/70 bg-muted px-1 rounded">localhost:3200</code>.
           The CLI is at <code className="text-foreground/70 bg-muted px-1 rounded">./bin/mentiko</code>.
         </p>
         <p className="mt-2 text-xs text-foreground/60 leading-relaxed">
@@ -106,7 +106,7 @@ npm run dev`}</CodeBlock>
       <section className="mb-6">
         <h2 className="text-sm font-medium mb-2">View in the Web UI</h2>
         <p className="text-xs text-foreground/60 leading-relaxed">
-          Navigate to <code className="text-foreground/70 bg-muted px-1 rounded">localhost:3000</code> to
+          Navigate to <code className="text-foreground/70 bg-muted px-1 rounded">localhost:3200</code> to
           see your chains, agents, runs, and conversations. The dashboard shows active
           sessions, and you can steer agents directly from the conversations page.
         </p>

@@ -124,7 +124,7 @@ export function getAutoRunServiceStatus() {
 // ---------------------------------------------------------------------------
 
 async function waitForHealth(): Promise<void> {
-  const port = process.env.PORT || 3000;
+  const port = process.env.WEB_PORT || process.env.PORT || 3000;
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < HEALTH_CHECK_MAX_WAIT_MS) {
@@ -151,7 +151,7 @@ async function waitForHealth(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function checkAutoRunTasks() {
-  const port = process.env.PORT || 3000;
+  const port = process.env.WEB_PORT || process.env.PORT || 3000;
   const secret = process.env.BETTER_AUTH_SECRET || "";
   const namespaceId = process.env.NAMESPACE_ID || "default";
 

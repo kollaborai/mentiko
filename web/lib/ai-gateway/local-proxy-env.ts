@@ -12,7 +12,7 @@ function localOrigin(origin?: string): string {
       /* fall back to WEB_PORT */
     }
   }
-  return `http://127.0.0.1:${process.env.WEB_PORT || "3000"}`;
+  return `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || "3000"}`;
 }
 
 export function buildLocalAiGatewayProxyEnv(origin?: string): Record<string, string> {

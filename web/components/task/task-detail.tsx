@@ -72,6 +72,17 @@ function CollapsibleSection({
   );
 }
 
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function isSupersededDecisionSubtask(task: Task, parentSupersededIds: Set<string>): boolean {
+  if (parentSupersededIds.has(task.id)) return true;
+  if (task.type !== "decision") return false;
+  return task.metadata?.decision_status === "superseded";
+}
+
 export function TaskDetail({
   task,
   subtasks,
@@ -118,6 +129,10 @@ export function TaskDetail({
   const decisionSubtaskId = typeof task.metadata?.decision_subtask_id === "string"
     ? (task.metadata.decision_subtask_id as string)
     : undefined;
+  const supersededDecisionSubtaskIds = new Set(stringArray(task.metadata?.superseded_decision_subtask_ids));
+  const visibleSubtasks = subtasks.filter(
+    (subtask) => !isSupersededDecisionSubtask(subtask, supersededDecisionSubtaskIds),
+  );
 
   if (decisionId) {
     return (
@@ -186,7 +201,7 @@ export function TaskDetail({
           )}
           {decisionSubtaskId && (
             <button
-              onClick={() => onSelectDep(decisionSubtaskId)}
+              onClick={() => (onOpenTask ?? onSelectDep)(decisionSubtaskId)}
               className="mt-2 rounded-sm bg-background/50 px-2 py-1 text-[10px] font-mono text-foreground/60 hover:text-foreground"
             >
               → view decision subtask
@@ -260,7 +275,7 @@ export function TaskDetail({
       )}
 
       {/* epic auto-run toggle */}
-      {task.type === "epic" && subtasks.length > 0 && onToggleEpicAutoRun && (
+      {task.type === "epic" && visibleSubtasks.length > 0 && onToggleEpicAutoRun && (
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-foreground/40 font-medium">
@@ -285,7 +300,7 @@ export function TaskDetail({
       )}
 
       {/* subtasks */}
-      <TaskChildren items={subtasks} onSelectChild={onSelectChild} depInfo={depInfo} />
+      <TaskChildren items={visibleSubtasks} onSelectChild={onSelectChild} depInfo={depInfo} />
 
       {/* deps graph */}
       <TaskDepsGraph

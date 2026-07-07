@@ -15,6 +15,7 @@ export interface RetryPolicy {
 
 export interface RetryPlanInput {
   runId: string;
+  chainId?: string;
   chainName: string;
   chainPath?: string;
   workspacePath?: string;
@@ -28,16 +29,23 @@ export interface RetryPlanInput {
   debug?: boolean;
 }
 
+export type RetryStateStep =
+  | { type: "retry-state"; action: "set"; agentId: string; attempt: number }
+  | { type: "retry-state"; action: "clear"; agentId: string };
+
+export type RetryFailureStep =
+  | RetryStateStep
+  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number };
+
 export type RetryExhaustedStep =
-  | { type: "retry-state"; action: "clear"; agentId: string }
-  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }
+  | RetryFailureStep
   | { type: "rollback"; action: "plan-only"; agentId: string; startSha?: string }
   | { type: "run-status"; status: "stopped"; reason: string }
   | { type: "task-status"; status: "stopped"; taskId?: string; runId?: string }
   | { type: "hook"; event: "run-error"; runId: string; details: Record<string, string> }
   | { type: "notification"; event: "agent-failed" | "chain-failed"; chainName: string; runId: string; agentId?: string; reason: string }
   | { type: "plugin"; event: "chain-stopped"; chainName: string; runId: string; agentId: string }
-  | { type: "metadata-webhooks"; event: "failed"; chainPath?: string; chainName: string; runId: string };
+  | { type: "metadata-webhooks"; event: "failed"; chainId?: string; chainPath?: string; chainName: string; runId: string };
 
 export type RetryNoEventPlan =
   | {
@@ -48,7 +56,7 @@ export type RetryNoEventPlan =
       delaySeconds: number;
       strategy: RetryStrategy;
       circuitBreaker: Required<RetryCircuitBreakerPolicy>;
-      steps: Array<{ type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }>;
+      steps: RetryFailureStep[];
       launch: {
         agentId: string;
         reason: "missing-event";
@@ -79,7 +87,10 @@ export function planNoEventRetry(input: RetryPlanInput): RetryNoEventPlan {
       delaySeconds: Number((delayMs / 1000).toFixed(1)),
       strategy: policy.strategy,
       circuitBreaker,
-      steps: [circuitFailureStep(input, circuitBreaker)],
+      steps: [
+        circuitFailureStep(input, circuitBreaker),
+        { type: "retry-state", action: "set", agentId: input.agentId, attempt: nextAttempt },
+      ],
       launch: {
         agentId: input.agentId,
         reason: "missing-event",
@@ -207,6 +218,7 @@ function buildRetryExhaustedSteps(input: RetryPlanInput): RetryExhaustedStep[] {
     {
       type: "metadata-webhooks",
       event: "failed",
+      chainId: input.chainId,
       chainPath: input.chainPath,
       chainName,
       runId: input.runId,

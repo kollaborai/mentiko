@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { withErrorHandling } from "@/lib/api-response";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -9,10 +10,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   if (ctx instanceof NextResponse) return ctx;
 
   // Proxy to /api/system/detect-cli with inbox-key bypass
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
   const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
 
-  const response = await fetch(`${webUrl}/api/system/detect-cli`, {
+  const response = await fetch(internalApiUrl("/api/system/detect-cli", request.url), {
     method: "GET",
     headers: {
       "X-Mentiko-Inbox-Key": inboxKey,

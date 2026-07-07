@@ -9,7 +9,7 @@ This does NOT cover external provisioning or hosting services, which have their 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `BETTER_AUTH_SECRET` | - | **Yes** (production) | Session signing, JWT secrets, HMAC key. Generate with `openssl rand -base64 32` |
-| `BETTER_AUTH_URL` | `http://localhost:3000` | No | Base URL for auth redirects and session management |
+| `BETTER_AUTH_URL` | `http://localhost:3200` | No | Base URL for auth redirects and session management |
 | `DATABASE_URL` | `file:{globalRoot}/data/auth.db` | No | SQLite or Postgres connection string |
 | `ADMIN_EMAILS` | `""` | No | Comma-separated emails that get platform admin access |
 | `GITHUB_CLIENT_ID` | - | No | GitHub OAuth provider |
@@ -188,8 +188,8 @@ Build-time variables baked into the client bundle.
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `NEXT_PUBLIC_BASE_URL` | `https://mentiko.com` | No | App base URL for metadata and SEO |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3000` | No | API base URL |
-| `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` | No | App URL for notification links |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3200` | No | API base URL |
+| `NEXT_PUBLIC_APP_URL` | `http://localhost:3200` | No | App URL for notification links |
 | `NEXT_PUBLIC_WS_TERMINAL_PORT` | `3099` | No | WebSocket terminal port (client) |
 | `NEXT_PUBLIC_MANAGED` | - | No | `true` to enable SaaS billing UI |
 | `NEXT_PUBLIC_MOCK_OAUTH` | - | No | `true` for mock OAuth (test) |
@@ -206,8 +206,8 @@ Build-time variables baked into the client bundle.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `APP_URL` | `http://localhost:3000` | No | App URL for email unsubscribe links |
-| `BASE_URL` | `http://localhost:3000` | No | Base URL for unsubscribe validation |
+| `APP_URL` | `http://localhost:3200` | No | App URL for email unsubscribe links |
+| `BASE_URL` | `http://localhost:3200` | No | Base URL for unsubscribe validation |
 
 ## Tenant
 

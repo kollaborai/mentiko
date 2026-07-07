@@ -37,9 +37,17 @@ jest.mock("fs", () => ({
     || path.endsWith("bootstrap-executor.ts")
     || path.endsWith("controller.ts")
     || path.endsWith("agent-functions.sh")
+    || path.endsWith("agent-profile.sh")
+    || path.endsWith("secrets-resolve.mjs")
     || path.endsWith("chain-runner.sh")
     || path.endsWith("Dockerfile")
     || path.endsWith("launch-plan.ts")
+    || path.endsWith("loop-state.ts")
+    || path.endsWith("task-outcome-audit.ts")
+    || path.endsWith("completion-audit-apply.ts")
+    || path.endsWith("task-store.ts")
+    || path.endsWith("run-outcome-evidence.ts")
+    || path.endsWith("chain-generation-required-rules.ts")
     || path.endsWith("background-worker.ts")
     || path.endsWith("runner-v2-runtime-proof.json")
     || path.endsWith("runner-v2-watched-proof.json")
@@ -83,6 +91,12 @@ jest.mock("fs", () => ({
     if (path.endsWith("agent-functions.sh")) {
       return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-complete.js";
     }
+    if (path.endsWith("agent-profile.sh")) {
+      return "jq select((.value | test(\"^\\\\{secret:[^}]+\\\\}$\")) | not)";
+    }
+    if (path.endsWith("secrets-resolve.mjs")) {
+      return "console.error('# unresolved secret reference skipped')";
+    }
     if (path.endsWith("chain-runner.sh")) {
       return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"';
     }
@@ -96,10 +110,28 @@ jest.mock("fs", () => ({
       return "import { startRunnerV2Bootstrap } from '@/lib/runner-v2/bootstrap-executor'; startRunnerV2Bootstrap(context);";
     }
     if (path.endsWith("completion-entrypoint.ts")) {
-      return "const generation = generationImportPlan(run, runDir, env);";
+      return "const generation = generationImportPlan(run, runDir, env); shellLoopStatePath(runDir); return { decision: 'already-completed' };";
+    }
+    if (path.endsWith("loop-state.ts")) {
+      return "export function shellLoopStatePath() { return 'chain_loop_tracker.txt'; }";
+    }
+    if (path.endsWith("task-outcome-audit.ts")) {
+      return "const key = 'task_outcome_summary_run_fingerprint'; task_outcome_summary: undefined";
+    }
+    if (path.endsWith("completion-audit-apply.ts")) {
+      return "const key = 'completion_audit_claimed_run_id';";
+    }
+    if (path.endsWith("task-store.ts")) {
+      return "closed_at = NULL";
+    }
+    if (path.endsWith("run-outcome-evidence.ts")) {
+      return "function listArtifactFiles() {}";
+    }
+    if (path.endsWith("chain-generation-required-rules.ts")) {
+      return "DYNAMIC_PORT_RUNTIME_PROOF";
     }
     if (path.endsWith("adapters.ts")) {
-      return "function applyGenerationImport() { return true; }";
+      return "function applyGenerationImport() { return true; } function applyRetryState() {}";
     }
     if (path.endsWith("completion-runner.ts")) {
       return 'return { action: "generation-terminal" };';
@@ -111,7 +143,7 @@ jest.mock("fs", () => ({
       return "import { classifyCliReadiness } from '@/lib/runner-v2/readiness-policy'; export async function executeLocalBootstrap() { await executor.spawn('name'); classifyCliReadiness({ output: '' }); await waitForBootstrapReadiness(); await startMonitorSession(); }";
     }
     if (path.endsWith("executor.ts")) {
-      return 'case "generation-import": return effect;';
+      return 'case "generation-import": return effect; function buildRetryLaunchCommand() {} const env = { MENTIKO_RETRY_ATTEMPT: "1" };';
     }
     if (path.endsWith("background-worker.ts")) {
       return "import { drainRunnerV2ExternalEffects } from '../lib/runner-v2/external-effects'; setInterval(() => drainRunnerV2ExternalEffects(), 15_000);";
@@ -197,6 +229,18 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "agent-bootstrap-planner", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-executor", status: "pass" }),
       expect.objectContaining({ id: "completion-runtime-compile", status: "pass" }),
+      expect.objectContaining({ id: "profile-secret-placeholder-skip", status: "pass" }),
+      expect.objectContaining({ id: "profile-fallback-secret-filter", status: "pass" }),
+      expect.objectContaining({ id: "loop-state-shell-typed-interop", status: "pass" }),
+      expect.objectContaining({ id: "completion-dry-run-shell-loop-restore", status: "pass" }),
+      expect.objectContaining({ id: "completion-idempotent-duplicate", status: "pass" }),
+      expect.objectContaining({ id: "task-audit-run-fingerprint", status: "pass" }),
+      expect.objectContaining({ id: "completion-audit-claimed-vs-applied", status: "pass" }),
+      expect.objectContaining({ id: "completion-audit-disk-artifacts", status: "pass" }),
+      expect.objectContaining({ id: "chain-generation-dynamic-port-proof", status: "pass" }),
+      expect.objectContaining({ id: "retry-delay-command", status: "pass" }),
+      expect.objectContaining({ id: "retry-attempt-env", status: "pass" }),
+      expect.objectContaining({ id: "retry-state-adapter", status: "pass" }),
       expect.objectContaining({ id: "watched-runtime-proof", status: "pass" }),
       expect.objectContaining({ id: "watched-pty-proof", status: "pass" }),
       expect.objectContaining({ id: "initial-launch-typed", status: "pass" }),

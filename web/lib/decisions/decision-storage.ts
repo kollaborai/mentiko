@@ -100,13 +100,18 @@ function findDecisionLocation(
 
   addCandidate(getDecisionFile(nsId, orgId, id, workspacePath));
 
-  if (!workspacePath) {
-    const projectsDir = orgPath(nsId, orgId, "projects");
-    if (existsSync(projectsDir)) {
-      for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        addCandidate(path.join(projectsDir, entry.name, "decisions", `${id}.json`));
-      }
+  // Completion-audit decisions are namespace/global records. Task detail views
+  // still pass the current workspace, so a workspace-only lookup makes those
+  // decision subtasks open to "decision not found".
+  if (workspacePath) {
+    addCandidate(getDecisionFile(nsId, orgId, id));
+  }
+
+  const projectsDir = orgPath(nsId, orgId, "projects");
+  if (existsSync(projectsDir)) {
+    for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      addCandidate(path.join(projectsDir, entry.name, "decisions", `${id}.json`));
     }
   }
 

@@ -136,10 +136,28 @@ function validateChainBranches(
       .map((agent) => (typeof agent.emits === "string" ? agent.emits : ""))
       .filter(Boolean)
   );
+  // An agent declares ONE static `emits`, but at runtime a single agent can emit one of
+  // several conditional events — a verifier emits "verification-passed" on success and
+  // "verification-failed" on failure; a reviewer emits "approved" OR "needs-revision".
+  // These secondary events never appear in any static `emits`, so the branch that routes
+  // them is instead wired to an agent that triggers on them (the loop-back / conditional
+  // patterns the chain generator is built to produce — see
+  // web/lib/generation/generation-template-storage.ts). An agent's `triggers` are therefore
+  // part of the chain's real event vocabulary: a branch key is valid if some agent emits it
+  // OR some agent consumes it. Matching only against `emits` falsely rejects those chains
+  // (and even the generator's own canonical review-loop example).
+  const consumedEvents = new Set(
+    agents.flatMap((agent) =>
+      Array.isArray(agent.triggers)
+        ? (agent.triggers as unknown[]).filter((t): t is string => typeof t === "string")
+        : []
+    )
+  );
+  const knownEvents = new Set([...emittedEvents, ...consumedEvents]);
 
   for (const [eventName, target] of Object.entries(branches as Record<string, unknown>)) {
-    if (emittedEvents.size > 0 && !emittedEvents.has(eventName)) {
-      collect(errors, `branches.${eventName}`, "must match an event emitted by an agent");
+    if (emittedEvents.size > 0 && !knownEvents.has(eventName)) {
+      collect(errors, `branches.${eventName}`, "must match an event emitted or consumed by an agent");
     }
 
     for (const targetId of collectBranchTargets(target)) {

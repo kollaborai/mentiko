@@ -119,6 +119,15 @@ CHAIN DESIGN PRINCIPLES:
    completion once the acceptance criteria are demonstrably true — not merely
    "specified".
 
+   DYNAMIC_PORT_RUNTIME_PROOF (non-negotiable for web/app delivery verification):
+   Never assume port 3000 and never treat an already-listening port as proof. If
+   runtime verification is needed, pick a free port at verification time, start
+   the target app bound explicitly to 127.0.0.1 on that port, capture the PID and
+   working directory for the process you started, and verify the response contains
+   target-specific content or a file/route marker from this workspace. Generic
+   framework pages or another product's title are insufficient evidence. Stop
+   only the PID you started; do not use broad commands such as pkill -f "next dev".
+
 7. EXISTING AGENTS — prefer $ref over inline
    Check {{AGENT_CATALOG}} for agents that match your needs:
    - Same role and capabilities? Use {"$ref": "agent-id"}

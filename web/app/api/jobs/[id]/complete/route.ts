@@ -13,6 +13,7 @@ import { processTaskGenerationResult } from "@/lib/tasks/generated-task-import";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 import { enforceDeliveryGate } from "@/lib/tasks/completion-audit-delivery-gate";
+import { currentRunTerminalFingerprint } from "@/lib/tasks/run-outcome-evidence";
 
 export const dynamic = "force-dynamic";
 
@@ -420,6 +421,11 @@ export const POST = withErrorHandling(async (
         const sourceRunId = typeof updatedJob.input?.sourceRunId === "string"
           ? updatedJob.input.sourceRunId
           : undefined;
+        const runFingerprint = typeof updatedJob.input?.runFingerprint === "string"
+          ? updatedJob.input.runFingerprint
+          : sourceRunId
+            ? currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId)
+            : undefined;
         taskUpdate(orgId, updatedJob.taskId, {
           metadata: {
             ...existing,
@@ -428,6 +434,7 @@ export const POST = withErrorHandling(async (
             task_outcome_summary_run_id: updatedJob.runId,
             task_outcome_summary_chain_id: updatedJob.chainId,
             ...(sourceRunId ? { task_outcome_summary_source_run_id: sourceRunId } : {}),
+            ...(runFingerprint ? { task_outcome_summary_run_fingerprint: runFingerprint } : {}),
             ...(updatedJob.status === "complete" && updatedJob.result
               ? {
                   task_outcome_summary: updatedJob.result,
@@ -476,6 +483,9 @@ export const POST = withErrorHandling(async (
           task: auditTask,
           audit,
           runId: sourceRunId,
+          runFingerprint: typeof updatedJob.input?.runFingerprint === "string"
+            ? updatedJob.input.runFingerprint
+            : currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId),
           workspacePath: workspacePathFromJobInput(updatedJob.input || {}),
           metadata: metadataRecord(auditTask.metadata),
         });

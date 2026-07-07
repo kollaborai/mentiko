@@ -75,13 +75,19 @@
       "cmd": "npx",
       "args": ["next", "dev"],
       "env": {
-        "PORT": "3000"
+        "PORT": "3200",
+        "WEB_PORT": "3200",
+        "BETTER_AUTH_URL": "http://localhost:3200",
+        "NEXT_PUBLIC_APP_URL": "http://localhost:3200",
+        "NEXT_PUBLIC_API_URL": "http://localhost:3200",
+        "APP_URL": "http://localhost:3200",
+        "MENTIKO_WEB_URL": "http://127.0.0.1:3200"
       },
       "cwd": ".",
       "dependsOn": ["ws-terminal"],
       "readiness": {
         "type": "port",
-        "port": 3000,
+        "port": 3200,
         "timeout": 90000,
         "interval": 500
       },

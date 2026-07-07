@@ -4,7 +4,7 @@ Decisions API Reference
 REST API for the decision system. all endpoints require auth
 (cookie or bearer token) and the x-namespace-id header.
 
-base url: http://localhost:3000/api/decisions
+base url: http://localhost:3200/api/decisions
 
 common headers:
   Cookie: better-auth.session_token=<token>
@@ -86,11 +86,11 @@ query params:
 
 response: { decisions: Decision[] }
 
-  curl -s http://localhost:3000/api/decisions \
+  curl -s http://localhost:3200/api/decisions \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
-  curl -s "http://localhost:3000/api/decisions?status=pending" \
+  curl -s "http://localhost:3200/api/decisions?status=pending" \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -102,7 +102,7 @@ GET /api/decisions/:id
 response: { decision: Decision }
   404 if not found
 
-  curl -s http://localhost:3000/api/decisions/abc123 \
+  curl -s http://localhost:3200/api/decisions/abc123 \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -117,7 +117,7 @@ request body:
 response: { decision: Decision }  (status 201)
   new decision starts in "intake" status
 
-  curl -s -X POST http://localhost:3000/api/decisions \
+  curl -s -X POST http://localhost:3200/api/decisions \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -132,7 +132,7 @@ request body: any partial Decision fields
 
 response: { decision: Decision }
 
-  curl -s -X PATCH http://localhost:3000/api/decisions/abc123 \
+  curl -s -X PATCH http://localhost:3200/api/decisions/abc123 \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -145,7 +145,7 @@ DELETE /api/decisions/:id
 
 response: { success: true }
 
-  curl -s -X DELETE http://localhost:3000/api/decisions/abc123 \
+  curl -s -X DELETE http://localhost:3200/api/decisions/abc123 \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -175,11 +175,11 @@ side effects:
   - decision.activeJobId set to job id
   - spawns detached job-runner.mjs process
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/research \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/research \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/research \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/research \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -201,7 +201,7 @@ side effects:
   - decision.activeJobId cleared
   - options, recommendation, context populated from job result
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/research \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/research \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -248,7 +248,7 @@ task creation behavior:
     - wires up plan dependencies via task store API
     - response.taskIds contains [epicId, ...subtaskIds]
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/resolve \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/resolve \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -280,7 +280,7 @@ side effects:
   - decision.retroJobId set to job id
   - spawns detached job-runner.mjs process
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/retrospective \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/retrospective \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -300,7 +300,7 @@ side effects:
   - decision.retrospective populated
   - decision.retroJobId cleared
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/retrospective \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/retrospective \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -355,7 +355,7 @@ TradeoffQuestion shape:
   category    string    question category
   weight      number    importance weight
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/guided/questions \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/guided/questions \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -384,7 +384,7 @@ behavior:
     - guidedFlow.round1.preferenceProfile built from answers
       (maps each category to the chosen value)
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/guided/answer \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/guided/answer \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \
@@ -427,7 +427,7 @@ TailoredOption shape (extends Option):
   matchLabel    string?   human-readable match description
   preview       object?   { type: "image"|"component"|"code", content: string }
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/guided/options \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/guided/options \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>"
 
@@ -482,7 +482,7 @@ PlanDependency shape:
   from            string    plan task id (blocker)
   to              string    plan task id (blocked)
 
-  curl -s -X POST http://localhost:3000/api/decisions/abc123/guided/plan \
+  curl -s -X POST http://localhost:3200/api/decisions/abc123/guided/plan \
     -H "x-namespace-id: default" \
     -H "Cookie: better-auth.session_token=<token>" \
     -H "Content-Type: application/json" \

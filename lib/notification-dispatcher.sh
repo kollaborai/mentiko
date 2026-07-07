@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
 
 # default dispatch endpoint (override via env)
-DISPATCH_ENDPOINT="${MENTIKO_DISPATCH_ENDPOINT:-http://localhost:3000/api/notifications/dispatch}"
+DISPATCH_ENDPOINT="${MENTIKO_DISPATCH_ENDPOINT:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}/api/notifications/dispatch}"
 DISPATCH_SECRET="${MENTIKO_DISPATCH_SECRET:-${BETTER_AUTH_SECRET:-}}"
 
 # -------------------------------------------------------------------

@@ -429,7 +429,7 @@ import_generation_job_backstop() {
         MENTIKO_COMPLETION_EVENT_DATA="${TRIGGERED_EVENT_DATA:-}" \
         NAMESPACE_ID="${NAMESPACE_ID:-default}" \
         ORG_ID="${ORG_ID:-default}" \
-        MENTIKO_WEB_URL="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-3000}}" \
+        MENTIKO_WEB_URL="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}" \
         "$_gen_bin" generation import 2>&1); then
         echo "  generation: job $_gen_job_id ($_gen_kind) import ok"
         _sys_log "info" "chain-runner-complete" "run ${RUN_ID} generation import backstop ok" "job: $_gen_job_id, kind: $_gen_kind"
@@ -1085,7 +1085,7 @@ fail_generation_job() {
     local reason="$3"
     local token="${MENTIKO_JOB_IMPORT_TOKEN:-}"
     local token_path="${RUN_DIR:-}/.internal/generation-import-token"
-    local base_url="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-3000}}"
+    local base_url="${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}"
     local payload=""
 
     if [[ -z "$token" && -f "$token_path" ]]; then
@@ -1590,7 +1590,7 @@ if [[ -n "$TRIGGERED_EVENT_NAME" ]]; then
         fi
 
         # dispatch notifications: chain-completed
-        BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+        BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
         curl -s -X POST "${BASE_URL}/api/notifications/dispatch" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \
@@ -2043,7 +2043,7 @@ if [[ -z "$TRIGGERED_EVENT_NAME" && -n "$RUN_ID" ]]; then
         update-task-from-run "$RUN_ID" "completed"
 
         # dispatch notifications: chain-completed
-        BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+        BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
         curl -s -X POST "${BASE_URL}/api/notifications/dispatch" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \

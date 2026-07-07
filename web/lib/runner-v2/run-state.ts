@@ -18,6 +18,7 @@ export interface RunAgentRecord {
 export interface RunRecord {
   id: string;
   chain: string;
+  chainId?: string;
   goal: string;
   started: string;
   status: RunStatus | string;

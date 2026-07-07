@@ -140,7 +140,7 @@ Dev process config: `web/processes.dev.json`
 - `pty-mgr`: repo wrapper, daemonized.
 - `ws-terminal`: terminal websocket bridge on port 3099.
 - `worker`: background worker.
-- `platform`: `next dev` on port 3000.
+- `platform`: `next dev` on port 3200.
 - `kollabor-engine`: optional local engine on port 7433.
 
 Production process config: `web/processes.json`

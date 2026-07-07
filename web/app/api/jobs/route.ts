@@ -14,6 +14,7 @@ import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { buildChainSummary, getAllChains } from "@/lib/chains/chain-utils";
+import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -137,7 +138,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     // raw user prompt — wrap it in the chain_generation template
     const schema = getChainSchema();
     const template = getTemplate(namespaceId, orgId, "chain_generation");
-    input.prompt = resolveTemplate(template.content, {
+    input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
       USER_PROMPT: String(input.userPrompt || ""),
       SCHEMA: schema,
       AGENT_CATALOG: "",
@@ -148,7 +149,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     // wrap it in the chain_generation template as USER_PROMPT
     const schema = getChainSchema();
     const template = getTemplate(namespaceId, orgId, "chain_generation");
-    input.prompt = resolveTemplate(template.content, {
+    input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
       USER_PROMPT: String(input.prompt),
       SCHEMA: schema,
       AGENT_CATALOG: "",

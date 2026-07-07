@@ -45,7 +45,7 @@ export async function getSystemInfo(): Promise<{
   version?: any;
   health?: any;
 }> {
-  const WEB_URL = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
+  const WEB_URL = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
   const [version, health] = await Promise.all([
     fetch(`${WEB_URL}/api/version`)
       .then((r) => r.json())

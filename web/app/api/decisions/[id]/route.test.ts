@@ -27,6 +27,8 @@ const getJob = jest.fn();
 const resolveLinkRunsDir = jest.fn();
 const applyDecisionRunResult = jest.fn();
 const taskUpdate = jest.fn();
+const taskGet = jest.fn();
+const taskDelete = jest.fn();
 const existsSync = jest.fn();
 const readFileSync = jest.fn();
 
@@ -62,6 +64,8 @@ jest.mock("@/lib/decisions/decision-run-results", () => ({
 }));
 
 jest.mock("@/lib/tasks/task-store", () => ({
+  taskDelete: (...args: unknown[]) => taskDelete(...args),
+  taskGet: (...args: unknown[]) => taskGet(...args),
   taskUpdate: (...args: unknown[]) => taskUpdate(...args),
 }));
 
@@ -70,7 +74,7 @@ jest.mock("node:fs", () => ({
   readFileSync: (...args: unknown[]) => readFileSync(...args),
 }));
 
-import { GET, PATCH } from "./route";
+import { DELETE, GET, PATCH } from "./route";
 
 function makeRequest(body?: Record<string, unknown>): Parameters<typeof GET>[0] {
   return {
@@ -185,6 +189,71 @@ describe("PATCH /api/decisions/[id]", () => {
       "default",
       "DEC-001",
       { title: "New title" },
+      "default",
+    );
+  });
+});
+
+describe("DELETE /api/decisions/[id]", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    checkAuth.mockResolvedValue(true);
+    getNamespaceIdFromRequest.mockResolvedValue("default");
+    getOrgIdFromRequest.mockResolvedValue("default");
+    getWorkspacePath.mockReturnValue("/repo");
+    getDecision.mockReturnValue({
+      id: "decision-1",
+      taskId: "DEC-038",
+      parentTaskId: "TASK-093",
+      title: "Dead gate",
+      prompt: "Dead gate",
+      status: "briefed",
+      options: [],
+    });
+    taskGet.mockImplementation((_orgId: string, taskId: string) => {
+      if (taskId === "DEC-038") {
+        return {
+          id: "DEC-038",
+          parent_id: "TASK-093",
+          metadata: {
+            decision_id: "decision-1",
+          },
+        };
+      }
+      if (taskId === "TASK-093") {
+        return {
+          id: "TASK-093",
+          metadata: {
+            decision_subtask_id: "DEC-038",
+            last_run_decision_required: true,
+            superseded_decision_subtask_ids: ["DEC-039", "DEC-038"],
+            unrelated: "keep",
+          },
+        };
+      }
+      return null;
+    });
+  });
+
+  test("deletes linked decision task and clears parent task references", async () => {
+    const res = await DELETE(
+      makeRequest() as Parameters<typeof DELETE>[0],
+      { params: Promise.resolve({ id: "decision-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(deleteDecision).toHaveBeenCalledWith("default", "default", "decision-1", "/repo");
+    expect(taskDelete).toHaveBeenCalledWith("default", "DEC-038", "default");
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      {
+        metadata: {
+          last_run_decision_required: false,
+          superseded_decision_subtask_ids: ["DEC-039"],
+          unrelated: "keep",
+        },
+      },
       "default",
     );
   });

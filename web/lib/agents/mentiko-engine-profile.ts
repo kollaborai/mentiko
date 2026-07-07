@@ -16,7 +16,6 @@ const INTERNAL_AUTH_INFO = `mentiko-internal-api:${INTERNAL_AUTH_CONTEXT}`;
 const ENGINE_BASE_URL = "http://127.0.0.1:7433";
 export const ENGINE_WAIT_MS = 90_000;
 export const ENGINE_POLL_INTERVAL_MS = 1_000;
-const LOCAL_PROXY_BASE_URL = "http://127.0.0.1:3000/api/ai-gateway/local/v1";
 const PROFILE_NAME = MENTIKO_GATEWAY_PROFILE.name;
 const PROFILE_MODEL = MENTIKO_GATEWAY_PROFILE.model;
 const PROFILE_PROVIDER = MENTIKO_GATEWAY_PROFILE.provider;
@@ -51,6 +50,13 @@ export function getInternalGatewayBearer(env: Env = process.env): string {
   return createHmac("sha256", secret).update(INTERNAL_AUTH_INFO, "utf8").digest("hex");
 }
 
+function localProxyBaseUrl(env: Env): string {
+  const webUrl = env.MENTIKO_WEB_URL || env.MENTIKO_INTERNAL_WEB_ORIGIN;
+  if (webUrl) return `${webUrl.replace(/\/$/, "")}/api/ai-gateway/local/v1`;
+  const port = env.WEB_PORT || env.PORT || "3000";
+  return `http://127.0.0.1:${port}/api/ai-gateway/local/v1`;
+}
+
 export function buildMentikoProfileConfig(env: Env = process.env): MentikoProfileConfig | null {
   if (env.MENTIKO_AI_GATEWAY_ENABLED !== "true") return null;
   if (!rootSecret(env)) return null;
@@ -59,7 +65,7 @@ export function buildMentikoProfileConfig(env: Env = process.env): MentikoProfil
     name: PROFILE_NAME,
     provider: PROFILE_PROVIDER,
     model: PROFILE_MODEL,
-    base_url: LOCAL_PROXY_BASE_URL,
+    base_url: localProxyBaseUrl(env),
     api_key: getInternalGatewayBearer(env),
     description: PROFILE_DESCRIPTION,
   };

@@ -4,6 +4,7 @@ describe("runner-v2 retry planner", () => {
   it("plans same-agent retry before failing a missing event", () => {
     const plan = planNoEventRetry({
       runId: "run-123",
+      chainId: "build-chain",
       chainName: "Build Chain",
       agentId: "writer",
       agentName: "Writer",
@@ -24,7 +25,10 @@ describe("runner-v2 retry planner", () => {
       delaySeconds: 1,
       strategy: "exponential",
       circuitBreaker: { threshold: 3, timeout: 120 },
-      steps: [{ type: "circuit-breaker", action: "record-failure", threshold: 3, timeout: 120 }],
+      steps: [
+        { type: "circuit-breaker", action: "record-failure", threshold: 3, timeout: 120 },
+        { type: "retry-state", action: "set", agentId: "writer", attempt: 1 },
+      ],
       launch: { agentId: "writer", reason: "missing-event" },
     });
   });
@@ -32,6 +36,7 @@ describe("runner-v2 retry planner", () => {
   it("plans exhausted retry side effects when the retry budget is spent", () => {
     const plan = planNoEventRetry({
       runId: "run-123",
+      chainId: "build-chain",
       chainName: "Build Chain",
       chainPath: "/chains/build.json",
       taskId: "task-1",
@@ -55,7 +60,7 @@ describe("runner-v2 retry planner", () => {
         { type: "notification", event: "agent-failed", agentId: "writer" },
         { type: "plugin", event: "chain-stopped", agentId: "writer" },
         { type: "notification", event: "chain-failed" },
-        { type: "metadata-webhooks", event: "failed", chainPath: "/chains/build.json" },
+        { type: "metadata-webhooks", event: "failed", chainId: "build-chain", chainPath: "/chains/build.json" },
       ],
     });
   });

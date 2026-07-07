@@ -170,6 +170,40 @@ JSON
 resolved_missing_agent_profile="$(resolve_agent_profile_id "$chain_with_missing_agent_profile" "agent-one")"
 assert_eq "codex-default" "$resolved_missing_agent_profile" "skips stale agent profile and uses valid chain default"
 
+cat > "$AGENT_PROFILES_DIR/secret-placeholder.json" <<'JSON'
+{
+  "id": "secret-placeholder",
+  "name": "Secret Placeholder",
+  "cli": "claude",
+  "isDefault": false,
+  "env": {
+    "ANTHROPIC_BASE_URL": "{secret:ANTHROPIC_BASE_URL}",
+    "STATIC_VAR": "present"
+  }
+}
+JSON
+
+profile_command="$(MENTIKO_CODE_ROOT="$TEST_TMP_DIR/missing-code-root" build_profile_command "$AGENT_PROFILES_DIR/secret-placeholder.json" --interactive)"
+env_file="$(echo "$profile_command" | sed -n 's/^source \([^;]*\);.*/\1/p')"
+if [[ -z "$env_file" || ! -f "$env_file" ]]; then
+  echo "FAIL: build_profile_command should create env file"
+  echo "command: $profile_command"
+  exit 1
+fi
+env_content="$(cat "$env_file")"
+if echo "$env_content" | grep -q "ANTHROPIC_BASE_URL"; then
+  echo "FAIL: unresolved secret placeholder leaked into profile env file"
+  echo "$env_content"
+  exit 1
+fi
+if ! echo "$env_content" | grep -q "export STATIC_VAR='present'"; then
+  echo "FAIL: static env var missing from profile env file"
+  echo "$env_content"
+  exit 1
+fi
+rm -f "$env_file"
+echo "PASS: unresolved secret placeholders are skipped by profile fallback env"
+
 resolved_file="$(resolve_agent_profile_file "$chain_without_profile" "agent-one")"
 assert_eq "$AGENT_PROFILES_DIR/kollab.json" "$resolved_file" "returns profile file for resolved default"
 

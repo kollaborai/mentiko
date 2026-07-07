@@ -11,7 +11,7 @@ EVENT_TYPE="${PLUGIN_EVENT_TYPE:-unknown}"
 CHAIN_ID="${PLUGIN_CHAIN_ID:-unknown}"
 RUN_ID="${PLUGIN_RUN_ID:-}"
 NOTIFY_ON="${PLUGIN_NOTIFY_ON:-all}"
-BASE_URL="${BETTER_AUTH_URL:-http://localhost:3000}"
+BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
 
 # check filter
 if [[ "$NOTIFY_ON" != "all" && "$NOTIFY_ON" != "$EVENT_TYPE" ]]; then

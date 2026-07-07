@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { BadRequest } from "@/lib/api-errors";
+import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +22,10 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // proxy to the main guided/plan route with inbox-key bypass
-  const webUrl = process.env.MENTIKO_WEB_URL || "http://127.0.0.1:3000";
   const inboxKey = process.env.MENTIKO_INBOX_KEY || "";
 
   const res = await fetch(
-    `${webUrl}/api/decisions/${body.decisionId}/guided/plan`,
+    internalApiUrl(`/api/decisions/${body.decisionId}/guided/plan`, request.url),
     {
       method: "POST",
       headers: {
