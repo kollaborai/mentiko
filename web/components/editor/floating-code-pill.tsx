@@ -22,6 +22,7 @@ import { SplitContainer } from "./split-container";
 import { SearchPanel } from "./search-panel";
 import { EditorConfigPanel } from "./editor-config";
 import { GitPanel } from "./git-panel";
+import { TasksDbPanel } from "./tasks-db-panel";
 import { QuickOpen } from "./quick-open";
 
 // ─── sidebar icon ────────────────────────────────────────────
@@ -537,12 +538,16 @@ export function FloatingCodePill() {
                                 <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
                               </svg>
                             </SidebarIcon>
+                            <SidebarIcon active={sidebarView === "db"} onClick={() => setSidebarView("db")} title="Tasks DB">
+                              <span className="font-mono text-[10px] font-semibold">db</span>
+                            </SidebarIcon>
                           </div>
                           <div className="flex-1 overflow-y-auto overflow-x-hidden">
                             {sidebarView === "files" && <FileTree workspacePath={projectRoot} filterOpen={fileFilterOpen} onFileSelect={() => setSidebarVisible(false)} />}
                             {sidebarView === "search" && <SearchPanel workspacePath={projectRoot} />}
                             {sidebarView === "config" && <EditorConfigPanel />}
                             {sidebarView === "git" && <GitPanel workspacePath={projectRoot} />}
+                            {sidebarView === "db" && <TasksDbPanel />}
                           </div>
                         </div>
                       )
@@ -577,12 +582,16 @@ export function FloatingCodePill() {
                                 <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
                               </svg>
                             </SidebarIcon>
+                            <SidebarIcon active={sidebarView === "db"} onClick={() => setSidebarView("db")} title="Tasks DB">
+                              <span className="font-mono text-[10px] font-semibold">db</span>
+                            </SidebarIcon>
                           </div>
                           <div className="flex-1 overflow-y-auto overflow-x-hidden">
                             {sidebarView === "files" && <FileTree workspacePath={projectRoot} filterOpen={fileFilterOpen} />}
                             {sidebarView === "search" && <SearchPanel workspacePath={projectRoot} />}
                             {sidebarView === "config" && <EditorConfigPanel />}
                             {sidebarView === "git" && <GitPanel workspacePath={projectRoot} />}
+                            {sidebarView === "db" && <TasksDbPanel />}
                           </div>
                         </motion.div>
 

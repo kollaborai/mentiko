@@ -8,6 +8,7 @@ import { SplitContainer } from "./split-container";
 import { QuickOpen } from "./quick-open";
 import { SearchPanel } from "./search-panel";
 import { EditorConfigPanel } from "./editor-config";
+import { TasksDbPanel } from "./tasks-db-panel";
 import { DocumentFilled, SearchNormalFilled, SettingsFilled, SidebarLeftFilled } from "@aliimam/icons";
 
 const SIDEBAR_KEY = "editor-sidebar-width";
@@ -171,6 +172,13 @@ export function EditorPageClient() {
               <SettingsFilled className="h-3.5 w-3.5" />
             </SidebarIcon>
             <SidebarIcon
+              active={sidebarView === "db"}
+              onClick={() => setSidebarView("db")}
+              title="Tasks DB"
+            >
+              <span className="font-mono text-[10px] font-semibold">db</span>
+            </SidebarIcon>
+            <SidebarIcon
               active={false}
               onClick={() => setSidebarCollapsed(true)}
               title="Hide sidebar"
@@ -185,6 +193,7 @@ export function EditorPageClient() {
           {sidebarView === "files" && <FileTree workspacePath={workspacePath} />}
           {sidebarView === "search" && <SearchPanel workspacePath={workspacePath} />}
           {sidebarView === "config" && <EditorConfigPanel />}
+          {sidebarView === "db" && <TasksDbPanel />}
         </div>
 
         {/* resize handle */}

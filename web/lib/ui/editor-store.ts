@@ -8,6 +8,10 @@ export type EditorView = {
   workspacePath: string;
   selectedFiles: string[];
   sourceBranch: string;
+} | {
+  type: "tasks-db";
+  mode: "table" | "schema" | "recent" | "graph" | "dependencies" | "diagnostics" | "select";
+  table?: string;
 };
 
 // shared file data (content is synced across panes showing same file)
@@ -55,7 +59,7 @@ const OVERLAY_OPEN_KEY = "editor-overlay-open";
 const DEFAULT_CONFIG: EditorConfig = {
   fontSize: 11,
   tabSize: 2,
-  wordWrap: "off",
+  wordWrap: "on",
   minimap: false,
   lineNumbers: "on",
   renderWhitespace: "boundary",
@@ -83,8 +87,8 @@ interface EditorStore {
   treeWorkspacePath: string | null;
 
   // sidebar view
-  sidebarView: "files" | "search" | "config" | "git";
-  setSidebarView: (view: "files" | "search" | "config" | "git") => void;
+  sidebarView: "files" | "search" | "config" | "git" | "db";
+  setSidebarView: (view: "files" | "search" | "config" | "git" | "db") => void;
   searchPanelVisible: boolean;
   toggleSearchPanel: () => void;
   pendingReveal: { path: string; line: number; column: number } | null;

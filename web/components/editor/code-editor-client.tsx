@@ -10,10 +10,15 @@ import { QuickOpen } from "./quick-open";
 import { SearchPanel } from "./search-panel";
 import { EditorConfigPanel } from "./editor-config";
 import { GitPanel } from "./git-panel";
+import { TasksDbPanel } from "./tasks-db-panel";
 import { DocumentFilled, SearchNormalFilled, SettingsFilled, FilterFilled } from "@aliimam/icons";
 import { FloatingFileSidebar } from "./floating-sidebar";
 
 const DEFAULT_SIDEBAR_W = 240;
+const WRAP_DEFAULT_WORKSPACES = new Set([
+  "/Users/malmazan/.mentiko/namespaces/default/workspace/ambient-fs",
+  "/Users/malmazan/.mentiko/namespaces/default/workspace/mentiko",
+]);
 
 function SidebarIcon({
   active,
@@ -46,6 +51,8 @@ export function CodeEditorClient() {
   const toggleSearchPanel = useEditorStore((s) => s.toggleSearchPanel);
   const sidebarView = useEditorStore((s) => s.sidebarView);
   const setSidebarView = useEditorStore((s) => s.setSidebarView);
+  const editorConfig = useEditorStore((s) => s.editorConfig);
+  const updateEditorConfig = useEditorStore((s) => s.updateEditorConfig);
   const { workspacePath } = useWorkspace();
   const [configRoot, setConfigRoot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +77,12 @@ export function CodeEditorClient() {
   useEffect(() => {
     if (projectRoot) setTreeWorkspacePath(projectRoot);
   }, [projectRoot, setTreeWorkspacePath]);
+
+  useEffect(() => {
+    if (projectRoot && WRAP_DEFAULT_WORKSPACES.has(projectRoot) && editorConfig.wordWrap === "off") {
+      updateEditorConfig({ wordWrap: "on" });
+    }
+  }, [editorConfig.wordWrap, projectRoot, updateEditorConfig]);
 
   // cmd+p quick open, cmd+shift+f search
   useEffect(() => {
@@ -159,6 +172,9 @@ export function CodeEditorClient() {
               <path d="M6 8.5 C6 12 18 12 18 8.5" stroke="currentColor" strokeWidth="2" fill="none"/>
             </svg>
           </SidebarIcon>
+          <SidebarIcon active={sidebarView === "db"} onClick={() => setSidebarView("db")} title="Tasks DB">
+            <span className="font-mono text-[10px] font-semibold">db</span>
+          </SidebarIcon>
         </div>
 
         {/* sidebar content */}
@@ -166,6 +182,7 @@ export function CodeEditorClient() {
         {sidebarView === "search" && <SearchPanel workspacePath={projectRoot} />}
         {sidebarView === "config" && <EditorConfigPanel />}
         {sidebarView === "git" && <GitPanel workspacePath={projectRoot} />}
+        {sidebarView === "db" && <TasksDbPanel />}
       </FloatingFileSidebar>
 
       <FloatingWindowManager rootPath={projectRoot} />

@@ -9,6 +9,7 @@ import { StatusBar } from "./status-bar";
 import { getFileAccentColor } from "./file-tree";
 import { Markdown } from "@/components/ui/markdown";
 import { PeerReviewView } from "@/components/git/peer-review-view";
+import { TasksDbView } from "./tasks-db-view";
 import type { editor } from "monaco-editor";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
@@ -331,6 +332,9 @@ export function EditorPane({ paneId, rootPath }: EditorPaneProps) {
           onReviewCreated={() => notifyReviewsChanged()}
         />
       );
+    }
+    if (file.view.type === "tasks-db") {
+      return <TasksDbView mode={file.view.mode} table={file.view.table} />;
     }
     return null;
   }

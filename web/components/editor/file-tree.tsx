@@ -12,6 +12,7 @@ import {
   FolderAddFilled,
 } from "@aliimam/icons";
 import { useEditorStore } from "@/lib/ui/editor-store";
+import { FLOATING_SURFACE_Z } from "@/lib/ui/floating-surface-z";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { FileTypeIcon } from "./quick-open";
 import { cn } from "@/lib/utils";
@@ -651,8 +652,10 @@ export function FileTree({ workspacePath, filterOpen: externalFilterOpen, onFile
       {/* context menu - portal to body to avoid transform offset */}
       {contextMenu && createPortal(
         <div
-          className="fixed z-[9999] min-w-[140px] py-1 rounded-md bg-[#1a1a1a] shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_24px_rgba(0,0,0,0.5)]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          data-editor-overlay
+          role="menu"
+          className="fixed min-w-[140px] py-1 rounded-md bg-[#1a1a1a] shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_8px_24px_rgba(0,0,0,0.5)]"
+          style={{ left: contextMenu.x, top: contextMenu.y, zIndex: FLOATING_SURFACE_Z.pillNavMenu }}
           onClick={(e) => e.stopPropagation()}
         >
           {contextMenu.node.type === "dir" && (
