@@ -34,6 +34,7 @@ export interface Job {
 // stale detection: generation chains can run up to 8min; leave room for import.
 const STALE_MS = 10 * 60 * 1000;
 const FAILED_RUN_STATUSES = new Set(["blocked", "cancelled", "failed", "stopped"]);
+const COMPLETED_RUN_STATUSES = new Set(["complete", "completed"]);
 
 function getJobPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.json`);
@@ -41,6 +42,20 @@ function getJobPath(id: string, namespaceId?: string): string {
 
 function getTmpPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.tmp`);
+}
+
+function readCompletedRunResult(runId: string, namespaceId?: string): Record<string, unknown> | undefined {
+  const nsId = namespaceId || config.namespaceId;
+  const artifactsDir = nsPath(nsId, "runs", runId, "artifacts");
+  const generationResultPath = join(artifactsDir, "generation-result.json");
+  if (!existsSync(generationResultPath)) return undefined;
+
+  try {
+    const output = readFileSync(generationResultPath, "utf-8");
+    return { output };
+  } catch {
+    return undefined;
+  }
 }
 
 function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
@@ -52,7 +67,16 @@ function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
 
   try {
     const run = JSON.parse(readFileSync(runPath, "utf-8")) as { status?: string; status_message?: string; error?: string };
-    if (!run.status || !FAILED_RUN_STATUSES.has(run.status)) return false;
+    if (!run.status) return false;
+
+    if (COMPLETED_RUN_STATUSES.has(run.status)) {
+      job.status = "complete";
+      job.result = job.result || readCompletedRunResult(job.runId, namespaceId);
+      job.completedAt = new Date().toISOString();
+      return true;
+    }
+
+    if (!FAILED_RUN_STATUSES.has(run.status)) return false;
 
     job.status = "failed";
     job.error = run.error || run.status_message || `Run ${job.runId} ${run.status}`;

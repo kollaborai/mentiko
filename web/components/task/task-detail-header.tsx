@@ -59,6 +59,8 @@ export function TaskDetailHeader({
   const [autoRunResetting, setAutoRunResetting] = useState(false);
   const [autoRunError, setAutoRunError] = useState<string | null>(null);
 
+  const assignedChainId = task.chainBinding?.chain_id || "";
+  const hasAssignedChain = assignedChainId.length > 0;
   const autoRunEnabled = !!task.chainBinding?.auto_run;
   const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
   const autoRunPaused = autoRunEnabled && autoRunRetries >= MAX_AUTO_RUN_RETRIES && !task.completed;
@@ -127,13 +129,13 @@ export function TaskDetailHeader({
                 priority={task.priority}
                 rawPriority={task.rawPriority}
               />
-              {task.chainBinding && (
+              {hasAssignedChain && (
                 <Link
-                  href={`/chains/${encodeURIComponent(task.chainBinding.chain_id)}/edit`}
+                  href={`/chains/${encodeURIComponent(assignedChainId)}/edit`}
                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-accent text-foreground/70 hover:bg-accent/80 transition-colors"
                 >
                   <LinkFilled className="h-2.5 w-2.5" style={{ color: "#b07ee8" }} />
-                  {task.chainBinding.chain_name || task.chainBinding.chain_id}
+                  {task.chainBinding?.chain_name || assignedChainId}
                 </Link>
               )}
               {task.type === "decision" && typeof task.metadata?.decision_id === "string" && (
@@ -187,7 +189,7 @@ export function TaskDetailHeader({
               Decision
             </Link>
           )}
-          {task.chainBinding && !task.completed && (
+          {hasAssignedChain && !task.completed && (
             <Button
               size="sm"
               variant="default"
@@ -199,7 +201,7 @@ export function TaskDetailHeader({
               Run
             </Button>
           )}
-          {task.chainBinding && onToggleAutoRun && (
+          {hasAssignedChain && onToggleAutoRun && (
             task.completed ? (
               autoRunEnabled ? (
                 <span className="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-[10px] font-mono text-foreground/45 max-[420px]:w-full max-[420px]:justify-center">
@@ -375,12 +377,12 @@ export function TaskDetailHeader({
             </div>
           </div>
         )}
-        {task.chainBinding && (
+        {hasAssignedChain && (
           <div className="flex items-center gap-1.5 col-span-2">
             <Link2 className="h-2.5 w-2.5 text-foreground/30" />
             <span className="text-foreground/30">chain</span>
             <span className="text-foreground/60 font-medium">
-              {task.chainBinding.chain_name || task.chainBinding.chain_id}
+              {task.chainBinding?.chain_name || assignedChainId}
             </span>
           </div>
         )}

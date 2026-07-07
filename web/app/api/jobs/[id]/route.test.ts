@@ -41,6 +41,9 @@ jest.mock("@/lib/namespace-config", () => ({
 import { GET } from "./route";
 import { createJob, updateJob, getJob, listJobs, deleteJob } from "@/lib/runs/job-store";
 import { taskCreate, taskDelete, taskGet } from "@/lib/tasks/task-store";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { nsPath } from "@/lib/config";
 
 function createMockRequest() {
   return {
@@ -56,6 +59,7 @@ function createMockRequest() {
 describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
   const testJobIds: string[] = [];
   const testTaskIds: string[] = [];
+  const testRunIds: string[] = [];
 
   afterAll(async () => {
     // Cleanup all test jobs
@@ -64,6 +68,9 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
     }
     for (const id of testTaskIds) {
       taskDelete("default", id);
+    }
+    for (const id of testRunIds) {
+      rmSync(nsPath("default", "runs", id), { recursive: true, force: true });
     }
   });
 
@@ -120,6 +127,43 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       expect(data.data.status).toBe("running");
       expect(data.data.startedAt).toBeDefined();
       expect(data.data.completedAt).toBeUndefined();
+    });
+
+    test("syncs a running generation job from a completed run artifact", async () => {
+      const runId = `run-job-sync-${Date.now()}`;
+      testRunIds.push(runId);
+      const runDir = nsPath("default", "runs", runId);
+      const artifactsDir = join(runDir, "artifacts");
+      mkdirSync(artifactsDir, { recursive: true });
+      writeFileSync(join(runDir, "run.json"), JSON.stringify({
+        id: runId,
+        status: "completed",
+        completed: new Date().toISOString(),
+      }, null, 2));
+      writeFileSync(join(artifactsDir, "generation-result.json"), JSON.stringify({
+        name: "Synced Chain",
+        agents: [],
+      }));
+
+      const job = createJob("generate", { prompt: "sync from run" }, "task-sync");
+      testJobIds.push(job.id);
+      updateJob(job.id, {
+        status: "running",
+        runId,
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+      });
+
+      const synced = getJob(job.id);
+
+      expect(synced).toMatchObject({
+        id: job.id,
+        status: "complete",
+        runId,
+        result: {
+          output: expect.stringContaining("Synced Chain"),
+        },
+      });
+      expect(synced?.completedAt).toBeDefined();
     });
 
     test("should return completed job with result", async () => {

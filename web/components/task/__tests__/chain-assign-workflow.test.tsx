@@ -76,6 +76,9 @@ const completedChainGenerationJob = {
 const jobsById = new Map<string, unknown>();
 const mockSetJob = jest.fn();
 const mockFetchWithNamespace = jest.fn();
+let mockSharedChains: Array<{ id: string; name: string; description?: string; agentCount?: number }> = [];
+let mockSharedChainsLoading = false;
+const mockRefetchChains = jest.fn();
 
 jest.mock("@/hooks/use-job-status", () => ({
   useJobStatus: (jobId: string | null) => ({
@@ -91,7 +94,11 @@ jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
 }));
 
 jest.mock("@/lib/chains/chains-store", () => ({
-  useSharedChains: () => ({ chains: [] }),
+  useSharedChains: () => ({
+    chains: mockSharedChains,
+    loading: mockSharedChainsLoading,
+    refetch: mockRefetchChains,
+  }),
 }));
 
 function makeTask(chainBinding: Task["chainBinding"] = { chain_id: "", auto_run: false }): Task {
@@ -122,6 +129,9 @@ describe("ChainAssignWorkflow", () => {
     jobsById.clear();
     mockSetJob.mockClear();
     mockFetchWithNamespace.mockReset();
+    mockSharedChains = [];
+    mockSharedChainsLoading = false;
+    mockRefetchChains.mockClear();
   });
 
   it("renders old completed no-match recommendations without auto-starting generation on mount", async () => {
@@ -196,6 +206,108 @@ describe("ChainAssignWorkflow", () => {
     await waitFor(() => {
       expect(metadataUpdates).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("hydrates completed analysis jobs from standard API envelopes", async () => {
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: generatedNewJob, requestId: "req-test" }),
+    });
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: false,
+          analysis_job_id: "job-generate-new",
+          analysis_status: "complete",
+        })}
+        onAssignChain={jest.fn()}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    expect(await screen.findByText("recommendation: generate new chain")).toBeInTheDocument();
+    expect(screen.getByText("Generate This Chain")).toBeInTheDocument();
+  });
+
+  it("hydrates completed analysis jobs whose recommendation is stored as output JSON", async () => {
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          ...generatedNewJob,
+          result: {
+            output: JSON.stringify({
+              recommendation: generatedNewJob.result.recommendation,
+              alternatives: [
+                {
+                  chain_id: "nextjs-lead-capture-api-pipeline",
+                  chain_name: "nextjs-lead-capture-api-pipeline",
+                  relevance: "Useful dependency but not a UI chain.",
+                },
+              ],
+            }),
+          },
+        },
+        requestId: "req-output",
+      }),
+    });
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: false,
+          analysis_job_id: "job-generate-new",
+          analysis_status: "complete",
+        })}
+        onAssignChain={jest.fn()}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    expect(await screen.findByText("recommendation: generate new chain")).toBeInTheDocument();
+    expect(screen.getByText("Generate This Chain")).toBeInTheDocument();
+    expect(screen.getByText(/Useful dependency but not a UI chain/)).toBeInTheDocument();
+    expect(screen.queryByText("Loading chains...")).not.toBeInTheDocument();
+  });
+
+  it("updates the manual picker when shared chains arrive after opening", async () => {
+    mockSharedChainsLoading = true;
+    mockFetchWithNamespace.mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    const props = {
+      task: makeTask(),
+      onAssignChain: jest.fn(),
+      onCancel: jest.fn(),
+      onMetadataUpdate: jest.fn(),
+    };
+    const { rerender } = render(<ChainAssignWorkflow {...props} />);
+
+    fireEvent.click(await screen.findByText("Pick Manually"));
+    expect(screen.getByText("Loading chains...")).toBeInTheDocument();
+    expect(mockRefetchChains).toHaveBeenCalled();
+
+    mockSharedChainsLoading = false;
+    mockSharedChains = [
+      {
+        id: "landing-page-builder",
+        name: "Landing Page Builder",
+        description: "Builds marketing page components.",
+        agentCount: 2,
+      },
+    ];
+    rerender(<ChainAssignWorkflow {...props} />);
+
+    expect(await screen.findByText("Landing Page Builder")).toBeInTheDocument();
+    expect(screen.queryByText("Loading chains...")).not.toBeInTheDocument();
   });
 
   it("auto-starts chain generation after analyze returns generate-new", async () => {
