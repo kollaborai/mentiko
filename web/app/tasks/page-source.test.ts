@@ -11,4 +11,15 @@ describe("tasks page source contract", () => {
     expect(source).not.toContain("hidden md:flex");
     expect(source).not.toContain("} md:flex`}");
   });
+
+  it("clears stale selected task state when a selected detail fetch 404s", () => {
+    expect(source).toContain("if (detailRes && detailRes.status === 404)");
+    expect(source).toContain("setSelected((prev) => (prev?.id === task.id ? null : prev))");
+  });
+
+  it("refreshes the task tree after decision updates and deletes", () => {
+    expect(source).toContain("const [treeRefreshSignal, setTreeRefreshSignal] = useState(0)");
+    expect(source).toContain("setTreeRefreshSignal((value) => value + 1)");
+    expect(source).toContain("refreshSignal={treeRefreshSignal}");
+  });
 });

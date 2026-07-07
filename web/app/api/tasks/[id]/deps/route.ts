@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskGet, taskGetAllDeps, taskList } from "@/lib/tasks/task-store";
 import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
+import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { getWorkspaceId } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -76,11 +77,11 @@ export const GET = requirePermission("view_tasks")(async (
 
       // blocking = tasks this issue depends on (from dependencies)
       // filter out parent-child relationships - only include real dep links
-      const blocking = (taskData.dependencies || [])
+      const blocking = filterVisibleTaskRecords(taskData.dependencies || [])
         .filter(d => d.type !== "parent-child")
         .map(d => toDepNode(d));
       // blocked = tasks that depend on this issue (from dependents)
-      const blocked = (taskData.dependents || [])
+      const blocked = filterVisibleTaskRecords(taskData.dependents || [])
         .filter(d => d.type !== "parent-child")
         .map(d => toDepNode(d));
 
@@ -177,7 +178,9 @@ export const GET = requirePermission("view_tasks")(async (
     }
 
     // tree format - list children
-    const allIssues = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
+    const allIssues = filterVisibleTaskRecords(
+      taskList(orgId, { status: "all" }, workspaceId, namespaceId),
+    );
     const children = allIssues.filter(i => i.parent_id === safeId);
     const childIds = new Set(children.map((child) => child.id));
     const deps = taskGetAllDeps(orgId, namespaceId).filter(

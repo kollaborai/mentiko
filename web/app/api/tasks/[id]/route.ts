@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
+import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
 import { NotFound, BadRequest } from "@/lib/api-errors";
@@ -24,6 +25,14 @@ export const GET = requirePermission("view_tasks")(
       const issue = taskGet(orgId, safeId, namespaceId);
 
       if (!issue) {
+        throw new NotFound("Task", id);
+      }
+      const visibleTaskIds = new Set(
+        filterVisibleTaskRecords(
+          taskList(orgId, { status: "all" }, undefined, namespaceId),
+        ).map((task) => task.id),
+      );
+      if (!visibleTaskIds.has(issue.id)) {
         throw new NotFound("Task", id);
       }
 

@@ -68,6 +68,7 @@ function TasksPageContent() {
     (searchParams.get("view") as "list" | "tree" | "overview") || "list"
   );
   const [depInfo, setDepInfo] = useState<Map<string, { blockedBy: string[]; blocks: string[] }>>(new Map());
+  const [treeRefreshSignal, setTreeRefreshSignal] = useState(0);
 
   // bulk select mode
   const [selectMode, setSelectMode] = useState(false);
@@ -266,6 +267,13 @@ function TasksPageContent() {
       fetchWithNamespace(`/api/tasks/${id}/deps${wsParam}`).catch(() => null),
       fetchWithNamespace(`/api/tasks/${id}/comments${wsParam}`).catch(() => null),
     ]);
+
+    if (detailRes && detailRes.status === 404) {
+      setSelected((prev) => (prev?.id === task.id ? null : prev));
+      setChildren([]);
+      setComments([]);
+      return;
+    }
 
     // merge full detail (has acceptance, design, notes, etc.) with list data
     // detail endpoint doesn't return counts, so we preserve them from the list version
@@ -761,7 +769,7 @@ function TasksPageContent() {
         createData.chainAssignment = {
           chainId: data.chainId || undefined,
           chainName: data.chainName,
-          autoRun: data.autoRun ?? false,
+          ...(data.autoRun !== undefined ? { autoRun: data.autoRun } : {}),
         };
       }
 
@@ -793,6 +801,7 @@ function TasksPageContent() {
       fetchDepInfo(),
       refreshSelectedTask(),
     ]);
+    setTreeRefreshSignal((value) => value + 1);
   }, [fetchTasks, fetchEpics, fetchDepInfo, refreshSelectedTask]);
 
   const handleSelectDep = useCallback(
@@ -847,6 +856,14 @@ function TasksPageContent() {
 
       const id = encodeURIComponent(taskId);
       const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`);
+      if (res.status === 404) {
+        if (selected?.id === taskId) {
+          setSelected(null);
+          setChildren([]);
+          setComments([]);
+        }
+        return;
+      }
       if (!res.ok) return;
 
       const raw = await res.json();
@@ -856,7 +873,7 @@ function TasksPageContent() {
       const fetched = toTask(data.issue);
       await selectOpenedTask(fetched);
     },
-    [tasks, loadDetail, wsParam, fetchWithNamespace]
+    [tasks, loadDetail, wsParam, fetchWithNamespace, selected]
   );
 
   const handleAddDep = useCallback(
@@ -1059,6 +1076,7 @@ function TasksPageContent() {
         >
           <TaskTreeView
             selectedId={selected?.id}
+            refreshSignal={treeRefreshSignal}
             onSelectTask={(taskId) => {
               setMobileView("detail");
               handleSelectDep(taskId);

@@ -1,5 +1,8 @@
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
 import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
+import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
+import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
@@ -121,6 +124,78 @@ function resolveEpicAncestor(
   return parentTask.id;
 }
 
+function taskMetadata(task: TaskRecord | undefined | null): Record<string, unknown> {
+  return task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+    ? { ...task.metadata as Record<string, unknown> }
+    : {};
+}
+
+function lifecycleMetadata(state: TaskLifecycleState, current: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...current,
+    lifecycle_phase: state.phase,
+    execution_retries: state.executionRetryCount,
+    gated_run_fingerprints: state.gatedFingerprints,
+    summarized_run_fingerprints: state.summarizedFingerprints,
+    followup_task_ids: state.followUpTaskIds,
+    decision_subtask_id: state.decisionTaskId,
+    last_run_decision_required: state.phase === "followup_blocked" || state.phase === "decision_blocked",
+  };
+}
+
+async function applyResolutionLifecycle(input: {
+  namespaceId: string;
+  orgId: string;
+  parentTask: TaskRecord;
+  decisionTaskId: string;
+  followUpTaskIds: string[];
+  workspaceId?: string;
+  workspacePath?: string;
+}): Promise<void> {
+  const { namespaceId, orgId, parentTask, decisionTaskId, followUpTaskIds, workspaceId, workspacePath } = input;
+  const deps: LifecycleEffectDeps = {
+    startOutcomeSummary: async () => undefined,
+    createDecisionGate: async () => undefined,
+    blockOnDecision: () => undefined,
+    createFollowupDependencies: (depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId) => {
+      taskAddDep(depOrgId, taskId, followUpTaskId, depNamespaceId, depWorkspaceId);
+    },
+    resumeOriginalTask: () => undefined,
+    closeTask: () => undefined,
+    clearDecisionGate: () => undefined,
+    scanUnblockedAutoRunTasks: () => undefined,
+    retryExecution: async () => undefined,
+  };
+  const transition = await applyLifecycleEvent({
+    state: hydrateLifecycleState(parentTask.id, parentTask.metadata),
+    event: {
+      type: "decision.resolved",
+      taskId: parentTask.id,
+      decisionTaskId,
+      followUpTaskIds,
+    },
+    context: {
+      request: {} as Request,
+      namespaceId,
+      orgId,
+      workspaceId,
+      workspacePath,
+    },
+    deps,
+  });
+  const status = transition.state.phase === "followup_blocked" ? "blocked" : "open";
+  const current = taskMetadata(parentTask);
+  taskUpdate(
+    orgId,
+    parentTask.id,
+    {
+      status,
+      metadata: lifecycleMetadata(transition.state, current),
+    },
+    namespaceId,
+  );
+}
+
 export async function resolveDecisionToTasks({
   namespaceId,
   orgId,
@@ -184,6 +259,7 @@ export async function resolveDecisionToTasks({
 
   let epicId: string;
   const allTaskIds: string[] = [];
+  const followUpTaskIds: string[] = [];
   if (decisionTaskId) {
     allTaskIds.push(decisionTaskId);
   }
@@ -220,6 +296,7 @@ export async function resolveDecisionToTasks({
       );
       taskIdMap[planTask.id] = subtask.id;
       allTaskIds.push(subtask.id);
+      followUpTaskIds.push(subtask.id);
     }
 
     if (plan.dependencies?.length) {
@@ -286,6 +363,9 @@ export async function resolveDecisionToTasks({
       );
       taskIdMap[planTask.id] = subtask.id;
       allTaskIds.push(subtask.id);
+      if (existingParentTaskId) {
+        followUpTaskIds.push(subtask.id);
+      }
     }
 
     if (plan.dependencies?.length) {
@@ -301,6 +381,8 @@ export async function resolveDecisionToTasks({
         }
       }
     }
+  } else if (existingParentTaskId && decision.source === "completion-audit") {
+    epicId = resolutionParentId ?? existingParentTaskId;
   } else {
     const task = taskCreate(
       orgId,
@@ -323,6 +405,9 @@ export async function resolveDecisionToTasks({
     );
     epicId = resolutionParentId ?? task.id;
     allTaskIds.push(task.id);
+    if (existingParentTaskId) {
+      followUpTaskIds.push(task.id);
+    }
   }
 
   if (decisionTaskId) {
@@ -359,6 +444,18 @@ export async function resolveDecisionToTasks({
     },
     resolvedWorkspacePath,
   );
+
+  if (parentTask && decisionTaskId) {
+    await applyResolutionLifecycle({
+      namespaceId,
+      orgId,
+      parentTask,
+      decisionTaskId,
+      followUpTaskIds,
+      workspaceId,
+      workspacePath: resolvedWorkspacePath,
+    });
+  }
 
   return { decision: updated, taskId: epicId, taskIds: allTaskIds };
 }

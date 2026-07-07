@@ -29,6 +29,7 @@ const applyDecisionRunResult = jest.fn();
 const taskUpdate = jest.fn();
 const taskGet = jest.fn();
 const taskDelete = jest.fn();
+const taskList = jest.fn();
 const existsSync = jest.fn();
 const readFileSync = jest.fn();
 
@@ -66,6 +67,7 @@ jest.mock("@/lib/decisions/decision-run-results", () => ({
 jest.mock("@/lib/tasks/task-store", () => ({
   taskDelete: (...args: unknown[]) => taskDelete(...args),
   taskGet: (...args: unknown[]) => taskGet(...args),
+  taskList: (...args: unknown[]) => taskList(...args),
   taskUpdate: (...args: unknown[]) => taskUpdate(...args),
 }));
 
@@ -233,6 +235,7 @@ describe("DELETE /api/decisions/[id]", () => {
       }
       return null;
     });
+    taskList.mockReturnValue([]);
   });
 
   test("deletes linked decision task and clears parent task references", async () => {
@@ -248,13 +251,120 @@ describe("DELETE /api/decisions/[id]", () => {
       "default",
       "TASK-093",
       {
-        metadata: {
+        status: "open",
+        metadata: expect.objectContaining({
           last_run_decision_required: false,
           superseded_decision_subtask_ids: ["DEC-039"],
           unrelated: "keep",
-        },
+        }),
       },
       "default",
     );
+  });
+
+  test("falls back to DEC task metadata when the decision JSON is already missing", async () => {
+    getDecision.mockReturnValue(null);
+    taskList.mockReturnValue([
+      {
+        id: "DEC-038",
+        parent_id: "TASK-093",
+        issue_type: "decision",
+        metadata: {
+          decision_id: "decision-1",
+          decision_source: "completion-audit",
+        },
+      },
+    ]);
+    taskGet.mockImplementation((_orgId: string, taskId: string) => {
+      if (taskId === "TASK-093") {
+        return {
+          id: "TASK-093",
+          metadata: {
+            decision_subtask_id: "DEC-038",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      return null;
+    });
+
+    const res = await DELETE(
+      makeRequest() as Parameters<typeof DELETE>[0],
+      { params: Promise.resolve({ id: "decision-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(taskList).toHaveBeenCalledWith("default", { status: "all" }, undefined, "default");
+    expect(taskDelete).toHaveBeenCalledWith("default", "DEC-038", "default");
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      {
+        status: "open",
+        metadata: expect.objectContaining({ last_run_decision_required: false }),
+      },
+      "default",
+    );
+  });
+
+  test("keeps decision-required true when another live completion-audit gate remains", async () => {
+    getDecision.mockReturnValue({
+      id: "decision-1",
+      taskId: "DEC-038",
+      parentTaskId: "TASK-093",
+      title: "Dead gate",
+      prompt: "Dead gate",
+      status: "briefed",
+      options: [],
+    });
+    taskList.mockReturnValue([
+      {
+        id: "DEC-999",
+        parent_id: "TASK-093",
+        issue_type: "decision",
+        status: "open",
+        metadata: {
+          decision_id: "decision-live",
+          decision_source: "completion-audit",
+        },
+      },
+    ]);
+
+    const res = await DELETE(
+      makeRequest() as Parameters<typeof DELETE>[0],
+      { params: Promise.resolve({ id: "decision-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      {
+        status: "blocked",
+        metadata: expect.objectContaining({
+          decision_subtask_id: "DEC-999",
+          last_run_decision_required: true,
+          superseded_decision_subtask_ids: ["DEC-039"],
+          unrelated: "keep",
+        }),
+      },
+      "default",
+    );
+  });
+
+  test("is idempotent when the decision JSON and linked DEC task are already gone", async () => {
+    getDecision.mockReturnValue(null);
+    taskList.mockReturnValue([]);
+    taskGet.mockReturnValue(null);
+
+    const res = await DELETE(
+      makeRequest() as Parameters<typeof DELETE>[0],
+      { params: Promise.resolve({ id: "decision-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(deleteDecision).toHaveBeenCalledWith("default", "default", "decision-1", "/repo");
+    expect(taskDelete).not.toHaveBeenCalled();
+    expect(taskUpdate).not.toHaveBeenCalled();
   });
 });

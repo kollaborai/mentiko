@@ -168,4 +168,98 @@ describe("resolveDecisionToTasks parenting", () => {
     expect(created.some((f) => f.issue_type === "epic")).toBe(false);
     expect(res.taskId).toBe("EPIC-008");
   });
+
+  it("completion-audit plan resolution blocks the original task on generated follow-ups, not the epic ancestor", async () => {
+    taskGet.mockImplementation((_org: unknown, id: string) => {
+      if (id === "FEAT-019") {
+        return {
+          id: "FEAT-019",
+          issue_type: "feature",
+          parent_id: "EPIC-008",
+          workspace_id: undefined,
+          metadata: {
+            lifecycle_phase: "decision_blocked",
+            decision_subtask_id: "DEC-TASK-1",
+            last_run_decision_required: true,
+          },
+        };
+      }
+      if (id === "EPIC-008") {
+        return { id: "EPIC-008", issue_type: "epic", parent_id: null, workspace_id: undefined, metadata: {} };
+      }
+      return undefined;
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+      ...planFlow,
+    }));
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    const created = taskCreate.mock.results.map((result) => result.value as { id: string });
+    expect(created.map((task) => task.id)).toEqual(["NEW-1", "NEW-2"]);
+    expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-1", "default", undefined);
+    expect(taskAddDep).toHaveBeenCalledWith("default", "FEAT-019", "NEW-2", "default", undefined);
+    expect(taskAddDep).not.toHaveBeenCalledWith("default", "EPIC-008", expect.any(String), "default", undefined);
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "blocked",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "followup_blocked",
+          followup_task_ids: ["NEW-1", "NEW-2"],
+          last_run_decision_required: true,
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("completion-audit resolution with no follow-ups clears the gate and resumes the original task", async () => {
+    taskGet.mockReturnValue({
+      id: "FEAT-019",
+      issue_type: "feature",
+      workspace_id: undefined,
+      metadata: {
+        lifecycle_phase: "decision_blocked",
+        decision_subtask_id: "DEC-TASK-1",
+        last_run_decision_required: true,
+      },
+    });
+    getDecision.mockReturnValue(makeDecision({
+      source: "completion-audit",
+      parentTaskId: "FEAT-019",
+    }));
+
+    await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    expect(taskCreate).not.toHaveBeenCalled();
+    expect(taskAddDep).not.toHaveBeenCalled();
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-019",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "resuming",
+          followup_task_ids: [],
+          last_run_decision_required: false,
+          decision_subtask_id: undefined,
+        }),
+      },
+      "default",
+    );
+  });
 });

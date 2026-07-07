@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskList, taskGetAllDeps } from "@/lib/tasks/task-store";
+import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -149,7 +150,9 @@ export const GET = requirePermission("view_tasks")(
     }
 
     // one taskList call + one SQL call for all deps (include closed so tree toggle works)
-    const issues = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
+    const issues = filterVisibleTaskRecords(
+      taskList(orgId, { status: "all" }, workspaceId, namespaceId),
+    );
     if (issues.length === 0) {
       return apiSuccess({ nodes: [], links: [], deps: [], layers: {} });
     }
@@ -160,7 +163,7 @@ export const GET = requirePermission("view_tasks")(
     const issueIds = new Set(issues.map((i) => i.id));
     const deps: Array<{ from: string; to: string }> = [];
     for (const dep of depRows) {
-      if (dep.type === "blocks" && issueIds.has(dep.task_id)) {
+      if (dep.type === "blocks" && issueIds.has(dep.task_id) && issueIds.has(dep.depends_on_id)) {
         deps.push({ from: dep.depends_on_id, to: dep.task_id });
       }
     }

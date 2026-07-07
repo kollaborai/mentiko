@@ -49,6 +49,7 @@ interface HierarchyNode {
 interface TaskTreeViewProps {
   onSelectTask?: (taskId: string) => void;
   selectedId?: string | null;
+  refreshSignal?: number;
 }
 
 function statusDot(status: string) {
@@ -115,7 +116,7 @@ function flattenVisibleRows(
   return rows;
 }
 
-export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
+export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: TaskTreeViewProps) {
   const { workspacePath } = useWorkspace();
   const { fetchWithNamespace } = useNamespaceFetch();
   const [nodes, setNodes] = useState<ApiNode[]>([]);
@@ -158,7 +159,7 @@ export function TaskTreeView({ onSelectTask, selectedId }: TaskTreeViewProps) {
       .finally(() => setLoading(false));
   }, [workspacePath, fetchWithNamespace]);
 
-  useEffect(() => { fetchGraph(); }, [fetchGraph]);
+  useEffect(() => { fetchGraph(); }, [fetchGraph, refreshSignal]);
 
   // handle drag-drop dependency creation
   async function handleDrop(fromId: string, toId: string) {

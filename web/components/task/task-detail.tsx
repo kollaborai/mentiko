@@ -11,6 +11,7 @@ import { TaskDepsGraph } from "./task-deps-graph";
 import { TaskRunStoryPanels } from "./task-run-story-panels";
 import { TaskAttemptsPanel } from "./task-attempts-panel";
 import { DecisionDetail } from "@/components/decision/decision-detail";
+import { filterVisibleTasks } from "@/lib/tasks/task-visibility";
 import type { Task, TaskComment } from "@/lib/tasks/task-types";
 import { Markdown } from "@/components/ui/markdown";
 
@@ -72,17 +73,6 @@ function CollapsibleSection({
   );
 }
 
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
-}
-
-function isSupersededDecisionSubtask(task: Task, parentSupersededIds: Set<string>): boolean {
-  if (parentSupersededIds.has(task.id)) return true;
-  if (task.type !== "decision") return false;
-  return task.metadata?.decision_status === "superseded";
-}
-
 export function TaskDetail({
   task,
   subtasks,
@@ -129,9 +119,8 @@ export function TaskDetail({
   const decisionSubtaskId = typeof task.metadata?.decision_subtask_id === "string"
     ? (task.metadata.decision_subtask_id as string)
     : undefined;
-  const supersededDecisionSubtaskIds = new Set(stringArray(task.metadata?.superseded_decision_subtask_ids));
-  const visibleSubtasks = subtasks.filter(
-    (subtask) => !isSupersededDecisionSubtask(subtask, supersededDecisionSubtaskIds),
+  const visibleSubtasks = filterVisibleTasks([task, ...subtasks]).filter(
+    (subtask) => subtask.id !== task.id,
   );
 
   if (decisionId) {

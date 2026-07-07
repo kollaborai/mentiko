@@ -32,6 +32,15 @@ jest.mock("@aliimam/icons", () => ({
   ArrowUpFilled: ({ className }: { className?: string }) => (
     <svg data-testid="arrow-up" className={className} />
   ),
+  AddCircleFilled: ({ className }: { className?: string }) => (
+    <svg data-testid="add-circle" className={className} />
+  ),
+  DangerFilled: ({ className }: { className?: string }) => (
+    <svg data-testid="danger" className={className} />
+  ),
+  MinusFilled: ({ className }: { className?: string }) => (
+    <svg data-testid="minus" className={className} />
+  ),
   JudgeFilled: ({ className }: { className?: string }) => (
     <svg data-testid="judge" className={className} />
   ),
@@ -80,5 +89,21 @@ describe("TaskTreeView", () => {
     fireEvent.click(taskRow);
 
     expect(onSelectTask).toHaveBeenCalledWith("TASK-092");
+  });
+
+  it("reloads graph data when the refresh signal changes", async () => {
+    const { rerender } = render(<TaskTreeView selectedId={null} refreshSignal={0} />);
+
+    await screen.findByRole("button", {
+      name: /Initialize Next\.js 16 project/i,
+    });
+    expect(mockFetchWithNamespace).toHaveBeenCalledTimes(1);
+
+    rerender(<TaskTreeView selectedId={null} refreshSignal={1} />);
+
+    await screen.findByRole("button", {
+      name: /Initialize Next\.js 16 project/i,
+    });
+    expect(mockFetchWithNamespace).toHaveBeenCalledTimes(2);
   });
 });
