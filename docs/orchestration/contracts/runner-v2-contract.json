@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-05",
   "revised_at": "2026-07-07",
-  "revision_note": "added false-failure (premature-completion) invariants symmetric to the existing false-success guards; recorded liveness-aware exhaustion and late-event recovery as BUILT-BUT-UNWIRED (TASK-093 root class). The contract previously guarded only against fabricating success, never against fabricating failure.",
+  "revision_note": "added false-failure (premature-completion) invariants symmetric to the existing false-success guards; late-event recovery is now wired through the task reconciler, while liveness-aware exhaustion remains built-but-unfed. The contract previously guarded only against fabricating success, never against fabricating failure.",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -36,7 +36,7 @@
     "completion_reentry": {
       "current": "lib/chain-runner-complete.sh -> lib/chain-runner.sh --start/--parallel",
       "v2": "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled",
-      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported (exit 64); the bridge exits unsupported for members of a live fan group because typed fan-in accounting is not wired — the shell handler owns those completions",
+      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported (exit 64); live fan-group members are now typed-accounted, while unsupported still protects malformed/incomplete runtime contexts",
       "routed_coverage": "agents relaunched by the typed bridge (routed chain-runner --start/--parallel) complete through the typed pipeline too: shell chain-runner monitors carry the completion flags + run-dir context inline (pty daemon whitelists spawn env), and the completion entrypoint adopts an AgentAttempt record (origin routed-completion-adoption, created at instructions_submitted from completion-time evidence) before the verdict drives the normal completed/completion_failed edges",
       "division_of_labor": "exactly one handler applies completion side effects: typed bridge exit != 64 means the shell handler never runs (typed queues external effects to the outbox); exit 64 means the shell handler applies everything inline",
       "reason": "completion owns fan-in, fan-out, retries, generation backstop, and event archiving; typed re-entry is opt-in until full branch parity is proven"
@@ -139,9 +139,9 @@
     "coverage": {
       "events_dir_read": "LIVE - completion-entrypoint reads [EVENTS_DIR, projectEventsDir, runDir/events] deduped, unconditional",
       "handoff_artifact_salvage": "LIVE - completeAgent calls synthesizeCompletionEventFromHandoff before any fail path",
-      "liveness_wins": "BUILT, NOT FED - the sole live caller (completion-entrypoint -> runCompletionPipeline -> completeAgent) passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and await-liveness never fires in production; see known_gaps",
+      "liveness_wins": "BUILT, NOT FED - the sole live caller (completion-entrypoint -> runCompletionPipeline -> completeAgent) passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and await-liveness never fires in production; monitor-v2 now prevents new blind no-event completion handoffs by invoking completion only on a genuine latch, so this branch is legacy/dead-path cleanup rather than a readiness blocker",
       "bounded_await": "NOT ACTIVE - depends on liveness_wins being fed plus a durable extension counter",
-      "late_event_recovery": "BUILT, NOT WIRED - recoverLateCompletionEvents has no caller; the live run-reconciler covers the agent-status level only (no downstream relaunch); see known_gaps"
+      "late_event_recovery": "LIVE - app/api/tasks/reconcile/route.ts invokes recoverLateCompletionEvents before retry/audit handling for stale terminal auto-runs, reopens the run status returned by recovery, builds a typed executor route plan for each recovered completion, and applies it so downstream launches resume"
     }
   },
   "invariants": [
@@ -161,10 +161,8 @@
     "completion re-entry remains shell fallback-capable until parity tests cover every branch"
   ],
   "known_gaps": [
-    "fan-out member completions are intentionally shell-handled: the typed bridge exits unsupported (64) for members of a live fan group because typed fan-in accounting is not wired to the completion entrypoint; wiring the fan-group store into typed completion removes the last routed-coverage carve-out",
     "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
-    "liveness-aware exhaustion is BUILT BUT NOT FED: completion-entrypoint -> runCompletionPipeline -> completeAgent passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and the await-liveness branch never fires in production; activation needs (a) a durable extension counter persisted across completion re-entries and (b) shell-monitor re-arm after an await instead of a single handoff. Signal source exists: pty-client getLiveSessions() (reused from run-reconciler). Verified 2026-07-07, TASK-093 root class",
-    "recoverLateCompletionEvents is BUILT BUT HAS NO CALLER: no reconcile/sweep invokes it. The live run-reconciler (recoverCompletedAgentsFromEvents + repairStoppedAllCompleteRun, wired via background-worker every 60s) provides partial cover at the agent-status level but does not relaunch downstream after a late first-agent completion; full activation must reopen the run AND launch the returned route. Verified 2026-07-07"
+    "liveness-aware exhaustion is BUILT BUT NOT FED: completion-entrypoint -> runCompletionPipeline -> completeAgent passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and the await-liveness branch never fires in production. Monitor-v2 now gates completion invocation on genuine done, and the reconciler connects late-event recovery for already-stuck legacy false failures; remaining work is to delete or deliberately feed this dead branch before removing shell completion fallback. Verified 2026-07-07, TASK-093 root class"
   ],
   "implementation_coverage": {
     "chain-runner.contract.json": {
@@ -190,7 +188,7 @@
       "invariant:a missing agent summary stubs as status unknown; an all-stub completed run resolves needs_review with decision_required, never complete (0c96b73)": { "status": "shell-owned", "reason": "verdict/stub logic lives in shell build-run-summary-json; the typed quality gate honors the summary status it reads (run-1783231933089 status_message)" },
       "invariant:archive only events owned by run id plus source or agent": { "status": "covered", "evidence": "web/lib/runner-v2/event-side-effects.ts eventIsOwnedBy now mirrors lib/event-trigger.sh _event-belongs-to: run-id scoping (mismatch excludes only when both run ids present), source/agent superstring both ways checking BOTH the raw source AND agent fields (diagnostic events carry source=<emitter e.g. chain-runner-complete/monitor> with the owner in a distinct agent: field, which source-only matching missed), plus the filename last-resort. planCompletionEventSideEffects archives ONLY owned events so a parallel sibling's not-yet-processed event stays for its owner (finding #6 archive-global-race); adapters.ts applyEventSideEffects renames archiveOwned into events/archive. Proven: event-side-effects.test.ts archives the completing agent's own agent-keyed diagnostic, excludes a sibling's diagnostic, and covers run-id + filename-fallback cases" },
       "invariant:quality gates run before generation import and downstream routing": { "status": "covered", "evidence": "typed completion pipeline runs the quality gate before routing (completion-entrypoint quality-gate branch; run-1783231933089)" },
-      "invariant:fan-in launches exactly once under fan-group lock": { "status": "shell-owned", "reason": "typed bridge exits 64 for members of a live fan group by contract; shell completion owns fan-in accounting" },
+      "invariant:fan-in launches exactly once under fan-group lock": { "status": "covered", "evidence": "typed completion-entrypoint resolves live fan-group membership from both shell .state and typed .json stores, suppresses normal member routing, and adapters.ts applies completeFanGroupMemberLocked so only the claim winner launches fan-in. Proven by completion-entrypoint.test fan-group member cases, fan-group-store.test, adapters.test lock winner case, and live fan-out/fan-in proof run-1783437332756-3693ab01 with state/fan-groups/dispatch-done-1783437361464.json completed=2 and collector completed once" },
       "invariant:fan-out launches detached with nohup/disown semantics": { "status": "covered", "evidence": "4452b91 detached all typed routed and executor launches; output captured to launches.log (5e79030)" },
       "invariant:task status propagation happens on completed, failed, and stopped": { "status": "covered", "evidence": "external-effects task-status operations dispatched on typed completions (dispatch ledger run-1783232579797; plain-fail steps 0dbf677)" }
     },
@@ -236,7 +234,7 @@
       "invariant:diagnostic events use source monitor, never the agent id, so they cannot satisfy the completion matcher": { "status": "covered", "evidence": "monitor-diagnostics.ts MONITOR_DIAGNOSTIC_SOURCE; monitor-diagnostics.test.ts 'a diagnostic's source is monitor, never the agent id'" },
       "invariant:completion is invoked only on a genuine latch, never while alive and eventless": { "status": "covered", "evidence": "monitor-reducer.ts emits complete only on latched; monitor.test.ts TASK-093 asserts onComplete is not called until the agent latches" },
       "invariant:remote (ssh/docker) workspaces skip the local process-death check": { "status": "covered", "evidence": "monitor-reducer.ts workspaceType local guard; monitor-reducer.test.ts 'skips the local process-death check for remote (ssh/docker) workspaces'" },
-      "invariant:the completion handoff wiring (gate/feed liveness, connect late-event recovery) is connected before readiness": { "status": "gap", "blocker": "handoff not wired: buildMonitorCommand still emits the shell monitor-chain-agent, and the typed completion liveness feed + late-event recovery are BUILT-BUT-NOT-WIRED (monitor-v2-contract.json readiness_gate + migration_plan steps 3-4). Readiness must stay blocked until this lands." }
+      "invariant:late-event recovery or an explicit replacement is connected before readiness": { "status": "covered", "evidence": "monitor-v2 command wiring and live TASK-093-shaped completion handoff are proven behind MENTIKO_MONITOR_V2 (watched proof terminalReason completed_from_event; monitor e2e 28/28). Existing false-failure cleanup is now connected: app/api/tasks/reconcile/route.ts calls recoverLateCompletionEvents before terminal retry/audit handling, then buildTypedExecutorPlan/applyTypedExecutorPlan relaunch downstream for recovered events. Proven by app/api/tasks/reconcile/route.test.ts 'recovers late completion events before terminal retry or audit handling' and lib/runner-v2/completion-late-event.test.ts." }
     }
   }
 }

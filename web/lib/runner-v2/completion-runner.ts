@@ -22,6 +22,7 @@ export type CompletionRunnerDecision =
   | { action: "retry"; reason: string; retry: Extract<RetryNoEventPlan, { action: "retry" }>; run: RunRecord }
   | { action: "exhausted"; reason: string; retry: Extract<RetryNoEventPlan, { action: "exhausted" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "generation-terminal"; reason: string; generation: GenerationImportPlan; terminal: TerminalCompletionPlan; run: RunRecord }
+  | { action: "fan-group-member"; event: RunnerEventRecord; agent: CompletionAgentRef; run: RunRecord; fanGroup: FanGroupCompletionPlan }
   | { action: "route"; event: RunnerEventRecord; route: RoutingDecision; loopGuard?: LoopGuardDecision; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "loop-complete"; event: RunnerEventRecord; loopGuard: Extract<LoopGuardDecision, { action: "complete" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "max-rounds-stop"; event: RunnerEventRecord; loopGuard: Extract<LoopGuardDecision, { action: "stop" }>; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
@@ -250,6 +251,15 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     detail: `matched completion event ${match.event.event}`,
     now: input.now,
   });
+  if (input.fanGroup) {
+    return {
+      action: "fan-group-member",
+      event: match.event,
+      agent: input.agent,
+      fanGroup: fanGroup!,
+      run: readCurrentRun(input.runJsonPath),
+    };
+  }
   const route = decideNextRoute(input.chain, match.event.event);
   const loopGuard = input.loopGuard ? applyLoopGuardToRoute({
     currentAgentId: input.agent.id,

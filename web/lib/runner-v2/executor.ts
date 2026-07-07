@@ -15,14 +15,14 @@ export type TypedExecutorEffect =
   | { type: "generation-import"; plan: GenerationImportPlan }
   | { type: "fan-group-create"; group: FanGroupState }
   | { type: "retry"; plan: RetryNoEventPlan }
-  | { type: "fan-group"; plan: FanGroupCompletionPlan }
+  | { type: "fan-group"; plan: FanGroupCompletionPlan; agentId?: string; status?: "complete" | "failed" }
   | { type: "agent-completion"; plan: AgentCompletionPlan }
   | { type: "terminal"; plan: TerminalCompletionPlan }
   | { type: "terminal-failure"; plan: TerminalFailurePlan }
   | { type: "run-terminal"; status: "completed" | "stopped" | "failed"; reason: string };
 
 export interface TypedExecutorPlan {
-  action: "already-completed" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop";
+  action: "already-completed" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop" | "fan-group-member";
   launches: RoutedLaunchPlan[];
   effects: TypedExecutorEffect[];
 }
@@ -64,18 +64,12 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
   }
 
   if ("fanGroup" in decision && decision.fanGroup) {
-    effects.push({ type: "fan-group", plan: decision.fanGroup });
-    if (decision.fanGroup.launch) {
-      launches.push({
-        kind: "single",
-        command: buildFanGroupLaunchCommand(input.routeContext, decision.fanGroup.launch.agentId),
-        env: {
-          ...input.routeContext.env,
-          ...decision.fanGroup.launch.env,
-        },
-        detached: true,
-      });
-    }
+    effects.push({
+      type: "fan-group",
+      plan: decision.fanGroup,
+      agentId: decision.action === "fan-group-member" ? decision.agent.id : input.agentCompletion?.agentId,
+      status: decision.action === "fail" || decision.action === "exhausted" ? "failed" : "complete",
+    });
   }
 
   if (decision.action === "route") {

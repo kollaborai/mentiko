@@ -20,20 +20,12 @@ describe("implementation contract binding (real repo contracts)", () => {
     }
   });
 
-  it("has only the known, tracked monitor-v2 completion-handoff gap (which blocks the switch)", () => {
-    // Gaps are the honest red on the switch report. The runner/completion path is
-    // fully bound (no gaps); the one intentional, readiness-blocking gap is the
-    // monitor-v2 completion-handoff wiring (buildMonitorCommand + liveness feed +
-    // late-event recovery). This assertion fails on any UNEXPECTED gap, and also
-    // fails when this gap is silently removed without wiring the handoff — forcing
-    // the coverage flip to be deliberate.
+  it("has no remaining implementation-contract gaps", () => {
+    // Gaps are the honest red on the switch report. Once the late-event
+    // recovery/default-switch parity item is wired, the real contract ledger
+    // must be all covered/shell-owned with no readiness-blocking gaps.
     const summaries = assessImplementationContractBinding();
     const gaps = summaries.flatMap((summary) => summary.gaps.map((gap) => ({ file: summary.file, key: gap.key })));
-    expect(gaps).toEqual([
-      {
-        file: "monitor-v2.contract.json",
-        key: "invariant:the completion handoff wiring (gate/feed liveness, connect late-event recovery) is connected before readiness",
-      },
-    ]);
+    expect(gaps).toEqual([]);
   });
 });

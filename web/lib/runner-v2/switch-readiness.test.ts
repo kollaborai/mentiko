@@ -98,10 +98,10 @@ jest.mock("fs", () => ({
       return "console.error('# unresolved secret reference skipped')";
     }
     if (path.endsWith("chain-runner.sh")) {
-      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"';
+      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"\nexport MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"';
     }
     if (path.endsWith("Dockerfile")) {
-      return "runner-v2-complete.js";
+      return "runner-v2-complete.js monitor-v2.js";
     }
     if (path.endsWith("launch-plan.ts")) {
       return 'const CHAIN_RUNNER = "chain-runner.sh"; MENTIKO_RUNNER_V2_MODE: "typed-plan"; args.push("--start")';
@@ -137,7 +137,7 @@ jest.mock("fs", () => ({
       return 'return { action: "generation-terminal" };';
     }
     if (path.endsWith("agent-bootstrap-plan.ts")) {
-      return "Core generation handoff uses generation-result.json.";
+      return "Core generation handoff uses generation-result.json. MENTIKO_MONITOR_V2";
     }
     if (path.endsWith("bootstrap-executor.ts")) {
       return "import { classifyCliReadiness } from '@/lib/runner-v2/readiness-policy'; export async function executeLocalBootstrap() { await executor.spawn('name'); classifyCliReadiness({ output: '' }); await waitForBootstrapReadiness(); await startMonitorSession(); }";
@@ -169,7 +169,7 @@ jest.mock("fs", () => ({
     if (path.endsWith("monitor-v2.contract.json")) {
       return JSON.stringify({
         owns: ["mock monitor-v2 own"],
-        invariants: ["mock monitor-v2 invariant", "mock monitor-v2 handoff gap"],
+        invariants: ["mock monitor-v2 invariant", "mock monitor-v2 late-event recovery"],
       });
     }
     return JSON.stringify({
@@ -212,7 +212,7 @@ jest.mock("fs", () => ({
         "monitor-v2.contract.json": {
           "owns:mock monitor-v2 own": { status: "covered", evidence: "mock" },
           "invariant:mock monitor-v2 invariant": { status: "covered", evidence: "mock" },
-          "invariant:mock monitor-v2 handoff gap": { status: "gap", blocker: "handoff not wired (mock)" },
+          "invariant:mock monitor-v2 late-event recovery": { status: "covered", evidence: "mock" },
         },
       },
     });
@@ -220,14 +220,10 @@ jest.mock("fs", () => ({
 }));
 
 describe("runner-v2 switch readiness", () => {
-  it("runner checks pass but the switch is gated on the monitor-v2 completion-handoff gap", () => {
+  it("reports ready when runner, monitor-v2, and contract-binding checks pass", () => {
     const report = assessRunnerV2SwitchReadiness();
 
-    // The runner side (launch + typed completion + proofs) is fully ready, but the
-    // switch is now correctly BLOCKED by the monitor-v2 completion-handoff gap:
-    // flipping runner-v2 default while the monitor split-brain (TASK-093) is unfixed
-    // would ship the bug to every tenant. Readiness unblocks when the handoff lands.
-    expect(report.status).toBe("blocked");
+    expect(report.status).toBe("ready");
     expect(report.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "contract-side-by-side", status: "pass" }),
       expect.objectContaining({ id: "typed-executor-supported", status: "pass" }),
@@ -244,6 +240,9 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "agent-bootstrap-planner", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-executor", status: "pass" }),
       expect.objectContaining({ id: "completion-runtime-compile", status: "pass" }),
+      expect.objectContaining({ id: "monitor-runtime-compile", status: "pass" }),
+      expect.objectContaining({ id: "typed-bootstrap-monitor-gate", status: "pass" }),
+      expect.objectContaining({ id: "routed-monitor-v2-default-on", status: "pass" }),
       expect.objectContaining({ id: "profile-secret-placeholder-skip", status: "pass" }),
       expect.objectContaining({ id: "profile-fallback-secret-filter", status: "pass" }),
       expect.objectContaining({ id: "loop-state-shell-typed-interop", status: "pass" }),
@@ -271,10 +270,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "contract-binding-run-event", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-watcher-watchdog", status: "pass" }),
     ]));
-    // exactly one blocker: the tracked monitor-v2 completion-handoff gap.
-    expect(report.blockers).toEqual([
-      expect.stringContaining("monitor-v2.contract.json"),
-    ]);
+    expect(report.blockers).toEqual([]);
   });
 
   it("reports every contract line as unbound when the coverage map is empty", () => {

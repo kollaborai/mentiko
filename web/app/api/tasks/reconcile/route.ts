@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
@@ -14,6 +14,12 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
+import { hasExecutionRetriesRemaining, nextExecutionRetryMetadata } from "@/lib/tasks/execution-retry-policy";
+import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
+import { recoverLateCompletionEvents } from "@/lib/runner-v2/completion-recovery";
+import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import { buildTypedExecutorPlan } from "@/lib/runner-v2/executor";
+import type { RoutingChain } from "@/lib/runner-v2/routing";
 
 export const dynamic = "force-dynamic";
 
@@ -127,7 +133,18 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           continue;
         }
 
-        if (run.status !== "running" && run.status !== "pending") {
+        const lateRecovery = recoverLateCompletionIfPossible({
+          runDir,
+          runJsonPath,
+          runId,
+          run,
+          namespaceId,
+          orgId,
+        });
+        if (lateRecovery.recovered) {
+          newStatus = lateRecovery.status;
+          reason = lateRecovery.reason;
+        } else if (run.status !== "running" && run.status !== "pending") {
           newStatus = run.status;
           reason = `run.json status is ${run.status}`;
         } else {
@@ -176,20 +193,22 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
-        // auto-run handling: hand ANY terminal run (success or failure) to the
-        // completion auditor, which owns the retry-vs-decision-vs-close call. A
-        // genuine failure becomes the auditor's capped "retry"; a run that needs
-        // a human becomes a "decision". This unifies the old failed-retry path
-        // and the success path into one judged, loop-bounded trigger.
         const autoRun = meta?.auto_run === true;
         if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus)) {
-          try {
-            await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
-          } catch (auditError) {
-            failed.push({
-              taskId: issue.id,
-              error: `Failed to start completion audit: ${(auditError as Error).message}`,
-            });
+          if (hasExecutionRetriesRemaining(updatedMeta, newStatus)) {
+            const retryMeta = nextExecutionRetryMetadata(updatedMeta, newStatus, reason);
+            taskUpdate(orgId, safeId, { status: "open", metadata: retryMeta }, namespaceId);
+            newStatus = "retry_requested";
+            reason = `execution retry scheduled before outcome summary: ${reason}`;
+          } else {
+            try {
+              await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
+            } catch (auditError) {
+              failed.push({
+                taskId: issue.id,
+                error: `Failed to start completion audit: ${(auditError as Error).message}`,
+              });
+            }
           }
         }
 
@@ -241,11 +260,56 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         continue;
       }
 
+      const safeId = validateTaskId(issue.id);
+      const lateRecovery = recoverLateCompletionIfPossible({
+        runDir,
+        runJsonPath,
+        runId,
+        run,
+        namespaceId,
+        orgId,
+      });
+      if (lateRecovery.recovered) {
+        const updatedMeta: Record<string, unknown> = {
+          ...meta,
+          last_run_status: lateRecovery.status,
+        };
+        if (lateRecovery.status === "completed") {
+          updatedMeta.last_run_completed = new Date().toISOString();
+        }
+        taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
+        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          `task ${issue.id} run ${runId}: ${lateRecovery.status}`, lateRecovery.reason);
+        results.push({
+          taskId: issue.id,
+          runId,
+          previousStatus: String(meta.last_run_status || run.status || "terminal"),
+          newStatus: lateRecovery.status,
+          reason: lateRecovery.reason,
+        });
+        continue;
+      }
+
       if (!run.status || !TERMINAL_RUN_STATUSES.has(run.status)) {
         continue;
       }
 
-      const safeId = validateTaskId(issue.id);
+      if (hasExecutionRetriesRemaining(meta, run.status)) {
+        const retryMeta = nextExecutionRetryMetadata(meta, run.status, `run.json status is ${run.status}`);
+        taskUpdate(orgId, safeId, { status: "open", metadata: retryMeta }, namespaceId);
+        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          `task ${issue.id} run ${runId}: retry requested`,
+          `execution retry scheduled before outcome summary: ${run.status}`);
+        results.push({
+          taskId: issue.id,
+          runId,
+          previousStatus: String(meta.last_run_status || run.status),
+          newStatus: "retry_requested",
+          reason: "execution retry scheduled before outcome summary",
+        });
+        continue;
+      }
+
       const audit = await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
         `task ${issue.id} run ${runId}: audit ${audit.status}`,
@@ -299,4 +363,116 @@ function latestAgentCompletionMs(agents: Array<{ completed?: unknown }>): number
     .map((agent) => parseTimeMs(agent.completed))
     .filter((ms): ms is number => typeof ms === "number")
     .sort((a, b) => b - a)[0];
+}
+
+function recoverLateCompletionIfPossible(input: {
+  runDir: string;
+  runJsonPath: string;
+  runId: string;
+  run: Record<string, unknown>;
+  namespaceId: string;
+  orgId: string;
+}): { recovered: false } | { recovered: true; status: string; reason: string } {
+  const chainPath = join(input.runDir, "chain.json");
+  if (!existsSync(chainPath)) return { recovered: false };
+
+  const chain = readRoutingChain(chainPath);
+  if (!chain) return { recovered: false };
+
+  const events = readEventsFromDirs([
+    config.eventsDir,
+    join(input.runDir, "events"),
+    join(dirname(chainPath), "events"),
+  ]);
+  const recovery = recoverLateCompletionEvents({
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    chain,
+    events,
+  });
+  if (recovery.recovered.length === 0) return { recovered: false };
+
+  for (const item of recovery.recovered) {
+    const plan = buildTypedExecutorPlan({
+      pipeline: {
+        decision: {
+          action: "route",
+          event: item.event,
+          route: item.route,
+          run: recovery.run,
+        },
+        loopStateBefore: { visited: [], round: 0 },
+      },
+      allEvents: events,
+      routeContext: {
+        chainPath,
+        workspacePath: typeof input.run.workspacePath === "string" ? input.run.workspacePath : undefined,
+        taskId: typeof input.run.taskId === "string" ? input.run.taskId : undefined,
+        runDir: input.runDir,
+        env: {
+          MENTIKO_RUN_ID: input.runId,
+          RUN_ID: input.runId,
+          NAMESPACE_ID: input.namespaceId,
+          ORG_ID: input.orgId,
+          MENTIKO_RUNNER_V2: "1",
+          MENTIKO_RUNNER_V2_COMPLETION: "1",
+        },
+      },
+      terminal: {
+        runId: input.runId,
+        chainId: typeof input.run.chainId === "string" ? input.run.chainId : chain.id,
+        chainName: chain.name || chain.id || "unknown",
+        chainPath,
+        taskId: typeof input.run.taskId === "string" ? input.run.taskId : undefined,
+        lastAgentId: item.agentId,
+      },
+    });
+    applyTypedExecutorPlan(plan, {
+      runJsonPath: input.runJsonPath,
+      stateDir: config.stateDir,
+      namespaceId: input.namespaceId,
+      orgId: input.orgId,
+      eventsDir: config.eventsDir,
+      eventsArchiveDir: join(config.eventsDir, "archive"),
+    });
+  }
+
+  return {
+    recovered: true,
+    status: recovery.run.status,
+    reason: `late completion event recovered for ${recovery.recovered.map((item) => item.agentId).join(", ")}`,
+  };
+}
+
+function readRoutingChain(chainPath: string): RoutingChain | undefined {
+  try {
+    const chain = JSON.parse(readFileSync(chainPath, "utf-8")) as RoutingChain;
+    return Array.isArray(chain.agents) ? chain : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readEventsFromDirs(eventsDirs: string[]): RunnerEventRecord[] {
+  const seenDirs = new Set<string>();
+  const seenFiles = new Set<string>();
+  const events: RunnerEventRecord[] = [];
+  for (const dir of eventsDirs) {
+    if (!dir || seenDirs.has(dir) || !existsSync(dir)) continue;
+    seenDirs.add(dir);
+    let files: string[] = [];
+    try {
+      files = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".event")) continue;
+      const path = join(dir, file);
+      if (seenFiles.has(path)) continue;
+      seenFiles.add(path);
+      events.push({ ...parseRunnerEvent(readFileSync(path, "utf-8")), path });
+    }
+  }
+  return events;
 }

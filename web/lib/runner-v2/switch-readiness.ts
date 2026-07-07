@@ -129,6 +129,24 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "tenant image does not compile the runner-v2 completion bridge",
   ));
   checks.push(sourceContainsCheck(
+    "monitor-runtime-compile",
+    join(config.codeRoot, "Dockerfile"),
+    "monitor-v2.js",
+    "tenant image does not compile the runner-v2 monitor bridge",
+  ));
+  checks.push(sourceContainsCheck(
+    "typed-bootstrap-monitor-gate",
+    join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts"),
+    "MENTIKO_MONITOR_V2",
+    "typed bootstrap monitor command does not gate monitor-v2 behind MENTIKO_MONITOR_V2",
+  ));
+  checks.push(sourceContainsCheck(
+    "routed-monitor-v2-default-on",
+    join(config.codeRoot, "lib/chain-runner.sh"),
+    'export MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"',
+    "shell chain-runner monitors do not default MENTIKO_MONITOR_V2 on for routed/relaunched agents",
+  ));
+  checks.push(sourceContainsCheck(
     "profile-secret-placeholder-skip",
     join(config.codeRoot, "bin/secrets-resolve.mjs"),
     "unresolved secret reference skipped",

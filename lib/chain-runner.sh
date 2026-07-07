@@ -2333,6 +2333,7 @@ export MENTIKO_RUN_DIR="${RUNS_DIR:+${RUNS_DIR}/${RUN_ID}}"
 export EVENTS_DIR="${EVENTS_DIR:-}"
 export STATE_DIR="${STATE_DIR:-}"
 export MENTIKO_CODE_ROOT="${MENTIKO_CODE_ROOT:-}"
+export MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"
 # runner-v2 completion context: the pty daemon whitelists spawn env, so this
 # monitor only sees what is exported here. Without these the completion
 # handoff (launch-chain-runner-complete) can never choose the typed bridge for
@@ -2357,6 +2358,25 @@ MONEOF
 
         cat >> "$mon_script" <<MONEOF
 rm -f "\$0"
+if [[ "\${MENTIKO_MONITOR_V2:-1}" =~ ^(1|true|yes|on)$ ]] && command -v node >/dev/null 2>&1; then
+  _monitor_v2_root="\${MENTIKO_CODE_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+  _monitor_v2_script="\$_monitor_v2_root/lib/monitor-v2.js"
+  if [[ -f "\$_monitor_v2_script" ]]; then
+    node "\$_monitor_v2_script" '${session_name}' '${agent_monitor_interval}' '${agent_context}' "${CHAIN_FILE}" '${agent_max_stale}'
+    _monitor_v2_status=\$?
+    if [[ "\$_monitor_v2_status" -ne 64 ]]; then
+      exit "\$_monitor_v2_status"
+    fi
+  fi
+  _monitor_v2_source="\$_monitor_v2_root/web/lib/runner-v2/monitor-cli.ts"
+  if command -v npx >/dev/null 2>&1 && [[ -f "\$_monitor_v2_source" ]]; then
+    (cd "\$_monitor_v2_root/web" && npx tsx lib/runner-v2/monitor-cli.ts '${session_name}' '${agent_monitor_interval}' '${agent_context}' "${CHAIN_FILE}" '${agent_max_stale}')
+    _monitor_v2_status=\$?
+    if [[ "\$_monitor_v2_status" -ne 64 ]]; then
+      exit "\$_monitor_v2_status"
+    fi
+  fi
+fi
 monitor-chain-agent '${session_name}' '${agent_monitor_interval}' '${agent_context}' "${CHAIN_FILE}" '${agent_max_stale}'
 MONEOF
         chmod 700 "$mon_script"

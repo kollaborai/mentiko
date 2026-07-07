@@ -102,7 +102,7 @@ describe("runner-v2 typed executor plan", () => {
     });
   });
 
-  it("turns fan-group on_error claims into fan-in launch plans", () => {
+  it("keeps fan-group launch out of executor planning so the adapter lock decides the winner", () => {
     const dir = runDir();
     const pipeline = runCompletionPipeline({
       runDir: dir,
@@ -132,11 +132,7 @@ describe("runner-v2 typed executor plan", () => {
     expect(buildTypedExecutorPlan({ pipeline, routeContext: routeContext(dir) })).toMatchObject({
       action: "exhausted",
       effects: [{ type: "fan-group" }, { type: "retry" }],
-      launches: [{
-        kind: "single",
-        command: expect.stringContaining("--start 'recover'"),
-        env: { MENTIKO_RUN_ID: "run-123", AGENT_FAN_GROUP_ID: "group-1" },
-      }],
+      launches: [],
     });
   });
 

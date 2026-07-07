@@ -123,6 +123,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     // completion because the pty daemon strips spawn env to its whitelist.
     MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
+    MENTIKO_MONITOR_V2: input.env?.MENTIKO_MONITOR_V2 || "1",
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
 
@@ -313,7 +314,20 @@ function buildMonitorCommand(input: {
   env: Record<string, string>;
 }): string {
   const agentFunctions = join(config.codeRoot, "lib", "agent-functions.sh");
+  const compiledMonitor = join(config.codeRoot, "lib", "monitor-v2.js");
+  const webRoot = join(config.codeRoot, "web");
+  const sourceMonitor = join(webRoot, "lib", "runner-v2", "monitor-cli.ts");
   const context = `Agent: ${input.agentName} (${input.agentId}). Emits: ${input.emits}.`;
+  const shellCommand = `monitor-chain-agent ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}`;
+  const typedCommand = [
+    "if command -v node >/dev/null 2>&1; then",
+    `if [[ -f ${shellEscape(compiledMonitor)} ]]; then node ${shellEscape(compiledMonitor)} ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}; _monitor_v2_status=$?; if [[ "$_monitor_v2_status" -ne 64 ]]; then exit "$_monitor_v2_status"; fi; fi;`,
+    "fi;",
+    "if command -v npx >/dev/null 2>&1; then",
+    `if [[ -f ${shellEscape(sourceMonitor)} ]]; then (cd ${shellEscape(webRoot)} && npx tsx lib/runner-v2/monitor-cli.ts ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}); _monitor_v2_status=$?; if [[ "$_monitor_v2_status" -ne 64 ]]; then exit "$_monitor_v2_status"; fi; fi;`,
+    "fi;",
+    shellCommand,
+  ].join(" ");
   return [
     `source ${shellEscape(agentFunctions)}`,
     ...Object.entries(input.env)
@@ -323,6 +337,6 @@ function buildMonitorCommand(input: {
     `export MENTIKO_RUN_ID=${shellEscape(input.runId)}`,
     `export RUN_ID=${shellEscape(input.runId)}`,
     `export MENTIKO_AGENT_ID=${shellEscape(input.agentId)}`,
-    `monitor-chain-agent ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}`,
+    `if [[ "\${MENTIKO_MONITOR_V2:-}" =~ ^(1|true|yes|on)$ ]]; then ${typedCommand}; else ${shellCommand}; fi`,
   ].join("; ");
 }

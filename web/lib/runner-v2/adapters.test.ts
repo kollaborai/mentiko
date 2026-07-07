@@ -95,6 +95,54 @@ describe("runner-v2 adapters", () => {
     });
   });
 
+  it("applies fan-group member completion under lock and launches fan-in only for the claim winner", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const chainPath = join(dir, "chain.json");
+    writeFileSync(chainPath, "{}\n");
+    const group = createFanGroupState({
+      id: "group-1",
+      event: "done",
+      fanOutAgents: ["a", "b"],
+      fanInAgent: "merge",
+      chainPath,
+      runId: "run-123",
+    });
+    applyTypedExecutorPlan({
+      action: "route",
+      effects: [{ type: "fan-group-create", group }],
+      launches: [],
+    }, { runJsonPath, stateDir: dir });
+
+    const first = applyTypedExecutorPlan({
+      action: "fan-group-member",
+      effects: [{ type: "fan-group", plan: { group, claimed: false }, agentId: "a", status: "complete" }],
+      launches: [],
+    }, { runJsonPath, stateDir: dir });
+    expect(first.launchesStarted).toEqual([]);
+
+    const second = applyTypedExecutorPlan({
+      action: "fan-group-member",
+      effects: [{ type: "fan-group", plan: { group, claimed: false }, agentId: "b", status: "complete" }],
+      launches: [],
+    }, { runJsonPath, stateDir: dir });
+    expect(second.launchesStarted).toHaveLength(1);
+    expect(second.launchesStarted[0].command).toContain("--start 'merge'");
+
+    const duplicate = applyTypedExecutorPlan({
+      action: "fan-group-member",
+      effects: [{ type: "fan-group", plan: { group, claimed: false }, agentId: "b", status: "complete" }],
+      launches: [],
+    }, { runJsonPath, stateDir: dir });
+    expect(duplicate.launchesStarted).toEqual([]);
+
+    expect(JSON.parse(readFileSync(fanGroupPath(dir, "group-1"), "utf8"))).toMatchObject({
+      status: "complete",
+      completed: 2,
+      members: { a: "complete", b: "complete" },
+    });
+  });
+
   it("applies terminal run-status effects to run.json", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);

@@ -7,7 +7,7 @@ import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifac
 import type { TypedExecutorEffect, TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
-import { writeFanGroup } from "@/lib/runner-v2/fan-group-store";
+import { completeFanGroupMemberLocked, writeFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
 import { updateRunStatus } from "@/lib/runner-v2/run-state";
 
@@ -84,6 +84,25 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
     runQualityGateEventArtifact(effect.plan);
   } else if (effect.type === "fan-group-create") {
     writeFanGroup(context.stateDir, effect.group);
+  } else if (effect.type === "fan-group") {
+    const plan = completeFanGroupMemberLocked(context.stateDir, {
+      groupId: effect.plan.group.id,
+      agentId: effect.agentId || "",
+      status: effect.status || "complete",
+    });
+    if (plan?.launch) {
+      const command = buildFanGroupLaunchCommand(context, plan.launch.agentId, plan.group.chainPath);
+      const child = startLaunch({
+        kind: "single",
+        command,
+        env: {
+          MENTIKO_RUN_ID: plan.group.runId,
+          AGENT_FAN_GROUP_ID: plan.group.id,
+        },
+        detached: true,
+      }, context);
+      launchesStarted.push({ command, pid: child?.pid });
+    }
   } else if (effect.type === "generation-import") {
     applyGenerationImport(effect.plan, context);
   } else if (effect.type === "run-terminal") {
@@ -144,6 +163,11 @@ function applyGenerationImport(plan: GenerationImportPlan, context: AdapterConte
   if (result.status !== 0) {
     throw new Error(`generation import failed for job ${plan.jobId}: ${result.stderr || result.stdout || result.status}`);
   }
+}
+
+function buildFanGroupLaunchCommand(context: AdapterContext, agentId: string, chainPath?: string): string {
+  const resolvedChainPath = chainPath || join(dirname(context.runJsonPath), "chain.json");
+  return `bash ${shellEscape(join(config.codeRoot, "lib", "chain-runner.sh"))} ${shellEscape(resolvedChainPath)} --start ${shellEscape(agentId)}`;
 }
 
 export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): ChildProcess | undefined {
@@ -566,8 +590,8 @@ function plannedOperations(effect: TypedExecutorEffect): AdapterOperation[] {
       .map((step) => step as AdapterOperation);
   }
   if (effect.type === "fan-group") {
-    return effect.plan.launch
-      ? [{ type: "next-chain", chainName: effect.plan.launch.agentId, parentRunId: effect.plan.group.runId || "" }]
+    return effect.plan.claim?.fanInAgent
+      ? [{ type: "next-chain", chainName: effect.plan.claim.fanInAgent, parentRunId: effect.plan.group.runId || "" }]
       : [];
   }
   if (effect.type === "generation-import") {

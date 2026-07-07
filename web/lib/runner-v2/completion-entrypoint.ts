@@ -9,6 +9,7 @@ import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/
 import { readRunJson, updateRunAgent, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
+import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 
 export interface RunnerV2CompletionEntrypointInput {
@@ -50,16 +51,12 @@ export function runRunnerV2CompletionEntrypoint(
   const agent = resolveAgent(input.sessionName, chain, run);
   const stateDir = resolveStateDir(env, runDir);
 
-  // fan-out members must fall back to the shell handler: typed completion has
-  // no fan-group accounting wired, so handling one here would skip the member
-  // counter and the fan-in would never fire. The shell recovers membership
-  // from the durable fan-group state files for exactly this reason
-  // (chain-runner-complete.sh fallback membership resolution) — apply the same
-  // evidence to route these completions to the runner that owns them.
+  // Fan-out members must suppress normal routing: their completion is an input
+  // to the durable fan-group counter, and only the claim winner launches fan-in.
+  // Read both shell and typed stores so routed shell-started members can still
+  // complete through this typed entrypoint.
   const fanGroupId = findLiveFanGroupMembership(stateDir, agent.id, runId);
-  if (fanGroupId) {
-    throw unsupported(`agent ${agent.id} is a member of live fan group ${fanGroupId}; typed fan-in accounting is not wired`);
-  }
+  const fanGroup = fanGroupId ? readFanGroup(stateDir, fanGroupId) || undefined : undefined;
 
   const eventsDir = resolveEventsDir(env, input.chainPath);
   // env EVENTS_DIR and the per-run events dir can disagree across the
@@ -183,6 +180,7 @@ export function runRunnerV2CompletionEntrypoint(
         lastAgentId: agent.id,
       },
       generation: generationImportPlan(run, runDir, env),
+      fanGroup,
       retry: {
         policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
         currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,

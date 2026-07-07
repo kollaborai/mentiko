@@ -16,6 +16,7 @@ export interface FanGroupState {
   total: number;
   chainPath?: string;
   runId?: string;
+  members?: Record<string, FanMemberStatus>;
 }
 
 export interface FanGroupCreateInput {
@@ -79,8 +80,18 @@ export function completeFanGroupMember(input: FanGroupCompletionInput): FanGroup
   }
 
   const status = input.status || "complete";
+  if (!input.group.fanOutAgents.includes(input.agentId)) {
+    return { group: input.group, claimed: false };
+  }
+  if (input.group.members?.[input.agentId]) {
+    return { group: input.group, claimed: false };
+  }
   const nextGroup: FanGroupState = {
     ...input.group,
+    members: {
+      ...(input.group.members || {}),
+      [input.agentId]: status,
+    },
     completed: input.group.completed + (status === "complete" ? 1 : 0),
     failed: input.group.failed + (status === "failed" ? 1 : 0),
   };

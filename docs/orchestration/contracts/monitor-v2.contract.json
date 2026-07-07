@@ -21,6 +21,6 @@
     "diagnostic events use source monitor, never the agent id, so they cannot satisfy the completion matcher",
     "completion is invoked only on a genuine latch, never while alive and eventless",
     "remote (ssh/docker) workspaces skip the local process-death check",
-    "the completion handoff wiring (gate/feed liveness, connect late-event recovery) is connected before readiness"
+    "late-event recovery or an explicit replacement is connected before readiness"
   ]
 }

@@ -616,7 +616,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(run.agents?.[0]).toMatchObject({ id: "verifier", status: "complete" });
   });
 
-  it("exits unsupported for members of a live fan group so the shell handler keeps fan-in accounting", () => {
+  it("accounts shell-state fan-group members through typed completion without normal routing", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root);
     emitVerifierEvent(fixture.eventsDir);
@@ -639,15 +639,16 @@ describe("runner-v2 completion entrypoint", () => {
       "",
     ].join("\n"));
 
-    const before = readFileSync(fixture.runJsonPath, "utf8");
-    expect(() => runRunnerV2CompletionEntrypoint({
+    const result = runRunnerV2CompletionEntrypoint({
       sessionName: "verifier-run-123",
       chainPath: fixture.chainPath,
       env: routedEnv(fixture),
       now: new Date("2026-07-04T00:00:00.000Z"),
-    })).toThrow(RunnerV2CompletionUnsupportedError);
-    // no mutation before the unsupported exit
-    expect(readFileSync(fixture.runJsonPath, "utf8")).toBe(before);
+    });
+    expect(result).toMatchObject({ status: "handled", decision: "fan-group-member" });
+    expect(readFileSync(join(groupsDir, "review-fan-1.state"), "utf8")).toContain("completed: 1");
+    expect(readFileSync(join(groupsDir, "review-fan-1.state"), "utf8")).toContain("member_verifier: complete");
+    expect(readRunJson(fixture.runJsonPath).status).toBe("running");
   });
 
   it("ignores fan groups that are no longer running or belong to another run", () => {
@@ -683,7 +684,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(result).toMatchObject({ status: "handled", decision: "route" });
   });
 
-  it("gates typed completion on live typed-store fan groups too", () => {
+  it("accounts typed-store fan-group members too", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root);
     emitVerifierEvent(fixture.eventsDir);
@@ -700,12 +701,17 @@ describe("runner-v2 completion entrypoint", () => {
       total: 2,
     });
 
-    expect(() => runRunnerV2CompletionEntrypoint({
+    const result = runRunnerV2CompletionEntrypoint({
       sessionName: "verifier-run-123",
       chainPath: fixture.chainPath,
       env: routedEnv(fixture),
       now: new Date("2026-07-04T00:00:00.000Z"),
-    })).toThrow(RunnerV2CompletionUnsupportedError);
+    });
+    expect(result).toMatchObject({ status: "handled", decision: "fan-group-member" });
+    expect(JSON.parse(readFileSync(join(groupsDir, "typed-fan.json"), "utf8"))).toMatchObject({
+      completed: 1,
+      members: { verifier: "complete" },
+    });
   });
 
   it("keeps bootstrap-created attempts untouched instead of adopting a second record", () => {

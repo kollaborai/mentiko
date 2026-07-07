@@ -293,30 +293,49 @@ else
   [[ "$(agent_status "$RUN_FO" collector)" == "complete" ]] && pass "A: collector (fan-in) completed" || fail "A: collector not complete (got '$(agent_status "$RUN_FO" collector)')"
 
   # fan-in fired EXACTLY once: the group status flips to 'complete' (the single
-  # idempotent claim). More than one .state with status complete, or a collector
-  # launched twice, would indicate a double-fire. We assert the group claim.
-  FO_GROUP_STATE="$(ls -1 "$DATA_ROOT/namespaces/default/state/fan-groups/"*.state 2>/dev/null | head -1)"
-  if [[ -n "$FO_GROUP_STATE" ]]; then
-    FO_GROUP_STATUS="$(grep '^status:' "$FO_GROUP_STATE" | head -1 | cut -d' ' -f2-)"
-    FO_GROUP_COMPLETED="$(grep '^completed:' "$FO_GROUP_STATE" | head -1 | tr -dc '0-9')"
-    note "A: fan-group state: status=$FO_GROUP_STATUS completed=$FO_GROUP_COMPLETED"
+  # idempotent claim). Typed completion stores fan groups as JSON; shell stores
+  # them as .state key-value files. Accept both stores so this e2e remains a
+  # live engine proof rather than a shell-format-only assertion.
+  FO_GROUP_FILE="$(ls -1 "$DATA_ROOT/namespaces/default/state/fan-groups/"*.json "$DATA_ROOT/namespaces/default/state/fan-groups/"*.state 2>/dev/null | head -1)"
+  if [[ -n "$FO_GROUP_FILE" ]]; then
+    if [[ "$FO_GROUP_FILE" == *.json ]]; then
+      FO_GROUP_STATUS="$(jq -r '.status // ""' "$FO_GROUP_FILE")"
+      FO_GROUP_COMPLETED="$(jq -r '.completed // 0' "$FO_GROUP_FILE")"
+      FO_GROUP_MEMBER_A="$(jq -r '.members.worker_a // ""' "$FO_GROUP_FILE")"
+      FO_GROUP_MEMBER_B="$(jq -r '.members.worker_b // ""' "$FO_GROUP_FILE")"
+    else
+      FO_GROUP_STATUS="$(grep '^status:' "$FO_GROUP_FILE" | head -1 | cut -d' ' -f2-)"
+      FO_GROUP_COMPLETED="$(grep '^completed:' "$FO_GROUP_FILE" | head -1 | tr -dc '0-9')"
+      FO_GROUP_MEMBER_A="legacy-state"
+      FO_GROUP_MEMBER_B="legacy-state"
+    fi
+    note "A: fan-group state: file=$(basename "$FO_GROUP_FILE") status=$FO_GROUP_STATUS completed=$FO_GROUP_COMPLETED members=$FO_GROUP_MEMBER_A/$FO_GROUP_MEMBER_B"
     [[ "$FO_GROUP_STATUS" == "complete" ]] && pass "A: fan-group claimed exactly once (status=complete = fan-in launched)" \
                                            || fail "A: fan-group status is '$FO_GROUP_STATUS' (expected complete)"
     [[ "$FO_GROUP_COMPLETED" == "2" ]] && pass "A: both completers counted in fan-group (completed=2, no lost update)" \
                                        || fail "A: fan-group completed=$FO_GROUP_COMPLETED (expected 2)"
+    if [[ "$FO_GROUP_FILE" == *.json ]]; then
+      [[ "$FO_GROUP_MEMBER_A" == "complete" && "$FO_GROUP_MEMBER_B" == "complete" ]] \
+        && pass "A: typed fan-group member ledger counted both workers" \
+        || fail "A: typed fan-group member ledger mismatch (worker_a=$FO_GROUP_MEMBER_A worker_b=$FO_GROUP_MEMBER_B)"
+    fi
   else
-    fail "A: no fan-group state file created (the #15 underscore call would skip this)"
+    fail "A: no fan-group state file created (neither typed JSON nor shell .state)"
   fi
 
-  # both siblings' completion events were processed + archived (not stranded by a
-  # global wipe — #6 under live concurrency). Both should be in events/archive/.
-  A_DONE_ARCHIVED=0; B_DONE_ARCHIVED=0
-  ls "$EVENTS_DIR_LIVE/archive/"*worker-a-done*.event >/dev/null 2>&1 && A_DONE_ARCHIVED=1
-  ls "$EVENTS_DIR_LIVE/archive/"*worker-b-done*.event >/dev/null 2>&1 && B_DONE_ARCHIVED=1
-  if [[ "$A_DONE_ARCHIVED" == "1" && "$B_DONE_ARCHIVED" == "1" ]]; then
-    pass "A: BOTH siblings' completion events archived (neither stranded by the other's archive — #6)"
+  # both siblings' completion events must be owned and processed. The shell path
+  # may archive them; the typed path can mark the triggered event processed
+  # in-place and only archive sibling-owned extras. Both prove the old global
+  # wipe did not strand either sibling.
+  A_DONE_FILE="$(ls -1 "$EVENTS_DIR_LIVE/"*worker-a-done*.event "$EVENTS_DIR_LIVE/archive/"*worker-a-done*.event 2>/dev/null | head -1)"
+  B_DONE_FILE="$(ls -1 "$EVENTS_DIR_LIVE/"*worker-b-done*.event "$EVENTS_DIR_LIVE/archive/"*worker-b-done*.event 2>/dev/null | head -1)"
+  A_DONE_PROCESSED=0; B_DONE_PROCESSED=0
+  [[ -n "$A_DONE_FILE" ]] && grep -qiE '^processed:[[:space:]]*true[[:space:]]*$' "$A_DONE_FILE" && A_DONE_PROCESSED=1
+  [[ -n "$B_DONE_FILE" ]] && grep -qiE '^processed:[[:space:]]*true[[:space:]]*$' "$B_DONE_FILE" && B_DONE_PROCESSED=1
+  if [[ "$A_DONE_PROCESSED" == "1" && "$B_DONE_PROCESSED" == "1" ]]; then
+    pass "A: BOTH siblings' completion events processed (typed in-place or shell archived; neither stranded — #6)"
   else
-    fail "A: a sibling completion event was not archived (a=$A_DONE_ARCHIVED b=$B_DONE_ARCHIVED) — possible #6 strand"
+    fail "A: a sibling completion event was not processed (a=$A_DONE_PROCESSED file=$A_DONE_FILE b=$B_DONE_PROCESSED file=$B_DONE_FILE) — possible #6 strand"
     note "A: archive dir: $(ls -1 "$EVENTS_DIR_LIVE/archive" 2>/dev/null | tr '\n' ' ')"
   fi
 fi

@@ -6,7 +6,7 @@
   "preserves": "docs/orchestration/contracts/monitor.contract.json is the v1 behavior of record; every invariant and behavior there must survive the port unchanged unless explicitly superseded below",
   "flag": {
     "name": "MENTIKO_MONITOR_V2",
-    "default": "off",
+    "default": "on",
     "scope": "typed agent monitor loop; independent of MENTIKO_RUNNER_V2 (typed launch) and MENTIKO_RUNNER_V2_COMPLETION (typed completion verdict)"
   },
   "why": {
@@ -18,7 +18,7 @@
     "spawn": {
       "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand (:326) builds the shell chain monitor command: monitor-chain-agent <session> <interval> <context> <chain.json> <maxStale> (defined in lib/agent-functions.sh:919, also invoked by lib/chain-runner.sh:2360). The typed bootstrap spawns it as the monitor PTY, so even a typed launch monitors via shell today.",
       "v2": "buildMonitorCommand emits a typed monitor command (compiled node monitor-v2 entry, <session> <chain.json>) when MENTIKO_MONITOR_V2 is enabled; identical PTY-spawn contract, identical env carry, identical singleton semantics",
-      "fallback": "the existing monitor-chain-agent shell command (agent-functions.sh:919) when the flag is off, or when the typed monitor exits unsupported (64) before it has latched or handled anything (mirror the runner/completion exit-64 fallback discipline: no fallback after the typed monitor has mutated latch/nudge/run state). The standalone lib/mentiko-monitor.sh is NOT the fallback for the chain path."
+      "fallback": "the existing monitor-chain-agent shell command (agent-functions.sh:919) when the flag is explicitly set off, or when the typed monitor exits unsupported (64) before it has latched or handled anything (mirror the runner/completion exit-64 fallback discipline: no fallback after the typed monitor has mutated latch/nudge/run state). The standalone lib/mentiko-monitor.sh is NOT the fallback for the chain path."
     },
     "env_carry": "the pty daemon whitelists spawn env, so the typed monitor command must inline-export the same context the shell monitor carries (monitor.contract.json launches.completion_env): MENTIKO_RUN_DIR/RUNS_DIR, EVENTS_DIR, STATE_DIR, NAMESPACE_ID/ORG_ID, MENTIKO_CODE_ROOT anchored from the engine location, and both runner-v2 flags — otherwise the completion it launches cannot resolve run context."
   },
@@ -68,15 +68,15 @@
       "~/.mentiko_monitor/${session}_complete (latch)",
       "~/.mentiko_monitor/${session}_armed + ${session}_armed_grace (process-gone arming/grace)"
     ],
-    "flag": "MENTIKO_MONITOR_V2 gates which command buildMonitorCommand emits: off -> shell monitor-chain-agent, on -> typed monitor-v2. Deleting the shell is gated on flag default-on + proven parity."
+    "flag": "MENTIKO_MONITOR_V2 gates which command buildMonitorCommand emits: unset/default/on -> typed monitor-v2, explicit off -> shell monitor-chain-agent. Deleting the shell remains gated on default-on bake + proven parity."
   },
   "readiness_gate": {
-    "blocks_until": "readiness MUST NOT pass on a typed monitor that does not also fix the TASK-093 failure mode. Required before any monitor-v2 invariant reads 'covered': (1) the monitor invokes completion ONLY on a genuine latch, never while the agent is alive and eventless (monitor-reducer proves it: alive+producing -> active, never complete); (2) death is event-first (classifyDeath) and latch wins over death; (3) late-event recovery is CONNECTED so a false completion_failed heals instead of spawning a dead/stalled decision loop (runner-v2-contract.json late_event_recovery is currently BUILT-BUT-NOT-WIRED); (4) liveness is passed to / enforced by the completion handoff, not left blind.",
-    "no_half_fix": "a typed monitor loop WITHOUT the completion handoff wired is explicitly NOT done. It re-homes the watch loop without removing the split-brain that failed TASK-093. migration_plan steps 2-4 are all prerequisites of readiness, not independently shippable."
+    "blocks_until": "readiness MUST NOT pass on a typed monitor that does not also fix the TASK-093 failure mode. Proven before default switch: (1) the monitor invokes completion ONLY on a genuine latch, never while the agent is alive and eventless (monitor-reducer proves it: alive+producing -> active, never complete); (2) death is event-first (classifyDeath) and latch wins over death; (3) live TASK-093-shaped proof completes through monitor-v2 and typed completion with terminalReason completed_from_event; (4) late-event recovery is connected through the task reconciler for already-stuck legacy false failures.",
+    "no_half_fix": "a typed monitor loop WITHOUT the completion handoff wired was explicitly NOT done. That handoff is now proven, and recoverLateCompletionEvents is connected before terminal retry/audit handling; default readiness can pass when the contract-binding gate is otherwise clean."
   },
   "readiness_binding": {
-    "requirement": "the monitor-v2 invariants MUST be enforced by the switch-readiness contract-binding gate (web/lib/runner-v2/switch-readiness.ts + switch-readiness.binding.test.ts) — the same gate that refuses any unbound owns/invariants line. TODAY THIS IS NOT WIRED: this file is not in IMPLEMENTATION_CONTRACT_FILES (web/lib/runner-v2/contracts.ts) and uses -contract.json rather than the enforced .contract.json convention, so readiness can pass while ignoring every invariant here.",
-    "how": "add an implementation contract docs/orchestration/contracts/monitor-v2.contract.json (owns + the invariants list below) to IMPLEMENTATION_CONTRACT_FILES, and bind every line in runner-v2-contract.json implementation_coverage['monitor-v2.contract.json'] with status covered (evidence: monitor-reducer.ts / monitor.ts / monitor-diagnostics.ts + their tests) or an explicit gap/shell-owned. The existing switch-readiness.binding.test.ts then fails on any unbound monitor-v2 line automatically.",
+    "requirement": "the monitor-v2 invariants MUST be enforced by the switch-readiness contract-binding gate (web/lib/runner-v2/switch-readiness.ts + switch-readiness.binding.test.ts) — the same gate that refuses any unbound owns/invariants line. This is wired through docs/orchestration/contracts/monitor-v2.contract.json in IMPLEMENTATION_CONTRACT_FILES.",
+    "how": "bind every line in runner-v2-contract.json implementation_coverage['monitor-v2.contract.json'] with status covered (evidence: monitor-reducer.ts / monitor.ts / monitor-diagnostics.ts / monitor-live-io.ts + their tests/proofs) or an explicit gap/shell-owned. The existing switch-readiness.binding.test.ts fails on any unbound monitor-v2 line automatically.",
     "test": "a test MUST fail if any monitor-v2 invariant is unbound; once monitor-v2.contract.json is in IMPLEMENTATION_CONTRACT_FILES, switch-readiness.binding.test.ts provides exactly this."
   },
   "superseded_or_not_applicable": {
@@ -111,14 +111,14 @@
     "do not delete the shell monitor until typed parity is proven and MENTIKO_MONITOR_V2 defaults on"
   ],
   "known_gaps": [
-    "the typed completion bridge (completion-runner.ts) already contains a liveness-aware await path (evaluateAgentLiveness / await-liveness) and a late-event recovery (recoverLateCompletionEvents) that are BUILT BUT UNFED/UNWIRED (runner-v2-contract.json known_gaps). Once the typed monitor owns liveness, decide deliberately: FEED them (monitor passes liveness into completion) or REMOVE them as redundant (monitor gates invocation on genuine-done). Do not leave both a gating monitor and a dead await path.",
+    "the typed completion bridge (completion-runner.ts) still contains a liveness-aware await path (evaluateAgentLiveness / await-liveness) that is built but unfed (runner-v2-contract.json known_gaps). Monitor-v2 gates invocation on genuine-done and late-event recovery is connected through reconcile, so this is now cleanup before shell completion fallback removal rather than a monitor-v2 readiness blocker.",
     "the shell md5-of-20-lines detector is heuristic and known-blind to spinner redraws (agent-functions.sh comment); the port should preserve behavior but may improve the change detector without weakening 'stale is not complete'",
     "remote (ssh/docker) liveness has no local pid to pgrep; the typed monitor must reproduce the shell remote-skip and lean on event/transcript evidence for those workspaces",
     "the monitor is a long-lived per-agent PTY loop, not a one-shot; the typed port must handle its own restart/idempotency (durable latch + nudge files) the way the shell monitor does"
   ],
   "migration_plan": [
     "1. write this contract (done)",
-    "2. typed monitor loop behind MENTIKO_MONITOR_V2 (default off): watch + latch + stale + durable nudge + event-first death, at parity with the shell monitor, with NO completion-handoff changes yet",
+    "2. typed monitor loop behind MENTIKO_MONITOR_V2 (default on, explicit opt-out): watch + latch + stale + durable nudge + event-first death, at parity with the shell monitor, with typed completion handoff proven live",
     "3. wire buildMonitorCommand to emit the typed monitor command when the flag is on; keep shell fallback and full env carry",
     "4. unify the completion handoff: the typed monitor invokes the typed completion verdict with a shared liveness view (or gates invocation on genuine-done); remove the blind exhaustion path",
     "5. parity tests cover every invariant; a runtime proof on a real stalled-but-alive agent (the TASK-093 shape) shows the agent is nudged/awaited and never falsely failed",

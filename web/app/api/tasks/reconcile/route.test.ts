@@ -9,10 +9,12 @@ jest.mock("@/lib/auth/api-auth", () => ({
 
 const mockExistsSync = jest.fn();
 const mockReadFileSync = jest.fn();
+const mockReaddirSync = jest.fn();
 const mockWriteFileSync = jest.fn();
 jest.mock("fs", () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+  readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 }));
 
@@ -57,12 +59,29 @@ jest.mock("@/lib/config", () => ({
   __esModule: true,
   default: {
     runsDir: "/tmp/mentiko-test/runs",
+    stateDir: "/tmp/mentiko-test/state",
+    eventsDir: "/tmp/mentiko-test/events",
   },
 }));
 
 const mockWriteLog = jest.fn();
 jest.mock("@/lib/system/system-logger", () => ({
   writeLog: (...args: unknown[]) => mockWriteLog(...args),
+}));
+
+const mockRecoverLateCompletionEvents = jest.fn();
+jest.mock("@/lib/runner-v2/completion-recovery", () => ({
+  recoverLateCompletionEvents: (...args: unknown[]) => mockRecoverLateCompletionEvents(...args),
+}));
+
+const mockBuildTypedExecutorPlan = jest.fn();
+jest.mock("@/lib/runner-v2/executor", () => ({
+  buildTypedExecutorPlan: (...args: unknown[]) => mockBuildTypedExecutorPlan(...args),
+}));
+
+const mockApplyTypedExecutorPlan = jest.fn();
+jest.mock("@/lib/runner-v2/adapters", () => ({
+  applyTypedExecutorPlan: (...args: unknown[]) => mockApplyTypedExecutorPlan(...args),
 }));
 
 import { GET } from "./route";
@@ -83,6 +102,10 @@ describe("GET /api/tasks/reconcile", () => {
     mockCheckAuth.mockResolvedValue(true);
     mockGetLiveSessions.mockResolvedValue(new Set());
     mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue([]);
+    mockRecoverLateCompletionEvents.mockReturnValue({ recovered: [], run: { status: "stopped" } });
+    mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [], launches: [] });
+    mockApplyTypedExecutorPlan.mockReturnValue({ effectsApplied: [], operations: [], launchesStarted: [] });
     mockTaskList.mockReturnValue([
       {
         id: "TASK-044",
@@ -527,7 +550,7 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
-  it("marks an old orphaned real run stopped and hands it to the auditor", async () => {
+  it("marks an old orphaned real run stopped and schedules retry before auditing", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -548,6 +571,8 @@ describe("GET /api/tasks/reconcile", () => {
           auto_run: true,
           last_run_id: "run-exec",
           last_run_status: "running",
+          auto_run_retries: 99,
+          execution_retries: 0,
         },
       },
     ]);
@@ -563,8 +588,8 @@ describe("GET /api/tasks/reconcile", () => {
         expect.objectContaining({
           taskId: "TASK-044",
           runId: "run-exec",
-          newStatus: "stopped",
-          reason: "no live sessions found",
+          newStatus: "retry_requested",
+          reason: "execution retry scheduled before outcome summary: no live sessions found",
         }),
       ],
     });
@@ -572,19 +597,146 @@ describe("GET /api/tasks/reconcile", () => {
       "default",
       "TASK-044",
       {
+        status: "open",
         metadata: expect.objectContaining({
           auto_run: true,
-          last_run_id: "run-exec",
-          last_run_status: "stopped",
+          last_run_id: undefined,
+          last_run_status: "retry_requested",
+          auto_run_retries: 99,
+          execution_retries: 1,
         }),
       },
       "default",
     );
-    // Terminal failure now routes through the auditor (which owns retry vs
-    // decision vs close), not a blind reconcile retry.
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+    expect(mockTaskClose).not.toHaveBeenCalled();
+  });
+
+  it("audits a failed execution run after the retry budget is exhausted", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "failed",
+      chainId: "smoke-test-suite-generator",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "failed",
+          auto_run_retries: 0,
+          execution_retries: 2,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-044",
+        runId: "run-exec",
+        newStatus: "audit_started",
+      }),
+    ]);
     expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
       expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
     );
-    expect(mockTaskClose).not.toHaveBeenCalled();
+  });
+
+  it("recovers late completion events before terminal retry or audit handling", async () => {
+    const stoppedRun = {
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "stopped",
+      chainId: "build-chain",
+      workspacePath: "/workspace",
+      metadata: {},
+    };
+    const chain = {
+      id: "build-chain",
+      name: "Build Chain",
+      agents: [
+        { id: "writer", emits: "draft-ready" },
+        { id: "reviewer", triggers: ["draft-ready"] },
+      ],
+    };
+    const event = "event: draft-ready\nsource: writer-run-exec\nrun_id: run-exec\nprocessed: false\n";
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const file = String(path);
+      if (file.endsWith("/chain.json")) return JSON.stringify(chain);
+      if (file.endsWith("/late.event")) return event;
+      return JSON.stringify(stoppedRun);
+    });
+    mockReaddirSync.mockReturnValue(["late.event"]);
+    mockRecoverLateCompletionEvents.mockReturnValue({
+      recovered: [{
+        agentId: "writer",
+        event: { event: "draft-ready", source: "writer-run-exec", run_id: "run-exec", processed: false, path: "/tmp/late.event" },
+        route: { action: "launch", agentIds: ["reviewer"], reason: "branch" },
+      }],
+      run: { ...stoppedRun, status: "running" },
+    });
+    mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [{ type: "event-side-effects", plan: {} }], launches: [{ command: "launch reviewer" }] });
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_chain: "Build Chain",
+          chain_id: "build-chain",
+          last_run_id: "run-exec",
+          last_run_status: "stopped",
+          execution_retries: 2,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-044",
+        runId: "run-exec",
+        previousStatus: "stopped",
+        newStatus: "running",
+        reason: "late completion event recovered for writer",
+      }),
+    ]);
+    expect(mockRecoverLateCompletionEvents).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-exec",
+      chain,
+      events: expect.arrayContaining([
+        expect.objectContaining({ event: "draft-ready", source: "writer-run-exec" }),
+      ]),
+    }));
+    expect(mockBuildTypedExecutorPlan).toHaveBeenCalledWith(expect.objectContaining({
+      pipeline: expect.objectContaining({
+        decision: expect.objectContaining({
+          action: "route",
+          event: expect.objectContaining({ event: "draft-ready" }),
+          route: expect.objectContaining({ action: "launch", agentIds: ["reviewer"] }),
+        }),
+      }),
+    }));
+    expect(mockApplyTypedExecutorPlan).toHaveBeenCalled();
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      { metadata: expect.objectContaining({ last_run_status: "running" }) },
+      "default",
+    );
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
   });
 });
