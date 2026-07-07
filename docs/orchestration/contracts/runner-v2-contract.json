@@ -1,6 +1,8 @@
 {
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-05",
+  "revised_at": "2026-07-07",
+  "revision_note": "added false-failure (premature-completion) invariants symmetric to the existing false-success guards; recorded liveness-aware exhaustion and late-event recovery as BUILT-BUT-UNWIRED (TASK-093 root class). The contract previously guarded only against fabricating success, never against fabricating failure.",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -127,11 +129,30 @@
     "run_stop": "use shared run lock when available",
     "stalled_event": "diagnostic run-stalled event is not canonical agent handoff"
   },
+  "completion_liveness_contract": {
+    "principle": "symmetric to monitor_contract.forbidden: the runner must not fabricate FAILURE any more than it fabricates success. A completion attempt that finds no declared event must not terminalize an agent that is still alive, still producing, or whose valid event merely arrived late. This is the dual the v1 contract omitted and TASK-093 exploited (event landed ~4.5 min after 'retries exhausted').",
+    "liveness_wins": "when no completion event matches, an agent whose completion session is alive and (process-alive OR output-changed) is returned as await-liveness, never exhausted/failed (evaluateAgentLiveness -> completion-runner.ts). Mirrors watchdog_contract.alive_source, applied to completion rather than reaping.",
+    "bounded_await": "await-liveness is capped at maxExtensions (default 6) so a genuinely hung-but-alive agent still terminates; the extension count MUST be persisted across completion re-entries or await never converges (infinite defer).",
+    "handoff_artifact_salvage": "before failing an agent with no declared event, synthesize completion from a non-empty durable handoff artifact ({agentId}-summary.json/.md); generalized beyond the generation-only no_emit_salvage carve-out (completion-runner.ts synthesizeCompletionEventFromHandoff).",
+    "late_event_recovery": "a valid unprocessed completion event that lands after a premature completion_failed re-completes the agent and reopens the run for downstream (recoverLateCompletionEvents); idempotent on latest-attempt=completion_failed. Parity of the bash monitor-agent-died 'process gone but completion event exists ... completing normally' path.",
+    "events_dir_read": "the matcher always reads the project/namespace events dir in addition to EVENTS_DIR and runDir/events (readEventsFromDirs), so a valid event in the project dir is never missed when EVENTS_DIR points elsewhere or runDir/events is absent (completion-entrypoint.ts).",
+    "coverage": {
+      "events_dir_read": "LIVE - completion-entrypoint reads [EVENTS_DIR, projectEventsDir, runDir/events] deduped, unconditional",
+      "handoff_artifact_salvage": "LIVE - completeAgent calls synthesizeCompletionEventFromHandoff before any fail path",
+      "liveness_wins": "BUILT, NOT FED - the sole live caller (completion-entrypoint -> runCompletionPipeline -> completeAgent) passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and await-liveness never fires in production; see known_gaps",
+      "bounded_await": "NOT ACTIVE - depends on liveness_wins being fed plus a durable extension counter",
+      "late_event_recovery": "BUILT, NOT WIRED - recoverLateCompletionEvents has no caller; the live run-reconciler covers the agent-status level only (no downstream relaunch); see known_gaps"
+    }
+  },
   "invariants": [
     "do not mutate existing shell runner behavior when MENTIKO_RUNNER_V2 is unset",
     "do not use stale json schemas as the runtime truth",
     "do not collapse watcher/watchdog/scheduler/completion into one implicit state machine",
     "do not fabricate agent success events",
+    "do not fabricate agent failure: never terminalize completion_failed while the agent's completion session is alive and producing (liveness wins, bounded by maxExtensions)",
+    "honor a late valid completion event: recover a premature completion_failed when its declared event later lands unprocessed (idempotent on latest-attempt)",
+    "salvage a missing declared event from durable handoff artifacts before failing a completed agent (generalized beyond generation agents)",
+    "the completion matcher always reads the project/namespace events dir, never only EVENTS_DIR or runDir/events",
     "do not archive sibling-agent or other-run events",
     "preserve run.json lock interoperability with bash",
     "preserve agent terminal status complete vs run status completed",
@@ -141,7 +162,9 @@
   ],
   "known_gaps": [
     "fan-out member completions are intentionally shell-handled: the typed bridge exits unsupported (64) for members of a live fan group because typed fan-in accounting is not wired to the completion entrypoint; wiring the fan-group store into typed completion removes the last routed-coverage carve-out",
-    "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)"
+    "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
+    "liveness-aware exhaustion is BUILT BUT NOT FED: completion-entrypoint -> runCompletionPipeline -> completeAgent passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and the await-liveness branch never fires in production; activation needs (a) a durable extension counter persisted across completion re-entries and (b) shell-monitor re-arm after an await instead of a single handoff. Signal source exists: pty-client getLiveSessions() (reused from run-reconciler). Verified 2026-07-07, TASK-093 root class",
+    "recoverLateCompletionEvents is BUILT BUT HAS NO CALLER: no reconcile/sweep invokes it. The live run-reconciler (recoverCompletedAgentsFromEvents + repairStoppedAllCompleteRun, wired via background-worker every 60s) provides partial cover at the agent-status level but does not relaunch downstream after a late first-agent completion; full activation must reopen the run AND launch the returned route. Verified 2026-07-07"
   ],
   "implementation_coverage": {
     "chain-runner.contract.json": {
