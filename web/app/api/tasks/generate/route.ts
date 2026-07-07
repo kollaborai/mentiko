@@ -11,6 +11,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationJob } from "@/lib/generation/generation-chain-dispatch";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getSessionUser(request);
   const userId = session?.id;
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, userId);
+  const resolvedAutoRun = resolveTaskAutoRunDefault({
+    namespaceId,
+    orgId,
+    workspacePath: authorizedWorkspacePath || undefined,
+    explicitAutoRun: typeof autoRun === "boolean" ? autoRun : undefined,
+  });
   const trimmedPrompt = prompt.trim();
   const allowDecisionRouting = sendToDecisionIfWarranted !== false;
 
@@ -86,7 +93,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     userId,
     jobInput: {
       ...(typeof parentId === "string" && parentId.trim() ? { parentId: parentId.trim() } : {}),
-      ...(autoRun === true ? { autoRun: true } : {}),
+      autoRun: resolvedAutoRun,
       allowDecisionRouting,
     },
   });

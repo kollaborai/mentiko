@@ -48,7 +48,8 @@ export function TaskCreateDialog({
   const [parent, setParent] = useState("");
   const [chainId, setChainId] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [autoRun, setAutoRun] = useState(chainBinding?.auto_run ?? false);
+  const [autoRun, setAutoRun] = useState(chainBinding?.auto_run ?? true);
+  const [autoRunTouched, setAutoRunTouched] = useState(false);
 
   if (!open) return null;
 
@@ -65,7 +66,7 @@ export function TaskCreateDialog({
       parent: parent || undefined,
       chainId: chainId || undefined,
       chainName: selectedChain?.name || undefined,
-      autoRun: chainId ? autoRun : undefined,
+      autoRun: chainId && autoRunTouched ? autoRun : undefined,
     });
     setTitle("");
     setDescription("");
@@ -73,7 +74,8 @@ export function TaskCreateDialog({
     setPriority(2);
     setParent("");
     setChainId("");
-    setAutoRun(false);
+    setAutoRun(chainBinding?.auto_run ?? true);
+    setAutoRunTouched(false);
     setSubmitting(false);
     onClose();
   };
@@ -178,7 +180,10 @@ export function TaskCreateDialog({
             <input
               type="checkbox"
               checked={autoRun}
-              onChange={(e) => setAutoRun(e.target.checked)}
+              onChange={(e) => {
+                setAutoRun(e.target.checked);
+                setAutoRunTouched(true);
+              }}
               className="mt-0.5 h-4 w-4 rounded-sm border-foreground/20 bg-muted text-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
             />
             <div className="flex-1 space-y-0.5">

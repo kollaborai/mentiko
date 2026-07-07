@@ -3,6 +3,7 @@ import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { readSystemSettings, writeSystemSettings as writeSettings, type SystemSettings } from "@/lib/system/system-settings";
+import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
-  return apiSuccess({ settings: readSystemSettings() });
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  return apiSuccess({ settings: readSystemSettings(namespaceId) });
 });
 
 export const PUT = withErrorHandling(async (request: NextRequest) => {
@@ -21,7 +23,8 @@ export const PUT = withErrorHandling(async (request: NextRequest) => {
   }
 
   const body = await request.json();
-  const current = readSystemSettings();
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  const current = readSystemSettings(namespaceId);
   const updated: SystemSettings = {
     max_concurrent_runs:
       typeof body.max_concurrent_runs === "number"
@@ -33,6 +36,6 @@ export const PUT = withErrorHandling(async (request: NextRequest) => {
         : current.auto_run_enabled,
   };
 
-  writeSettings(updated);
+  writeSettings(updated, namespaceId);
   return apiSuccess({ settings: updated });
 });

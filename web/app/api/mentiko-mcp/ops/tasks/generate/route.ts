@@ -6,6 +6,7 @@ import { resolveTemplate } from "@/lib/system/template-resolver";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationJob } from "@/lib/generation/generation-chain-dispatch";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,12 @@ export async function POST(req: Request) {
   }
 
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, ctx.userId);
+  const resolvedAutoRun = resolveTaskAutoRunDefault({
+    namespaceId,
+    orgId,
+    workspacePath: authorizedWorkspacePath || undefined,
+    explicitAutoRun: autoRun,
+  });
   const prompt = description.trim();
   const allowDecisionRouting = sendToDecisionIfWarranted !== false;
 
@@ -101,7 +108,7 @@ export async function POST(req: Request) {
     workspacePath: authorizedWorkspacePath || undefined,
     userId: ctx.userId,
     jobInput: {
-      ...(autoRun === true ? { autoRun: true } : {}),
+      autoRun: resolvedAutoRun,
       allowDecisionRouting,
       taskGenerationMetadata: { created_by_session: ctx.sessionId },
     },

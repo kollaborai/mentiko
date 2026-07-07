@@ -28,6 +28,18 @@ jest.mock("@/lib/config", () => {
   };
 });
 
+jest.mock("@/lib/system/system-settings", () => ({
+  readSystemSettings: jest.fn(() => ({ max_concurrent_runs: 5, auto_run_enabled: true })),
+}));
+
+jest.mock("@/lib/workspaces/workspace-storage", () => ({
+  getWorkspace: jest.fn((_namespaceId: string, _orgId: string, workspacePath: string) => ({
+    path: workspacePath,
+    auto_run: "inherit",
+  })),
+  resolveAutoRun: jest.fn((_workspace: unknown, systemDefault: boolean) => systemDefault),
+}));
+
 import { importGeneratedTaskTree, processTaskGenerationResult } from "../generated-task-import";
 import { taskCreate, taskGet, closeAll } from "../task-store";
 
@@ -151,6 +163,37 @@ describe("importGeneratedTaskTree workspace_id stamping", () => {
     });
 
     expect(taskGet(ORG, result.parentId, NS)!.workspace_id).toBe("/ws/explicit-wins");
+  });
+
+  it("enables auto-run from the workspace/system default when not explicitly set", () => {
+    const result = importGeneratedTaskTree({
+      namespaceId: NS,
+      orgId: ORG,
+      generated: { title: "Default auto-run tree", subtasks: [{ title: "Child" }] },
+      workspacePath: "/ws/auto-default",
+      createdBy: "test",
+      generationJobId: "job-auto-default",
+    });
+
+    for (const id of result.createdTaskIds) {
+      expect(taskGet(ORG, id, NS)!.metadata).toEqual(expect.objectContaining({ auto_run: true }));
+    }
+  });
+
+  it("honors explicit autoRun:false over the workspace/system default", () => {
+    const result = importGeneratedTaskTree({
+      namespaceId: NS,
+      orgId: ORG,
+      generated: { title: "Explicit off tree", subtasks: [{ title: "Child" }] },
+      workspacePath: "/ws/auto-off",
+      autoRun: false,
+      createdBy: "test",
+      generationJobId: "job-auto-off",
+    });
+
+    for (const id of result.createdTaskIds) {
+      expect(taskGet(ORG, id, NS)!.metadata).not.toEqual(expect.objectContaining({ auto_run: true }));
+    }
   });
 });
 

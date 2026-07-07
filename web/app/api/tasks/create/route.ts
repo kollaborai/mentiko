@@ -5,6 +5,7 @@ import { taskCreate } from "@/lib/tasks/task-store";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -48,6 +49,12 @@ export const POST = requirePermission("manage_tasks")(
     if (workspaceId) {
       metadata.workspace_path = workspaceId;
     }
+    const resolvedAutoRun = resolveTaskAutoRunDefault({
+      namespaceId,
+      orgId,
+      workspacePath: workspaceId,
+      explicitAutoRun: typeof chainAssignment?.autoRun === "boolean" ? chainAssignment.autoRun : undefined,
+    });
     if (chainAssignment?.chainId) {
       const validation = validateChainId(
         chainAssignment.chainId,
@@ -62,10 +69,10 @@ export const POST = requirePermission("manage_tasks")(
         ...buildChainMetadata(
           chainAssignment.chainId,
           validation.chainName || chainAssignment.chainName,
-          chainAssignment.autoRun ?? false
+          resolvedAutoRun
         ),
       };
-    } else if (chainAssignment?.autoRun) {
+    } else if (resolvedAutoRun) {
       // auto-run without a specific chain: system will analyze + generate
       metadata.auto_run = true;
     }

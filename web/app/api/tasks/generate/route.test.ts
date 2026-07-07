@@ -22,6 +22,7 @@ const startGenerationJob = jest.fn();
 const createDecision = jest.fn();
 const updateDecision = jest.fn();
 const taskCreate = jest.fn();
+const resolveTaskAutoRunDefault = jest.fn();
 
 jest.mock("@/lib/auth/api-auth", () => ({ checkAuth: (...a: unknown[]) => checkAuth(...a) }));
 jest.mock("@/lib/middleware", () => ({ enforceGuestWrites: (...a: unknown[]) => enforceGuestWrites(...a) }));
@@ -38,6 +39,9 @@ jest.mock("@/lib/auth/workspace-auth", () => ({
 }));
 jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationJob: (...a: unknown[]) => startGenerationJob(...a),
+}));
+jest.mock("@/lib/tasks/task-auto-run-default", () => ({
+  resolveTaskAutoRunDefault: (...a: unknown[]) => resolveTaskAutoRunDefault(...a),
 }));
 // createTaskDecision (real) calls these mocked internals in decision mode:
 jest.mock("@/lib/decisions/decision-storage", () => ({
@@ -70,6 +74,7 @@ describe("POST /api/tasks/generate", () => {
     );
     getSessionUser.mockResolvedValue({ id: "user-1" });
     resolveAuthorizedWorkspacePath.mockReturnValue("/repo");
+    resolveTaskAutoRunDefault.mockReturnValue(true);
     startGenerationJob.mockResolvedValue({ jobId: "job-1", runId: "run-1", status: "pending" });
     createDecision.mockReturnValue({ id: "decision-1", status: "intake", prompt: "x", options: [] });
     updateDecision.mockImplementation(async (_ns: unknown, _org: unknown, _id: unknown, updates: unknown) => ({
@@ -93,6 +98,13 @@ describe("POST /api/tasks/generate", () => {
     expect(startGenerationJob.mock.calls[0][0]).toMatchObject({
       kind: "task", workspacePath: "/repo", userId: "user-1",
     });
+    expect(resolveTaskAutoRunDefault).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      workspacePath: "/repo",
+      explicitAutoRun: undefined,
+    });
+    expect(startGenerationJob.mock.calls[0][0].jobInput.autoRun).toBe(true);
     expect(startGenerationJob.mock.calls[0][0].jobInput.allowDecisionRouting).toBe(true);
     expect(createDecision).not.toHaveBeenCalled();
   });
@@ -136,6 +148,28 @@ describe("POST /api/tasks/generate", () => {
     expect(startGenerationJob.mock.calls[0][0].jobInput.allowDecisionRouting).toBe(false);
     expect(startGenerationJob.mock.calls[0][0].prompt).toContain("DECISION ROUTING DISABLED");
     expect(createDecision).not.toHaveBeenCalled();
+  });
+
+  it("honors explicit autoRun:false over the workspace/system default", async () => {
+    resolveTaskAutoRunDefault.mockReturnValue(false);
+
+    const res = await POST(makeRequest({
+      prompt: "create a better git integration in the UI",
+      workspacePath: "/repo",
+      autoRun: false,
+    }) as Parameters<typeof POST>[0]);
+
+    await expect(res.json()).resolves.toMatchObject({
+      success: true,
+      data: { jobId: "job-1", runId: "run-1" },
+    });
+    expect(resolveTaskAutoRunDefault).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      workspacePath: "/repo",
+      explicitAutoRun: false,
+    });
+    expect(startGenerationJob.mock.calls[0][0].jobInput.autoRun).toBe(false);
   });
 
   it("rejects when prompt is missing", async () => {

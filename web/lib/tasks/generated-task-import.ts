@@ -3,6 +3,7 @@ import { join } from "node:path";
 import config from "@/lib/config";
 import { _getDb, taskAddDep, taskCreate, taskGet } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 type IssueType = "epic" | "feature" | "task" | "bug" | "chore";
 
@@ -122,14 +123,24 @@ function resolveEffectiveWorkspace(input: ImportGeneratedTaskTreeInput): string 
   );
 }
 
-function generatedTaskMetadata(input: ImportGeneratedTaskTreeInput, extra?: Record<string, unknown>) {
+function generatedTaskMetadata(
+  input: ImportGeneratedTaskTreeInput,
+  effectiveWorkspace: string | undefined,
+  extra?: Record<string, unknown>,
+) {
+  const autoRun = resolveTaskAutoRunDefault({
+    namespaceId: input.namespaceId,
+    orgId: input.orgId,
+    workspacePath: effectiveWorkspace,
+    explicitAutoRun: input.autoRun,
+  });
   return {
     ...(input.metadata || {}),
     ...(input.generationJobId ? { task_generation_job_id: input.generationJobId } : {}),
     ...(input.generationRunId ? { task_generation_run_id: input.generationRunId } : {}),
     ...(input.generationChainId ? { task_generation_chain_id: input.generationChainId } : {}),
-    ...(input.workspacePath ? { workspace_path: input.workspacePath } : {}),
-    ...(input.autoRun === true ? { auto_run: true } : {}),
+    ...(effectiveWorkspace ? { workspace_path: effectiveWorkspace } : {}),
+    ...(autoRun ? { auto_run: true } : {}),
     ...extra,
   };
 }
@@ -221,7 +232,7 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
         parent_id: input.parentId,
         created_by: input.createdBy,
         workspace_id: effectiveWorkspace,
-        metadata: generatedTaskMetadata(input, { task_generation_role: "parent" }),
+        metadata: generatedTaskMetadata(input, effectiveWorkspace, { task_generation_role: "parent" }),
       },
       input.namespaceId,
     );
@@ -246,7 +257,7 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
             parent_id: parent.id,
             created_by: input.createdBy,
             workspace_id: effectiveWorkspace,
-            metadata: generatedTaskMetadata(input, {
+            metadata: generatedTaskMetadata(input, effectiveWorkspace, {
               task_generation_role: "subtask",
               task_generation_parent_id: parent.id,
               task_generation_subtask_index: index,
