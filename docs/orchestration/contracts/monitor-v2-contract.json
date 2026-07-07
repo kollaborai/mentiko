@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-07",
   "migration_mode": "side-by-side",
-  "replaces": "the shell agent monitor: lib/mentiko-monitor.sh + lib/monitor-completion.sh + the monitor-side helpers in lib/agent-functions.sh (monitor-agent-died, stale/nudge, latch)",
+  "replaces": "the shell CHAIN agent monitor: the monitor-chain-agent function and its helpers in lib/agent-functions.sh (monitor-chain-agent at :919, monitor-agent-died, monitor-agent-stalled, ensure-event-file, durable AGENT_COMPLETE detection) + lib/monitor-completion.sh. NOTE: lib/mentiko-monitor.sh is the SEPARATE standalone 'mentiko monitor' CLI for manual monitoring, NOT the chain path (its own header says the chain path uses monitor-chain-agent); it is out of scope here unless a later pass unifies them.",
   "preserves": "docs/orchestration/contracts/monitor.contract.json is the v1 behavior of record; every invariant and behavior there must survive the port unchanged unless explicitly superseded below",
   "flag": {
     "name": "MENTIKO_MONITOR_V2",
@@ -16,7 +16,7 @@
   },
   "entrypoints": {
     "spawn": {
-      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand builds the shell monitor command (lib/mentiko-monitor.sh); the typed bootstrap spawns it as the monitor PTY. So even a typed launch monitors via shell today.",
+      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand (:326) builds the shell chain monitor command: monitor-chain-agent <session> <interval> <context> <chain.json> <maxStale> (defined in lib/agent-functions.sh:919, also invoked by lib/chain-runner.sh:2360). The typed bootstrap spawns it as the monitor PTY, so even a typed launch monitors via shell today.",
       "v2": "buildMonitorCommand emits a typed monitor command (compiled node monitor-v2 entry, <session> <chain.json>) when MENTIKO_MONITOR_V2 is enabled; identical PTY-spawn contract, identical env carry, identical singleton semantics",
       "fallback": "shell mentiko-monitor.sh when the flag is off, or when the typed monitor exits unsupported before it has latched or handled anything (mirror the runner/completion exit-64 fallback discipline: no fallback after the typed monitor has mutated latch/nudge/run state)"
     },
@@ -75,6 +75,6 @@
     "3. wire buildMonitorCommand to emit the typed monitor command when the flag is on; keep shell fallback and full env carry",
     "4. unify the completion handoff: the typed monitor invokes the typed completion verdict with a shared liveness view (or gates invocation on genuine-done); remove the blind exhaustion path",
     "5. parity tests cover every invariant; a runtime proof on a real stalled-but-alive agent (the TASK-093 shape) shows the agent is nudged/awaited and never falsely failed",
-    "6. default MENTIKO_MONITOR_V2 on; only THEN delete lib/mentiko-monitor.sh, lib/monitor-completion.sh, and the monitor-side helpers in lib/agent-functions.sh"
+    "6. default MENTIKO_MONITOR_V2 on; only THEN delete the chain-monitor surface — monitor-chain-agent and its helpers in lib/agent-functions.sh + lib/monitor-completion.sh (the standalone lib/mentiko-monitor.sh CLI is a separate concern, not deleted here)"
   ]
 }
