@@ -33,7 +33,7 @@
   "completion_handoff": {
     "invoke": "the monitor launches the completion verdict in a SEPARATE pty (never the monitor pty), and ONLY on a genuine latch (event / AGENT_COMPLETE) or on death-with-event — never speculatively while the agent is alive and eventless",
     "shared_liveness": "because the typed monitor already holds the liveness view, it either (a) passes that view into the typed completion verdict, or (b) simply does not invoke completion until the agent is genuinely done. Either way the typed completion's blind retry/exhaust — the root of TASK-093 — is removed. This is where completion-runner.ts evaluateAgentLiveness/await-liveness finally receives a real signal from its true owner.",
-    "one_owner": "exactly one owner applies completion side effects. In the fully-typed path there is NO shell completion fallback; the typed monitor + typed completion are the single owner. Until parity, the exit-64 shell completion fallback remains (monitor.contract.json launches.typed_bridge: completion pty runs node runner-v2-complete first, exit != 64 terminal, exit 64 execs the shell completion script).",
+    "one_owner": "exactly one owner applies completion side effects. In the typed path there is NO shell completion fallback; the typed monitor + typed completion are the single owner. A typed exit 64 or completion PTY spawn failure fails closed instead of execing/nohuping shell completion.",
     "no_blind_exhaustion": "the migrated path MUST NOT contain a completion verdict that terminalizes an agent for a missing event without the monitor's liveness view. Blind exhaustion is the specific defect being removed; a parity test must prove a stalled-but-alive agent is never failed."
   },
   "death_latch_ordering": {
@@ -111,7 +111,7 @@
     "do not delete the shell monitor until typed parity is proven and MENTIKO_MONITOR_V2 defaults on"
   ],
   "known_gaps": [
-    "the typed completion bridge (completion-runner.ts) still contains a liveness-aware await path (evaluateAgentLiveness / await-liveness) that is built but unfed (runner-v2-contract.json known_gaps). Monitor-v2 gates invocation on genuine-done and late-event recovery is connected through reconcile, so this is now cleanup before shell completion fallback removal rather than a monitor-v2 readiness blocker.",
+    "the typed completion bridge (completion-runner.ts) still contains a liveness-aware await path (evaluateAgentLiveness / await-liveness) that is built but unfed (runner-v2-contract.json known_gaps). Monitor-v2 gates invocation on genuine-done and late-event recovery is connected through reconcile, so this is now cleanup rather than a monitor-v2 readiness blocker.",
     "the shell md5-of-20-lines detector is heuristic and known-blind to spinner redraws (agent-functions.sh comment); the port should preserve behavior but may improve the change detector without weakening 'stale is not complete'",
     "remote (ssh/docker) liveness has no local pid to pgrep; the typed monitor must reproduce the shell remote-skip and lean on event/transcript evidence for those workspaces",
     "the monitor is a long-lived per-agent PTY loop, not a one-shot; the typed port must handle its own restart/idempotency (durable latch + nudge files) the way the shell monitor does"

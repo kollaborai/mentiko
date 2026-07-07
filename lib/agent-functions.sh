@@ -691,16 +691,18 @@ launch-chain-runner-complete() {
     local chain_file_q=""
     local completion_cmd=""
     local completion_run_dir=""
+    local typed_completion_enabled=false
 
     printf -v completion_script_q "%q" "$script_dir/chain-runner-complete.sh"
     printf -v runner_v2_compiled_script_q "%q" "$script_dir/runner-v2-complete.js"
     printf -v runner_v2_completion_script_q "%q" "$script_dir/../web/scripts/runner-v2-complete.cjs"
     printf -v session_name_q "%q" "$session_name"
     printf -v chain_file_q "%q" "$chain_file"
-    completion_cmd="exec $completion_script_q $session_name_q $chain_file_q"
+    completion_cmd="$completion_script_q $session_name_q $chain_file_q"
     if [[ "${MENTIKO_RUNNER_V2:-}" =~ ^(1|true|yes|on)$ ]] && \
        [[ "${MENTIKO_RUNNER_V2_COMPLETION:-}" =~ ^(1|true|yes|on)$ ]]; then
-        completion_cmd="if command -v node >/dev/null 2>&1; then if [[ -f $runner_v2_compiled_script_q ]]; then node $runner_v2_compiled_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; elif [[ -f $runner_v2_completion_script_q ]]; then node $runner_v2_completion_script_q $session_name_q $chain_file_q; _runner_v2_status=\$?; if [[ \"\$_runner_v2_status\" -ne 64 ]]; then exit \"\$_runner_v2_status\"; fi; fi; fi; exec $completion_script_q $session_name_q $chain_file_q"
+        typed_completion_enabled=true
+        completion_cmd="if ! command -v node >/dev/null 2>&1; then echo 'runner-v2 completion failed closed: node unavailable' >&2; exit 64; fi; if [[ -f $runner_v2_compiled_script_q ]]; then node $runner_v2_compiled_script_q $session_name_q $chain_file_q; exit \"\$?\"; fi; if [[ -f $runner_v2_completion_script_q ]]; then node $runner_v2_completion_script_q $session_name_q $chain_file_q; exit \"\$?\"; fi; echo 'runner-v2 completion failed closed: typed completion entrypoint missing' >&2; exit 64"
     fi
     # typed-bootstrap monitors export MENTIKO_RUN_DIR directly (their env has
     # no RUNS_DIR); honor it first so the typed completion bridge can resolve
@@ -752,9 +754,12 @@ launch-chain-runner-complete() {
         echo "  chain-runner-complete session failed: $completion_session"
     fi
 
-    nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-    disown $! 2>/dev/null || true
-    echo "  chain-runner-complete launched (pid: $!, disowned)"
+    if [[ "$typed_completion_enabled" == "true" ]]; then
+        echo "  runner-v2 completion failed closed; shell completion fallback disabled"
+    else
+        echo "  chain-runner-complete session failed; shell completion fallback disabled"
+    fi
+    return 1
 }
 
 # -------------------------------------------------------------------

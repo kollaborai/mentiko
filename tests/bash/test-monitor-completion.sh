@@ -374,8 +374,16 @@ assert_contains "$chain_monitor_source" \
   'transport_new_session "$completion_session" env' \
   "chain completion handler starts in a separate pty session"
 
+assert_not_contains "$chain_monitor_source" \
+  'exec $completion_script_q $session_name_q $chain_file_q' \
+  "typed completion does not exec shell completion after runner-v2 exit 64"
+
+assert_not_contains "$chain_monitor_source" \
+  'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
+  "typed completion does not fall back to shell completion when completion pty spawn fails"
+
 # the monitor loops delegate to launch-chain-runner-complete; they must not nohup
-# the completion script themselves (the nohup fallback lives inside the launcher).
+# the completion script themselves.
 chain_monitor_body="$(sed -n '/^monitor-with-ai() {/,$p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_not_contains "$chain_monitor_body" \
   'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \

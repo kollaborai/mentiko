@@ -36,10 +36,10 @@
     "completion_reentry": {
       "current": "lib/chain-runner-complete.sh -> lib/chain-runner.sh --start/--parallel",
       "v2": "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled",
-      "fallback": "shell completion when completion flag is disabled or typed bridge exits unsupported (exit 64); live fan-group members are now typed-accounted, while unsupported still protects malformed/incomplete runtime contexts",
+      "fallback": "shell completion only when the completion flag is disabled. When MENTIKO_RUNNER_V2_COMPLETION is enabled, typed completion is fail-closed: exit 64/malformed context and completion PTY spawn failure do not exec or nohup shell completion.",
       "routed_coverage": "agents relaunched by the typed bridge (routed chain-runner --start/--parallel) complete through the typed pipeline too: shell chain-runner monitors carry the completion flags + run-dir context inline (pty daemon whitelists spawn env), and the completion entrypoint adopts an AgentAttempt record (origin routed-completion-adoption, created at instructions_submitted from completion-time evidence) before the verdict drives the normal completed/completion_failed edges",
-      "division_of_labor": "exactly one handler applies completion side effects: typed bridge exit != 64 means the shell handler never runs (typed queues external effects to the outbox); exit 64 means the shell handler applies everything inline",
-      "reason": "completion owns fan-in, fan-out, retries, generation backstop, and event archiving; typed re-entry is opt-in until full branch parity is proven"
+      "division_of_labor": "exactly one handler applies completion side effects: with MENTIKO_RUNNER_V2_COMPLETION enabled, typed completion owns the verdict and queues external effects to the outbox; the shell handler is not used as a post-typed fallback.",
+      "reason": "completion owns fan-in, fan-out, retries, generation backstop, and event archiving; typed re-entry is the default proven path while shell completion remains available only by disabling the completion flag"
     },
     "daemon_watchers": {
       "current": "chain-runner ensures mentiko-watchdog and mentiko-chain-watcher pty sessions",
@@ -158,11 +158,11 @@
     "preserve agent terminal status complete vs run status completed",
     "preserve chain-authored trigger configuration",
     "preserve namespace/org/root scoping for daemon sessions",
-    "completion re-entry remains shell fallback-capable until parity tests cover every branch"
+    "completion re-entry is typed-only and fail-closed when MENTIKO_RUNNER_V2_COMPLETION is enabled; shell completion is a flag-off owner, not an exit-64 fallback"
   ],
   "known_gaps": [
     "task update on run completion refreshes last_run_status/timestamps but leaves last_run_agents and last_run_artifacts stale from the prior run until the run-summary pipeline rewrites them (observed live on TASK-173, 2026-07-04)",
-    "liveness-aware exhaustion is BUILT BUT NOT FED: completion-entrypoint -> runCompletionPipeline -> completeAgent passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and the await-liveness branch never fires in production. Monitor-v2 now gates completion invocation on genuine done, and the reconciler connects late-event recovery for already-stuck legacy false failures; remaining work is to delete or deliberately feed this dead branch before removing shell completion fallback. Verified 2026-07-07, TASK-093 root class"
+    "liveness-aware exhaustion is BUILT BUT NOT FED: completion-entrypoint -> runCompletionPipeline -> completeAgent passes no liveness input, so evaluateAgentLiveness(undefined) returns 'dead' and the await-liveness branch never fires in production. Monitor-v2 now gates completion invocation on genuine done, and the reconciler connects late-event recovery for already-stuck legacy false failures. Verified 2026-07-07, TASK-093 root class"
   ],
   "implementation_coverage": {
     "chain-runner.contract.json": {
@@ -180,7 +180,7 @@
       "invariant:best-effort observability writers (perf/metrics/profiler) must never abort a live run under set -e + ERR trap (23bdfe7)": { "status": "shell-owned", "reason": "perf/metrics/profiler writers exist only in the shell launch path; the typed path runs none of them" },
       "invariant:diagnostic monitor events must not look like successful handoff events": { "status": "shell-owned", "reason": "monitors remain v1 shell under typed launches; the typed completion matcher enforces its own diagnostic rejection (see chain-runner-complete binding)" },
       "invariant:watchdog and chain event watcher startup remains early side effect": { "status": "covered", "evidence": "executeLocalBootstrap calls ensureDaemonSingletons before createAgentAttempt, acquireChainAdmission, artifact writes, agent PTY remove/spawn, readiness, instruction submission, or monitor startup; bootstrap-executor.test 'ensures watchdog and chain event watcher singletons before attempt creation and pty launch' asserts the singleton has/remove/spawn calls precede remove:workspace-writer-run-1" },
-      "invariant:completion/routing stays delegated to chain-runner-complete": { "status": "covered", "evidence": "typed completion re-entry bridge with exit-64 division of labor (completion_reentry entrypoint; lib/agent-functions.sh gate)" }
+      "invariant:completion/routing stays delegated to chain-runner-complete": { "status": "covered", "evidence": "typed completion re-entry bridge with fail-closed typed-only division of labor when MENTIKO_RUNNER_V2_COMPLETION is enabled; tests/bash/test-monitor-completion.sh asserts no shell exec fallback after exit 64 and no nohup shell completion after completion PTY spawn failure" }
     },
     "chain-runner-complete.contract.json": {
       "invariant:never fabricate the declared emits event": { "status": "covered", "evidence": "BUG-022 fabrication guard: lib/agent-functions.sh ensure-event-file refuses to synthesize the declared emits fallback event unless the agent's durable transcript shows a standalone AGENT_COMPLETE (agent-complete-marker-durable over the session JSONL, never the re-wrappable rendered screen); complements chain-runner-complete.sh fail_completion_no_event (JSON mode already records FAILED without fabricating) and the typed matcher (diagnostic events never satisfy handoff). Oracle tests/bash/test-bug022-durable-completion.sh fabrication-guard cases: refuses + writes no event off a rendered marker, writes the fallback only when the transcript proves completion" },

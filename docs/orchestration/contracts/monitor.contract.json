@@ -24,7 +24,7 @@
   },
   "launches": {
     "completion": "chain-runner-complete in separate pty when chain.json exists",
-    "typed_bridge": "when MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are enabled, the completion pty runs node runner-v2-complete.js first; exit != 64 is terminal (typed pipeline handled completion), exit 64 execs the shell completion script (20ce3b1)",
+    "typed_bridge": "when MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are enabled, the completion pty runs node runner-v2-complete.js as the only completion owner; exit 64/malformed typed context fails closed and does not exec shell completion",
     "completion_env": "completion session carries MENTIKO_RUN_DIR ($RUNS_DIR/$run_id), EVENTS_DIR, STATE_DIR, both runner-v2 flags, and MENTIKO_CODE_ROOT anchored from the engine location (20ce3b1, 5e79030, 6504637)",
     "legacy": "complete-agent.sh only when monitor has no chain.json"
   },

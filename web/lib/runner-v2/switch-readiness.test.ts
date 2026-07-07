@@ -191,7 +191,7 @@ jest.mock("fs", () => ({
       entrypoints: {
         completion_reentry: { v2: "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled" },
       },
-      invariants: ["completion re-entry remains shell fallback-capable until parity tests cover every branch"],
+      invariants: ["completion re-entry is typed-only and fail-closed when MENTIKO_RUNNER_V2_COMPLETION is enabled"],
       implementation_coverage: {
         "chain-runner.contract.json": {
           "owns:mock chain-runner own": { status: "covered", evidence: "mock" },
