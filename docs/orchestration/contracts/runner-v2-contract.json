@@ -222,6 +222,21 @@
       "invariant:run-session reaping is deny-list based: unknown or non-terminal run status is never reaped (e289ea8)": { "status": "shell-owned", "reason": "watchdog daemon is not replaced by runner-v2 side-by-side" },
       "invariant:spawned shells inherit sanitized env: BASH_FUNC_* stripped at the spawn layer (7816b0f)": { "status": "shell-owned", "reason": "pty-manager spawn layer owns env sanitization for both runners" },
       "invariant:scheduler state ids are path-derived": { "status": "shell-owned", "reason": "scheduler daemon is not replaced by runner-v2 side-by-side" }
+    },
+    "monitor-v2.contract.json": {
+      "owns:the typed chain monitor poll-loop decision (classifyMonitorTick) and its action set": { "status": "covered", "evidence": "web/lib/runner-v2/monitor-reducer.ts classifyMonitorTick; proven by monitor-reducer.test.ts (16 parity cases mirroring agent-functions.sh monitor-chain-agent :980-1233)" },
+      "owns:the completion latch decision (sticky AGENT_COMPLETE marker OR emitted event)": { "status": "covered", "evidence": "monitor-reducer.ts latched branch, evaluated before the hash AND before death; monitor-reducer.test.ts latch cases" },
+      "owns:stale/nudge classification with a durable, restart-surviving nudge budget": { "status": "covered", "evidence": "monitor-reducer.ts stale/nudge branches with durable nudgeCount + nudgeEchoGrace; monitor-reducer.test.ts durable-budget + echo-grace cases" },
+      "owns:event-first death classification and BLOCKED stall surfacing": { "status": "covered", "evidence": "web/lib/runner-v2/monitor-diagnostics.ts classifyDeath/classifyStall + buildMonitorDiagnosticEvent; monitor-diagnostics.test.ts" },
+      "invariant:stale is not complete": { "status": "covered", "evidence": "monitor-reducer.test.ts 'stale is not complete: an idle agent past max stale is BLOCKED, never completed'" },
+      "invariant:dead without a declared event is not success (event-first death)": { "status": "covered", "evidence": "monitor-diagnostics.ts classifyDeath (event-first); monitor-diagnostics.test.ts 'death is event-first' + 'death WITHOUT an event is FAILED, never a fabricated success'" },
+      "invariant:the completion latch wins over process death": { "status": "covered", "evidence": "monitor-reducer.ts order latched-before-processGone (supersedes shell :995/:1044); monitor-reducer.test.ts 'latch wins over process death'" },
+      "invariant:liveness wins: an alive, producing agent with no event is never failed": { "status": "covered", "evidence": "monitor-reducer.test.ts 'liveness wins...'; monitor.test.ts 'TASK-093: ... completes - never died/stalled'" },
+      "invariant:the durable nudge budget survives screen-echo resets (echo grace)": { "status": "covered", "evidence": "monitor-reducer.ts nudgeCount + nudgeEchoGrace; monitor-reducer.test.ts 'does NOT refill the budget while inside the nudge-echo grace window'" },
+      "invariant:diagnostic events use source monitor, never the agent id, so they cannot satisfy the completion matcher": { "status": "covered", "evidence": "monitor-diagnostics.ts MONITOR_DIAGNOSTIC_SOURCE; monitor-diagnostics.test.ts 'a diagnostic's source is monitor, never the agent id'" },
+      "invariant:completion is invoked only on a genuine latch, never while alive and eventless": { "status": "covered", "evidence": "monitor-reducer.ts emits complete only on latched; monitor.test.ts TASK-093 asserts onComplete is not called until the agent latches" },
+      "invariant:remote (ssh/docker) workspaces skip the local process-death check": { "status": "covered", "evidence": "monitor-reducer.ts workspaceType local guard; monitor-reducer.test.ts 'skips the local process-death check for remote (ssh/docker) workspaces'" },
+      "invariant:the completion handoff wiring (gate/feed liveness, connect late-event recovery) is connected before readiness": { "status": "gap", "blocker": "handoff not wired: buildMonitorCommand still emits the shell monitor-chain-agent, and the typed completion liveness feed + late-event recovery are BUILT-BUT-NOT-WIRED (monitor-v2-contract.json readiness_gate + migration_plan steps 3-4). Readiness must stay blocked until this lands." }
     }
   }
 }

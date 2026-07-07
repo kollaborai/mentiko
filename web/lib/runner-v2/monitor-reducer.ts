@@ -39,16 +39,25 @@ export function classifyMonitorTick(
     return { state, action: { type: "session-gone" } };
   }
 
-  // 2. process death is checked only for local workspaces; remote (ssh/docker)
-  //    has no local pid to pgrep, so the shell skips it (:995). dead != succeeded.
-  if (config.workspaceType === "local" && obs.processGone) {
-    return { state, action: { type: "died" } };
-  }
-
-  // 3. authoritative "done" latch, checked before the hash so a status-line
-  //    repaint after the final text cannot delay completion (:1044).
+  // 2. authoritative "done" latch (sticky AGENT_COMPLETE marker OR event) wins
+  //    over everything below, including process death. An agent that printed its
+  //    marker / emitted its event and THEN exited finished normally; classifying
+  //    that as "died" is the ordering bug this contract exists to prevent.
+  //    NOTE: this deliberately supersedes the shell order (process-gone checked
+  //    before the latch at :995 vs :1044), whose monitor-agent-died only re-checks
+  //    the EVENT FILE and would lose a marker-only latch on death. Latch-first
+  //    fixes that. Also checked before the hash so a status-line repaint after the
+  //    final text cannot delay completion.
   if (obs.latched) {
     return { state, action: { type: "complete" } };
+  }
+
+  // 3. process death is checked only for local workspaces; remote (ssh/docker)
+  //    has no local pid to pgrep, so the shell skips it (:995). dead != succeeded.
+  //    Reaching here means NOT latched, so death is genuine (no marker, no event);
+  //    onDied still re-checks the event file as a race guard (classifyDeath).
+  if (config.workspaceType === "local" && obs.processGone) {
+    return { state, action: { type: "died" } };
   }
 
   const hashChanged = obs.captureHash !== state.prevHash;

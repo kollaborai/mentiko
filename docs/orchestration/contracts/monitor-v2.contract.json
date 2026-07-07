@@ -1,0 +1,26 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": [
+    "web/lib/runner-v2/monitor-reducer.ts",
+    "web/lib/runner-v2/monitor.ts",
+    "web/lib/runner-v2/monitor-diagnostics.ts"
+  ],
+  "role": "typed chain monitor decision core (ports lib/agent-functions.sh monitor-chain-agent): watch the agent, latch completion, classify stale/dead, and gate the completion handoff on a genuine done signal. Design rationale + migration plan live in monitor-v2-contract.json; this file is the enforceable owns/invariants bound by the switch-readiness gate.",
+  "owns": [
+    "the typed chain monitor poll-loop decision (classifyMonitorTick) and its action set",
+    "the completion latch decision (sticky AGENT_COMPLETE marker OR emitted event)",
+    "stale/nudge classification with a durable, restart-surviving nudge budget",
+    "event-first death classification and BLOCKED stall surfacing"
+  ],
+  "invariants": [
+    "stale is not complete",
+    "dead without a declared event is not success (event-first death)",
+    "the completion latch wins over process death",
+    "liveness wins: an alive, producing agent with no event is never failed",
+    "the durable nudge budget survives screen-echo resets (echo grace)",
+    "diagnostic events use source monitor, never the agent id, so they cannot satisfy the completion matcher",
+    "completion is invoked only on a genuine latch, never while alive and eventless",
+    "remote (ssh/docker) workspaces skip the local process-death check",
+    "the completion handoff wiring (gate/feed liveness, connect late-event recovery) is connected before readiness"
+  ]
+}

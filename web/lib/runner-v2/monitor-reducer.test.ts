@@ -37,6 +37,16 @@ describe("classifyMonitorTick — chain monitor parity", () => {
     expect(r.action.type).toBe("complete");
   });
 
+  it("latch wins over process death: a process that exited AFTER latching completes, not dies", () => {
+    const r = classifyMonitorTick(
+      state(),
+      obs({ processGone: true, latched: true }),
+      resolveMonitorConfig({ workspaceType: "local" }),
+    );
+    expect(r.action.type).toBe("complete");
+    expect(r.action.type).not.toBe("died");
+  });
+
   // --- the TASK-093 invariant ---
   it("liveness wins: an alive, producing agent with no latch and no event is active, never failed", () => {
     const r = classifyMonitorTick(

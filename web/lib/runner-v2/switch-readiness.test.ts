@@ -166,6 +166,12 @@ jest.mock("fs", () => ({
     if (path.endsWith("watcher-watchdog.contract.json")) {
       return JSON.stringify({ invariants: ["mock watcher invariant"] });
     }
+    if (path.endsWith("monitor-v2.contract.json")) {
+      return JSON.stringify({
+        owns: ["mock monitor-v2 own"],
+        invariants: ["mock monitor-v2 invariant", "mock monitor-v2 handoff gap"],
+      });
+    }
     return JSON.stringify({
       schema_version: "runner-contract/v1",
       migration_mode: "side-by-side",
@@ -203,16 +209,25 @@ jest.mock("fs", () => ({
         "watcher-watchdog.contract.json": {
           "invariant:mock watcher invariant": { status: "covered", evidence: "mock" },
         },
+        "monitor-v2.contract.json": {
+          "owns:mock monitor-v2 own": { status: "covered", evidence: "mock" },
+          "invariant:mock monitor-v2 invariant": { status: "covered", evidence: "mock" },
+          "invariant:mock monitor-v2 handoff gap": { status: "gap", blocker: "handoff not wired (mock)" },
+        },
       },
     });
   }),
 }));
 
 describe("runner-v2 switch readiness", () => {
-  it("reports ready when typed launch, typed completion, bootstrap executor, and runtime proof are present", () => {
+  it("runner checks pass but the switch is gated on the monitor-v2 completion-handoff gap", () => {
     const report = assessRunnerV2SwitchReadiness();
 
-    expect(report.status).toBe("ready");
+    // The runner side (launch + typed completion + proofs) is fully ready, but the
+    // switch is now correctly BLOCKED by the monitor-v2 completion-handoff gap:
+    // flipping runner-v2 default while the monitor split-brain (TASK-093) is unfixed
+    // would ship the bug to every tenant. Readiness unblocks when the handoff lands.
+    expect(report.status).toBe("blocked");
     expect(report.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "contract-side-by-side", status: "pass" }),
       expect.objectContaining({ id: "typed-executor-supported", status: "pass" }),
@@ -252,10 +267,14 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "contract-binding-chain-runner", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-chain-runner-complete", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-monitor", status: "pass" }),
+      expect.objectContaining({ id: "contract-binding-monitor-v2", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-run-event", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-watcher-watchdog", status: "pass" }),
     ]));
-    expect(report.blockers).toEqual([]);
+    // exactly one blocker: the tracked monitor-v2 completion-handoff gap.
+    expect(report.blockers).toEqual([
+      expect.stringContaining("monitor-v2.contract.json"),
+    ]);
   });
 
   it("reports every contract line as unbound when the coverage map is empty", () => {
@@ -270,7 +289,7 @@ describe("runner-v2 switch readiness", () => {
     } as unknown as RunnerV2Contract;
 
     const summaries = assessImplementationContractBinding(bareContract);
-    expect(summaries).toHaveLength(5);
+    expect(summaries).toHaveLength(6);
     for (const summary of summaries) {
       expect(summary.unbound.length).toBeGreaterThan(0);
       expect(summary.covered).toBe(0);
