@@ -30,7 +30,7 @@ describe("hydrateLifecycleState", () => {
     expect(state.retryBudget).toBe(2);
     expect(state.currentRunId).toBe("run-5");
     expect(state.currentRunStatus).toBe("running");
-    expect(state.summarizedFingerprints).toEqual(["ok:1"]);
+    expect(state.summarizedFingerprints).toEqual(["run-5::ok:1"]);
     expect(state.gatedFingerprints).toEqual(["run-3"]);
     expect(state.decisionTaskId).toBe("DEC-9");
     expect(state.followUpTaskIds).toEqual(["TASK-2"]);
@@ -43,11 +43,22 @@ describe("hydrateLifecycleState", () => {
     expect(state.executionRetryCount).toBe(0);
   });
 
-  test("legacy single fingerprint fields hydrate into summarizedFingerprints", () => {
-    const a = hydrateLifecycleState("TASK-1", { completion_audit_run_fingerprint: "legacy:a" });
-    expect(a.summarizedFingerprints).toContain("legacy:a");
-    const b = hydrateLifecycleState("TASK-1", { task_outcome_summary_run_fingerprint: "legacy:b" });
-    expect(b.summarizedFingerprints).toContain("legacy:b");
+  test("legacy single fingerprint fields hydrate into run-scoped summarizedFingerprints when last_run_id exists", () => {
+    const a = hydrateLifecycleState("TASK-1", {
+      last_run_id: "run-legacy",
+      completion_audit_run_fingerprint: "legacy:a",
+    });
+    expect(a.summarizedFingerprints).toContain("run-legacy::legacy:a");
+    const b = hydrateLifecycleState("TASK-1", {
+      last_run_id: "run-legacy",
+      task_outcome_summary_run_fingerprint: "legacy:b",
+    });
+    expect(b.summarizedFingerprints).toContain("run-legacy::legacy:b");
+  });
+
+  test("legacy single fingerprint without a run id remains compatible but cannot suppress another run", () => {
+    const state = hydrateLifecycleState("TASK-1", { completion_audit_run_fingerprint: "legacy:a" });
+    expect(state.summarizedFingerprints).toContain("legacy:a");
   });
 
   test("an already-stuck task (open, exhausted terminal runs) hydrates to a sane phase, not default", () => {
@@ -143,7 +154,7 @@ describe("applyLifecycleEvent", () => {
     const deps = makeDeps();
     await applyLifecycleEvent({
       state,
-      event: { type: "summary.completed", taskId: "TASK-1", summaryRunId: "sum-1", sourceRunId: "run-1", verdict: "close" },
+      event: { type: "summary.completed", taskId: "TASK-1", summaryRunId: "sum-1", sourceRunId: "run-1", fingerprint: "completed:f1", verdict: "close" },
       context,
       deps,
     });
@@ -217,7 +228,7 @@ describe("applyLifecycleEvent", () => {
   });
 
   test("no effects invokes no dependencies (duplicate completed is a pure no-op)", async () => {
-    const state = hydrateLifecycleState("TASK-1", { summarized_run_fingerprints: ["ok:1"] });
+    const state = hydrateLifecycleState("TASK-1", { last_run_id: "run-1", summarized_run_fingerprints: ["ok:1"] });
     const deps = makeDeps();
     await applyLifecycleEvent({
       state,
@@ -226,5 +237,22 @@ describe("applyLifecycleEvent", () => {
       deps,
     });
     expect(deps.startOutcomeSummary).not.toHaveBeenCalled();
+  });
+
+  test("legacy fingerprint-only state does not suppress a different completed run", async () => {
+    const state = hydrateLifecycleState("TASK-1", {
+      last_run_id: "run-1",
+      summarized_run_fingerprints: ["completed:no-terminal-time"],
+    });
+    const deps = makeDeps();
+    await applyLifecycleEvent({
+      state,
+      event: { type: "execution.completed", taskId: "TASK-1", runId: "run-2", fingerprint: "completed:no-terminal-time" },
+      context,
+      deps,
+    });
+    expect(deps.startOutcomeSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceRunId: "run-2", runFingerprint: "completed:no-terminal-time" }),
+    );
   });
 });

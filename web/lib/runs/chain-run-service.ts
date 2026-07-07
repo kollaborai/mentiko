@@ -32,7 +32,7 @@ import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
 import { resolveMaxConcurrentChains } from "@/lib/system/system-settings";
-import { taskMergeMeta, taskUpdate } from "@/lib/tasks/task-store";
+import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { BadRequest, Conflict, Forbidden } from "@/lib/api-errors";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { buildChildEnv } from "@/lib/runs/child-env";
@@ -46,6 +46,7 @@ import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
 const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
@@ -596,8 +597,19 @@ export async function startChainRun({
 
   if (executionTaskId && shouldRecordTaskExecutionRun({ taskId: executionTaskId, chainId: runObject.chainId as string, metadata: runMetadata })) {
     try {
-      taskUpdate(orgId, executionTaskId, { status: "in_progress" }, namespaceId);
-      taskMergeMeta(orgId, executionTaskId, { last_run_id: runId, last_run_status: "running" }, namespaceId);
+      const task = taskGet(orgId, executionTaskId, namespaceId);
+      const metadata = task?.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+        ? task.metadata as Record<string, unknown>
+        : runMetadata || {};
+      taskUpdate(orgId, executionTaskId, {
+        status: "in_progress",
+        metadata: executionStartedLifecycleMetadata({
+          taskId: executionTaskId,
+          metadata,
+          runId,
+          chainId: runObject.chainId as string,
+        }),
+      }, namespaceId);
     } catch {
       // non-critical: don't fail the run if task update fails
     }

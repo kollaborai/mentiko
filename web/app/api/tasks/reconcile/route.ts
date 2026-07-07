@@ -14,12 +14,19 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
-import { hasExecutionRetriesRemaining, nextExecutionRetryMetadata } from "@/lib/tasks/execution-retry-policy";
 import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
 import { recoverLateCompletionEvents } from "@/lib/runner-v2/completion-recovery";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan } from "@/lib/runner-v2/executor";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
+import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
+import {
+  applyLifecycleEvent,
+  type LifecycleEffectDeps,
+  type StartOutcomeSummaryInput,
+} from "@/lib/orchestration/task-lifecycle-service";
+import type { TaskLifecycleEffect, TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
+import { currentRunTerminalFingerprint } from "@/lib/tasks/run-outcome-evidence";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +34,7 @@ const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 // Any terminal run state hands off to the completion auditor, which owns the
 // retry-vs-decision-vs-close call. A genuine failure becomes the auditor's
 // "retry"; a run that needs a human becomes "decision".
-const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "failed", "stopped"]);
+const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "failed", "stopped", "deleted", "unknown", "cancelled"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
 
@@ -95,8 +102,14 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       shouldAuditCompletedAutoRun(meta)
     );
   });
+  const issueById = new Map(issues.map((issue) => [issue.id, issue]));
+  const followupBlockedTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    return meta?.lifecycle_phase === "followup_blocked" && stringArray(meta.followup_task_ids).length > 0;
+  });
 
-  if (runningTasks.length === 0 && terminalAutoRunTasks.length === 0) {
+  if (runningTasks.length === 0 && terminalAutoRunTasks.length === 0 && followupBlockedTasks.length === 0) {
     return apiSuccess({ reconciled: 0, results: [] });
   }
 
@@ -195,20 +208,32 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
         const autoRun = meta?.auto_run === true;
         if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus)) {
-          if (hasExecutionRetriesRemaining(updatedMeta, newStatus)) {
-            const retryMeta = nextExecutionRetryMetadata(updatedMeta, newStatus, reason);
-            taskUpdate(orgId, safeId, { status: "open", metadata: retryMeta }, namespaceId);
-            newStatus = "retry_requested";
-            reason = `execution retry scheduled before outcome summary: ${reason}`;
-          } else {
-            try {
-              await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
-            } catch (auditError) {
-              failed.push({
-                taskId: issue.id,
-                error: `Failed to start completion audit: ${(auditError as Error).message}`,
-              });
+          try {
+            const lifecycle = await applyExecutionLifecycle({
+              request,
+              namespaceId,
+              orgId,
+              workspaceId,
+              taskId: safeId,
+              metadata: updatedMeta,
+              runId,
+              runStatus: newStatus,
+              reason,
+            });
+            if (lifecycle.effects.some((effect) => effect.type === "retry_execution")) {
+              reason = `execution retry scheduled before outcome summary: ${reason}`;
             }
+            if (lifecycle.effects.some((effect) => effect.type === "retry_execution")) {
+              newStatus = "retry_requested";
+            } else if (lifecycle.effects.some((effect) => effect.type === "start_outcome_summary")) {
+              newStatus = `audit_${lifecycle.auditStatus ?? "skipped"}`;
+              reason = "completion audit triggered";
+            }
+          } catch (auditError) {
+            failed.push({
+              taskId: issue.id,
+              error: `Failed to apply lifecycle event: ${(auditError as Error).message}`,
+            });
           }
         }
 
@@ -278,14 +303,39 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           updatedMeta.last_run_completed = new Date().toISOString();
         }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
+        let resultStatus = lateRecovery.status;
+        let resultReason = lateRecovery.reason;
+        if (TERMINAL_RUN_STATUSES.has(lateRecovery.status)) {
+          const lifecycle = await applyExecutionLifecycle({
+            request,
+            namespaceId,
+            orgId,
+            workspaceId,
+            taskId: safeId,
+            metadata: updatedMeta,
+            runId,
+            runStatus: lateRecovery.status,
+            reason: lateRecovery.reason,
+          });
+          if (lifecycle.effects.some((effect) => effect.type === "retry_execution")) {
+            resultStatus = "retry_requested";
+            resultReason = `execution retry scheduled after late recovery: ${lateRecovery.reason}`;
+          } else if (lifecycle.effects.some((effect) => effect.type === "start_outcome_summary")) {
+            resultStatus = `audit_${lifecycle.auditStatus ?? "skipped"}`;
+            resultReason = "completion audit triggered after late recovery";
+          } else {
+            resultStatus = "lifecycle_noop";
+            resultReason = "late-recovered terminal run already handled";
+          }
+        }
         writeLog(namespaceId, orgId, "warn", "task-reconciler",
-          `task ${issue.id} run ${runId}: ${lateRecovery.status}`, lateRecovery.reason);
+          `task ${issue.id} run ${runId}: ${resultStatus}`, resultReason);
         results.push({
           taskId: issue.id,
           runId,
           previousStatus: String(meta.last_run_status || run.status || "terminal"),
-          newStatus: lateRecovery.status,
-          reason: lateRecovery.reason,
+          newStatus: resultStatus,
+          reason: resultReason,
         });
         continue;
       }
@@ -294,9 +344,19 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         continue;
       }
 
-      if (hasExecutionRetriesRemaining(meta, run.status)) {
-        const retryMeta = nextExecutionRetryMetadata(meta, run.status, `run.json status is ${run.status}`);
-        taskUpdate(orgId, safeId, { status: "open", metadata: retryMeta }, namespaceId);
+      const lifecycle = await applyExecutionLifecycle({
+        request,
+        namespaceId,
+        orgId,
+        workspaceId,
+        taskId: safeId,
+        metadata: meta,
+        runId,
+        runStatus: run.status,
+        reason: `run.json status is ${run.status}`,
+      });
+      const retried = lifecycle.effects.some((effect) => effect.type === "retry_execution");
+      if (retried) {
         writeLog(namespaceId, orgId, "warn", "task-reconciler",
           `task ${issue.id} run ${runId}: retry requested`,
           `execution retry scheduled before outcome summary: ${run.status}`);
@@ -310,16 +370,74 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         continue;
       }
 
-      const audit = await startTaskOutcomeAudit({ request, namespaceId, orgId, taskId: safeId });
+      const startedSummary = lifecycle.effects.some((effect) => effect.type === "start_outcome_summary");
+      if (!startedSummary) {
+        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          `task ${issue.id} run ${runId}: lifecycle no-op`,
+          "terminal run was already handled by lifecycle state");
+        results.push({
+          taskId: issue.id,
+          runId,
+          previousStatus: String(meta.last_run_status || "completed"),
+          newStatus: "lifecycle_noop",
+          reason: "terminal run already handled",
+        });
+        continue;
+      }
+
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
-        `task ${issue.id} run ${runId}: audit ${audit.status}`,
+        `task ${issue.id} run ${runId}: audit ${lifecycle.auditStatus ?? "skipped"}`,
         "completion audit triggered for terminal auto-run task");
       results.push({
         taskId: issue.id,
         runId,
         previousStatus: String(meta.last_run_status || "completed"),
-        newStatus: `audit_${audit.status}`,
+        newStatus: `audit_${lifecycle.auditStatus ?? "skipped"}`,
         reason: "completion audit triggered",
+      });
+    } catch (error) {
+      failed.push({
+        taskId: issue.id,
+        error: (error as Error).message,
+      });
+    }
+  }
+
+  for (const issue of followupBlockedTasks) {
+    const meta = parseMetadata(issue.metadata)!;
+    const followUpTaskIds = stringArray(meta.followup_task_ids);
+    const allFollowUpsComplete = followUpTaskIds.every((id) => {
+      const followUp = issueById.get(id);
+      return !!followUp && DONE_TASK_STATUSES.has(followUp.status);
+    });
+    if (!allFollowUpsComplete) continue;
+
+    try {
+      const safeId = validateTaskId(issue.id);
+      const state = hydrateLifecycleState(safeId, meta);
+      await applyLifecycleEvent({
+        state,
+        event: { type: "followups.completed", taskId: safeId, followUpTaskIds },
+        context: { request, namespaceId, orgId, workspaceId },
+        deps: makeLifecycleDeps({
+          namespaceId,
+          orgId,
+          workspaceId,
+          taskId: safeId,
+          metadata: meta,
+          runStatus: undefined,
+          reason: "all follow-up tasks are complete",
+        }),
+      });
+      writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        `task ${issue.id}: followups completed`,
+        "all follow-up tasks are complete");
+      results.push({
+        taskId: issue.id,
+        runId: typeof meta.last_run_id === "string" ? meta.last_run_id : "",
+        previousStatus: "followup_blocked",
+        newStatus: "followups_completed",
+        reason: "all follow-up tasks are complete",
       });
     } catch (error) {
       failed.push({
@@ -331,12 +449,124 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   return apiSuccess({
     reconciled: results.length,
-    checked: runningTasks.length + terminalAutoRunTasks.length,
+    checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length,
     failed: failed.length,
     results,
     errors: failed,
   });
 });
+
+async function applyExecutionLifecycle(input: {
+  request: NextRequest;
+  namespaceId: string;
+  orgId: string;
+  workspaceId?: string;
+  taskId: string;
+  metadata: Record<string, unknown>;
+  runId: string;
+  runStatus: string;
+  reason: string;
+}): Promise<{ effects: TaskLifecycleEffect[]; auditStatus?: string }> {
+  const runFingerprint = currentRunTerminalFingerprint(input.namespaceId, input.orgId, input.runId);
+  let auditStatus: string | undefined;
+  const transition = await applyLifecycleEvent({
+    state: hydrateLifecycleState(input.taskId, input.metadata),
+    event:
+      input.runStatus === "completed" || input.runStatus === "complete"
+        ? { type: "execution.completed", taskId: input.taskId, runId: input.runId, fingerprint: runFingerprint }
+        : {
+            type: "execution.failed",
+            taskId: input.taskId,
+            runId: input.runId,
+            fingerprint: runFingerprint,
+            reason: input.reason,
+          },
+    context: {
+      request: input.request,
+      namespaceId: input.namespaceId,
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+    },
+    deps: makeLifecycleDeps({
+      namespaceId: input.namespaceId,
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+      metadata: input.metadata,
+      runId: input.runId,
+      runStatus: input.runStatus,
+      reason: input.reason,
+      onAuditStatus: (status) => {
+        auditStatus = status;
+      },
+    }),
+  });
+  return { effects: transition.effects, auditStatus };
+}
+
+function makeLifecycleDeps(input: {
+  namespaceId: string;
+  orgId: string;
+  workspaceId?: string;
+  taskId: string;
+  metadata: Record<string, unknown>;
+  runId?: string;
+  runStatus?: string;
+  reason: string;
+  onAuditStatus?: (status: string) => void;
+}): LifecycleEffectDeps {
+  return {
+    startOutcomeSummary: async (summaryInput: StartOutcomeSummaryInput) => {
+      const result = await startTaskOutcomeAudit(summaryInput);
+      input.onAuditStatus?.(result.status);
+      return result;
+    },
+    createDecisionGate: async () => undefined,
+    blockOnDecision: () => undefined,
+    createFollowupDependencies: () => undefined,
+    resumeOriginalTask: ({ lifecycleState }) => {
+      taskUpdate(input.orgId, input.taskId, {
+        status: "open",
+        metadata: {
+          ...metadataWithLifecycleState(input.metadata, lifecycleState),
+          last_run_decision_required: false,
+          decision_subtask_id: undefined,
+          followup_task_ids: [],
+        },
+      }, input.namespaceId);
+    },
+    closeTask: () => undefined,
+    clearDecisionGate: async () => undefined,
+    scanUnblockedAutoRunTasks: async () => undefined,
+    retryExecution: ({ lifecycleState }) => {
+      taskUpdate(input.orgId, input.taskId, {
+        status: "open",
+        metadata: {
+          ...metadataWithLifecycleState(input.metadata, lifecycleState),
+          last_run_id: undefined,
+          last_run_status: "retry_requested",
+          last_run_error: input.reason || `Execution run ended with ${input.runStatus || "failed"}`,
+          last_run_decision_required: false,
+        },
+      }, input.namespaceId);
+    },
+  };
+}
+
+function metadataWithLifecycleState(
+  metadata: Record<string, unknown>,
+  state: TaskLifecycleState,
+): Record<string, unknown> {
+  return {
+    ...metadata,
+    lifecycle_phase: state.phase,
+    execution_retries: state.executionRetryCount,
+    summarized_run_fingerprints: state.summarizedFingerprints,
+    gated_run_fingerprints: state.gatedFingerprints,
+    decision_subtask_id: state.decisionTaskId,
+    followup_task_ids: state.followUpTaskIds,
+  };
+}
 
 function parseMetadata(
   raw: string | Record<string, unknown> | undefined
@@ -350,6 +580,10 @@ function parseMetadata(
     }
   }
   return raw;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
 function parseTimeMs(value: unknown): number | undefined {

@@ -206,4 +206,43 @@ describe("POST /api/tasks/[id]/run-chain", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("records reducer-derived execution.started lifecycle metadata", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      title: "Smoke test suite",
+      description: "Create smoke tests",
+      issue_type: "feat",
+      priority: 1,
+      metadata: {
+        chain_id: "smoke-test-suite-generator",
+        chain_name: "smoke-test-suite-generator",
+        last_run_id: "run-old",
+        last_run_status: "completed",
+        execution_retries: 2,
+      },
+    });
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "FEAT-001" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-001",
+      {
+        status: "in_progress",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "executing",
+          execution_retries: 0,
+          last_run_status: "running",
+          chain_id: "smoke-test-suite-generator",
+          last_run_error: undefined,
+          last_run_completed: null,
+        }),
+      },
+      "marco",
+    );
+  });
 });

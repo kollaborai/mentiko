@@ -14,6 +14,8 @@
 
 import {
   MAX_EXECUTION_RETRIES_BEFORE_SUMMARY,
+  TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR,
+  taskLifecycleRunFingerprintKey,
   type TaskLifecyclePhase,
   type TaskLifecycleState,
 } from "./task-lifecycle-types";
@@ -64,6 +66,19 @@ function stringOrUndefined(value: unknown): string | undefined {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v.length > 0) : [];
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function toRunScopedFingerprint(value: string, currentRunId: string | undefined): string {
+  if (value.includes(TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR) || !currentRunId) return value;
+  return taskLifecycleRunFingerprintKey(currentRunId, value);
+}
+
+function runScopedFingerprintArray(value: unknown, currentRunId: string | undefined): string[] {
+  return unique(stringArray(value).map((fingerprint) => toRunScopedFingerprint(fingerprint, currentRunId)));
 }
 
 /** Narrow a raw run status string onto the state's typed union (else undefined). */
@@ -118,10 +133,16 @@ export function hydrateLifecycleState(taskId: string, metadata: unknown): TaskLi
   const chainId = stringOrUndefined(m.chain_id);
 
   // summarized_run_fingerprints + legacy single-field compatibility fallback.
-  const summarizedFingerprints = stringArray(m.summarized_run_fingerprints);
+  // New persisted shape is `${runId}::${fingerprint}`. Old bare fingerprints are
+  // normalized only when last_run_id exists; otherwise they remain as legacy
+  // compatibility values but cannot suppress a different run in the reducer.
+  const summarizedFingerprints = runScopedFingerprintArray(m.summarized_run_fingerprints, currentRunId);
   for (const legacyKey of ["completion_audit_run_fingerprint", "task_outcome_summary_run_fingerprint"]) {
     const legacy = stringOrUndefined(m[legacyKey]);
-    if (legacy && !summarizedFingerprints.includes(legacy)) summarizedFingerprints.push(legacy);
+    if (legacy) {
+      const scoped = toRunScopedFingerprint(legacy, currentRunId);
+      if (!summarizedFingerprints.includes(scoped)) summarizedFingerprints.push(scoped);
+    }
   }
   const gatedFingerprints = stringArray(m.gated_run_fingerprints);
 

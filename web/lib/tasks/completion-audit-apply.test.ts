@@ -13,6 +13,7 @@ const taskUpdate = jest.fn();
 const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
 const taskList = jest.fn();
+const taskAddDep = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
 const startDecisionResearch = jest.fn();
@@ -24,6 +25,7 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskMergeMeta: (...a: unknown[]) => taskMergeMeta(...a),
   taskAddComment: (...a: unknown[]) => taskAddComment(...a),
   taskList: (...a: unknown[]) => taskList(...a),
+  taskAddDep: (...a: unknown[]) => taskAddDep(...a),
 }));
 
 jest.mock("@/lib/tasks/task-decision-link", () => ({
@@ -123,7 +125,10 @@ describe("applyCompletionAudit", () => {
     const task = makeTask();
     const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
 
-    const result = await applyCompletionAudit(makeInput(task, audit));
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t1",
+    });
 
     expect(result.action).toBe("closed");
 
@@ -155,14 +160,21 @@ describe("applyCompletionAudit", () => {
       decision: { prompt: "Should we add SSO?", options_hint: "Yes / No / Defer" },
     };
 
-    const result = await applyCompletionAudit(makeInput(task, audit));
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t1",
+    });
 
     expect(result.action).toBe("decision_created");
     expect(result.decisionTaskId).toBe("DEC-1");
 
     expect(createTaskDecision).toHaveBeenCalledTimes(1);
     expect(createTaskDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ parentTaskId: "TASK-42" }),
+      expect.objectContaining({
+        parentTaskId: "TASK-42",
+        sourceRunId: "run-abc",
+        runFingerprint: "completed:t1",
+      }),
     );
 
     expect(startDecisionResearch).toHaveBeenCalledTimes(1);
@@ -173,10 +185,48 @@ describe("applyCompletionAudit", () => {
       expect.objectContaining({
         last_run_decision_required: true,
         decision_subtask_id: "DEC-1",
+        gated_run_fingerprints: ["run-abc::completed:t1"],
+        lifecycle_phase: "decision_blocked",
         last_audit_verdict: "decision",
       }),
       "default",
     );
+    expect(taskAddDep).toHaveBeenCalledWith("default", "TASK-42", "DEC-1", "default", "/repo");
+  });
+
+  it("decision: skips duplicate completion-audit DEC tasks for the same parent/source run/fingerprint", async () => {
+    taskList.mockReturnValue([
+      makeTask({
+        id: "DEC-777",
+        parent_id: "TASK-42",
+        issue_type: "decision",
+        status: "open",
+        metadata: {
+          decision_source: "completion-audit",
+          completion_audit_source_run_id: "run-abc",
+          completion_audit_run_fingerprint: "completed:t1",
+        },
+      }),
+    ]);
+    const task = makeTask();
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which path?" },
+    };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit, {}, "run-abc"),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result).toEqual({
+      action: "skipped",
+      detail: "completion-audit decision already exists for this run",
+      decisionTaskId: "DEC-777",
+    });
+    expect(createTaskDecision).not.toHaveBeenCalled();
+    expect(startDecisionResearch).not.toHaveBeenCalled();
   });
 
   // 3. verdict "retry" under cap
@@ -194,8 +244,10 @@ describe("applyCompletionAudit", () => {
         },
       },
     };
-    // auto_run_retries: 1 — under RETRY_CAP (2)
-    const result = await applyCompletionAudit(makeInput(task, audit, { auto_run_retries: 1 }));
+    const result = await applyCompletionAudit(makeInput(task, audit, {
+      auto_run_retries: 99,
+      execution_retries: 1,
+    }));
 
     expect(result.action).toBe("retry_scheduled");
 
@@ -227,7 +279,8 @@ describe("applyCompletionAudit", () => {
       "TASK-42",
       expect.objectContaining({
         last_run_id: undefined,
-        auto_run_retries: 2,
+        execution_retries: 2,
+        lifecycle_phase: "retrying",
         last_audit_verdict: "retry",
       }),
       "default",
@@ -236,8 +289,8 @@ describe("applyCompletionAudit", () => {
     expect(createTaskDecision).not.toHaveBeenCalled();
   });
 
-  // 4. verdict "retry" at or over RETRY_CAP → escalate
-  it("retry at RETRY_CAP (auto_run_retries >= 2): escalates to decision subtask instead of retrying, returns escalated_decision", async () => {
+  // 4. verdict "retry" at or over shared execution retry limit → escalate
+  it("retry at execution retry limit (execution_retries >= 2): escalates to decision subtask instead of retrying, returns escalated_decision", async () => {
     const task = makeTask();
     const audit: CompletionAudit = {
       verdict: "retry",
@@ -245,16 +298,28 @@ describe("applyCompletionAudit", () => {
       retry: { guidance: "Root-cause the underlying problem." },
     };
     // exactly at cap
-    const result = await applyCompletionAudit(makeInput(task, audit, { auto_run_retries: 2 }));
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        auto_run_retries: 0,
+        execution_retries: 2,
+      }),
+      runFingerprint: "failed:t2",
+    });
 
     expect(result.action).toBe("escalated_decision");
     expect(result.decisionTaskId).toBe("DEC-1");
 
     // escalation path goes through createDecisionSubtask
     expect(createTaskDecision).toHaveBeenCalledTimes(1);
+    expect(createTaskDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runFingerprint: "failed:t2",
+      }),
+    );
 
-    // must NOT have attempted a normal retry
-    expect(taskUpdate).not.toHaveBeenCalled();
+    // must NOT have attempted a normal retry; the only status update is the
+    // decision-gate block applied by createDecisionSubtask.
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
     expect(taskAddComment).not.toHaveBeenCalled();
   });
 
@@ -330,7 +395,7 @@ describe("applyCompletionAudit", () => {
     expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
   });
 
-  it("decision: does not touch status when the task is already open", async () => {
+  it("decision: blocks the original task when it is still in progress", async () => {
     const task = makeTask({ status: "in_progress" });
     const audit: CompletionAudit = {
       verdict: "decision",
@@ -340,7 +405,32 @@ describe("applyCompletionAudit", () => {
 
     await applyCompletionAudit(makeInput(task, audit));
 
-    expect(taskUpdate).not.toHaveBeenCalled();
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-42", { status: "blocked" }, "default");
+  });
+
+  it("decision: persists parent lifecycle metadata before dependency and research side effects", async () => {
+    const task = makeTask();
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which way?" },
+    };
+
+    await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t1",
+    });
+
+    const lifecycleMergeOrder = taskMergeMeta.mock.calls.findIndex((call) => {
+      const meta = call[2] as Record<string, unknown>;
+      return meta.lifecycle_phase === "decision_blocked" && meta.decision_subtask_id === "DEC-1";
+    });
+    expect(lifecycleMergeOrder).toBeGreaterThanOrEqual(0);
+
+    const mergeCallOrder = taskMergeMeta.mock.invocationCallOrder[lifecycleMergeOrder];
+    expect(mergeCallOrder).toBeLessThan(taskAddDep.mock.invocationCallOrder[0]);
+    expect(mergeCallOrder).toBeLessThan(taskUpdate.mock.invocationCallOrder[0]);
+    expect(mergeCallOrder).toBeLessThan(startDecisionResearch.mock.invocationCallOrder[0]);
   });
 
   it("does not skip when only an audit claim exists for the same run", async () => {
@@ -408,11 +498,13 @@ describe("applyCompletionAudit", () => {
       "default",
       "decision-024",
       { status: "superseded" },
+      "/repo",
     );
     expect(taskMergeMeta).toHaveBeenCalledWith(
       "default",
       "TASK-42",
       expect.objectContaining({
+        lifecycle_phase: "closing",
         superseded_decision_subtask_ids: ["DEC-024"],
         completion_audit_run_fingerprint: "completed:t2",
       }),

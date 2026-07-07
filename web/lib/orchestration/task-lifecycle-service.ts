@@ -78,6 +78,7 @@ export interface ResumeOriginalTaskInput {
   taskId: string;
   namespaceId?: string;
   workspaceId?: string;
+  lifecycleState: TaskLifecycleState;
 }
 export type ResumeOriginalTaskFn = (input: ResumeOriginalTaskInput) => void | Promise<void>;
 
@@ -113,6 +114,7 @@ export interface RetryExecutionInput {
   namespaceId?: string;
   previousRunId: string;
   reason: string;
+  lifecycleState: TaskLifecycleState;
 }
 export type RetryExecutionFn = (input: RetryExecutionInput) => void | Promise<void>;
 
@@ -146,6 +148,7 @@ async function applyEffect(
   effect: TaskLifecycleEffect,
   ctx: LifecycleAdapterContext,
   deps: LifecycleEffectDeps,
+  lifecycleState: TaskLifecycleState,
 ): Promise<void> {
   switch (effect.type) {
     case "retry_execution":
@@ -155,6 +158,7 @@ async function applyEffect(
         namespaceId: ctx.namespaceId,
         previousRunId: effect.previousRunId,
         reason: effect.reason,
+        lifecycleState,
       });
       return;
 
@@ -199,6 +203,7 @@ async function applyEffect(
         taskId: effect.taskId,
         namespaceId: ctx.namespaceId,
         workspaceId: ctx.workspaceId,
+        lifecycleState,
       });
       return;
 
@@ -249,7 +254,7 @@ export async function applyLifecycleEvent(args: {
   const { state, event, context, deps } = args;
   const transition = reduceTaskLifecycle(state, event);
   for (const effect of transition.effects) {
-    await applyEffect(effect, context, deps);
+    await applyEffect(effect, context, deps, transition.state);
   }
   return transition;
 }

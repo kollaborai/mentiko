@@ -291,6 +291,8 @@ describe("getAutoRunCandidates", () => {
         status: "in_progress",
         metadata: expect.objectContaining({
           auto_run: true,
+          lifecycle_phase: "executing",
+          execution_retries: 0,
           last_run_id: "run-active",
           last_run_status: "running",
           last_run_chain: "release-review",

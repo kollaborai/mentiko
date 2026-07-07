@@ -42,9 +42,24 @@ describe("evaluateAgentLiveness", () => {
     expect(evaluateAgentLiveness({ sessionAlive: true, outputChanged: true }).disposition).toBe("working");
   });
 
+  it("grants bounded grace to an alive-but-silent session before the extension cap", () => {
+    expect(evaluateAgentLiveness({
+      sessionAlive: true,
+      processAlive: false,
+      outputChanged: false,
+      extensionCount: 0,
+      maxExtensions: 6,
+    }).disposition).toBe("grace");
+  });
+
   it("classifies an alive-but-silent session past the extension cap as a silent timeout", () => {
-    expect(evaluateAgentLiveness({ sessionAlive: true, processAlive: false, outputChanged: false }).disposition)
-      .toBe("silent-timeout");
+    expect(evaluateAgentLiveness({
+      sessionAlive: true,
+      processAlive: false,
+      outputChanged: false,
+      extensionCount: 6,
+      maxExtensions: 6,
+    }).disposition).toBe("silent-timeout");
     expect(evaluateAgentLiveness({ sessionAlive: true, outputChanged: true, extensionCount: 6, maxExtensions: 6 }).disposition)
       .toBe("silent-timeout");
   });
@@ -115,7 +130,7 @@ describe("runner-v2 completion runner: liveness-aware exhaustion", () => {
       chain: { name: "Build Chain", agents: [{ id: "writer", emits: "draft-ready" }] },
       events: [],
       retry: EXHAUSTED_RETRY,
-      liveness: { sessionAlive: true, processAlive: false, outputChanged: false },
+      liveness: { sessionAlive: true, processAlive: false, outputChanged: false, extensionCount: 6, maxExtensions: 6 },
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
 

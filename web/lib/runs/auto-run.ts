@@ -11,6 +11,7 @@ import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
+import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
 type DependencyStatus = {
   id: string;
@@ -185,8 +186,12 @@ export function reconcileTaskActiveRun(
 
   const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {};
   const nextMetadata = {
-    ...metadata,
-    last_run_id: activeRun.id,
+    ...executionStartedLifecycleMetadata({
+      taskId: task.id,
+      metadata: metadata as Record<string, unknown>,
+      runId: activeRun.id,
+      chainId: activeRun.chainId,
+    }),
     last_run_status: activeRun.status,
     last_run_chain: activeRun.chain || metadata.last_run_chain,
     last_run_started: activeRun.started || metadata.last_run_started,

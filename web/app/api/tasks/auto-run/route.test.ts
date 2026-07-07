@@ -465,6 +465,8 @@ describe("POST /api/tasks/auto-run", () => {
       expect.objectContaining({
         status: "in_progress",
         metadata: expect.objectContaining({
+          lifecycle_phase: "executing",
+          execution_retries: 0,
           last_run_id: "run-stopped",
           last_run_status: "running",
           auto_run_retries: 2,
@@ -541,6 +543,8 @@ describe("POST /api/tasks/auto-run", () => {
       "TASK-1",
       expect.objectContaining({
         metadata: expect.objectContaining({
+          lifecycle_phase: "executing",
+          execution_retries: 0,
           last_run_id: "run-exec",
           last_run_status: "running",
         }),

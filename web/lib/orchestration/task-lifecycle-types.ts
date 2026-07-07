@@ -13,6 +13,11 @@
 // current auditor RETRY_CAP=2 (>=) semantics. Do NOT change to 3 without a
 // deliberate call — see the plan's C1.
 export const MAX_EXECUTION_RETRIES_BEFORE_SUMMARY = 2;
+export const TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR = "::";
+
+export function taskLifecycleRunFingerprintKey(runId: string, fingerprint: string): string {
+  return `${runId}${TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR}${fingerprint}`;
+}
 
 export type TaskLifecyclePhase =
   | "idle"
@@ -58,7 +63,7 @@ export type TaskLifecycleEvent =
       requiresGeneration: boolean;
     }
   | { type: "chain.generated"; taskId: string; chainId: string; generationRunId: string }
-  | { type: "execution.started"; taskId: string; runId: string; chainId: string }
+  | { type: "execution.started"; taskId: string; runId: string; chainId?: string }
   | { type: "execution.completed"; taskId: string; runId: string; fingerprint: string }
   | {
       type: "execution.failed";
@@ -73,6 +78,7 @@ export type TaskLifecycleEvent =
       taskId: string;
       summaryRunId: string;
       sourceRunId: string;
+      fingerprint: string;
       verdict: "close" | "retry" | "decision";
       followUpTaskIds?: string[];
       decisionTaskId?: string;

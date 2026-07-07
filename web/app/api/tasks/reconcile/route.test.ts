@@ -35,6 +35,11 @@ jest.mock("@/lib/tasks/task-outcome-audit", () => ({
   startTaskOutcomeAudit: (...args: unknown[]) => mockStartTaskOutcomeAudit(...args),
 }));
 
+const mockCurrentRunTerminalFingerprint = jest.fn();
+jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
+  currentRunTerminalFingerprint: (...args: unknown[]) => mockCurrentRunTerminalFingerprint(...args),
+}));
+
 jest.mock("@/lib/workspaces/workspace-params", () => ({
   getWorkspaceId: jest.fn().mockReturnValue(undefined),
   hasWorkspaceParam: jest.fn().mockReturnValue(false),
@@ -103,6 +108,7 @@ describe("GET /api/tasks/reconcile", () => {
     mockGetLiveSessions.mockResolvedValue(new Set());
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
+    mockCurrentRunTerminalFingerprint.mockReturnValue("completed:no-terminal-time");
     mockRecoverLateCompletionEvents.mockReturnValue({ recovered: [], run: { status: "stopped" } });
     mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [], launches: [] });
     mockApplyTypedExecutorPlan.mockReturnValue({ effectsApplied: [], operations: [], launchesStarted: [] });
@@ -262,8 +268,8 @@ describe("GET /api/tasks/reconcile", () => {
         expect.objectContaining({
           taskId: "TASK-044",
           runId: "run-exec",
-          newStatus: "completed",
-          reason: "run.json status is completed",
+          newStatus: "audit_started",
+          reason: "completion audit triggered",
         }),
       ],
     });
@@ -280,7 +286,13 @@ describe("GET /api/tasks/reconcile", () => {
       "default",
     );
     expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
+      expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        taskId: "TASK-044",
+        sourceRunId: "run-exec",
+        runFingerprint: "completed:no-terminal-time",
+      }),
     );
     expect(mockTaskClose).not.toHaveBeenCalled();
   });
@@ -317,7 +329,7 @@ describe("GET /api/tasks/reconcile", () => {
         expect.objectContaining({
           taskId: "TASK-044",
           runId: "run-exec",
-          newStatus: "completed",
+          newStatus: "audit_started",
         }),
       ],
     });
@@ -377,7 +389,13 @@ describe("GET /api/tasks/reconcile", () => {
       ],
     });
     expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
+      expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        taskId: "TASK-044",
+        sourceRunId: "run-exec",
+        runFingerprint: "completed:no-terminal-time",
+      }),
     );
     expect(mockTaskClose).not.toHaveBeenCalled();
   });
@@ -462,7 +480,13 @@ describe("GET /api/tasks/reconcile", () => {
       ],
     });
     expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-092" }),
+      expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        taskId: "TASK-092",
+        sourceRunId: "run-exec",
+        runFingerprint: "completed:no-terminal-time",
+      }),
     );
   });
 
@@ -551,6 +575,7 @@ describe("GET /api/tasks/reconcile", () => {
   });
 
   it("marks an old orphaned real run stopped and schedules retry before auditing", async () => {
+    mockCurrentRunTerminalFingerprint.mockReturnValue("stopped:no-terminal-time");
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -604,6 +629,8 @@ describe("GET /api/tasks/reconcile", () => {
           last_run_status: "retry_requested",
           auto_run_retries: 99,
           execution_retries: 1,
+          lifecycle_phase: "retrying",
+          summarized_run_fingerprints: ["run-exec::stopped:no-terminal-time"],
         }),
       },
       "default",
@@ -613,6 +640,7 @@ describe("GET /api/tasks/reconcile", () => {
   });
 
   it("audits a failed execution run after the retry budget is exhausted", async () => {
+    mockCurrentRunTerminalFingerprint.mockReturnValue("failed:no-terminal-time");
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
       taskId: "TASK-044",
@@ -647,7 +675,99 @@ describe("GET /api/tasks/reconcile", () => {
       }),
     ]);
     expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ namespaceId: "default", orgId: "default", taskId: "TASK-044" }),
+      expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        taskId: "TASK-044",
+        sourceRunId: "run-exec",
+        runFingerprint: "failed:no-terminal-time",
+      }),
+    );
+  });
+
+  it("retries a missing execution run through the lifecycle reducer", async () => {
+    mockExistsSync.mockReturnValue(false);
+    mockCurrentRunTerminalFingerprint.mockReturnValue("deleted:no-terminal-time");
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-missing",
+          last_run_status: "running",
+          execution_retries: 0,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-044",
+        runId: "run-missing",
+        newStatus: "retry_requested",
+        reason: "execution retry scheduled before outcome summary: run directory no longer exists",
+      }),
+    ]);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "retrying",
+          execution_retries: 1,
+          last_run_id: undefined,
+          last_run_status: "retry_requested",
+          summarized_run_fingerprints: ["run-missing::deleted:no-terminal-time"],
+        }),
+      },
+      "default",
+    );
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("audits a corrupt execution run through the lifecycle reducer after retry budget is exhausted", async () => {
+    mockCurrentRunTerminalFingerprint.mockReturnValue("unknown:no-terminal-time");
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error("bad json");
+    });
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-corrupt",
+          last_run_status: "running",
+          execution_retries: 2,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-044",
+        runId: "run-corrupt",
+        newStatus: "audit_started",
+      }),
+    ]);
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "TASK-044",
+        sourceRunId: "run-corrupt",
+        runFingerprint: "unknown:no-terminal-time",
+      }),
     );
   });
 
@@ -738,5 +858,154 @@ describe("GET /api/tasks/reconcile", () => {
       "default",
     );
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("audits a late-recovered completed terminal run in the same reconcile pass", async () => {
+    const completedRun = {
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "stopped",
+      chainId: "build-chain",
+      workspacePath: "/workspace",
+      metadata: {},
+    };
+    const chain = {
+      id: "build-chain",
+      name: "Build Chain",
+      agents: [{ id: "writer", emits: "done" }],
+    };
+    const event = "event: done\nsource: writer-run-exec\nrun_id: run-exec\nprocessed: false\n";
+    mockCurrentRunTerminalFingerprint.mockReturnValue("completed:late");
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const file = String(path);
+      if (file.endsWith("/chain.json")) return JSON.stringify(chain);
+      if (file.endsWith("/late.event")) return event;
+      return JSON.stringify(completedRun);
+    });
+    mockReaddirSync.mockReturnValue(["late.event"]);
+    mockRecoverLateCompletionEvents.mockReturnValue({
+      recovered: [{
+        agentId: "writer",
+        event: { event: "done", source: "writer-run-exec", run_id: "run-exec", processed: false, path: "/tmp/late.event" },
+        route: { action: "terminal", reason: "done" },
+      }],
+      run: { ...completedRun, status: "completed" },
+    });
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_chain: "Build Chain",
+          chain_id: "build-chain",
+          last_run_id: "run-exec",
+          last_run_status: "stopped",
+          execution_retries: 2,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-044",
+        runId: "run-exec",
+        newStatus: "audit_started",
+        reason: "completion audit triggered after late recovery",
+      }),
+    ]);
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "TASK-044",
+        sourceRunId: "run-exec",
+        runFingerprint: "completed:late",
+      }),
+    );
+  });
+
+  it("does not emit followups.completed while any follow-up task is still open", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-093",
+        title: "Original task",
+        status: "blocked",
+        metadata: {
+          lifecycle_phase: "followup_blocked",
+          last_run_decision_required: true,
+          followup_task_ids: ["TASK-100", "TASK-101"],
+        },
+      },
+      { id: "TASK-100", title: "Done follow-up", status: "closed", metadata: {} },
+      { id: "TASK-101", title: "Open follow-up", status: "open", metadata: {} },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 0,
+      checked: 1,
+      results: [],
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      expect.anything(),
+      "default",
+    );
+  });
+
+  it("emits followups.completed when every follow-up is closed and resumes the original task", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-093",
+        title: "Original task",
+        status: "blocked",
+        metadata: {
+          lifecycle_phase: "followup_blocked",
+          last_run_decision_required: true,
+          decision_subtask_id: "DEC-1",
+          followup_task_ids: ["TASK-100", "TASK-101"],
+        },
+      },
+      { id: "TASK-100", title: "Done follow-up", status: "closed", metadata: {} },
+      { id: "TASK-101", title: "Resolved follow-up", status: "resolved", metadata: {} },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-093",
+          newStatus: "followups_completed",
+          reason: "all follow-up tasks are complete",
+        }),
+      ],
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-093",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "resuming",
+          last_run_decision_required: false,
+          decision_subtask_id: undefined,
+          followup_task_ids: [],
+        }),
+      },
+      "default",
+    );
   });
 });

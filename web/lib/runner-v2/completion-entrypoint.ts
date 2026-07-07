@@ -1,12 +1,15 @@
+import { spawnSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
+import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
 import { eventMatchesRunId, parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
-import { readRunJson, updateRunAgent, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import { captureHash, monitorStatePaths } from "@/lib/runner-v2/monitor-io";
+import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
 import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
@@ -116,6 +119,12 @@ export function runRunnerV2CompletionEntrypoint(
   const completionChainId = resolveCompletionChainId(run, chain);
   const completionChainName = chain.name || completionChainId || "unknown";
   const maxRounds = numberValue(chain.config?.max_rounds);
+  const liveness = resolveCompletionLiveness({
+    sessionName: input.sessionName,
+    env,
+    run,
+    agentId: agent.id,
+  });
   const qualityGate = maybeHandleQualityGateFailure({
     run,
     runDir,
@@ -181,6 +190,7 @@ export function runRunnerV2CompletionEntrypoint(
       },
       generation: generationImportPlan(run, runDir, env),
       fanGroup,
+      liveness,
       retry: {
         policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
         currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,
@@ -192,6 +202,18 @@ export function runRunnerV2CompletionEntrypoint(
         debug: env.DEBUG === "1" || env.MENTIKO_DEBUG === "1",
       },
     });
+    if (pipeline.decision.action === "await-liveness") {
+      if (!input.dryRun) {
+        recordCompletionLivenessExtension({
+          runJsonPath,
+          agentId: agent.id,
+          decision: pipeline.decision.liveness,
+          now: input.now,
+        });
+      }
+    } else if (liveness && !input.dryRun) {
+      clearCompletionLivenessExtension(runJsonPath, agent.id);
+    }
 
     const plan = buildTypedExecutorPlan({
       pipeline,
@@ -241,7 +263,7 @@ export function runRunnerV2CompletionEntrypoint(
 
     if (input.dryRun) {
       restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
-    } else {
+    } else if (pipeline.decision.action !== "await-liveness") {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself.
       // Runs for every handled verdict — v1 kills sessions unconditionally in
@@ -443,6 +465,182 @@ function resolveRunDir(env: NodeJS.ProcessEnv | Record<string, string | undefine
 
 function resolveEventsDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, chainPath: string): string {
   return env.EVENTS_DIR || join(dirname(chainPath), "events");
+}
+
+function resolveCompletionLiveness(input: {
+  sessionName: string;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  run: RunRecord;
+  agentId: string;
+}): AgentLivenessInput | undefined {
+  const sessionAlive = ptySessionAlive(input.sessionName, input.env);
+  if (sessionAlive === undefined) return undefined;
+
+  const maxExtensions = positiveIntValue(input.env.MENTIKO_RUNNER_V2_COMPLETION_MAX_EXTENSIONS, 6);
+  const extensionCount = completionLivenessExtensionCount(input.run, input.agentId);
+  if (!sessionAlive) {
+    return { sessionAlive: false, extensionCount, maxExtensions };
+  }
+
+  const info = ptySessionInfo(input.sessionName, input.env);
+  const processAlive = processIdAlive(numberValue(info?.childPid) || numberValue(info?.pid));
+  const outputChanged = ptyOutputChangedSinceMonitorCheck(input.sessionName, input.env);
+
+  return {
+    sessionAlive: true,
+    processAlive,
+    outputChanged,
+    extensionCount,
+    maxExtensions,
+  };
+}
+
+function ptySessionAlive(
+  sessionName: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): boolean | undefined {
+  const result = runPtyMgr(env, ["alive", sessionName]);
+  if (!result) return undefined;
+  if (result.status !== 0) return undefined;
+  const out = result.stdout.trim().toLowerCase();
+  if (out === "alive") return true;
+  if (out === "dead") return false;
+  return undefined;
+}
+
+function ptySessionInfo(
+  sessionName: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): Record<string, unknown> | undefined {
+  const result = runPtyMgr(env, ["info", sessionName]);
+  if (!result || result.status !== 0) return undefined;
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    return objectValue(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function ptyOutputChangedSinceMonitorCheck(
+  sessionName: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): boolean {
+  const stateDir = env.MENTIKO_MONITOR_STATE_DIR;
+  const statePath = monitorStatePaths(sessionName, stateDir).state;
+  if (!existsSync(statePath)) return false;
+
+  const previous = readFileSync(statePath, "utf8").trim();
+  if (!previous) return false;
+
+  const result = runPtyMgr(env, ["capture", sessionName, "20"]);
+  if (!result || result.status !== 0) return false;
+  return captureHash(result.stdout, 20) !== previous;
+}
+
+function runPtyMgr(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  args: string[],
+): { status: number | null; stdout: string; stderr: string } | undefined {
+  const result = spawnSync(resolvePtyMgrBin(env), args, {
+    encoding: "utf8",
+    timeout: positiveIntValue(env.MENTIKO_RUNNER_V2_PTY_PROBE_TIMEOUT_MS, 2_000),
+    env: stringEnv({
+      ...process.env,
+      ...env,
+    }),
+  });
+  if (result.error) return undefined;
+  return {
+    status: result.status,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+  };
+}
+
+function resolvePtyMgrBin(env: NodeJS.ProcessEnv | Record<string, string | undefined>): string {
+  const explicit = env.PTY_MGR_BIN || env.MENTIKO_PTY_MGR_BIN;
+  if (explicit) return explicit;
+  const codeRoot = env.MENTIKO_CODE_ROOT || process.env.MENTIKO_CODE_ROOT;
+  return codeRoot ? join(codeRoot, "bin", "pty-mgr") : "pty-mgr";
+}
+
+function positiveIntValue(value: unknown, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function stringEnv(env: Record<string, string | undefined>): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV || "test" };
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
+function processIdAlive(pid: number | undefined): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function completionLivenessExtensionCount(run: RunRecord, agentId: string): number {
+  const runnerV2 = objectValue(run.runnerV2);
+  const liveness = objectValue(runnerV2?.completionLiveness);
+  const agent = objectValue(liveness?.[agentId]);
+  return numberValue(agent?.extensions) || 0;
+}
+
+function recordCompletionLivenessExtension(input: {
+  runJsonPath: string;
+  agentId: string;
+  decision: { disposition: string; reason: string };
+  now?: Date;
+}): RunRecord {
+  return updateRunJson(input.runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${input.runJsonPath}`);
+    const runnerV2 = objectValue(current.runnerV2) || {};
+    const liveness = objectValue(runnerV2.completionLiveness) || {};
+    const previous = objectValue(liveness[input.agentId]);
+    return {
+      ...current,
+      runnerV2: {
+        ...runnerV2,
+        completionLiveness: {
+          ...liveness,
+          [input.agentId]: {
+            extensions: (numberValue(previous?.extensions) || 0) + 1,
+            disposition: input.decision.disposition,
+            reason: input.decision.reason,
+            checkedAt: (input.now || new Date()).toISOString(),
+          },
+        },
+      },
+    };
+  });
+}
+
+function clearCompletionLivenessExtension(runJsonPath: string, agentId: string): RunRecord {
+  return updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const runnerV2 = objectValue(current.runnerV2);
+    const liveness = objectValue(runnerV2?.completionLiveness);
+    if (!runnerV2 || !liveness || !(agentId in liveness)) return current;
+
+    const nextLiveness = { ...liveness };
+    delete nextLiveness[agentId];
+    return {
+      ...current,
+      runnerV2: {
+        ...runnerV2,
+        completionLiveness: nextLiveness,
+      },
+    };
+  });
 }
 
 function readJsonObject(path: string): Record<string, unknown> | undefined {

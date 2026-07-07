@@ -71,7 +71,7 @@ test("nonRetryable failure summarizes immediately regardless of budget", () => {
 });
 
 test("duplicate execution.failed for same fingerprint is idempotent (no effects)", () => {
-  const s = baseState({ executionRetryCount: 1, summarizedFingerprints: ["failed:1"] });
+  const s = baseState({ currentRunId: "run-1", executionRetryCount: 1, summarizedFingerprints: ["run-1::failed:1"] });
   const r = reduceTaskLifecycle(s, {
     type: "execution.failed",
     taskId: "TASK-093",
@@ -81,6 +81,25 @@ test("duplicate execution.failed for same fingerprint is idempotent (no effects)
   });
   expect(r.effects).toEqual([]);
   expect(r.state.executionRetryCount).toBe(1); // not double-incremented
+});
+
+test("legacy fingerprint-only failure does not suppress a different run with the same fingerprint", () => {
+  const s = baseState({
+    currentRunId: "run-1",
+    executionRetryCount: 1,
+    summarizedFingerprints: ["failed:no-terminal-time"],
+  });
+  const r = reduceTaskLifecycle(s, {
+    type: "execution.failed",
+    taskId: "TASK-093",
+    runId: "run-2",
+    fingerprint: "failed:no-terminal-time",
+    reason: "agent failed",
+  });
+  expect(r.effects).toEqual([
+    { type: "retry_execution", taskId: "TASK-093", previousRunId: "run-2", reason: "agent failed" },
+  ]);
+  expect(r.state.executionRetryCount).toBe(2);
 });
 
 test("fail -> start -> fail -> start -> fail reaches summary on the 3rd attempt", () => {
@@ -127,18 +146,40 @@ test("execution.completed starts outcome summary with authoritative source run +
     type: "execution.completed", taskId: "TASK-093", runId: "run-NEW", fingerprint: "ok:new",
   });
   expect(r.state.phase).toBe("summarizing");
-  expect(r.state.summarizedFingerprints).toContain("ok:new");
+  expect(r.state.summarizedFingerprints).toContain("run-NEW::ok:new");
   expect(r.effects).toEqual([
     { type: "start_outcome_summary", taskId: "TASK-093", sourceRunId: "run-NEW", fingerprint: "ok:new" },
   ]);
 });
 
 test("duplicate execution.completed for same fingerprint does not re-summarize", () => {
-  const s = baseState({ phase: "summarizing", summarizedFingerprints: ["ok:1"] });
+  const s = baseState({ phase: "summarizing", summarizedFingerprints: ["run-1::ok:1"] });
   const r = reduceTaskLifecycle(s, {
     type: "execution.completed", taskId: "TASK-093", runId: "run-1", fingerprint: "ok:1",
   });
   expect(r.effects).toEqual([]); // C4: idempotent
+});
+
+test("legacy fingerprint-only completion does not suppress a different run with the same fingerprint", () => {
+  const s = baseState({
+    phase: "summarizing",
+    currentRunId: "run-1",
+    summarizedFingerprints: ["completed:no-terminal-time"],
+  });
+  const r = reduceTaskLifecycle(s, {
+    type: "execution.completed",
+    taskId: "TASK-093",
+    runId: "run-2",
+    fingerprint: "completed:no-terminal-time",
+  });
+  expect(r.effects).toEqual([
+    {
+      type: "start_outcome_summary",
+      taskId: "TASK-093",
+      sourceRunId: "run-2",
+      fingerprint: "completed:no-terminal-time",
+    },
+  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,7 +219,7 @@ test("execution.started is a no-op when a run is already running (concurrency gu
 
 test("summary verdict=close closes and scans unblocked tasks", () => {
   const r = reduceTaskLifecycle(baseState({ phase: "summarizing" }), {
-    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", verdict: "close",
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", fingerprint: "completed:f1", verdict: "close",
   });
   expect(r.state.phase).toBe("closing");
   expect(r.effects).toEqual([
@@ -190,7 +231,7 @@ test("summary verdict=close closes and scans unblocked tasks", () => {
 test("summary verdict=retry increments the counter (bounded loop)", () => {
   const s = baseState({ phase: "summarizing", executionRetryCount: 0 });
   const r = reduceTaskLifecycle(s, {
-    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", verdict: "retry",
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", fingerprint: "completed:f1", verdict: "retry",
   });
   expect(r.state.executionRetryCount).toBe(1); // C2: must increment, else infinite
   expect(r.effects[0].type).toBe("retry_execution");
@@ -200,31 +241,42 @@ test("summary verdict=retry increments the counter (bounded loop)", () => {
 test("summary verdict=retry at budget creates a decision gate instead of looping", () => {
   const s = baseState({ phase: "summarizing", executionRetryCount: 2 });
   const r = reduceTaskLifecycle(s, {
-    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-9", verdict: "retry",
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-9", fingerprint: "failed:f9", verdict: "retry",
   });
   expect(r.state.phase).toBe("decision_blocked");
   expect(r.effects[0].type).toBe("create_decision_gate");
-  expect(r.state.gatedFingerprints).toContain("run-9"); // gate recorded in same transition
+  expect(r.state.gatedFingerprints).toContain("run-9::failed:f9"); // gate recorded in same transition
 });
 
 test("summary verdict=decision creates a decision gate and records the gate fingerprint", () => {
   const s = baseState({ phase: "summarizing" });
   const r = reduceTaskLifecycle(s, {
-    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", verdict: "decision",
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-1", sourceRunId: "run-1", fingerprint: "completed:f1", verdict: "decision",
   });
   expect(r.state.phase).toBe("decision_blocked");
   expect(r.effects).toEqual([
-    { type: "create_decision_gate", taskId: "TASK-093", sourceRunId: "run-1", fingerprint: "" },
+    { type: "create_decision_gate", taskId: "TASK-093", sourceRunId: "run-1", fingerprint: "completed:f1" },
   ]);
-  expect(r.state.gatedFingerprints).toContain("run-1");
+  expect(r.state.gatedFingerprints).toContain("run-1::completed:f1");
 });
 
-test("second decision verdict for an already-gated source reuses the existing gate", () => {
-  const s = baseState({ phase: "decision_blocked", gatedFingerprints: ["run-1"] });
+test("second decision verdict for an already-gated source fingerprint reuses the existing gate", () => {
+  const s = baseState({ phase: "decision_blocked", gatedFingerprints: ["run-1::completed:f1"] });
   const r = reduceTaskLifecycle(s, {
-    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-2", sourceRunId: "run-1", verdict: "decision",
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-2", sourceRunId: "run-1", fingerprint: "completed:f1", verdict: "decision",
   });
   expect(r.effects).toEqual([]); // no duplicate gate
+});
+
+test("decision verdict for same source with a newer fingerprint creates a fresh gate", () => {
+  const s = baseState({ phase: "decision_blocked", gatedFingerprints: ["run-1::completed:old"] });
+  const r = reduceTaskLifecycle(s, {
+    type: "summary.completed", taskId: "TASK-093", summaryRunId: "sum-2", sourceRunId: "run-1", fingerprint: "completed:new", verdict: "decision",
+  });
+  expect(r.effects).toEqual([
+    { type: "create_decision_gate", taskId: "TASK-093", sourceRunId: "run-1", fingerprint: "completed:new" },
+  ]);
+  expect(r.state.gatedFingerprints).toContain("run-1::completed:new");
 });
 
 // ---------------------------------------------------------------------------

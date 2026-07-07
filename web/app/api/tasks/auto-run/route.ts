@@ -33,6 +33,7 @@ import {
 import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     throw new Unauthorized();
   }
 
-  const settings = readSystemSettings();
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  const settings = readSystemSettings(namespaceId);
   if (!settings.auto_run_enabled) {
     return apiSuccess({
       auto_run_enabled: false,
@@ -57,7 +59,6 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     });
   }
 
-  const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
   const candidates = getAutoRunCandidates(orgId, undefined, namespaceId);
   const activeRuns = countActiveRuns(namespaceId);
@@ -290,11 +291,12 @@ async function resumeExistingRun(
     taskUpdate(orgId, taskId, {
       status: "in_progress",
       metadata: {
-        ...existingMeta,
-        last_run_id: runId,
-        last_run_status: "running",
-        last_run_error: undefined,
-        last_run_completed: null,
+        ...executionStartedLifecycleMetadata({
+          taskId,
+          metadata: existingMeta,
+          runId,
+          chainId: typeof existingMeta.chain_id === "string" ? existingMeta.chain_id : undefined,
+        }),
       },
     }, namespaceId);
   } catch {
@@ -510,7 +512,7 @@ async function triggerAutoRun(
   if (workspaceId && !workspacePath) {
     const workspace = getWorkspace(namespaceId, orgId, workspaceId);
     if (workspace) {
-      const settings = readSystemSettings();
+      const settings = readSystemSettings(namespaceId);
       const allowed = resolveAutoRun(workspace, settings.auto_run_enabled);
       if (!allowed) {
         return {
@@ -1014,10 +1016,12 @@ async function startChainRun(
       : taskMetadata || {};
     taskUpdate(orgId, taskId, {
       metadata: {
-        ...existingMeta,
-        last_run_id: runData.data.runId,
-        last_run_status: "running",
-        last_run_error: undefined,
+        ...executionStartedLifecycleMetadata({
+          taskId,
+          metadata: existingMeta,
+          runId: runData.data.runId,
+          chainId,
+        }),
         auto_run_retries: 0,
       },
     }, namespaceId);

@@ -104,6 +104,8 @@ describe("POST /api/tasks/[id]/outcome-summary", () => {
       issue_type: "task",
       metadata: {
         last_run_id: "run-source",
+        auto_run_retries: 0,
+        execution_retries: 2,
         task_outcome_summary: { audit: { verdict: "decision" } },
         task_outcome_summary_completed_at: "2026-07-06T20:00:00.000Z",
       },
@@ -143,6 +145,42 @@ describe("POST /api/tasks/[id]/outcome-summary", () => {
       },
       "default",
     );
+  });
+
+  it("rejects a failed execution summary while execution retries remain", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Summarize me",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        last_run_id: "run-source",
+        auto_run_retries: 99,
+        execution_retries: 1,
+      },
+    });
+    mockExistsSync.mockImplementation((path: string) => path.includes("/tmp/mentiko-runs/run-source"));
+    mockReadFileSync.mockImplementation((path: string) => {
+      if (path.endsWith("run.json")) {
+        return JSON.stringify({
+          id: "run-source",
+          taskId: "TASK-1",
+          status: "failed",
+          chainId: "execution-chain",
+          completed: "2026-07-06T20:00:00.000Z",
+        });
+      }
+      return JSON.stringify({ ok: true });
+    });
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "TASK-1" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockCreateJob).not.toHaveBeenCalled();
+    expect(mockStartGenerationChainRun).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
   it("starts a new audit when the same run has a different terminal fingerprint and includes disk artifacts", async () => {
@@ -209,6 +247,71 @@ describe("POST /api/tasks/[id]/outcome-summary", () => {
           task_outcome_summary_run_fingerprint: "completed:2026-07-06T20:08:02.554Z",
           task_outcome_summary: undefined,
           task_outcome_summary_completed_at: undefined,
+        }),
+      },
+      "default",
+    );
+  });
+
+  it("records lifecycle metadata when an audit job is already running", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Summarize me",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        last_run_id: "run-source",
+      },
+    });
+    mockExistsSync.mockImplementation((path: string) => path.includes("/tmp/mentiko-runs/run-source"));
+    mockReadFileSync.mockImplementation((path: string) => {
+      if (path.endsWith("run.json")) {
+        return JSON.stringify({
+          id: "run-source",
+          taskId: "TASK-1",
+          status: "completed",
+          chainId: "execution-chain",
+          completed: "2026-07-06T20:08:02.554Z",
+        });
+      }
+      return JSON.stringify({ ok: true });
+    });
+    mockListJobs.mockReturnValue([
+      {
+        id: "job-existing",
+        type: "task_run_summary",
+        runId: "run-summary",
+        input: { sourceRunId: "run-source" },
+      },
+    ]);
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "TASK-1" }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      status: "running",
+      jobId: "job-existing",
+      runId: "run-summary",
+      sourceRunId: "run-source",
+    });
+    expect(mockCreateJob).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      {
+        metadata: expect.objectContaining({
+          lifecycle_phase: "summarizing",
+          task_outcome_summary_job_id: "job-existing",
+          task_outcome_summary_status: "running",
+          task_outcome_summary_run_id: "run-summary",
+          task_outcome_summary_source_run_id: "run-source",
+          task_outcome_summary_run_fingerprint: "completed:2026-07-06T20:08:02.554Z",
+          summarized_run_fingerprints: expect.arrayContaining([
+            "run-source::completed:2026-07-06T20:08:02.554Z",
+          ]),
         }),
       },
       "default",

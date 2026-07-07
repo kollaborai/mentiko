@@ -14,6 +14,8 @@ interface CreateTaskDecisionInput {
   source: string;
   workspacePath?: string;
   parentTaskId?: string;
+  sourceRunId?: string;
+  runFingerprint?: string;
 }
 
 interface CreateTaskDecisionResult {
@@ -32,6 +34,8 @@ export async function createTaskDecision({
   source,
   workspacePath,
   parentTaskId,
+  sourceRunId,
+  runFingerprint,
 }: CreateTaskDecisionInput): Promise<CreateTaskDecisionResult> {
   // The completion-audit path hands us a fully composed decision prompt; the
   // Generate-Task path hands us a raw user request that still needs the decision
@@ -67,6 +71,12 @@ export async function createTaskDecision({
         decision_status: decision.status,
         decision_source: source,
         ...(parentTaskId ? { decision_parent_task_id: parentTaskId } : {}),
+        ...(source === "completion-audit" && sourceRunId
+          ? { completion_audit_source_run_id: sourceRunId }
+          : {}),
+        ...(source === "completion-audit" && runFingerprint
+          ? { completion_audit_run_fingerprint: runFingerprint }
+          : {}),
       },
     },
     namespaceId,

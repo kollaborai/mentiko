@@ -43,6 +43,8 @@ describe("createTaskDecision prompt framing", () => {
       prompt: composed,
       source: "completion-audit",
       parentTaskId: "FEAT-019",
+      sourceRunId: "run-source",
+      runFingerprint: "completed:f1",
     });
 
     // the decision record gets the prompt UNCHANGED (no Generate-Task wrapper)
@@ -59,6 +61,13 @@ describe("createTaskDecision prompt framing", () => {
     );
     expect(taskFields.description).toBe(composed);
     expect(taskFields.parent_id).toBe("FEAT-019");
+    expect(taskFields.metadata).toEqual(expect.objectContaining({
+      decision_id: "dec-1",
+      decision_source: "completion-audit",
+      decision_parent_task_id: "FEAT-019",
+      completion_audit_source_run_id: "run-source",
+      completion_audit_run_fingerprint: "completed:f1",
+    }));
   });
 
   it("task-generate: wraps the raw ask in the decision framing", async () => {

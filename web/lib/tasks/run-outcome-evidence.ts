@@ -52,6 +52,15 @@ export function currentRunTerminalFingerprint(
   return [status, completed || updatedAt || "no-terminal-time"].join(":");
 }
 
+export function currentRunStatus(
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+): string {
+  const run = metadataRecord(readJsonFile(join(runDirPath(namespaceId, orgId, runId), "run.json")));
+  return typeof run.status === "string" ? run.status : "unknown";
+}
+
 const NON_EXECUTION_CHAIN_IDS = new Set([
   "run-summary-generation",
   "chain-recommendation",

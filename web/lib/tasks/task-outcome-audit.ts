@@ -11,22 +11,29 @@ import { taskGet, taskUpdate, validateTaskId } from "@/lib/tasks/task-store";
 import {
   currentRunArtifacts,
   currentRunSummary,
+  currentRunStatus,
   currentRunTerminalFingerprint,
   isOutcomeSummaryExecutionSource,
   metadataRecord,
 } from "@/lib/tasks/run-outcome-evidence";
+import { hasExecutionRetriesRemaining } from "@/lib/tasks/execution-retry-policy";
+import { taskLifecycleRunFingerprintKey } from "@/lib/orchestration/task-lifecycle-types";
 
 export interface StartTaskOutcomeAuditInput {
   request: Request;
   namespaceId: string;
   orgId: string;
   taskId: string;
+  /** Explicit source execution run. Authoritative when provided by lifecycle effects. */
+  sourceRunId?: string;
+  /** Explicit terminal fingerprint for sourceRunId. Authoritative when provided by lifecycle effects. */
+  runFingerprint?: string;
   /** Optional acting user id (omitted for autonomous/system triggers). */
   userId?: string;
 }
 
 export interface StartTaskOutcomeAuditResult {
-  status: "no_run" | "already_exists" | "running" | "started";
+  status: "no_run" | "retry_pending" | "already_exists" | "running" | "started";
   jobId?: string;
   runId?: string;
   sourceRunId?: string;
@@ -48,10 +55,22 @@ export async function startTaskOutcomeAudit(
   if (!task) return { status: "no_run" };
 
   const metadata = metadataRecord(task.metadata);
-  const sourceRunId = typeof metadata.last_run_id === "string" ? metadata.last_run_id : "";
+  const sourceRunId =
+    typeof input.sourceRunId === "string" && input.sourceRunId.length > 0
+      ? input.sourceRunId
+      : typeof metadata.last_run_id === "string"
+        ? metadata.last_run_id
+        : "";
   if (!sourceRunId) return { status: "no_run" };
   if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) return { status: "no_run" };
-  const runFingerprint = currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId);
+  const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId);
+  if (hasExecutionRetriesRemaining(metadata, runStatus)) {
+    return { status: "retry_pending", sourceRunId };
+  }
+  const runFingerprint =
+    typeof input.runFingerprint === "string" && input.runFingerprint.length > 0
+      ? input.runFingerprint
+      : currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId);
   const auditedFingerprint =
     typeof metadata.task_outcome_summary_run_fingerprint === "string"
       ? metadata.task_outcome_summary_run_fingerprint
@@ -65,9 +84,15 @@ export async function startTaskOutcomeAudit(
     auditedFingerprint === runFingerprint &&
     metadata.task_outcome_summary
   ) {
+    taskUpdate(orgId, taskId, {
+      metadata: outcomeAuditLifecycleMetadata(metadata, sourceRunId, runFingerprint),
+    }, namespaceId);
     return { status: "already_exists", sourceRunId };
   }
   if (metadata.completion_audit_run_id === sourceRunId && auditedFingerprint === runFingerprint) {
+    taskUpdate(orgId, taskId, {
+      metadata: outcomeAuditLifecycleMetadata(metadata, sourceRunId, runFingerprint),
+    }, namespaceId);
     return { status: "already_exists", sourceRunId };
   }
 
@@ -75,10 +100,17 @@ export async function startTaskOutcomeAudit(
   const existingJob = listJobs({ taskId, status: "running" }, namespaceId)
     .find((job) => job.type === "task_run_summary" && job.input?.sourceRunId === sourceRunId);
   if (existingJob) {
+    taskUpdate(orgId, taskId, {
+      metadata: outcomeAuditLifecycleMetadata(metadata, sourceRunId, runFingerprint, {
+        task_outcome_summary_job_id: existingJob.id,
+        task_outcome_summary_status: "running",
+        task_outcome_summary_run_id: existingJob.runId,
+      }),
+    }, namespaceId);
     return { status: "running", jobId: existingJob.id, runId: existingJob.runId, sourceRunId };
   }
 
-  const workspacePath = typeof metadata.workspace_path === "string" ? metadata.workspace_path : undefined;
+  const workspacePath = task.workspace_id || (typeof metadata.workspace_path === "string" ? metadata.workspace_path : undefined);
   const runSummary = currentRunSummary(namespaceId, orgId, sourceRunId, metadata.last_run_summary);
   const runArtifacts = currentRunArtifacts(namespaceId, orgId, sourceRunId, metadata.last_run_artifacts);
   const generationFlow = {
@@ -129,16 +161,13 @@ export async function startTaskOutcomeAudit(
   );
 
   taskUpdate(orgId, taskId, {
-    metadata: {
-      ...metadata,
+    metadata: outcomeAuditLifecycleMetadata(metadata, sourceRunId, runFingerprint, {
       task_outcome_summary_job_id: job.id,
       task_outcome_summary_status: "running",
-      task_outcome_summary_source_run_id: sourceRunId,
-      task_outcome_summary_run_fingerprint: runFingerprint,
       task_outcome_summary: undefined,
       task_outcome_summary_completed_at: undefined,
       task_outcome_summary_error: undefined,
-    },
+    }),
   }, namespaceId);
 
   try {
@@ -157,35 +186,59 @@ export async function startTaskOutcomeAudit(
     });
 
     const latest = taskGet(orgId, taskId, namespaceId);
+    const latestMetadata = metadataRecord(latest?.metadata);
     taskUpdate(orgId, taskId, {
-      metadata: {
-        ...metadataRecord(latest?.metadata),
+      metadata: outcomeAuditLifecycleMetadata(latestMetadata, sourceRunId, runFingerprint, {
         task_outcome_summary_job_id: job.id,
         task_outcome_summary_status: "running",
         task_outcome_summary_run_id: run.runId,
         task_outcome_summary_chain_id: run.chainId,
-        task_outcome_summary_source_run_id: sourceRunId,
-        task_outcome_summary_run_fingerprint: runFingerprint,
         task_outcome_summary: undefined,
         task_outcome_summary_completed_at: undefined,
-      },
+      }),
     }, namespaceId);
 
     return { status: "started", jobId: job.id, runId: run.runId, sourceRunId };
   } catch (error) {
     const latest = taskGet(orgId, taskId, namespaceId);
+    const latestMetadata = metadataRecord(latest?.metadata);
     taskUpdate(orgId, taskId, {
-      metadata: {
-        ...metadataRecord(latest?.metadata),
+      metadata: outcomeAuditLifecycleMetadata(latestMetadata, sourceRunId, runFingerprint, {
         task_outcome_summary_job_id: job.id,
         task_outcome_summary_status: "failed",
-        task_outcome_summary_source_run_id: sourceRunId,
-        task_outcome_summary_run_fingerprint: runFingerprint,
         task_outcome_summary: undefined,
         task_outcome_summary_completed_at: undefined,
         task_outcome_summary_error: error instanceof Error ? error.message : String(error),
-      },
+      }),
     }, namespaceId);
     throw error;
   }
+}
+
+function withLifecycleFingerprint(
+  metadata: Record<string, unknown>,
+  sourceRunId: string,
+  runFingerprint: string,
+): string[] {
+  const existing = Array.isArray(metadata.summarized_run_fingerprints)
+    ? metadata.summarized_run_fingerprints.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  const key = taskLifecycleRunFingerprintKey(sourceRunId, runFingerprint);
+  return existing.includes(key) ? existing : [...existing, key];
+}
+
+function outcomeAuditLifecycleMetadata(
+  metadata: Record<string, unknown>,
+  sourceRunId: string,
+  runFingerprint: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...metadata,
+    ...extra,
+    task_outcome_summary_source_run_id: sourceRunId,
+    task_outcome_summary_run_fingerprint: runFingerprint,
+    summarized_run_fingerprints: withLifecycleFingerprint(metadata, sourceRunId, runFingerprint),
+    lifecycle_phase: "summarizing",
+  };
 }

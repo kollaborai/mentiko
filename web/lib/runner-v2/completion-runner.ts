@@ -66,7 +66,7 @@ export interface AgentLivenessInput {
 }
 
 export interface AgentLivenessDecision {
-  disposition: "working" | "silent-timeout" | "dead";
+  disposition: "working" | "grace" | "silent-timeout" | "dead";
   reason: string;
 }
 
@@ -95,7 +95,7 @@ export function evaluateAgentLiveness(input?: AgentLivenessInput): AgentLiveness
     return { disposition: "working", reason: "completion session still active" };
   }
 
-  return { disposition: "silent-timeout", reason: "completion session alive but silent" };
+  return { disposition: "grace", reason: "completion session alive but silent; bounded grace active" };
 }
 
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
@@ -114,7 +114,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
 
   if (!match.matched || !match.event) {
     const liveness = evaluateAgentLiveness(input.liveness);
-    if (liveness.disposition === "working") {
+    if (liveness.disposition === "working" || liveness.disposition === "grace") {
       return {
         action: "await-liveness",
         reason: match.reason || "no matching completion event",

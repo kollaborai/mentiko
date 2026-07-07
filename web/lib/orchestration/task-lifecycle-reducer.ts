@@ -14,6 +14,7 @@ import type {
   TaskLifecycleState,
   TaskLifecycleTransition,
 } from "./task-lifecycle-types";
+import { taskLifecycleRunFingerprintKey } from "./task-lifecycle-types";
 
 /** No transition — echo the current state with no effects. */
 function noop(state: TaskLifecycleState): TaskLifecycleTransition {
@@ -26,12 +27,40 @@ function withValue(list: string[], value: string): string[] {
 }
 
 /**
+ * New persisted dedupe shape is run-scoped: `${runId}::${fingerprint}`. A bare
+ * legacy fingerprint is honored only when it belongs to the state's current run;
+ * it must never suppress a different run that happens to produce the same
+ * low-info fingerprint (for example failed:no-terminal-time).
+ */
+function hasRunFingerprint(state: TaskLifecycleState, runId: string, fingerprint: string): boolean {
+  const scoped = taskLifecycleRunFingerprintKey(runId, fingerprint);
+  return (
+    state.summarizedFingerprints.includes(scoped) ||
+    (state.currentRunId === runId && state.summarizedFingerprints.includes(fingerprint))
+  );
+}
+
+function withRunFingerprint(state: TaskLifecycleState, runId: string, fingerprint: string): string[] {
+  return withValue(state.summarizedFingerprints, taskLifecycleRunFingerprintKey(runId, fingerprint));
+}
+
+/**
  * Gate key for dedup. When reconcile computes a per-run terminal fingerprint we
- * key on it; when only the source run id is known (summary verdicts carry no
- * fingerprint) we key on the run id. Either way one live gate per source run.
+ * key on `(sourceRunId, fingerprint)`; when only the source run id is known
+ * (summary verdicts carry no fingerprint) we key on the run id. Either way one
+ * live gate per source run.
  */
 function gateKey(sourceRunId: string, fingerprint: string): string {
-  return fingerprint || sourceRunId;
+  return fingerprint ? taskLifecycleRunFingerprintKey(sourceRunId, fingerprint) : sourceRunId;
+}
+
+function hasGateKey(state: TaskLifecycleState, sourceRunId: string, fingerprint: string): boolean {
+  const key = gateKey(sourceRunId, fingerprint);
+  return (
+    state.gatedFingerprints.includes(key) ||
+    state.gatedFingerprints.includes(sourceRunId) ||
+    (fingerprint.length > 0 && state.currentRunId === sourceRunId && state.gatedFingerprints.includes(fingerprint))
+  );
 }
 
 /**
@@ -47,7 +76,7 @@ function createDecisionGate(
 ): TaskLifecycleTransition {
   const key = gateKey(sourceRunId, fingerprint);
   // Reuse existing gate: already gated by fingerprint OR by source run id.
-  if (state.gatedFingerprints.includes(key) || state.gatedFingerprints.includes(sourceRunId)) {
+  if (hasGateKey(state, sourceRunId, fingerprint)) {
     return { state: { ...state, phase: "decision_blocked" }, effects: [] };
   }
   return {
@@ -125,7 +154,7 @@ export function reduceTaskLifecycle(
     // -----------------------------------------------------------------------
     case "execution.completed": {
       // Dedup on the terminal fingerprint (reconcile re-polls the same run, C4).
-      if (state.summarizedFingerprints.includes(event.fingerprint)) {
+      if (hasRunFingerprint(state, event.runId, event.fingerprint)) {
         return noop(state);
       }
       return {
@@ -134,7 +163,7 @@ export function reduceTaskLifecycle(
           phase: "summarizing",
           currentRunId: event.runId,
           currentRunStatus: "completed",
-          summarizedFingerprints: withValue(state.summarizedFingerprints, event.fingerprint),
+          summarizedFingerprints: withRunFingerprint(state, event.runId, event.fingerprint),
         },
         // Authoritative: the audit MUST use this source run + fingerprint, not
         // metadata.last_run_id.
@@ -150,7 +179,7 @@ export function reduceTaskLifecycle(
     case "execution.failed": {
       // Idempotent on the terminal fingerprint: a re-polled failed run does
       // nothing once already consumed (retried or summarized).
-      if (state.summarizedFingerprints.includes(event.fingerprint)) {
+      if (hasRunFingerprint(state, event.runId, event.fingerprint)) {
         return noop(state);
       }
 
@@ -163,7 +192,7 @@ export function reduceTaskLifecycle(
             currentRunId: event.runId,
             currentRunStatus: "failed",
             lastError: event.reason,
-            summarizedFingerprints: withValue(state.summarizedFingerprints, event.fingerprint),
+            summarizedFingerprints: withRunFingerprint(state, event.runId, event.fingerprint),
           },
           effects: [
             { type: "start_outcome_summary", taskId: state.taskId, sourceRunId: event.runId, fingerprint: event.fingerprint },
@@ -182,7 +211,7 @@ export function reduceTaskLifecycle(
             lastError: event.reason,
             executionRetryCount: state.executionRetryCount + 1,
             // Consume the fingerprint so a re-poll of this same failed run is a no-op.
-            summarizedFingerprints: withValue(state.summarizedFingerprints, event.fingerprint),
+            summarizedFingerprints: withRunFingerprint(state, event.runId, event.fingerprint),
           },
           effects: [
             { type: "retry_execution", taskId: state.taskId, previousRunId: event.runId, reason: event.reason },
@@ -198,7 +227,7 @@ export function reduceTaskLifecycle(
           currentRunId: event.runId,
           currentRunStatus: "failed",
           lastError: event.reason,
-          summarizedFingerprints: withValue(state.summarizedFingerprints, event.fingerprint),
+          summarizedFingerprints: withRunFingerprint(state, event.runId, event.fingerprint),
         },
         effects: [
           { type: "start_outcome_summary", taskId: state.taskId, sourceRunId: event.runId, fingerprint: event.fingerprint },
@@ -232,11 +261,11 @@ export function reduceTaskLifecycle(
           };
         }
         // Exhausted -> hand off to a human decision gate instead of looping.
-        return createDecisionGate(state, event.sourceRunId, "");
+        return createDecisionGate(state, event.sourceRunId, event.fingerprint);
       }
 
       // verdict === "decision"
-      return createDecisionGate(state, event.sourceRunId, "");
+      return createDecisionGate(state, event.sourceRunId, event.fingerprint);
     }
 
     // -----------------------------------------------------------------------
@@ -249,7 +278,7 @@ export function reduceTaskLifecycle(
       }
       const key = gateKey(event.sourceRunId, event.fingerprint);
       const gated =
-        state.gatedFingerprints.includes(key) || state.gatedFingerprints.includes(event.sourceRunId)
+        hasGateKey(state, event.sourceRunId, event.fingerprint)
           ? state.gatedFingerprints
           : withValue(state.gatedFingerprints, key);
       return {

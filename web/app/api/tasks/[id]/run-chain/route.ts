@@ -12,6 +12,7 @@ import { NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { taskDetailHref } from "@/lib/tasks/task-routes";
 import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import type { TaskChainBinding } from "@/lib/tasks/task-types";
+import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -146,10 +147,12 @@ export const POST = requirePermission("manage_tasks")(async (
     // 5. pre-generate runId and update task status + metadata FIRST
     const runId = `run-${Date.now()}`;
     const updatedMeta = {
-      ...metadata,
-      last_run_id: runId,
-      last_run_status: "running",
-      last_run_error: undefined,
+      ...executionStartedLifecycleMetadata({
+        taskId: safeId,
+        metadata,
+        runId,
+        chainId: binding.chain_id,
+      }),
       auto_run_retries: 0,
     };
     taskUpdate(orgId, safeId, { status: "in_progress", metadata: updatedMeta }, namespaceId);
