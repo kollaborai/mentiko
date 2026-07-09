@@ -12,6 +12,8 @@ import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import { resolveAutoRunState, MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 type DependencyStatus = {
   id: string;
@@ -92,7 +94,7 @@ interface AutoRunCandidate {
  * @param orgId - organization ID
  * @param workspaceId - optional workspace ID filter
  */
-const MAX_AUTO_RUN_RETRIES = 3;
+// MAX_AUTO_RUN_RETRIES is imported from @/lib/tasks/auto-run-state (single source).
 
 function compareTaskIds(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
@@ -253,11 +255,16 @@ export function reconcileActiveAutoRunTasks(orgId: string, namespaceId?: string)
   const tasks = taskList(orgId, { status: "all" }, undefined, namespaceId);
   let reconciled = 0;
 
+  const wsDefaultCache = new Map<string, boolean>();
   for (const task of tasks) {
     if (task.issue_type === "epic") continue;
     if (DONE_STATUSES.has(task.status)) continue;
     const metadata = task.metadata as Record<string, unknown> | undefined;
-    if (!metadata?.auto_run) continue;
+    const enabled = resolveAutoRunState({
+      explicitAutoRun: typeof metadata?.auto_run === "boolean" ? metadata.auto_run : undefined,
+      workspaceDefault: workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache),
+    }).enabled;
+    if (!enabled) continue;
     if (reconcileTaskActiveRun(orgId, task, namespaceId).reconciled) {
       reconciled += 1;
     }
@@ -301,14 +308,18 @@ export interface AutoRunAdmission {
  * NOT start another execution. Generation state may only advance PRE-execution
  * (a generation_job_id with no chain_id yet).
  *
- * This is a PER-TASK predicate only: global policy (the auto_run_enabled namespace
- * setting) and workspace policy (resolveAutoRun) are enforced by callers, NOT here
- * -- folding those in would mean a settings read per task on every scan.
+ * Auto-run enablement is resolved here from the explicit per-task flag AND the
+ * workspace default (resolveAutoRunState) -- a task with no explicit flag still
+ * runs when its workspace defaults to on. The workspace default is fs-backed, so
+ * callers scanning many tasks pass a cached `workspaceAutoRunDefault` (see
+ * workspaceAutoRunDefaultFor); a caller that omits it gets a correct-but-uncached
+ * resolve so the gate is never wrong.
  */
 export function canAdmitAutoRun(
   task: TaskRecord,
   orgId: string,
   namespaceId?: string,
+  workspaceAutoRunDefault?: boolean,
 ): AutoRunAdmission {
   // epics don't run chains directly -- their subtasks do
   if (task.issue_type === "epic") {
@@ -319,11 +330,30 @@ export function canAdmitAutoRun(
     ? task.metadata
     : {}) as Record<string, unknown>;
 
-  if (!metadata.auto_run) {
+  const explicitAutoRun = typeof metadata.auto_run === "boolean" ? metadata.auto_run : undefined;
+  const autoRun = resolveAutoRunState({
+    explicitAutoRun,
+    // Only consult the workspace default when the task has no explicit flag: an
+    // explicit true/false wins outright, so resolving the default there would be
+    // a wasted settings/workspace read (and would double-resolve the policy that
+    // triggerAutoRun checks separately).
+    workspaceDefault: explicitAutoRun !== undefined
+      ? undefined
+      : (workspaceAutoRunDefault ?? resolveTaskAutoRunDefault({
+          namespaceId: namespaceId || "default",
+          orgId,
+          workspacePath: typeof task.workspace_id === "string" ? task.workspace_id : undefined,
+        })),
+    retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : 0,
+    userPaused: metadata.auto_run_paused === true,
+    pausedReason: typeof metadata.auto_run_paused_reason === "string" ? metadata.auto_run_paused_reason : "",
+    completed: DONE_STATUSES.has(task.status),
+  });
+
+  if (!autoRun.enabled) {
     return { admit: false, reason: "auto-run is disabled for this task", action: "auto_run_disabled" };
   }
-  const pauseReason = typeof metadata.auto_run_paused_reason === "string" ? metadata.auto_run_paused_reason.trim() : "";
-  if (metadata.auto_run_paused === true || pauseReason.length > 0) {
+  if (autoRun.userPaused) {
     return { admit: false, reason: "auto-run is paused for this task", action: "paused" };
   }
   if (metadata.last_run_decision_required === true) {
@@ -365,8 +395,7 @@ export function canAdmitAutoRun(
   }
 
   // stop retrying after MAX_AUTO_RUN_RETRIES failures to prevent infinite loops
-  const retries = (metadata.auto_run_retries as number) || 0;
-  if (retries >= MAX_AUTO_RUN_RETRIES) {
+  if (autoRun.retriesExhausted) {
     return { admit: false, reason: "max auto-run retries reached", action: "max_retries" };
   }
 
@@ -378,12 +407,33 @@ export function canAdmitAutoRun(
   return { admit: true, reason: "ready", ready };
 }
 
+/**
+ * Resolve (and cache per workspace path) whether a task's workspace defaults
+ * auto-run to on. The cache keeps a full-task scan to one settings/workspace
+ * read per workspace instead of one per task.
+ */
+function workspaceAutoRunDefaultFor(
+  task: TaskRecord,
+  orgId: string,
+  namespaceId: string | undefined,
+  cache: Map<string, boolean>,
+): boolean {
+  const wsPath = typeof task.workspace_id === "string" ? task.workspace_id : "";
+  if (!wsPath) return false;
+  const cached = cache.get(wsPath);
+  if (cached !== undefined) return cached;
+  const resolved = resolveTaskAutoRunDefault({ namespaceId: namespaceId || "default", orgId, workspacePath: wsPath });
+  cache.set(wsPath, resolved);
+  return resolved;
+}
+
 export function getAutoRunCandidates(orgId: string, workspaceId?: string, namespaceId?: string): AutoRunCandidate[] {
   const tasks = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
   const candidates: AutoRunCandidate[] = [];
+  const wsDefaultCache = new Map<string, boolean>();
 
   for (const task of tasks) {
-    const admission = canAdmitAutoRun(task, orgId, namespaceId);
+    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache));
     if (!admission.admit || !admission.ready) continue;
 
     const metadata = (task.metadata as Record<string, unknown> | undefined) || {};
