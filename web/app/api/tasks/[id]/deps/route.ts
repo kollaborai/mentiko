@@ -6,6 +6,7 @@ import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { getWorkspaceId } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { apiSuccess, apiError } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
@@ -190,7 +191,22 @@ export const GET = requirePermission("view_tasks")(async (
         childIds.has(dep.depends_on_id)
     );
 
-    return apiSuccess({ children: sortTasksByDependencyOrder(children, deps) });
+    // Enrich children with the fs-backed workspace auto-run default (cached per
+    // workspace) so client-side toTask() resolves Task.autoRun for each child --
+    // mirrors GET /api/tasks and the task detail route.
+    const sortedChildren = sortTasksByDependencyOrder(children, deps);
+    const wsDefaultCache = new Map<string, boolean>();
+    const enrichedChildren = sortedChildren.map((child) => {
+      const wsPath = typeof child.workspace_id === "string" ? child.workspace_id : "";
+      if (!wsPath) return { ...child, workspace_auto_run_default: false };
+      let wsDefault = wsDefaultCache.get(wsPath);
+      if (wsDefault === undefined) {
+        wsDefault = resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: wsPath });
+        wsDefaultCache.set(wsPath, wsDefault);
+      }
+      return { ...child, workspace_auto_run_default: wsDefault };
+    });
+    return apiSuccess({ children: enrichedChildren });
   } catch (error: unknown) {
     return apiError(error);
   }

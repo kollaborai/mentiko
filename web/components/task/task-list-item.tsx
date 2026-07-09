@@ -6,9 +6,22 @@ import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
 import type { Task } from "@/lib/tasks/task-types";
+import { resolveAutoRunState, MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
 import { WorkflowSidebarItem } from "@/components/ui/workflow-sidebar";
 
-const MAX_AUTO_RUN_RETRIES = 3;
+// Resolved auto-run state -- single source of truth (lib/tasks/auto-run-state.ts).
+// Prefer the server-resolved Task.autoRun (folds in the workspace default); fall
+// back to resolving from raw chainBinding fields via the SAME resolver so the list
+// item never disagrees with the admission gate or the detail header.
+function taskAutoRunState(task: Task) {
+  return task.autoRun ?? resolveAutoRunState({
+    explicitAutoRun: typeof task.chainBinding?.auto_run === "boolean" ? task.chainBinding.auto_run : undefined,
+    retries: task.chainBinding?.auto_run_retries,
+    userPaused: task.chainBinding?.auto_run_paused,
+    pausedReason: task.chainBinding?.auto_run_paused_reason,
+    completed: task.completed,
+  });
+}
 
 interface TaskListItemProps {
   task: Task;
@@ -30,11 +43,7 @@ function isRunRecent(lastRunId: string | undefined): boolean {
 }
 
 function getTaskAccent(task: Task): string {
-  if (
-    task.chainBinding?.auto_run &&
-    (task.chainBinding.auto_run_retries || 0) >= MAX_AUTO_RUN_RETRIES &&
-    !task.completed
-  ) {
+  if (taskAutoRunState(task).retriesExhausted) {
     return "bg-red-500";
   }
   if (task.chainBinding?.last_run_decision_required) return "bg-amber-400";
@@ -66,11 +75,9 @@ export function TaskListItem({
   const isRunning = task.chainBinding?.last_run_status === "running";
   const needsRunReview = !!task.chainBinding?.last_run_decision_required;
   const hasRecentRun = isRunning || isRunRecent(task.chainBinding?.last_run_id);
-  const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
-  const autoRunPaused =
-    !!task.chainBinding?.auto_run &&
-    autoRunRetries >= MAX_AUTO_RUN_RETRIES &&
-    !task.completed;
+  const autoRun = taskAutoRunState(task);
+  const autoRunRetries = autoRun.retries;
+  const autoRunPaused = autoRun.retriesExhausted;
 
   // get dependency counts from depInfo if available
   const deps = depInfo?.get(task.id);
@@ -161,7 +168,7 @@ export function TaskListItem({
                 <span className="text-amber-400/70">{blocksCount}</span>
               </span>
             )}
-            {task.chainBinding?.auto_run && !task.completed && (
+            {autoRun.enabled && !task.completed && (
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full px-2 py-0.5",

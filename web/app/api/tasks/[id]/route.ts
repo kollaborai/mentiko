@@ -8,6 +8,7 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
 import { NotFound, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,15 @@ export const GET = requirePermission("view_tasks")(
         throw new NotFound("Task", id);
       }
 
-      return apiSuccess({ issue });
+      // Enrich with the workspace auto-run default (fs-backed, resolvable only
+      // server-side) so client-side toTask() resolves Task.autoRun in the detail
+      // view -- otherwise the detail header shows a flagless workspace-default-ON
+      // task as OFF, disagreeing with the admission gate. Mirrors GET /api/tasks.
+      const wsPath = typeof issue.workspace_id === "string" ? issue.workspace_id : "";
+      const workspaceAutoRunDefault = wsPath
+        ? resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: wsPath })
+        : false;
+      return apiSuccess({ issue: { ...issue, workspace_auto_run_default: workspaceAutoRunDefault } });
     }
   )
 );
