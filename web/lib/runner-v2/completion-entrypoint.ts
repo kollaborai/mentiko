@@ -220,6 +220,7 @@ export function runRunnerV2CompletionEntrypoint(
     const plan = buildTypedExecutorPlan({
       pipeline,
       allEvents: events,
+      allAgentIds: chain.agents.map((candidate) => candidate.id),
       terminal: {
         runId,
         chainId: completionChainId,

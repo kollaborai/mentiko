@@ -31,6 +31,7 @@ export interface TypedExecutorInput {
   pipeline: CompletionPipelineResult;
   routeContext: RoutedLaunchContext;
   allEvents?: RunnerEventRecord[];
+  allAgentIds?: string[];
   terminal?: TerminalCompletionInput;
   agentCompletion?: AgentCompletionInput;
 }
@@ -51,7 +52,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
   if ("event" in decision) {
     effects.push({
       type: "event-side-effects",
-      plan: planCompletionEventSideEffects(decision.event, input.allEvents || [decision.event]),
+      plan: planCompletionEventSideEffects(decision.event, input.allEvents || [decision.event], input.allAgentIds),
     });
   }
 

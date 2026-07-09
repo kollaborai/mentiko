@@ -255,7 +255,15 @@ export function findAgentCompletionEventAnyRun(input: {
     if ((fields.event ?? "").toLowerCase() !== emits) continue;
     const source = (fields.source ?? "").toLowerCase();
     if (DIAGNOSTIC_SOURCES.has(source)) continue;
-    if (agent && !source.includes(agent) && !(fields.agent ?? "").toLowerCase().includes(agent)) continue;
+    // Cross-run scan: the event is from a DIFFERENT session, so its source is
+    // session-shaped ("<agent>-run-<other>"), never the current session name --
+    // exact/session match can't apply here. Bound the agent-id match to an exact
+    // id or a "<id>-" prefix (not an unbounded substring), which drops mid-string
+    // false matches like "senior-researcher" owning "researcher"'s events.
+    const fieldAgent = (fields.agent ?? "").toLowerCase();
+    const ownsEvent = source === agent || source.startsWith(`${agent}-`)
+      || fieldAgent === agent || fieldAgent.startsWith(`${agent}-`);
+    if (agent && !ownsEvent) continue;
     return file;
   }
   return "";

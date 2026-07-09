@@ -105,6 +105,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     agent: input.agent,
     runId: input.runId,
     events: input.events,
+    allAgentIds: input.chain.agents.map((candidate) => candidate.id),
   });
 
   if (!match.matched) {

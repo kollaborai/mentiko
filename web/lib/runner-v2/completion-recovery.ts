@@ -51,11 +51,12 @@ export function recoverLateCompletionEvents(input: RecoverLateCompletionInput): 
   const stuckAgentIds = latestFailedAgentIds(attempts);
 
   const recovered: LateCompletionRecovery[] = [];
+  const allAgentIds = input.chain.agents.map((candidate) => candidate.id);
   for (const agentId of stuckAgentIds) {
     const agent = input.chain.agents.find((candidate) => candidate.id === agentId);
     if (!agent?.emits) continue;
 
-    const match = findCompletionEvent({ agent, runId: input.runId, events: input.events });
+    const match = findCompletionEvent({ agent, runId: input.runId, events: input.events, allAgentIds });
     if (!match.matched || !match.event) continue;
 
     // the completion_failed attempt is terminal and cannot transition to
