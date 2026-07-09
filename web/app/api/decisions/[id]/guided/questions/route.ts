@@ -71,6 +71,14 @@ export const POST = withErrorHandling(async (
   const decision = getDecision(namespaceId, orgId, id, workspacePath);
   if (!decision) throw new NotFound("Decision", id);
 
+  // Idempotency: don't start a second deck generation if one is already in flight. The
+  // server-side auto-advance (lib/decisions/decision-auto-advance) and a live browser
+  // useEffect can both reach here for the same decision; first wins, rest are no-ops.
+  const existingRound1 = decision.guidedFlow?.round1;
+  if (existingRound1?.status === "in_progress" && (existingRound1.generationRunId || existingRound1.generationJobId)) {
+    return apiSuccess({ status: "already_generating", decision });
+  }
+
   const template = getTemplate(namespaceId, orgId, "decision_guided_questions");
   const prompt = resolveTemplate(template.content, {
     DECISION_CONTEXT: [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n"),

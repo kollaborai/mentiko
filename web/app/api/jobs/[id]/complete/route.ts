@@ -9,6 +9,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
+import { advanceDecisionAfterPhase } from "@/lib/decisions/decision-auto-advance";
 import { processTaskGenerationResult } from "@/lib/tasks/generated-task-import";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
@@ -346,7 +347,7 @@ export const POST = withErrorHandling(async (
         const isComplete = updatedJob.status === "complete";
 
         if (phase && isComplete && updatedJob.result) {
-          await applyDecisionRunResult({
+          const advancedDecision = await applyDecisionRunResult({
             namespaceId,
             orgId,
             decisionId: updatedJob.decisionId,
@@ -357,6 +358,9 @@ export const POST = withErrorHandling(async (
               ? updatedJob.input.selectedOptionId
               : undefined,
           });
+          // Drive the next generation step server-side (headless) up to the human
+          // selection gate; auto-resolve after the plan. See lib/decisions/decision-auto-advance.
+          advanceDecisionAfterPhase({ namespaceId, orgId, decision: advancedDecision });
         } else if (phase === "research") {
           // job failed or no result - just clear the pointer
           await updateDecision(namespaceId, orgId, updatedJob.decisionId, {
