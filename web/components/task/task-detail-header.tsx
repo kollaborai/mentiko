@@ -25,9 +25,8 @@ import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
+import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import type { Task } from "@/lib/tasks/task-types";
-
-const MAX_AUTO_RUN_RETRIES = 3;
 
 interface TaskDetailHeaderProps {
   task: Task;
@@ -64,16 +63,25 @@ export function TaskDetailHeader({
 
   const assignedChainId = task.chainBinding?.chain_id || "";
   const hasAssignedChain = assignedChainId.length > 0;
-  const autoRunEnabled = !!task.chainBinding?.auto_run;
-  const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
-  const autoRunPaused = autoRunEnabled && autoRunRetries >= MAX_AUTO_RUN_RETRIES && !task.completed;
-  // Explicit user pause (web/lib/runs/auto-run.ts canAdmitAutoRun): distinct from
-  // autoRunPaused above (which is retries-exhausted). A task counts as paused if
-  // either the boolean is set OR only the legacy reason string was ever written
-  // (some paused tasks predate the boolean writer) -- must mirror canAdmitAutoRun's
-  // own check so the UI never lies about whether auto-run will actually admit.
-  const autoRunUserPauseReason = task.chainBinding?.auto_run_paused_reason?.trim() || "";
-  const autoRunUserPaused = !!task.chainBinding?.auto_run_paused || autoRunUserPauseReason.length > 0;
+  // Single source of truth (lib/tasks/auto-run-state.ts): resolved server-side from
+  // the explicit per-task flag AND the workspace default, so the header can never
+  // disagree with the admission gate about whether this task auto-runs.
+  // Prefer the server-resolved state (includes the workspace default); fall back
+  // to resolving from the raw chainBinding fields via the SAME resolver when the
+  // DTO wasn't enriched (test fixtures / un-enriched client transforms).
+  const autoRun = task.autoRun ?? resolveAutoRunState({
+    explicitAutoRun: typeof task.chainBinding?.auto_run === "boolean" ? task.chainBinding.auto_run : undefined,
+    retries: task.chainBinding?.auto_run_retries,
+    userPaused: task.chainBinding?.auto_run_paused,
+    pausedReason: task.chainBinding?.auto_run_paused_reason,
+    completed: task.completed,
+  });
+  const autoRunEnabled = autoRun.enabled;
+  const autoRunRetries = autoRun.retries;
+  const autoRunPaused = autoRun.retriesExhausted;
+  const autoRunUserPauseReason = autoRun.pausedReason;
+  const autoRunUserPaused = autoRun.userPaused;
+  const autoRunFromWorkspace = autoRun.source === "workspace";
 
   function copyId() {
     copyToClipboard(task.id);
@@ -224,7 +232,7 @@ export function TaskDetailHeader({
               Run
             </Button>
           )}
-          {hasAssignedChain && onToggleAutoRun && (
+          {onToggleAutoRun && (
             task.completed ? (
               autoRunEnabled ? (
                 <span className="inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-[10px] font-mono text-foreground/45 max-[420px]:w-full max-[420px]:justify-center">
@@ -252,7 +260,7 @@ export function TaskDetailHeader({
                   ) : (
                     <ToggleLeft className="h-3.5 w-3.5" />
                   )}
-                  {autoRunEnabled ? "auto-run on" : "auto-run off"}
+                  {autoRunEnabled ? (autoRunFromWorkspace ? "auto-run on · workspace" : "auto-run on") : "auto-run off"}
                 </button>
                 {autoRunEnabled && onToggleAutoRunPause ? (
                   <>

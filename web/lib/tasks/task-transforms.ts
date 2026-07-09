@@ -9,6 +9,7 @@ import type {
   TaskChainBinding,
 } from "./task-types";
 import type { GoalStatus } from "@/components/ui/goal-card";
+import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 
 // priority 0-4 -> UI priority
 export function mapPriority(rawPriority: number): TaskPriority {
@@ -159,6 +160,14 @@ export function toTask(issue: TaskRecord): Task {
     dependentCount: issue.dependent_count || 0,
     commentCount: issue.comment_count || 0,
     chainBinding,
+    autoRun: resolveAutoRunState({
+      explicitAutoRun: typeof metadata?.auto_run === "boolean" ? metadata.auto_run : undefined,
+      workspaceDefault: issue.workspace_auto_run_default,
+      retries: typeof metadata?.auto_run_retries === "number" ? metadata.auto_run_retries : 0,
+      userPaused: metadata?.auto_run_paused === true,
+      pausedReason: typeof metadata?.auto_run_paused_reason === "string" ? metadata.auto_run_paused_reason : "",
+      completed: isTerminalTaskStatus(issue.status),
+    }),
     parentId: issue.parent_id,
     acceptance: issue.acceptance_criteria,
     design: issue.design,

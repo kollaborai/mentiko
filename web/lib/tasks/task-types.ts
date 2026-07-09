@@ -1,4 +1,5 @@
 // task type definitions for UI consumption
+import type { AutoRunState } from "@/lib/tasks/auto-run-state";
 
 // raw task record shape (used by UI transforms)
 export interface TaskRecord {
@@ -26,6 +27,10 @@ export interface TaskRecord {
   acceptance_criteria?: string;
   design?: string;
   notes?: string;
+  // server enrichment: the task's workspace default for auto-run, fs-resolved in
+  // the API route so the client-side toTask() can resolve Task.autoRun without
+  // needing filesystem access.
+  workspace_auto_run_default?: boolean;
 }
 
 export interface TaskDependency {
@@ -150,6 +155,9 @@ export interface Task {
   dependentCount: number;
   commentCount: number;
   chainBinding?: TaskChainBinding;
+  /** resolved auto-run state — single source of truth (lib/tasks/auto-run-state.ts).
+   *  Always set by toTask(); optional only so hand-built test fixtures need not. */
+  autoRun?: AutoRunState;
   parentId?: string;
   acceptance?: string;
   design?: string;

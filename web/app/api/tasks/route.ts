@@ -5,6 +5,7 @@ import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,21 @@ export const GET = requirePermission("view_tasks")(
       query: search || undefined,
     }, workspaceId, namespaceId));
 
-    return apiSuccess({ issues });
+    // Enrich each record with its workspace auto-run default so the client-side
+    // toTask() can resolve Task.autoRun (the workspace default is fs-backed and
+    // can only be read here). Cached per workspace path -> one read per workspace.
+    const wsDefaultCache = new Map<string, boolean>();
+    const enriched = issues.map((issue) => {
+      const wsPath = typeof issue.workspace_id === "string" ? issue.workspace_id : "";
+      if (!wsPath) return { ...issue, workspace_auto_run_default: false };
+      let wsDefault = wsDefaultCache.get(wsPath);
+      if (wsDefault === undefined) {
+        wsDefault = resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: wsPath });
+        wsDefaultCache.set(wsPath, wsDefault);
+      }
+      return { ...issue, workspace_auto_run_default: wsDefault };
+    });
+
+    return apiSuccess({ issues: enriched });
   })
 );
