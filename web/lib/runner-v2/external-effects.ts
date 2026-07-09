@@ -1,5 +1,5 @@
 import { basename, dirname, join } from "path";
-import { existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
 import { execFile } from "child_process";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { fireWebhooks, type WebhookEvent } from "@/lib/webhooks/webhook-utils";
@@ -503,8 +503,11 @@ function readQueuedEffects(path: string): QueuedExternalEffect[] {
 }
 
 function appendJsonl(path: string, value: DispatchAuditRecord | QueuedExternalEffect): void {
-  const tmp = `${path}.tmp.${process.pid}`;
-  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
-  writeFileSync(tmp, `${current}${JSON.stringify(value)}\n`);
-  renameSync(tmp, path);
+  // Append-only via O_APPEND: the OS guarantees a single write() of this size
+  // is atomic, so concurrent appenders each land their whole line and readers
+  // never observe a partial one. The previous read-entire-file -> write
+  // tmp -> rename approach was a read-modify-write: two concurrent appends
+  // read the same base content and the second rename clobbered the first
+  // record (lost update) instead of both lines surviving.
+  appendFileSync(path, `${JSON.stringify(value)}\n`);
 }

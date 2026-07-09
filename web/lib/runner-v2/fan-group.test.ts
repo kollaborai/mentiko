@@ -1,4 +1,4 @@
-import { completeFanGroupMember, createFanGroupState } from "@/lib/runner-v2/fan-group";
+import { completeFanGroupMember, createFanGroupState, fanGroupConditionMet } from "@/lib/runner-v2/fan-group";
 
 describe("runner-v2 fan group planner", () => {
   it("creates shell-compatible fan-group state", () => {
@@ -103,6 +103,44 @@ describe("runner-v2 fan group planner", () => {
       claimed: true,
       claim: { fanInAgent: "merge", completed: 2 },
     });
+  });
+
+  it("treats an unknown waitFor as \"all\" instead of hanging the fan-in", () => {
+    const group = createFanGroupState({
+      id: "typo-group",
+      event: "done",
+      fanOutAgents: ["a", "b"],
+      fanInAgent: "merge",
+      waitFor: "majority",
+    });
+    expect(group.waitFor).toBe("all");
+
+    const first = completeFanGroupMember({ group, agentId: "a", status: "complete" });
+    expect(first.claimed).toBe(false);
+
+    const second = completeFanGroupMember({ group: first.group, agentId: "b", status: "complete" });
+    expect(second).toMatchObject({
+      claimed: true,
+      claim: { fanInAgent: "merge", completed: 2, total: 2 },
+      launch: { agentId: "merge" },
+    });
+  });
+
+  it("guards fanGroupConditionMet directly against an unrecognized waitFor value", () => {
+    const group = {
+      id: "raw-group",
+      status: "running" as const,
+      event: "done",
+      fanOutAgents: ["a", "b"],
+      fanInAgent: "merge",
+      waitFor: "majority",
+      quorum: 0,
+      completed: 1,
+      failed: 1,
+      total: 2,
+    };
+
+    expect(fanGroupConditionMet(group)).toBe(true);
   });
 
   it("routes to on_error when all wait completes with failures", () => {

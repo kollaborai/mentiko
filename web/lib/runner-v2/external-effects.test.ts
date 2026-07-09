@@ -543,3 +543,44 @@ describe("runner-v2 external effects drain", () => {
     expect(existsSync(join(runsDir, "run-2", "runner-v2-probe", "external-effects.jsonl"))).toBe(true);
   });
 });
+
+describe("runner-v2 external effects appendJsonl", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("appends both records across two calls instead of the second clobbering the first", async () => {
+    const dir = tempDir();
+    const auditPath = join(dir, "external-effects.dispatch.jsonl");
+    // content already on disk (e.g. from an earlier process) must survive.
+    writeFileSync(auditPath, `${JSON.stringify({ type: "seed", status: "dispatched", timestamp: "seed" })}\n`);
+
+    const firstOutbox = writeOutbox(dir, [
+      {
+        type: "notification",
+        status: "queued",
+        operation: { type: "notification", event: "chain-completed", chainName: "Build Chain", runId: "run-1" },
+      },
+    ]);
+    await dispatchExternalEffects({ outboxPath: firstOutbox, auditPath, namespaceId: "default", orgId: "default" });
+
+    const secondDir = tempDir();
+    const secondOutbox = writeOutbox(secondDir, [
+      {
+        type: "notification",
+        status: "queued",
+        operation: { type: "notification", event: "chain-completed", chainName: "Build Chain", runId: "run-2" },
+      },
+    ]);
+    await dispatchExternalEffects({ outboxPath: secondOutbox, auditPath, namespaceId: "default", orgId: "default" });
+
+    // a read-entire-file -> write -> rename implementation would have the
+    // second call's write clobber the first call's appended line; both (plus
+    // the pre-existing seed line) must be present with nothing dropped.
+    const lines = readFileSync(auditPath, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[0])).toMatchObject({ type: "seed" });
+    expect(JSON.parse(lines[1])).toMatchObject({ operation: expect.objectContaining({ runId: "run-1" }) });
+    expect(JSON.parse(lines[2])).toMatchObject({ operation: expect.objectContaining({ runId: "run-2" }) });
+  });
+});

@@ -1,4 +1,4 @@
-import type { RoutingChain, RoutingDecision } from "@/lib/runner-v2/routing";
+import { normalizeRouteEvent, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
 
 export interface LoopGuardInput {
   currentAgentId: string;
@@ -18,6 +18,9 @@ export type LoopGuardDecision =
 
 export function applyLoopGuardToRoute(input: LoopGuardInput): LoopGuardDecision {
   const eventName = input.eventName || "none";
+  // note: visitKey intentionally stays keyed on the raw event name (not
+  // normalizeRouteEvent) — normalizing it risks prematurely completing
+  // legitimate multi-round loops that reuse the same base event per round.
   const visitKey = `${input.currentAgentId}:${eventName}`;
 
   if ((input.visited || []).includes(visitKey)) {
@@ -69,7 +72,15 @@ function shouldIncrementRound(input: LoopGuardInput): boolean {
   }
 
   const currentAgent = input.chain.agents.find((agent) => agent.id === input.currentAgentId);
-  return Boolean(input.eventName && currentAgent?.triggers?.includes(input.eventName));
+  const eventName = input.eventName;
+  if (!eventName) {
+    return false;
+  }
+  // routing.ts matches triggers via normalizeRouteEvent (strips
+  // -round-N/-revision-N suffixes, lowercases). A round-suffixed cyclic event
+  // (e.g. "content-ready-round-2") must be matched the same way here, or a
+  // routed loop silently bypasses the maxRounds guard below.
+  return Boolean(currentAgent?.triggers?.some((trigger) => normalizeRouteEvent(trigger) === normalizeRouteEvent(eventName)));
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {

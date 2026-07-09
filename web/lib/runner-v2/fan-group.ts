@@ -63,7 +63,7 @@ export function createFanGroupState(input: FanGroupCreateInput): FanGroupState {
     event: input.event,
     fanOutAgents: input.fanOutAgents,
     fanInAgent: input.fanInAgent,
-    waitFor: input.waitFor || "all",
+    waitFor: normalizeWaitFor(input.waitFor),
     quorum: normalizeNonNegativeInteger(input.quorum, 0),
     onError: input.onError,
     completed: 0,
@@ -137,16 +137,20 @@ export function claimFanGroup(group: FanGroupState): FanGroupClaim | null {
 }
 
 export function fanGroupConditionMet(group: FanGroupState): boolean {
-  if (group.waitFor === "all") {
-    return group.completed + group.failed >= group.total;
-  }
   if (group.waitFor === "any") {
     return group.completed >= 1;
   }
   if (group.waitFor === "quorum") {
     return group.completed >= group.quorum;
   }
-  return false;
+  // "all" is the default; an unexpected/unrecognized waitFor (e.g. a typo, or
+  // a group loaded from a source that skipped createFanGroupState's
+  // normalization) also falls back to "all" here rather than never claiming.
+  return group.completed + group.failed >= group.total;
+}
+
+function normalizeWaitFor(value: FanGroupWaitFor | undefined): "all" | "any" | "quorum" {
+  return value === "all" || value === "any" || value === "quorum" ? value : "all";
 }
 
 function normalizeNonNegativeInteger(value: unknown, fallback: number): number {

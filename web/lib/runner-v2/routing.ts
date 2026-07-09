@@ -83,11 +83,20 @@ function decisionFromTargets(targets: string[], agents: RoutingAgent[], reason: 
   });
 
   if (runnable.length === 0) {
-    // targets exist but are running/complete or blocked on other prerequisites:
-    // v1 exits quietly here (chain-runner-complete.sh "downstream already
-    // active" / "waiting for prerequisites") — the run must stay running.
-    if (targets.length > 0) {
+    const knownTargets = targets.filter((target) => agents.some((agent) => agent.id === target));
+    if (knownTargets.length > 0) {
+      // at least one target is a real agent that's running/complete or
+      // blocked on other prerequisites: v1 exits quietly here
+      // (chain-runner-complete.sh "downstream already active" / "waiting for
+      // prerequisites") — the run must stay running.
       return { action: "wait", reason: "targets already active or complete", pending: true };
+    }
+    if (targets.length > 0) {
+      // every target names an agent id that doesn't exist in this chain, so
+      // it will never launch — reporting pending here would hang the run
+      // forever (this is reachable: dirty chains with branch targets that
+      // match no agent id).
+      return { action: "wait", reason: "targets reference unknown agents", pending: false };
     }
     return { action: "wait", reason: "no downstream target" };
   }

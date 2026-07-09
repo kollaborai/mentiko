@@ -61,6 +61,39 @@ describe("runner-v2 loop guard", () => {
     });
   });
 
+  it("increments round for a round-suffixed cyclic event matched via normalized triggers", () => {
+    expect(applyLoopGuardToRoute({
+      currentAgentId: "writer",
+      eventName: "x-round-2",
+      nextAgentIds: ["reviewer"],
+      chain: { agents: [{ id: "writer", triggers: ["x"] }] },
+      currentRound: 1,
+      maxRounds: 3,
+    })).toMatchObject({
+      action: "continue",
+      round: 2,
+    });
+  });
+
+  it("stops a round-suffixed loop at maxRounds instead of running unbounded", () => {
+    expect(applyLoopGuardToRoute({
+      currentAgentId: "writer",
+      eventName: "x-round-2",
+      nextAgentIds: ["reviewer"],
+      chain: { agents: [{ id: "writer", triggers: ["x"] }] },
+      currentRound: 3,
+      maxRounds: 3,
+    })).toEqual({
+      action: "stop",
+      reason: "max-rounds-exceeded",
+      visitKey: "writer:x-round-2",
+      round: 4,
+      maxRounds: 3,
+      runStatus: "stopped",
+      taskStatus: "stopped",
+    });
+  });
+
   it("stops the run when max rounds are exceeded", () => {
     expect(applyLoopGuardToRoute({
       currentAgentId: "writer",

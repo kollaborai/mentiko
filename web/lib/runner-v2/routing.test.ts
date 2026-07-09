@@ -74,6 +74,28 @@ describe("runner-v2 routing decision", () => {
     });
   });
 
+  it("does not hang forever when a branch target names an agent id that doesn't exist", () => {
+    expect(decideNextRoute({
+      branches: { done: "ghost-agent" },
+      agents: [{ id: "writer" }],
+    }, "done")).toEqual({
+      action: "wait",
+      reason: "targets reference unknown agents",
+      pending: false,
+    });
+  });
+
+  it("keeps pending=true when a known target is still running, even alongside an unknown target", () => {
+    expect(decideNextRoute({
+      branches: { done: ["reviewer", "ghost-agent"] },
+      agents: [{ id: "reviewer", status: "running" }],
+    }, "done")).toEqual({
+      action: "wait",
+      reason: "targets already active or complete",
+      pending: true,
+    });
+  });
+
   it("keeps no-downstream waits non-pending so completion can finalize the run", () => {
     expect(decideNextRoute({
       agents: [
