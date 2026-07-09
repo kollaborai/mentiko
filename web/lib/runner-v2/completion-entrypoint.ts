@@ -4,6 +4,7 @@ import { dirname, join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
+import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
 import { eventMatchesRunId, parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
@@ -303,7 +304,12 @@ function alreadyCompletedVerdict(input: {
     event.processed
     && event.event === emitted
     && eventMatchesRunId(event, input.runId)
-    && (!event.source || event.source === input.sessionName)
+    // canonical event source is the AGENT ID, not the session name -- a bare
+    // (!event.source || event.source === sessionName) guard missed the common
+    // "source: <agent id>" shape and let an already-completed agent be
+    // re-routed/retried/failed. agentOwnsEvent checks exact identity against
+    // the agent id, its declared session prefix, and the session name.
+    && agentOwnsEvent(event, input.agent, input.sessionName)
   ));
 }
 

@@ -656,6 +656,49 @@ describe("runner-v2 completion entrypoint", () => {
     expect(readFileSync(fixture.runJsonPath, "utf8")).toBe(before);
   });
 
+  // regression test for the alreadyCompletedVerdict dupe guard: the OLD guard was
+  // `!event.source || event.source === sessionName`. Canonical event source is
+  // the bare AGENT ID (the real `mentiko emit`/MENTIKO_AGENT_ID convention), not
+  // the session name, so a `source: verifier` event next to
+  // `sessionName: verifier-run-123` (never equal) fell through the guard and let
+  // an already-completed agent get re-routed/retried/failed. agentOwnsEvent
+  // fixes this by treating the agent id, its session prefix, and the session
+  // name as independent exact-match owners.
+  it("detects an already-completed agent by source: <agent id> when sessionName is the distinct full session id", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    const runBefore = readRunJson(fixture.runJsonPath);
+    updateRunJson(fixture.runJsonPath, () => ({
+      ...runBefore,
+      agents: [{ id: "verifier", name: "Verifier", session: "verifier-run-123", status: "complete" }],
+      sessions: ["verifier-run-123"],
+    }));
+    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), [
+      "event: verification-complete",
+      "source: verifier",
+      "run_id: run-123",
+      "processed: true",
+      "data: ok",
+      "",
+    ].join("\n"));
+
+    const before = readFileSync(fixture.runJsonPath, "utf8");
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "already-completed",
+      plan: { action: "already-completed", launches: [], effects: [] },
+      adapter: { effectsApplied: [], operations: [], launchesStarted: [] },
+    });
+    expect(readFileSync(fixture.runJsonPath, "utf8")).toBe(before);
+  });
+
   it("stays quiet when the routed completion's downstream target is already active", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root, { downstream: true, downstreamStatus: "running" });

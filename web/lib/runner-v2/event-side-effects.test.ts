@@ -40,4 +40,31 @@ describe("runner-v2 completion event side effects", () => {
     // last resort: no source/agent field, but the filename names the owner
     expect(eventIsOwnedBy(owner, { ...parseRunnerEvent("event: done\nrun_id: run-1\n"), path: "/events/run-1-writer-done.event" })).toBe(true);
   });
+
+  // lib/event-trigger.sh _event-belongs-to (L181-188) documents the both-way
+  // substring as INTENTIONAL: a session-suffixed source like "researcher-7f3a"
+  // must still resolve to bare agent id "researcher". A real sibling agent id
+  // that happens to share a prefix ("api-reviewer" vs "api") is structurally
+  // identical to that legitimate case and is unresolvable without knowing the
+  // full chain agent-id set -- this is a documented limitation, not a bug fix.
+  it("collides on a prefix-matching sibling agent id without the chain agent-id set (documented shell-parity limitation)", () => {
+    const triggered = parseRunnerEvent("event: build-complete\nsource: api\nrun_id: run-1\nprocessed: false\n");
+    const siblingEvent = parseRunnerEvent("event: review-complete\nsource: api-reviewer\nrun_id: run-1\nprocessed: false\n");
+
+    expect(eventIsOwnedBy(triggered, siblingEvent)).toBe(true);
+  });
+
+  it("does not archive a prefix-colliding sibling agent's event once the chain agent-id set disambiguates it (api vs api-reviewer)", () => {
+    const triggered = parseRunnerEvent("event: build-complete\nsource: api\nrun_id: run-1\nprocessed: false\n");
+    const siblingEvent = parseRunnerEvent("event: review-complete\nsource: api-reviewer\nrun_id: run-1\nprocessed: false\n");
+    const allAgentIds = ["api", "api-reviewer"];
+
+    expect(eventIsOwnedBy(triggered, siblingEvent, allAgentIds)).toBe(false);
+    expect(planCompletionEventSideEffects(triggered, [triggered, siblingEvent], allAgentIds).archiveOwned).toEqual([triggered]);
+
+    // reverse direction: owner "api-reviewer" must not sweep up sibling "api"'s event
+    const reviewerTriggered = parseRunnerEvent("event: review-complete\nsource: api-reviewer\nrun_id: run-1\nprocessed: false\n");
+    const apiEvent = parseRunnerEvent("event: build-complete\nsource: api\nrun_id: run-1\nprocessed: false\n");
+    expect(eventIsOwnedBy(reviewerTriggered, apiEvent, allAgentIds)).toBe(false);
+  });
 });

@@ -11,6 +11,11 @@ export interface CompletionMatchInput {
   agent: CompletionAgentRef;
   runId?: string;
   events: Array<RunnerEventRecord | string>;
+  // Full chain agent-id set, used only to disambiguate a source that exactly
+  // names a DIFFERENT declared agent from a legitimate session-prefix match.
+  // Optional and additive: omitting it preserves the shell-parity prefix
+  // match unguarded (see sourceMatchesAgent).
+  allAgentIds?: string[];
 }
 
 export interface CompletionMatchResult {
@@ -29,7 +34,7 @@ export function findCompletionEvent(input: CompletionMatchInput): CompletionMatc
 
   for (const candidate of input.events) {
     const event = typeof candidate === "string" ? parseRunnerEvent(candidate) : candidate;
-    const rejected = rejectCompletionEvent(event, input.agent, expectedEvent, input.runId);
+    const rejected = rejectCompletionEvent(event, input.agent, expectedEvent, input.runId, input.allAgentIds);
     if (!rejected) {
       return { matched: true, event };
     }
@@ -43,6 +48,7 @@ export function rejectCompletionEvent(
   agent: CompletionAgentRef,
   expectedEvent: string,
   runId?: string,
+  allAgentIds?: string[],
 ): string | null {
   if (event.processed) {
     return "event already processed";
@@ -56,13 +62,17 @@ export function rejectCompletionEvent(
   if (DIAGNOSTIC_SOURCES.has(normalize(event.source))) {
     return "diagnostic source cannot complete agent";
   }
-  if (!sourceMatchesAgent(event.source, agent)) {
+  if (!sourceMatchesAgent(event.source, agent, allAgentIds)) {
     return "event source does not match agent";
   }
   return null;
 }
 
-export function sourceMatchesAgent(source: string, agent: CompletionAgentRef): boolean {
+export function sourceMatchesAgent(
+  source: string,
+  agent: CompletionAgentRef,
+  allAgentIds?: string[],
+): boolean {
   const normalizedSource = normalize(source);
   if (!normalizedSource) {
     return false;
@@ -72,7 +82,46 @@ export function sourceMatchesAgent(source: string, agent: CompletionAgentRef): b
     .map((value) => normalize(value))
     .filter((value): value is string => Boolean(value));
 
+  // exact identity always wins.
+  if (candidates.includes(normalizedSource)) {
+    return true;
+  }
+
+  // Prefix match mirrors the shell's _event-belongs-to (lib/event-trigger.sh
+  // L181-188, documented as intentional): a session-suffixed source like
+  // "researcher-7f3a" must still be owned by bare agent id "researcher".
+  // Guarded against the sibling-id collision this creates (owner "api"
+  // wrongly claiming "api-reviewer"'s event -- structurally identical to the
+  // legitimate session-suffix case): when the full chain agent-id set is
+  // known, a source that EXACTLY names a DIFFERENT declared agent is never
+  // claimed via prefix match. Callers that cannot supply allAgentIds keep the
+  // shell-parity substring behavior unguarded.
+  const namesAnotherAgent = allAgentIds?.some((id) => {
+    const normalizedId = normalize(id);
+    return normalizedId !== "" && normalizedId === normalizedSource && !candidates.includes(normalizedId);
+  });
+  if (namesAnotherAgent) {
+    return false;
+  }
+
   return candidates.some((candidate) => normalizedSource.includes(candidate));
+}
+
+// Exact identity ownership. NO substring. Mirrors shell _event-belongs-to /
+// archive-run-events (CURRENT_AGENT_ID exact). sessionName covers the paths that
+// stamp source with the session id instead of the bare agent id.
+export function agentOwnsEvent(
+  event: RunnerEventRecord,
+  agent: { id: string; sessionPrefix?: string },
+  sessionName?: string,
+): boolean {
+  const owners = [agent.id, agent.sessionPrefix, sessionName]
+    .map(normalize)
+    .filter((v): v is string => Boolean(v));
+  const candidates = [event.source, event.fields.agent, event.fields.source]
+    .map(normalize)
+    .filter((v): v is string => Boolean(v));
+  return candidates.some((c) => owners.includes(c)); // EXACT equality only
 }
 
 function normalize(value: string | undefined): string {
