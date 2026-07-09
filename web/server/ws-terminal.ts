@@ -33,7 +33,7 @@ import { join } from "path";
 import { createServer, IncomingMessage } from "http";
 import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "fs";
-import { createInitialCaptureState, formatInitialCaptureChunk } from "../lib/terminal-stream";
+import { splitPtyChunk } from "../lib/terminal-stream";
 import { canAccessSession } from "../lib/pty/session-owners";
 
 const WS_PORT = parseInt(process.env.WS_TERMINAL_PORT || "3099", 10);
@@ -531,15 +531,10 @@ function handleAttach(
   const conn = createConnection(SOCKET_PATH);
   let gotAck = false;
   let headerBuf = "";
-  const initialCapture = createInitialCaptureState();
 
   const sendData = (data: string) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "data", data }));
-  };
-
-  const sendInitialCaptureData = (data: string) => {
-    sendData(formatInitialCaptureChunk(data, initialCapture));
   };
 
   conn.on("error", (err: NodeJS.ErrnoException) => {
@@ -590,10 +585,11 @@ function handleAttach(
           })
         );
 
-        // forward any remaining data after the ack line. pty-manager's attach
-        // snapshot is rendered text, so normalize it before xterm sees it.
+        // forward any remaining data after the ack line verbatim.
+        // pty-mgr >= 1.4.1 replays a full ANSI terminal state dump that
+        // xterm.js consumes natively -- any rewriting corrupts it.
         if (remainder.length > 0) {
-          sendInitialCaptureData(remainder);
+          sendData(remainder);
         }
       } catch {
         ws.send(JSON.stringify({ type: "error", message: "invalid ack from daemon" }));
@@ -602,48 +598,16 @@ function handleAttach(
       return;
     }
 
-    // streaming mode: split out ACTIVITY: messages from PTY data
-    // PTY output already has proper \r\n - don't convert (corrupts ANSI escapes)
+    // streaming mode: split out ACTIVITY: messages ("ACTIVITY:{json}\n"),
+    // forward PTY data byte-for-byte. PTY output is already terminal-correct;
+    // don't rewrite it (corrupts ANSI escapes and in-place repaints).
     const str = data.toString("utf-8");
-
-    if (initialCapture.pending) {
-      sendInitialCaptureData(str);
-      return;
-    }
-
-    // ACTIVITY: messages are newline-delimited: "ACTIVITY:{json}\n"
-    // split chunks on that boundary, forward PTY data and activity separately
-    let remaining = str;
-    while (remaining.length > 0) {
-      const actIdx = remaining.indexOf("ACTIVITY:");
-      if (actIdx === -1) {
-        // no more activity messages, rest is PTY output
-        sendData(remaining);
-        break;
+    for (const part of splitPtyChunk(str)) {
+      if (part.kind === "data") {
+        sendData(part.text);
+      } else if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "activity", data: part.activity }));
       }
-
-      // send any PTY data before the activity marker
-      if (actIdx > 0) {
-        const ptyData = remaining.slice(0, actIdx);
-        sendData(ptyData);
-      }
-
-      // find end of activity JSON (newline-terminated)
-      const afterMarker = remaining.slice(actIdx + 9);
-      const nlIdx = afterMarker.indexOf("\n");
-      const activityStr = nlIdx !== -1 ? afterMarker.slice(0, nlIdx) : afterMarker;
-
-      try {
-        const activity = JSON.parse(activityStr);
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "activity", data: activity }));
-        }
-      } catch {
-        // malformed activity, forward as data
-        sendData(`ACTIVITY:${activityStr}`);
-      }
-
-      remaining = nlIdx !== -1 ? afterMarker.slice(nlIdx + 1) : "";
     }
   });
 
