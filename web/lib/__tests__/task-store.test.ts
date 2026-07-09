@@ -291,6 +291,30 @@ describe("task-store", () => {
       expect(fetched.closed_at).toBeNull();
     });
 
+    // B4: `complete` is terminal alongside `closed` (auto-run admission and
+    // the UI transform both treat it as done) -- taskUpdate previously only
+    // special-cased `closed`, so a task patched to `complete` had no
+    // closed_at at all.
+    it("sets closed_at when status=complete", () => {
+      const t = taskCreate("upd", { title: "To complete" });
+      taskUpdate("upd", t.id, { status: "complete" });
+      const fetched = taskGet("upd", t.id)!;
+      expect(fetched.status).toBe("complete");
+      expect(fetched.closed_at).toBeTruthy();
+    });
+
+    it("clears closed_at when a complete task is reopened", () => {
+      const t = taskCreate("upd", { title: "To reopen from complete" });
+      taskUpdate("upd", t.id, { status: "complete" });
+      expect(taskGet("upd", t.id)!.closed_at).toBeTruthy();
+
+      taskUpdate("upd", t.id, { status: "in_progress" });
+
+      const fetched = taskGet("upd", t.id)!;
+      expect(fetched.status).toBe("in_progress");
+      expect(fetched.closed_at).toBeNull();
+    });
+
     it("replaces metadata entirely", () => {
       const t = taskCreate("upd", { title: "Meta", metadata: { a: 1, b: 2 } });
       taskUpdate("upd", t.id, { metadata: { c: 3 } });

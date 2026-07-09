@@ -224,6 +224,19 @@ function now(): string {
   return new Date().toISOString();
 }
 
+// Terminal task statuses. `closed` is the original vocabulary; `complete` was
+// added later (chain-run completion, auto-run admission's DONE_STATUSES in
+// lib/runs/auto-run.ts already treats both as terminal) but taskUpdate only
+// ever special-cased `closed` for closed_at -- so a task patched to
+// `complete` was terminal-for-admission yet had no closed_at and (via
+// task-transforms.toTask, which independently must mirror this) wasn't shown
+// as completed in the UI. Both statuses now get identical closed_at handling.
+const TERMINAL_TASK_STATUSES = new Set(["closed", "complete"]);
+
+export function isTerminalTaskStatus(status: string | null | undefined): boolean {
+  return !!status && TERMINAL_TASK_STATUSES.has(status);
+}
+
 // ---------- CRUD ----------
 
 // Row cap used when a caller doesn't bound the query itself (e.g. the web UI's
@@ -452,7 +465,7 @@ export function taskUpdate(
   if (fields.description !== undefined) { sets.push("description = ?"); params.push(fields.description); }
   if (fields.status !== undefined) {
     sets.push("status = ?"); params.push(fields.status);
-    if (fields.status === "closed") { sets.push("closed_at = ?"); params.push(now()); }
+    if (isTerminalTaskStatus(fields.status)) { sets.push("closed_at = ?"); params.push(now()); }
     else { sets.push("closed_at = NULL"); }
   }
   if (fields.priority !== undefined) { sets.push("priority = ?"); params.push(fields.priority); }

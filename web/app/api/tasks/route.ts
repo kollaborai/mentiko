@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskList } from "@/lib/tasks/task-store";
+import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -24,12 +25,15 @@ export const GET = requirePermission("view_tasks")(
       return apiSuccess({ issues: [] });
     }
 
-    const issues = taskList(orgId, {
+    // Hide superseded decision gates the same way detail/deps/graph already
+    // do (task-visibility.ts) -- otherwise a superseded gate shows up in this
+    // list and then 404s when clicked through to /api/tasks/[id].
+    const issues = filterVisibleTaskRecords(taskList(orgId, {
       status: status || undefined,
       issue_type: type || undefined,
       assignee: assignee || undefined,
       query: search || undefined,
-    }, workspaceId, namespaceId);
+    }, workspaceId, namespaceId));
 
     return apiSuccess({ issues });
   })

@@ -1,11 +1,12 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import { NextRequest } from "next/server";
-import { checkAuth } from "@/lib/auth/api-auth";
-import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
+import { requirePermission } from "@/lib/auth/rbac-auth";
+import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
+import { filterVisibleTaskRecords, type VisibilityTask } from "@/lib/tasks/task-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -180,14 +181,23 @@ function readTaskGraph(db: import("better-sqlite3").Database, tables: TableInfo[
   if (!hasTable(tables, "tasks")) {
     return { nodes: [], edges: [] };
   }
-  const nodes = db.prepare(`
-    SELECT id, title, status, parent_id, workspace_id, updated_at
+  // Select issue_type + metadata (not part of TaskLite) purely so
+  // filterVisibleTaskRecords can identify superseded decision gates -- this
+  // raw db browse must not expose tasks /api/tasks already hides. Stripped
+  // back down to TaskLite before returning.
+  const rawNodes = db.prepare(`
+    SELECT id, title, status, parent_id, workspace_id, updated_at, issue_type, metadata
     FROM tasks
     ORDER BY id
     LIMIT 1000
-  `).all().map((row) => normalizeRow(row as Record<string, unknown>)) as unknown as TaskLite[];
+  `).all().map((row) => normalizeRow(row as Record<string, unknown>)) as unknown as Array<TaskLite & VisibilityTask>;
+  const visibleNodes = filterVisibleTaskRecords(rawNodes);
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  const nodes: TaskLite[] = visibleNodes.map(({ id, title, status, parent_id, workspace_id, updated_at }) => ({
+    id, title, status, parent_id, workspace_id, updated_at,
+  }));
   const edges = nodes
-    .filter((task) => task.parent_id)
+    .filter((task) => task.parent_id && visibleIds.has(task.parent_id))
     .map((task) => ({ from: task.parent_id, to: task.id, type: "parent" }));
   if (hasTable(tables, "task_dependencies")) {
     const dependencyEdges = db.prepare(`
@@ -197,7 +207,11 @@ function readTaskGraph(db: import("better-sqlite3").Database, tables: TableInfo[
       ORDER BY task_id, depends_on_id
       LIMIT 2000
     `).all() as Array<{ to_id: string; from_id: string }>;
-    edges.push(...dependencyEdges.map((edge) => ({ from: edge.from_id, to: edge.to_id, type: "depends_on" })));
+    edges.push(
+      ...dependencyEdges
+        .filter((edge) => visibleIds.has(edge.from_id) && visibleIds.has(edge.to_id))
+        .map((edge) => ({ from: edge.from_id, to: edge.to_id, type: "depends_on" })),
+    );
   }
   return { nodes, edges };
 }
@@ -206,23 +220,32 @@ function readDependencies(db: import("better-sqlite3").Database, tables: TableIn
   if (!hasTable(tables, "tasks")) {
     return { task: null, parent: null, children: [], blockedBy: [], blocks: [] };
   }
+  // task itself is an explicit by-id lookup (caller already knows the id, same
+  // as [id]/deps/route.ts not filtering its root); the LISTS of related tasks
+  // below go through filterVisibleTaskRecords so a superseded decision gate
+  // can't be discovered via this raw browse either.
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Record<string, unknown> | undefined;
   const parentId = typeof task?.parent_id === "string" ? task.parent_id : "";
-  const parent = parentId ? db.prepare("SELECT id, title, status FROM tasks WHERE id = ?").get(parentId) : null;
-  const children = db.prepare("SELECT id, title, status FROM tasks WHERE parent_id = ? ORDER BY id LIMIT 200").all(taskId);
-  let blockedBy: unknown[] = [];
-  let blocks: unknown[] = [];
+  const parent = parentId
+    ? db.prepare("SELECT id, title, status, issue_type, metadata FROM tasks WHERE id = ?").get(parentId)
+    : null;
+  const rawChildren = db.prepare(
+    "SELECT id, title, status, issue_type, metadata FROM tasks WHERE parent_id = ? ORDER BY id LIMIT 200"
+  ).all(taskId) as unknown as VisibilityTask[];
+  const children = filterVisibleTaskRecords(rawChildren);
+  let rawBlockedBy: unknown[] = [];
+  let rawBlocks: unknown[] = [];
   if (hasTable(tables, "task_dependencies")) {
-    blockedBy = db.prepare(`
-      SELECT d.depends_on_id AS id, t.title, t.status
+    rawBlockedBy = db.prepare(`
+      SELECT d.depends_on_id AS id, t.title, t.status, t.issue_type, t.metadata
       FROM task_dependencies d
       LEFT JOIN tasks t ON t.id = d.depends_on_id
       WHERE d.task_id = ?
       ORDER BY d.depends_on_id
       LIMIT 200
     `).all(taskId);
-    blocks = db.prepare(`
-      SELECT d.task_id AS id, t.title, t.status
+    rawBlocks = db.prepare(`
+      SELECT d.task_id AS id, t.title, t.status, t.issue_type, t.metadata
       FROM task_dependencies d
       LEFT JOIN tasks t ON t.id = d.task_id
       WHERE d.depends_on_id = ?
@@ -230,12 +253,14 @@ function readDependencies(db: import("better-sqlite3").Database, tables: TableIn
       LIMIT 200
     `).all(taskId);
   }
+  const blockedBy = filterVisibleTaskRecords(rawBlockedBy as VisibilityTask[]);
+  const blocks = filterVisibleTaskRecords(rawBlocks as VisibilityTask[]);
   return {
     task: task ? normalizeRow(task) : null,
     parent: parent ? normalizeRow(parent as Record<string, unknown>) : null,
-    children: children.map((row) => normalizeRow(row as Record<string, unknown>)),
-    blockedBy: blockedBy.map((row) => normalizeRow(row as Record<string, unknown>)),
-    blocks: blocks.map((row) => normalizeRow(row as Record<string, unknown>)),
+    children: children.map((row) => normalizeRow(row as unknown as Record<string, unknown>)),
+    blockedBy: blockedBy.map((row) => normalizeRow(row as unknown as Record<string, unknown>)),
+    blocks: blocks.map((row) => normalizeRow(row as unknown as Record<string, unknown>)),
   };
 }
 
@@ -315,14 +340,18 @@ function assertReadOnlySelect(sql: string): string {
 }
 
 export const GET = withErrorHandling(async (request: NextRequest) => {
-  if (!(await checkAuth(request))) {
-    throw new Unauthorized();
-  }
+  // Raw table browse + arbitrary read-only SELECT against tasks.db is a
+  // dev/admin diagnostic surface, not a general task API -- require the same
+  // role tier as /api/audit (owner/admin), not just an authenticated session.
+  const permissionError = await requirePermission(request, "view_audit");
+  if (permissionError) return permissionError;
 
   const namespaceId = await getNamespaceIdFromRequest(request);
   const dbPath = getTasksDbPath(namespaceId);
   if (!existsSync(dbPath)) {
-    throw new NotFound("tasks.db", dbPath);
+    // NotFound's identifier ends up in the error response's `details.id` --
+    // never the absolute host filesystem path (namespaceId is enough to debug).
+    throw new NotFound("tasks.db", namespaceId);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -334,29 +363,38 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const tables = readTables(db);
     const mode = request.nextUrl.searchParams.get("mode") || "";
     if (mode === "diagnostics") {
-      return apiSuccess({ namespaceId, dbPath, ...readDiagnostics(db, tables) });
+      // Intentionally NOT run through filterVisibleTaskRecords: this surfaces
+      // data-integrity anomalies (orphaned parents, duplicate titles, invalid
+      // statuses), and a superseded decision gate having e.g. a missing
+      // parent is exactly the kind of thing this mode exists to catch.
+      return apiSuccess({ namespaceId, ...readDiagnostics(db, tables) });
     }
     if (mode === "graph") {
-      return apiSuccess({ namespaceId, dbPath, ...readTaskGraph(db, tables) });
+      return apiSuccess({ namespaceId, ...readTaskGraph(db, tables) });
     }
     if (mode === "dependencies") {
       const taskId = (request.nextUrl.searchParams.get("taskId") || "").trim();
       if (!taskId) throw new BadRequest("taskId is required");
-      return apiSuccess({ namespaceId, dbPath, taskId, ...readDependencies(db, tables, taskId) });
+      return apiSuccess({ namespaceId, taskId, ...readDependencies(db, tables, taskId) });
     }
     if (mode === "select") {
+      // Arbitrary read-only SQL against ANY table -- shape of the result set
+      // is unknown, so it can't be run through filterVisibleTaskRecords
+      // without risking silently dropping rows from unrelated tables that
+      // happen to have an `id` column. Admin/dev gating above is the control
+      // here, not row-level visibility.
       const sql = assertReadOnlySelect(request.nextUrl.searchParams.get("sql") || "");
       const limitParam = Number.parseInt(request.nextUrl.searchParams.get("limit") || "100", 10);
       const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 500) : 100;
       const statement = `SELECT * FROM (${sql}) AS readonly_select LIMIT ?`;
       const rows = db.prepare(statement).all(limit).map((row) => normalizeRow(row as Record<string, unknown>));
       const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-      return apiSuccess({ namespaceId, dbPath, sql, executedSql: statement, columns, rows, limit });
+      return apiSuccess({ namespaceId, sql, executedSql: statement, columns, rows, limit });
     }
 
     const tableName = request.nextUrl.searchParams.get("table");
     if (!tableName) {
-      return apiSuccess({ namespaceId, dbPath, tables });
+      return apiSuccess({ namespaceId, tables });
     }
 
     const table = tables.find((item) => item.name === tableName);
@@ -383,14 +421,23 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const offsetParam = Number.parseInt(request.nextUrl.searchParams.get("offset") || "0", 10);
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 500) : 100;
     const offset = Number.isFinite(offsetParam) ? Math.max(offsetParam, 0) : 0;
-    const rows = db
+    const rawRows = db
       .prepare(generatedSql)
       .all(...where.params, limit, offset)
       .map((row) => normalizeRow(row as Record<string, unknown>));
+    // The generic table browser works against ANY table; only the `tasks`
+    // table itself carries superseded-decision-gate visibility rules. Note
+    // filteredRowCount/hasMore below are computed pre-filter (SQL COUNT/LIMIT
+    // happen before this post-fetch filter step), so they can slightly
+    // overcount when a page contains a hidden row -- acceptable for this
+    // admin-only diagnostic view; a fully accurate count would need the
+    // visibility predicate pushed into SQL, which is out of scope here.
+    const rows = tableName === "tasks"
+      ? filterVisibleTaskRecords(rawRows as unknown as VisibilityTask[])
+      : rawRows;
 
     return apiSuccess({
       namespaceId,
-      dbPath,
       table,
       rows,
       limit,

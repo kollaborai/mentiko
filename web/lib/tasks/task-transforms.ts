@@ -51,6 +51,16 @@ function stringValue(value: unknown): string | undefined {
   return value ? String(value) : undefined;
 }
 
+// Terminal task statuses -- mirrors task-store.ts's isTerminalTaskStatus.
+// Kept as an independent copy (not imported) because task-store.ts pulls in
+// better-sqlite3 (native addon), which must never end up in a client bundle
+// that imports this file (components/task/* import toTask() directly).
+const TERMINAL_TASK_STATUSES = new Set(["closed", "complete"]);
+
+function isTerminalTaskStatus(status: string | null | undefined): boolean {
+  return !!status && TERMINAL_TASK_STATUSES.has(status);
+}
+
 function lastRunChainName(metadata: Record<string, unknown>): string {
   const direct = stringValue(metadata.last_run_chain);
   if (direct) return direct;
@@ -131,7 +141,7 @@ export function toTask(issue: TaskRecord): Task {
     id: issue.id,
     title: issue.title,
     description: issue.description,
-    completed: issue.status === "closed",
+    completed: isTerminalTaskStatus(issue.status),
     status: issue.status as Task["status"],
     priority: mapPriority(issue.priority),
     rawPriority: issue.priority,

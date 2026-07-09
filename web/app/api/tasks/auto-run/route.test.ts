@@ -65,9 +65,12 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
 }));
 
+const mockListWorkspaces = jest.fn();
+const mockResolveAutoRunPolicy = jest.fn().mockReturnValue(true);
 jest.mock("@/lib/workspaces/workspace-storage", () => ({
   getWorkspace: jest.fn(),
-  resolveAutoRun: jest.fn().mockReturnValue(true),
+  listWorkspaces: (...args: unknown[]) => mockListWorkspaces(...args),
+  resolveAutoRun: (...args: unknown[]) => mockResolveAutoRunPolicy(...args),
 }));
 
 const mockGetJob = jest.fn();
@@ -143,6 +146,8 @@ describe("POST /api/tasks/auto-run", () => {
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
     mockReadFileSync.mockReturnValue("{}");
+    mockListWorkspaces.mockReturnValue([]);
+    mockResolveAutoRunPolicy.mockReturnValue(true);
     global.fetch = jest.fn().mockResolvedValue(jsonResponse({
       success: true,
       data: { jobId: "job-analysis", status: "pending" },
@@ -339,6 +344,69 @@ describe("POST /api/tasks/auto-run", () => {
     const [, init] = (global.fetch as jest.Mock).mock.calls[0];
     const body = JSON.parse(init.body);
     expect(body.input.workspacePath).toBe("/repo/live");
+  });
+
+  it("enforces a disabled workspace auto-run policy even though the task already carries a resolved path (B1)", async () => {
+    // workspace_id here is already a resolved path -- before the fix this made
+    // triggerAutoRun skip the workspace policy check entirely (it only ran
+    // when `workspaceId && !workspacePath`), so a disabled workspace could
+    // never block an already-path-hydrated task.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Blocked by workspace policy",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      workspace_id: "/repo/acme-web",
+      metadata: { auto_run: true, workspace_id: "acme-web", chain_id: "chain-1" },
+    });
+    mockListWorkspaces.mockReturnValue([
+      { id: "acme-web", name: "Acme Web", path: "/repo/acme-web", auto_run: "disabled" },
+    ]);
+    mockResolveAutoRunPolicy.mockReturnValueOnce(false);
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      error: "Auto-run disabled for workspace 'Acme Web'",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("resolves the workspace by path (not just id) so its policy still gates auto-run (B1)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Should be gated by path-matched workspace",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      workspace_id: "/repo/acme-web",
+      // no metadata.workspace_id -- the only way to find this workspace is a path match
+      metadata: { auto_run: true, chain_id: "chain-1" },
+    });
+    mockListWorkspaces.mockReturnValue([
+      { id: "acme-web", name: "Acme Web", path: "/repo/acme-web", auto_run: "disabled" },
+    ]);
+    mockResolveAutoRunPolicy.mockReturnValueOnce(false);
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockListWorkspaces).toHaveBeenCalledWith("default", "default");
+    expect(mockResolveAutoRunPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "acme-web", path: "/repo/acme-web" }),
+      true,
+    );
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      error: "Auto-run disabled for workspace 'Acme Web'",
+    });
   });
 
   it("reconciles and skips a task that already has an active run", async () => {

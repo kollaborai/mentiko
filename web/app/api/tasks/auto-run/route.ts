@@ -21,7 +21,7 @@ import {
   reconcileTaskActiveRun,
 } from "@/lib/runs/auto-run";
 import { taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
-import { getWorkspace, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
+import { getWorkspace, listWorkspaces, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
 import { getJob } from "@/lib/runs/job-store";
 import config, { nsPath } from "@/lib/config";
 import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
@@ -490,6 +490,20 @@ function parseTaskMetadata(
   return task?.metadata || {};
 }
 
+// Resolve a workspace given any mix of a Workspace.id (metadata.workspace_id)
+// and/or a filesystem path (workspacePath / task.workspace_id) -- either
+// candidate may match either field, since callers disagree on which one they
+// hand in. Returns null when nothing matches.
+function findWorkspaceByIdOrPath(
+  namespaceId: string,
+  orgId: string,
+  ...candidates: Array<string | undefined>
+): ReturnType<typeof getWorkspace> {
+  const values = candidates.filter((v): v is string => Boolean(v));
+  if (values.length === 0) return null;
+  return listWorkspaces(namespaceId, orgId).find((w) => values.includes(w.id) || values.includes(w.path)) ?? null;
+}
+
 function resolveTaskWorkspacePath(
   namespaceId: string,
   orgId: string,
@@ -531,22 +545,25 @@ async function triggerAutoRun(
     return { triggered: false, taskId, action: admission.action, reason: admission.reason };
   }
 
-  // resolve workspace if workspaceId provided but no workspacePath yet
+  // Resolve the workspace by id OR path and enforce its auto-run policy
+  // unconditionally -- previously this only ran when `workspaceId &&
+  // !workspacePath`, so a task that already carried a resolved path (the
+  // common case: resolveTaskWorkspacePath fills it in before triggerAutoRun
+  // is even called) skipped the workspace's `auto_run: disabled` override
+  // entirely.
   const workspaceId = metadata.workspace_id as string | undefined;
-  if (workspaceId && !workspacePath) {
-    const workspace = getWorkspace(namespaceId, orgId, workspaceId);
-    if (workspace) {
-      const settings = readSystemSettings(namespaceId);
-      const allowed = resolveAutoRun(workspace, settings.auto_run_enabled);
-      if (!allowed) {
-        return {
-          triggered: false,
-          taskId,
-          error: `Auto-run disabled for workspace '${workspace.name}'`,
-        };
-      }
-      workspacePath = workspace.path;
+  const workspace = findWorkspaceByIdOrPath(namespaceId, orgId, workspaceId, workspacePath);
+  if (workspace) {
+    const settings = readSystemSettings(namespaceId);
+    const allowed = resolveAutoRun(workspace, settings.auto_run_enabled);
+    if (!allowed) {
+      return {
+        triggered: false,
+        taskId,
+        error: `Auto-run disabled for workspace '${workspace.name}'`,
+      };
     }
+    if (!workspacePath) workspacePath = workspace.path;
   }
   workspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, undefined);
 
