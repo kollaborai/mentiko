@@ -420,6 +420,20 @@ export function taskCreate(
     if (parent?.workspace_id) workspaceId = parent.workspace_id;
   }
 
+  // TODO(auto-run write boundary): stamp the workspace default here so no producer
+  // has to remember. Every producer that creates a workspace-scoped task WITHOUT
+  // setting metadata.auto_run -- decision plans (decision-resolution.ts:273), MCP
+  // create_task (ops/tasks/route.ts:202), event-artifact follow-ups
+  // (event-artifact-actions.ts:72), task-decision-link.ts:60 -- is born auto-run-less,
+  // so a workspace-default-ON task (e.g. TASK-205) never admits. When workspaceId is
+  // set, metadata.auto_run is absent, and issueType !== "epic", stamp:
+  //   metadata.auto_run = resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: workspaceId })
+  // which makes all those producers no-ops.
+  // The READ side is already the single source and MUST be reused (do NOT add a
+  // second resolver): resolveAutoRunState() in lib/tasks/auto-run-state.ts is wired
+  // into canAdmitAutoRun, getAutoRunCandidates, toTask, and the task header, and it
+  // resolves-on-read for already-created tasks so no data migration is needed.
+
   db.prepare(`
     INSERT INTO tasks (id, org_id, workspace_id, title, description, status, priority,
       issue_type, owner, assignee, parent_id, labels, metadata,
