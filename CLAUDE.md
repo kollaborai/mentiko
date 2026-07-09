@@ -334,6 +334,46 @@ relationships: agents compose into chains, chains bind to tasks, tasks link to r
 - decision UI components: web/components/decision/ (dashboard tabs, verdict, approval)
   and web/components/guided-flow/ (round indicator, tradeoff cards, plan tree)
 
+## auto-run automation (the contract — this is the mission)
+
+The system runs itself. A person sets direction; the machine carries it. The ONLY stop is the
+human decision gate. Everything else is momentum. Concretely:
+
+- a task is "up next" when every blocker is closed (isTaskReady) and auto-run is on — explicit
+  metadata.auto_run, else the workspace default, which is INHERITED (resolveAutoRunState +
+  resolveTaskAutoRunDefault). Workspace off = tasks default off.
+- an up-next task with NO chain pulls itself through the whole pipeline unattended: analyze
+  (chain-recommendation) → recommend → generate a chain if needed → run it. triggerAutoRun
+  (web/app/api/tasks/auto-run/route.ts) advances one step per poller tick; the within-task
+  pipeline is complete.
+- on completion a task propagates to its DIRECT dependents only (dependents-only, storm-safe):
+  the three lifecycle sites (completion-audit-apply.ts, reconcile/route.ts, decision-resolution.ts)
+  fire triggerAutoRunScan(ns, org, completedTaskId) → getDirectDependentAutoRunCandidates.
+  NEVER wire a full-org scan nudge into close/reconcile — that recursed into the TASK-097 re-run
+  storm. See memory reference_mentiko_autorun_admission_envelope.
+- workspace default flows downhill: turn a workspace on and every task inherits it and runs in
+  order; or leave it off, flip tasks on individually, and start the chain at the epic — the whole
+  epic cascades in dependency order, every chain running, agents checking each other's work.
+- decision-type tasks are passive gates — EXCLUDED from the chain pipeline (canAdmitAutoRun);
+  their Decision entity advances instead (below).
+
+decisions auto-advance too, server-side + headless (lib/decisions/decision-auto-advance.ts,
+driven from app/api/jobs/[id]/complete after each phase; idempotency-guarded so a browser tab and
+the server driver never double-generate):
+  research done (briefed) → auto-generate the DECK (round-1 questions)
+  deck ready              → STOP: human answers the tradeoff cards
+  options ready (round 2) → STOP: human SELECTS an option   ← the one and only gate
+  plan ready (round 3)    → auto-resolve into tasks (no separate "Approve" click)
+so a person's single action — the selection — cascades straight through to created tasks, which
+then auto-run themselves.
+
+robustness (why it stays unjammed):
+- crashed/orphaned runs are reaped: a running/pending run with no agent liveness (heartbeat /
+  status write / run.json mtime) for >45m is terminalized at the top of every scan (reapDeadRuns),
+  so a dead session can't hold a concurrency slot or block its task via findActiveRunForTask.
+- the 60s poller (auto-run-service.ts) is the backstop; 120s fetch timeout + an in-flight guard so
+  a slow full scan can't stack against the interval and double-trigger.
+
 ## puppeteer QA
 
 use puppeteer MCP tools to test the web UI. dev server must be running first (cd web && npm run dev).
