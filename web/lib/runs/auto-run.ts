@@ -120,11 +120,33 @@ function hasTerminalRunnerV2Attempt(run: { runnerV2?: unknown }): boolean {
   if (!runnerV2 || typeof runnerV2 !== "object" || Array.isArray(runnerV2)) return false;
   const attempts = (runnerV2 as { attempts?: unknown }).attempts;
   if (!Array.isArray(attempts)) return false;
-  return attempts.some((attempt) => {
-    if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return false;
-    const phase = (attempt as { phase?: unknown }).phase;
-    return typeof phase === "string" && TERMINAL_RUNNER_V2_ATTEMPT_PHASES.has(phase);
+  // Latest attempt per agent wins (append order), mirroring completion-recovery's
+  // latestFailedAgentIds. A run whose completion_failed attempt was later
+  // RECOVERED (recoverLateCompletionEvents appends a fresh completed attempt and
+  // reopens the run to running) must NOT read as terminal here — otherwise
+  // findActiveRunForTask skips a live recovered run and the auto-run admission
+  // gate admits a duplicate run for the same task. Using .some() over every
+  // attempt would keep flagging the stale completion_failed entry forever.
+  const latestPhaseByAgent = new Map<string, string>();
+  attempts.forEach((attempt, index) => {
+    if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return;
+    const record = attempt as { agentId?: unknown; id?: unknown; phase?: unknown };
+    if (typeof record.phase !== "string") return;
+    // Group by agent so only the LATEST attempt per agent decides. Fall back to
+    // the attempt id / index when agentId is absent so a completion_failed
+    // attempt is never silently dropped (real AgentAttemptRecords always carry
+    // agentId; this only guards minimal/legacy records).
+    const key = typeof record.agentId === "string"
+      ? record.agentId
+      : typeof record.id === "string"
+        ? record.id
+        : `#${index}`;
+    latestPhaseByAgent.set(key, record.phase);
   });
+  for (const phase of latestPhaseByAgent.values()) {
+    if (TERMINAL_RUNNER_V2_ATTEMPT_PHASES.has(phase)) return true;
+  }
+  return false;
 }
 
 function hasNonExecutionChainId(run: { chain?: unknown; chainId?: unknown }): boolean {

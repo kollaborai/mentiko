@@ -755,11 +755,21 @@ launch-chain-runner-complete() {
     fi
 
     if [[ "$typed_completion_enabled" == "true" ]]; then
+        # Typed completion must fail closed: a shell fallback here could
+        # double-complete against the typed bridge (see b34fd72).
         echo "  runner-v2 completion failed closed; shell completion fallback disabled"
-    else
-        echo "  chain-runner-complete session failed; shell completion fallback disabled"
+        return 1
     fi
-    return 1
+
+    # Non-typed (legacy default) path: the completion PTY session failed to
+    # launch, so fall back to a detached shell completion agent -- the same
+    # safety net that existed before b34fd72. Without it a PTY-launch failure
+    # strands the run with no completion handler until the 60s watchdog trips.
+    echo "  chain-runner-complete session failed; falling back to detached shell completion"
+    nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
+    disown $! 2>/dev/null || true
+    echo "  chain-runner-complete launched (pid: $!, disowned)"
+    return 0
 }
 
 # -------------------------------------------------------------------

@@ -14,6 +14,7 @@ import {
   markAgentAttemptCompletedFromGeneration,
   markAgentAttemptFailedNoCompletion,
   markAgentAttemptRetriesExhausted,
+  readRunnerV2AttemptState,
 } from "@/lib/runner-v2/agent-attempt";
 
 export type CompletionRunnerDecision =
@@ -107,9 +108,17 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   });
 
   if (!match.matched) {
-    const salvaged = synthesizeCompletionEventFromHandoff(input);
-    if (salvaged) {
-      match = { matched: true, event: salvaged };
+    // Only adopt a leftover handoff artifact once the agent is no longer
+    // actively working. Salvaging before the liveness check (below) would
+    // falsely complete a still-live agent that merely wrote an interim summary,
+    // preempting the grace window. A dead/silent-timeout agent with a fresh
+    // artifact is the real "event lost but work finished" case this salvages.
+    const salvageLiveness = evaluateAgentLiveness(input.liveness);
+    if (salvageLiveness.disposition !== "working" && salvageLiveness.disposition !== "grace") {
+      const salvaged = synthesizeCompletionEventFromHandoff(input);
+      if (salvaged) {
+        match = { matched: true, event: salvaged };
+      }
     }
   }
 
@@ -349,9 +358,17 @@ function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): Runner
     join(artifactsDir, `${input.agent.id}-summary.json`),
     join(artifactsDir, `${input.agent.id}-summary.md`),
   ];
+  // Require the artifact to be at least as new as the current attempt so a
+  // stale summary left by a PRIOR attempt (the filename is agent-id-keyed, not
+  // attempt-keyed) cannot salvage-complete a fresh retry from old output.
+  const attemptStartMs = latestAttemptStartMs(input.runJsonPath, input.runId, input.agent.id);
   const artifactPath = candidates.find((candidate) => {
     try {
-      return existsSync(candidate) && statSync(candidate).size > 0;
+      if (!existsSync(candidate)) return false;
+      const stat = statSync(candidate);
+      if (stat.size <= 0) return false;
+      if (attemptStartMs !== null && stat.mtimeMs < attemptStartMs) return false;
+      return true;
     } catch {
       return false;
     }
@@ -376,6 +393,22 @@ function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): Runner
     },
     path: artifactPath,
   };
+}
+
+// Start time of the agent's latest attempt (append order = latest), used to
+// reject stale prior-attempt summary artifacts. Returns null when attempt state
+// is unavailable (e.g. agents whose startup ran outside the typed runtime), in
+// which case the caller falls back to the size-only guard.
+function latestAttemptStartMs(runJsonPath: string, runId: string, agentId: string): number | null {
+  try {
+    const attempts = readRunnerV2AttemptState(runJsonPath).attempts
+      .filter((attempt) => attempt.runId === runId && attempt.agentId === agentId);
+    if (attempts.length === 0) return null;
+    const startedMs = new Date(attempts[attempts.length - 1].createdAt).getTime();
+    return Number.isFinite(startedMs) ? startedMs : null;
+  } catch {
+    return null;
+  }
 }
 
 function hasDownstreamForAgent(chain: RoutingChain, agentId: string): boolean {

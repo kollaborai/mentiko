@@ -73,6 +73,11 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 main().catch((error) => {
-  console.error(`monitor-v2 failed: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
+  // Exit 64 (not 1) so an unexpected monitor-v2 crash DELEGATES to the shell
+  // monitor: chain-runner.sh only falls through to monitor-chain-agent on
+  // status 64; any other code is read as "monitor-v2 already handled it".
+  // Exiting 1 here would suppress the proven bash monitor and leave the agent
+  // on the coarse 60s watchdog backstop with no nudges or completion handoff.
+  console.error(`monitor-v2 crashed, delegating to shell monitor: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(64);
 });
