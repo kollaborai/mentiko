@@ -30,6 +30,7 @@ interface TaskDetailProps {
   onRunChain: () => Promise<void>;
   onToggleAutoRun: (autoRun: boolean) => Promise<void>;
   onResetAutoRunAttempts?: () => Promise<void>;
+  onToggleAutoRunPause?: (paused: boolean) => Promise<void>;
   onToggleEpicAutoRun?: (autoRun: boolean) => Promise<void>;
   onMetadataUpdate?: (metadata: Record<string, unknown>) => void;
   onClearMetadata?: () => void;
@@ -88,6 +89,7 @@ export function TaskDetail({
   onRunChain,
   onToggleAutoRun,
   onResetAutoRunAttempts,
+  onToggleAutoRunPause,
   onToggleEpicAutoRun,
   onMetadataUpdate,
   onClearMetadata,
@@ -147,6 +149,7 @@ export function TaskDetail({
         onEdit={onEdit}
         onToggleAutoRun={onToggleAutoRun}
         onResetAutoRunAttempts={onResetAutoRunAttempts}
+        onToggleAutoRunPause={onToggleAutoRunPause}
         onSelectParent={onSelectDep}
         isRunning={isRunning}
       />

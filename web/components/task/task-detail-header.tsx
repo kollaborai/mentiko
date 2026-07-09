@@ -15,7 +15,7 @@ import {
   ToggleOffFilled as ToggleLeft,
   ToggleOnFilled as ToggleRight,
 } from "@aliimam/icons";
-import { PlayFilled, LinkFilled } from "@aliimam/icons";
+import { PlayFilled, LinkFilled, PauseFilled as Pause } from "@aliimam/icons";
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ interface TaskDetailHeaderProps {
   onEdit: () => void;
   onToggleAutoRun?: (autoRun: boolean) => Promise<void>;
   onResetAutoRunAttempts?: () => Promise<void>;
+  onToggleAutoRunPause?: (paused: boolean) => Promise<void>;
   onSelectParent?: (parentId: string) => void;
   isRunning: boolean;
 }
@@ -51,12 +52,14 @@ export function TaskDetailHeader({
   onEdit,
   onToggleAutoRun,
   onResetAutoRunAttempts,
+  onToggleAutoRunPause,
   onSelectParent,
   isRunning,
 }: TaskDetailHeaderProps) {
   const [copied, setCopied] = useState(false);
   const [autoRunPending, setAutoRunPending] = useState(false);
   const [autoRunResetting, setAutoRunResetting] = useState(false);
+  const [autoRunPausePending, setAutoRunPausePending] = useState(false);
   const [autoRunError, setAutoRunError] = useState<string | null>(null);
 
   const assignedChainId = task.chainBinding?.chain_id || "";
@@ -64,6 +67,13 @@ export function TaskDetailHeader({
   const autoRunEnabled = !!task.chainBinding?.auto_run;
   const autoRunRetries = task.chainBinding?.auto_run_retries || 0;
   const autoRunPaused = autoRunEnabled && autoRunRetries >= MAX_AUTO_RUN_RETRIES && !task.completed;
+  // Explicit user pause (web/lib/runs/auto-run.ts canAdmitAutoRun): distinct from
+  // autoRunPaused above (which is retries-exhausted). A task counts as paused if
+  // either the boolean is set OR only the legacy reason string was ever written
+  // (some paused tasks predate the boolean writer) -- must mirror canAdmitAutoRun's
+  // own check so the UI never lies about whether auto-run will actually admit.
+  const autoRunUserPauseReason = task.chainBinding?.auto_run_paused_reason?.trim() || "";
+  const autoRunUserPaused = !!task.chainBinding?.auto_run_paused || autoRunUserPauseReason.length > 0;
 
   function copyId() {
     copyToClipboard(task.id);
@@ -94,6 +104,19 @@ export function TaskDetailHeader({
       setAutoRunError(err instanceof Error ? err.message : "failed to reset attempts");
     } finally {
       setAutoRunResetting(false);
+    }
+  }
+
+  async function toggleAutoRunUserPause() {
+    if (!onToggleAutoRunPause || autoRunPausePending || task.completed) return;
+    setAutoRunPausePending(true);
+    setAutoRunError(null);
+    try {
+      await onToggleAutoRunPause(!autoRunUserPaused);
+    } catch (err) {
+      setAutoRunError(err instanceof Error ? err.message : "failed to update pause state");
+    } finally {
+      setAutoRunPausePending(false);
     }
   }
 
@@ -231,6 +254,41 @@ export function TaskDetailHeader({
                   )}
                   {autoRunEnabled ? "auto-run on" : "auto-run off"}
                 </button>
+                {autoRunEnabled && onToggleAutoRunPause ? (
+                  <>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-label="pause auto-run"
+                      aria-checked={autoRunUserPaused}
+                      onClick={toggleAutoRunUserPause}
+                      disabled={autoRunPausePending}
+                      className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-mono transition-colors disabled:opacity-50 max-[420px]:flex-1 max-[420px]:justify-center ${
+                        autoRunUserPaused
+                          ? "bg-zinc-500/15 text-zinc-300 hover:bg-zinc-500/25"
+                          : "bg-muted text-foreground/45 hover:bg-accent hover:text-foreground/65"
+                      }`}
+                    >
+                      {autoRunUserPaused ? (
+                        <PlayFilled className="h-3.5 w-3.5" />
+                      ) : (
+                        <Pause className="h-3.5 w-3.5" />
+                      )}
+                      {autoRunPausePending ? "..." : autoRunUserPaused ? "resume" : "pause"}
+                    </button>
+                    {autoRunUserPaused ? (
+                      <span
+                        className="inline-flex h-7 max-w-[220px] items-center gap-1 rounded-md bg-zinc-500/15 px-2 text-[10px] font-mono text-zinc-300"
+                        title={autoRunUserPauseReason || "paused by user"}
+                      >
+                        <Pause className="h-3 w-3 shrink-0" />
+                        <span className="truncate">
+                          {autoRunUserPauseReason || "paused by user"}
+                        </span>
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
                 {autoRunPaused ? (
                   <>
                     <span className="inline-flex h-7 items-center rounded-md bg-red-500/10 px-2 text-[10px] font-mono text-red-300">

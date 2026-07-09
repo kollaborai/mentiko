@@ -166,6 +166,44 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       expect(synced?.completedAt).toBeDefined();
     });
 
+    test("salvages a stale running generation job from a valid artifact before stale failure", async () => {
+      const runId = `run-job-stale-artifact-${Date.now()}`;
+      testRunIds.push(runId);
+      const runDir = nsPath("default", "runs", runId);
+      const artifactsDir = join(runDir, "artifacts");
+      mkdirSync(artifactsDir, { recursive: true });
+      writeFileSync(join(runDir, "run.json"), JSON.stringify({
+        id: runId,
+        status: "running",
+        started: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+      }, null, 2));
+      writeFileSync(join(artifactsDir, "generation-result.json"), JSON.stringify({
+        name: "Recovered Chain",
+        agents: [{ id: "builder", triggers: ["manual-start"], emits: "built" }],
+      }));
+
+      const job = createJob("generate", { prompt: "artifact beats stale" }, "task-stale-artifact");
+      testJobIds.push(job.id);
+      updateJob(job.id, {
+        status: "running",
+        runId,
+        startedAt: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+      });
+
+      const synced = getJob(job.id);
+
+      expect(synced).toMatchObject({
+        id: job.id,
+        status: "complete",
+        runId,
+        result: {
+          output: expect.stringContaining("Recovered Chain"),
+        },
+      });
+      expect(synced?.error).toBeUndefined();
+      expect(synced?.completedAt).toBeDefined();
+    });
+
     test("should return completed job with result", async () => {
       const job = createJob("generate", { prompt: "complete test" }, "task-789");
       testJobIds.push(job.id);

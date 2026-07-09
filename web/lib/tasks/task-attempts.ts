@@ -181,11 +181,13 @@ function markLatestForKind(attempts: TaskAttempt[]) {
 }
 
 function sortAttempts(a: TaskAttempt, b: TaskAttempt) {
+  const aTime = timeValue(a.startedAt);
+  const bTime = timeValue(b.startedAt);
+  const byTime = (aTime || Number.MAX_SAFE_INTEGER) - (bTime || Number.MAX_SAFE_INTEGER);
+  if (byTime !== 0) return byTime;
+
   const byKind = ATTEMPT_ORDER[a.kind] - ATTEMPT_ORDER[b.kind];
   if (byKind !== 0) return byKind;
-
-  const byTime = timeValue(a.startedAt) - timeValue(b.startedAt);
-  if (byTime !== 0) return byTime;
 
   return a.runId.localeCompare(b.runId);
 }

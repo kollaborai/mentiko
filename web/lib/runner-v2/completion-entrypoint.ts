@@ -189,6 +189,7 @@ export function runRunnerV2CompletionEntrypoint(
         lastAgentId: agent.id,
       },
       generation: generationImportPlan(run, runDir, env),
+      agentCompleteMarker: monitorCompletionLatchAccepted(env),
       fanGroup,
       liveness,
       retry: {
@@ -641,6 +642,11 @@ function clearCompletionLivenessExtension(runJsonPath: string, agentId: string):
       },
     };
   });
+}
+
+function monitorCompletionLatchAccepted(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
+  const value = (env.MENTIKO_MONITOR_COMPLETION_LATCH || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "agent_complete";
 }
 
 function readJsonObject(path: string): Record<string, unknown> | undefined {

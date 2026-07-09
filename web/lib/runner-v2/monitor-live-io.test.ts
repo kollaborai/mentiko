@@ -116,7 +116,15 @@ describe("monitor-v2 live IO", () => {
 
   it("spawns completion in a separate PTY with typed bridge env", async () => {
     const f = fixture();
-    await liveIo(f).onComplete("writer-run-123");
+    const transcript = join(f.root, "transcript.jsonl");
+    writeFileSync(transcript, [
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "work\nAGENT_COMPLETE\n" }] },
+      }),
+      "",
+    ].join("\n"));
+    await liveIo(f, { MENTIKO_TRANSCRIPT_JSONL: transcript }).onComplete("writer-run-123");
     expect(ptyMock.spawn).toHaveBeenCalledWith(
       expect.stringMatching(/^complete-writer-run-123-/),
       "bash",
@@ -130,9 +138,12 @@ describe("monitor-v2 live IO", () => {
           STATE_DIR: f.stateDir,
           MENTIKO_RUNNER_V2: "1",
           MENTIKO_RUNNER_V2_COMPLETION: "1",
+          MENTIKO_MONITOR_COMPLETION_LATCH: "1",
         }),
       }),
     );
+    const command = ptyMock.spawn.mock.calls[0][2][1];
+    expect(command).toContain("MENTIKO_MONITOR_COMPLETION_LATCH='1'");
   });
 
   it("dead without event marks run and agent failed with monitor diagnostic event", async () => {

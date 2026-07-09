@@ -4,7 +4,7 @@
 // retry. All actions are idempotent on the audited run id and bounded by a
 // retry cap so audit-driven retries can't loop forever.
 
-import { taskAddDep, taskClose, taskUpdate, taskMergeMeta, taskAddComment, taskList } from "@/lib/tasks/task-store";
+import { taskAddDep, taskClose, taskGet, taskUpdate, taskMergeMeta, taskAddComment, taskList } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { updateDecision } from "@/lib/decisions/decision-storage";
@@ -14,6 +14,11 @@ import { reduceTaskLifecycle } from "@/lib/orchestration/task-lifecycle-reducer"
 import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { CompletionAudit } from "@/lib/tasks/completion-audit-schema";
+
+// Task statuses that count as "done". taskClose() writes "closed"; a human may
+// also mark resolved/done/complete. Used to detect whether a close verdict
+// actually landed before trusting completion_audit_apply_status === "applied".
+const CLOSED_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 
 export type CompletionAuditAction =
   | "closed"
@@ -84,6 +89,37 @@ function lifecycleMetadata(state: TaskLifecycleState): Record<string, unknown> {
     followup_task_ids: state.followUpTaskIds,
     decision_subtask_id: state.decisionTaskId,
   };
+}
+
+function completionTimestampFromFingerprint(runFingerprint?: string): string | undefined {
+  const prefix = "completed:";
+  if (!runFingerprint?.startsWith(prefix)) return undefined;
+  const value = runFingerprint.slice(prefix.length);
+  return value || undefined;
+}
+
+function closeExecutionMetadata(runId: string, runFingerprint?: string): Record<string, unknown> {
+  return {
+    last_run_id: runId,
+    last_run_status: "completed",
+    last_run_started: undefined,
+    last_run_completed: completionTimestampFromFingerprint(runFingerprint),
+    last_run_error: undefined,
+    last_run_decision_required: false,
+  };
+}
+
+function closeExecutionMetadataNeedsRepair(
+  metadata: Record<string, unknown>,
+  runId: string,
+  runFingerprint?: string,
+): boolean {
+  const completedAt = completionTimestampFromFingerprint(runFingerprint);
+  return metadata.last_run_id !== runId
+    || metadata.last_run_status !== "completed"
+    || metadata.last_run_started !== undefined
+    || metadata.last_run_error !== undefined
+    || (completedAt ? metadata.last_run_completed !== completedAt : metadata.last_run_completed !== undefined);
 }
 
 function findExistingCompletionAuditDecisionSubtask(
@@ -270,6 +306,10 @@ async function applySummaryLifecycle(input: ApplyCompletionAuditInput): Promise<
       taskClose(depOrgId, taskId, reason, depNamespaceId);
     },
     clearDecisionGate: () => undefined,
+    // DISABLED (regression): a full-scan nudge here caused a recursive
+    // auto-run <-> reconcile storm that re-ran already-completed chains
+    // (TASK-097). Next-task falls back to the 60s poller until a surgical
+    // dependents-only redo lands.
     scanUnblockedAutoRunTasks: () => undefined,
     retryExecution: async () => {
       applyRetryTweaks(input);
@@ -365,19 +405,46 @@ export async function applyCompletionAudit(
     : "";
   const sameAppliedRun = metadata.completion_audit_run_id === runId;
   const sameAppliedFingerprint = runFingerprint ? appliedFingerprint === runFingerprint : true;
-  if (sameAppliedRun && sameAppliedFingerprint && metadata.completion_audit_apply_status === "applied") {
+  const auditAlreadyApplied =
+    sameAppliedRun && sameAppliedFingerprint && metadata.completion_audit_apply_status === "applied";
+  // "applied" is only trustworthy for a close verdict if the task ACTUALLY
+  // reached a done status. If a later reopen (reconcile / run-status flap)
+  // clobbered the close, the flag lies -- fall through and re-close instead of
+  // skipping forever. This half-state is what kept TASK-095 open after the
+  // audit reported close+applied.
+  const closeVerdictNotYetClosed =
+    audit.verdict === "close" && !CLOSED_TASK_STATUSES.has(task.status);
+  if (auditAlreadyApplied && !closeVerdictNotYetClosed) {
+    if (audit.verdict === "close" && closeExecutionMetadataNeedsRepair(metadata, runId, runFingerprint)) {
+      taskMergeMeta(orgId, task.id, {
+        ...lifecycleMetadata(hydrateLifecycleState(task.id, metadata)),
+        last_audit_verdict: "close",
+        ...closeExecutionMetadata(runId, runFingerprint),
+        completion_audit_run_id: runId,
+        completion_audit_apply_status: "applied",
+        ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
+      }, namespaceId);
+      return { action: "skipped", detail: "audit already applied for this run; repaired execution metadata" };
+    }
     return { action: "skipped", detail: "audit already applied for this run" };
   }
 
   const { state, decisionResult, supersededDecisionSubtaskIds } = await applySummaryLifecycle(input);
 
   if (audit.verdict === "close") {
+    // Verify the lifecycle close effect actually landed before recording
+    // "applied" -- otherwise a close that silently failed (or got clobbered)
+    // would still mark itself applied, permanently skipping the idempotency
+    // guard's re-close path. This half-state is what kept TASK-095 open after
+    // the audit reported close+applied.
+    const closedTask = taskGet(orgId, task.id, namespaceId);
+    const didClose = !!closedTask && CLOSED_TASK_STATUSES.has(closedTask.status);
     taskMergeMeta(orgId, task.id, {
       ...lifecycleMetadata(state),
       last_audit_verdict: "close",
-      last_run_decision_required: false,
+      ...closeExecutionMetadata(runId, runFingerprint),
       completion_audit_run_id: runId,
-      completion_audit_apply_status: "applied",
+      completion_audit_apply_status: didClose ? "applied" : "pending_close",
       ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
       ...(supersededDecisionSubtaskIds.length
         ? { superseded_decision_subtask_ids: supersededDecisionSubtaskIds }

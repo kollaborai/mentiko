@@ -112,6 +112,8 @@ export function toTask(issue: TaskRecord): Task {
       last_run_error: executionRunId ? stringValue(metadata.last_run_error) : undefined,
       last_run_completed: executionRunId ? stringValue(metadata.last_run_completed) : undefined,
       auto_run_retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : undefined,
+      auto_run_paused: (metadata.auto_run_paused as boolean) ?? false,
+      auto_run_paused_reason: stringValue(metadata.auto_run_paused_reason),
       analysis_job_id: (metadata.analysis_job_id as string) || undefined,
       analysis_status: (metadata.analysis_status as TaskChainBinding["analysis_status"]) || undefined,
       recommendation_run_id: stringValue(metadata.recommendation_run_id) || auditRun.recommendationRunId,

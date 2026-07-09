@@ -14,6 +14,7 @@ const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
 const taskList = jest.fn();
 const taskAddDep = jest.fn();
+const taskGet = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
 const startDecisionResearch = jest.fn();
@@ -26,6 +27,7 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskAddComment: (...a: unknown[]) => taskAddComment(...a),
   taskList: (...a: unknown[]) => taskList(...a),
   taskAddDep: (...a: unknown[]) => taskAddDep(...a),
+  taskGet: (...a: unknown[]) => taskGet(...a),
 }));
 
 jest.mock("@/lib/tasks/task-decision-link", () => ({
@@ -45,6 +47,14 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
 // module registry that jest.mock() patches.
 jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
   startDecisionResearch: (...a: unknown[]) => startDecisionResearch(...a),
+}));
+
+// scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
+// lib/runs/auto-run-service.ts) -- mock it so tests never make a real network
+// call, and so the "close" tests can assert the next-task nudge actually fired.
+const triggerAutoRunScan = jest.fn().mockResolvedValue(undefined);
+jest.mock("@/lib/runs/auto-run-service", () => ({
+  triggerAutoRunScan: (...a: unknown[]) => triggerAutoRunScan(...a),
 }));
 
 import { applyCompletionAudit } from "./completion-audit-apply";
@@ -106,6 +116,10 @@ function makeInput(
 beforeEach(() => {
   jest.clearAllMocks();
   taskList.mockReturnValue([]);
+  // Default: the lifecycle's close effect (taskClose, mocked above) actually
+  // landed -- most "close" tests want the happy path. Tests exercising the
+  // pending_close half-state override this per-test.
+  taskGet.mockReturnValue(makeTask({ status: "closed" }));
   // Default: createTaskDecision returns a fake {decision, task}.
   createTaskDecision.mockResolvedValue({
     decision: { id: "decision-x1" },
@@ -149,6 +163,84 @@ describe("applyCompletionAudit", () => {
 
     expect(createTaskDecision).not.toHaveBeenCalled();
     expect(startDecisionResearch).not.toHaveBeenCalled();
+  });
+
+  it("close: does NOT fire the scan nudge (disabled — the full-scan nudge caused a recursive auto-run/reconcile storm that re-ran completed chains, TASK-097; next-task falls back to the 60s poller until a surgical dependents-only redo lands)", async () => {
+    const task = makeTask();
+    const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result.action).toBe("closed");
+    expect(triggerAutoRunScan).not.toHaveBeenCalled();
+  });
+
+  it("close: replaces stale running execution metadata with the audited completed source run", async () => {
+    const task = makeTask();
+    const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
+
+    await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        last_run_id: "run-duplicate",
+        last_run_status: "running",
+        last_run_started: "2026-07-08T01:40:21.416Z",
+      }),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        last_audit_verdict: "close",
+        last_run_id: "run-abc",
+        last_run_status: "completed",
+        last_run_started: undefined,
+        last_run_completed: "t1",
+        last_run_error: undefined,
+      }),
+      "default",
+    );
+  });
+
+  it("close: repairs stale execution metadata when the same close audit is replayed", async () => {
+    const task = makeTask({ status: "closed", closed_at: "2026-07-08T01:45:38.016Z" });
+    const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        completion_audit_run_id: "run-abc",
+        completion_audit_run_fingerprint: "completed:t1",
+        completion_audit_apply_status: "applied",
+        last_run_id: "run-duplicate",
+        last_run_status: "running",
+        last_run_started: "2026-07-08T01:40:21.416Z",
+      }),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result).toEqual({
+      action: "skipped",
+      detail: "audit already applied for this run; repaired execution metadata",
+    });
+    expect(taskClose).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        last_audit_verdict: "close",
+        last_run_id: "run-abc",
+        last_run_status: "completed",
+        last_run_started: undefined,
+        last_run_completed: "t1",
+        last_run_error: undefined,
+      }),
+      "default",
+    );
   });
 
   // 2. verdict "decision"
@@ -324,8 +416,11 @@ describe("applyCompletionAudit", () => {
   });
 
   // 5. idempotency
-  it("skips entirely when completion_audit_run_id already matches the current applied run fingerprint", async () => {
-    const task = makeTask();
+  it("skips entirely when the same close audit already has canonical execution metadata", async () => {
+    // Task is genuinely closed already: a re-poll of an applied close audit must
+    // be a true no-op. (If it were still open, that's the half-state bug covered
+    // by the next test -- we must re-close, not skip.)
+    const task = makeTask({ status: "closed" });
     const audit: CompletionAudit = { verdict: "close", reason: "Done." };
     // metadata already records this run as processed
     const result = await applyCompletionAudit(
@@ -334,6 +429,9 @@ describe("applyCompletionAudit", () => {
           completion_audit_run_id: "run-abc",
           completion_audit_run_fingerprint: "completed:t1",
           completion_audit_apply_status: "applied",
+          last_run_id: "run-abc",
+          last_run_status: "completed",
+          last_run_completed: "t1",
         }, "run-abc"),
         runFingerprint: "completed:t1",
       },
@@ -348,6 +446,64 @@ describe("applyCompletionAudit", () => {
     expect(taskAddComment).not.toHaveBeenCalled();
     expect(createTaskDecision).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("re-closes when a prior close was applied but the task got reopened (half-state)", async () => {
+    // The TASK-095 bug: completion_audit_apply_status="applied" for a close
+    // verdict, but a later reopen (reconcile / run-status flap) clobbered the
+    // close so the task is open again. The apply flag lies -- re-run the close
+    // instead of skipping forever.
+    const task = makeTask({ status: "in_progress" });
+    const audit: CompletionAudit = { verdict: "close", reason: "Done." };
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        completion_audit_run_id: "run-abc",
+        completion_audit_run_fingerprint: "completed:t1",
+        completion_audit_apply_status: "applied",
+        last_run_id: "run-abc",
+        last_run_status: "completed",
+        last_run_completed: "t1",
+      }, "run-abc"),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result.action).toBe("closed");
+    expect(taskClose).toHaveBeenCalled();
+    // The re-close actually landed this time (taskGet confirms "closed" per the
+    // default mock) -- so the apply flag correctly flips back to "applied",
+    // not stuck at pending_close forever.
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({ completion_audit_apply_status: "applied" }),
+      "default",
+    );
+  });
+
+  it("close: writes pending_close (not applied) when the lifecycle close verdict does not actually land", async () => {
+    // If applySummaryLifecycle's close effect silently no-ops (or the task
+    // flips right back via a concurrent write), taskGet-after-the-fact must
+    // catch it: marking "applied" here is the TASK-095 lie that leaves a task
+    // open forever, because the idempotency guard then skips every future audit.
+    taskGet.mockReturnValue(makeTask({ status: "in_progress" }));
+    const task = makeTask();
+    const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result.action).toBe("closed");
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        last_audit_verdict: "close",
+        completion_audit_apply_status: "pending_close",
+      }),
+      "default",
+    );
   });
 
   // 6. research failure is non-fatal

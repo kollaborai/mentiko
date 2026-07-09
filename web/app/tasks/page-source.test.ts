@@ -22,4 +22,21 @@ describe("tasks page source contract", () => {
     expect(source).toContain("setTreeRefreshSignal((value) => value + 1)");
     expect(source).toContain("refreshSignal={treeRefreshSignal}");
   });
+
+  it("pauses auto-run by writing both auto_run_paused and a reason", () => {
+    expect(source).toContain(
+      "? { auto_run_paused: true, auto_run_paused_reason: \"Paused by user\" }"
+    );
+  });
+
+  it("resumes auto-run by clearing both auto_run_paused and its reason (migration: reason-only paused tasks must resume)", () => {
+    expect(source).toContain(
+      ": { auto_run_paused: false, auto_run_paused_reason: null }"
+    );
+  });
+
+  it("wires the pause/resume handler into every TaskDetail render site", () => {
+    const occurrences = source.split("onToggleAutoRunPause={handleToggleAutoRunPause}").length - 1;
+    expect(occurrences).toBe(3);
+  });
 });

@@ -138,14 +138,6 @@ export function TaskAttemptsPanel({ taskId }: { taskId: string }) {
   const activeError = error?.taskId === taskId ? error.message : null;
   const loading = !activeData && !activeError;
   const attempts = useMemo(() => activeData?.attempts || [], [activeData?.attempts]);
-  const orderedAttempts = useMemo(() => {
-    return [...attempts].sort((a, b) => {
-      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      if (a.kind === "execution" && b.kind !== "execution") return -1;
-      if (b.kind === "execution" && a.kind !== "execution") return 1;
-      return 0;
-    });
-  }, [attempts]);
   const selectedAttempt = useMemo(
     () => attempts.find((attempt) => attempt.runId === selectedRunId),
     [attempts, selectedRunId],
@@ -185,7 +177,7 @@ export function TaskAttemptsPanel({ taskId }: { taskId: string }) {
         <div className="grid items-start gap-3 xl:grid-cols-[260px_minmax(0,1fr)]">
           <div className="self-start rounded-sm bg-background/45 p-1">
             <div className="max-h-[340px] overflow-y-auto pr-1 no-scrollbar">
-              {orderedAttempts.map((attempt) => {
+              {attempts.map((attempt) => {
                 const selected = selectedAttempt?.runId === attempt.runId;
                 const label = labelFor(attempt.kind);
                 const disabled = attempt.status === "missing";

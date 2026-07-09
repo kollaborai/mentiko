@@ -48,6 +48,7 @@ export interface CompleteAgentInput {
   };
   fanGroup?: FanGroupState;
   generation?: GenerationImportPlan & { importablePayload?: boolean };
+  agentCompleteMarker?: boolean;
   loopGuard?: {
     visited?: string[];
     currentRound?: number;
@@ -113,16 +114,6 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   if (!match.matched || !match.event) {
-    const liveness = evaluateAgentLiveness(input.liveness);
-    if (liveness.disposition === "working" || liveness.disposition === "grace") {
-      return {
-        action: "await-liveness",
-        reason: match.reason || "no matching completion event",
-        liveness,
-        run: readCurrentRun(input.runJsonPath),
-      };
-    }
-
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now);
       const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now);
@@ -144,6 +135,25 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
           lastAgentId: input.agent.id,
         }, "explicit-stop"),
         run,
+      };
+    }
+
+    if (input.agentCompleteMarker) {
+      const salvaged = synthesizeCompletionEventFromAgentCompleteMarker(input);
+      if (salvaged) {
+        match = { matched: true, event: salvaged };
+      }
+    }
+  }
+
+  if (!match.matched || !match.event) {
+    const liveness = evaluateAgentLiveness(input.liveness);
+    if (liveness.disposition === "working" || liveness.disposition === "grace") {
+      return {
+        action: "await-liveness",
+        reason: match.reason || "no matching completion event",
+        liveness,
+        run: readCurrentRun(input.runJsonPath),
       };
     }
 
@@ -307,6 +317,27 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     loopGuard,
     fanGroup,
     run,
+  };
+}
+
+function synthesizeCompletionEventFromAgentCompleteMarker(input: CompleteAgentInput): RunnerEventRecord | null {
+  if (!input.agent.emits) return null;
+  const timestamp = (input.now || new Date()).toISOString();
+  return {
+    event: input.agent.emits,
+    source: input.agent.id,
+    runId: input.runId,
+    timestamp,
+    processed: false,
+    data: "salvaged-from-agent-complete-marker",
+    fields: {
+      event: input.agent.emits,
+      source: input.agent.id,
+      run_id: input.runId,
+      timestamp,
+      processed: "false",
+      data: "salvaged-from-agent-complete-marker",
+    },
   };
 }
 

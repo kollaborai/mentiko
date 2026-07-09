@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../runs/auto-run";
+import { canAdmitAutoRun, findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../runs/auto-run";
 import { taskGet, taskList, taskUpdate } from "../tasks/task-store";
 
 jest.mock("fs", () => ({
@@ -100,7 +100,7 @@ describe("getAutoRunCandidates", () => {
     expect(getAutoRunCandidates("default")).toEqual([]);
   });
 
-  it("skips open auto-run tasks after a completed execution", () => {
+  it("skips open auto-run tasks after a completed execution of the assigned chain", () => {
     mockTaskList.mockReturnValue([
       {
         id: "TASK-040",
@@ -109,6 +109,7 @@ describe("getAutoRunCandidates", () => {
         issue_type: "task",
         metadata: {
           auto_run: true,
+          chain_id: "release-review",
           last_run_status: "completed",
           last_run_id: "run-done",
         },
@@ -116,6 +117,29 @@ describe("getAutoRunCandidates", () => {
     ] as never);
 
     expect(getAutoRunCandidates("default")).toEqual([]);
+  });
+
+  it("does not skip a completed status with no chain_id assigned (recommendation/generation bookkeeping)", () => {
+    // Revision 2 invariant: "completed" is only terminal for the CURRENT assigned
+    // chain's execution. A task that has never had a chain assigned yet (e.g. a
+    // chain-recommendation or generation job recorded a "completed" status on
+    // itself) must still be allowed to continue toward execution.
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-041",
+        title: "Recommendation bookkeeping only",
+        status: "open",
+        issue_type: "task",
+        metadata: {
+          auto_run: true,
+          last_run_status: "completed",
+        },
+      },
+    ] as never);
+
+    expect(getAutoRunCandidates("default")).toEqual([
+      expect.objectContaining({ taskId: "TASK-041" }),
+    ]);
   });
 
   it("skips a retryable task when live run state says it is already active", () => {
@@ -340,5 +364,121 @@ describe("getAutoRunCandidates", () => {
       "TASK-001",
       "TASK-010",
     ]);
+  });
+
+  it("canAdmitAutoRun rejects a completed run when a chain is assigned, purely from the predicate, even with a stale generation_job_id", () => {
+    const task = {
+      id: "TASK-050",
+      title: "Stale generation after completion",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_status: "completed",
+        generation_job_id: "job-stale",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission).toEqual(
+      expect.objectContaining({ admit: false, action: "already_completed" }),
+    );
+    // No job/run lookup needed -- the chain_id + completed check alone rejects.
+    expect(mockExistsSync).not.toHaveBeenCalled();
+    expect(mockTaskGet).not.toHaveBeenCalled();
+  });
+
+  it("canAdmitAutoRun does not reject completion when no chain_id is assigned yet", () => {
+    const task = {
+      id: "TASK-051",
+      title: "Recommendation bookkeeping",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        last_run_status: "completed",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission.action).not.toBe("already_completed");
+    expect(admission.admit).toBe(true);
+  });
+
+  it("canAdmitAutoRun still rejects a completed run when chain_id is present but empty (\"\"), unlike a genuinely absent chain_id", () => {
+    // Fix C: chain_id:"" (which task-transforms' String(metadata.chain_id||"")
+    // can produce) is falsy but IS a present key -- a completed status only
+    // ever follows a real execution, and an execution always runs via a real
+    // chain_id, so "" here is corrupted/lost bookkeeping from a real
+    // execution, not "no chain was ever assigned" (that case has the key
+    // absent entirely, covered by the sibling test above). The guard must
+    // check presence (!== undefined), not truthiness, or this re-admits a
+    // completed execution.
+    const task = {
+      id: "TASK-052",
+      title: "Corrupted chain_id bookkeeping",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "",
+        last_run_status: "completed",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission).toEqual(
+      expect.objectContaining({ admit: false, action: "already_completed" }),
+    );
+  });
+
+  it("excludes a task paused via auto_run_paused_reason from auto-run candidates", () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-060",
+        title: "Paused via reason only",
+        status: "open",
+        issue_type: "task",
+        metadata: {
+          auto_run: true,
+          auto_run_paused_reason: "waiting on design review",
+        },
+      },
+    ] as never);
+
+    expect(getAutoRunCandidates("default")).toEqual([]);
+  });
+
+  it("reconcileTaskActiveRun refuses to reopen a closed task even with an orphaned active run on disk", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(["run-orphan"] as never);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-orphan",
+      taskId: "TASK-095",
+      status: "running",
+      chain: "release-review",
+      started: "2026-05-01T01:00:00.000Z",
+    }));
+
+    const result = reconcileTaskActiveRun("default", {
+      id: "TASK-095",
+      title: "Already closed",
+      status: "closed",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        last_run_id: "run-orphan",
+        last_run_status: "running",
+      },
+    } as never, "default");
+
+    expect(result).toEqual({ activeRun: null, reconciled: false });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    // DONE guard short-circuits before ever scanning the runs directory.
+    expect(mockReaddirSync).not.toHaveBeenCalled();
   });
 });

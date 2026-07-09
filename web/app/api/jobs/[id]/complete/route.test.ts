@@ -77,6 +77,16 @@ jest.mock("@/lib/decisions/decision-run-results", () => ({
   applyDecisionRunResult: jest.fn(),
 }));
 
+const mockApplyCompletionAudit = jest.fn();
+jest.mock("@/lib/tasks/completion-audit-apply", () => ({
+  applyCompletionAudit: (...args: unknown[]) => mockApplyCompletionAudit(...args),
+}));
+
+const mockEnforceDeliveryGate = jest.fn((...args: unknown[]) => args[0]);
+jest.mock("@/lib/tasks/completion-audit-delivery-gate", () => ({
+  enforceDeliveryGate: (...args: unknown[]) => mockEnforceDeliveryGate(...args),
+}));
+
 let linkRunDir = "";
 jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunPaths: jest.fn(() => ({ runDir: linkRunDir })),
@@ -158,6 +168,8 @@ describe("POST /api/jobs/[id]/complete", () => {
       createdAgents: ["processed-agent"],
       extractedCount: 1,
     });
+    mockApplyCompletionAudit.mockResolvedValue({ action: "closed" });
+    mockEnforceDeliveryGate.mockImplementation((audit) => audit);
 
     let createCount = 0;
     mockTaskCreate.mockImplementation((_orgId, input) => {
@@ -379,7 +391,7 @@ describe("POST /api/jobs/[id]/complete", () => {
       type: "task_run_summary",
       status: "running",
       taskId: "TASK-070",
-      input: { sourceRunId: "run-execution" },
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:2026-07-08T01:23:55.573Z" },
       result: undefined,
       runId: "run-summary",
       chainId: "run-summary-generation",
@@ -429,6 +441,67 @@ describe("POST /api/jobs/[id]/complete", () => {
         task_outcome_summary: result,
       }),
     }, "default");
+  });
+
+  test("task run summary completion applies audit verdict embedded in output string", async () => {
+    let currentJob = {
+      id: "job-task-summary",
+      type: "task_run_summary",
+      status: "running",
+      taskId: "TASK-094",
+      input: {
+        sourceRunId: "run-execution",
+        runFingerprint: "completed:2026-07-08T01:31:46.726Z",
+        workspacePath: "/repo/realtor-website",
+      },
+      result: undefined,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-094",
+      title: "Design and implement landing page components",
+      issue_type: "task",
+      metadata: {
+        last_run_id: "run-execution",
+        chain_id: "realtor-landing-page-delivery-pipeline",
+      },
+    });
+
+    const { POST } = await import("./route");
+    const result = {
+      output: JSON.stringify({
+        headline: "Implementation verified",
+        audit: {
+          verdict: "close",
+          reason: "All acceptance checks passed against the live app.",
+        },
+      }),
+    };
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+    }), { params: Promise.resolve({ id: "job-task-summary" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: "default",
+      namespaceId: "default",
+      task: expect.objectContaining({ id: "TASK-094" }),
+      audit: { verdict: "close", reason: "All acceptance checks passed against the live app." },
+      runId: "run-execution",
+      runFingerprint: "completed:2026-07-08T01:31:46.726Z",
+      workspacePath: "/repo/realtor-website",
+      metadata: expect.objectContaining({ last_run_id: "run-execution" }),
+    }));
   });
 
   test("generate completion stores generated-chain run provenance without clobbering execution run", async () => {

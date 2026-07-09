@@ -14,6 +14,7 @@ import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 import { enforceDeliveryGate } from "@/lib/tasks/completion-audit-delivery-gate";
 import { currentRunTerminalFingerprint } from "@/lib/tasks/run-outcome-evidence";
+import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 
 export const dynamic = "force-dynamic";
 
@@ -437,7 +438,12 @@ export const POST = withErrorHandling(async (
             ...(runFingerprint ? { task_outcome_summary_run_fingerprint: runFingerprint } : {}),
             ...(updatedJob.status === "complete" && updatedJob.result
               ? {
-                  task_outcome_summary: updatedJob.result,
+                  // Store the auditor's canonical payload (headline, narrative,
+                  // audit, ...), NOT the raw { output: "<json string>" } job
+                  // envelope. The completion-audit path below already unwraps
+                  // this same envelope via extractCompletionAudit; the summary
+                  // read path (aiOutcomeSummary) expects the unwrapped object.
+                  task_outcome_summary: unwrapAgentJsonOutput(updatedJob.result) ?? updatedJob.result,
                   task_outcome_summary_completed_at: updatedJob.completedAt || new Date().toISOString(),
                   task_outcome_summary_error: undefined,
                 }

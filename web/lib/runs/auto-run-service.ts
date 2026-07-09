@@ -210,3 +210,35 @@ async function checkAutoRunTasks() {
   state.lastCheck = new Date().toISOString();
   state.checkCount++;
 }
+
+// ---------------------------------------------------------------------------
+// one-shot scan nudge (task-lifecycle "scan_unblocked_auto_run_tasks" effect)
+// ---------------------------------------------------------------------------
+// When a task closes (or a decision resolves), its dependents may have just
+// become unblocked. This fires the SAME /api/tasks/auto-run route the 60s
+// poller above hits -- empty body means "scan every candidate", not just the
+// task that triggered this -- so a newly-unblocked dependent starts right away
+// instead of waiting up to 60s. Fire-and-forget by design: callers do NOT
+// await the returned promise, so a close/resolve can never fail because this
+// downstream nudge failed or timed out. Errors are caught and logged here so
+// there is never an unhandled rejection even though nobody awaits us.
+export async function triggerAutoRunScan(namespaceId: string, orgId: string): Promise<void> {
+  const port = process.env.WEB_PORT || process.env.PORT || 3000;
+  const secret = process.env.BETTER_AUTH_SECRET || "";
+
+  try {
+    await fetch(`http://localhost:${port}/api/tasks/auto-run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${secret}`,
+        "x-namespace-id": namespaceId,
+        "x-org-id": orgId,
+      },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    console.warn("[auto-run] scan_unblocked_auto_run_tasks nudge failed:", err);
+  }
+}

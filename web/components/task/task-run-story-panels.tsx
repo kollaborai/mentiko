@@ -15,6 +15,7 @@ import {
 } from "@aliimam/icons";
 import type { Task } from "@/lib/tasks/task-types";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { cn } from "@/lib/utils";
 
 type RunSummaryAgent = {
@@ -96,7 +97,9 @@ function runSummary(value: unknown): RunSummary | undefined {
 }
 
 function aiOutcomeSummary(value: unknown): AiOutcomeSummary | undefined {
-  const record = recordValue(value);
+  // Tolerate legacy rows stored as the raw { output: "<json string>" } job
+  // envelope by unwrapping to the auditor's payload before reading fields.
+  const record = unwrapAgentJsonOutput(value);
   if (!record) return undefined;
   return {
     headline: stringValue(record.headline),

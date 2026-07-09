@@ -634,6 +634,46 @@ function TasksPageContent() {
     }).catch(() => {});
   }, [selected, wsParam, fetchWithNamespace, updateTaskBinding]);
 
+  const handleToggleAutoRunPause = useCallback(
+    async (paused: boolean) => {
+      if (!selected) return;
+      const id = encodeURIComponent(selected.id);
+      // Resume MUST clear both fields: some tasks were paused via the reason
+      // string alone before a boolean writer existed (canAdmitAutoRun in
+      // web/lib/runs/auto-run.ts treats either as paused), so clearing only
+      // the boolean would leave those tasks stuck rejected.
+      const metadata = paused
+        ? { auto_run_paused: true, auto_run_paused_reason: "Paused by user" }
+        : { auto_run_paused: false, auto_run_paused_reason: null };
+
+      const res = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metadata: JSON.stringify(metadata) }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const msg =
+          typeof data.error === "string"
+            ? data.error
+            : data.error?.message || `Failed to update pause state (${res.status})`;
+        throw new Error(msg);
+      }
+
+      updateTaskBinding(selected.id, (binding) =>
+        binding
+          ? {
+              ...binding,
+              auto_run_paused: paused,
+              auto_run_paused_reason: paused ? "Paused by user" : undefined,
+            }
+          : binding
+      );
+    },
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding]
+  );
+
   const handleMetadataUpdate = useCallback(
     (metadata: Record<string, unknown>) => {
       const binding = metadata as unknown as Task["chainBinding"];
@@ -1050,6 +1090,7 @@ function TasksPageContent() {
                   onRunChain={handleRunChain}
                   onToggleAutoRun={handleToggleAutoRun}
                   onResetAutoRunAttempts={handleResetAutoRunAttempts}
+                  onToggleAutoRunPause={handleToggleAutoRunPause}
                   onClearMetadata={handleClearMetadata}
                   onMetadataUpdate={handleMetadataUpdate}
                   onRefreshTask={refreshSelectedTask}
@@ -1119,6 +1160,7 @@ function TasksPageContent() {
               onRunChain={handleRunChain}
               onToggleAutoRun={handleToggleAutoRun}
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
+              onToggleAutoRunPause={handleToggleAutoRunPause}
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
               onDecisionUpdate={handleDecisionUpdate}
@@ -1271,6 +1313,7 @@ function TasksPageContent() {
               onRunChain={handleRunChain}
               onToggleAutoRun={handleToggleAutoRun}
               onResetAutoRunAttempts={handleResetAutoRunAttempts}
+              onToggleAutoRunPause={handleToggleAutoRunPause}
               onMetadataUpdate={handleMetadataUpdate}
               onRefreshTask={refreshSelectedTask}
               onDecisionUpdate={handleDecisionUpdate}

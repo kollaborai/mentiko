@@ -40,6 +40,14 @@ jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   currentRunTerminalFingerprint: (...args: unknown[]) => mockCurrentRunTerminalFingerprint(...args),
 }));
 
+// scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
+// lib/runs/auto-run-service.ts) -- mock it so tests never make a real network
+// call (this suite's "followups.completed" path emits that effect).
+const mockTriggerAutoRunScan = jest.fn().mockResolvedValue(undefined);
+jest.mock("@/lib/runs/auto-run-service", () => ({
+  triggerAutoRunScan: (...args: unknown[]) => mockTriggerAutoRunScan(...args),
+}));
+
 jest.mock("@/lib/workspaces/workspace-params", () => ({
   getWorkspaceId: jest.fn().mockReturnValue(undefined),
   hasWorkspaceParam: jest.fn().mockReturnValue(false),

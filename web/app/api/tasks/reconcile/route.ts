@@ -87,6 +87,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   // filter to tasks with last_run_status=running in metadata
   const runningTasks = issues.filter((issue) => {
+    // Never reconcile a done task back to life: a stale last_run_status="running"
+    // on a closed task must not reopen it (the reopen-clobbers-close loop that
+    // kept re-admitting TASK-095). Mirrors the guard on the two filters below.
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
     const meta = parseMetadata(issue.metadata);
     return meta?.last_run_status === "running" && meta?.last_run_id;
   });
@@ -537,6 +541,8 @@ function makeLifecycleDeps(input: {
     },
     closeTask: () => undefined,
     clearDecisionGate: async () => undefined,
+    // DISABLED (regression): the full-scan nudge caused a recursive
+    // auto-run <-> reconcile storm re-running completed chains (TASK-097).
     scanUnblockedAutoRunTasks: async () => undefined,
     retryExecution: ({ lifecycleState }) => {
       taskUpdate(input.orgId, input.taskId, {

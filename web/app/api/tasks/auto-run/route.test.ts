@@ -39,11 +39,21 @@ jest.mock("@/lib/system/system-settings", () => ({
 const mockIsTaskReady = jest.fn();
 const mockReconcileActiveAutoRunTasks = jest.fn();
 const mockReconcileTaskActiveRun = jest.fn();
+// canAdmitAutoRun is intentionally the REAL implementation, not a hand-tuned
+// mock: triggerAutoRun's whole point (funnel through the shared gate) is that
+// a fixture the real invariant would reject must actually fail here, not be
+// papered over by a return value we control. jest.requireActual bypasses the
+// mock only for THIS module -- its internal isTaskReady/findActiveRunForTask
+// calls still resolve taskGet/fs/nsPath through the mocks registered in this
+// file, so the predicate runs for real against realistic fixture data.
+const actualAutoRun = jest.requireActual("@/lib/runs/auto-run") as typeof import("@/lib/runs/auto-run");
+const mockCanAdmitAutoRun = jest.fn(actualAutoRun.canAdmitAutoRun);
 jest.mock("@/lib/runs/auto-run", () => ({
   getAutoRunCandidates: jest.fn().mockReturnValue([]),
   isTaskReady: (...args: unknown[]) => mockIsTaskReady(...args),
   reconcileActiveAutoRunTasks: (...args: unknown[]) => mockReconcileActiveAutoRunTasks(...args),
   reconcileTaskActiveRun: (...args: unknown[]) => mockReconcileTaskActiveRun(...args),
+  canAdmitAutoRun: (...args: Parameters<typeof actualAutoRun.canAdmitAutoRun>) => mockCanAdmitAutoRun(...args),
 }));
 
 const mockTaskGet = jest.fn();
@@ -148,6 +158,7 @@ describe("POST /api/tasks/auto-run", () => {
       id: "TASK-1",
       title: "Implement auto-run",
       description: "Make ready tasks analyze and run",
+      status: "open",
       issue_type: "task",
       priority: 1,
       workspace_id: "/repo",
@@ -315,6 +326,7 @@ describe("POST /api/tasks/auto-run", () => {
       id: "TASK-1",
       title: "Implement auto-run",
       description: "Make ready tasks analyze and run",
+      status: "open",
       issue_type: "task",
       priority: 1,
       workspace_id: "/repo/live",
@@ -410,9 +422,41 @@ describe("POST /api/tasks/auto-run", () => {
       triggered: false,
       taskId: "TASK-1",
       action: "already_completed",
-      reason: "last auto-run completed",
+      reason: "last execution run already completed",
     });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a completed assigned chain when a stale generation job id remains", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Already completed with stale generation job",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        generation_job_id: "job-generation",
+        generation_status: "complete",
+        last_run_id: "run-complete",
+        last_run_status: "completed",
+        last_run_decision_required: false,
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-1",
+      action: "already_completed",
+      reason: "last execution run already completed",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockGetJob).not.toHaveBeenCalled();
   });
 
   it("resumes a stopped assigned run instead of starting a duplicate run", async () => {
@@ -558,6 +602,7 @@ describe("POST /api/tasks/auto-run", () => {
       id: "TASK-2",
       title: "Release review",
       description: "Review the release",
+      status: "open",
       issue_type: "task",
       priority: 2,
       metadata: {
@@ -662,6 +707,7 @@ describe("POST /api/tasks/auto-run", () => {
       id: "TASK-3",
       title: "Run smoke tests",
       description: "Run local smoke tests and fix failures",
+      status: "open",
       issue_type: "task",
       priority: 2,
       metadata: {
@@ -730,11 +776,414 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("auto-accepts a hydrated recommend job whose result is enveloped as { output: \"<json>\" } instead of re-launching analysis (TASK-097 shape)", async () => {
+    // job-store.ts hydrates a completed run's generation-result.json artifact
+    // as { output: "<raw json string>" } for BOTH "generate" and "recommend"
+    // job types (isGenerationArtifactJob). Reading job.result.recommendation
+    // directly (pre-fix) is undefined for this shape and silently re-launches
+    // analysis every scan even though the recommendation already completed.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-097",
+      title: "Add SSO support",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-097",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis-097",
+      type: "recommend",
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          recommendation: {
+            chain_id: null,
+            confidence: "high",
+            rationale: "No existing chain fits this task.",
+            suggested_approach: "Generate a new chain.",
+          },
+        }),
+      },
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: true,
+      data: { jobId: "job-generation-097", status: "pending" },
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-097" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-097",
+      jobId: "job-generation-097",
+      action: "generation_started",
+    });
+    // Must have auto-accepted straight into generation, NOT re-launched analysis.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/api/jobs",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"type":"generate"'),
+      }),
+    );
+  });
+
+  it("auto-accepts a hydrated recommend job whose enveloped result is a BARE recommendation object -- assigns + runs the chain, no new analysis", async () => {
+    // { output: "<json>" } where the inner json is the bare recommendation
+    // { action, chain_id, ... } with NO { recommendation } wrapper. This is one
+    // of the two legal artifact shapes (lib/mentiko-cli-generation.mjs
+    // normalizes with `obj.recommendation ?? obj`).
+    mockTaskGet.mockReturnValue({
+      id: "TASK-097",
+      title: "Cut the release",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-097",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis-097",
+      type: "recommend",
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          action: "use_existing",
+          chain_id: "release-review",
+          chain_name: "Release Review",
+        }),
+      },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).includes("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: {
+            chain: {
+              name: "Release Review",
+              config: {},
+              agents: [{ id: "reviewer", prompt: "Review {TASK}" }],
+            },
+          },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-097" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-097",
+      runId: "run-exec",
+      action: "chain_run",
+    });
+    // Assigned + ran the existing chain -- and crucially did NOT re-launch a
+    // fresh /api/jobs analysis run.
+    expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url))).toEqual([
+      "http://localhost:3000/api/chains/release-review",
+      "http://localhost:3000/api/chains/run",
+    ]);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-097",
+      { metadata: expect.objectContaining({ chain_id: "release-review", analysis_status: "accepted" }) },
+      "default",
+    );
+  });
+
+  it("auto-accepts a hydrated recommend job whose enveloped result is a WRAPPED recommendation and routes to use_existing (NOT generate_new)", async () => {
+    // { output: "<json>" } where the inner json wraps the recommendation as
+    // { recommendation: { action, chain_id } }. Passing the wrapper straight
+    // into normalizeTaskChainRecommendation would find no top-level action and
+    // default to generate_new -- the inner object must be extracted first.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-097",
+      title: "Cut the release",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-097",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis-097",
+      type: "recommend",
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          recommendation: { action: "use_existing", chain_id: "release-review" },
+        }),
+      },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).includes("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: {
+            chain: {
+              name: "Release Review",
+              config: {},
+              agents: [{ id: "reviewer", prompt: "Review {TASK}" }],
+            },
+          },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-097" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-097",
+      runId: "run-exec",
+      action: "chain_run",
+    });
+    const calledUrls = (global.fetch as jest.Mock).mock.calls.map(([url]) => String(url));
+    expect(calledUrls).toEqual([
+      "http://localhost:3000/api/chains/release-review",
+      "http://localhost:3000/api/chains/run",
+    ]);
+    // Explicitly NOT a generation mis-route: no generate job was posted.
+    expect(calledUrls.some((u) => u.endsWith("/api/jobs"))).toBe(false);
+  });
+
+  it("still auto-accepts the normal (already-unwrapped) { recommendation } shape into use_existing (no regression)", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-097",
+      title: "Cut the release",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-097",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis-097",
+      type: "recommend",
+      status: "complete",
+      result: {
+        recommendation: {
+          action: "use_existing",
+          chain_id: "release-review",
+          chain_name: "Release Review",
+        },
+      },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).includes("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: {
+            chain: {
+              name: "Release Review",
+              config: {},
+              agents: [{ id: "reviewer", prompt: "Review {TASK}" }],
+            },
+          },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-097" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-097",
+      runId: "run-exec",
+      action: "chain_run",
+    });
+    expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url))).toEqual([
+      "http://localhost:3000/api/chains/release-review",
+      "http://localhost:3000/api/chains/run",
+    ]);
+  });
+
+  it("stops auto-run (does not re-launch analysis) once the unwrapped recommendation resolves to the already-satisfied terminal action", async () => {
+    // This convergence branch (autoAcceptRecommendation's no_action_needed
+    // path) already existed but was unreachable for a hydrated/enveloped job
+    // result until the unwrap -- it always fell through to case 4 first.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-098",
+      title: "Investigate flaky test",
+      status: "open",
+      issue_type: "task",
+      priority: 2,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-098",
+        analysis_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis-098",
+      type: "recommend",
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          recommendation: {
+            action: "already_satisfied",
+            reasoning: "Acceptance criteria already met by a prior run.",
+          },
+        }),
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-098" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-098",
+      action: "no_action_needed",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-098",
+      { metadata: expect.objectContaining({ auto_run: false, chain_recommendation_action: "no_action_needed" }) },
+      "default",
+    );
+  });
+
+  it.each([
+    ["a non-JSON { output } envelope", { output: "not json" }],
+    ["an empty { output: \"{}\" } envelope", { output: "{}" }],
+    // Valid JSON, but NOT a recommendation shape. Before the shared payload
+    // contract, the in-process door hydrated this as a lone { output } and (per
+    // the drift) could mis-route it; it must now be rejected by the SAME
+    // predicate the CLI import path uses (isPayloadCompatibleWithKind).
+    ["an unrelated valid-JSON { output } envelope", { output: JSON.stringify({ report: "not a recommendation" }) }],
+    ["no result object at all", undefined],
+  ] as Array<[string, Record<string, unknown> | undefined]>)(
+    "counts a completed-but-unreadable analysis job (%s) as a retry and does NOT start a new analysis run",
+    async (_label, result) => {
+      // Fix 2: a completed analysis job whose result unwraps to nothing usable
+      // must bound the loop -- clear the job ref, mark analysis_status
+      // "unreadable", and increment auto_run_retries -- instead of falling
+      // through to case 4 and re-launching analysis every scan. This guarantees
+      // MAX_AUTO_RUN_RETRIES eventually trips even if the envelope handling ever
+      // regresses. Notably, an unparseable { output: "not json" } must NOT reach
+      // normalizeTaskChainRecommendation (which would mis-route it to
+      // generate_new).
+      mockTaskGet.mockReturnValue({
+        id: "TASK-099",
+        title: "Ambiguous recommendation",
+        status: "open",
+        issue_type: "task",
+        priority: 2,
+        metadata: {
+          auto_run: true,
+          analysis_job_id: "job-analysis-099",
+          analysis_status: "running",
+          auto_run_retries: 1,
+        },
+      });
+      mockGetJob.mockReturnValue({
+        id: "job-analysis-099",
+        type: "recommend",
+        status: "complete",
+        result,
+      });
+
+      const res = await POST(makeRequest({ taskId: "TASK-099" }) as never);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data).toMatchObject({
+        triggered: false,
+        taskId: "TASK-099",
+        action: "analysis_unreadable",
+        jobId: "job-analysis-099",
+      });
+      // No new analysis run (and no generation mis-route) was started.
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockTaskUpdate).toHaveBeenCalledWith(
+        "default",
+        "TASK-099",
+        {
+          metadata: expect.objectContaining({
+            analysis_job_id: undefined,
+            analysis_status: "unreadable",
+            auto_run_retries: 2,
+          }),
+        },
+        "default",
+      );
+    },
+  );
+
+  it("rejects further re-analysis once auto_run_retries has already reached the ceiling", async () => {
+    // Proves the unreadable-retry increment above actually terminates the loop:
+    // once retries reach MAX_AUTO_RUN_RETRIES, canAdmitAutoRun's pre-existing
+    // ceiling check rejects before ever reaching analysis again.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-100",
+      title: "Stuck re-analysis",
+      status: "open",
+      issue_type: "task",
+      priority: 2,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-100",
+        analysis_status: "running",
+        auto_run_retries: 3,
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-100" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-100",
+      action: "max_retries",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockGetJob).not.toHaveBeenCalled();
+  });
+
   it("does not start duplicate generation when another request already claimed it", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-3",
       title: "Run smoke tests",
       description: "Run local smoke tests and fix failures",
+      status: "open",
       issue_type: "task",
       priority: 2,
       metadata: {
@@ -778,5 +1227,31 @@ describe("POST /api/tasks/auto-run", () => {
       }),
       "default",
     );
+  });
+
+  it("rejects a paused task via the shared admission gate (auto_run_paused_reason), same gate a post-job continuation uses", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-9",
+      title: "Paused via reason",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        auto_run_paused_reason: "waiting on design review",
+      },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-9" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-9",
+      action: "paused",
+      reason: "auto-run is paused for this task",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

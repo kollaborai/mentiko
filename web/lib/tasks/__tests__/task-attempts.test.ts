@@ -147,4 +147,67 @@ describe("buildTaskAttempts", () => {
 
     expect(attempts.map((attempt) => attempt.runId)).toEqual(["run-exec", "run-summary-latest"]);
   });
+
+  it("sorts attempts by actual start time across system and execution runs", () => {
+    const attempts = buildTaskAttempts({
+      taskId: "TASK-1",
+      metadata: {
+        recommendation_run_id: "run-rec",
+        generated_chain_run_id: "run-gen",
+        last_run_id: "run-exec-2",
+        task_outcome_summary_run_id: "run-summary-2",
+      },
+      runs: [
+        baseRun({
+          id: "run-exec-2",
+          chain: "Delivery Pipeline",
+          chainId: "delivery-pipeline",
+          started: "2026-06-21T10:30:00.000Z",
+        }),
+        baseRun({
+          id: "run-summary-1",
+          chain: "Run Summary Generation",
+          chainId: "run-summary-generation",
+          started: "2026-06-21T10:20:00.000Z",
+          metadata: { generationKind: "run_summary", taskOutcomeSourceRunId: "run-exec-1" },
+        }),
+        baseRun({
+          id: "run-gen",
+          chain: "Chain Generation",
+          chainId: "chain-generation",
+          started: "2026-06-21T10:05:00.000Z",
+          metadata: { generationKind: "chain_generation" },
+        }),
+        baseRun({
+          id: "run-exec-1",
+          chain: "Delivery Pipeline",
+          chainId: "delivery-pipeline",
+          started: "2026-06-21T10:10:00.000Z",
+        }),
+        baseRun({
+          id: "run-summary-2",
+          chain: "Run Summary Generation",
+          chainId: "run-summary-generation",
+          started: "2026-06-21T10:40:00.000Z",
+          metadata: { generationKind: "run_summary", taskOutcomeSourceRunId: "run-exec-2" },
+        }),
+        baseRun({
+          id: "run-rec",
+          chain: "Chain Recommendation",
+          chainId: "chain-recommendation",
+          started: "2026-06-21T10:00:00.000Z",
+          metadata: { generationKind: "chain_recommendation" },
+        }),
+      ],
+    });
+
+    expect(attempts.map((attempt) => [attempt.runId, attempt.kind])).toEqual([
+      ["run-rec", "recommendation"],
+      ["run-gen", "chain_generation"],
+      ["run-exec-1", "execution"],
+      ["run-summary-1", "outcome_summary"],
+      ["run-exec-2", "execution"],
+      ["run-summary-2", "outcome_summary"],
+    ]);
+  });
 });

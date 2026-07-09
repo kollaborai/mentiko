@@ -140,3 +140,117 @@ remaining:
   ☐ decide whether to migrate existing dirty saved chains. audit found 38
     chain/run chain.json files under ~/.mentiko/namespaces/default with branch
     keys no agent emits or branch targets that no saved agent id/ref matches.
+
+open blockers (found 2026-07-08 reviewing TASK-097 — a completed recommendation
+chain re-runs on every scan; auto-run "fix" left this half-closed):
+
+  ☑ make the recommendation auto-accept consumer envelope-aware (parity with generation)
+    context:
+      - job-store hydration (readCompletedRunResult, web/lib/runs/job-store.ts)
+        recovers a completed recommend/generate job by wrapping the run artifact
+        as { output: "<json string>" }. isGenerationArtifactJob matches BOTH
+        "generate" AND "recommend", so recommend jobs hydrate to this envelope too.
+      - the generation consumer unwraps it: extractGeneratedChain parses
+        result.output (auto-run/route.ts ~402). the recommendation consumer does
+        NOT: case 3 tests `job.result?.recommendation` (auto-run/route.ts ~638),
+        which is undefined for the { output } envelope. control falls through to
+        case 4 (startAnalysisJob) and launches a fresh chain_recommendation run
+        every scan — the "chains running that already completed" symptom.
+      - this DEFEATS the "already-satisfied recommendation stops auto_run"
+        convergence item above (line ~83): the terminal action is never read, so
+        it can never fire.
+      - unwrapAgentJsonOutput (web/lib/tasks/agent-json-output.ts) is the right
+        tool and already exists, but is wired only into the outcome-summary write
+        (jobs/[id]/complete/route.ts ~446), not into this auto-accept path.
+    files:
+      - web/app/api/tasks/auto-run/route.ts
+      - web/lib/runs/job-store.ts
+      - web/lib/tasks/agent-json-output.ts
+      - web/app/api/tasks/auto-run/route.test.ts
+    fix:
+      - before case 3's check, unwrap: payload = unwrapAgentJsonOutput(job.result);
+        recommendation = payload?.recommendation ?? payload; then route as today
+        through normalizeTaskChainRecommendation(recommendation).
+    tests:
+      - a hydrated recommend job (result = { output: "<recommendation json>" })
+        auto-accepts instead of re-launching analysis.  <-- CURRENTLY UNCOVERED:
+        every mockGetJob fixture uses the pre-unwrapped { recommendation } shape,
+        which is why CI is green while prod loops.
+      - normal { recommendation: {...} } shape still auto-accepts (no regression).
+
+  ☑ bound the re-analysis loop with the retry ceiling
+    context:
+      - startAnalysisJob (case 4) never increments auto_run_retries, so
+        MAX_AUTO_RUN_RETRIES cannot contain a repeating re-analysis — only the
+        failure branches bump retries. combined with the envelope gap above this
+        is an UNBOUNDED loop, not a 3-strike stop.
+    files:
+      - web/app/api/tasks/auto-run/route.ts
+      - web/app/api/tasks/auto-run/route.test.ts
+    fix:
+      - increment auto_run_retries when re-entering analysis for a task that
+        already had a completed analysis job this episode, so the ceiling trips
+        even if the envelope fix regresses.
+    tests:
+      - repeated re-analysis on one task stops after MAX_AUTO_RUN_RETRIES.
+
+  ☑ admission gate: presence-check chain_id, not truthiness (defense in depth)
+    RESOLVED in working tree — verified 2026-07-08. this was documented as a live
+    `&& chainId` truthiness bug, but the current code already fixed it: canAdmitAutoRun
+    uses `chainId !== undefined` (web/lib/runs/auto-run.ts:325), not truthiness. so
+    chain_id:"" (which task-transforms' String(metadata.chain_id||"") can produce) is a
+    present-but-falsy key and STILL blocks re-admission of a completed execution, while a
+    genuinely-absent chain_id (undefined) still passes through to the recommendation/
+    generation phase unchanged.
+    evidence:
+      - guard: web/lib/runs/auto-run.ts:325 (`&& chainId !== undefined`)
+      - test:  web/lib/__tests__/auto-run.test.ts:411 ("rejects a completed run when
+        chain_id is present but empty") — passing.
+
+  ☐ STRUCTURAL: one validated job-result shape across both consumer paths
+    (this is the root cause behind the three tactical items above — audit 2026-07-08)
+    context:
+      - generation-result.json is validated + normalized on the CLI import path
+        ONLY: lib/mentiko-cli-generation.mjs isPayloadCompatibleWithKind +
+        normalizeResultForKind (invoked via the runner's generation-import effect).
+      - the in-process hydration path (job-store.ts readCompletedRunResult, added
+        in 88a072b) trusts the file raw and returns { output: "<string>" }, so
+        every downstream consumer re-guesses the shape (auto-run's
+        unwrapAgentJsonOutput + payload?.recommendation ?? payload). two readers,
+        two shapes, no shared parser. job.result is Record<string,unknown>
+        (job-types.ts) — no schema, compiler is blind to the drift.
+      - the event-template-artifact-contract was meant to be the "schema
+        expectations" home, but it is half-enforced: the quality_gate.failed
+        triage flow is wired live (event-artifact-runner.ts, called from
+        runner-v2 completion-entrypoint.ts), yet the runner never dereferences
+        mapping.generationTemplateId/artifactTemplateId and never validates the
+        emitted artifact against artifactSchema — it hardcodes the shape and
+        stamps the schema id as an inert label. the /artifacts editor +
+        artifact-template-storage.ts are wired to their own CRUD but are NOT read
+        at runtime (orphaned as a source of truth). no event-mapping editor
+        exists — mappings are code defaults (event-template-map.ts) only.
+    fix:
+      - extract the CLI validator/normalizer into a shared TS module (kind-aware)
+        and route readCompletedRunResult (kind from job.type) through it, so
+        in-process hydration and CLI import emit the SAME validated object; then
+        job.result can drop the { output } envelope and consumers drop the ad-hoc
+        unwrap.
+      - give job.result a discriminated type per job kind + a schema test, so a
+        producer/consumer shape drift is a compile/test failure, not a silent loop.
+      - (contract) make event-artifact-runner consume the referenced artifact
+        template and validate the emitted artifact against its schema, so the
+        /artifacts editor becomes the real schema source of truth instead of an
+        orphaned surface.
+    note:
+      - bigger than the TASK-097 hotfix. keep the tactical case-3 unwrap for now;
+        this is the durable fix behind it.
+
+scope note:
+  none of the *.contract.json files own this behavior. that set is the shell->TS
+  runtime layer (launch/monitor/completion/events). the task-lifecycle reducer
+  spec explicitly keeps admission — analysis, chain generation, execution start —
+  external in v1 (see "Execution admission (external in v1)"), so the reducer
+  contract does not assert it either. auto-run admission + job-result hydration is
+  owned by triggerAutoRun/reconcile and tracked HERE. if we want an enforced
+  invariant, the home is a switch-readiness blocker (see line ~114) plus the
+  route test above, not a new .contract.json.

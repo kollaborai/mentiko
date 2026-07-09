@@ -83,6 +83,80 @@ describe("TaskAttemptsPanel", () => {
     });
   });
 
+  it("renders runs in the API execution order without pinning current execution first", async () => {
+    mockFetchWithNamespace.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: {
+          taskId: "TASK-1",
+          currentExecutionRunId: "run-exec-current",
+          attempts: [
+            {
+              runId: "run-rec",
+              kind: "recommendation",
+              category: "system",
+              chainName: "Chain Recommendation",
+              status: "completed",
+              startedAt: "2026-06-21T10:00:00.000Z",
+              source: "run_json",
+              isSystem: true,
+              isCurrent: false,
+              isLatestForKind: true,
+            },
+            {
+              runId: "run-exec-current",
+              kind: "execution",
+              category: "task_execution",
+              chainName: "First Execution",
+              status: "completed",
+              startedAt: "2026-06-21T10:10:00.000Z",
+              source: "merged",
+              isSystem: false,
+              isCurrent: true,
+              isLatestForKind: false,
+            },
+            {
+              runId: "run-summary",
+              kind: "outcome_summary",
+              category: "system",
+              chainName: "Run Summary Generation",
+              status: "completed",
+              startedAt: "2026-06-21T10:20:00.000Z",
+              source: "run_json",
+              isSystem: true,
+              isCurrent: false,
+              isLatestForKind: true,
+            },
+            {
+              runId: "run-exec-later",
+              kind: "execution",
+              category: "task_execution",
+              chainName: "Later Execution",
+              status: "stopped",
+              startedAt: "2026-06-21T10:30:00.000Z",
+              source: "run_json",
+              isSystem: false,
+              isCurrent: false,
+              isLatestForKind: true,
+            },
+          ],
+        },
+      }),
+    });
+
+    render(<TaskAttemptsPanel taskId="TASK-1" />);
+
+    await screen.findByText("Chain Recommendation");
+    const runButtons = screen.getAllByRole("button").map((button) => button.textContent || "");
+
+    expect(runButtons).toEqual([
+      expect.stringContaining("Chain Recommendation"),
+      expect.stringContaining("First Execution"),
+      expect.stringContaining("Run Summary Generation"),
+      expect.stringContaining("Later Execution"),
+    ]);
+  });
+
   it("uses the same section header while runs are loading", () => {
     mockFetchWithNamespace.mockReturnValue(new Promise(() => {}));
 

@@ -111,6 +111,11 @@ export interface TaskChainBinding {
   last_run_error?: string;
   last_run_completed?: string;
   auto_run_retries?: number;
+  // explicit user pause (distinct from auto_run_retries exhaustion above):
+  // canAdmitAutoRun (web/lib/runs/auto-run.ts) rejects admission when
+  // auto_run_paused is true OR auto_run_paused_reason is a non-empty string.
+  auto_run_paused?: boolean;
+  auto_run_paused_reason?: string;
   // job refs (lightweight - full results in agents/jobs/{jobId}.json)
   analysis_job_id?: string;
   analysis_status?: JobStatusType;

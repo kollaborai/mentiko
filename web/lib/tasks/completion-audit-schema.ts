@@ -54,6 +54,31 @@ function escalate(reason: string): CompletionAudit {
   return { verdict: "decision", reason, decision: { prompt: reason } };
 }
 
+function looksLikeAuditObject(value: Record<string, unknown>): boolean {
+  return (
+    value.verdict !== undefined ||
+    value.reason !== undefined ||
+    value.retry !== undefined ||
+    value.decision !== undefined
+  );
+}
+
+function outputAudit(result: Record<string, unknown>): CompletionAudit | null {
+  const output = result.output;
+  if (output === undefined || output === null) return null;
+  if (typeof output === "string") {
+    try {
+      return extractCompletionAudit(JSON.parse(output));
+    } catch {
+      return escalate("Auditor output was not valid JSON; escalating to human review.");
+    }
+  }
+  if (typeof output === "object") {
+    return extractCompletionAudit(output);
+  }
+  return null;
+}
+
 /**
  * Pull a CompletionAudit out of an auditor agent's result object. The auditor
  * embeds the verdict under an `audit` key alongside its narrative summary.
@@ -63,7 +88,19 @@ function escalate(reason: string): CompletionAudit {
  */
 export function extractCompletionAudit(result: unknown): CompletionAudit | null {
   if (!result || typeof result !== "object") return null;
-  const audit = (result as Record<string, unknown>).audit;
+  const source = result as Record<string, unknown>;
+  if (source.audit === undefined) {
+    if (looksLikeAuditObject(source)) {
+      return parseAuditBlock(source);
+    }
+    return outputAudit(source);
+  }
+
+  const audit = source.audit;
+  return parseAuditBlock(audit);
+}
+
+function parseAuditBlock(audit: unknown): CompletionAudit | null {
   if (audit === undefined || audit === null) return null;
   if (typeof audit !== "object") {
     return escalate("Auditor returned a non-object audit block; escalating to human review.");

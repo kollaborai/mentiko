@@ -86,6 +86,65 @@ describe("runner-v2 completion entrypoint", () => {
     expect(readFileSync(eventPath, "utf8")).toContain("processed: false");
   });
 
+  it("routes a monitor-latched AGENT_COMPLETE completion when no event file exists", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [
+        { id: "writer", name: "Writer", emits: "draft-ready" },
+        { id: "reviewer", name: "Reviewer", triggers: ["draft-ready"] },
+      ],
+    });
+
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "running" }],
+      sessions: ["writer-run-123"],
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+        MENTIKO_MONITOR_COMPLETION_LATCH: "1",
+      },
+      dryRun: true,
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      runId: "run-123",
+      agentId: "writer",
+      decision: "route",
+      plan: { action: "route", launches: [{ kind: "single" }] },
+    });
+    expect(readRunJson(runJsonPath).agents[0]).toMatchObject({
+      id: "writer",
+      status: "running",
+    });
+  });
+
   it("matches an event emitted into the run-dir events dir when env EVENTS_DIR points elsewhere", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");

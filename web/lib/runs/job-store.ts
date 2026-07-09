@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import config, { nsPath } from "@/lib/config";
+import { isPayloadCompatibleWithKind, jobTypeToGenerationKind } from "@/lib/generation/payload-contract.mjs";
 
 /**
  * Resolve the jobs directory for a given namespace.
@@ -44,7 +45,11 @@ function getTmpPath(id: string, namespaceId?: string): string {
   return join(getJobsDir(namespaceId), `${id}.tmp`);
 }
 
-function readCompletedRunResult(runId: string, namespaceId?: string): Record<string, unknown> | undefined {
+function readCompletedRunResult(
+  runId: string,
+  namespaceId?: string,
+  kind = "",
+): Record<string, unknown> | undefined {
   const nsId = namespaceId || config.namespaceId;
   const artifactsDir = nsPath(nsId, "runs", runId, "artifacts");
   const generationResultPath = join(artifactsDir, "generation-result.json");
@@ -52,10 +57,34 @@ function readCompletedRunResult(runId: string, namespaceId?: string): Record<str
 
   try {
     const output = readFileSync(generationResultPath, "utf-8");
+    const parsed = JSON.parse(output);
+    // Gate the hydrated artifact through the SAME contract the CLI import path
+    // uses (isPayloadCompatibleWithKind), so an unrelated/incompatible JSON
+    // artifact can no longer hydrate a completed generation/recommend job
+    // in-process as a lone { output } envelope. kind === "" (non-generation
+    // jobs) is ungated — the default branch returns true.
+    if (!isPayloadCompatibleWithKind(parsed, kind)) return undefined;
     return { output };
   } catch {
     return undefined;
   }
+}
+
+function isGenerationArtifactJob(job: Job): boolean {
+  return job.type === "generate" || job.type === "recommend";
+}
+
+function syncRunningJobFromGenerationArtifact(job: Job, namespaceId?: string): boolean {
+  if (job.status !== "running" || !job.runId || !isGenerationArtifactJob(job)) return false;
+
+  const result = readCompletedRunResult(job.runId, namespaceId, jobTypeToGenerationKind(job.type));
+  if (!result) return false;
+
+  job.status = "complete";
+  job.result = job.result || result;
+  delete job.error;
+  job.completedAt = new Date().toISOString();
+  return true;
 }
 
 function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
@@ -71,7 +100,7 @@ function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
 
     if (COMPLETED_RUN_STATUSES.has(run.status)) {
       job.status = "complete";
-      job.result = job.result || readCompletedRunResult(job.runId, namespaceId);
+      job.result = job.result || readCompletedRunResult(job.runId, namespaceId, jobTypeToGenerationKind(job.type));
       job.completedAt = new Date().toISOString();
       return true;
     }
@@ -88,6 +117,10 @@ function syncRunningJobFromRun(job: Job, namespaceId?: string): boolean {
 }
 
 function syncJobStatus(job: Job, namespaceId?: string): boolean {
+  if (syncRunningJobFromGenerationArtifact(job, namespaceId)) {
+    return true;
+  }
+
   if (syncRunningJobFromRun(job, namespaceId)) {
     return true;
   }

@@ -36,6 +36,7 @@ export interface LiveMonitorContext {
 }
 
 export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverIO {
+  let completionMarkerLatched = false;
   return {
     hasSession: (session) => pty.alive(session),
     observe: async (session) => {
@@ -50,6 +51,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         agentId: context.agentId,
       });
       const markerDurable = await agentCompleteMarkerDurable(session, context.env);
+      if (markerDurable) completionMarkerLatched = true;
       const latched = computeLatch({
         alreadyLatched: latchExists(session),
         markerDurable,
@@ -72,7 +74,9 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       await sleepMs(500);
     },
     onComplete: async (session) => {
-      await launchCompletionSession(session, context);
+      await launchCompletionSession(session, context, {
+        agentCompleteMarker: completionMarkerLatched || await agentCompleteMarkerDurable(session, context.env),
+      });
     },
     onDied: async (session) => {
       const hasCompletionEvent = Boolean(findCompletionEventFile({
@@ -92,7 +96,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         timestamp: timestamp(),
       });
       if (verdict.outcome === "complete-normally") {
-        await launchCompletionSession(session, context);
+        await launchCompletionSession(session, context, { agentCompleteMarker: false });
         return;
       }
       updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
@@ -241,9 +245,17 @@ function assistantTexts(record: unknown): string[] {
   return out;
 }
 
-async function launchCompletionSession(sessionName: string, context: LiveMonitorContext): Promise<void> {
+interface CompletionLaunchOptions {
+  agentCompleteMarker?: boolean;
+}
+
+async function launchCompletionSession(
+  sessionName: string,
+  context: LiveMonitorContext,
+  options: CompletionLaunchOptions = {},
+): Promise<void> {
   const completionSession = `complete-${sessionName}-${Math.floor(Date.now() / 1000)}`;
-  const shellCommand = buildCompletionCommand(sessionName, context);
+  const shellCommand = buildCompletionCommand(sessionName, context, options);
   await pty.spawn(completionSession, "bash", ["-lc", shellCommand], {
     env: {
       ...stringEnv(context.env),
@@ -258,11 +270,16 @@ async function launchCompletionSession(sessionName: string, context: LiveMonitor
       STATE_DIR: context.stateDir,
       MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
       MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
+      MENTIKO_MONITOR_COMPLETION_LATCH: options.agentCompleteMarker ? "1" : "",
     },
   });
 }
 
-function buildCompletionCommand(sessionName: string, context: LiveMonitorContext): string {
+function buildCompletionCommand(
+  sessionName: string,
+  context: LiveMonitorContext,
+  options: CompletionLaunchOptions = {},
+): string {
   const completeShell = join(config.codeRoot, "lib", "chain-runner-complete.sh");
   const compiled = join(config.codeRoot, "lib", "runner-v2-complete.js");
   const devScript = join(config.codeRoot, "web", "scripts", "runner-v2-complete.cjs");
@@ -288,6 +305,7 @@ function buildCompletionCommand(sessionName: string, context: LiveMonitorContext
     STATE_DIR: context.stateDir,
     MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
+    MENTIKO_MONITOR_COMPLETION_LATCH: options.agentCompleteMarker ? "1" : "",
   };
   const envArgs = Object.entries(env).map(([key, value]) => `${key}=${shellEscape(String(value))}`).join(" ");
   return `env ${envArgs} bash -lc ${shellEscape(completion)}`;

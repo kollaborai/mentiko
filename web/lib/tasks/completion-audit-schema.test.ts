@@ -15,6 +15,23 @@ describe("extractCompletionAudit", () => {
     expect(a).toEqual({ verdict: "close", reason: "all AC met" });
   });
 
+  it("parses an audit embedded in a generated job output string", () => {
+    const a = extractCompletionAudit({
+      output: JSON.stringify({
+        headline: "implemented and verified",
+        audit: { verdict: "close", reason: "live runtime evidence satisfied the task" },
+      }),
+    });
+    expect(a).toEqual({ verdict: "close", reason: "live runtime evidence satisfied the task" });
+  });
+
+  it("FAIL-SAFE: unknown verdict embedded directly in job output escalates to decision", () => {
+    const a = extractCompletionAudit({
+      output: JSON.stringify({ verdict: "ship_it", reason: "looks fine" }),
+    });
+    expect(a?.verdict).toBe("decision");
+  });
+
   it("parses a decision verdict with prompt and options", () => {
     const a = extractCompletionAudit({
       audit: {

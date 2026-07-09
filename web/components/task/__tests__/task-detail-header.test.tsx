@@ -31,6 +31,9 @@ jest.mock("@aliimam/icons", () => ({
   LinkFilled: ({ className }: { className?: string; style?: CSSProperties }) => (
     <svg className={className} aria-hidden="true" />
   ),
+  PauseFilled: ({ className }: { className?: string }) => (
+    <svg className={className} aria-hidden="true" />
+  ),
   PlayFilled: ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
@@ -230,6 +233,114 @@ describe("TaskDetailHeader", () => {
     expect(screen.getByText(/auto-run paused/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /reset attempts/i }));
     await waitFor(() => expect(onResetAutoRunAttempts).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a pause control when auto-run is enabled and pauses on click", async () => {
+    const onToggleAutoRunPause = jest.fn().mockResolvedValue(undefined);
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: { ...taskWithActions.chainBinding!, auto_run: true },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onToggleAutoRunPause={onToggleAutoRunPause}
+        isRunning={false}
+      />
+    );
+
+    const pauseSwitch = screen.getByRole("switch", { name: /pause auto-run/i });
+    expect(pauseSwitch).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByText(/paused by user/i)).not.toBeInTheDocument();
+
+    fireEvent.click(pauseSwitch);
+    await waitFor(() => expect(onToggleAutoRunPause).toHaveBeenCalledWith(true));
+  });
+
+  it("shows the resume control and reason badge when auto_run_paused is set, and clears on click", async () => {
+    const onToggleAutoRunPause = jest.fn().mockResolvedValue(undefined);
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: {
+            ...taskWithActions.chainBinding!,
+            auto_run: true,
+            auto_run_paused: true,
+            auto_run_paused_reason: "Paused by user",
+          },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onToggleAutoRunPause={onToggleAutoRunPause}
+        isRunning={false}
+      />
+    );
+
+    const pauseSwitch = screen.getByRole("switch", { name: /pause auto-run/i });
+    expect(pauseSwitch).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("resume")).toBeInTheDocument();
+    expect(screen.getByText("Paused by user")).toBeInTheDocument();
+
+    fireEvent.click(pauseSwitch);
+    await waitFor(() => expect(onToggleAutoRunPause).toHaveBeenCalledWith(false));
+  });
+
+  it("treats a legacy reason-only pause as paused (pre-boolean-writer migration)", () => {
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: {
+            ...taskWithActions.chainBinding!,
+            auto_run: true,
+            auto_run_paused: undefined,
+            auto_run_paused_reason: "waiting on design review",
+          },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onToggleAutoRunPause={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByRole("switch", { name: /pause auto-run/i })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("waiting on design review")).toBeInTheDocument();
+  });
+
+  it("does not show the pause control when auto-run is disabled for the task", () => {
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: { ...taskWithActions.chainBinding!, auto_run: false },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onToggleAutoRunPause={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.queryByRole("switch", { name: /pause auto-run/i })).not.toBeInTheDocument();
   });
 
   it("does not offer an active auto-run switch on a closed task", () => {

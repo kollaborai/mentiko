@@ -163,6 +163,8 @@ async function applyResolutionLifecycle(input: {
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
+    // DISABLED (regression): the full-scan nudge caused a recursive
+    // auto-run <-> reconcile storm re-running completed chains (TASK-097).
     scanUnblockedAutoRunTasks: () => undefined,
     retryExecution: async () => undefined,
   };

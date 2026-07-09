@@ -29,6 +29,14 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
   updateDecision: (...a: unknown[]) => updateDecision(...a),
 }));
 
+// scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
+// lib/runs/auto-run-service.ts) -- mock it so tests never make a real network
+// call when a parented resolution reaches applyResolutionLifecycle.
+const triggerAutoRunScan = jest.fn().mockResolvedValue(undefined);
+jest.mock("@/lib/runs/auto-run-service", () => ({
+  triggerAutoRunScan: (...a: unknown[]) => triggerAutoRunScan(...a),
+}));
+
 import { resolveDecisionToTasks } from "./decision-resolution";
 
 let seq = 0;

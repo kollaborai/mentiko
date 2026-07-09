@@ -92,6 +92,42 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
+  it("imports core generation payload before deferring to live session liveness", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { id: "chain-generation", name: "Chain Generation", agents: [] },
+      events: [],
+      generation: {
+        jobId: "job-1",
+        generationKind: "chain_generation",
+        runId: "run-123",
+        artifactsDir: "/tmp/run-123/artifacts",
+        importablePayload: true,
+      },
+      liveness: { sessionAlive: true, processAlive: true, outputChanged: true },
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "generation-terminal",
+      generation: { jobId: "job-1", generationKind: "chain_generation" },
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "completed",
+      agents: [{ id: "writer", status: "complete" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_generation_artifact",
+    });
+  });
+
   it("plans retry without failing the run when a declared emits event is missing and retry remains", () => {
     const file = runPath();
     seedRun(file);
@@ -168,6 +204,53 @@ describe("runner-v2 completion runner", () => {
         event: "draft-ready",
         source: "writer",
         data: "salvaged-from-agent-handoff-artifacts",
+      },
+      route: {
+        action: "launch",
+        agentIds: ["reviewer"],
+      },
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "running",
+      agents: [{ id: "writer", status: "complete" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_event",
+    });
+  });
+
+  it("routes from a monitor-latched AGENT_COMPLETE marker when the declared event is missing", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const input = {
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", name: "Writer", emits: "draft-ready" },
+      chain: {
+        id: "build-chain",
+        name: "Build Chain",
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: [],
+      agentCompleteMarker: true,
+      liveness: { sessionAlive: true, processAlive: true, outputChanged: true },
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    };
+
+    const decision = completeAgent(input);
+
+    expect(decision).toMatchObject({
+      action: "route",
+      event: {
+        event: "draft-ready",
+        source: "writer",
+        data: "salvaged-from-agent-complete-marker",
       },
       route: {
         action: "launch",

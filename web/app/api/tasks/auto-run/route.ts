@@ -14,6 +14,7 @@ import {
 } from "@/lib/namespace-config";
 import { readSystemSettings, resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import {
+  canAdmitAutoRun,
   getAutoRunCandidates,
   isTaskReady,
   reconcileActiveAutoRunTasks,
@@ -34,14 +35,14 @@ import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin
 import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
 
 export const dynamic = "force-dynamic";
 
 export const runtime = "nodejs";
 
 const RESUMABLE_RUN_STATUSES = new Set(["stopped", "failed", "cancelled"]);
-const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
-const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -409,6 +410,52 @@ function extractGeneratedChain(result: Record<string, unknown> | undefined): Rec
   return null;
 }
 
+function asPlainObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Resolve the recommendation object from a completed analysis job's result,
+ * across BOTH shapes job.result can take:
+ *
+ *   - normal (already unwrapped):  { recommendation: {...} }
+ *   - hydrated envelope:           { output: "<json string>" }
+ *
+ * job-store.ts readCompletedRunResult wraps a completed run's
+ * generation-result.json as { output } for recommend jobs too
+ * (isGenerationArtifactJob matches "recommend"). The inner json is itself
+ * EITHER a bare { action, chain_id, ... } object OR a wrapped
+ * { recommendation: {...} } (lib/mentiko-cli-generation.mjs normalizes with
+ * `obj.recommendation ?? obj`), so both are handled here.
+ *
+ * Returns the recommendation object ONLY when the shared payload contract deems
+ * it compatible; an unparseable / empty / incompatible payload resolves to null
+ * so the caller counts it as an unreadable retry instead of mis-routing it.
+ */
+function resolveJobRecommendation(result: unknown): Record<string, unknown> | null {
+  // Fast-path: the normal, already-unwrapped shape. Preserves prior behavior
+  // (job.result.recommendation) exactly -- no regression for the common case.
+  const direct = asPlainObject(result);
+  const directRecommendation = direct ? asPlainObject(direct.recommendation) : null;
+  if (directRecommendation) return directRecommendation;
+
+  // Enveloped shape: unwrap { output: "<json>" }, then prefer a nested
+  // `.recommendation` wrapper, falling back to the payload itself (bare shape).
+  const payload = unwrapAgentJsonOutput(result);
+  const recommendation = asPlainObject(payload?.recommendation) ?? payload ?? null;
+  if (!recommendation) return null;
+
+  // Validate through the shared payload contract — the SAME predicate the CLI
+  // import path (lib/mentiko-cli-generation.mjs) and the in-process hydration
+  // boundary (job-store.ts readCompletedRunResult) use — so all three consumers
+  // accept/reject the exact same recommendation payloads instead of each
+  // re-guessing the shape. An unrelated/empty payload resolves to null and is
+  // counted as an unreadable retry rather than mis-routed to generate_new.
+  return isPayloadCompatibleWithKind(recommendation, "chain_recommendation") ? recommendation : null;
+}
+
 function recoverGeneratedChainFromRunArtifacts(
   metadata: Record<string, unknown>,
   namespaceId: string
@@ -475,36 +522,13 @@ async function triggerAutoRun(
 ): Promise<TriggerResult> {
   const chainId = metadata.chain_id as string | undefined;
   const orgId = await getOrgIdFromRequest(request);
-  const taskStatus = typeof task.status === "string" ? task.status : undefined;
-  const lastRunStatus =
-    typeof metadata.last_run_status === "string" ? metadata.last_run_status : undefined;
 
-  if (taskStatus && DONE_TASK_STATUSES.has(taskStatus)) {
-    return {
-      triggered: false,
-      taskId,
-      action: "already_completed",
-      reason: "task is already complete",
-    };
-  }
-
-  if (metadata.last_run_decision_required === true) {
-    return {
-      triggered: false,
-      taskId,
-      action: "decision_required",
-      reason: "last run requires review",
-    };
-  }
-
-  const pendingGenerationJobId = metadata.generation_job_id as string | undefined;
-  if (lastRunStatus && COMPLETED_RUN_STATUSES.has(lastRunStatus) && !pendingGenerationJobId) {
-    return {
-      triggered: false,
-      taskId,
-      action: "already_completed",
-      reason: "last auto-run completed",
-    };
+  // Single gate for admission -- the SAME predicate the 60s poller uses via
+  // getAutoRunCandidates. This is what stops a paused/terminal task from
+  // slipping through the direct POST path or a post-job continuation call.
+  const admission = canAdmitAutoRun(task, orgId, namespaceId);
+  if (!admission.admit) {
+    return { triggered: false, taskId, action: admission.action, reason: admission.reason };
   }
 
   // resolve workspace if workspaceId provided but no workspacePath yet
@@ -659,18 +683,45 @@ async function triggerAutoRun(
       };
     }
 
-    if (job.status === "complete" && job.result?.recommendation) {
-      // auto-accept: extract chain from recommendation
-      return await autoAcceptRecommendation(
-        taskId,
-        task.title,
-        metadata,
-        job.result.recommendation as Record<string, unknown>,
-        namespaceId,
-        orgId,
-        request,
-        workspacePath
-      );
+    if (job.status === "complete") {
+      // Envelope-aware: a recommend job hydrated from a completed run's
+      // generation-result.json artifact (job-store.ts readCompletedRunResult
+      // via isGenerationArtifactJob, which matches BOTH "generate" and
+      // "recommend") wraps the agent payload as { output: "<json string>" }.
+      // The pre-fix check `job.result?.recommendation` is undefined for that
+      // envelope, so control fell through to case 4 and re-launched a fresh
+      // chain-recommendation run on every scan even though the recommendation
+      // already completed (TASK-097). resolveJobRecommendation handles the
+      // normal, enveloped-bare, and enveloped-wrapped shapes.
+      const recommendation = resolveJobRecommendation(job.result);
+      if (recommendation) {
+        return await autoAcceptRecommendation(
+          taskId,
+          task.title,
+          metadata,
+          recommendation,
+          namespaceId,
+          orgId,
+          request,
+          workspacePath
+        );
+      }
+
+      // Completed but unreadable (a lone { output } envelope that failed to
+      // parse, an empty object, or a payload with no recommendation keys).
+      // Mirror the failed-branch just above: clear the job ref, mark it
+      // unreadable, and count a retry so MAX_AUTO_RUN_RETRIES eventually trips
+      // even if the envelope handling ever regresses. A completed analysis job
+      // must NOT silently fall through to case 4 and relaunch every scan.
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          analysis_job_id: undefined,
+          analysis_status: "unreadable",
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        },
+      }, namespaceId);
+      return { triggered: false, taskId, action: "analysis_unreadable", jobId: analysisJobId };
     }
   }
 
