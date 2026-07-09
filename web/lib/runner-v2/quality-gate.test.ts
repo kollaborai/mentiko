@@ -63,6 +63,15 @@ describe("runner-v2 quality gate", () => {
     })).toEqual({ passed: true });
   });
 
+  it("passes a zero-route coverage report instead of treating a missing protectionRate as 0%", () => {
+    expect(evaluateQualityGate({
+      agent: { id: "route-coverage" },
+      routeCoverage: {
+        totalRoutes: 0,
+      },
+    })).toEqual({ passed: true });
+  });
+
   it("builds the shell-compatible quality gate failure side-effect plan", () => {
     expect(buildQualityGateFailurePlan(
       { id: "qa", name: "QA" },

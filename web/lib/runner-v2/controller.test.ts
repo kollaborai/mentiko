@@ -166,6 +166,40 @@ describe("runner-v2 controller", () => {
     );
   });
 
+  it("falls back on fallbackAllowed:true even when the reason text does not mention workspaces", async () => {
+    // Regression for a bug where the fallback decision keyed off a substring
+    // of the human-readable reason instead of the structured fallbackAllowed
+    // flag. bootstrap-executor's planning-failure case sets fallbackAllowed:
+    // true with a reason that never mentions "local workspaces" -- a
+    // substring check would incorrectly skip the fallback here.
+    mockLoadContract.mockReturnValue({
+      schema_version: "runner-contract/v1",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
+      flag: {
+        name: "MENTIKO_RUNNER_V2",
+        enabled_values: ["1"],
+        default: "off",
+        scope: "test",
+      },
+      invariants: ["default shell behavior remains unchanged"],
+    });
+    mockStartBootstrap.mockResolvedValue({
+      support: "unsupported",
+      reason: "runner-v2 bootstrap planning failed: missing agent id",
+      fallbackAllowed: true,
+    });
+
+    const result = await startRunnerV2Launch(launchContext());
+
+    expect(result.support).toBe("supported");
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "/bin/zsh",
+      ["-lc", expect.stringContaining(" --start 'writer'")],
+      expect.objectContaining({ cwd: "/repo", detached: true }),
+    );
+  });
+
   it("does not shell fallback when typed bootstrap reports a partial mutation failure", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",

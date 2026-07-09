@@ -35,6 +35,28 @@ describe("runner-v2 routed launch plans", () => {
     }]);
   });
 
+  it("shell-escapes a '--'-prefixed agent id instead of treating it as a bare flag", () => {
+    expect(buildRoutedLaunchPlans({
+      action: "launch",
+      agentIds: ["--evil; rm -rf"],
+      reason: "trigger match",
+    }, context)[0]).toMatchObject({
+      kind: "single",
+      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start '--evil; rm -rf'",
+    });
+  });
+
+  it("shell-escapes an agent id that collides with a known flag name", () => {
+    expect(buildRoutedLaunchPlans({
+      action: "launch",
+      agentIds: ["--start"],
+      reason: "trigger match",
+    }, context)[0]).toMatchObject({
+      kind: "single",
+      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start '--start'",
+    });
+  });
+
   it("builds one --parallel launch plan for multiple agents", () => {
     expect(buildRoutedLaunchPlans({
       action: "launch",

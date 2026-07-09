@@ -88,7 +88,7 @@ export function evaluateQualityGate(input: QualityGateInput): QualityGateResult 
       if (
         (coverage.totalRoutes ?? 0) > 0 && (coverage.protectedRoutes ?? 0) < (coverage.totalRoutes ?? 0)
         || (coverage.unprotectedRoutes ?? 0) > 0
-        || (coverage.protectionRate ?? 0) < required
+        || (coverage.totalRoutes ?? 0) > 0 && (coverage.protectionRate ?? 0) < required
       ) {
         return {
           passed: false,

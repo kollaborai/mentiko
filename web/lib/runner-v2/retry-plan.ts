@@ -124,7 +124,12 @@ export function calculateRetryDelayMs(
   } else if (strategy === "exponential") {
     delayMs = safeBase * (2 ** (safeAttempt - 1));
   } else if (strategy === "exponential_with_jitter") {
-    delayMs = safeBase * (2 ** (safeAttempt - 1));
+    // Full jitter (AWS backoff pattern): pick uniformly from [0, cappedExp]
+    // instead of always sleeping the full exponential delay, so retries from
+    // many concurrent failures don't all wake up on the same tick.
+    const exponentialDelayMs = safeBase * (2 ** (safeAttempt - 1));
+    const cappedExponentialDelayMs = Math.min(exponentialDelayMs, safeMax);
+    delayMs = Math.floor(Math.random() * (cappedExponentialDelayMs + 1));
   }
 
   return Math.min(delayMs, safeMax);

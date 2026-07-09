@@ -101,4 +101,34 @@ describe("runner-v2 retry planner", () => {
     expect(calculateRetryDelayMs(5, "exponential", 1000, 5000)).toBe(5000);
     expect(calculateRetryDelayMs(3, "unknown", 1000)).toBe(1000);
   });
+
+  it("applies full jitter for exponential_with_jitter instead of a fixed exponential delay", () => {
+    const attempt = 4;
+    const base = 1000;
+    const max = 20000;
+    const exponentialResult = calculateRetryDelayMs(attempt, "exponential", base, max);
+    const samples = Array.from(
+      { length: 30 },
+      () => calculateRetryDelayMs(attempt, "exponential_with_jitter", base, max),
+    );
+
+    for (const sample of samples) {
+      expect(sample).toBeGreaterThanOrEqual(0);
+      expect(sample).toBeLessThanOrEqual(exponentialResult);
+    }
+    // Not a no-op: across enough samples, jitter must produce at least one
+    // value that differs from the plain exponential delay.
+    expect(samples.some((sample) => sample !== exponentialResult)).toBe(true);
+  });
+
+  it("caps exponential_with_jitter at max_delay_ms like the plain exponential strategy", () => {
+    const samples = Array.from(
+      { length: 30 },
+      () => calculateRetryDelayMs(5, "exponential_with_jitter", 1000, 5000),
+    );
+    for (const sample of samples) {
+      expect(sample).toBeGreaterThanOrEqual(0);
+      expect(sample).toBeLessThanOrEqual(5000);
+    }
+  });
 });

@@ -72,6 +72,45 @@ describe("TaskRunStoryPanels", () => {
     expect(screen.queryByText("summarizing")).not.toBeInTheDocument();
   });
 
+  it("renders the completed outcome summary when execution metadata was cleared", () => {
+    const decisionBlockedTask: Task = {
+      ...task,
+      completed: false,
+      status: "open",
+      closedAt: undefined,
+      chainBinding: {
+        chain_id: "phase-1-lead-capture-validation",
+        chain_name: "Phase 1 Lead Capture Validation",
+        auto_run: true,
+      },
+      metadata: {
+        task_outcome_summary_status: "complete",
+        task_outcome_summary_source_run_id: "run-source",
+        task_outcome_summary_run_id: "run-summary",
+        task_outcome_summary: {
+          headline: "All six phase-1 lead-capture test cases passed.",
+          narrative: "Runtime validation passed but closure needs review.",
+          outcome: "complete",
+          confidence: "high",
+          decision_required: true,
+          what_happened: ["Happy path passed."],
+          evidence: ["phase-1-validation-report.md"],
+          improvement_signals: ["QA-only tasks need a closeability rule."],
+          next_actions: ["Decide whether to close TASK-096."],
+        },
+      },
+    };
+
+    render(<TaskRunStoryPanels task={decisionBlockedTask} />);
+
+    expect(screen.getByText("All six phase-1 lead-capture test cases passed.")).toBeInTheDocument();
+    expect(screen.getByText("Runtime validation passed but closure needs review.")).toBeInTheDocument();
+    expect(screen.getByText("ready")).toBeInTheDocument();
+    expect(screen.getByText("review")).toBeInTheDocument();
+    expect(screen.getAllByText("run-source").length).toBeGreaterThan(0);
+    expect(screen.getByText("run-summary")).toBeInTheDocument();
+  });
+
   it("keeps the Summary label outside the panel while summary generation is pending", () => {
     const pendingTask: Task = {
       ...task,

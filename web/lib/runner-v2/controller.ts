@@ -30,7 +30,7 @@ export async function startRunnerV2Launch(context: RunnerV2LaunchContext): Promi
   const bootstrap = await startRunnerV2Bootstrap(context);
   if (bootstrap.support === "supported") return bootstrap;
 
-  if (!bootstrap.reason.includes("only supports local workspaces")) return bootstrap;
+  if (!bootstrap.fallbackAllowed) return bootstrap;
 
   let plan;
   try {

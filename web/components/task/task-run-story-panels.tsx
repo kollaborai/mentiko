@@ -226,13 +226,13 @@ export function TaskRunStoryPanels({
   const metadata = task.metadata || {};
   const summary = runSummary(metadata.last_run_summary);
   const binding = task.chainBinding;
-  const lastRunId = binding?.last_run_id || summary?.run_id;
-  const outcome = binding?.last_run_outcome || summary?.outcome || binding?.last_run_status || "unknown";
-  const decisionRequired = binding?.last_run_decision_required ?? summary?.decision_required;
   const summarySourceRunId = stringValue(metadata.task_outcome_summary_source_run_id);
+  const lastRunId = binding?.last_run_id || summary?.run_id || summarySourceRunId;
   const matchingAiSummary = summarySourceRunId === lastRunId
     ? aiOutcomeSummary(metadata.task_outcome_summary)
     : undefined;
+  const outcome = matchingAiSummary?.outcome || binding?.last_run_outcome || summary?.outcome || binding?.last_run_status || "unknown";
+  const decisionRequired = matchingAiSummary?.decision_required ?? binding?.last_run_decision_required ?? summary?.decision_required;
   const summaryStatus = stringValue(metadata.task_outcome_summary_status);
   const summaryError = stringValue(metadata.task_outcome_summary_error);
   const summaryJobRunId = stringValue(metadata.task_outcome_summary_run_id);
@@ -416,7 +416,7 @@ export function TaskRunStoryPanels({
               <dt className="text-foreground/35">summary run</dt>
               <dd className="truncate font-mono text-foreground/65"><RunLink runId={summaryJobRunId}>{summaryJobRunId || "-"}</RunLink></dd>
               <dt className="text-foreground/35">status</dt>
-              <dd className="text-foreground/65">{summary?.status || binding?.last_run_status || "-"}</dd>
+              <dd className="text-foreground/65">{summary?.status || binding?.last_run_status || summaryStatus || "-"}</dd>
               <dt className="text-foreground/35">chain</dt>
               <dd className="truncate text-foreground/65">{binding?.chain_name || summary?.chain || "-"}</dd>
             </dl>

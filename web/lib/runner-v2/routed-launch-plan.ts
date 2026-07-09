@@ -60,6 +60,13 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   }];
 }
 
+// The only flags this file ever emits into tailArgs, and only ever as the
+// leading element (see the three call sites above: ["--start", agentId],
+// ["--parallel", ...agentIds], ["--start", agentIds[0]]). Matching by value
+// alone would let an agent id that happens to equal one of these strings
+// slip through unescaped too, so KNOWN_FLAGS only exempts index 0.
+const KNOWN_FLAGS = new Set(["--start", "--parallel", "--debug"]);
+
 function runnerCommand(context: RoutedLaunchContext, tailArgs: string[]): string {
   const runner = join(config.codeRoot, "lib", "chain-runner.sh");
   const args = [
@@ -68,7 +75,7 @@ function runnerCommand(context: RoutedLaunchContext, tailArgs: string[]): string
     ...(context.workspacePath ? ["--workspace", shellEscape(context.workspacePath)] : []),
     ...(context.taskId ? ["--task", shellEscape(context.taskId)] : []),
     ...(context.debug ? ["--debug"] : []),
-    ...tailArgs.map((arg) => arg.startsWith("--") ? arg : shellEscape(arg)),
+    ...tailArgs.map((arg, index) => (index === 0 && KNOWN_FLAGS.has(arg) ? arg : shellEscape(arg))),
   ];
   return `bash ${args.join(" ")}`;
 }
