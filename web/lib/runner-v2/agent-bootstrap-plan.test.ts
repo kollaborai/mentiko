@@ -8,6 +8,7 @@ jest.mock("@/lib/config", () => ({
   default: {
     codeRoot: "/repo",
   },
+  ptyDaemonEnv: () => ({ PTY_DAEMON: "mentiko-test", PTY_MANAGER_DIR: "/repo/.pty-manager" }),
 }));
 
 jest.mock("@/lib/api/audit-exec", () => ({

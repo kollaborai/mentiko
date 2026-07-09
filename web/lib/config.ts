@@ -111,6 +111,23 @@ const claudeProjectsBase = process.env.CLAUDE_PROJECTS_DIR || path.join(homedir(
 const ptyManagerDir = process.env.PTY_MANAGER_DIR || path.join(homedir(), ".pty-manager");
 const demoWorkspaceDir = process.env.DEMO_WORKSPACE_DIR || path.join(globalRoot, "demo-workspace");
 
+/**
+ * Single source of truth for the env that pins any child process — an agent,
+ * its monitor, the completion session, or a spawned pty-mgr — to the SAME pty
+ * daemon socket the web pty-client already uses. Every spawn path must route
+ * through this instead of hand-copying the vars (or defaulting them to "" /
+ * "default"): a child that re-derives the daemon name forks a rogue
+ * `default.sock` daemon and the session becomes unreachable ("connection failed").
+ */
+export function ptyDaemonEnv(): Record<string, string> {
+  const env: Record<string, string> = {
+    PTY_DAEMON: ptyDaemonName,
+    PTY_MANAGER_DIR: ptyManagerDir,
+  };
+  if (process.env.PTY_SOCKET_PATH) env.PTY_SOCKET_PATH = process.env.PTY_SOCKET_PATH;
+  return env;
+}
+
 // ---------------------------------------------------------------------------
 // path helpers (for dynamic namespace/org/project from request context)
 // ---------------------------------------------------------------------------

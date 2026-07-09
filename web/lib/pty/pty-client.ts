@@ -9,7 +9,7 @@
 //   const sessions = await getLiveSessions();
 
 import { createConnection } from "net";
-import { config } from "../config";
+import { config, ptyDaemonEnv } from "../config";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
 import { spawn as cpSpawn } from "child_process";
@@ -170,7 +170,7 @@ async function ensureDaemon(): Promise<void> {
           MENTIKO_NAMESPACE_ROOT: config.namespaceRoot,
           NAMESPACE_ID: config.namespaceId,
           ORG_ID: config.orgId,
-          PTY_DAEMON: DAEMON_NAME,
+          ...ptyDaemonEnv(),
         },
       });
     } catch {

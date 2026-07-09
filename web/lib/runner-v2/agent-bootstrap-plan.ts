@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { basename, dirname, join } from "path";
-import config from "@/lib/config";
+import config, { ptyDaemonEnv } from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
@@ -112,9 +112,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_SESSION_TOKEN: input.env?.MENTIKO_SESSION_TOKEN || "",
     MENTIKO_WEB_URL: input.env?.MENTIKO_WEB_URL || "",
     KOLLABOR_ENGINE_URL: input.env?.KOLLABOR_ENGINE_URL || "",
-    PTY_DAEMON: input.env?.PTY_DAEMON || "",
-    PTY_MANAGER_SOCKET_DIR: input.env?.PTY_MANAGER_SOCKET_DIR || "",
-    PTY_MANAGER_DIR: input.env?.PTY_MANAGER_DIR || "",
+    ...ptyDaemonEnv(),
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
     MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
     MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
