@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 
 // The verifiable core of the typed monitor's I/O adapter. Everything here is a
@@ -98,24 +99,37 @@ export function captureHash(capture: string, lines = 20): string {
 
 /**
  * Find the completion event file for this run/agent in the events dir, mirroring
- * monitor_completion_event_file: an unprocessed event whose run id matches and
- * whose source contains the agent id (never a diagnostic monitor/watchdog event).
- * Returns the filename, or "" if none. This is the "event exists" signal that
- * makes an eventless-but-alive agent distinguishable from one that handed off.
+ * monitor_completion_event_file: an unprocessed event whose run id matches, whose
+ * event NAME equals the agent's declared `emits` (shell monitor-completion.sh:44,61
+ * -- caller must resolve this via readDeclaredEmits and pass it in), and whose
+ * source/agent EXACTLY identifies this agent -- agentOwnsEvent, never a
+ * substring/prefix match, never a diagnostic monitor/watchdog event. Real events are
+ * typically stamped with the session name (agentId + run suffix, e.g.
+ * "writer-run-1"), not the bare agent id, so callers should pass sessionName
+ * (agentOwnsEvent's third owner candidate) -- without it, only an event stamped
+ * with the literal bare agent id (or a configured sessionPrefix) will match, which
+ * is intentionally conservative (fail-closed) rather than a silent no-op. Returns
+ * the filename, or "" if none, including when the agent has no declared emits event
+ * at all (mirrors shell's `-n "$expected_event"` guard: no declared event, no
+ * completion file, ever). This is the "event exists" signal that makes an
+ * eventless-but-alive agent distinguishable from one that handed off.
  */
 export function findCompletionEventFile(input: {
   eventsDir: string;
   runId: string;
   agentId: string;
+  expectedEvent: string;
+  sessionName?: string;
 }): string {
   if (!input.eventsDir || !existsSync(input.eventsDir)) return "";
+  if (!input.expectedEvent) return "";
   let files: string[];
   try {
     files = readdirSync(input.eventsDir).filter((f) => f.endsWith(".event"));
   } catch {
     return "";
   }
-  const agent = input.agentId.toLowerCase();
+  const expectedEvent = input.expectedEvent.toLowerCase();
   for (const file of files) {
     let body: string;
     try {
@@ -126,15 +140,29 @@ export function findCompletionEventFile(input: {
     const fields = parseEventFields(body);
     if (fields.processed === "true") continue;
     if (input.runId && fields.run_id && fields.run_id !== input.runId) continue;
+    if ((fields.event ?? "").toLowerCase() !== expectedEvent) continue;
     const source = (fields.source ?? "").toLowerCase();
     if (DIAGNOSTIC_SOURCES.has(source)) continue;
-    if (agent && !source.includes(agent) && !(fields.agent ?? "").toLowerCase().includes(agent)) continue;
+    if (!agentOwnsEvent(toOwnershipCandidate(fields), { id: input.agentId }, input.sessionName)) continue;
     return file;
   }
   return "";
 }
 
 const DIAGNOSTIC_SOURCES = new Set(["monitor", "watchdog", "chain-runner-complete"]);
+
+/** Shapes a parsed field map into the RunnerEventRecord agentOwnsEvent expects. */
+function toOwnershipCandidate(fields: Record<string, string>) {
+  return {
+    event: fields.event ?? "",
+    source: fields.source ?? "",
+    runId: fields.run_id ?? "",
+    timestamp: fields.timestamp ?? "",
+    processed: fields.processed === "true",
+    data: fields.data ?? "",
+    fields,
+  };
+}
 
 function parseEventFields(body: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -145,7 +173,46 @@ function parseEventFields(body: string): Record<string, string> {
     const value = line.slice(idx + 1).trim();
     if (key && !(key in out)) out[key] = value;
   }
+
+  // Shell falls back to whole-body JSON parsing for whichever plain
+  // key:value lines are missing (monitor-completion.sh:55-58 for
+  // event/source, :66-68 for run_id -- independently guarded): a valid JSON
+  // event body (e.g. from `mentiko emit --json`) the shell accepts must not
+  // be invisible to the typed monitor, producing a false stall/nudge.
+  if ((!out.event && !out.source) || !out.run_id) {
+    const json = tryParseJsonObject(body);
+    if (json) {
+      if (!out.event && !out.source) {
+        const event = firstString(json.event, json.event_name);
+        const source = firstString(json.source, json.source_agent, json.agent);
+        if (event) out.event = event;
+        if (source) out.source = source;
+      }
+      if (!out.run_id) {
+        const runId = firstString(json.run_id, json.runId);
+        if (runId) out.run_id = runId;
+      }
+    }
+  }
   return out;
+}
+
+function tryParseJsonObject(body: string): Record<string, unknown> | null {
+  const trimmed = body.trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
 }
 
 /**
@@ -251,4 +318,81 @@ export function writeLatch(session: string, dir: string = MONITOR_STATE_DIR): vo
 
 export function latchExists(session: string, dir: string = MONITOR_STATE_DIR): boolean {
   return existsSync(monitorStatePaths(session, dir).complete);
+}
+
+/**
+ * Read the run_id + timestamp fields off one specific event file. For callers
+ * (monitor-live-io's cross-run completion recovery) that need adoption
+ * evidence beyond "does a matching-name file exist somewhere": which run
+ * produced it, and how fresh it is.
+ */
+export function readEventRunAndTimestamp(eventsDir: string, file: string): { runId: string; timestamp: string } {
+  try {
+    const fields = parseEventFields(readFileSync(join(eventsDir, file), "utf8"));
+    return { runId: fields.run_id ?? "", timestamp: fields.timestamp ?? "" };
+  } catch {
+    return { runId: "", timestamp: "" };
+  }
+}
+
+export interface CrossRunAdoptionRunRef {
+  taskId?: string;
+  chainId?: string;
+  chain?: string;
+  parent_run_id?: string;
+}
+
+// Mirrors the reconcile route's RUN_HANDOFF_GRACE_MS order of magnitude
+// (web/app/api/tasks/reconcile/route.ts) for "how long is a stale-but-real
+// handoff plausible" -- a tight window, not a blanket allowance.
+const CROSS_RUN_ADOPTION_FRESHNESS_MS = 5 * 60 * 1000;
+
+/**
+ * Whether a cross-run completion event found under a DIFFERENT run id may be
+ * adopted to complete the CURRENT run (monitor-live-io's cross-run recovery).
+ * Two independent paths to "yes":
+ *
+ *  1. a PROVEN predecessor/attempt relation: the candidate run is the current
+ *     run's recorded parent (parent_run_id), or both runs are attempts at the
+ *     same task (matching taskId) -- a system-recorded relationship, not a
+ *     guess. No freshness requirement: the relationship itself is the proof.
+ *  2. a TIGHT freshness window on the event's own timestamp PLUS matching
+ *     chain identity, for ad-hoc runs with no task linkage.
+ *
+ * Anything else (unknown candidate run, no relation, stale, or a
+ * chain/task mismatch): no adoption. The caller must not latch -- leave it
+ * for the reconcile late-event recovery (recoverLateCompletionEvents, which
+ * is run-scoped and keys off real attempt state) instead of a stale event
+ * from an unrelated prior run silently completing this one.
+ */
+export function crossRunAdoptionAllowed(input: {
+  candidateRunId: string;
+  candidateTimestamp: string;
+  now: Date;
+  currentRun: CrossRunAdoptionRunRef;
+  candidateRun: CrossRunAdoptionRunRef | null;
+}): boolean {
+  if (!input.candidateRunId) return false;
+
+  if (input.currentRun.parent_run_id && input.currentRun.parent_run_id === input.candidateRunId) {
+    return true;
+  }
+  if (input.currentRun.taskId && input.candidateRun?.taskId === input.currentRun.taskId) {
+    return true;
+  }
+
+  const ageMs = eventAgeMs(input.candidateTimestamp, input.now);
+  if (ageMs === null || ageMs > CROSS_RUN_ADOPTION_FRESHNESS_MS) return false;
+
+  const sameChain =
+    (Boolean(input.currentRun.chainId) && input.currentRun.chainId === input.candidateRun?.chainId) ||
+    (Boolean(input.currentRun.chain) && input.currentRun.chain === input.candidateRun?.chain);
+  return sameChain;
+}
+
+function eventAgeMs(timestamp: string, now: Date): number | null {
+  if (!timestamp) return null;
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return null;
+  return now.getTime() - parsed;
 }

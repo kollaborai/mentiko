@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createLiveMonitorIO } from "@/lib/runner-v2/monitor-live-io";
-import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: {
@@ -157,6 +157,158 @@ describe("monitor-v2 live IO", () => {
     expect(eventFiles).toContain("event: agent-error");
     expect(eventFiles).toContain("source: monitor");
     expect(eventFiles).toContain("agent: writer");
+  });
+
+  describe("completion command flag gate (A1 -- fail closed on 64, no shell fallthrough)", () => {
+    // No MENTIKO_TRANSCRIPT_JSONL override in these tests, so onComplete's
+    // agentCompleteMarker lookup falls through to pty.capture -- pin it to a
+    // UUID-free string so resolveTranscriptJsonl short-circuits instead of
+    // scanning the real homedir with whatever a prior test left mocked
+    // (clearAllMocks clears calls, not mockResolvedValue implementations).
+    beforeEach(() => {
+      ptyMock.capture.mockResolvedValue("");
+    });
+
+    it("runs ONLY the shell completion script when MENTIKO_RUNNER_V2_COMPLETION is not enabled", async () => {
+      const f = fixture();
+      await liveIo(f, { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "" }).onComplete("writer-run-123");
+      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
+      expect(command).toContain("chain-runner-complete.sh");
+      expect(command).not.toContain("runner-v2-complete.js");
+      expect(command).not.toContain("runner-v2-complete.cjs");
+    });
+
+    it("runs ONLY the shell completion script when MENTIKO_RUNNER_V2 is off, even if the completion flag is on", async () => {
+      const f = fixture();
+      await liveIo(f, { MENTIKO_RUNNER_V2: "", MENTIKO_RUNNER_V2_COMPLETION: "1" }).onComplete("writer-run-123");
+      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
+      expect(command).toContain("chain-runner-complete.sh");
+      expect(command).not.toContain("runner-v2-complete.js");
+    });
+
+    it("runs the typed path and fails CLOSED on 64 -- no shell fallthrough -- when both flags are enabled", async () => {
+      const f = fixture();
+      await liveIo(f, { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" }).onComplete("writer-run-123");
+      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
+      expect(command).toContain("runner-v2-complete.js");
+      expect(command).toContain("exit 64");
+      expect(command).not.toContain("chain-runner-complete.sh");
+    });
+  });
+
+  describe("cross-run completion adoption (A3 -- freshness + task/chain identity guard)", () => {
+    function chainWithEmit(root: string, agentId: string, emits: string): string {
+      const chainPath = join(root, "chain.json");
+      writeFileSync(chainPath, JSON.stringify({ agents: [{ id: agentId, emits }] }));
+      return chainPath;
+    }
+
+    function seedCandidateRun(root: string, runId: string, patch: Partial<RunRecord> = {}) {
+      const runDir = join(root, "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      const run = createRunRecord({ chainName: "chain", goal: "goal" });
+      writeFileSync(join(runDir, "run.json"), JSON.stringify({ ...run, id: runId, status: "completed", ...patch }));
+    }
+
+    function seedCompletionEvent(eventsDir: string, name: string, fields: Record<string, string>) {
+      const body = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n");
+      writeFileSync(join(eventsDir, name), `${body}\n`);
+    }
+
+    it("adopts a cross-run event when both runs share the same task id (proven attempt relation), even if stale", async () => {
+      const f = fixture();
+      const chainPath = chainWithEmit(f.root, "writer", "draft");
+      updateRunJson(f.runJsonPath, (run) => ({ ...(run as RunRecord), taskId: "TASK-1" }));
+      seedCandidateRun(f.root, "run-old", { taskId: "TASK-1" });
+      seedCompletionEvent(f.eventsDir, "run-old-writer-draft.event", {
+        event: "draft",
+        source: "writer-run-old",
+        run_id: "run-old",
+        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        processed: "false",
+      });
+      ptyMock.capture.mockResolvedValue("work done\nAGENT_COMPLETE\n");
+
+      const observed = await createLiveMonitorIO({
+        sessionName: "writer-run-123",
+        chainPath,
+        runId: "run-123",
+        runDir: f.runDir,
+        runJsonPath: f.runJsonPath,
+        agentId: "writer",
+        workspaceType: "local",
+        eventsDir: f.eventsDir,
+        stateDir: f.stateDir,
+        namespaceId: "default",
+        orgId: "default",
+        env: { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" },
+      }).observe("writer-run-123");
+
+      expect(observed.completionEventPresent).toBe(true);
+    });
+
+    it("does NOT adopt a stale cross-run event from an unrelated task, even with a matching chain name", async () => {
+      const f = fixture();
+      const chainPath = chainWithEmit(f.root, "writer", "draft");
+      updateRunJson(f.runJsonPath, (run) => ({ ...(run as RunRecord), taskId: "TASK-1" }));
+      seedCandidateRun(f.root, "run-old", { taskId: "TASK-9", chain: "chain" });
+      seedCompletionEvent(f.eventsDir, "run-old-writer-draft.event", {
+        event: "draft",
+        source: "writer-run-old",
+        run_id: "run-old",
+        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h old -- outside the freshness window
+        processed: "false",
+      });
+      ptyMock.capture.mockResolvedValue("work done\nAGENT_COMPLETE\n");
+
+      const observed = await createLiveMonitorIO({
+        sessionName: "writer-run-123",
+        chainPath,
+        runId: "run-123",
+        runDir: f.runDir,
+        runJsonPath: f.runJsonPath,
+        agentId: "writer",
+        workspaceType: "local",
+        eventsDir: f.eventsDir,
+        stateDir: f.stateDir,
+        namespaceId: "default",
+        orgId: "default",
+        env: { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" },
+      }).observe("writer-run-123");
+
+      expect(observed.completionEventPresent).toBe(false);
+    });
+
+    it("adopts a cross-run event with no task link when it is FRESH and the chain name matches", async () => {
+      const f = fixture();
+      const chainPath = chainWithEmit(f.root, "writer", "draft");
+      seedCandidateRun(f.root, "run-old", { chain: "chain" });
+      seedCompletionEvent(f.eventsDir, "run-old-writer-draft.event", {
+        event: "draft",
+        source: "writer-run-old",
+        run_id: "run-old",
+        timestamp: new Date().toISOString(),
+        processed: "false",
+      });
+      ptyMock.capture.mockResolvedValue("work done\nAGENT_COMPLETE\n");
+
+      const observed = await createLiveMonitorIO({
+        sessionName: "writer-run-123",
+        chainPath,
+        runId: "run-123",
+        runDir: f.runDir,
+        runJsonPath: f.runJsonPath,
+        agentId: "writer",
+        workspaceType: "local",
+        eventsDir: f.eventsDir,
+        stateDir: f.stateDir,
+        namespaceId: "default",
+        orgId: "default",
+        env: { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" },
+      }).observe("writer-run-123");
+
+      expect(observed.completionEventPresent).toBe(true);
+    });
   });
 });
 

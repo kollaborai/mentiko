@@ -11,17 +11,19 @@ import {
   captureHash,
   clearMonitorState,
   computeLatch,
+  crossRunAdoptionAllowed,
   findAgentCompletionEventAnyRun,
   findCompletionEventFile,
   latchExists,
   loadMonitorState,
   monitorStatePaths,
   readDeclaredEmits,
+  readEventRunAndTimestamp,
   saveMonitorState,
   writeLatch,
 } from "@/lib/runner-v2/monitor-io";
 import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
-import { updateRunAgent, updateRunStatus } from "@/lib/runner-v2/run-state";
+import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 
 export interface LiveMonitorContext {
   sessionName: string;
@@ -44,40 +46,76 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     hasSession: (session) => pty.alive(session),
     observe: async (session) => {
       const capture = await pty.capture(session, 20).catch(() => "");
+      const expectedEvent = readDeclaredEmits(context.chainPath, context.agentId);
       let eventFile = findCompletionEventFile({
         eventsDir: context.eventsDir,
         runId: context.runId,
         agentId: context.agentId,
+        expectedEvent,
+        sessionName: context.sessionName,
       }) || findCompletionEventFile({
         eventsDir: join(dirname(context.chainPath), "events"),
         runId: context.runId,
         agentId: context.agentId,
+        expectedEvent,
+        sessionName: context.sessionName,
       });
 
       // Cross-run completion recovery: this run has NO completion event of its own,
       // yet the agent has printed a standalone AGENT_COMPLETE AND its declared emit
       // event already exists under ANOTHER run (a duplicate run of work a prior run
-      // finished). The watched agent is genuinely done, so adopt the prior event and
-      // let the run complete cleanly instead of nudging to a false stalled-escalate.
-      // Gated on the agent asserting completion, so an actively-working run (which
-      // has not printed the marker) is never short-circuited; run-scoped isolation
-      // above stays the primary signal.
-      if (!eventFile && captureAssertsAgentComplete(capture)) {
-        const emits = readDeclaredEmits(context.chainPath, context.agentId);
-        if (emits) {
-          eventFile = findAgentCompletionEventAnyRun({
-            eventsDir: context.eventsDir,
+      // finished). Gated on the agent asserting completion, so an actively-working
+      // run (which has not printed the marker) is never short-circuited; run-scoped
+      // isolation above stays the primary signal.
+      //
+      // Finding the event is not enough to adopt it: a stale event from an
+      // unrelated prior run must not complete this run. crossRunAdoptionAllowed
+      // requires either a proven predecessor/task relation, or a tight freshness
+      // window plus matching chain identity; otherwise this leaves the event for
+      // the reconcile late-event recovery (recoverLateCompletionEvents) instead of
+      // latching here.
+      if (!eventFile && expectedEvent && captureAssertsAgentComplete(capture)) {
+        const primaryEventsDir = context.eventsDir;
+        const secondaryEventsDir = join(dirname(context.chainPath), "events");
+        let candidateDir = primaryEventsDir;
+        let candidate = findAgentCompletionEventAnyRun({
+          eventsDir: primaryEventsDir,
+          agentId: context.agentId,
+          emitsEvent: expectedEvent,
+        });
+        if (!candidate) {
+          candidate = findAgentCompletionEventAnyRun({
+            eventsDir: secondaryEventsDir,
             agentId: context.agentId,
-            emitsEvent: emits,
-          }) || findAgentCompletionEventAnyRun({
-            eventsDir: join(dirname(context.chainPath), "events"),
-            agentId: context.agentId,
-            emitsEvent: emits,
+            emitsEvent: expectedEvent,
           });
-          if (eventFile) {
+          candidateDir = secondaryEventsDir;
+        }
+        if (candidate) {
+          const { runId: candidateRunId, timestamp: candidateTimestamp } = readEventRunAndTimestamp(candidateDir, candidate);
+          const currentRun = safeReadRunJson(context.runJsonPath);
+          const candidateRun = candidateRunId
+            ? safeReadRunJson(join(dirname(context.runDir), candidateRunId, "run.json"))
+            : null;
+          const allowed = Boolean(currentRun) && crossRunAdoptionAllowed({
+            candidateRunId,
+            candidateTimestamp,
+            now: new Date(),
+            currentRun: currentRun ?? {},
+            candidateRun,
+          });
+          if (allowed) {
+            eventFile = candidate;
             console.log(
-              `monitor: ${context.agentId} asserted AGENT_COMPLETE and its '${emits}' completion event ` +
-                `exists under another run (${eventFile}); completing run ${context.runId} cleanly instead of escalating`,
+              `monitor: ${context.agentId} asserted AGENT_COMPLETE and its '${expectedEvent}' completion event ` +
+                `exists under another run (${candidate}, run ${candidateRunId}); completing run ${context.runId} cleanly instead of escalating`,
+            );
+          } else {
+            console.log(
+              `monitor: ${context.agentId} asserted AGENT_COMPLETE and a '${expectedEvent}' completion event exists ` +
+                `under another run (${candidate}, run ${candidateRunId || "unknown"}), but adoption requires a proven ` +
+                `predecessor/task relation or fresh+matching-chain evidence; leaving it for reconcile late-event ` +
+                `recovery instead of completing run ${context.runId}`,
             );
           }
         }
@@ -112,14 +150,19 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       });
     },
     onDied: async (session) => {
+      const expectedEvent = readDeclaredEmits(context.chainPath, context.agentId);
       const hasCompletionEvent = Boolean(findCompletionEventFile({
         eventsDir: context.eventsDir,
         runId: context.runId,
         agentId: context.agentId,
+        expectedEvent,
+        sessionName: context.sessionName,
       }) || findCompletionEventFile({
         eventsDir: join(dirname(context.chainPath), "events"),
         runId: context.runId,
         agentId: context.agentId,
+        expectedEvent,
+        sessionName: context.sessionName,
       }));
       const verdict = classifyDeath({
         hasCompletionEvent,
@@ -157,6 +200,15 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     clearState: clearMonitorState,
     log: (message) => console.log(message),
   };
+}
+
+/** Best-effort run.json read for the cross-run adoption guard -- never throws. */
+function safeReadRunJson(path: string): RunRecord | null {
+  try {
+    return existsSync(path) ? readRunJson(path) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function monitorAgentProcessGone(
@@ -308,6 +360,14 @@ async function launchCompletionSession(
   });
 }
 
+// Mirrors bash `[[ "$VALUE" =~ ^(1|true|yes|on)$ ]]` (case-sensitive, same as
+// lib/agent-functions.sh:702-703 launch-chain-runner-complete).
+const RUNNER_V2_TRUTHY = /^(1|true|yes|on)$/;
+
+function isFlagTruthy(value: string | undefined): boolean {
+  return typeof value === "string" && RUNNER_V2_TRUTHY.test(value);
+}
+
 function buildCompletionCommand(
   sessionName: string,
   context: LiveMonitorContext,
@@ -319,13 +379,29 @@ function buildCompletionCommand(
   const session = shellEscape(sessionName);
   const chain = shellEscape(context.chainPath);
   const shell = `exec ${shellEscape(completeShell)} ${session} ${chain}`;
-  const completion = [
-    "if command -v node >/dev/null 2>&1; then",
-    `if [[ -f ${shellEscape(compiled)} ]]; then node ${shellEscape(compiled)} ${session} ${chain}; _s=$?; if [[ "$_s" -ne 64 ]]; then exit "$_s"; fi; fi;`,
-    `if [[ -f ${shellEscape(devScript)} ]]; then node ${shellEscape(devScript)} ${session} ${chain}; _s=$?; if [[ "$_s" -ne 64 ]]; then exit "$_s"; fi; fi;`,
-    "fi;",
-    shell,
-  ].join(" ");
+
+  // Mirrors lib/agent-functions.sh launch-chain-runner-complete (:694-706), the
+  // shell equivalent of this function: typed completion only engages when BOTH
+  // MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are truthy. When disabled,
+  // run ONLY the shell completion path -- no node invocation at all. When
+  // enabled, run whichever typed script exists and exit with EXACTLY its exit
+  // code (including 64) -- fail CLOSED, never fall through to
+  // chain-runner-complete.sh. The old "_s=$?; if -ne 64" chain let a
+  // declining/unsupported typed script (64, RunnerV2CompletionUnsupportedError)
+  // cascade all the way into the shell path even with the flag on, mixing typed
+  // + shell ownership for the same completion (see b34fd72).
+  const typedCompletionEnabled = isFlagTruthy(context.env.MENTIKO_RUNNER_V2)
+    && isFlagTruthy(context.env.MENTIKO_RUNNER_V2_COMPLETION);
+  const completion = typedCompletionEnabled
+    ? [
+        "if ! command -v node >/dev/null 2>&1; then",
+        "echo 'runner-v2 completion failed closed: node unavailable' >&2; exit 64;",
+        "fi;",
+        `if [[ -f ${shellEscape(compiled)} ]]; then node ${shellEscape(compiled)} ${session} ${chain}; exit "$?"; fi;`,
+        `if [[ -f ${shellEscape(devScript)} ]]; then node ${shellEscape(devScript)} ${session} ${chain}; exit "$?"; fi;`,
+        "echo 'runner-v2 completion failed closed: typed completion entrypoint missing' >&2; exit 64;",
+      ].join(" ")
+    : shell;
   const env = {
     MENTIKO_RUN_ID: context.runId,
     RUN_ID: context.runId,
