@@ -7,13 +7,16 @@ import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
 import { classifyDeath, classifyStall, type MonitorDiagnosticEvent } from "@/lib/runner-v2/monitor-diagnostics";
 import {
+  captureAssertsAgentComplete,
   captureHash,
   clearMonitorState,
   computeLatch,
+  findAgentCompletionEventAnyRun,
   findCompletionEventFile,
   latchExists,
   loadMonitorState,
   monitorStatePaths,
+  readDeclaredEmits,
   saveMonitorState,
   writeLatch,
 } from "@/lib/runner-v2/monitor-io";
@@ -41,7 +44,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     hasSession: (session) => pty.alive(session),
     observe: async (session) => {
       const capture = await pty.capture(session, 20).catch(() => "");
-      const eventFile = findCompletionEventFile({
+      let eventFile = findCompletionEventFile({
         eventsDir: context.eventsDir,
         runId: context.runId,
         agentId: context.agentId,
@@ -50,6 +53,36 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         runId: context.runId,
         agentId: context.agentId,
       });
+
+      // Cross-run completion recovery: this run has NO completion event of its own,
+      // yet the agent has printed a standalone AGENT_COMPLETE AND its declared emit
+      // event already exists under ANOTHER run (a duplicate run of work a prior run
+      // finished). The watched agent is genuinely done, so adopt the prior event and
+      // let the run complete cleanly instead of nudging to a false stalled-escalate.
+      // Gated on the agent asserting completion, so an actively-working run (which
+      // has not printed the marker) is never short-circuited; run-scoped isolation
+      // above stays the primary signal.
+      if (!eventFile && captureAssertsAgentComplete(capture)) {
+        const emits = readDeclaredEmits(context.chainPath, context.agentId);
+        if (emits) {
+          eventFile = findAgentCompletionEventAnyRun({
+            eventsDir: context.eventsDir,
+            agentId: context.agentId,
+            emitsEvent: emits,
+          }) || findAgentCompletionEventAnyRun({
+            eventsDir: join(dirname(context.chainPath), "events"),
+            agentId: context.agentId,
+            emitsEvent: emits,
+          });
+          if (eventFile) {
+            console.log(
+              `monitor: ${context.agentId} asserted AGENT_COMPLETE and its '${emits}' completion event ` +
+                `exists under another run (${eventFile}); completing run ${context.runId} cleanly instead of escalating`,
+            );
+          }
+        }
+      }
+
       const markerDurable = await agentCompleteMarkerDurable(session, context.env);
       if (markerDurable) completionMarkerLatched = true;
       const latched = computeLatch({
@@ -351,7 +384,10 @@ function findJsonl(root: string, uuid: string, depth: number): string {
 }
 
 function hasPgrep(): boolean {
-  return spawnSync("command", ["-v", "pgrep"], { shell: true, stdio: "ignore" }).status === 0;
+  // Single shell-string form (no args array) so this does not trip Node's DEP0190
+  // "args + shell:true" deprecation. `command -v` is a shell builtin, so shell:true
+  // is required; there are no args to escape here.
+  return spawnSync("command -v pgrep", { shell: true, stdio: "ignore" }).status === 0;
 }
 
 function hasChildProcess(pid: number): boolean {

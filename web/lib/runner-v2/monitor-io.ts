@@ -149,6 +149,86 @@ function parseEventFields(body: string): Record<string, string> {
 }
 
 /**
+ * Cross-run completion recovery finder. Like findCompletionEventFile but WITHOUT
+ * the run-id filter, and REQUIRING the event name to equal the agent's declared
+ * emit -- so it matches ONLY this agent's actual completion event, under any run.
+ *
+ * Motivating case: a duplicate run of work a prior run already finished. The agent
+ * prints AGENT_COMPLETE but emits nothing under the duplicate run (its work + event
+ * are stamped the earlier run), so the run-scoped findCompletionEventFile returns
+ * "" and the monitor nudges to a false stalled-escalate. The live IO consults this
+ * ONLY when the agent has asserted completion AND this run has no event of its own,
+ * so run-scoped isolation stays the primary signal for the normal path.
+ */
+export function findAgentCompletionEventAnyRun(input: {
+  eventsDir: string;
+  agentId: string;
+  emitsEvent: string;
+}): string {
+  if (!input.eventsDir || !input.emitsEvent || !existsSync(input.eventsDir)) return "";
+  let files: string[];
+  try {
+    files = readdirSync(input.eventsDir).filter((f) => f.endsWith(".event"));
+  } catch {
+    return "";
+  }
+  const agent = input.agentId.toLowerCase();
+  const emits = input.emitsEvent.toLowerCase();
+  for (const file of files) {
+    let body: string;
+    try {
+      body = readFileSync(join(input.eventsDir, file), "utf8");
+    } catch {
+      continue;
+    }
+    const fields = parseEventFields(body);
+    if (fields.processed === "true") continue;
+    // Must be the agent's DECLARED completion event -- tighter than agentId alone,
+    // so an unrelated event for the same agent under another run cannot false-latch.
+    if ((fields.event ?? "").toLowerCase() !== emits) continue;
+    const source = (fields.source ?? "").toLowerCase();
+    if (DIAGNOSTIC_SOURCES.has(source)) continue;
+    if (agent && !source.includes(agent) && !(fields.agent ?? "").toLowerCase().includes(agent)) continue;
+    return file;
+  }
+  return "";
+}
+
+/**
+ * True if the capture contains a standalone AGENT_COMPLETE line (the agent
+ * asserting completion). Strict trim-equality so the monitor's own nudge text
+ * ("...output AGENT_COMPLETE on its own line.") -- where the token is mid-line --
+ * can never match. This is only a GATE for cross-run recovery, never a standalone
+ * latch (durable-transcript / event stay the authoritative marker signals).
+ */
+export function captureAssertsAgentComplete(capture: string): boolean {
+  if (!capture) return false;
+  return capture.split(/\r?\n/).some((line) => line.trim() === "AGENT_COMPLETE");
+}
+
+/**
+ * The declared completion event name (`emits`) for an agent in a chain.json, or ""
+ * if the chain / agent / emits can't be resolved. Scopes cross-run completion
+ * recovery to the agent's actual completion event. Array-valued emits return ""
+ * (no recovery) rather than guessing.
+ */
+export function readDeclaredEmits(chainPath: string, agentId: string): string {
+  try {
+    const chain = JSON.parse(readFileSync(chainPath, "utf8")) as { agents?: unknown };
+    const agents = Array.isArray(chain.agents) ? chain.agents : [];
+    for (const agent of agents) {
+      if (agent && typeof agent === "object" && (agent as { id?: unknown }).id === agentId) {
+        const emits = (agent as { emits?: unknown }).emits;
+        return typeof emits === "string" ? emits : "";
+      }
+    }
+  } catch {
+    /* unreadable chain -> no cross-run recovery */
+  }
+  return "";
+}
+
+/**
  * The sticky latch decision (agent-completion-latched): once latched, stay
  * latched (the marker can scroll off the capture window). Latch on EITHER a
  * durable-transcript AGENT_COMPLETE OR a completion event file. The durable
