@@ -165,7 +165,7 @@ describe("applyCompletionAudit", () => {
     expect(startDecisionResearch).not.toHaveBeenCalled();
   });
 
-  it("close: does NOT fire the scan nudge (disabled — the full-scan nudge caused a recursive auto-run/reconcile storm that re-ran completed chains, TASK-097; next-task falls back to the 60s poller until a surgical dependents-only redo lands)", async () => {
+  it("close: fires the dependents-only auto-run nudge for the completed task (surgical scan_unblocked; storm-safe via getDirectDependentAutoRunCandidates + the terminal rule, replacing the disabled full-scan nudge that caused the TASK-097 re-run storm)", async () => {
     const task = makeTask();
     const audit: CompletionAudit = { verdict: "close", reason: "All acceptance criteria met." };
 
@@ -175,7 +175,9 @@ describe("applyCompletionAudit", () => {
     });
 
     expect(result.action).toBe("closed");
-    expect(triggerAutoRunScan).not.toHaveBeenCalled();
+    // dependents-only: the completed task's id is passed so the route scans only ITS
+    // direct dependents, not the whole org.
+    expect(triggerAutoRunScan).toHaveBeenCalledWith(expect.any(String), expect.any(String), task.id);
   });
 
   it("close: replaces stale running execution metadata with the audited completed source run", async () => {

@@ -9,6 +9,7 @@ import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { updateDecision } from "@/lib/decisions/decision-storage";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
+import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
 import { reduceTaskLifecycle } from "@/lib/orchestration/task-lifecycle-reducer";
 import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
@@ -306,11 +307,13 @@ async function applySummaryLifecycle(input: ApplyCompletionAuditInput): Promise<
       taskClose(depOrgId, taskId, reason, depNamespaceId);
     },
     clearDecisionGate: () => undefined,
-    // DISABLED (regression): a full-scan nudge here caused a recursive
-    // auto-run <-> reconcile storm that re-ran already-completed chains
-    // (TASK-097). Next-task falls back to the 60s poller until a surgical
-    // dependents-only redo lands.
-    scanUnblockedAutoRunTasks: () => undefined,
+    // Surgical dependents-only nudge (the redo the disable note was waiting for):
+    // fire-and-forget a scan of ONLY this completed task's direct dependents so the
+    // next task starts immediately instead of waiting up to 60s. Storm-safe: the route
+    // uses getDirectDependentAutoRunCandidates, and canAdmitAutoRun's terminal rule can
+    // never re-run a finished chain (that was the TASK-097 root cause, since fixed). The
+    // 60s poller backstops if this fire-and-forget is ever dropped by the runtime.
+    scanUnblockedAutoRunTasks: () => { void triggerAutoRunScan(input.namespaceId, input.orgId, input.task.id); },
     retryExecution: async () => {
       applyRetryTweaks(input);
     },

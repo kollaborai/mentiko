@@ -14,6 +14,7 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
+import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
 import { recoverLateCompletionEvents } from "@/lib/runner-v2/completion-recovery";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
@@ -541,9 +542,10 @@ function makeLifecycleDeps(input: {
     },
     closeTask: () => undefined,
     clearDecisionGate: async () => undefined,
-    // DISABLED (regression): the full-scan nudge caused a recursive
-    // auto-run <-> reconcile storm re-running completed chains (TASK-097).
-    scanUnblockedAutoRunTasks: async () => undefined,
+    // Surgical dependents-only nudge: scan ONLY this reconciled task's direct dependents
+    // (the ones whose last blocker just cleared), fire-and-forget. Storm-safe -- the
+    // terminal rule blocks any completed chain -- and O(dependents), not O(org).
+    scanUnblockedAutoRunTasks: () => { void triggerAutoRunScan(input.namespaceId, input.orgId, input.taskId); },
     retryExecution: ({ lifecycleState }) => {
       taskUpdate(input.orgId, input.taskId, {
         status: "open",

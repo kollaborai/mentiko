@@ -4,8 +4,9 @@
  */
 
 import { NextRequest } from "next/server";
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
+import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import {
@@ -16,6 +17,7 @@ import { readSystemSettings, resolveMaxConcurrentChains } from "@/lib/system/sys
 import {
   canAdmitAutoRun,
   getAutoRunCandidates,
+  getDirectDependentAutoRunCandidates,
   isTaskReady,
   reconcileActiveAutoRunTasks,
   reconcileTaskActiveRun,
@@ -91,6 +93,11 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const namespaceId = await getNamespaceIdFromRequest(request);
   const body = await request.json().catch(() => ({}));
   const taskId: string | undefined = body.taskId;
+  // Surgical completion nudge: when set, scan only this task's direct dependents (the
+  // ones whose last blocker just cleared) instead of the whole org -- fast, and it can
+  // never re-run a completed chain. Falls through the SAME concurrency-capped trigger.
+  const completedTaskId: string | undefined =
+    typeof body.completedTaskId === "string" ? body.completedTaskId : undefined;
 
   const settings = readSystemSettings(namespaceId);
   if (!settings.auto_run_enabled) {
@@ -137,7 +144,13 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   // otherwise scan all candidates
-  const candidates = getAutoRunCandidates(orgId, undefined, namespaceId);
+  // Reap dead runs FIRST: an orphaned "running" run (crashed session) otherwise holds a
+  // concurrency slot (countActiveRuns) and blocks its own task (findActiveRunForTask)
+  // forever. Doing it before the candidate scan + cap check frees both in this same tick.
+  const reapedDead = reapDeadRuns(namespaceId);
+  const candidates = completedTaskId
+    ? getDirectDependentAutoRunCandidates(orgId, completedTaskId, namespaceId)
+    : getAutoRunCandidates(orgId, undefined, namespaceId);
   if (candidates.length === 0) {
     return apiSuccess({ triggered: 0, results: [], reconciled: reconciledActiveRuns });
   }
@@ -153,6 +166,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (availableSlots === 0) {
     return apiSuccess({
       triggered: 0,
+      reaped: reapedDead,
       skipped: candidates.length,
       reconciled: reconciledActiveRuns,
       reason: `concurrent limit reached (${activeCount}/${maxConcurrent} active). Change at /settings/system.`,
@@ -187,6 +201,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   return apiSuccess({
     triggered,
+    reaped: reapedDead,
     activeRuns: activeCount,
     maxConcurrent,
     reconciled: reconciledActiveRuns,
@@ -1187,6 +1202,74 @@ async function startAnalysisJob(
  * Count currently active (running/pending) chain runs.
  * Same logic as /api/chains/run concurrency check.
  */
+// A crashed/orphaned run whose session died mid-agent keeps status "running" with a
+// non-terminal agent forever (the runner-v2 monitor never got to mark it) -- it then
+// permanently holds a concurrency slot in countActiveRuns AND blocks its own task via
+// findActiveRunForTask, so the whole auto-run pipeline deadlocks (observed: 4 runs stuck
+// "running" for 10-12h jamming the cap at 4/5). This is a self-healing watchdog: any
+// running/pending run with no agent liveness for DEAD_RUN_STALE_MS is terminalized so
+// the slot frees and the next reconcile audits it back onto its task. Threshold is 45m
+// -- >4x the 10-min agent heartbeat cadence and far beyond any run.json write gap, so a
+// slow-but-live agent is never reaped.
+const DEAD_RUN_STALE_MS = 45 * 60 * 1000;
+const TERMINAL_AGENT_STATUSES = new Set([
+  "complete", "completed", "failed", "cancelled", "canceled", "skipped", "stopped", "done", "error",
+]);
+
+function runLastActivityMs(rj: Record<string, unknown>, runJsonPath: string): number {
+  let latest = 0;
+  const consider = (v: unknown) => {
+    if (typeof v === "string") {
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) latest = Math.max(latest, t);
+    } else if (typeof v === "number" && v > 0) {
+      latest = Math.max(latest, v < 1e12 ? v * 1000 : v);
+    }
+  };
+  consider(rj.started); consider(rj.startedAt); consider(rj.resumedAt);
+  consider(rj.updatedAt); consider(rj.blockedAt);
+  const agents = Array.isArray(rj.agents) ? rj.agents : [];
+  for (const a of agents) consider((a as Record<string, unknown>)?.lastHeartbeat);
+  try { latest = Math.max(latest, statSync(runJsonPath).mtimeMs); } catch { /* ignore */ }
+  return latest;
+}
+
+/** Terminalize dead ("running"/"pending" but no liveness past DEAD_RUN_STALE_MS) runs so
+ *  they stop jamming the concurrency cap and blocking their tasks. Returns the count reaped. */
+function reapDeadRuns(namespaceId?: string): number {
+  const nsId = namespaceId || config.namespaceId;
+  const runsDir = nsPath(nsId, "runs");
+  if (!existsSync(runsDir)) return 0;
+  const now = Date.now();
+  let reaped = 0;
+  for (const dir of readdirSync(runsDir)) {
+    if (!dir.startsWith("run-")) continue;
+    const runDir = join(runsDir, dir);
+    const p = join(runDir, "run.json");
+    if (!existsSync(p)) continue;
+    try {
+      const rj = JSON.parse(readFileSync(p, "utf-8"));
+      if (rj.status !== "running" && rj.status !== "pending") continue;
+      if (allDeclaredAgentsComplete(rj, runDir)) continue; // effectively done; reconcile owns it
+      const last = runLastActivityMs(rj, p);
+      if (last > 0 && now - last <= DEAD_RUN_STALE_MS) continue; // still live
+      withRunJsonLock(p, () => {
+        const fresh = JSON.parse(readFileSync(p, "utf-8"));
+        if (fresh.status !== "running" && fresh.status !== "pending") return; // raced to terminal
+        if (now - runLastActivityMs(fresh, p) <= DEAD_RUN_STALE_MS) return; // became live under lock
+        fresh.status = "failed";
+        fresh.status_message = `reaped: no agent liveness for >${Math.round(DEAD_RUN_STALE_MS / 60000)}m (dead session); freed concurrency slot`;
+        for (const a of (Array.isArray(fresh.agents) ? fresh.agents : [])) {
+          if (!TERMINAL_AGENT_STATUSES.has(a.status)) a.status = "failed";
+        }
+        writeRunJsonAtomic(p, fresh);
+      });
+      reaped++;
+    } catch { /* skip corrupt */ }
+  }
+  return reaped;
+}
+
 function countActiveRuns(namespaceId?: string): number {
   const nsId = namespaceId || config.namespaceId;
   const runsDir = nsPath(nsId, "runs");

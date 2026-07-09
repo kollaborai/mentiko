@@ -12,7 +12,7 @@ import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
-import { resolveAutoRunState, MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
+import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 
 type DependencyStatus = {
@@ -326,6 +326,18 @@ export function canAdmitAutoRun(
     return { admit: false, reason: "epics do not run chains directly", action: "not_runnable" };
   }
 
+  // decision-type tasks are passive gates for a Decision entity -- that entity
+  // auto-advances through its OWN generation pipeline (research -> questions ->
+  // options -> plan, stopping at the human option-selection gate), never the
+  // chain analyze/generate/run pipeline. Admitting them here burns a concurrency
+  // slot on a meaningless chain-recommendation run and drives auto_run_retries to
+  // the ceiling (observed: every DEC-* task stuck at retries=3, all slots consumed
+  // by chain-recommender runs). The decision advances via decision-auto-advance,
+  // not this gate.
+  if (task.issue_type === "decision") {
+    return { admit: false, reason: "decision tasks advance via the decision pipeline, not chains", action: "not_runnable" };
+  }
+
   const metadata = (task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
     ? task.metadata
     : {}) as Record<string, unknown>;
@@ -433,6 +445,57 @@ export function getAutoRunCandidates(orgId: string, workspaceId?: string, namesp
   const wsDefaultCache = new Map<string, boolean>();
 
   for (const task of tasks) {
+    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache));
+    if (!admission.admit || !admission.ready) continue;
+
+    const metadata = (task.metadata as Record<string, unknown> | undefined) || {};
+    candidates.push({
+      taskId: task.id,
+      title: task.title,
+      chainId: metadata.chain_id as string | undefined,
+      chainName: metadata.chain_name as string | undefined,
+      priority: typeof task.priority === "number" ? task.priority : 2,
+      createdAt: task.created_at,
+      ready: admission.ready,
+    });
+  }
+
+  return candidates.sort(compareCandidates);
+}
+
+/**
+ * Dependents-only variant of getAutoRunCandidates: given a task that just reached a
+ * terminal state, return only its DIRECT dependents (task_dependencies where
+ * depends_on_id = completedTaskId) that are now admissible. This is the surgical
+ * "scan_unblocked_auto_run_tasks" effect -- O(direct dependents), not O(all org tasks) --
+ * so a completion nudge starts the next task immediately without re-scanning (or
+ * re-triggering) the whole org. Safe against the TASK-097 re-run storm: canAdmitAutoRun's
+ * isTaskReady still requires ALL of a dependent's blockers to be closed (a multi-blocker
+ * dependent only admits once the last completes), and the terminal rule still rejects any
+ * already-completed chain -- identical protection to the full scan, just narrower input.
+ */
+export function getDirectDependentAutoRunCandidates(
+  orgId: string,
+  completedTaskId: string,
+  namespaceId?: string,
+): AutoRunCandidate[] {
+  const completed = taskGet(orgId, completedTaskId, namespaceId) as
+    | (TaskRecord & { dependents?: Array<{ task_id?: string; id?: string; status?: string }> })
+    | undefined;
+  const dependents = completed?.dependents ?? [];
+  if (dependents.length === 0) return [];
+
+  const candidates: AutoRunCandidate[] = [];
+  const wsDefaultCache = new Map<string, boolean>();
+  const seen = new Set<string>();
+
+  for (const dep of dependents) {
+    const depId = dep.task_id || dep.id;
+    if (!depId || seen.has(depId)) continue;
+    seen.add(depId);
+    if (dep.status && DONE_STATUSES.has(dep.status)) continue; // already done -- skip cheaply
+    const task = taskGet(orgId, depId, namespaceId);
+    if (!task) continue;
     const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache));
     if (!admission.admit || !admission.ready) continue;
 

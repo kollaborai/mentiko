@@ -21,6 +21,7 @@ interface AutoRunServiceState {
   lastTriggered: number;
   lastError: string | null;
   healthy: boolean;
+  checkInFlight: boolean;
 }
 
 const g = globalThis as typeof globalThis & { __autoRunServiceState?: AutoRunServiceState };
@@ -34,6 +35,7 @@ if (!g.__autoRunServiceState) {
     lastTriggered: 0,
     lastError: null,
     healthy: false,
+    checkInFlight: false,
   };
 }
 const state = g.__autoRunServiceState;
@@ -151,6 +153,11 @@ async function waitForHealth(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function checkAutoRunTasks() {
+  // Don't stack scans: a full scan can exceed the 60s interval, and a second concurrent
+  // scan would double-trigger through the non-atomic cap slice. The two fetches below are
+  // each try/caught and the tail is pure assignment, so the guard is always released.
+  if (state.checkInFlight) return;
+  state.checkInFlight = true;
   const port = process.env.WEB_PORT || process.env.PORT || 3000;
   const secret = process.env.BETTER_AUTH_SECRET || "";
   const namespaceId = process.env.NAMESPACE_ID || "default";
@@ -178,7 +185,7 @@ async function checkAutoRunTasks() {
         "x-namespace-id": namespaceId,
       },
       body: JSON.stringify({}),
-      signal: AbortSignal.timeout(30_000), // 30s timeout for the full scan
+      signal: AbortSignal.timeout(120_000), // full scan can take ~45s+ on large task sets; must exceed it or every tick "fails"
     });
 
     if (!res.ok) {
@@ -209,6 +216,7 @@ async function checkAutoRunTasks() {
 
   state.lastCheck = new Date().toISOString();
   state.checkCount++;
+  state.checkInFlight = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +230,7 @@ async function checkAutoRunTasks() {
 // await the returned promise, so a close/resolve can never fail because this
 // downstream nudge failed or timed out. Errors are caught and logged here so
 // there is never an unhandled rejection even though nobody awaits us.
-export async function triggerAutoRunScan(namespaceId: string, orgId: string): Promise<void> {
+export async function triggerAutoRunScan(namespaceId: string, orgId: string, completedTaskId?: string): Promise<void> {
   const port = process.env.WEB_PORT || process.env.PORT || 3000;
   const secret = process.env.BETTER_AUTH_SECRET || "";
 
@@ -235,8 +243,10 @@ export async function triggerAutoRunScan(namespaceId: string, orgId: string): Pr
         "x-namespace-id": namespaceId,
         "x-org-id": orgId,
       },
-      body: JSON.stringify({}),
-      signal: AbortSignal.timeout(15_000),
+      // completedTaskId -> the route scans only that task's direct dependents (surgical,
+      // storm-safe). Omitted -> full-org scan (legacy callers). Fire-and-forget either way.
+      body: JSON.stringify(completedTaskId ? { completedTaskId } : {}),
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     console.warn("[auto-run] scan_unblocked_auto_run_tasks nudge failed:", err);

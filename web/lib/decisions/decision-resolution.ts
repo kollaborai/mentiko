@@ -6,6 +6,7 @@ import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-type
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
+import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 
 type ResolvedDecisionOption = Pick<
   Option | TailoredOption,
@@ -163,9 +164,10 @@ async function applyResolutionLifecycle(input: {
     resumeOriginalTask: () => undefined,
     closeTask: () => undefined,
     clearDecisionGate: () => undefined,
-    // DISABLED (regression): the full-scan nudge caused a recursive
-    // auto-run <-> reconcile storm re-running completed chains (TASK-097).
-    scanUnblockedAutoRunTasks: () => undefined,
+    // Surgical dependents-only nudge: when a decision resolves and its parent task
+    // resumes (or follow-ups complete), scan ONLY the parent's direct dependents,
+    // fire-and-forget. Storm-safe (terminal rule) and O(dependents).
+    scanUnblockedAutoRunTasks: () => { void triggerAutoRunScan(namespaceId, orgId, parentTask.id); },
     retryExecution: async () => undefined,
   };
   const transition = await applyLifecycleEvent({
