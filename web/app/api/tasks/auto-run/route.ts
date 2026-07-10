@@ -22,7 +22,9 @@ import {
   reconcileActiveAutoRunTasks,
   reconcileTaskActiveRun,
 } from "@/lib/runs/auto-run";
-import { taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { createTaskDecision } from "@/lib/tasks/task-decision-link";
+import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { getWorkspace, listWorkspaces, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
 import { getJob } from "@/lib/runs/job-store";
 import config, { nsPath } from "@/lib/config";
@@ -840,6 +842,12 @@ async function autoAcceptRecommendation(
   }
 
   if (action === "execute_directly") {
+    // "Execute directly" means no orchestration chain fits, but the task still needs
+    // action -- ambiguous for a machine to just do. Route it to a human DECISION GATE
+    // (the one legitimate stop): create a decision for the task, block the task on it,
+    // and kick off research so the decision auto-advances its deck headlessly (the deck
+    // then waits at the human selection gate). Previously this just disabled auto-run and
+    // dead-ended, leaving the task open and silently blocking its dependents forever.
     const updated = {
       ...metadata,
       auto_run: false,
@@ -848,19 +856,34 @@ async function autoAcceptRecommendation(
       chain_recommendation_reason: normalized.reasoning,
     };
     try {
-      taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
-    } catch {
-      /* non-fatal */
+      const prompt = `Task "${taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${normalized.reasoning ? `\n\nRecommender reasoning: ${normalized.reasoning}` : ""}`;
+      const { decision, task: decisionTask } = await createTaskDecision({
+        namespaceId,
+        orgId,
+        prompt,
+        source: "auto-run-execute-directly",
+        workspacePath,
+        parentTaskId: taskId,
+      });
+      taskAddDep(orgId, taskId, decisionTask.id, namespaceId, workspacePath);
+      taskUpdate(orgId, taskId, { status: "blocked", metadata: updated }, namespaceId);
+      // start research so the gate advances to a ready deck without a live browser tab
+      // (jobs/[id]/complete + decision-auto-advance then carry it to the selection gate).
+      const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
+      await startDecisionResearch({ request, namespaceId, orgId, decision, userPrompt: prompt, workspacePath });
+      return { triggered: false, taskId, action: "execute_directly_decision", reason: normalized.reasoning };
+    } catch (err) {
+      // gate creation failed -- fall back to the old disable behavior so we never throw
+      // out of the scan loop for one task.
+      try { taskUpdate(orgId, taskId, { metadata: updated }, namespaceId); } catch { /* non-fatal */ }
+      return { triggered: false, taskId, action: "execute_directly", error: err instanceof Error ? err.message : String(err) };
     }
-    return {
-      triggered: false,
-      taskId,
-      action: "execute_directly",
-      reason: normalized.reasoning,
-    };
   }
 
   if (action === "no_action_needed") {
+    // The recommender determined nothing needs doing -> the task IS complete. CLOSE it
+    // (don't just disable auto-run and dead-end) so its dependents unblock and the cascade
+    // continues -- then fire the dependents-only nudge, exactly like any completion.
     const updated = {
       ...metadata,
       auto_run: false,
@@ -869,10 +892,11 @@ async function autoAcceptRecommendation(
       chain_recommendation_reason: normalized.reasoning,
     };
     try {
-      taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
+      taskUpdate(orgId, taskId, { status: "closed", metadata: updated }, namespaceId);
     } catch {
       /* non-fatal */
     }
+    void triggerAutoRunScan(namespaceId, orgId, taskId);
     return {
       triggered: false,
       taskId,

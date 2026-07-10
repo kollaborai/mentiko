@@ -59,10 +59,27 @@ jest.mock("@/lib/runs/auto-run", () => ({
 const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClaimMetadataKeyIfUnset = jest.fn();
+const mockTaskAddDep = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClaimMetadataKeyIfUnset: (...args: unknown[]) => mockTaskClaimMetadataKeyIfUnset(...args),
+  taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
+}));
+
+const mockTriggerAutoRunScan = jest.fn();
+jest.mock("@/lib/runs/auto-run-service", () => ({
+  triggerAutoRunScan: (...args: unknown[]) => mockTriggerAutoRunScan(...args),
+}));
+
+const mockCreateTaskDecision = jest.fn();
+jest.mock("@/lib/tasks/task-decision-link", () => ({
+  createTaskDecision: (...args: unknown[]) => mockCreateTaskDecision(...args),
+}));
+
+const mockStartDecisionResearch = jest.fn();
+jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
+  startDecisionResearch: (...args: unknown[]) => mockStartDecisionResearch(...args),
 }));
 
 const mockListWorkspaces = jest.fn();
@@ -1143,9 +1160,44 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
       "TASK-098",
-      { metadata: expect.objectContaining({ auto_run: false, chain_recommendation_action: "no_action_needed" }) },
+      { status: "closed", metadata: expect.objectContaining({ auto_run: false, chain_recommendation_action: "no_action_needed" }) },
       "default",
     );
+    // no_action_needed now CLOSES the task (nothing to do = done) and fires the
+    // dependents-only nudge so the cascade continues instead of dead-ending.
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default", "TASK-098");
+  });
+
+  it("execute_directly recommendation -> creates a decision gate, blocks the task, kicks off research", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-200",
+      title: "Do the thing",
+      status: "open",
+      issue_type: "task",
+      priority: 2,
+      metadata: { auto_run: true, analysis_job_id: "job-ed-200", analysis_status: "running" },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-ed-200",
+      type: "recommend",
+      status: "complete",
+      result: { output: JSON.stringify({ recommendation: { action: "execute_directly", reasoning: "no orchestration chain fits" } }) },
+    });
+    mockCreateTaskDecision.mockResolvedValue({ decision: { id: "dec-ed-1" }, task: { id: "DEC-77" } });
+
+    const res = await POST(makeRequest({ taskId: "TASK-200" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: false, taskId: "TASK-200", action: "execute_directly_decision" });
+    // routed to a human decision gate (not dead-ended by disabling auto-run):
+    expect(mockCreateTaskDecision).toHaveBeenCalledTimes(1);
+    expect(mockTaskAddDep.mock.calls[0][0]).toBe("default");
+    expect(mockTaskAddDep.mock.calls[0][1]).toBe("TASK-200");
+    expect(mockTaskAddDep.mock.calls[0][2]).toBe("DEC-77");
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "TASK-200", expect.objectContaining({ status: "blocked" }), "default");
+    // research kicked off so the gate auto-advances its deck without a live browser tab:
+    expect(mockStartDecisionResearch).toHaveBeenCalledTimes(1);
   });
 
   it.each([
