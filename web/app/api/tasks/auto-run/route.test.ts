@@ -1184,6 +1184,7 @@ describe("POST /api/tasks/auto-run", () => {
       result: { output: JSON.stringify({ recommendation: { action: "execute_directly", reasoning: "no orchestration chain fits" } }) },
     });
     mockCreateTaskDecision.mockResolvedValue({ decision: { id: "dec-ed-1" }, task: { id: "DEC-77" } });
+    mockTaskClaimMetadataKeyIfUnset.mockReturnValue(true); // atomic gate claim succeeds
 
     const res = await POST(makeRequest({ taskId: "TASK-200" }) as never);
     const body = await res.json();

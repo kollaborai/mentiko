@@ -148,7 +148,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // otherwise scan all candidates
   // Reap dead runs FIRST: an orphaned "running" run (crashed session) otherwise holds a
   // concurrency slot (countActiveRuns) and blocks its own task (findActiveRunForTask)
-  // forever. Doing it before the candidate scan + cap check frees both in this same tick.
+  // forever. Doing it before the cap check frees the SLOT this tick; the reaped run's task
+  // re-admits once the next reconcile syncs its stale run metadata (last_run_status) --
+  // reapDeadRuns only rewrites run.json, it does not touch task metadata.
   const reapedDead = reapDeadRuns(namespaceId);
   const candidates = completedTaskId
     ? getDirectDependentAutoRunCandidates(orgId, completedTaskId, namespaceId)
@@ -844,19 +846,30 @@ async function autoAcceptRecommendation(
   if (action === "execute_directly") {
     // "Execute directly" means no orchestration chain fits, but the task still needs
     // action -- ambiguous for a machine to just do. Route it to a human DECISION GATE
-    // (the one legitimate stop): create a decision for the task, block the task on it,
-    // and kick off research so the decision auto-advances its deck headlessly (the deck
-    // then waits at the human selection gate). Previously this just disabled auto-run and
-    // dead-ended, leaving the task open and silently blocking its dependents forever.
-    const updated = {
-      ...metadata,
+    // (the one legitimate stop): create a decision, block the task on it, and start
+    // research so the decision auto-advances its deck headlessly. Previously this just
+    // disabled auto-run and dead-ended, silently blocking dependents forever.
+    //
+    // The createTaskDecision + dep + status + research writes are NOT one transaction, so
+    // two concurrent scans/nudges could each build a gate for the same task. Claim first
+    // (atomically, under the store's claim lock) -- exactly one scan proceeds; the rest
+    // defer. The claim also flips auto_run off so subsequent scans skip it at admission.
+    const reason = normalized.reasoning;
+    const claimBase = {
       auto_run: false,
       analysis_status: "accepted",
       chain_recommendation_action: "execute_directly",
-      chain_recommendation_reason: normalized.reasoning,
+      chain_recommendation_reason: reason,
     };
+    const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "execute_directly_gate", {
+      execute_directly_gate: true,
+      ...claimBase,
+    }, namespaceId);
+    if (!claimed) {
+      return { triggered: false, taskId, action: "execute_directly_pending" };
+    }
     try {
-      const prompt = `Task "${taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${normalized.reasoning ? `\n\nRecommender reasoning: ${normalized.reasoning}` : ""}`;
+      const prompt = `Task "${taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${reason ? `\n\nRecommender reasoning: ${reason}` : ""}`;
       const { decision, task: decisionTask } = await createTaskDecision({
         namespaceId,
         orgId,
@@ -866,16 +879,21 @@ async function autoAcceptRecommendation(
         parentTaskId: taskId,
       });
       taskAddDep(orgId, taskId, decisionTask.id, namespaceId, workspacePath);
-      taskUpdate(orgId, taskId, { status: "blocked", metadata: updated }, namespaceId);
+      taskUpdate(orgId, taskId, {
+        status: "blocked",
+        metadata: { ...metadata, execute_directly_gate: true, ...claimBase, execute_directly_decision_task_id: decisionTask.id },
+      }, namespaceId);
       // start research so the gate advances to a ready deck without a live browser tab
       // (jobs/[id]/complete + decision-auto-advance then carry it to the selection gate).
       const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
       await startDecisionResearch({ request, namespaceId, orgId, decision, userPrompt: prompt, workspacePath });
-      return { triggered: false, taskId, action: "execute_directly_decision", reason: normalized.reasoning };
+      return { triggered: false, taskId, action: "execute_directly_decision", reason };
     } catch (err) {
-      // gate creation failed -- fall back to the old disable behavior so we never throw
-      // out of the scan loop for one task.
-      try { taskUpdate(orgId, taskId, { metadata: updated }, namespaceId); } catch { /* non-fatal */ }
+      // Compensation: release the claim so the task isn't left permanently claimed-but-
+      // gateless. Leaves auto_run off (parked for a human) rather than looping.
+      try {
+        taskUpdate(orgId, taskId, { metadata: { ...metadata, execute_directly_gate: undefined, ...claimBase } }, namespaceId);
+      } catch { /* non-fatal */ }
       return { triggered: false, taskId, action: "execute_directly", error: err instanceof Error ? err.message : String(err) };
     }
   }
