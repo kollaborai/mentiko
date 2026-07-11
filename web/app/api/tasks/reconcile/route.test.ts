@@ -83,8 +83,14 @@ jest.mock("@/lib/system/system-logger", () => ({
 }));
 
 const mockRecoverLateCompletionEvents = jest.fn();
+const mockClaimLateCompletionDelivery = jest.fn();
+const mockAcknowledgeLateCompletionDelivery = jest.fn();
+const mockReleaseLateCompletionDelivery = jest.fn();
 jest.mock("@/lib/runner-v2/completion-recovery", () => ({
   recoverLateCompletionEvents: (...args: unknown[]) => mockRecoverLateCompletionEvents(...args),
+  claimLateCompletionDelivery: (...args: unknown[]) => mockClaimLateCompletionDelivery(...args),
+  acknowledgeLateCompletionDelivery: (...args: unknown[]) => mockAcknowledgeLateCompletionDelivery(...args),
+  releaseLateCompletionDelivery: (...args: unknown[]) => mockReleaseLateCompletionDelivery(...args),
 }));
 
 const mockBuildTypedExecutorPlan = jest.fn();
@@ -117,7 +123,10 @@ describe("GET /api/tasks/reconcile", () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
     mockCurrentRunTerminalFingerprint.mockReturnValue("completed:no-terminal-time");
-    mockRecoverLateCompletionEvents.mockReturnValue({ recovered: [], run: { status: "stopped" } });
+    mockRecoverLateCompletionEvents.mockReturnValue({ recovered: [], deliveries: [], run: { status: "stopped" } });
+    mockClaimLateCompletionDelivery.mockReturnValue(true);
+    mockAcknowledgeLateCompletionDelivery.mockReturnValue(true);
+    mockReleaseLateCompletionDelivery.mockReturnValue(true);
     mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [], launches: [] });
     mockApplyTypedExecutorPlan.mockReturnValue({ effectsApplied: [], operations: [], launchesStarted: [] });
     mockTaskList.mockReturnValue([
@@ -804,12 +813,15 @@ describe("GET /api/tasks/reconcile", () => {
       return JSON.stringify(stoppedRun);
     });
     mockReaddirSync.mockReturnValue(["late.event"]);
+    const delivery = {
+      deliveryId: "late-delivery-writer",
+      agentId: "writer",
+      event: { event: "draft-ready", source: "writer-run-exec", run_id: "run-exec", processed: true, path: "/tmp/late.event" },
+      route: { action: "launch", agentIds: ["reviewer"], reason: "branch" },
+    };
     mockRecoverLateCompletionEvents.mockReturnValue({
-      recovered: [{
-        agentId: "writer",
-        event: { event: "draft-ready", source: "writer-run-exec", run_id: "run-exec", processed: false, path: "/tmp/late.event" },
-        route: { action: "launch", agentIds: ["reviewer"], reason: "branch" },
-      }],
+      recovered: [delivery],
+      deliveries: [delivery],
       run: { ...stoppedRun, status: "running" },
     });
     mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [{ type: "event-side-effects", plan: {} }], launches: [{ command: "launch reviewer" }] });
@@ -859,6 +871,13 @@ describe("GET /api/tasks/reconcile", () => {
       }),
     }));
     expect(mockApplyTypedExecutorPlan).toHaveBeenCalled();
+    expect(mockClaimLateCompletionDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: "late-delivery-writer",
+    }));
+    expect(mockAcknowledgeLateCompletionDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: "late-delivery-writer",
+      evidence: "plan-applied",
+    }));
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
       "TASK-044",
@@ -866,6 +885,178 @@ describe("GET /api/tasks/reconcile", () => {
       "default",
     );
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("resumes one pending delivery after a crash between event consumption and plan apply", async () => {
+    const run = {
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "stopped",
+      chainId: "build-chain",
+      workspacePath: "/workspace",
+      agents: [
+        { id: "writer", status: "complete" },
+        { id: "reviewer", status: "pending" },
+      ],
+    };
+    const chain = {
+      id: "build-chain",
+      name: "Build Chain",
+      agents: [
+        { id: "writer", emits: "draft-ready" },
+        { id: "reviewer", triggers: ["draft-ready"] },
+      ],
+    };
+    const delivery = {
+      deliveryId: "late-delivery-crash-window",
+      agentId: "writer",
+      event: { event: "draft-ready", source: "writer-run-exec", runId: "run-exec", processed: true, path: "/tmp/late.event" },
+      route: { action: "launch", agentIds: ["reviewer"], reason: "trigger match" },
+    };
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const file = String(path);
+      if (file.endsWith("/chain.json")) return JSON.stringify(chain);
+      if (file.endsWith("/late.event")) return "event: draft-ready\nsource: writer-run-exec\nrun_id: run-exec\nprocessed: true\n";
+      return JSON.stringify(run);
+    });
+    mockReaddirSync.mockReturnValue(["late.event"]);
+    mockRecoverLateCompletionEvents
+      .mockReturnValueOnce({ recovered: [delivery], deliveries: [delivery], run: { ...run, status: "running" } })
+      .mockReturnValueOnce({ recovered: [], deliveries: [delivery], run: { ...run, status: "running" } })
+      .mockReturnValueOnce({ recovered: [], deliveries: [], run });
+    mockBuildTypedExecutorPlan
+      .mockImplementationOnce(() => { throw new Error("injected crash before plan apply"); })
+      .mockReturnValue({ action: "route", effects: [], launches: [{ command: "launch reviewer" }] });
+    mockTaskList.mockReturnValue([{
+      id: "TASK-044",
+      title: "Recover late completion",
+      status: "open",
+      metadata: {
+        auto_run: true,
+        chain_id: "build-chain",
+        last_run_id: "run-exec",
+        last_run_status: "stopped",
+        execution_retries: 2,
+      },
+    }]);
+
+    const crashed = await GET(makeRequest() as never);
+    expect(await crashed.json()).toMatchObject({
+      data: {
+        errors: [{ taskId: "TASK-044", error: "injected crash before plan apply" }],
+      },
+    });
+    expect(mockClaimLateCompletionDelivery).toHaveBeenCalledTimes(1);
+    expect(mockApplyTypedExecutorPlan).not.toHaveBeenCalled();
+    expect(mockReleaseLateCompletionDelivery).toHaveBeenCalledTimes(1);
+
+    const resumed = await GET(makeRequest() as never);
+    expect(await resumed.json()).toMatchObject({
+      data: {
+        results: [expect.objectContaining({
+          taskId: "TASK-044",
+          newStatus: "running",
+        })],
+      },
+    });
+    expect(mockClaimLateCompletionDelivery).toHaveBeenCalledTimes(2);
+    expect(mockApplyTypedExecutorPlan).toHaveBeenCalledTimes(1);
+    expect(mockAcknowledgeLateCompletionDelivery).toHaveBeenCalledTimes(1);
+    expect(mockAcknowledgeLateCompletionDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: delivery.deliveryId,
+      evidence: "plan-applied",
+    }));
+    expect(mockBuildTypedExecutorPlan).toHaveBeenCalledWith(expect.objectContaining({
+      routeContext: expect.objectContaining({
+        fanGroupId: `late-recovery-${delivery.deliveryId}`,
+        env: expect.objectContaining({ MENTIKO_RUNNER_V2_DELIVERY_ID: delivery.deliveryId }),
+      }),
+    }));
+    expect(mockBuildTypedExecutorPlan.mock.calls[1][0]).toEqual(mockBuildTypedExecutorPlan.mock.calls[0][0]);
+
+    await GET(makeRequest() as never);
+    expect(mockApplyTypedExecutorPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("acknowledges downstream run evidence instead of duplicating a launch after apply", async () => {
+    let run: Record<string, unknown> = {
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "stopped",
+      chainId: "build-chain",
+      agents: [
+        { id: "writer", status: "complete" },
+        { id: "reviewer", status: "pending" },
+      ],
+    };
+    const chain = {
+      id: "build-chain",
+      name: "Build Chain",
+      agents: [
+        { id: "writer", emits: "draft-ready" },
+        { id: "reviewer", triggers: ["draft-ready"] },
+      ],
+    };
+    const delivery = {
+      deliveryId: "late-delivery-after-apply",
+      agentId: "writer",
+      event: { event: "draft-ready", source: "writer-run-exec", runId: "run-exec", processed: true, path: "/tmp/late.event" },
+      route: { action: "launch", agentIds: ["reviewer"], reason: "trigger match" },
+    };
+    mockReadFileSync.mockImplementation((path: unknown) => {
+      const file = String(path);
+      if (file.endsWith("/chain.json")) return JSON.stringify(chain);
+      if (file.endsWith("/late.event")) return "event: draft-ready\nsource: writer-run-exec\nrun_id: run-exec\nprocessed: true\n";
+      return JSON.stringify(run);
+    });
+    mockReaddirSync.mockReturnValue(["late.event"]);
+    mockRecoverLateCompletionEvents.mockImplementation(() => ({
+      recovered: [],
+      deliveries: [delivery],
+      run: { ...run, status: "running" },
+    }));
+    mockAcknowledgeLateCompletionDelivery
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    mockTaskList.mockReturnValue([{
+      id: "TASK-044",
+      title: "Recover late completion",
+      status: "open",
+      metadata: {
+        auto_run: true,
+        chain_id: "build-chain",
+        last_run_id: "run-exec",
+        last_run_status: "stopped",
+        execution_retries: 2,
+      },
+    }]);
+
+    const unacknowledged = await GET(makeRequest() as never);
+    expect(await unacknowledged.json()).toMatchObject({
+      data: {
+        errors: [{ taskId: "TASK-044", error: "late completion delivery acknowledgement failed: late-delivery-after-apply" }],
+      },
+    });
+    expect(mockApplyTypedExecutorPlan).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLateCompletionDelivery).not.toHaveBeenCalled();
+
+    run = {
+      ...run,
+      agents: [
+        { id: "writer", status: "complete" },
+        { id: "reviewer", status: "running", session: "reviewer-run-exec" },
+      ],
+    };
+    const converged = await GET(makeRequest() as never);
+    expect(await converged.json()).toMatchObject({
+      data: { results: [expect.objectContaining({ newStatus: "running" })] },
+    });
+    expect(mockApplyTypedExecutorPlan).toHaveBeenCalledTimes(1);
+    expect(mockClaimLateCompletionDelivery).toHaveBeenCalledTimes(1);
+    expect(mockAcknowledgeLateCompletionDelivery).toHaveBeenLastCalledWith(expect.objectContaining({
+      deliveryId: delivery.deliveryId,
+      evidence: "downstream-state",
+    }));
   });
 
   it("audits a late-recovered completed terminal run in the same reconcile pass", async () => {
@@ -891,12 +1082,15 @@ describe("GET /api/tasks/reconcile", () => {
       return JSON.stringify(completedRun);
     });
     mockReaddirSync.mockReturnValue(["late.event"]);
+    const delivery = {
+      deliveryId: "late-delivery-terminal",
+      agentId: "writer",
+      event: { event: "done", source: "writer-run-exec", run_id: "run-exec", processed: true, path: "/tmp/late.event" },
+      route: { action: "wait", pending: false, reason: "done" },
+    };
     mockRecoverLateCompletionEvents.mockReturnValue({
-      recovered: [{
-        agentId: "writer",
-        event: { event: "done", source: "writer-run-exec", run_id: "run-exec", processed: false, path: "/tmp/late.event" },
-        route: { action: "terminal", reason: "done" },
-      }],
+      recovered: [delivery],
+      deliveries: [delivery],
       run: { ...completedRun, status: "completed" },
     });
     mockTaskList.mockReturnValue([

@@ -12,6 +12,7 @@ import {
   taskAddComment,
   taskGetActivity,
   validateTaskId,
+  isTerminalTaskStatus,
   closeAll,
   _getDb,
 } from "../tasks/task-store";
@@ -197,6 +198,22 @@ describe("task-store", () => {
       const global = tasks.find((t) => t.title === "global task");
       expect(global!.workspace_id).toBeNull();
     });
+
+    it("repairs terminal timestamps and stale reopened timestamps on reconnect", () => {
+      const NS = "repair-terminal-ns";
+      const ORG = "repair-terminal-org";
+      const terminal = taskCreate(ORG, { title: "legacy terminal" }, NS);
+      const reopened = taskCreate(ORG, { title: "legacy reopened" }, NS);
+      const db = _getDb(NS);
+      db.prepare("UPDATE tasks SET status = 'complete', closed_at = NULL WHERE id = ?").run(terminal.id);
+      db.prepare("UPDATE tasks SET status = 'open', closed_at = ? WHERE id = ?")
+        .run("2026-01-01T00:00:00.000Z", reopened.id);
+
+      closeAll();
+
+      expect(taskGet(ORG, terminal.id, NS)!.closed_at).toBeTruthy();
+      expect(taskGet(ORG, reopened.id, NS)!.closed_at).toBeNull();
+    });
   });
 
   // ---- list ----
@@ -209,19 +226,25 @@ describe("task-store", () => {
       taskCreate(ORG, { title: "Open 2", issue_type: "bug" });
       const toClose = taskCreate(ORG, { title: "Closed one" });
       taskClose(ORG, toClose.id);
+      for (const status of ["complete", "resolved", "done"]) {
+        const terminal = taskCreate(ORG, { title: `${status} one` });
+        taskUpdate(ORG, terminal.id, { status });
+      }
       taskCreate(ORG, { title: "WS scoped", workspace_id: "/ws/alpha" });
       taskCreate("other-list-org", { title: "Wrong org" });
     });
 
-    it("lists only this org, excludes closed by default", () => {
+    it("lists only this org and excludes every terminal status by default", () => {
       const tasks = taskList(ORG);
       expect(tasks.every((t) => t.org_id === ORG)).toBe(true);
-      expect(tasks.every((t) => t.status !== "closed")).toBe(true);
+      expect(tasks.every((t) => !isTerminalTaskStatus(t.status))).toBe(true);
     });
 
-    it("includes closed with status=all", () => {
+    it("includes every terminal status with status=all", () => {
       const all = taskList(ORG, { status: "all" });
-      expect(all.some((t) => t.status === "closed")).toBe(true);
+      for (const status of ["closed", "complete", "resolved", "done"]) {
+        expect(all.some((t) => t.status === status)).toBe(true);
+      }
     });
 
     it("filters by status", () => {
@@ -300,6 +323,14 @@ describe("task-store", () => {
       taskUpdate("upd", t.id, { status: "complete" });
       const fetched = taskGet("upd", t.id)!;
       expect(fetched.status).toBe("complete");
+      expect(fetched.closed_at).toBeTruthy();
+    });
+
+    it.each(["resolved", "done"])("sets closed_at when status=%s", (status) => {
+      const t = taskCreate("upd", { title: `To ${status}` });
+      taskUpdate("upd", t.id, { status });
+      const fetched = taskGet("upd", t.id)!;
+      expect(fetched.status).toBe(status);
       expect(fetched.closed_at).toBeTruthy();
     });
 
@@ -391,13 +422,17 @@ describe("task-store", () => {
       expect(() => taskAddDep(ORG, a.id, b.id, undefined, "/ws/a")).toThrow();
     });
 
-    it("taskDepsAllClosed works", () => {
+    it("taskDepsAllClosed recognizes every terminal dependency status", () => {
       const dep = taskCreate(ORG, { title: "Dep" });
       const task = taskCreate(ORG, { title: "Task" });
       taskAddDep(ORG, task.id, dep.id);
       expect(taskDepsAllClosed(ORG, task.id)).toBe(false);
-      taskClose(ORG, dep.id);
-      expect(taskDepsAllClosed(ORG, task.id)).toBe(true);
+      for (const status of ["closed", "complete", "resolved", "done"]) {
+        taskUpdate(ORG, dep.id, { status });
+        expect(taskDepsAllClosed(ORG, task.id)).toBe(true);
+        taskUpdate(ORG, dep.id, { status: "open" });
+        expect(taskDepsAllClosed(ORG, task.id)).toBe(false);
+      }
     });
 
     it("taskDepsAllClosed returns true when no deps", () => {

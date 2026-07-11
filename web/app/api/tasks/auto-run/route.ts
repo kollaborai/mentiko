@@ -15,20 +15,26 @@ import {
 } from "@/lib/namespace-config";
 import { readSystemSettings, resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import {
+  buildRunsSnapshot,
   canAdmitAutoRun,
   getAutoRunCandidates,
   getDirectDependentAutoRunCandidates,
   isTaskReady,
   reconcileActiveAutoRunTasks,
   reconcileTaskActiveRun,
+  removeRunFromSnapshot,
+  type RunsSnapshot,
 } from "@/lib/runs/auto-run";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { getWorkspace, listWorkspaces, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
-import { getJob } from "@/lib/runs/job-store";
-import config, { nsPath } from "@/lib/config";
-import { Unauthorized, Forbidden, NotFound } from "@/lib/api-errors";
+import { getJob, listJobs, type Job, type JobType } from "@/lib/runs/job-store";
+import { listDecisions, updateDecision } from "@/lib/decisions/decision-storage";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
+import { nsPath } from "@/lib/config";
+import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import {
@@ -36,7 +42,6 @@ import {
   normalizeTaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
 import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
-import { allDeclaredAgentsComplete } from "@/lib/runs/run-completion";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
@@ -47,6 +52,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const RESUMABLE_RUN_STATUSES = new Set(["stopped", "failed", "cancelled"]);
+const JOB_CLAIM_PREFIX = "claim-";
+const JOB_CLAIM_STALE_MS = 5 * 60 * 1000;
+const EXECUTE_DIRECTLY_GATE_KEY = "auto_run_execute_directly_gate";
+const EXECUTE_DIRECTLY_GATE_STALE_MS = 5 * 60 * 1000;
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -55,21 +64,15 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   const namespaceId = await getNamespaceIdFromRequest(request);
-  const settings = readSystemSettings(namespaceId);
-  if (!settings.auto_run_enabled) {
-    return apiSuccess({
-      auto_run_enabled: false,
-      candidates: [],
-      message: "Auto-run is disabled in system settings",
-    });
-  }
-
   const orgId = await getOrgIdFromRequest(request);
-  const candidates = getAutoRunCandidates(orgId, undefined, namespaceId);
-  const activeRuns = countActiveRuns(namespaceId);
+  const runsSnapshot = buildRunsSnapshot(namespaceId);
+  const candidates = getAutoRunCandidates(orgId, undefined, namespaceId, runsSnapshot);
+  const activeRuns = runsSnapshot.activeRuns.length;
   const maxConcurrent = resolveMaxConcurrentChains(namespaceId);
   return apiSuccess({
-    auto_run_enabled: true,
+    // System settings supply the inherited default. A workspace or explicit
+    // task opt-in may legitimately override an off default.
+    auto_run_enabled: readSystemSettings(namespaceId).auto_run_enabled,
     max_concurrent_runs: maxConcurrent,
     active_runs: activeRuns,
     available_slots: Math.max(0, maxConcurrent - activeRuns),
@@ -101,13 +104,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const completedTaskId: string | undefined =
     typeof body.completedTaskId === "string" ? body.completedTaskId : undefined;
 
-  const settings = readSystemSettings(namespaceId);
-  if (!settings.auto_run_enabled) {
-    throw new Forbidden("Auto-run is disabled in system settings");
-  }
-
   const orgId = await getOrgIdFromRequest(request);
-  const reconciledActiveRuns = reconcileActiveAutoRunTasks(orgId, namespaceId);
+  // ONE runs-dir read serves this whole request. The snapshot's active-run set
+  // IS the dead-run reap candidate set, so reapDeadRuns consumes it (liveness
+  // re-verified fresh under the run.json lock) and prunes reaped runs from it
+  // in place -- admission below therefore always sees post-reap state: a
+  // just-terminalized run neither holds a cap slot nor blocks its task.
+  // Run reaping is part of admission, not a later maintenance pass. A reaped
+  // run must update task metadata before this request selects candidates.
+  const runsSnapshot = buildRunsSnapshot(namespaceId);
+  const reapedDeadRuns = reapDeadRuns(runsSnapshot);
+  const reconciledReapedRuns = reconcileReapedDeadRunTasks(orgId, namespaceId, reapedDeadRuns);
+  const reconciledActiveRuns = reconcileActiveAutoRunTasks(orgId, namespaceId, runsSnapshot);
 
   // if taskId given, check/trigger just that task
   if (taskId) {
@@ -119,7 +127,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
     const metadata = parseTaskMetadata(task);
     const workspacePath = resolveTaskWorkspacePath(namespaceId, orgId, task, metadata);
-    const activeRun = reconcileTaskActiveRun(orgId, task, namespaceId);
+    const activeRun = reconcileTaskActiveRun(orgId, task, namespaceId, runsSnapshot);
     if (activeRun.activeRun) {
       return apiSuccess({
         triggered: false,
@@ -141,38 +149,40 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       });
     }
 
-    const result = await triggerAutoRun(taskId, namespaceId, request, workspacePath, task, metadata);
+    const result = await triggerAutoRun(taskId, namespaceId, request, workspacePath, task, metadata, runsSnapshot);
     return apiSuccess(result);
   }
 
   // otherwise scan all candidates
-  // Reap dead runs FIRST: an orphaned "running" run (crashed session) otherwise holds a
-  // concurrency slot (countActiveRuns) and blocks its own task (findActiveRunForTask)
-  // forever. Doing it before the cap check frees the SLOT this tick; the reaped run's task
-  // re-admits once the next reconcile syncs its stale run metadata (last_run_status) --
-  // reapDeadRuns only rewrites run.json, it does not touch task metadata.
-  const reapedDead = reapDeadRuns(namespaceId);
   const candidates = completedTaskId
-    ? getDirectDependentAutoRunCandidates(orgId, completedTaskId, namespaceId)
-    : getAutoRunCandidates(orgId, undefined, namespaceId);
+    ? getDirectDependentAutoRunCandidates(orgId, completedTaskId, namespaceId, runsSnapshot)
+    : getAutoRunCandidates(orgId, undefined, namespaceId, runsSnapshot);
   if (candidates.length === 0) {
-    return apiSuccess({ triggered: 0, results: [], reconciled: reconciledActiveRuns });
+    return apiSuccess({
+      triggered: 0,
+      results: [],
+      reaped: reapedDeadRuns.length,
+      reconciled: reconciledActiveRuns,
+      reapedTaskAdmissions: reconciledReapedRuns,
+    });
   }
 
   // respect the concurrency ceiling -- only trigger up to available slots. Uses the
   // SAME authoritative resolver as the run starter + engine (phase-2 step 2): the
   // MENTIKO_MAX_CONCURRENT_CHAINS env (control-plane per-tier) when set, else the
-  // max_concurrent_runs system setting.
-  const activeCount = countActiveRuns(namespaceId);
+  // max_concurrent_runs system setting. The count comes from the post-reap
+  // snapshot -- identical semantics to the old countActiveRuns() walk.
+  const activeCount = runsSnapshot.activeRuns.length;
   const maxConcurrent = resolveMaxConcurrentChains(namespaceId);
   const availableSlots = Math.max(0, maxConcurrent - activeCount);
 
   if (availableSlots === 0) {
     return apiSuccess({
       triggered: 0,
-      reaped: reapedDead,
+      reaped: reapedDeadRuns.length,
       skipped: candidates.length,
       reconciled: reconciledActiveRuns,
+      reapedTaskAdmissions: reconciledReapedRuns,
       reason: `concurrent limit reached (${activeCount}/${maxConcurrent} active). Change at /settings/system.`,
       results: candidates.map((c) => ({
         triggered: false,
@@ -186,6 +196,13 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const toTrigger = candidates.slice(0, availableSlots);
   const deferred = candidates.slice(availableSlots);
 
+  // The dispatch-time canAdmitAutoRun inside triggerAutoRun is the deliberate
+  // self-heal against staleness accumulated between candidate scan and
+  // dispatch (a concurrent POST/nudge starting a run for the same task). It
+  // must see CURRENT state, so rebuild the snapshot here instead of reusing
+  // the request's aging one -- one extra walk, same freshness the old
+  // per-task live scans had.
+  const dispatchSnapshot = buildRunsSnapshot(namespaceId);
   const results = await Promise.allSettled(
     toTrigger.map(async (c) => {
       const task = taskGet(orgId, c.taskId, namespaceId);
@@ -195,7 +212,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       const metadata = parseTaskMetadata(task);
       const workspacePath = resolveTaskWorkspacePath(namespaceId, orgId, task, metadata);
 
-      return triggerAutoRun(c.taskId, namespaceId, request, workspacePath, task, metadata);
+      return triggerAutoRun(c.taskId, namespaceId, request, workspacePath, task, metadata, dispatchSnapshot);
     })
   );
 
@@ -205,10 +222,11 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   return apiSuccess({
     triggered,
-    reaped: reapedDead,
+    reaped: reapedDeadRuns.length,
     activeRuns: activeCount,
     maxConcurrent,
     reconciled: reconciledActiveRuns,
+    reapedTaskAdmissions: reconciledReapedRuns,
     deferred: deferred.length,
     results: [
       ...results.map((r, i) =>
@@ -454,11 +472,17 @@ function asPlainObject(value: unknown): Record<string, unknown> | null {
  * so the caller counts it as an unreadable retry instead of mis-routing it.
  */
 function resolveJobRecommendation(result: unknown): Record<string, unknown> | null {
-  // Fast-path: the normal, already-unwrapped shape. Preserves prior behavior
-  // (job.result.recommendation) exactly -- no regression for the common case.
+  // The normal, already-unwrapped shape must cross the same boundary as an
+  // artifact envelope. Otherwise `{ recommendation: { report: ... } }` skips
+  // validation while `{ output: "..." }` does not, and normalizeTaskChainRecommendation
+  // guesses a new generation run from unrelated data.
   const direct = asPlainObject(result);
   const directRecommendation = direct ? asPlainObject(direct.recommendation) : null;
-  if (directRecommendation) return directRecommendation;
+  if (directRecommendation) {
+    return isPayloadCompatibleWithKind(directRecommendation, "chain_recommendation")
+      ? directRecommendation
+      : null;
+  }
 
   // Enveloped shape: unwrap { output: "<json>" }, then prefer a nested
   // `.recommendation` wrapper, falling back to the payload itself (bare shape).
@@ -506,7 +530,109 @@ function recoverGeneratedChainFromRunArtifacts(
 function parseTaskMetadata(
   task: ReturnType<typeof taskGet>
 ): Record<string, unknown> {
-  return task?.metadata || {};
+  const metadata = task?.metadata;
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return metadata as Record<string, unknown>;
+  }
+  if (typeof metadata === "string") {
+    try {
+      const parsed = JSON.parse(metadata);
+      return asPlainObject(parsed) ?? {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function newAutoRunClaimId(): string {
+  return `${JOB_CLAIM_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function readClaimedAt(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const timestamp = Date.parse(value);
+    return Number.isNaN(timestamp) ? null : timestamp;
+  }
+  return null;
+}
+
+function taskMetadataForUpdate(
+  orgId: string,
+  taskId: string,
+  namespaceId: string,
+  fallback: Record<string, unknown>
+): Record<string, unknown> {
+  const current = taskGet(orgId, taskId, namespaceId);
+  return current ? parseTaskMetadata(current) : fallback;
+}
+
+interface ClaimedJobRecovery {
+  job?: Job;
+  expired: boolean;
+}
+
+/**
+ * A task claim is deliberately durable before dispatch. If the post-dispatch
+ * metadata write fails, recover the exact job by its claim token instead of
+ * launching another analysis/generation run. A legacy or pre-dispatch claim
+ * with no matching job expires, so `claim-*` can never stall forever.
+ */
+function recoverClaimedJob(input: {
+  taskId: string;
+  metadata: Record<string, unknown>;
+  jobKey: "analysis_job_id" | "generation_job_id";
+  statusKey: "analysis_status" | "generation_status";
+  claimedAtKey: "analysis_job_claimed_at" | "generation_job_claimed_at";
+  jobType: Extract<JobType, "recommend" | "generate">;
+  namespaceId: string;
+  orgId: string;
+}): ClaimedJobRecovery {
+  const claimId = typeof input.metadata[input.jobKey] === "string"
+    ? input.metadata[input.jobKey] as string
+    : "";
+  const recovered = listJobs({ taskId: input.taskId }, input.namespaceId).find((job) =>
+    job.type === input.jobType && job.input?.auto_run_claim_id === claimId
+  );
+  if (recovered) {
+    try {
+      const current = taskMetadataForUpdate(input.orgId, input.taskId, input.namespaceId, input.metadata);
+      taskUpdate(input.orgId, input.taskId, {
+        metadata: {
+          ...current,
+          [input.jobKey]: recovered.id,
+          [input.statusKey]: recovered.status === "pending" ? "running" : recovered.status,
+          [input.claimedAtKey]: undefined,
+        },
+      }, input.namespaceId);
+    } catch {
+      // Keep the claim: a later scan will discover the exact same job again.
+    }
+    return { job: recovered, expired: false };
+  }
+
+  const claimedAt = readClaimedAt(input.metadata, input.claimedAtKey);
+  if (claimedAt !== null && Date.now() - claimedAt < JOB_CLAIM_STALE_MS) {
+    return { expired: false };
+  }
+
+  try {
+    const current = taskMetadataForUpdate(input.orgId, input.taskId, input.namespaceId, input.metadata);
+    taskUpdate(input.orgId, input.taskId, {
+      metadata: {
+        ...current,
+        [input.jobKey]: undefined,
+        [input.statusKey]: "claim_expired",
+        [input.claimedAtKey]: undefined,
+      },
+    }, input.namespaceId);
+  } catch {
+    // We still return a bounded state; the untouched claim will be retried on
+    // the next scan and cannot start a duplicate job meanwhile.
+  }
+  return { expired: true };
 }
 
 // Resolve a workspace given any mix of a Workspace.id (metadata.workspace_id)
@@ -551,37 +677,44 @@ async function triggerAutoRun(
   request: NextRequest,
   workspacePath: string | undefined,
   task: NonNullable<ReturnType<typeof taskGet>>,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  runsSnapshot?: RunsSnapshot
 ): Promise<TriggerResult> {
   const chainId = metadata.chain_id as string | undefined;
   const orgId = await getOrgIdFromRequest(request);
 
+  // Resolve the actual workspace before admission. canAdmitAutoRun owns the
+  // precedence rule: task explicit > workspace > system. Passing the resolved
+  // workspace default here keeps direct POSTs consistent with the scan path,
+  // including metadata.workspace_id/path forms that do not live in task.workspace_id.
+  const workspaceId = metadata.workspace_id as string | undefined;
+  const metadataWorkspacePath = typeof metadata.workspace_path === "string"
+    ? metadata.workspace_path
+    : undefined;
+  const workspace = findWorkspaceByIdOrPath(
+    namespaceId,
+    orgId,
+    workspaceId,
+    metadataWorkspacePath,
+    workspacePath
+  );
+  const workspaceAutoRunDefault = workspace
+    ? resolveAutoRun(workspace, readSystemSettings(namespaceId).auto_run_enabled)
+    : undefined;
+
   // Single gate for admission -- the SAME predicate the 60s poller uses via
   // getAutoRunCandidates. This is what stops a paused/terminal task from
   // slipping through the direct POST path or a post-job continuation call.
-  const admission = canAdmitAutoRun(task, orgId, namespaceId);
+  const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefault, runsSnapshot);
   if (!admission.admit) {
     return { triggered: false, taskId, action: admission.action, reason: admission.reason };
   }
 
-  // Resolve the workspace by id OR path and enforce its auto-run policy
-  // unconditionally -- previously this only ran when `workspaceId &&
-  // !workspacePath`, so a task that already carried a resolved path (the
-  // common case: resolveTaskWorkspacePath fills it in before triggerAutoRun
-  // is even called) skipped the workspace's `auto_run: disabled` override
-  // entirely.
-  const workspaceId = metadata.workspace_id as string | undefined;
-  const workspace = findWorkspaceByIdOrPath(namespaceId, orgId, workspaceId, workspacePath);
+  // The workspace is an inherited default, not a second veto after the shared
+  // gate. In particular, an explicit task opt-in must work while its workspace
+  // is off (the per-task throttle contract). We only use the resolved workspace
+  // here to fill the authorized execution path.
   if (workspace) {
-    const settings = readSystemSettings(namespaceId);
-    const allowed = resolveAutoRun(workspace, settings.auto_run_enabled);
-    if (!allowed) {
-      return {
-        triggered: false,
-        taskId,
-        error: `Auto-run disabled for workspace '${workspace.name}'`,
-      };
-    }
     if (!workspacePath) workspacePath = workspace.path;
   }
   workspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, undefined);
@@ -603,16 +736,29 @@ async function triggerAutoRun(
   // case 2: generation job already running — check if it completed and auto-save/assign
   const generationJobId = metadata.generation_job_id as string | undefined;
   if (generationJobId) {
-    if (generationJobId.startsWith("claim-")) {
+    const claimed = generationJobId.startsWith(JOB_CLAIM_PREFIX);
+    const claimedRecovery = claimed
+      ? recoverClaimedJob({
+          taskId,
+          metadata,
+          jobKey: "generation_job_id",
+          statusKey: "generation_status",
+          claimedAtKey: "generation_job_claimed_at",
+          jobType: "generate",
+          namespaceId,
+          orgId,
+        })
+      : undefined;
+    if (claimed && !claimedRecovery?.job) {
       return {
         triggered: false,
         taskId,
-        action: "generation_pending",
+        action: claimedRecovery?.expired ? "generation_claim_expired" : "generation_pending",
         jobId: generationJobId,
       };
     }
 
-    const job = getJob(generationJobId, namespaceId);
+    const job = claimedRecovery?.job ?? getJob(generationJobId, namespaceId);
     if (!job) {
       const recovered = recoverGeneratedChainFromRunArtifacts(metadata, namespaceId);
       if (recovered) {
@@ -643,7 +789,7 @@ async function triggerAutoRun(
         triggered: false,
         taskId,
         action: "generation_pending",
-        jobId: generationJobId,
+        jobId: job.id,
       };
     }
 
@@ -680,7 +826,29 @@ async function triggerAutoRun(
   // case 3: analysis job already running — check if it completed and auto-accept
   const analysisJobId = metadata.analysis_job_id as string | undefined;
   if (analysisJobId) {
-    const job = getJob(analysisJobId, namespaceId);
+    const claimed = analysisJobId.startsWith(JOB_CLAIM_PREFIX);
+    const claimedRecovery = claimed
+      ? recoverClaimedJob({
+          taskId,
+          metadata,
+          jobKey: "analysis_job_id",
+          statusKey: "analysis_status",
+          claimedAtKey: "analysis_job_claimed_at",
+          jobType: "recommend",
+          namespaceId,
+          orgId,
+        })
+      : undefined;
+    if (claimed && !claimedRecovery?.job) {
+      return {
+        triggered: false,
+        taskId,
+        action: claimedRecovery?.expired ? "analysis_claim_expired" : "analysis_pending",
+        jobId: analysisJobId,
+      };
+    }
+
+    const job = claimedRecovery?.job ?? getJob(analysisJobId, namespaceId);
     if (!job) {
       taskUpdate(orgId, taskId, {
         metadata: {
@@ -698,7 +866,7 @@ async function triggerAutoRun(
         triggered: false,
         taskId,
         action: "analysis_pending",
-        jobId: analysisJobId,
+        jobId: job.id,
       };
     }
 
@@ -762,7 +930,384 @@ async function triggerAutoRun(
   }
 
   // case 4: no chain, no pending job — start analysis
-  return await startAnalysisJob(taskId, namespaceId, orgId, request, workspacePath, task);
+  return await startAnalysisJob(taskId, metadata, namespaceId, orgId, request, workspacePath, task);
+}
+
+interface ExecuteDirectlyGate {
+  claim_id?: string;
+  claimed_at?: string;
+  decision_id?: string;
+  decision_task_id?: string;
+  research_state?: "created" | "starting" | "started";
+  research_claimed_at?: string;
+  /** Stable idempotency key for this decision's one autonomous research launch. */
+  research_fingerprint?: string;
+  /** Persisted after dispatch; crash recovery can also derive it from provenance. */
+  research_run_id?: string;
+}
+
+function readExecuteDirectlyGate(metadata: Record<string, unknown>): ExecuteDirectlyGate | null {
+  const raw = asPlainObject(metadata[EXECUTE_DIRECTLY_GATE_KEY]);
+  return raw ? raw as ExecuteDirectlyGate : null;
+}
+
+function isOlderThan(value: unknown, maxAgeMs: number): boolean {
+  const timestamp = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(timestamp) || Date.now() - timestamp >= maxAgeMs;
+}
+
+function decisionResearchFingerprint(decisionId: string): string {
+  // decisionId + phase are immutable run provenance. The fingerprint is stable
+  // across retries/restarts, unlike a request id or a wall-clock claim token.
+  return `auto-run-execute-directly:${decisionId}:research`;
+}
+
+interface DecisionResearchRun {
+  id: string;
+  started?: string;
+  status?: string;
+}
+
+/**
+ * Recover the one decision-research run for this gate before considering a
+ * relaunch. New runs carry the fingerprint. The provenance fallback covers the
+ * tiny crash window after chain creation but before this route tags run.json:
+ * decisionId + decisionPhase is the dispatcher's immutable identity tuple.
+ */
+function findDecisionResearchRun(
+  namespaceId: string,
+  orgId: string,
+  decisionId: string,
+  fingerprint: string,
+  expectedRunId?: string
+): DecisionResearchRun | null {
+  const runsDir = resolveLinkRunsDir(namespaceId, orgId);
+  if (!existsSync(runsDir)) return null;
+
+  const matches: DecisionResearchRun[] = [];
+  for (const dir of readdirSync(runsDir)) {
+    if (!dir.startsWith("run-")) continue;
+    if (expectedRunId && dir !== expectedRunId) continue;
+    const runPath = join(runsDir, dir, "run.json");
+    if (!existsSync(runPath)) continue;
+    try {
+      const run = JSON.parse(readFileSync(runPath, "utf8")) as Record<string, unknown>;
+      const metadata = asPlainObject(run.metadata);
+      if (!metadata) continue;
+      const exactFingerprint = metadata.auto_run_decision_research_fingerprint === fingerprint;
+      const provenanceMatch = metadata.decisionId === decisionId && metadata.decisionPhase === "research";
+      if (!exactFingerprint && !provenanceMatch) continue;
+      matches.push({
+        id: typeof run.id === "string" ? run.id : dir,
+        started: typeof run.started === "string" ? run.started : undefined,
+        status: typeof run.status === "string" ? run.status : undefined,
+      });
+    } catch {
+      /* ignore a partial/corrupt run record and retry next scan */
+    }
+  }
+  matches.sort((a, b) => Date.parse(b.started || "") - Date.parse(a.started || "") || b.id.localeCompare(a.id));
+  return matches[0] ?? null;
+}
+
+function tagDecisionResearchRun(
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+  fingerprint: string,
+): void {
+  const runJsonPath = join(resolveLinkRunsDir(namespaceId, orgId), runId, "run.json");
+  if (!existsSync(runJsonPath)) return;
+  try {
+    withRunJsonLock(runJsonPath, () => {
+      const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as Record<string, unknown>;
+      const metadata = asPlainObject(run.metadata) ?? {};
+      if (metadata.auto_run_decision_research_fingerprint === fingerprint) return;
+      writeRunJsonAtomic(runJsonPath, {
+        ...run,
+        metadata: { ...metadata, auto_run_decision_research_fingerprint: fingerprint },
+      });
+    });
+  } catch {
+    // The provenance fallback above still makes the launch recoverable.
+  }
+}
+
+async function persistRecoveredDecisionResearch(input: {
+  namespaceId: string;
+  orgId: string;
+  workspacePath?: string;
+  decisionId: string;
+  runId: string;
+  fingerprint: string;
+}): Promise<void> {
+  tagDecisionResearchRun(input.namespaceId, input.orgId, input.runId, input.fingerprint);
+  try {
+    await updateDecision(input.namespaceId, input.orgId, input.decisionId, {
+      status: "researching",
+      researchRunId: input.runId,
+      activeJobId: undefined,
+    }, input.workspacePath);
+  } catch {
+    // The gate owns recovery; decision metadata is a helpful mirror only.
+  }
+}
+
+function persistExecuteDirectlyGate(input: {
+  orgId: string;
+  taskId: string;
+  namespaceId: string;
+  metadata: Record<string, unknown>;
+  gate: ExecuteDirectlyGate | undefined;
+  status?: string;
+  reasoning?: string;
+}): boolean {
+  try {
+    const current = taskMetadataForUpdate(input.orgId, input.taskId, input.namespaceId, input.metadata);
+    taskUpdate(input.orgId, input.taskId, {
+      ...(input.status ? { status: input.status } : {}),
+      metadata: {
+        ...current,
+        analysis_status: "accepted",
+        chain_recommendation_action: "execute_directly",
+        chain_recommendation_reason: input.reasoning,
+        [EXECUTE_DIRECTLY_GATE_KEY]: input.gate,
+      },
+    }, input.namespaceId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Creates exactly one durable decision gate per execute_directly recommendation.
+ * The task-owned claim wins concurrent scans; every later phase is resumable from
+ * task metadata, so a failure leaves the parent open for retry rather than blocked
+ * on an unprepared or duplicate decision.
+ */
+async function ensureExecuteDirectlyDecisionGate(input: {
+  taskId: string;
+  taskTitle: string;
+  metadata: Record<string, unknown>;
+  reasoning?: string;
+  namespaceId: string;
+  orgId: string;
+  request: NextRequest;
+  workspacePath?: string;
+}): Promise<TriggerResult> {
+  let gate = readExecuteDirectlyGate(input.metadata);
+  let ownsClaim = false;
+  if (!gate) {
+    const claim: ExecuteDirectlyGate = {
+      claim_id: newAutoRunClaimId(),
+      claimed_at: new Date().toISOString(),
+    };
+    ownsClaim = taskClaimMetadataKeyIfUnset(input.orgId, input.taskId, EXECUTE_DIRECTLY_GATE_KEY, {
+      [EXECUTE_DIRECTLY_GATE_KEY]: claim,
+    }, input.namespaceId);
+    if (!ownsClaim) {
+      return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+    }
+    gate = claim;
+  }
+
+  let decision = null as ReturnType<typeof listDecisions>[number] | null;
+  if (gate.decision_id && gate.decision_task_id) {
+    decision = listDecisions(input.namespaceId, input.orgId, input.workspacePath)
+      .find((candidate) => candidate.id === gate?.decision_id) ?? null;
+    if (!decision && gate.research_state !== "started") {
+      // No decision record means nothing user-visible is being held. Clear the
+      // durable gate so the next scan can claim and recreate it safely.
+      persistExecuteDirectlyGate({ ...input, gate: undefined });
+      return { triggered: false, taskId: input.taskId, action: "decision_gate_missing" };
+    }
+  } else {
+    const recovered = listDecisions(input.namespaceId, input.orgId, input.workspacePath)
+      .find((candidate) =>
+        candidate.source === "auto-run-execute-directly" &&
+        candidate.parentTaskId === input.taskId &&
+        typeof candidate.taskId === "string"
+      ) ?? null;
+    if (recovered?.taskId) {
+      decision = recovered;
+      gate = {
+        ...gate,
+        decision_id: recovered.id,
+        decision_task_id: recovered.taskId,
+        research_state: gate.research_state ?? "created",
+      };
+      if (!persistExecuteDirectlyGate({ ...input, gate })) {
+        return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+      }
+    } else if (!ownsClaim) {
+      if (isOlderThan(gate.claimed_at, EXECUTE_DIRECTLY_GATE_STALE_MS)) {
+        persistExecuteDirectlyGate({ ...input, gate: undefined });
+        return { triggered: false, taskId: input.taskId, action: "decision_gate_claim_expired" };
+      }
+      return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+    } else {
+      const prompt = `Task "${input.taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${input.reasoning ? `\n\nRecommender reasoning: ${input.reasoning}` : ""}`;
+      try {
+        const created = await createTaskDecision({
+          namespaceId: input.namespaceId,
+          orgId: input.orgId,
+          prompt,
+          source: "auto-run-execute-directly",
+          workspacePath: input.workspacePath,
+          parentTaskId: input.taskId,
+        });
+        decision = created.decision;
+        gate = {
+          ...gate,
+          decision_id: created.decision.id,
+          decision_task_id: created.task.id,
+          research_state: "created",
+        };
+        if (!persistExecuteDirectlyGate({ ...input, gate })) {
+          // The claim remains; a later scan recovers this exact decision by
+          // source + parent instead of creating another one.
+          return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+        }
+      } catch (error) {
+        // No parent dependency/status was written. Release only the task claim
+        // so the normal poller can retry instead of leaving a hidden block.
+        persistExecuteDirectlyGate({ ...input, gate: undefined });
+        return {
+          triggered: false,
+          taskId: input.taskId,
+          action: "decision_gate_failed",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  }
+
+  const decisionTaskId = gate.decision_task_id;
+  if (!decisionTaskId) {
+    return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+  }
+
+  if (gate.research_state !== "started") {
+    if (!decision) {
+      decision = listDecisions(input.namespaceId, input.orgId, input.workspacePath)
+        .find((candidate) => candidate.id === gate?.decision_id) ?? null;
+    }
+    if (!decision) {
+      persistExecuteDirectlyGate({ ...input, gate: undefined });
+      return { triggered: false, taskId: input.taskId, action: "decision_gate_missing" };
+    }
+
+    const researchFingerprint = gate.research_fingerprint ?? decisionResearchFingerprint(decision.id);
+    // Before relaunching an expired `starting` claim, recover the exact
+    // decision/phase run. This closes the crash window after startDecisionResearch
+    // created run.json but before this route persisted `research_state: started`.
+    const recoveredRun = findDecisionResearchRun(
+      input.namespaceId,
+      input.orgId,
+      decision.id,
+      researchFingerprint,
+      gate.research_run_id,
+    );
+    if (recoveredRun) {
+      await persistRecoveredDecisionResearch({
+        namespaceId: input.namespaceId,
+        orgId: input.orgId,
+        workspacePath: input.workspacePath,
+        decisionId: decision.id,
+        runId: recoveredRun.id,
+        fingerprint: researchFingerprint,
+      });
+      gate = {
+        ...gate,
+        research_fingerprint: researchFingerprint,
+        research_run_id: recoveredRun.id,
+        research_state: "started",
+        research_claimed_at: undefined,
+      };
+      if (!persistExecuteDirectlyGate({ ...input, gate })) {
+        return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+      }
+    } else if (gate.research_state === "starting" && !isOlderThan(gate.research_claimed_at, EXECUTE_DIRECTLY_GATE_STALE_MS)) {
+      return { triggered: false, taskId: input.taskId, action: "decision_research_pending" };
+    } else {
+      gate = {
+        ...gate,
+        research_fingerprint: researchFingerprint,
+        research_state: "starting",
+        research_claimed_at: new Date().toISOString(),
+      };
+      if (!persistExecuteDirectlyGate({ ...input, gate })) {
+        return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+      }
+      const prompt = `Task "${input.taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${input.reasoning ? `\n\nRecommender reasoning: ${input.reasoning}` : ""}`;
+      try {
+        const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
+        const started = await startDecisionResearch({
+          request: input.request,
+          namespaceId: input.namespaceId,
+          orgId: input.orgId,
+          decision,
+          userPrompt: prompt,
+          workspacePath: input.workspacePath,
+        });
+        if (!started?.runId) {
+          throw new Error("Decision research did not return a run id");
+        }
+        await persistRecoveredDecisionResearch({
+          namespaceId: input.namespaceId,
+          orgId: input.orgId,
+          workspacePath: input.workspacePath,
+          decisionId: decision.id,
+          runId: started.runId,
+          fingerprint: researchFingerprint,
+        });
+        gate = {
+          ...gate,
+          research_fingerprint: researchFingerprint,
+          research_run_id: started.runId,
+          research_state: "started",
+          research_claimed_at: undefined,
+        };
+        if (!persistExecuteDirectlyGate({ ...input, gate })) {
+          return { triggered: false, taskId: input.taskId, action: "decision_gate_pending" };
+        }
+      } catch (error) {
+        // Keep the durable decision link but do not block the parent. The next
+        // poll retries only after proving the claimed run was not created.
+        persistExecuteDirectlyGate({
+          ...input,
+          gate: { ...gate, research_state: "created", research_claimed_at: undefined },
+        });
+        return {
+          triggered: false,
+          taskId: input.taskId,
+          action: "decision_research_failed",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  }
+
+  try {
+    taskAddDep(input.orgId, input.taskId, decisionTaskId, input.namespaceId, input.workspacePath);
+  } catch (error) {
+    // Research is prepared, but the parent is still open and therefore will
+    // retry attaching the same idempotent dependency on the next scan.
+    return {
+      triggered: false,
+      taskId: input.taskId,
+      action: "decision_gate_attach_failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (!persistExecuteDirectlyGate({ ...input, gate, status: "blocked" })) {
+    // taskAddDep is the real gate and the parent remains open if this write
+    // failed; resolution will still unblock it. Do not invent a silent block.
+    return { triggered: false, taskId: input.taskId, action: "decision_gate_prepared" };
+  }
+  return { triggered: false, taskId: input.taskId, action: "execute_directly_decision", reason: input.reasoning };
 }
 
 async function autoAcceptRecommendation(
@@ -844,58 +1389,16 @@ async function autoAcceptRecommendation(
   }
 
   if (action === "execute_directly") {
-    // "Execute directly" means no orchestration chain fits, but the task still needs
-    // action -- ambiguous for a machine to just do. Route it to a human DECISION GATE
-    // (the one legitimate stop): create a decision, block the task on it, and start
-    // research so the decision auto-advances its deck headlessly. Previously this just
-    // disabled auto-run and dead-ended, silently blocking dependents forever.
-    //
-    // The createTaskDecision + dep + status + research writes are NOT one transaction, so
-    // two concurrent scans/nudges could each build a gate for the same task. Claim first
-    // (atomically, under the store's claim lock) -- exactly one scan proceeds; the rest
-    // defer. The claim also flips auto_run off so subsequent scans skip it at admission.
-    const reason = normalized.reasoning;
-    const claimBase = {
-      auto_run: false,
-      analysis_status: "accepted",
-      chain_recommendation_action: "execute_directly",
-      chain_recommendation_reason: reason,
-    };
-    const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "execute_directly_gate", {
-      execute_directly_gate: true,
-      ...claimBase,
-    }, namespaceId);
-    if (!claimed) {
-      return { triggered: false, taskId, action: "execute_directly_pending" };
-    }
-    try {
-      const prompt = `Task "${taskTitle}" needs action, but the chain recommender found no orchestration chain fits (verdict: execute directly). How should this be handled?${reason ? `\n\nRecommender reasoning: ${reason}` : ""}`;
-      const { decision, task: decisionTask } = await createTaskDecision({
-        namespaceId,
-        orgId,
-        prompt,
-        source: "auto-run-execute-directly",
-        workspacePath,
-        parentTaskId: taskId,
-      });
-      taskAddDep(orgId, taskId, decisionTask.id, namespaceId, workspacePath);
-      taskUpdate(orgId, taskId, {
-        status: "blocked",
-        metadata: { ...metadata, execute_directly_gate: true, ...claimBase, execute_directly_decision_task_id: decisionTask.id },
-      }, namespaceId);
-      // start research so the gate advances to a ready deck without a live browser tab
-      // (jobs/[id]/complete + decision-auto-advance then carry it to the selection gate).
-      const { startDecisionResearch } = await import("@/lib/decisions/decision-chain-dispatch");
-      await startDecisionResearch({ request, namespaceId, orgId, decision, userPrompt: prompt, workspacePath });
-      return { triggered: false, taskId, action: "execute_directly_decision", reason };
-    } catch (err) {
-      // Compensation: release the claim so the task isn't left permanently claimed-but-
-      // gateless. Leaves auto_run off (parked for a human) rather than looping.
-      try {
-        taskUpdate(orgId, taskId, { metadata: { ...metadata, execute_directly_gate: undefined, ...claimBase } }, namespaceId);
-      } catch { /* non-fatal */ }
-      return { triggered: false, taskId, action: "execute_directly", error: err instanceof Error ? err.message : String(err) };
-    }
+    return await ensureExecuteDirectlyDecisionGate({
+      taskId,
+      taskTitle,
+      metadata,
+      reasoning: normalized.reasoning,
+      namespaceId,
+      orgId,
+      request,
+      workspacePath,
+    });
   }
 
   if (action === "no_action_needed") {
@@ -1006,10 +1509,11 @@ async function startGenerationJob(
   request: NextRequest,
   workspacePath?: string
 ): Promise<TriggerResult> {
-  const claimId = `claim-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const claimId = newAutoRunClaimId();
   const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "generation_job_id", {
     generation_job_id: claimId,
     generation_status: "starting",
+    generation_job_claimed_at: new Date().toISOString(),
     analysis_status: "accepted",
   }, namespaceId);
 
@@ -1029,7 +1533,7 @@ async function startGenerationJob(
     body: JSON.stringify({
       type: "generate",
       taskId,
-      input: { prompt, workspacePath, namespaceId, orgId },
+      input: { prompt, workspacePath, namespaceId, orgId, auto_run_claim_id: claimId },
     }),
   });
 
@@ -1040,6 +1544,7 @@ async function startGenerationJob(
         ...metadata,
         generation_job_id: undefined,
         generation_status: "failed",
+        generation_job_claimed_at: undefined,
         analysis_status: "accepted",
         auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
       },
@@ -1049,12 +1554,27 @@ async function startGenerationJob(
 
   const jobData = await jobRes.json();
   const generationJobId = jobData.data?.jobId || jobData.jobId;
-  try {
+  if (typeof generationJobId !== "string" || !generationJobId) {
     taskUpdate(orgId, taskId, {
       metadata: {
         ...metadata,
+        generation_job_id: undefined,
+        generation_status: "failed",
+        generation_job_claimed_at: undefined,
+        analysis_status: "accepted",
+        auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+      },
+    }, namespaceId);
+    return { triggered: false, taskId, error: "Generation response did not include a job id" };
+  }
+  try {
+    const current = taskMetadataForUpdate(orgId, taskId, namespaceId, metadata);
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...current,
         generation_job_id: generationJobId,
         generation_status: "running",
+        generation_job_claimed_at: undefined,
         analysis_status: "accepted",
       },
     }, namespaceId);
@@ -1164,6 +1684,7 @@ async function startChainRun(
 
 async function startAnalysisJob(
   taskId: string,
+  metadata: Record<string, unknown>,
   namespaceId: string,
   orgId: string,
   request: NextRequest,
@@ -1183,6 +1704,17 @@ async function startAnalysisJob(
   if (!task) return { triggered: false, taskId, error: "Task not found" };
 
   // /api/jobs owns namespace-aware template resolution and chain catalog loading.
+  // Claim before dispatch so a persistence failure after /api/jobs creates the
+  // real job cannot make a later scan submit a duplicate recommendation run.
+  const claimId = newAutoRunClaimId();
+  const claimed = taskClaimMetadataKeyIfUnset(orgId, taskId, "analysis_job_id", {
+    analysis_job_id: claimId,
+    analysis_status: "starting",
+    analysis_job_claimed_at: new Date().toISOString(),
+  }, namespaceId);
+  if (!claimed) {
+    return { triggered: false, taskId, action: "analysis_pending" };
+  }
 
   const jobRes = await fetch(internalApiUrl("/api/jobs", request.url), {
     method: "POST",
@@ -1205,27 +1737,59 @@ async function startAnalysisJob(
         workspacePath,
         namespaceId,
         orgId,
+        auto_run_claim_id: claimId,
       },
     }),
   });
 
   if (!jobRes.ok) {
     const err = await jobRes.json().catch(() => ({}));
+    try {
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          analysis_job_id: undefined,
+          analysis_status: "failed",
+          analysis_job_claimed_at: undefined,
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        },
+      }, namespaceId);
+    } catch {
+      /* a stale pre-dispatch claim is recoverable on the next scan */
+    }
     return { triggered: false, taskId, error: (err as { error?: string }).error || "Failed to start analysis" };
   }
 
   const jobData = await jobRes.json();
   const analysisJobId2 = jobData.data?.jobId || jobData.jobId;
+  if (typeof analysisJobId2 !== "string" || !analysisJobId2) {
+    try {
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          analysis_job_id: undefined,
+          analysis_status: "failed",
+          analysis_job_claimed_at: undefined,
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        },
+      }, namespaceId);
+    } catch {
+      /* a stale pre-dispatch claim is recoverable on the next scan */
+    }
+    return { triggered: false, taskId, error: "Analysis response did not include a job id" };
+  }
 
-  // update task metadata with analysis job ref
+  // Persist the discovered job. If this write fails, the claim remains and
+  // recoverClaimedJob finds this exact job by `auto_run_claim_id` next tick.
   try {
-    const existing = (task.metadata || {}) as Record<string, unknown>;
+    const existing = taskMetadataForUpdate(orgId, taskId, namespaceId, metadata);
 
     taskUpdate(orgId, taskId, {
       metadata: {
         ...existing,
         analysis_job_id: analysisJobId2,
         analysis_status: "running",
+        analysis_job_claimed_at: undefined,
       },
     }, namespaceId);
   } catch {
@@ -1276,25 +1840,30 @@ function runLastActivityMs(rj: Record<string, unknown>, runJsonPath: string): nu
   return latest;
 }
 
+interface ReapedDeadRun {
+  runId: string;
+  taskId?: string;
+}
+
 /** Terminalize dead ("running"/"pending" but no liveness past DEAD_RUN_STALE_MS) runs so
- *  they stop jamming the concurrency cap and blocking their tasks. Returns the count reaped. */
-function reapDeadRuns(namespaceId?: string): number {
-  const nsId = namespaceId || config.namespaceId;
-  const runsDir = nsPath(nsId, "runs");
-  if (!existsSync(runsDir)) return 0;
+ *  they stop jamming the concurrency cap and blocking their tasks. The exact
+ *  task/run identities are returned so the same request can repair admission.
+ *
+ *  Consumes the request's RunsSnapshot: its active-run set is by construction
+ *  the exact reap candidate set (running/pending, declared agents incomplete),
+ *  so no second directory walk is needed. Liveness is still decided on CURRENT
+ *  data -- runLastActivityMs stats the file live, and the terminalize itself
+ *  re-reads and re-checks under the run.json lock. Reaped runs are pruned from
+ *  the snapshot so the same request's admission sees post-reap state. */
+function reapDeadRuns(snapshot: RunsSnapshot): ReapedDeadRun[] {
   const now = Date.now();
-  let reaped = 0;
-  for (const dir of readdirSync(runsDir)) {
-    if (!dir.startsWith("run-")) continue;
-    const runDir = join(runsDir, dir);
-    const p = join(runDir, "run.json");
-    if (!existsSync(p)) continue;
+  const reaped: ReapedDeadRun[] = [];
+  for (const record of [...snapshot.activeRuns]) {
+    const p = record.runPath;
     try {
-      const rj = JSON.parse(readFileSync(p, "utf-8"));
-      if (rj.status !== "running" && rj.status !== "pending") continue;
-      if (allDeclaredAgentsComplete(rj, runDir)) continue; // effectively done; reconcile owns it
-      const last = runLastActivityMs(rj, p);
+      const last = runLastActivityMs(record.raw, p);
       if (last > 0 && now - last <= DEAD_RUN_STALE_MS) continue; // still live
+      let terminalized: ReapedDeadRun | undefined;
       withRunJsonLock(p, () => {
         const fresh = JSON.parse(readFileSync(p, "utf-8"));
         if (fresh.status !== "running" && fresh.status !== "pending") return; // raced to terminal
@@ -1305,29 +1874,60 @@ function reapDeadRuns(namespaceId?: string): number {
           if (!TERMINAL_AGENT_STATUSES.has(a.status)) a.status = "failed";
         }
         writeRunJsonAtomic(p, fresh);
+        terminalized = {
+          runId: typeof fresh.id === "string" ? fresh.id : record.active.id,
+          taskId: typeof fresh.taskId === "string" ? fresh.taskId : undefined,
+        };
       });
-      reaped++;
+      if (terminalized) {
+        reaped.push(terminalized);
+        removeRunFromSnapshot(snapshot, terminalized.runId);
+      }
     } catch { /* skip corrupt */ }
   }
   return reaped;
 }
 
-function countActiveRuns(namespaceId?: string): number {
-  const nsId = namespaceId || config.namespaceId;
-  const runsDir = nsPath(nsId, "runs");
-  if (!existsSync(runsDir)) return 0;
-
-  const runDirs = readdirSync(runsDir).filter((d) => d.startsWith("run-"));
-  let count = 0;
-  for (const dir of runDirs) {
-    const rjPath = join(runsDir, dir, "run.json");
-    if (!existsSync(rjPath)) continue;
+/**
+ * `reapDeadRuns` rewrites run.json; admission reads the task row too. Keep the
+ * two truths synchronized before candidate selection so a reaped `running` run
+ * becomes a retryable failed attempt in this same polling tick.
+ */
+function reconcileReapedDeadRunTasks(
+  orgId: string,
+  namespaceId: string,
+  reapedRuns: ReapedDeadRun[]
+): number {
+  let reconciled = 0;
+  for (const reaped of reapedRuns) {
+    if (!reaped.taskId) continue;
+    const task = taskGet(orgId, reaped.taskId, namespaceId);
+    if (!task || isTerminalTaskStatus(task.status)) continue;
+    const metadata = parseTaskMetadata(task);
+    // A newer live run must remain authoritative; the old reaped run cannot
+    // overwrite its task metadata.
+    if (
+      typeof metadata.last_run_id === "string" &&
+      metadata.last_run_id !== reaped.runId &&
+      metadata.last_run_status === "running"
+    ) {
+      continue;
+    }
     try {
-      const rj = JSON.parse(readFileSync(rjPath, "utf-8"));
-      if ((rj.status === "running" || rj.status === "pending") && !allDeclaredAgentsComplete(rj, join(runsDir, dir))) {
-        count++;
-      }
-    } catch { /* skip corrupt */ }
+      taskUpdate(orgId, reaped.taskId, {
+        status: "in_progress",
+        metadata: {
+          ...metadata,
+          last_run_id: reaped.runId,
+          last_run_status: "failed",
+          last_run_error: "reaped dead run: no agent liveness for >45m",
+          last_run_completed: new Date().toISOString(),
+        },
+      }, namespaceId);
+      reconciled += 1;
+    } catch {
+      // The failed run remains terminal; a later poll can retry metadata repair.
+    }
   }
-  return count;
+  return reconciled;
 }

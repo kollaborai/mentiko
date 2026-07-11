@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { taskList, taskUpdate } from "@/lib/tasks/task-store";
@@ -16,7 +17,13 @@ import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "@/lib/runs/run
 import { allDeclaredAgentsComplete, latestAgentCompletion } from "@/lib/runs/run-completion";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { applyTypedExecutorPlan } from "@/lib/runner-v2/adapters";
-import { recoverLateCompletionEvents } from "@/lib/runner-v2/completion-recovery";
+import {
+  acknowledgeLateCompletionDelivery,
+  claimLateCompletionDelivery,
+  recoverLateCompletionEvents,
+  releaseLateCompletionDelivery,
+  type LateCompletionRecovery,
+} from "@/lib/runner-v2/completion-recovery";
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan } from "@/lib/runner-v2/executor";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
@@ -632,58 +639,135 @@ function recoverLateCompletionIfPossible(input: {
     chain,
     events,
   });
-  if (recovery.recovered.length === 0) return { recovered: false };
+  if (recovery.deliveries.length === 0) return { recovered: false };
 
-  for (const item of recovery.recovered) {
-    const plan = buildTypedExecutorPlan({
-      pipeline: {
-        decision: {
-          action: "route",
-          event: item.event,
-          route: item.route,
-          run: recovery.run,
-        },
-        loopStateBefore: { visited: [], round: 0 },
-      },
-      allEvents: events,
-      routeContext: {
-        chainPath,
-        workspacePath: typeof input.run.workspacePath === "string" ? input.run.workspacePath : undefined,
-        taskId: typeof input.run.taskId === "string" ? input.run.taskId : undefined,
-        runDir: input.runDir,
-        env: {
-          MENTIKO_RUN_ID: input.runId,
-          RUN_ID: input.runId,
-          NAMESPACE_ID: input.namespaceId,
-          ORG_ID: input.orgId,
-          MENTIKO_RUNNER_V2: "1",
-          MENTIKO_RUNNER_V2_COMPLETION: "1",
-        },
-      },
-      terminal: {
-        runId: input.runId,
-        chainId: typeof input.run.chainId === "string" ? input.run.chainId : chain.id,
-        chainName: chain.name || chain.id || "unknown",
-        chainPath,
-        taskId: typeof input.run.taskId === "string" ? input.run.taskId : undefined,
-        lastAgentId: item.agentId,
-      },
-    });
-    applyTypedExecutorPlan(plan, {
+  for (const item of recovery.deliveries) {
+    const latestRun = readRunForDelivery(input.runJsonPath, recovery.run);
+    if (deliveryTargetsAlreadyStarted(item, latestRun)) {
+      acknowledgeLateCompletionDelivery({
+        runJsonPath: input.runJsonPath,
+        deliveryId: item.deliveryId,
+        evidence: "downstream-state",
+      });
+      continue;
+    }
+
+    const claimId = `reconcile:${process.pid}:${randomUUID()}`;
+    if (!claimLateCompletionDelivery({
       runJsonPath: input.runJsonPath,
-      stateDir: config.stateDir,
-      namespaceId: input.namespaceId,
-      orgId: input.orgId,
-      eventsDir: config.eventsDir,
-      eventsArchiveDir: join(config.eventsDir, "archive"),
-    });
+      deliveryId: item.deliveryId,
+      claimId,
+    })) continue;
+
+    let planApplied = false;
+    try {
+      // Building is intentionally inside the claimed try/catch. A crash or
+      // exception after event consumption but before adapter application leaves
+      // the durable delivery retryable instead of stranded in `applying`.
+      const plan = buildTypedExecutorPlan({
+        pipeline: {
+          decision: {
+            action: "route",
+            event: item.event,
+            route: item.route,
+            run: recovery.run,
+          },
+          loopStateBefore: { visited: [], round: 0 },
+        },
+        allEvents: events,
+        routeContext: {
+          chainPath,
+          workspacePath: typeof recovery.run.workspacePath === "string" ? recovery.run.workspacePath : undefined,
+          taskId: typeof recovery.run.taskId === "string" ? recovery.run.taskId : undefined,
+          runDir: input.runDir,
+          fanGroupId: `late-recovery-${item.deliveryId}`,
+          env: {
+            MENTIKO_RUN_ID: input.runId,
+            RUN_ID: input.runId,
+            NAMESPACE_ID: input.namespaceId,
+            ORG_ID: input.orgId,
+            MENTIKO_RUNNER_V2: "1",
+            MENTIKO_RUNNER_V2_COMPLETION: "1",
+            MENTIKO_RUNNER_V2_DELIVERY_ID: item.deliveryId,
+          },
+        },
+        terminal: {
+          runId: input.runId,
+          chainId: typeof input.run.chainId === "string" ? input.run.chainId : chain.id,
+          chainName: chain.name || chain.id || "unknown",
+          chainPath,
+          taskId: typeof recovery.run.taskId === "string" ? recovery.run.taskId : undefined,
+          lastAgentId: item.agentId,
+        },
+      });
+      applyTypedExecutorPlan(plan, {
+        runJsonPath: input.runJsonPath,
+        stateDir: config.stateDir,
+        namespaceId: input.namespaceId,
+        orgId: input.orgId,
+        eventsDir: config.eventsDir,
+        eventsArchiveDir: join(config.eventsDir, "archive"),
+      });
+      planApplied = true;
+      if (!acknowledgeLateCompletionDelivery({
+        runJsonPath: input.runJsonPath,
+        deliveryId: item.deliveryId,
+        claimId,
+        evidence: "plan-applied",
+      })) {
+        throw new Error(`late completion delivery acknowledgement failed: ${item.deliveryId}`);
+      }
+    } catch (error) {
+      // A failed plan can be safely retried. Once application returned, keep the
+      // claim: releasing it would allow a duplicate launch if only the durable
+      // acknowledgement failed. The next reconcile uses downstream run state to
+      // converge that claim to applied without launching again.
+      if (!planApplied) {
+        releaseLateCompletionDelivery({
+          runJsonPath: input.runJsonPath,
+          deliveryId: item.deliveryId,
+          claimId,
+        });
+      }
+      throw error;
+    }
   }
 
   return {
     recovered: true,
     status: recovery.run.status,
-    reason: `late completion event recovered for ${recovery.recovered.map((item) => item.agentId).join(", ")}`,
+    reason: `late completion event recovered for ${recovery.deliveries.map((item) => item.agentId).join(", ")}`,
   };
+}
+
+function readRunForDelivery(runJsonPath: string, fallback: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(runJsonPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return fallback;
+  }
+}
+
+function deliveryTargetsAlreadyStarted(
+  delivery: LateCompletionRecovery,
+  run: Record<string, unknown>,
+): boolean {
+  if (delivery.route.action !== "launch") return false;
+  const agents = Array.isArray(run.agents)
+    ? run.agents.filter((agent): agent is Record<string, unknown> => Boolean(agent) && typeof agent === "object")
+    : [];
+  return delivery.route.agentIds.every((agentId) => {
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    return Boolean(
+      agent
+      && (
+        agent.status === "running"
+        || agent.status === "complete"
+        || agent.status === "completed"
+        || typeof agent.session === "string"
+      )
+    );
+  });
 }
 
 function readRoutingChain(chainPath: string): RoutingChain | undefined {

@@ -33,7 +33,12 @@ import { join } from "path";
 import { createServer, IncomingMessage } from "http";
 import { randomBytes } from "crypto";
 import { writeFileSync, mkdirSync, unlinkSync, readFileSync, readdirSync, statSync } from "fs";
-import { splitPtyChunk } from "../lib/terminal-stream";
+import {
+  finishPtyTerminalStream,
+  PtyActivityStreamParser,
+  PtyChunkPart,
+  PtyUtf8StreamDecoder,
+} from "../lib/terminal-stream";
 import { canAccessSession } from "../lib/pty/session-owners";
 
 const WS_PORT = parseInt(process.env.WS_TERMINAL_PORT || "3099", 10);
@@ -531,10 +536,31 @@ function handleAttach(
   const conn = createConnection(SOCKET_PATH);
   let gotAck = false;
   let headerBuf = "";
+  const utf8Decoder = new PtyUtf8StreamDecoder();
+  const activityParser = new PtyActivityStreamParser();
 
   const sendData = (data: string) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "data", data }));
+  };
+
+  const forwardParts = (parts: PtyChunkPart[]) => {
+    for (const part of parts) {
+      if (part.kind === "data") {
+        sendData(part.text);
+      } else if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "activity", data: part.activity }));
+      }
+    }
+  };
+
+  const finishStream = () => {
+    const finalParts = finishPtyTerminalStream(utf8Decoder, activityParser);
+    if (finalParts === null) return;
+    forwardParts(finalParts);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "exit" }));
+    }
   };
 
   conn.on("error", (err: NodeJS.ErrnoException) => {
@@ -551,9 +577,10 @@ function handleAttach(
   });
 
   conn.on("data", (data: Buffer) => {
+    const str = utf8Decoder.write(data);
     if (!gotAck) {
       // first message is JSON ack with terminal size, terminated by \n
-      headerBuf += data.toString();
+      headerBuf += str;
       const nl = headerBuf.indexOf("\n");
       if (nl === -1) return; // wait for full ack
 
@@ -601,27 +628,11 @@ function handleAttach(
     // streaming mode: split out ACTIVITY: messages ("ACTIVITY:{json}\n"),
     // forward PTY data byte-for-byte. PTY output is already terminal-correct;
     // don't rewrite it (corrupts ANSI escapes and in-place repaints).
-    const str = data.toString("utf-8");
-    for (const part of splitPtyChunk(str)) {
-      if (part.kind === "data") {
-        sendData(part.text);
-      } else if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "activity", data: part.activity }));
-      }
-    }
+    forwardParts(activityParser.push(str));
   });
 
-  conn.on("close", () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "exit" }));
-    }
-  });
-
-  conn.on("end", () => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "exit" }));
-    }
-  });
+  conn.on("close", finishStream);
+  conn.on("end", finishStream);
 }
 
 // --- main ---

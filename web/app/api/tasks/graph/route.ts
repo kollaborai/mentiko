@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskList, taskGetAllDeps } from "@/lib/tasks/task-store";
-import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
+import { filterVisibleTaskRecordsWithVisibleParents } from "@/lib/tasks/task-visibility";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -150,7 +150,7 @@ export const GET = requirePermission("view_tasks")(
     }
 
     // one taskList call + one SQL call for all deps (include closed so tree toggle works)
-    const issues = filterVisibleTaskRecords(
+    const issues = filterVisibleTaskRecordsWithVisibleParents(
       taskList(orgId, { status: "all" }, workspaceId, namespaceId),
     );
     if (issues.length === 0) {

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { mapPriority } from "@/lib/tasks/task-transforms";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
@@ -45,11 +46,11 @@ interface TaskOverviewProps {
 interface EpicColumn {
   epic: ApiNode | null;
   tasks: ApiNode[];
-  closedCount: number;
+  completedCount: number;
 }
 
 function statusDot(status: string) {
-  if (status === "closed") return "bg-green-400";
+  if (isTerminalTaskStatus(status)) return "bg-green-400";
   if (status === "in_progress") return "bg-blue-400";
   return "bg-foreground/30";
 }
@@ -142,7 +143,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
     const epics = nodes.filter((n) => n.type === "epic");
     const epicIds = new Set(epics.map((e) => e.id));
     const visibleNodes = nodes.filter((n) => {
-      if (hideCompleted && n.status === "closed") return false;
+      if (hideCompleted && isTerminalTaskStatus(n.status)) return false;
       if (n.type !== "epic") {
         if (!taskOverviewPriorityMatches(n.priority, priorityFilter)) return false;
       }
@@ -177,7 +178,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
       return null;
     }
 
-    // group ALL nodes for closedCount (unfiltered), but display visibleNodes
+    // group ALL nodes for completedCount (unfiltered), but display visibleNodes
     const grouped = new Map<string, ApiNode[]>();
     const groupedAll = new Map<string, ApiNode[]>();
     const ungrouped: ApiNode[] = [];
@@ -209,7 +210,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
 
     const cols: EpicColumn[] = [];
     const sortedEpics = [...epics]
-      .filter((e) => !(hideCompleted && e.status === "closed"))
+      .filter((e) => !(hideCompleted && isTerminalTaskStatus(e.status)))
       .sort((a, b) => a.priority - b.priority);
 
     for (const epic of sortedEpics) {
@@ -219,14 +220,14 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
       // when hiding completed, skip columns where every task is done
       if (hideCompleted && tasks.length === 0) continue;
       tasks.sort((a, b) => a.layer - b.layer);
-      const closedCount = allTasks.filter((t) => t.status === "closed").length;
-      cols.push({ epic, tasks, closedCount });
+      const completedCount = allTasks.filter((task) => isTerminalTaskStatus(task.status)).length;
+      cols.push({ epic, tasks, completedCount });
     }
 
     if (ungroupedAll.length > 0 && !(hideCompleted && ungrouped.length === 0)) {
       ungrouped.sort((a, b) => a.layer - b.layer);
-      const closedCount = ungroupedAll.filter((t) => t.status === "closed").length;
-      cols.push({ epic: null, tasks: ungrouped, closedCount });
+      const completedCount = ungroupedAll.filter((task) => isTerminalTaskStatus(task.status)).length;
+      cols.push({ epic: null, tasks: ungrouped, completedCount });
     }
 
     return cols;
@@ -255,7 +256,7 @@ export function TaskOverview({ onSelectTask, onSelectEpic, selectedTaskId }: Tas
     );
   }
 
-  const completedCount = nodes.filter((n) => n.status === "closed" && n.type !== "epic").length;
+  const completedCount = nodes.filter((node) => isTerminalTaskStatus(node.status) && node.type !== "epic").length;
   const PRIORITY_OPTIONS: { label: string; value: PriorityFilter }[] = [
     { label: "All", value: "all" },
     { label: "P0", value: "p0" },
@@ -355,9 +356,9 @@ function EpicColumnCard({
   selectedTaskId?: string;
   compact?: boolean;
 }) {
-  const { epic, tasks, closedCount } = column;
-  const total = closedCount + tasks.filter((t) => t.status !== "closed").length;
-  const pct = total > 0 ? Math.round((closedCount / total) * 100) : 0;
+  const { epic, tasks, completedCount } = column;
+  const total = completedCount + tasks.filter((task) => !isTerminalTaskStatus(task.status)).length;
+  const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
   const isEpicSelected = !!epic && epic.id === selectedTaskId;
 
   // build set of task ids in this column for connector lines
@@ -373,7 +374,7 @@ function EpicColumnCard({
           {epic ? epic.label : "Ungrouped"}
         </span>
         <span className="text-[10px] font-mono text-foreground/40 ml-2 flex-shrink-0">
-          {closedCount}/{total}
+          {completedCount}/{total}
         </span>
       </div>
       {epic && (
@@ -474,7 +475,7 @@ function TaskCard({
 }) {
   const priority: TaskPriority = mapPriority(task.priority);
   const totalDeps = blockedBy.length + blocks.length;
-  const isReady = blockedBy.length === 0 && task.status !== "closed";
+  const isReady = blockedBy.length === 0 && !isTerminalTaskStatus(task.status);
   const isDecision = task.type === "decision";
 
   return (

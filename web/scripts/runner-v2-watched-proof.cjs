@@ -7,13 +7,13 @@ const { spawnSync } = require("child_process");
 
 const codeRoot = resolve(join(__dirname, "..", ".."));
 const tempRoot = mkdtempSync(join(tmpdir(), "mentiko-runner-v2-watched-"));
-const dataRoot = join(tempRoot, "data");
+// Keep the derived daemon socket below macOS's Unix-socket path limit.
+const dataRoot = join("/tmp", `mentiko-v2-data-${process.pid}`);
 const workspace = join(tempRoot, "workspace");
 const runsDir = join(dataRoot, "namespaces", "default", "runs");
 const runId = `run-${Date.now()}-${process.pid.toString(16)}`;
 const runDir = join(runsDir, runId);
 const profilesDir = join(dataRoot, "namespaces", "default", "agent-profiles");
-const ptyDaemon = `mentiko-v2-proof-${process.pid}-${Date.now()}`;
 
 process.env.MENTIKO_CODE_ROOT = codeRoot;
 process.env.MENTIKO_ROOT = codeRoot;
@@ -23,7 +23,6 @@ process.env.MENTIKO_NAMESPACE_ID = "default";
 process.env.NAMESPACE_ID = "default";
 process.env.ORG_ID = "default";
 process.env.PROJECT_ID = "default";
-process.env.PTY_DAEMON = ptyDaemon;
 process.env.MENTIKO_RUNNER_V2 = "1";
 process.env.MENTIKO_RUNNER_V2_COMPLETION = "1";
 process.env.MENTIKO_MONITOR_INTERVAL = "1";
@@ -43,6 +42,9 @@ require("tsconfig-paths").register({
   baseUrl: resolve(__dirname, ".."),
   paths: { "@/*": ["*"] },
 });
+const { derivePtyDaemonName } = require("../lib/config");
+const ptyDaemon = derivePtyDaemonName(dataRoot, "default", "default");
+process.env.PTY_DAEMON = ptyDaemon;
 
 async function main() {
   mkdirSync(runDir, { recursive: true });

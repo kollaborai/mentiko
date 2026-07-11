@@ -104,5 +104,50 @@ describe("runner-v2 completion entrypoint liveness", () => {
       status: "running",
       agents: [{ id: "writer", status: "running" }],
     });
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      expect.any(String),
+      ["alive", "writer-run-123"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          PTY_DAEMON: expect.stringMatching(/^mentiko-.*-default-default$/),
+        }),
+      }),
+    );
+  });
+
+  it("pins pty probes to the daemon derived from the run namespace and org", () => {
+    const root = tempRoot();
+    const { runDir, eventsDir, stateDir, chainPath } = seedRun(root);
+    mockPtySessionAliveWithChild();
+
+    runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        MENTIKO_GLOBAL_ROOT: root,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_CODE_ROOT: root,
+        NAMESPACE_ID: "team-a",
+        ORG_ID: "org-b",
+        PTY_DAEMON: "default",
+        MENTIKO_RETRY_ATTEMPT: "1",
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+      },
+      dryRun: true,
+    });
+
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      expect.any(String),
+      ["alive", "writer-run-123"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          PTY_DAEMON: expect.stringMatching(/^mentiko-.*-team-a-org-b$/),
+        }),
+      }),
+    );
   });
 });

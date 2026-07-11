@@ -167,6 +167,29 @@ describe("monitor-io — verifiable adapter core", () => {
         expect(findAgentCompletionEventAnyRun({ eventsDir: dir, agentId: "decision-researcher", emitsEvent: "decision-research-complete" })).toBe("");
       });
 
+      it("does not let a prefix agent adopt a sibling agent's session event", () => {
+        const dir = tempDir();
+        seedEvent(dir, "api-reviewer.event", {
+          event: "review-complete",
+          source: "api-reviewer-run-271",
+          run_id: "run-271",
+          processed: "false",
+        });
+        seedEvent(dir, "api.event", {
+          event: "review-complete",
+          source: "api-run-272",
+          run_id: "run-272",
+          processed: "false",
+        });
+
+        expect(findAgentCompletionEventAnyRun({
+          eventsDir: dir,
+          agentId: "api",
+          emitsEvent: "review-complete",
+          allAgentIds: ["api", "api-reviewer"],
+        })).toBe("api.event");
+      });
+
       it("rejects a diagnostic (monitor-sourced) event", () => {
         const dir = tempDir();
         seedEvent(dir, "e.event", { event: "decision-research-complete", source: "monitor", agent: "decision-researcher", run_id: "run-271", processed: "false" });

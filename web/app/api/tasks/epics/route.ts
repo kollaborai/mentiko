@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskList } from "@/lib/tasks/task-store";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
+import { filterVisibleTaskRecordsWithVisibleParents } from "@/lib/tasks/task-visibility";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -17,8 +19,10 @@ export const GET = requirePermission("view_tasks")(
       return apiSuccess({ epics: [] });
     }
 
-    const allEpics = taskList(orgId, { issue_type: "epic", status: "all" }, workspaceId, namespaceId);
-    const allTasks = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
+    const allTasks = filterVisibleTaskRecordsWithVisibleParents(
+      taskList(orgId, { status: "all" }, workspaceId, namespaceId),
+    );
+    const allEpics = allTasks.filter((task) => task.issue_type === "epic");
 
     const epics = allEpics.map((epic) => {
       // match children by parent_id field OR by ID prefix (legacy dot notation)
@@ -27,9 +31,7 @@ export const GET = requirePermission("view_tasks")(
           t.parent_id === epic.id ||
           (t.id.startsWith(epic.id + ".") && t.issue_type !== "epic")
       );
-      const closedChildren = children.filter(
-        (c) => c.status === "closed" || c.status === "resolved"
-      ).length;
+      const closedChildren = children.filter((child) => isTerminalTaskStatus(child.status)).length;
 
       return {
         id: epic.id,

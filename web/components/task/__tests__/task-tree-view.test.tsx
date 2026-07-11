@@ -106,4 +106,34 @@ describe("TaskTreeView", () => {
     });
     expect(mockFetchWithNamespace).toHaveBeenCalledTimes(2);
   });
+
+  it("hides complete tasks until the completed toggle is enabled", async () => {
+    mockFetchWithNamespace.mockResolvedValue({
+      json: async () => ({
+        data: {
+          nodes: [
+            {
+              id: "TASK-093",
+              label: "Completed task",
+              type: "task",
+              status: "complete",
+              priority: 0,
+              layer: 0,
+            },
+          ],
+          links: [],
+          deps: [],
+        },
+      }),
+    });
+
+    render(<TaskTreeView selectedId={null} />);
+
+    await screen.findByText(/0 open · 1 completed/i);
+    expect(screen.queryByRole("button", { name: /Completed task/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "show completed" }));
+
+    expect(await screen.findByRole("button", { name: /Completed task/i })).toBeInTheDocument();
+  });
 });

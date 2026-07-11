@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { agentOwnsEvent } from "@/lib/runner-v2/completion";
+import { agentOwnsEvent, sourceMatchesAgent } from "@/lib/runner-v2/completion";
 import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 
 // The verifiable core of the typed monitor's I/O adapter. Everything here is a
@@ -231,6 +231,7 @@ export function findAgentCompletionEventAnyRun(input: {
   eventsDir: string;
   agentId: string;
   emitsEvent: string;
+  allAgentIds?: string[];
 }): string {
   if (!input.eventsDir || !input.emitsEvent || !existsSync(input.eventsDir)) return "";
   let files: string[];
@@ -256,13 +257,14 @@ export function findAgentCompletionEventAnyRun(input: {
     const source = (fields.source ?? "").toLowerCase();
     if (DIAGNOSTIC_SOURCES.has(source)) continue;
     // Cross-run scan: the event is from a DIFFERENT session, so its source is
-    // session-shaped ("<agent>-run-<other>"), never the current session name --
-    // exact/session match can't apply here. Bound the agent-id match to an exact
-    // id or a "<id>-" prefix (not an unbounded substring), which drops mid-string
-    // false matches like "senior-researcher" owning "researcher"'s events.
+    // session-shaped ("<agent>-run-<other>"), never the current session name.
+    // Reuse completion ownership so a prefix agent ("api") cannot steal a
+    // sibling agent's event ("api-reviewer" or "api-reviewer-run-123") when
+    // the chain gives us the complete identity set. Legitimate session suffixes
+    // for the actual agent still match.
     const fieldAgent = (fields.agent ?? "").toLowerCase();
-    const ownsEvent = source === agent || source.startsWith(`${agent}-`)
-      || fieldAgent === agent || fieldAgent.startsWith(`${agent}-`);
+    const ownsEvent = sourceMatchesAgent(source, { id: agent }, input.allAgentIds)
+      || sourceMatchesAgent(fieldAgent, { id: agent }, input.allAgentIds);
     if (agent && !ownsEvent) continue;
     return file;
   }
@@ -301,6 +303,24 @@ export function readDeclaredEmits(chainPath: string, agentId: string): string {
     /* unreadable chain -> no cross-run recovery */
   }
   return "";
+}
+
+/** Full chain agent-id set for guarded cross-run source ownership. */
+export function readDeclaredAgentIds(chainPath: string): string[] {
+  try {
+    const chain = JSON.parse(readFileSync(chainPath, "utf8")) as { agents?: unknown };
+    if (!Array.isArray(chain.agents)) return [];
+    return chain.agents
+      .filter((agent): agent is { id: string } => (
+        Boolean(agent)
+        && typeof agent === "object"
+        && typeof (agent as { id?: unknown }).id === "string"
+        && Boolean((agent as { id: string }).id.trim())
+      ))
+      .map((agent) => agent.id);
+  } catch {
+    return [];
+  }
 }
 
 /**

@@ -59,9 +59,11 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
 }));
 
+const mockGetDecision = jest.fn();
+const mockUpdateDecision = jest.fn();
 jest.mock("@/lib/decisions/decision-storage", () => ({
-  getDecision: jest.fn(),
-  updateDecision: jest.fn(),
+  getDecision: (...args: unknown[]) => mockGetDecision(...args),
+  updateDecision: (...args: unknown[]) => mockUpdateDecision(...args),
 }));
 
 const mockPostProcessChain = jest.fn();
@@ -73,8 +75,14 @@ jest.mock("@/lib/auth/internal-web-origin", () => ({
   internalApiUrl: (path: string) => `http://localhost:3000${path}`,
 }));
 
+const mockApplyDecisionRunResult = jest.fn();
 jest.mock("@/lib/decisions/decision-run-results", () => ({
-  applyDecisionRunResult: jest.fn(),
+  applyDecisionRunResult: (...args: unknown[]) => mockApplyDecisionRunResult(...args),
+}));
+
+const mockAdvanceDecisionAfterPhase = jest.fn();
+jest.mock("@/lib/decisions/decision-auto-advance", () => ({
+  advanceDecisionAfterPhase: (...args: unknown[]) => mockAdvanceDecisionAfterPhase(...args),
 }));
 
 const mockApplyCompletionAudit = jest.fn();
@@ -170,6 +178,9 @@ describe("POST /api/jobs/[id]/complete", () => {
     });
     mockApplyCompletionAudit.mockResolvedValue({ action: "closed" });
     mockEnforceDeliveryGate.mockImplementation((audit) => audit);
+    mockGetDecision.mockReturnValue(null);
+    mockUpdateDecision.mockResolvedValue(undefined);
+    mockApplyDecisionRunResult.mockResolvedValue(undefined);
 
     let createCount = 0;
     mockTaskCreate.mockImplementation((_orgId, input) => {
@@ -262,6 +273,87 @@ describe("POST /api/jobs/[id]/complete", () => {
     expect(mockUpdateJob).toHaveBeenCalledWith("job-task", expect.objectContaining({
       taskId: "EPIC-001",
     }), "default");
+  });
+
+  test("hands the exact completed decision run to the auto-advance driver", async () => {
+    let currentJob = {
+      id: "job-decision-questions",
+      type: "decision_guided_questions",
+      status: "running",
+      decisionId: "dec-questions",
+      input: { workspacePath: "/repo/mentiko" },
+      runId: "run-decision-questions",
+      chainId: "decision-guided-questions",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockGetDecision.mockReturnValue({ id: "dec-questions", workspacePath: "/repo/mentiko" });
+    const advancedDecision = {
+      id: "dec-questions",
+      status: "briefed",
+      options: [],
+      workspacePath: "/repo/mentiko",
+    };
+    mockApplyDecisionRunResult.mockResolvedValue(advancedDecision);
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { questions: [{ id: "q-1" }] },
+      runId: "run-decision-questions",
+      chainId: "decision-guided-questions",
+    }), { params: Promise.resolve({ id: "job-decision-questions" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockApplyDecisionRunResult).toHaveBeenCalledWith(expect.objectContaining({
+      decisionId: "dec-questions",
+      phase: "questions",
+      runId: "run-decision-questions",
+      workspacePath: "/repo/mentiko",
+    }));
+    expect(mockAdvanceDecisionAfterPhase).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      decision: advancedDecision,
+    });
+  });
+
+  test("repairs a decision phase when a complete-job retry follows a partial failure", async () => {
+    let currentJob = {
+      id: "job-decision-repair",
+      type: "decision_guided_questions",
+      status: "complete",
+      decisionId: "dec-repair",
+      input: { workspacePath: "/repo/mentiko" },
+      result: { questions: [{ id: "q-1" }] },
+      runId: "run-decision-repair",
+      chainId: "decision-guided-questions",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockGetDecision.mockReturnValue({ id: "dec-repair", workspacePath: "/repo/mentiko" });
+    const repairedDecision = { id: "dec-repair", status: "briefed", options: [] };
+    mockApplyDecisionRunResult
+      .mockRejectedValueOnce(new Error("temporary decision write failure"))
+      .mockResolvedValueOnce(repairedDecision);
+
+    const { POST } = await import("./route");
+    await POST(makeRequest({ status: "complete" }), { params: Promise.resolve({ id: "job-decision-repair" }) });
+    await POST(makeRequest({ status: "complete" }), { params: Promise.resolve({ id: "job-decision-repair" }) });
+
+    expect(mockApplyDecisionRunResult).toHaveBeenCalledTimes(2);
+    expect(mockAdvanceDecisionAfterPhase).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceDecisionAfterPhase).toHaveBeenLastCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      decision: repairedDecision,
+    });
   });
 
   test("post-processes generated chain agents in the request namespace and org", async () => {

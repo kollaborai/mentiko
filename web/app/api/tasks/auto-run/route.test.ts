@@ -10,10 +10,24 @@ jest.mock("@/lib/auth/api-auth", () => ({
 const mockExistsSync = jest.fn();
 const mockReaddirSync = jest.fn();
 const mockReadFileSync = jest.fn();
+const mockStatSync = jest.fn();
 jest.mock("fs", () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
   readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+  statSync: (...args: unknown[]) => mockStatSync(...args),
+}));
+
+const mockWithRunJsonLock = jest.fn((_path: string, callback: () => unknown) => callback());
+const mockWriteRunJsonAtomic = jest.fn();
+jest.mock("@/lib/runs/run-json-lock", () => ({
+  withRunJsonLock: (...args: unknown[]) => mockWithRunJsonLock(args[0] as string, args[1] as () => unknown),
+  writeRunJsonAtomic: (...args: unknown[]) => mockWriteRunJsonAtomic(...args),
+}));
+
+const mockResolveLinkRunsDir = jest.fn();
+jest.mock("@/lib/links/link-run-runtime", () => ({
+  resolveLinkRunsDir: (...args: unknown[]) => mockResolveLinkRunsDir(...args),
 }));
 
 jest.mock("@/lib/namespace-config", () => ({
@@ -26,19 +40,21 @@ jest.mock("@/lib/namespace-config", () => ({
   }),
 }));
 
+const mockReadSystemSettings = jest.fn();
 jest.mock("@/lib/system/system-settings", () => ({
-  readSystemSettings: jest.fn().mockReturnValue({
-    auto_run_enabled: true,
-    max_concurrent_runs: 10,
-  }),
-  // phase-2 step 2: auto-run self-throttles against the same authoritative limit the
-  // run starter + engine use. With no env override it returns the system setting.
+  readSystemSettings: (...args: unknown[]) => mockReadSystemSettings(...args),
   resolveMaxConcurrentChains: jest.fn().mockReturnValue(10),
 }));
+
+const defaultSystemSettings = {
+  auto_run_enabled: true,
+  max_concurrent_runs: 10,
+};
 
 const mockIsTaskReady = jest.fn();
 const mockReconcileActiveAutoRunTasks = jest.fn();
 const mockReconcileTaskActiveRun = jest.fn();
+const mockGetAutoRunCandidates = jest.fn();
 // canAdmitAutoRun is intentionally the REAL implementation, not a hand-tuned
 // mock: triggerAutoRun's whole point (funnel through the shared gate) is that
 // a fixture the real invariant would reject must actually fail here, not be
@@ -48,8 +64,15 @@ const mockReconcileTaskActiveRun = jest.fn();
 // file, so the predicate runs for real against realistic fixture data.
 const actualAutoRun = jest.requireActual("@/lib/runs/auto-run") as typeof import("@/lib/runs/auto-run");
 const mockCanAdmitAutoRun = jest.fn(actualAutoRun.canAdmitAutoRun);
+// buildRunsSnapshot / removeRunFromSnapshot stay REAL: they read fs through the
+// mocks registered above, so fixtures that stage run.json dirs feed the
+// snapshot exactly like they fed the old per-call scans.
+const mockBuildRunsSnapshot = jest.fn(actualAutoRun.buildRunsSnapshot);
 jest.mock("@/lib/runs/auto-run", () => ({
-  getAutoRunCandidates: jest.fn().mockReturnValue([]),
+  buildRunsSnapshot: (...args: Parameters<typeof actualAutoRun.buildRunsSnapshot>) => mockBuildRunsSnapshot(...args),
+  removeRunFromSnapshot: (...args: Parameters<typeof actualAutoRun.removeRunFromSnapshot>) =>
+    actualAutoRun.removeRunFromSnapshot(...args),
+  getAutoRunCandidates: (...args: unknown[]) => mockGetAutoRunCandidates(...args),
   isTaskReady: (...args: unknown[]) => mockIsTaskReady(...args),
   reconcileActiveAutoRunTasks: (...args: unknown[]) => mockReconcileActiveAutoRunTasks(...args),
   reconcileTaskActiveRun: (...args: unknown[]) => mockReconcileTaskActiveRun(...args),
@@ -91,8 +114,17 @@ jest.mock("@/lib/workspaces/workspace-storage", () => ({
 }));
 
 const mockGetJob = jest.fn();
+const mockListJobs = jest.fn();
 jest.mock("@/lib/runs/job-store", () => ({
   getJob: (...args: unknown[]) => mockGetJob(...args),
+  listJobs: (...args: unknown[]) => mockListJobs(...args),
+}));
+
+const mockListDecisions = jest.fn();
+const mockUpdateDecision = jest.fn();
+jest.mock("@/lib/decisions/decision-storage", () => ({
+  listDecisions: (...args: unknown[]) => mockListDecisions(...args),
+  updateDecision: (...args: unknown[]) => mockUpdateDecision(...args),
 }));
 
 jest.mock("@/lib/chains/chain-utils", () => ({
@@ -121,6 +153,7 @@ jest.mock("@/lib/config", () => {
     __esModule: true,
     default: cfg,
     nsPath: (_nsId: string, ...segments: string[]) => ["/tmp/mentiko-test/default", ...segments].join("/"),
+    orgPath: (nsId: string, orgId: string, ...segments: string[]) => ["/tmp/mentiko-test", nsId, "orgs", orgId, ...segments].join("/"),
   };
 });
 
@@ -155,14 +188,22 @@ describe("POST /api/tasks/auto-run", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCheckAuth.mockResolvedValue(true);
+    mockReadSystemSettings.mockReturnValue(defaultSystemSettings);
     mockIsTaskReady.mockReturnValue({ ready: true, deps: [], blockingDeps: [] });
     mockReconcileActiveAutoRunTasks.mockReturnValue(0);
     mockReconcileTaskActiveRun.mockReturnValue({ activeRun: null, reconciled: false });
     mockGetJob.mockReturnValue(null);
+    mockListJobs.mockReturnValue([]);
+    mockListDecisions.mockReturnValue([]);
+    mockUpdateDecision.mockResolvedValue(undefined);
+    mockStartDecisionResearch.mockResolvedValue({ runId: "run-decision-research" });
+    mockGetAutoRunCandidates.mockReturnValue([]);
     mockTaskClaimMetadataKeyIfUnset.mockReturnValue(true);
     mockExistsSync.mockReturnValue(false);
     mockReaddirSync.mockReturnValue([]);
     mockReadFileSync.mockReturnValue("{}");
+    mockStatSync.mockReturnValue({ mtimeMs: Date.now() });
+    mockResolveLinkRunsDir.mockReturnValue("/tmp/mentiko-test/default/orgs/default/runs");
     mockListWorkspaces.mockReturnValue([]);
     mockResolveAutoRunPolicy.mockReturnValue(true);
     global.fetch = jest.fn().mockResolvedValue(jsonResponse({
@@ -363,11 +404,10 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.input.workspacePath).toBe("/repo/live");
   });
 
-  it("enforces a disabled workspace auto-run policy even though the task already carries a resolved path (B1)", async () => {
-    // workspace_id here is already a resolved path -- before the fix this made
-    // triggerAutoRun skip the workspace policy check entirely (it only ran
-    // when `workspaceId && !workspacePath`), so a disabled workspace could
-    // never block an already-path-hydrated task.
+  it("lets an explicit task opt-in run while its workspace default is disabled", async () => {
+    // Product contract: workspace off means new tasks inherit off, but a person
+    // may turn an individual task on. The workspace is a default, never a
+    // second veto after explicit task auto_run:true.
     mockTaskGet.mockReturnValue({
       id: "TASK-1",
       title: "Blocked by workspace policy",
@@ -375,7 +415,7 @@ describe("POST /api/tasks/auto-run", () => {
       issue_type: "task",
       priority: 1,
       workspace_id: "/repo/acme-web",
-      metadata: { auto_run: true, workspace_id: "acme-web", chain_id: "chain-1" },
+      metadata: { auto_run: true, workspace_id: "acme-web" },
     });
     mockListWorkspaces.mockReturnValue([
       { id: "acme-web", name: "Acme Web", path: "/repo/acme-web", auto_run: "disabled" },
@@ -387,14 +427,14 @@ describe("POST /api/tasks/auto-run", () => {
 
     expect(res.status).toBe(200);
     expect(body.data).toMatchObject({
-      triggered: false,
+      triggered: true,
       taskId: "TASK-1",
-      error: "Auto-run disabled for workspace 'Acme Web'",
+      action: "analysis_started",
     });
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves the workspace by path (not just id) so its policy still gates auto-run (B1)", async () => {
+  it("uses a path-matched disabled workspace as the inherited default when task auto_run is absent", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",
       title: "Should be gated by path-matched workspace",
@@ -403,7 +443,7 @@ describe("POST /api/tasks/auto-run", () => {
       priority: 1,
       workspace_id: "/repo/acme-web",
       // no metadata.workspace_id -- the only way to find this workspace is a path match
-      metadata: { auto_run: true, chain_id: "chain-1" },
+      metadata: {},
     });
     mockListWorkspaces.mockReturnValue([
       { id: "acme-web", name: "Acme Web", path: "/repo/acme-web", auto_run: "disabled" },
@@ -422,8 +462,9 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({
       triggered: false,
       taskId: "TASK-1",
-      error: "Auto-run disabled for workspace 'Acme Web'",
+      action: "auto_run_disabled",
     });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("reconciles and skips a task that already has an active run", async () => {
@@ -1374,5 +1415,172 @@ describe("POST /api/tasks/auto-run", () => {
       reason: "auto-run is paused for this task",
     });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incompatible normal { recommendation } payload through the same shared contract as envelopes", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-101",
+      title: "Do not guess a new chain",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, analysis_job_id: "job-bad-normal", analysis_status: "running" },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-bad-normal",
+      type: "recommend",
+      status: "complete",
+      result: { recommendation: { report: "not a chain recommendation" } },
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-101" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ action: "analysis_unreadable", taskId: "TASK-101" });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-101",
+      { metadata: expect.objectContaining({ analysis_status: "unreadable", analysis_job_id: undefined }) },
+      "default",
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("recovers an analysis job by its durable claim after the post-dispatch metadata write failed", async () => {
+    const task: { metadata: Record<string, unknown> } & Record<string, unknown> = {
+      id: "TASK-102",
+      title: "Recover the analysis job",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true },
+    };
+    mockTaskGet.mockReturnValue(task);
+    mockTaskUpdate.mockImplementationOnce(() => { throw new Error("sqlite busy"); });
+
+    const first = await POST(makeRequest({ taskId: "TASK-102" }) as never);
+    expect((await first.json()).data).toMatchObject({ action: "analysis_started", jobId: "job-analysis" });
+    const firstInput = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    const claimId = firstInput.input.auto_run_claim_id;
+
+    task.metadata = {
+      auto_run: true,
+      analysis_job_id: claimId,
+      analysis_job_claimed_at: new Date().toISOString(),
+    };
+    mockListJobs.mockReturnValue([{ id: "job-analysis", type: "recommend", status: "running", taskId: "TASK-102", input: { auto_run_claim_id: claimId } }]);
+    (global.fetch as jest.Mock).mockClear();
+
+    const second = await POST(makeRequest({ taskId: "TASK-102" }) as never);
+    expect((await second.json()).data).toMatchObject({ action: "analysis_pending", jobId: "job-analysis" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses one task-owned claim when concurrent execute_directly scans race", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-103",
+      title: "One decision only",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, analysis_job_id: "job-execute", analysis_status: "running" },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-execute",
+      type: "recommend",
+      status: "complete",
+      result: { recommendation: { action: "execute_directly", reasoning: "requires a human choice" } },
+    });
+    mockTaskClaimMetadataKeyIfUnset.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockCreateTaskDecision.mockResolvedValue({ decision: { id: "dec-103" }, task: { id: "DEC-103" } });
+
+    const first = await POST(makeRequest({ taskId: "TASK-103" }) as never);
+    const second = await POST(makeRequest({ taskId: "TASK-103" }) as never);
+
+    expect((await first.json()).data).toMatchObject({ action: "execute_directly_decision" });
+    expect((await second.json()).data).toMatchObject({ action: "decision_gate_pending" });
+    expect(mockCreateTaskDecision).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers an already-launched decision-research run after the starting-to-started crash window", async () => {
+    const fingerprint = "auto-run-execute-directly:dec-104:research";
+    mockTaskGet.mockReturnValue({
+      id: "TASK-104",
+      title: "Recover decision research",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-execute-104",
+        analysis_status: "running",
+        auto_run_execute_directly_gate: {
+          decision_id: "dec-104",
+          decision_task_id: "DEC-104",
+          research_state: "starting",
+          research_claimed_at: "2020-01-01T00:00:00.000Z",
+          research_fingerprint: fingerprint,
+        },
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-execute-104",
+      type: "recommend",
+      status: "complete",
+      result: { recommendation: { action: "execute_directly", reasoning: "recover the already-started run" } },
+    });
+    mockListDecisions.mockReturnValue([{ id: "dec-104", taskId: "DEC-104", status: "researching", prompt: "decision", options: [] }]);
+    mockExistsSync.mockImplementation((path: string) => String(path).includes("/default/orgs/default/runs"));
+    mockReaddirSync.mockReturnValue(["run-decision-research"]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-decision-research",
+      started: "2026-07-10T00:00:00.000Z",
+      status: "running",
+      metadata: { decisionId: "dec-104", decisionPhase: "research" },
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-104" }) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ action: "execute_directly_decision", taskId: "TASK-104" });
+    expect(mockStartDecisionResearch).not.toHaveBeenCalled();
+    expect(mockUpdateDecision).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "dec-104",
+      expect.objectContaining({ researchRunId: "run-decision-research" }),
+      undefined,
+    );
+    expect(mockWriteRunJsonAtomic).toHaveBeenCalledWith(
+      expect.stringContaining("run-decision-research/run.json"),
+      expect.objectContaining({ metadata: expect.objectContaining({ auto_run_decision_research_fingerprint: fingerprint }) }),
+    );
+  });
+
+  it("never reopens a terminal done task while reconciling a reaped old run", async () => {
+    mockExistsSync.mockImplementation((path: string) => String(path).includes("/tmp/mentiko-test/default/runs"));
+    mockReaddirSync.mockReturnValue(["run-dead"]);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-dead",
+      taskId: "TASK-DONE",
+      status: "running",
+      started: "2020-01-01T00:00:00.000Z",
+      agents: [{ id: "agent", status: "running" }],
+    }));
+    mockStatSync.mockReturnValue({ mtimeMs: 0 });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-DONE",
+      title: "Terminal task",
+      status: "done",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, last_run_id: "run-dead", last_run_status: "running" },
+    });
+
+    const res = await POST(makeRequest({}) as never);
+    const body = await res.json();
+
+    expect(body.data).toMatchObject({ reaped: 1, reapedTaskAdmissions: 0 });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 });

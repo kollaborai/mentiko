@@ -6,7 +6,7 @@ import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import config from "@/lib/config";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
-import { filterVisibleTaskRecords, type VisibilityTask } from "@/lib/tasks/task-visibility";
+import { filterVisibleTaskRecordsWithVisibleParents, type VisibilityTask } from "@/lib/tasks/task-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -177,12 +177,25 @@ function hasColumn(tables: TableInfo[], tableName: string, columnName: string): 
   return tables.find((table) => table.name === tableName)?.columns.some((column) => column.name === columnName) ?? false;
 }
 
+function readVisibleTaskIds(db: import("better-sqlite3").Database): Set<string> {
+  const tasks = db.prepare("SELECT id, parent_id, issue_type, metadata FROM tasks")
+    .all() as VisibilityTask[];
+  return new Set(filterVisibleTaskRecordsWithVisibleParents(tasks).map((task) => task.id));
+}
+
+function hideInvisibleParent<T extends Record<string, unknown>>(task: T, visibleIds: Set<string>): T {
+  const parentId = typeof task.parent_id === "string" ? task.parent_id : "";
+  return parentId && !visibleIds.has(parentId)
+    ? { ...task, parent_id: null }
+    : task;
+}
+
 function readTaskGraph(db: import("better-sqlite3").Database, tables: TableInfo[]) {
   if (!hasTable(tables, "tasks")) {
     return { nodes: [], edges: [] };
   }
   // Select issue_type + metadata (not part of TaskLite) purely so
-  // filterVisibleTaskRecords can identify superseded decision gates -- this
+  // filterVisibleTaskRecordsWithVisibleParents can identify superseded decision gates -- this
   // raw db browse must not expose tasks /api/tasks already hides. Stripped
   // back down to TaskLite before returning.
   const rawNodes = db.prepare(`
@@ -191,10 +204,15 @@ function readTaskGraph(db: import("better-sqlite3").Database, tables: TableInfo[
     ORDER BY id
     LIMIT 1000
   `).all().map((row) => normalizeRow(row as Record<string, unknown>)) as unknown as Array<TaskLite & VisibilityTask>;
-  const visibleNodes = filterVisibleTaskRecords(rawNodes);
-  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  const visibleIds = readVisibleTaskIds(db);
+  const visibleNodes = rawNodes.filter((node) => visibleIds.has(node.id));
   const nodes: TaskLite[] = visibleNodes.map(({ id, title, status, parent_id, workspace_id, updated_at }) => ({
-    id, title, status, parent_id, workspace_id, updated_at,
+    id,
+    title,
+    status,
+    parent_id: parent_id && visibleIds.has(parent_id) ? parent_id : null,
+    workspace_id,
+    updated_at,
   }));
   const edges = nodes
     .filter((task) => task.parent_id && visibleIds.has(task.parent_id))
@@ -220,19 +238,23 @@ function readDependencies(db: import("better-sqlite3").Database, tables: TableIn
   if (!hasTable(tables, "tasks")) {
     return { task: null, parent: null, children: [], blockedBy: [], blocks: [] };
   }
-  // task itself is an explicit by-id lookup (caller already knows the id, same
-  // as [id]/deps/route.ts not filtering its root); the LISTS of related tasks
-  // below go through filterVisibleTaskRecords so a superseded decision gate
-  // can't be discovered via this raw browse either.
+  // The root remains an explicit by-id lookup; every related record is checked
+  // against the full task collection so parent metadata that marks a decision
+  // gate superseded applies everywhere.
+  const visibleIds = readVisibleTaskIds(db);
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Record<string, unknown> | undefined;
   const parentId = typeof task?.parent_id === "string" ? task.parent_id : "";
-  const parent = parentId
+  const rawParent = parentId
     ? db.prepare("SELECT id, title, status, issue_type, metadata FROM tasks WHERE id = ?").get(parentId)
+    : null;
+  const parent = rawParent
+    && visibleIds.has((rawParent as VisibilityTask).id)
+    ? rawParent
     : null;
   const rawChildren = db.prepare(
     "SELECT id, title, status, issue_type, metadata FROM tasks WHERE parent_id = ? ORDER BY id LIMIT 200"
   ).all(taskId) as unknown as VisibilityTask[];
-  const children = filterVisibleTaskRecords(rawChildren);
+  const children = rawChildren.filter((task) => visibleIds.has(task.id));
   let rawBlockedBy: unknown[] = [];
   let rawBlocks: unknown[] = [];
   if (hasTable(tables, "task_dependencies")) {
@@ -253,8 +275,8 @@ function readDependencies(db: import("better-sqlite3").Database, tables: TableIn
       LIMIT 200
     `).all(taskId);
   }
-  const blockedBy = filterVisibleTaskRecords(rawBlockedBy as VisibilityTask[]);
-  const blocks = filterVisibleTaskRecords(rawBlocks as VisibilityTask[]);
+  const blockedBy = (rawBlockedBy as VisibilityTask[]).filter((task) => visibleIds.has(task.id));
+  const blocks = (rawBlocks as VisibilityTask[]).filter((task) => visibleIds.has(task.id));
   return {
     task: task ? normalizeRow(task) : null,
     parent: parent ? normalizeRow(parent as Record<string, unknown>) : null,
@@ -310,7 +332,7 @@ function readDiagnostics(db: import("better-sqlite3").Database, tables: TableInf
     ? db.prepare(`
       SELECT status, COUNT(*) AS count
       FROM tasks
-      WHERE status IS NULL OR status NOT IN ('open', 'in_progress', 'blocked', 'closed', 'complete', 'failed', 'cancelled')
+      WHERE status IS NULL OR status NOT IN ('open', 'in_progress', 'blocked', 'closed', 'resolved', 'done', 'complete', 'failed', 'cancelled')
       GROUP BY status
       ORDER BY count DESC
     `).all().map((row) => normalizeRow(row as Record<string, unknown>))
@@ -363,7 +385,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const tables = readTables(db);
     const mode = request.nextUrl.searchParams.get("mode") || "";
     if (mode === "diagnostics") {
-      // Intentionally NOT run through filterVisibleTaskRecords: this surfaces
+      // Intentionally NOT run through filterVisibleTaskRecordsWithVisibleParents: this surfaces
       // data-integrity anomalies (orphaned parents, duplicate titles, invalid
       // statuses), and a superseded decision gate having e.g. a missing
       // parent is exactly the kind of thing this mode exists to catch.
@@ -379,7 +401,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
     if (mode === "select") {
       // Arbitrary read-only SQL against ANY table -- shape of the result set
-      // is unknown, so it can't be run through filterVisibleTaskRecords
+      // is unknown, so it can't be run through filterVisibleTaskRecordsWithVisibleParents
       // without risking silently dropping rows from unrelated tables that
       // happen to have an `id` column. Admin/dev gating above is the control
       // here, not row-level visibility.
@@ -433,7 +455,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     // admin-only diagnostic view; a fully accurate count would need the
     // visibility predicate pushed into SQL, which is out of scope here.
     const rows = tableName === "tasks"
-      ? filterVisibleTaskRecords(rawRows as unknown as VisibilityTask[])
+      ? (() => {
+          const visibleIds = readVisibleTaskIds(db);
+          return rawRows
+            .filter((row) => visibleIds.has(String(row.id)))
+            .map((row) => hideInvisibleParent(row, visibleIds));
+        })()
       : rawRows;
 
     return apiSuccess({

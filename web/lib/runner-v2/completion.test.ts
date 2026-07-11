@@ -75,6 +75,16 @@ describe("runner-v2 completion matcher", () => {
     expect(sourceMatchesAgent("api-reviewer", { id: "api-reviewer" }, ["api", "api-reviewer"])).toBe(true);
   });
 
+  it("does not let a prefix match steal a sibling agent session while retaining legitimate session suffixes", () => {
+    const api = { id: "api" };
+    const agentIds = ["api", "api-reviewer"];
+
+    expect(sourceMatchesAgent("api-reviewer", api, agentIds)).toBe(false);
+    expect(sourceMatchesAgent("api-reviewer-run-123", api, agentIds)).toBe(false);
+    expect(sourceMatchesAgent("api-run-123", api, agentIds)).toBe(true);
+    expect(sourceMatchesAgent("api-7f3a", api, agentIds)).toBe(true);
+  });
+
   it("does not fabricate success for agents with no declared emits event", () => {
     expect(findCompletionEvent({
       agent: { id: "writer" },

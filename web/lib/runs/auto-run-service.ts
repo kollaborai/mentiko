@@ -152,15 +152,19 @@ async function waitForHealth(): Promise<void> {
 // core loop
 // ---------------------------------------------------------------------------
 
-async function checkAutoRunTasks() {
-  // Don't stack scans: a full scan can exceed the 60s interval, and a second concurrent
-  // scan would double-trigger through the non-atomic cap slice. The two fetches below are
-  // each try/caught and the tail is pure assignment, so the guard is always released.
+export async function checkAutoRunTasks() {
+  // Don't stack ticks: a tick that TRIGGERS runs awaits the whole dispatch fan-out
+  // (PTY bootstrap can take ~1min per run) and can exceed the 60s interval; a second
+  // concurrent tick would double-trigger through the non-atomic cap slice. (The scan
+  // itself is one RunsSnapshot walk, sub-second since the O(tasks x runs) fix.) The two
+  // fetches below are each try/caught and the tail is pure assignment, so the guard is
+  // always released.
   if (state.checkInFlight) return;
   state.checkInFlight = true;
   const port = process.env.WEB_PORT || process.env.PORT || 3000;
   const secret = process.env.BETTER_AUTH_SECRET || "";
   const namespaceId = process.env.NAMESPACE_ID || "default";
+  const orgId = process.env.ORG_ID || "default";
 
   // reconcile task statuses first -- sync completed/failed runs back to tasks
   // so auto-run can see which tasks are now open and ready for the next step
@@ -169,6 +173,7 @@ async function checkAutoRunTasks() {
       headers: {
         "Authorization": `Bearer ${secret}`,
         "x-namespace-id": namespaceId,
+        "x-org-id": orgId,
       },
       signal: AbortSignal.timeout(10_000),
     });
@@ -183,9 +188,10 @@ async function checkAutoRunTasks() {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${secret}`,
         "x-namespace-id": namespaceId,
+        "x-org-id": orgId,
       },
       body: JSON.stringify({}),
-      signal: AbortSignal.timeout(120_000), // full scan can take ~45s+ on large task sets; must exceed it or every tick "fails"
+      signal: AbortSignal.timeout(120_000), // scan is sub-second, but a TRIGGERING tick awaits chain dispatch (PTY bootstrap, ~1min worst case); must exceed that or every such tick "fails"
     });
 
     if (!res.ok) {

@@ -61,13 +61,10 @@ describe("toTask", () => {
     expect(task.status).toBe("closed");
   });
 
-  // B4: `complete` is terminal alongside `closed` (task-store's taskUpdate and
-  // auto-run admission both treat it that way) -- this transform previously
-  // only recognized `closed`, so a `complete` task showed as not-completed.
-  it("maps complete status to completed", () => {
-    const task = toTask({ ...baseTaskRecord, status: "complete" });
+  it.each(["complete", "resolved", "done"])("maps %s status to completed", (status) => {
+    const task = toTask({ ...baseTaskRecord, status });
     expect(task.completed).toBe(true);
-    expect(task.status).toBe("complete");
+    expect(task.status).toBe(status);
   });
 
   it("does not mark other non-terminal statuses as completed", () => {

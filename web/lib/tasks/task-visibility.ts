@@ -62,6 +62,22 @@ export function filterVisibleTaskRecords<T extends VisibilityTask>(tasks: readon
   return tasks.filter((task) => !isHiddenDecisionGate(task, supersededIds));
 }
 
+// Use only when `tasks` is the complete collection for the surface being
+// returned. A visible child must not retain a navigable parent pointer to an
+// invisible superseded decision gate.
+export function filterVisibleTaskRecordsWithVisibleParents<T extends VisibilityTask>(tasks: readonly T[]): T[] {
+  const visible = filterVisibleTaskRecords(tasks);
+  const visibleIds = new Set(visible.map((task) => task.id));
+
+  return visible.map((task) => {
+    const id = parentId(task);
+    if (!id || visibleIds.has(id)) return task;
+    if ("parent_id" in task) return { ...task, parent_id: null } as T;
+    if ("parentId" in task) return { ...task, parentId: undefined } as T;
+    return task;
+  });
+}
+
 export function filterVisibleTasks<T extends Task>(tasks: T[]): T[] {
   const supersededIds = supersededDecisionGateIds(tasks);
   return tasks.filter((task) => !isHiddenDecisionGate(task, supersededIds));

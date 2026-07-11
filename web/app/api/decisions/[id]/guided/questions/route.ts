@@ -13,6 +13,14 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
+import {
+  acquireDurableDecisionPhaseClaim,
+  decisionPhaseKey,
+  findDurableDecisionPhaseRun,
+  recordDurableDecisionPhaseRun,
+  releaseDurableDecisionPhaseClaim,
+  startDecisionPhaseOnce,
+} from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -71,42 +79,94 @@ export const POST = withErrorHandling(async (
   const decision = getDecision(namespaceId, orgId, id, workspacePath);
   if (!decision) throw new NotFound("Decision", id);
 
-  // Idempotency: don't start a second deck generation if one is already in flight. The
-  // server-side auto-advance (lib/decisions/decision-auto-advance) and a live browser
-  // useEffect can both reach here for the same decision; first wins, rest are no-ops.
+  // A durable pointer from an earlier request wins immediately. The shared phase helper
+  // below closes the smaller check-then-start window before that pointer is written.
   const existingRound1 = decision.guidedFlow?.round1;
   if (existingRound1?.status === "in_progress" && (existingRound1.generationRunId || existingRound1.generationJobId)) {
     return apiSuccess({ status: "already_generating", decision });
   }
 
-  const template = getTemplate(namespaceId, orgId, "decision_guided_questions");
-  const prompt = resolveTemplate(template.content, {
-    DECISION_CONTEXT: [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n"),
+  const phase = await startDecisionPhaseOnce({
+    key: decisionPhaseKey(namespaceId, orgId, id, "questions"),
+    start: async () => {
+      const durableInput = { namespaceId, orgId, decisionId: id, phase: "questions" };
+      const existingRun = findDurableDecisionPhaseRun(durableInput);
+      if (existingRun) return existingRun;
+
+      const claim = acquireDurableDecisionPhaseClaim(durableInput);
+      if (!claim.acquired) {
+        const claimedRun = claim.run ?? findDurableDecisionPhaseRun(durableInput);
+        if (claimedRun) return claimedRun;
+        // Another process owns the launch but has not yet reached the durable run write.
+        // Refuse this request rather than guessing and creating a duplicate deck.
+        throw new Error(`Decision ${id} question generation is already starting`);
+      }
+
+      const template = getTemplate(namespaceId, orgId, "decision_guided_questions");
+      const prompt = resolveTemplate(template.content, {
+        DECISION_CONTEXT: [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n"),
+      });
+      try {
+        const run = await startDecisionChainRun({
+          request,
+          namespaceId,
+          orgId,
+          decision,
+          phase: "questions",
+          prompt,
+          workspacePath: authorizedWorkspacePath,
+        });
+        // startChainRun has already written run.json. Record its id before attempting
+        // updateDecision so a process restart can adopt this exact run without relaunching.
+        recordDurableDecisionPhaseRun({ ...durableInput, runId: run.runId });
+        return run;
+      } catch (error) {
+        // No run id was durably recorded, so another request may safely take over.
+        releaseDurableDecisionPhaseClaim({ ...durableInput, runId: "" });
+        throw error;
+      }
+    },
+    persist: async (run) => {
+      // Re-read immediately before the write so a browser request and the headless nudge
+      // cannot overwrite each other's decision state with stale guided-flow snapshots.
+      const latest = getDecision(namespaceId, orgId, id, workspacePath);
+      if (!latest) throw new NotFound("Decision", id);
+      const latestRound1 = latest.guidedFlow?.round1;
+      if (latestRound1?.generationRunId === run.runId) {
+        releaseDurableDecisionPhaseClaim({ namespaceId, orgId, decisionId: id, phase: "questions", runId: run.runId });
+        return latest;
+      }
+      if (latestRound1?.generationRunId || latestRound1?.generationJobId) return latest;
+
+      const currentFlow = latest.guidedFlow;
+      const guidedFlow: GuidedFlow = currentFlow
+        ? {
+            ...currentFlow,
+            round1: { ...currentFlow.round1 },
+            round2: { ...currentFlow.round2 },
+            round3: { ...currentFlow.round3 },
+          }
+        : {
+            currentRound: 0,
+            round1: { status: "pending", questions: [], answers: [] },
+            round2: { status: "pending", tailoredOptions: [] },
+            round3: { status: "pending" },
+          };
+      guidedFlow.currentRound = 1;
+      guidedFlow.round1.status = "in_progress";
+      guidedFlow.round1.generationJobId = undefined;
+      guidedFlow.round1.generationRunId = run.runId;
+      guidedFlow.startedAt = guidedFlow.startedAt || new Date().toISOString();
+
+      const updated = await updateDecision(namespaceId, orgId, id, { guidedFlow, mode: "guided" }, workspacePath);
+      releaseDurableDecisionPhaseClaim({ namespaceId, orgId, decisionId: id, phase: "questions", runId: run.runId });
+      return updated;
+    },
   });
 
-  const run = await startDecisionChainRun({
-    request,
-    namespaceId,
-    orgId,
-    decision,
-    phase: "questions",
-    prompt,
-    workspacePath: authorizedWorkspacePath,
+  return apiSuccess({
+    runId: phase.started.runId,
+    status: phase.joined || phase.recovered ? "already_generating" : "running",
+    decision: phase.persisted,
   });
-
-  const guidedFlow: GuidedFlow = decision.guidedFlow || {
-    currentRound: 0,
-    round1: { status: "pending", questions: [], answers: [] },
-    round2: { status: "pending", tailoredOptions: [] },
-    round3: { status: "pending" },
-  };
-  guidedFlow.currentRound = 1;
-  guidedFlow.round1.status = "in_progress";
-  guidedFlow.round1.generationJobId = undefined;
-  guidedFlow.round1.generationRunId = run.runId;
-  guidedFlow.startedAt = new Date().toISOString();
-
-  const updated = await updateDecision(namespaceId, orgId, id, { guidedFlow, mode: "guided" }, workspacePath);
-
-  return apiSuccess({ runId: run.runId, status: "running", decision: updated });
 });

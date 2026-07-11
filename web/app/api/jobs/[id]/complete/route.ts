@@ -353,6 +353,7 @@ export const POST = withErrorHandling(async (
             decisionId: updatedJob.decisionId,
             phase,
             result: updatedJob.result,
+            runId: updatedJob.runId,
             workspacePath: decisionWs,
             selectedOptionId: typeof updatedJob.input?.selectedOptionId === "string"
               ? updatedJob.input.selectedOptionId

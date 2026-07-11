@@ -45,7 +45,10 @@ export const GET = requirePermission("view_tasks")(
       const workspaceAutoRunDefault = wsPath
         ? resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: wsPath })
         : false;
-      return apiSuccess({ issue: { ...issue, workspace_auto_run_default: workspaceAutoRunDefault } });
+      const parentId = issue.parent_id && visibleTaskIds.has(issue.parent_id)
+        ? issue.parent_id
+        : null;
+      return apiSuccess({ issue: { ...issue, parent_id: parentId, workspace_auto_run_default: workspaceAutoRunDefault } });
     }
   )
 );

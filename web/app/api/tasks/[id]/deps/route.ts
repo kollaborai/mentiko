@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { taskGet, taskGetAllDeps, taskList } from "@/lib/tasks/task-store";
 import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
-import { filterVisibleTaskRecords } from "@/lib/tasks/task-visibility";
+import {
+  filterVisibleTaskRecords,
+  filterVisibleTaskRecordsWithVisibleParents,
+} from "@/lib/tasks/task-visibility";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { getWorkspaceId } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -55,6 +58,12 @@ export const GET = requirePermission("view_tasks")(async (
 
     const { searchParams } = new URL(request.url);
     const format = searchParams.get("format");
+    const allIssues = filterVisibleTaskRecordsWithVisibleParents(
+      taskList(orgId, { status: "all" }, workspaceId, namespaceId),
+    );
+    if (!allIssues.some((issue) => issue.id === safeId)) {
+      return apiSuccess(format === "graph" ? { graph: null } : { children: [] });
+    }
 
     if (format === "graph") {
       // taskGet returns expanded dependencies and dependents
@@ -179,9 +188,6 @@ export const GET = requirePermission("view_tasks")(async (
     }
 
     // tree format - list children
-    const allIssues = filterVisibleTaskRecords(
-      taskList(orgId, { status: "all" }, workspaceId, namespaceId),
-    );
     const children = allIssues.filter(i => i.parent_id === safeId);
     const childIds = new Set(children.map((child) => child.id));
     const deps = taskGetAllDeps(orgId, namespaceId).filter(

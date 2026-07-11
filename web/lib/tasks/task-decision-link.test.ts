@@ -9,24 +9,65 @@
  */
 
 const createDecision = jest.fn();
+const deleteDecision = jest.fn();
+const getDecision = jest.fn();
 const updateDecision = jest.fn();
 const taskCreate = jest.fn();
+const taskDelete = jest.fn();
+const taskClaimMetadataKeyIfUnset = jest.fn();
+const taskGet = jest.fn();
+const taskList = jest.fn();
+const taskUpdate = jest.fn();
 
 jest.mock("@/lib/decisions/decision-storage", () => ({
   createDecision: (...a: unknown[]) => createDecision(...a),
+  deleteDecision: (...a: unknown[]) => deleteDecision(...a),
+  getDecision: (...a: unknown[]) => getDecision(...a),
   updateDecision: (...a: unknown[]) => updateDecision(...a),
 }));
 
 jest.mock("@/lib/tasks/task-store", () => ({
+  taskClaimMetadataKeyIfUnset: (...a: unknown[]) => taskClaimMetadataKeyIfUnset(...a),
   taskCreate: (...a: unknown[]) => taskCreate(...a),
+  taskDelete: (...a: unknown[]) => taskDelete(...a),
+  taskGet: (...a: unknown[]) => taskGet(...a),
+  taskList: (...a: unknown[]) => taskList(...a),
+  taskUpdate: (...a: unknown[]) => taskUpdate(...a),
 }));
 
 import { createTaskDecision } from "./task-decision-link";
 
+let parentMetadata: Record<string, unknown>;
+let createdTasks: Map<string, Record<string, unknown>>;
+
 beforeEach(() => {
   jest.clearAllMocks();
+  parentMetadata = {};
+  createdTasks = new Map();
   createDecision.mockReturnValue({ id: "dec-1", status: "intake" });
-  taskCreate.mockReturnValue({ id: "DEC-TASK-1" });
+  getDecision.mockReturnValue(null);
+  taskCreate.mockImplementation((_orgId: unknown, fields: Record<string, unknown>) => {
+    const task = { id: "DEC-TASK-1", ...fields };
+    createdTasks.set(task.id, task);
+    return task;
+  });
+  taskClaimMetadataKeyIfUnset.mockImplementation(
+    (_orgId: unknown, _taskId: unknown, key: string, metadata: Record<string, unknown>) => {
+      if (parentMetadata[key] !== undefined) return false;
+      parentMetadata = { ...parentMetadata, ...metadata };
+      return true;
+    },
+  );
+  taskGet.mockImplementation((_orgId: unknown, id: string) => {
+    if (id.startsWith("TASK-") || id.startsWith("FEAT-")) return { id, metadata: parentMetadata };
+    return createdTasks.get(id) ?? null;
+  });
+  taskList.mockImplementation(() => Array.from(createdTasks.values()));
+  taskUpdate.mockImplementation((_orgId: unknown, id: string, fields: Record<string, unknown>) => {
+    if (id.startsWith("TASK-") || id.startsWith("FEAT-")) {
+      parentMetadata = fields.metadata as Record<string, unknown>;
+    }
+  });
   updateDecision.mockImplementation(
     (_ns: unknown, _org: unknown, _id: unknown, patch: Record<string, unknown>) => ({ id: "dec-1", ...patch }),
   );
@@ -88,5 +129,80 @@ describe("createTaskDecision prompt framing", () => {
 
     const taskFields = taskCreate.mock.calls[0][1] as Record<string, unknown>;
     expect(taskFields.title).toContain("Decide the implementation approach for:");
+  });
+
+  it("creates one completion-audit gate for concurrent calls with the same stable fingerprint", async () => {
+    let decision = { id: "dec-stable", status: "intake" } as Record<string, unknown>;
+    createDecision.mockReturnValue(decision);
+    taskCreate.mockImplementation((_orgId: unknown, fields: Record<string, unknown>) => {
+      const task = { id: "DEC-STABLE-1", ...fields };
+      createdTasks.set(task.id, task);
+      return task;
+    });
+    getDecision.mockImplementation(() => createdTasks.size > 0 ? decision : null);
+    updateDecision.mockImplementation(async (_ns, _org, _id, patch) => {
+      decision = { ...decision, ...patch };
+      return decision;
+    });
+
+    const input = {
+      namespaceId: "default",
+      orgId: "default",
+      prompt: "A completed run needs a decision.",
+      source: "completion-audit",
+      parentTaskId: "TASK-009",
+      sourceRunId: "run-009",
+      runFingerprint: "completed:009",
+    };
+    const [first, second] = await Promise.all([createTaskDecision(input), createTaskDecision(input)]);
+
+    expect(createDecision).toHaveBeenCalledTimes(1);
+    expect(taskCreate).toHaveBeenCalledTimes(1);
+    expect(taskClaimMetadataKeyIfUnset.mock.results.filter((result) => result.value === true)).toHaveLength(2);
+    expect(first.task.id).toBe("DEC-STABLE-1");
+    expect(second.task.id).toBe("DEC-STABLE-1");
+    expect(second.decision.id).toBe("dec-stable");
+  });
+
+  it("reuses the ledgered decision when task creation fails after createDecision", async () => {
+    const decision = { id: "dec-repair", status: "intake" };
+    createDecision.mockReturnValue(decision);
+    getDecision.mockImplementation(() => parentMetadata ? decision : null);
+    updateDecision.mockImplementation(async (_ns, _org, _id, patch) => ({ ...decision, ...patch }));
+    taskCreate
+      .mockImplementationOnce(() => { throw new Error("task row write failed"); })
+      .mockImplementation((_orgId: unknown, fields: Record<string, unknown>) => {
+        const task = { id: "DEC-REPAIR-1", ...fields };
+        createdTasks.set(task.id, task);
+        return task;
+      });
+
+    const input = {
+      namespaceId: "default",
+      orgId: "default",
+      prompt: "A completed run needs a decision.",
+      source: "completion-audit",
+      parentTaskId: "TASK-010",
+      sourceRunId: "run-010",
+      runFingerprint: "completed:010",
+    };
+
+    await expect(createTaskDecision(input)).rejects.toThrow("task row write failed");
+    const durableLedger = Object.values(parentMetadata).find((value) =>
+      value && typeof value === "object" && (value as Record<string, unknown>).decisionId === "dec-repair",
+    ) as Record<string, unknown> | undefined;
+    expect(durableLedger).toEqual(expect.objectContaining({
+      decisionId: "dec-repair",
+      state: "task_create_failed",
+    }));
+    const repaired = await createTaskDecision(input);
+
+    expect(createDecision).toHaveBeenCalledTimes(1);
+    expect(taskCreate).toHaveBeenCalledTimes(2);
+    expect(repaired).toMatchObject({
+      decision: { id: "dec-repair", taskId: "DEC-REPAIR-1", parentTaskId: "TASK-010" },
+      task: { id: "DEC-REPAIR-1" },
+    });
+    expect(deleteDecision).not.toHaveBeenCalled();
   });
 });

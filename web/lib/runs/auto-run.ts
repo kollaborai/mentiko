@@ -157,11 +157,62 @@ function hasNonExecutionChainId(run: { chain?: unknown; chainId?: unknown }): bo
   return NON_EXECUTION_CHAIN_IDS.has(chainId) || NON_EXECUTION_CHAIN_IDS.has(chain);
 }
 
-export function findActiveRunForTask(taskId: string, namespaceId?: string): ActiveTaskRun | null {
-  const runsDir = nsPath(namespaceId || "default", "runs");
-  if (!existsSync(runsDir)) return null;
+/**
+ * One live (running/pending, not all-declared-agents-complete) run, as seen
+ * by a single point-in-time pass over the runs directory. Carries the parsed
+ * run.json so the dead-run reaper can do its liveness pre-check without
+ * re-reading every file.
+ */
+export interface ActiveRunRecord {
+  /** Absolute path to this run's run.json (for lock/re-read on reap). */
+  runPath: string;
+  taskId?: string;
+  /**
+   * Whether this run also passes the stricter per-task admission filters
+   * (execution run, no terminal runner-v2 attempt). A generation/decision run
+   * holds a concurrency slot but must not read as "task already executing".
+   */
+  admissionRelevant: boolean;
+  active: ActiveTaskRun;
+  /** Parsed run.json as read during the snapshot pass. */
+  raw: Record<string, unknown>;
+}
 
-  const activeRuns: ActiveTaskRun[] = [];
+/**
+ * Point-in-time index of the runs directory, built from ONE readdir +
+ * one run.json/chain.json read per run. Admission historically re-walked the
+ * whole runs dir once per task (findActiveRunForTask inside canAdmitAutoRun
+ * AND inside reconcileTaskActiveRun), plus twice more for the cap count and
+ * the dead-run reaper, making every auto-run scan O(tasks x runs) in
+ * filesystem reads. A snapshot is REQUEST-SCOPED by design: build it once per
+ * scan and thread it through, exactly like wsDefaultCache below. Never cache
+ * one across requests -- a stale active-run entry would re-block a finished
+ * task, and a stale absence would double-trigger a running one.
+ */
+export interface RunsSnapshot {
+  namespaceId: string;
+  /**
+   * Every live run -- the concurrency-cap set (countActiveRuns semantics:
+   * includes non-execution generation/decision runs, mirroring the
+   * /api/chains/run check) and, equivalently, the dead-run reap candidates.
+   * The cap count is `activeRuns.length`.
+   */
+  activeRuns: ActiveRunRecord[];
+  /** Newest admission-relevant active run per task (findActiveRunForTask semantics). */
+  activeRunByTask: Map<string, ActiveTaskRun>;
+}
+
+function newerActiveRun(a: ActiveTaskRun, b: ActiveTaskRun): boolean {
+  const diff = parseTime(a.started) - parseTime(b.started);
+  return diff > 0 || (diff === 0 && a.id.localeCompare(b.id) > 0);
+}
+
+export function buildRunsSnapshot(namespaceId?: string): RunsSnapshot {
+  const nsId = namespaceId || "default";
+  const runsDir = nsPath(nsId, "runs");
+  const snapshot: RunsSnapshot = { namespaceId: nsId, activeRuns: [], activeRunByTask: new Map() };
+  if (!existsSync(runsDir)) return snapshot;
+
   for (const dir of readdirSync(runsDir)) {
     if (!dir.startsWith("run-")) continue;
     const runPath = join(runsDir, dir, "run.json");
@@ -179,32 +230,73 @@ export function findActiveRunForTask(taskId: string, namespaceId?: string): Acti
         metadata?: unknown;
         runnerV2?: unknown;
       };
-      if (run.taskId !== taskId) continue;
-      if (hasNonExecutionChainId(run)) continue;
-      if (isNonExecutionRun(run)) continue;
       if (!run.status || !ACTIVE_RUN_STATUSES.has(run.status)) continue;
-      if (hasTerminalRunnerV2Attempt(run)) continue;
       if (allDeclaredAgentsComplete(run, join(runsDir, dir))) continue;
-      activeRuns.push({
+
+      const taskId = typeof run.taskId === "string" && run.taskId ? run.taskId : undefined;
+      const admissionRelevant =
+        taskId !== undefined &&
+        !hasNonExecutionChainId(run) &&
+        !isNonExecutionRun(run) &&
+        !hasTerminalRunnerV2Attempt(run);
+      const active: ActiveTaskRun = {
         id: run.id || dir,
         status: run.status,
         chain: run.chain,
         chainId: run.chainId,
         started: run.started,
-      });
+      };
+      snapshot.activeRuns.push({ runPath, taskId, admissionRelevant, active, raw: run as Record<string, unknown> });
+
+      if (!admissionRelevant || !taskId) continue;
+      const current = snapshot.activeRunByTask.get(taskId);
+      if (!current || newerActiveRun(active, current)) {
+        snapshot.activeRunByTask.set(taskId, active);
+      }
     } catch {
       // Ignore corrupt or partially-written run records during reconciliation.
     }
   }
 
-  activeRuns.sort((a, b) => parseTime(b.started) - parseTime(a.started) || b.id.localeCompare(a.id));
-  return activeRuns[0] || null;
+  return snapshot;
+}
+
+/**
+ * Drop a run that a caller just terminalized (reaped) from the snapshot so
+ * later admission in the SAME request neither counts it against the cap nor
+ * treats its task as executing. Restores the runner-up active run for the
+ * task, if any -- matching what a fresh directory walk would now return.
+ */
+export function removeRunFromSnapshot(snapshot: RunsSnapshot, runId: string): void {
+  const index = snapshot.activeRuns.findIndex((record) => record.active.id === runId);
+  if (index === -1) return;
+  const [removed] = snapshot.activeRuns.splice(index, 1);
+  const taskId = removed.taskId;
+  if (!taskId || snapshot.activeRunByTask.get(taskId)?.id !== removed.active.id) return;
+
+  snapshot.activeRunByTask.delete(taskId);
+  for (const record of snapshot.activeRuns) {
+    if (record.taskId !== taskId || !record.admissionRelevant) continue;
+    const current = snapshot.activeRunByTask.get(taskId);
+    if (!current || newerActiveRun(record.active, current)) {
+      snapshot.activeRunByTask.set(taskId, record.active);
+    }
+  }
+}
+
+export function findActiveRunForTask(
+  taskId: string,
+  namespaceId?: string,
+  snapshot?: RunsSnapshot,
+): ActiveTaskRun | null {
+  return (snapshot ?? buildRunsSnapshot(namespaceId)).activeRunByTask.get(taskId) ?? null;
 }
 
 export function reconcileTaskActiveRun(
   orgId: string,
   task: TaskRecord,
-  namespaceId?: string
+  namespaceId?: string,
+  snapshot?: RunsSnapshot,
 ): { activeRun: ActiveTaskRun | null; reconciled: boolean } {
   // Terminal-state is monotonic: a stale/orphaned "running" run.json must NEVER
   // reopen a task the lifecycle already closed. Without this guard a closed task
@@ -215,7 +307,7 @@ export function reconcileTaskActiveRun(
     return { activeRun: null, reconciled: false };
   }
 
-  const activeRun = findActiveRunForTask(task.id, namespaceId);
+  const activeRun = findActiveRunForTask(task.id, namespaceId, snapshot);
   if (!activeRun) return { activeRun: null, reconciled: false };
 
   const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {};
@@ -251,10 +343,15 @@ export function reconcileTaskActiveRun(
   return { activeRun, reconciled: false };
 }
 
-export function reconcileActiveAutoRunTasks(orgId: string, namespaceId?: string): number {
+export function reconcileActiveAutoRunTasks(
+  orgId: string,
+  namespaceId?: string,
+  snapshot?: RunsSnapshot,
+): number {
   const tasks = taskList(orgId, { status: "all" }, undefined, namespaceId);
   let reconciled = 0;
 
+  const runs = snapshot ?? buildRunsSnapshot(namespaceId);
   const wsDefaultCache = new Map<string, boolean>();
   for (const task of tasks) {
     if (task.issue_type === "epic") continue;
@@ -265,7 +362,7 @@ export function reconcileActiveAutoRunTasks(orgId: string, namespaceId?: string)
       workspaceDefault: workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache),
     }).enabled;
     if (!enabled) continue;
-    if (reconcileTaskActiveRun(orgId, task, namespaceId).reconciled) {
+    if (reconcileTaskActiveRun(orgId, task, namespaceId, runs).reconciled) {
       reconciled += 1;
     }
   }
@@ -320,6 +417,7 @@ export function canAdmitAutoRun(
   orgId: string,
   namespaceId?: string,
   workspaceAutoRunDefault?: boolean,
+  snapshot?: RunsSnapshot,
 ): AutoRunAdmission {
   // epics don't run chains directly -- their subtasks do
   if (task.issue_type === "epic") {
@@ -395,8 +493,11 @@ export function canAdmitAutoRun(
   }
 
   // Trust live run state over stale task metadata: an in-flight run means the
-  // task is already executing and must not be retried.
-  if (findActiveRunForTask(task.id, namespaceId)) {
+  // task is already executing and must not be retried. Callers scanning many
+  // tasks pass a shared RunsSnapshot so this stays one runs-dir read per scan;
+  // a caller that omits it gets a correct-but-uncached walk (same contract as
+  // workspaceAutoRunDefault above).
+  if (findActiveRunForTask(task.id, namespaceId, snapshot)) {
     return { admit: false, reason: "a run for this task is already active", action: "active_run_exists" };
   }
 
@@ -439,13 +540,19 @@ function workspaceAutoRunDefaultFor(
   return resolved;
 }
 
-export function getAutoRunCandidates(orgId: string, workspaceId?: string, namespaceId?: string): AutoRunCandidate[] {
+export function getAutoRunCandidates(
+  orgId: string,
+  workspaceId?: string,
+  namespaceId?: string,
+  snapshot?: RunsSnapshot,
+): AutoRunCandidate[] {
   const tasks = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
   const candidates: AutoRunCandidate[] = [];
+  const runs = snapshot ?? buildRunsSnapshot(namespaceId);
   const wsDefaultCache = new Map<string, boolean>();
 
   for (const task of tasks) {
-    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache));
+    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache), runs);
     if (!admission.admit || !admission.ready) continue;
 
     const metadata = (task.metadata as Record<string, unknown> | undefined) || {};
@@ -478,6 +585,7 @@ export function getDirectDependentAutoRunCandidates(
   orgId: string,
   completedTaskId: string,
   namespaceId?: string,
+  snapshot?: RunsSnapshot,
 ): AutoRunCandidate[] {
   const completed = taskGet(orgId, completedTaskId, namespaceId) as
     | (TaskRecord & { dependents?: Array<{ task_id?: string; id?: string; status?: string }> })
@@ -486,6 +594,7 @@ export function getDirectDependentAutoRunCandidates(
   if (dependents.length === 0) return [];
 
   const candidates: AutoRunCandidate[] = [];
+  const runs = snapshot ?? buildRunsSnapshot(namespaceId);
   const wsDefaultCache = new Map<string, boolean>();
   const seen = new Set<string>();
 
@@ -496,7 +605,7 @@ export function getDirectDependentAutoRunCandidates(
     if (dep.status && DONE_STATUSES.has(dep.status)) continue; // already done -- skip cheaply
     const task = taskGet(orgId, depId, namespaceId);
     if (!task) continue;
-    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache));
+    const admission = canAdmitAutoRun(task, orgId, namespaceId, workspaceAutoRunDefaultFor(task, orgId, namespaceId, wsDefaultCache), runs);
     if (!admission.admit || !admission.ready) continue;
 
     const metadata = (task.metadata as Record<string, unknown> | undefined) || {};

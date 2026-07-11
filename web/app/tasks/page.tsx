@@ -363,15 +363,15 @@ function TasksPageContent() {
     .filter((t) => {
       if (filterType !== "all" && t.type !== filterType) return false;
 
-      // ready filter: show tasks that are not closed and have no open blockers
+      // ready filter: show non-terminal tasks with no active blockers
       if (filterStatus === "ready") {
-        if (t.status === "closed") return false;
+        if (t.completed) return false;
         const info = depInfo.get(t.id);
         if (!info || info.blockedBy.length === 0) return true;
-        // check if all blockers are closed
+        // check if all blockers are terminal
         return info.blockedBy.every(blockerId => {
           const blocker = tasks.find(task => task.id === blockerId);
-          return blocker?.status === "closed";
+          return blocker?.completed === true;
         });
       }
 

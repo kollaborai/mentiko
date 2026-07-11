@@ -13,6 +13,7 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
+import { startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -79,31 +80,65 @@ export const POST = withErrorHandling(async (
   const guidedFlow = decision.guidedFlow as GuidedFlow;
   if (!guidedFlow) throw new BadRequest("No guided flow");
 
-  const contextParts = [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n");
-  const preferenceText = buildPreferenceText(guidedFlow);
-  const constraints = decision.context?.constraints?.join("; ") || "none specified";
+  if (guidedFlow.round2.generationRunId || guidedFlow.round2.generationJobId) {
+    return apiSuccess({
+      runId: guidedFlow.round2.generationRunId,
+      jobId: guidedFlow.round2.generationJobId,
+      status: "already_generating",
+      decision,
+    });
+  }
 
-  const template = getTemplate(namespaceId, orgId, "decision_guided_options");
-  const prompt = resolveTemplate(template.content, {
-    DECISION_CONTEXT: contextParts,
-    PREFERENCE_PROFILE: preferenceText,
-    CONSTRAINTS: constraints,
+  const phase = await startDurableDecisionPhaseOnce({
+    identity: { namespaceId, orgId, decisionId: id, phase: "options" },
+    start: async () => {
+      const contextParts = [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n");
+      const preferenceText = buildPreferenceText(guidedFlow);
+      const constraints = decision.context?.constraints?.join("; ") || "none specified";
+      const template = getTemplate(namespaceId, orgId, "decision_guided_options");
+      const prompt = resolveTemplate(template.content, {
+        DECISION_CONTEXT: contextParts,
+        PREFERENCE_PROFILE: preferenceText,
+        CONSTRAINTS: constraints,
+      });
+      return startDecisionChainRun({
+        request,
+        namespaceId,
+        orgId,
+        decision,
+        phase: "options",
+        prompt,
+        workspacePath: authorizedWorkspacePath,
+      });
+    },
+    persist: async (run) => {
+      const latest = getDecision(namespaceId, orgId, id, workspacePath);
+      if (!latest) throw new NotFound("Decision", id);
+      const latestFlow = latest.guidedFlow as GuidedFlow;
+      if (!latestFlow) throw new BadRequest("No guided flow");
+      if (latestFlow.round2.generationRunId === run.runId) return latest;
+      if (latestFlow.round2.generationRunId || latestFlow.round2.generationJobId) return latest;
+
+      const nextFlow: GuidedFlow = {
+        ...latestFlow,
+        round1: { ...latestFlow.round1 },
+        round2: {
+          ...latestFlow.round2,
+          status: "generating",
+          generationJobId: undefined,
+          generationRunId: run.runId,
+        },
+        round3: { ...latestFlow.round3 },
+      };
+      return updateDecision(namespaceId, orgId, id, { guidedFlow: nextFlow }, workspacePath);
+    },
   });
 
-  const run = await startDecisionChainRun({
-    request,
-    namespaceId,
-    orgId,
-    decision,
-    phase: "options",
-    prompt,
-    workspacePath: authorizedWorkspacePath,
+  return apiSuccess({
+    runId: phase.started.runId,
+    status: phase.joined || phase.recovered || phase.durableRecovered
+      ? "already_generating"
+      : "running",
+    decision: phase.persisted,
   });
-
-  guidedFlow.round2.status = "generating";
-  guidedFlow.round2.generationJobId = undefined;
-  guidedFlow.round2.generationRunId = run.runId;
-  const updated = await updateDecision(namespaceId, orgId, id, { guidedFlow }, workspacePath);
-
-  return apiSuccess({ runId: run.runId, status: "running", decision: updated });
 });

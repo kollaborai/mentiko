@@ -678,18 +678,65 @@ async function confirmInstructionSubmission(
   const deadline = Date.now() + deadlineMs;
   let enterRetries = 0;
   // give the daemon's own delayed enter a beat before the first check
-  await sleep(pollMs);
+  if (!(await sleepBeforeSubmissionDeadline(pollMs, deadline))) return false;
   while (Date.now() < deadline) {
-    const output = await executor.capture(plan.sessionName, 60);
+    const output = await awaitSubmissionOperation(
+      () => executor.capture(plan.sessionName, 60),
+      deadline,
+    );
+    if (output === SUBMISSION_DEADLINE_EXCEEDED) return false;
     if (!isComposerHoldingInput(output)) return true;
     if (enterRetries < maxEnterRetries) {
       enterRetries += 1;
-      if (executor.sendRaw) await executor.sendRaw(plan.sessionName, "\r");
-      else await executor.sendKeys(plan.sessionName, "");
+      const enterResult = await awaitSubmissionOperation(
+        () => executor.sendRaw
+          ? executor.sendRaw(plan.sessionName, "\r")
+          : executor.sendKeys(plan.sessionName, ""),
+        deadline,
+      );
+      if (enterResult === SUBMISSION_DEADLINE_EXCEEDED) return false;
     }
-    await sleep(pollMs);
+    if (!(await sleepBeforeSubmissionDeadline(pollMs, deadline))) return false;
   }
   return false;
+}
+
+const SUBMISSION_DEADLINE_EXCEEDED = Symbol("submission deadline exceeded");
+
+/**
+ * The PTY client has its own socket timeout. Do not let one slow RPC extend
+ * the submission promise past its advertised wall-clock deadline. The RPC may
+ * still settle later, but its handlers stay attached and this caller performs
+ * no further retry after the deadline; the durable attempt is marked stuck and
+ * its monitor remains responsible for recovery.
+ */
+async function awaitSubmissionOperation<T>(
+  operation: () => Promise<T>,
+  deadline: number,
+): Promise<T | typeof SUBMISSION_DEADLINE_EXCEEDED> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return SUBMISSION_DEADLINE_EXCEEDED;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<T | typeof SUBMISSION_DEADLINE_EXCEEDED>((resolve, reject) => {
+      timeout = setTimeout(() => resolve(SUBMISSION_DEADLINE_EXCEEDED), remainingMs);
+      try {
+        void operation().then(resolve, reject);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function sleepBeforeSubmissionDeadline(delayMs: number, deadline: number): Promise<boolean> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return false;
+  await sleep(Math.min(delayMs, remainingMs));
+  return Date.now() < deadline;
 }
 
 /**

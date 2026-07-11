@@ -468,6 +468,109 @@ describe("runner-v2 bootstrap executor", () => {
     );
   });
 
+  it("bounds a stalled composer capture by the submission deadline and leaves monitor recovery active", async () => {
+    const previousDeadline = process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+    process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS = "20";
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+
+    try {
+      const root = tempDir();
+      const runJsonPath = join(root, "run.json");
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      writeFileSync(runJsonPath, JSON.stringify({
+        id: "run-1",
+        sessions: [],
+        agents: [{ id: "writer", status: "pending" }],
+      }));
+      let captureCount = 0;
+      const executor = {
+        remove: jest.fn(async () => {}),
+        spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+        sendKeys: jest.fn(async () => {}),
+        sendRaw: jest.fn(async () => {}),
+        capture: jest.fn(() => {
+          captureCount += 1;
+          if (captureCount === 1) return Promise.resolve("claude ready >");
+          // Models the PTY client's independent 10s socket timeout. The
+          // submission confirmation must finish at 20ms without waiting for it.
+          return new Promise<string>((resolve) => setTimeout(() => resolve("❯ Read instructions"), 10_000));
+        }),
+      };
+
+      const startedAt = Date.now();
+      const bootstrap = executeLocalBootstrap(plan(root), context(root), executor);
+      await flushMicrotasks();
+      await jest.advanceTimersByTimeAsync(20);
+      await expect(bootstrap).resolves.toBeUndefined();
+
+      expect(Date.now() - startedAt).toBeLessThanOrEqual(20);
+      expect(executor.capture).toHaveBeenCalledTimes(2);
+      expect(executor.sendRaw).not.toHaveBeenCalled();
+      const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+      expect(attempts[0]?.phase).toBe("stuck");
+      expect(executor.spawn).toHaveBeenLastCalledWith(
+        "monitor-workspace-writer-run-1",
+        "bash",
+        ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+        expect.anything(),
+      );
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+      if (previousDeadline === undefined) delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+      else process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS = previousDeadline;
+    }
+  });
+
+  it("bounds a stalled bare-enter retry by the submission deadline", async () => {
+    const previousDeadline = process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+    process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS = "20";
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-07-09T00:00:00.000Z"));
+
+    try {
+      const root = tempDir();
+      const runJsonPath = join(root, "run.json");
+      writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+      writeFileSync(runJsonPath, JSON.stringify({
+        id: "run-1",
+        sessions: [],
+        agents: [{ id: "writer", status: "pending" }],
+      }));
+      const captures = ["claude ready >", "❯ Read instructions"];
+      const executor = {
+        remove: jest.fn(async () => {}),
+        spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+        sendKeys: jest.fn(async () => {}),
+        sendRaw: jest.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 10_000))),
+        capture: jest.fn(async () => captures.shift() || "❯ Read instructions"),
+      };
+
+      const startedAt = Date.now();
+      const bootstrap = executeLocalBootstrap(plan(root), context(root), executor);
+      await flushMicrotasks();
+      await jest.advanceTimersByTimeAsync(20);
+      await expect(bootstrap).resolves.toBeUndefined();
+
+      expect(Date.now() - startedAt).toBeLessThanOrEqual(20);
+      expect(executor.sendRaw).toHaveBeenCalledTimes(1);
+      const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+      expect(attempts[0]?.phase).toBe("stuck");
+      expect(executor.spawn).toHaveBeenLastCalledWith(
+        "monitor-workspace-writer-run-1",
+        "bash",
+        ["-lc", "monitor-chain-agent workspace-writer-run-1"],
+        expect.anything(),
+      );
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+      if (previousDeadline === undefined) delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+      else process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS = previousDeadline;
+    }
+  });
+
   it("submits instructions for a profile-less agent in legacy mode (v1: missing profile is unknown, not blocked)", async () => {
     const previous = process.env.MENTIKO_READINESS_FAIL_CLOSED;
     delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
@@ -716,4 +819,10 @@ function executorWithCapture(output: string) {
     sendRaw: jest.fn(async () => {}),
     capture: jest.fn(async () => output),
   };
+}
+
+async function flushMicrotasks(iterations = 12): Promise<void> {
+  for (let index = 0; index < iterations; index += 1) {
+    await Promise.resolve();
+  }
 }

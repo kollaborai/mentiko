@@ -6,6 +6,7 @@ import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { mapPriority } from "@/lib/tasks/task-transforms";
 import { sortTaskTreeNodes } from "@/lib/tasks/task-ordering";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
@@ -53,7 +54,7 @@ interface TaskTreeViewProps {
 }
 
 function statusDot(status: string) {
-  if (status === "closed") return "bg-green-400";
+  if (isTerminalTaskStatus(status)) return "bg-green-400";
   if (status === "in_progress") return "bg-blue-400";
   return "bg-foreground/30";
 }
@@ -65,23 +66,23 @@ function shortId(id: string): string {
   return id.slice(dot);
 }
 
-// does this (closed) node have any non-closed, non-epic descendant?
+// does this terminal node have any active, non-epic descendant?
 function hasOpenDescendant(node: HierarchyNode): boolean {
-  if (node.node.status !== "closed" && node.node.type !== "epic") return true;
+  if (!isTerminalTaskStatus(node.node.status) && node.node.type !== "epic") return true;
   return node.children.some((child) => hasOpenDescendant(child));
 }
 
 // should this child row be visible given the current showClosed filter?
 function isChildVisible(child: HierarchyNode, showClosed: boolean): boolean {
   if (showClosed) return true;
-  if (child.node.status !== "closed") return true;
+  if (!isTerminalTaskStatus(child.node.status)) return true;
   if (child.node.type === "epic") return hasOpenDescendant(child);
   return false;
 }
 
 // should this node itself render at all (epics stay if they have visible children)?
 function isNodeRendered(node: HierarchyNode, showClosed: boolean): boolean {
-  const isClosed = node.node.status === "closed";
+  const isClosed = isTerminalTaskStatus(node.node.status);
   if (!isClosed || showClosed) return true;
   if (node.node.type !== "epic") return false;
   return node.children.some((child) => isChildVisible(child, showClosed));
@@ -280,8 +281,8 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
 
   // stats
   const stats = useMemo(() => {
-    const open = nodes.filter((n) => n.status !== "closed").length;
-    const closed = nodes.filter((n) => n.status === "closed").length;
+    const open = nodes.filter((n) => !isTerminalTaskStatus(n.status)).length;
+    const closed = nodes.filter((n) => isTerminalTaskStatus(n.status)).length;
     return { open, closed, total: nodes.length };
   }, [nodes]);
 
@@ -381,13 +382,13 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
       {/* header bar */}
       <div className="flex items-center justify-between px-4 py-2 shrink-0 bg-accent">
         <span className="text-[10px] font-mono text-foreground/50">
-          {stats.open} open · {stats.closed} closed · {deps.length} dependencies
+          {stats.open} open · {stats.closed} completed · {deps.length} dependencies
         </span>
         <button
           onClick={() => setShowClosed(!showClosed)}
           className="text-[10px] font-mono text-foreground/40 hover:text-foreground/60 transition-colors"
         >
-          {showClosed ? "hide closed" : "show closed"}
+          {showClosed ? "hide completed" : "show completed"}
         </button>
       </div>
 
@@ -459,7 +460,7 @@ function TreeRow({
   onDrop,
 }: TreeRowProps) {
   const { node, children, blocksIds, blockedByIds } = treeNode;
-  const isClosed = node.status === "closed";
+  const isClosed = isTerminalTaskStatus(node.status);
   const isEpic = node.type === "epic";
   const isDecision = node.type === "decision";
   const hasChildren = children.length > 0;
@@ -758,7 +759,7 @@ function countTasks(
       closed += sub.closed;
     } else {
       total++;
-      if (child.node.status === "closed") closed++;
+      if (isTerminalTaskStatus(child.node.status)) closed++;
       // count sub-children too
       const sub = countTasks(child, showClosed);
       total += sub.total;

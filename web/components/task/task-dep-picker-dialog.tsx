@@ -36,11 +36,11 @@ export function TaskDepPickerDialog({
   const [searchQuery, setSearchQuery] = useState("");
   const [adding, setAdding] = useState<string | null>(null);
 
-  // filter candidates: exclude current task, existing deps, closed tasks
+  // filter candidates: exclude current task, existing deps, terminal tasks
   const candidates = useMemo(() => {
     const excludedIds = new Set([currentTaskId, ...existingDepIds]);
     return allTasks
-      .filter((t) => !excludedIds.has(t.id) && t.status !== "closed")
+      .filter((t) => !excludedIds.has(t.id) && !t.completed)
       .filter((t) => {
         if (!searchQuery.trim()) return true;
         const query = searchQuery.toLowerCase();

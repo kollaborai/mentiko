@@ -1,5 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
-import { canAdmitAutoRun, findActiveRunForTask, getAutoRunCandidates, reconcileTaskActiveRun } from "../runs/auto-run";
+import {
+  buildRunsSnapshot,
+  canAdmitAutoRun,
+  findActiveRunForTask,
+  getAutoRunCandidates,
+  reconcileTaskActiveRun,
+  removeRunFromSnapshot,
+} from "../runs/auto-run";
 import { taskGet, taskList, taskUpdate } from "../tasks/task-store";
 
 jest.mock("fs", () => ({
@@ -480,5 +487,111 @@ describe("getAutoRunCandidates", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
     // DONE guard short-circuits before ever scanning the runs directory.
     expect(mockReaddirSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("RunsSnapshot", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockExistsSync.mockReturnValue(true);
+    mockTaskGet.mockImplementation((_orgId, taskId) => ({
+      id: String(taskId),
+      title: String(taskId),
+      status: "open",
+      dependencies: [],
+      metadata: {},
+    }) as never);
+  });
+
+  function stageRuns(runs: Array<Record<string, unknown>>) {
+    mockReaddirSync.mockReturnValue(runs.map((r) => String(r.id)) as never);
+    // chain.json reads (allDeclaredAgentsComplete) resolve to "no declared
+    // agents" via the run.json content lacking a chain agents array.
+    mockReadFileSync.mockImplementation(((path: string) => {
+      const run = runs.find((r) => String(path).includes(`/${r.id}/`));
+      if (!run) throw new Error(`unexpected read: ${path}`);
+      return JSON.stringify(run);
+    }) as never);
+  }
+
+  it("walks the runs directory exactly ONCE for a whole candidate scan, regardless of task count", () => {
+    // The O(tasks x runs) regression guard: N admission-checked tasks must
+    // cost O(1) directory reads, not O(N). If someone reintroduces a per-task
+    // scan inside canAdmitAutoRun/findActiveRunForTask, this fails loudly.
+    stageRuns([
+      { id: "run-1", taskId: "TASK-900", status: "running", started: "2026-05-01T01:00:00.000Z" },
+      { id: "run-2", taskId: "TASK-901", status: "completed" },
+      { id: "run-3", taskId: "TASK-902", status: "failed" },
+    ]);
+    const tasks = Array.from({ length: 25 }, (_, i) => ({
+      id: `TASK-${100 + i}`,
+      title: `Task ${i}`,
+      status: "open",
+      issue_type: "task",
+      metadata: { auto_run: true },
+    }));
+    mockTaskList.mockReturnValue(tasks as never);
+
+    const candidates = getAutoRunCandidates("default", undefined, "default");
+
+    expect(candidates).toHaveLength(25);
+    expect(mockReaddirSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("a provided snapshot makes findActiveRunForTask a pure lookup (zero fs reads)", () => {
+    stageRuns([
+      { id: "run-live", taskId: "TASK-800", status: "running", started: "2026-05-01T01:00:00.000Z" },
+    ]);
+    const snapshot = buildRunsSnapshot("default");
+    jest.clearAllMocks();
+
+    expect(findActiveRunForTask("TASK-800", "default", snapshot)).toEqual(
+      expect.objectContaining({ id: "run-live", status: "running" })
+    );
+    expect(findActiveRunForTask("TASK-999", "default", snapshot)).toBeNull();
+    expect(mockReaddirSync).not.toHaveBeenCalled();
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+  });
+
+  it("matches findActiveRunForTask semantics: newest run wins, non-execution and terminal-attempt runs excluded from per-task view but counted for the cap", () => {
+    stageRuns([
+      { id: "run-old", taskId: "TASK-700", status: "running", started: "2026-05-01T01:00:00.000Z" },
+      { id: "run-new", taskId: "TASK-700", status: "running", started: "2026-05-02T01:00:00.000Z" },
+      {
+        id: "run-gen", taskId: "TASK-701", status: "running",
+        started: "2026-05-01T01:00:00.000Z", metadata: { generationKind: "chain_recommendation" },
+      },
+    ]);
+
+    const snapshot = buildRunsSnapshot("default");
+
+    // cap count includes the generation run (countActiveRuns semantics)...
+    expect(snapshot.activeRuns).toHaveLength(3);
+    // ...but the per-task admission view excludes it
+    expect(snapshot.activeRunByTask.get("TASK-701")).toBeUndefined();
+    expect(snapshot.activeRunByTask.get("TASK-700")).toEqual(
+      expect.objectContaining({ id: "run-new" })
+    );
+  });
+
+  it("removeRunFromSnapshot frees the cap slot and restores the runner-up active run for the task", () => {
+    stageRuns([
+      { id: "run-old", taskId: "TASK-700", status: "running", started: "2026-05-01T01:00:00.000Z" },
+      { id: "run-new", taskId: "TASK-700", status: "running", started: "2026-05-02T01:00:00.000Z" },
+    ]);
+    const snapshot = buildRunsSnapshot("default");
+
+    removeRunFromSnapshot(snapshot, "run-new");
+
+    expect(snapshot.activeRuns).toHaveLength(1);
+    // A fresh walk would now surface run-old -- the snapshot must agree, or a
+    // reap of the newer run would wrongly admit the task while run-old lives.
+    expect(snapshot.activeRunByTask.get("TASK-700")).toEqual(
+      expect.objectContaining({ id: "run-old" })
+    );
+
+    removeRunFromSnapshot(snapshot, "run-old");
+    expect(snapshot.activeRuns).toHaveLength(0);
+    expect(snapshot.activeRunByTask.get("TASK-700")).toBeUndefined();
   });
 });

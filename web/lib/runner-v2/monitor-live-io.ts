@@ -17,6 +17,7 @@ import {
   latchExists,
   loadMonitorState,
   monitorStatePaths,
+  readDeclaredAgentIds,
   readDeclaredEmits,
   readEventRunAndTimestamp,
   saveMonitorState,
@@ -42,6 +43,11 @@ export interface LiveMonitorContext {
 
 export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverIO {
   let completionMarkerLatched = false;
+  // A cross-run event is usable only after crossRunAdoptionAllowed accepts its
+  // task/predecessor or freshness+chain proof. Preserve that accepted evidence
+  // into the typed completion entrypoint; otherwise it re-reads only this run's
+  // events and falsely fails the completion it just allowed the monitor to take.
+  let acceptedCrossRunCompletionEvent = false;
   return {
     hasSession: (session) => pty.alive(session),
     observe: async (session) => {
@@ -77,17 +83,20 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       if (!eventFile && expectedEvent && captureAssertsAgentComplete(capture)) {
         const primaryEventsDir = context.eventsDir;
         const secondaryEventsDir = join(dirname(context.chainPath), "events");
+        const allAgentIds = readDeclaredAgentIds(context.chainPath);
         let candidateDir = primaryEventsDir;
         let candidate = findAgentCompletionEventAnyRun({
           eventsDir: primaryEventsDir,
           agentId: context.agentId,
           emitsEvent: expectedEvent,
+          allAgentIds,
         });
         if (!candidate) {
           candidate = findAgentCompletionEventAnyRun({
             eventsDir: secondaryEventsDir,
             agentId: context.agentId,
             emitsEvent: expectedEvent,
+            allAgentIds,
           });
           candidateDir = secondaryEventsDir;
         }
@@ -106,6 +115,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
           });
           if (allowed) {
             eventFile = candidate;
+            acceptedCrossRunCompletionEvent = true;
             console.log(
               `monitor: ${context.agentId} asserted AGENT_COMPLETE and its '${expectedEvent}' completion event ` +
                 `exists under another run (${candidate}, run ${candidateRunId}); completing run ${context.runId} cleanly instead of escalating`,
@@ -147,6 +157,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     onComplete: async (session) => {
       await launchCompletionSession(session, context, {
         agentCompleteMarker: completionMarkerLatched || await agentCompleteMarkerDurable(session, context.env),
+        acceptedCompletionEvent: acceptedCrossRunCompletionEvent,
       });
     },
     onDied: async (session) => {
@@ -332,6 +343,7 @@ function assistantTexts(record: unknown): string[] {
 
 interface CompletionLaunchOptions {
   agentCompleteMarker?: boolean;
+  acceptedCompletionEvent?: boolean;
 }
 
 async function launchCompletionSession(
@@ -355,7 +367,7 @@ async function launchCompletionSession(
       STATE_DIR: context.stateDir,
       MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
       MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
-      MENTIKO_MONITOR_COMPLETION_LATCH: options.agentCompleteMarker ? "1" : "",
+      MENTIKO_MONITOR_COMPLETION_LATCH: monitorCompletionLatch(options) ? "1" : "",
     },
   });
 }
@@ -414,10 +426,14 @@ function buildCompletionCommand(
     STATE_DIR: context.stateDir,
     MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
-    MENTIKO_MONITOR_COMPLETION_LATCH: options.agentCompleteMarker ? "1" : "",
+    MENTIKO_MONITOR_COMPLETION_LATCH: monitorCompletionLatch(options) ? "1" : "",
   };
   const envArgs = Object.entries(env).map(([key, value]) => `${key}=${shellEscape(String(value))}`).join(" ");
   return `env ${envArgs} bash -lc ${shellEscape(completion)}`;
+}
+
+function monitorCompletionLatch(options: CompletionLaunchOptions): boolean {
+  return Boolean(options.agentCompleteMarker || options.acceptedCompletionEvent);
 }
 
 function writeDiagnosticEvent(eventsDir: string, event: MonitorDiagnosticEvent): void {

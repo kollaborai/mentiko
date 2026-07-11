@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { ArrowDown2Filled as ChevronDown, ArrowRight2Filled as ChevronRight, ArrowUpFilled as ArrowUp, ArrowDownFilled as ArrowDown, AddFilled as Plus } from "@aliimam/icons";
 import { graphToNodes, mapPriority } from "@/lib/tasks/task-transforms";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
 import { unwrapApiData } from "@/lib/api/api-client";
@@ -37,7 +38,7 @@ function ChainView({
   const below = blocks.slice(0, 2);
 
   const statusColor = (status: string) =>
-    status === "closed"
+    isTerminalTaskStatus(status)
       ? "bg-green-400"
       : status === "in_progress"
         ? "bg-blue-400"
@@ -105,7 +106,7 @@ function ChainNode({
   onClick: () => void;
 }) {
   const statusColor =
-    node.status === "closed"
+    isTerminalTaskStatus(node.status)
       ? "bg-green-400"
       : node.status === "in_progress"
         ? "bg-blue-400"
@@ -328,7 +329,7 @@ function DepRow({ dep, onClick }: { dep: DepNode; onClick: () => void }) {
     >
       <span
         className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-          dep.status === "closed"
+          isTerminalTaskStatus(dep.status)
             ? "bg-green-400"
             : dep.status === "in_progress"
               ? "bg-blue-400"

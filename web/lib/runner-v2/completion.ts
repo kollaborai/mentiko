@@ -91,14 +91,17 @@ export function sourceMatchesAgent(
   // L181-188, documented as intentional): a session-suffixed source like
   // "researcher-7f3a" must still be owned by bare agent id "researcher".
   // Guarded against the sibling-id collision this creates (owner "api"
-  // wrongly claiming "api-reviewer"'s event -- structurally identical to the
-  // legitimate session-suffix case): when the full chain agent-id set is
-  // known, a source that EXACTLY names a DIFFERENT declared agent is never
-  // claimed via prefix match. Callers that cannot supply allAgentIds keep the
-  // shell-parity substring behavior unguarded.
+  // wrongly claiming "api-reviewer" or "api-reviewer-run-123" -- structurally
+  // identical to the legitimate session-suffix case): when the full chain
+  // agent-id set is known, a source that names a DIFFERENT declared agent, with
+  // or without that agent's session suffix, is never claimed via prefix match.
+  // Callers that cannot supply allAgentIds keep the shell-parity substring
+  // behavior unguarded.
   const namesAnotherAgent = allAgentIds?.some((id) => {
     const normalizedId = normalize(id);
-    return normalizedId !== "" && normalizedId === normalizedSource && !candidates.includes(normalizedId);
+    return normalizedId !== ""
+      && !candidates.includes(normalizedId)
+      && (normalizedSource === normalizedId || normalizedSource.startsWith(`${normalizedId}-`));
   });
   if (namesAnotherAgent) {
     return false;

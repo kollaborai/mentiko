@@ -34,7 +34,10 @@ jest.mock("@/lib/namespace-config", () => ({
 // (same process.pid) for use in the rest of this file.
 jest.mock("@/lib/config", () => ({
   __esModule: true,
-  default: { globalRoot: require("path").join("/tmp", `mentiko-test-tasksdb-${process.pid}`) },
+  default: {
+    globalRoot: jest.requireActual<typeof import("path")>("path")
+      .join("/tmp", `mentiko-test-tasksdb-${process.pid}`),
+  },
 }));
 
 const mockGlobalRoot = join("/tmp", `mentiko-test-tasksdb-${process.pid}`);
@@ -61,6 +64,10 @@ function seedDb() {
       metadata TEXT,
       updated_at TEXT
     );
+    CREATE TABLE task_dependencies (
+      task_id TEXT,
+      depends_on_id TEXT
+    );
   `);
   const insert = db.prepare(`
     INSERT INTO tasks (id, org_id, workspace_id, title, status, parent_id, issue_type, metadata, updated_at)
@@ -68,15 +75,23 @@ function seedDb() {
   `);
   insert.run({
     id: "TASK-1", org_id: "default", workspace_id: null, title: "Visible task",
-    status: "open", parent_id: null, issue_type: "task", metadata: "{}",
+    status: "open", parent_id: null, issue_type: "task",
+    metadata: JSON.stringify({ superseded_decision_subtask_ids: ["DEC-1"] }),
     updated_at: "2026-01-01T00:00:00.000Z",
   });
   insert.run({
     id: "DEC-1", org_id: "default", workspace_id: null, title: "Superseded gate",
-    status: "open", parent_id: null, issue_type: "decision",
-    metadata: JSON.stringify({ decision_status: "superseded" }),
+    status: "open", parent_id: "TASK-1", issue_type: "decision",
+    metadata: JSON.stringify({ decision_status: "briefed" }),
     updated_at: "2026-01-01T00:00:00.000Z",
   });
+  insert.run({
+    id: "TASK-2", org_id: "default", workspace_id: null, title: "Visible child of hidden gate",
+    status: "open", parent_id: "DEC-1", issue_type: "task", metadata: "{}",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  });
+  db.prepare("INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?, ?)")
+    .run("DEC-1", "TASK-1");
   db.close();
 }
 
@@ -152,6 +167,10 @@ describe("GET /api/code/tasks-db (B2)", () => {
     const ids = (body.data.nodes as Array<{ id: string }>).map((n) => n.id);
     expect(ids).toContain("TASK-1");
     expect(ids).not.toContain("DEC-1");
+    const visibleChild = (
+      body.data.nodes as Array<{ id: string; parent_id: string | null }>
+    ).find((node) => node.id === "TASK-2");
+    expect(visibleChild?.parent_id).toBeNull();
     expect(body.data.dbPath).toBeUndefined();
   });
 
@@ -163,14 +182,26 @@ describe("GET /api/code/tasks-db (B2)", () => {
     const ids = (body.data.rows as Array<{ id: string }>).map((r) => r.id);
     expect(ids).toContain("TASK-1");
     expect(ids).not.toContain("DEC-1");
+    const visibleChild = (body.data.rows as Array<{ id: string; parent_id: string | null }>)
+      .find((row) => row.id === "TASK-2");
+    expect(visibleChild?.parent_id).toBeNull();
     expect(body.data.dbPath).toBeUndefined();
   });
 
-  it("hides superseded decision gates from dependency listings", async () => {
-    const res = await GET(makeRequest("?mode=dependencies&taskId=TASK-1"));
-    const body = await res.json();
+  it("hides superseded parents, children, and dependencies from dependency listings", async () => {
+    const parentRes = await GET(makeRequest("?mode=dependencies&taskId=TASK-1"));
+    const parentBody = await parentRes.json();
+    const childRes = await GET(makeRequest("?mode=dependencies&taskId=TASK-2"));
+    const childBody = await childRes.json();
 
-    expect(res.status).toBe(200);
-    expect(body.data.dbPath).toBeUndefined();
+    expect(parentRes.status).toBe(200);
+    expect((parentBody.data.children as Array<{ id: string }>).map((task) => task.id))
+      .not.toContain("DEC-1");
+    expect((parentBody.data.blocks as Array<{ id: string }>).map((task) => task.id))
+      .not.toContain("DEC-1");
+    expect(childRes.status).toBe(200);
+    expect(childBody.data.parent).toBeNull();
+    expect(parentBody.data.dbPath).toBeUndefined();
+    expect(childBody.data.dbPath).toBeUndefined();
   });
 });

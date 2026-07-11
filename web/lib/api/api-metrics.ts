@@ -41,18 +41,50 @@ const metrics = g.__apiMetrics;
 const slowLog = g.__apiSlowLog;
 const subTimings = g.__apiSubTimings;
 
+// These are concrete /api/tasks routes, not dynamic task IDs. Keep the list
+// beside metric normalization so adding a task route cannot silently create a
+// fake /api/tasks/[id] time series.
+const STATIC_TASK_ROUTE_SEGMENTS = new Set([
+  "activity",
+  "auto-run",
+  "bulk",
+  "create",
+  "deps",
+  "epics",
+  "generate",
+  "graph",
+  "reconcile",
+]);
+const TASK_ID_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const COMPACT_ID_SEGMENT = /^[a-z]+-[a-z0-9]{2,8}(?:\.\d+)*$/i;
+
+function normalizeRouteSegments(pathname: string): string {
+  const segments = pathname.split("/");
+
+  return segments.map((segment, index) => {
+    const isTaskRouteSegment =
+      index === 3 && segments[1] === "api" && segments[2] === "tasks";
+    if (isTaskRouteSegment && STATIC_TASK_ROUTE_SEGMENTS.has(segment)) {
+      return segment;
+    }
+    if (isTaskRouteSegment && TASK_ID_SEGMENT.test(segment)) {
+      return "[id]";
+    }
+    return COMPACT_ID_SEGMENT.test(segment) ? "[id]" : segment;
+  }).join("/");
+}
+
 // extract route pattern from URL (collapse dynamic segments)
 export function extractRoute(url: string): string {
   try {
     const u = new URL(url);
     // strip query params, normalize dynamic segments
-    return u.pathname
-      .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/[id]")
-      .replace(/\/[a-z]+-[a-z0-9]{3,8}(\.[0-9]+)*/gi, (match) => {
-        // compact task IDs like TASK-001 / FEAT-042 -> [id]
-        if (/^\/[a-z]+-[a-z0-9]{2,8}(\.\d+)*$/i.test(match)) return "/[id]";
-        return match;
-      });
+    return normalizeRouteSegments(
+      u.pathname.replace(
+        /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+        "/[id]",
+      ),
+    );
   } catch {
     return "unknown";
   }

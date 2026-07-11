@@ -6,6 +6,7 @@ describe("task API visibility source contract", () => {
   const detailSource = readFileSync(join(apiRoot, "[id]/route.ts"), "utf8");
   const depsSource = readFileSync(join(apiRoot, "[id]/deps/route.ts"), "utf8");
   const graphSource = readFileSync(join(apiRoot, "graph/route.ts"), "utf8");
+  const epicsSource = readFileSync(join(apiRoot, "epics/route.ts"), "utf8");
 
   it("hides superseded decision gates from direct task detail fetches", () => {
     expect(detailSource).toContain('from "@/lib/tasks/task-visibility"');
@@ -14,8 +15,14 @@ describe("task API visibility source contract", () => {
   });
 
   it("hides superseded decision gates from child/dependency APIs", () => {
-    expect(depsSource).toContain("filterVisibleTaskRecords(");
-    expect(graphSource).toContain("filterVisibleTaskRecords(");
+    expect(depsSource).toContain("filterVisibleTaskRecordsWithVisibleParents(");
+    expect(depsSource).toContain("if (!allIssues.some((issue) => issue.id === safeId))");
+    expect(graphSource).toContain("filterVisibleTaskRecordsWithVisibleParents(");
     expect(graphSource).toContain("issueIds.has(dep.task_id) && issueIds.has(dep.depends_on_id)");
+  });
+
+  it("keeps epic progress on the same visibility and terminal-status contract", () => {
+    expect(epicsSource).toContain("filterVisibleTaskRecordsWithVisibleParents(");
+    expect(epicsSource).toContain("isTerminalTaskStatus(child.status)");
   });
 });

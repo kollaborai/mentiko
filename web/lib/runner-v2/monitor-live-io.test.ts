@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createLiveMonitorIO } from "@/lib/runner-v2/monitor-live-io";
+import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 
 jest.mock("@/lib/pty/pty-client", () => ({
@@ -22,6 +23,8 @@ jest.mock("node:child_process", () => ({
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
+  derivePtyDaemonName: (root: string, namespace: string, org: string) =>
+    `mentiko-${root.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "root"}-${namespace}-${org}`,
   default: {
     codeRoot: "/repo",
   },
@@ -308,6 +311,71 @@ describe("monitor-v2 live IO", () => {
       }).observe("writer-run-123");
 
       expect(observed.completionEventPresent).toBe(true);
+    });
+
+    it("feeds guarded cross-run completion evidence from observe into the typed entrypoint", async () => {
+      const f = fixture();
+      const chainPath = join(f.root, "chain.json");
+      writeFileSync(chainPath, JSON.stringify({
+        id: "chain",
+        name: "Chain",
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      }));
+      updateRunJson(f.runJsonPath, (run) => ({ ...(run as RunRecord), taskId: "TASK-1" }));
+      seedCandidateRun(f.root, "run-old", { taskId: "TASK-1" });
+      seedCompletionEvent(f.eventsDir, "run-old-writer-draft.event", {
+        event: "draft-ready",
+        source: "writer-run-old",
+        run_id: "run-old",
+        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        processed: "false",
+      });
+      ptyMock.capture.mockResolvedValue("work done\nAGENT_COMPLETE\n");
+
+      const io = createLiveMonitorIO({
+        sessionName: "writer-run-123",
+        chainPath,
+        runId: "run-123",
+        runDir: f.runDir,
+        runJsonPath: f.runJsonPath,
+        agentId: "writer",
+        workspaceType: "local",
+        eventsDir: f.eventsDir,
+        stateDir: f.stateDir,
+        namespaceId: "default",
+        orgId: "default",
+        env: { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" },
+      });
+
+      const observed = await io.observe("writer-run-123");
+      expect(observed).toMatchObject({ completionEventPresent: true, latched: true });
+      await io.onComplete("writer-run-123");
+
+      const completionEnv = ptyMock.spawn.mock.calls[0][3].env as Record<string, string>;
+      expect(completionEnv.MENTIKO_MONITOR_COMPLETION_LATCH).toBe("1");
+
+      const result = runRunnerV2CompletionEntrypoint({
+        sessionName: "writer-run-123",
+        chainPath,
+        env: {
+          ...completionEnv,
+          MENTIKO_MONITOR_STATE_DIR: f.stateDir,
+          PTY_MGR_BIN: "/bin/false",
+        },
+        dryRun: true,
+        now: new Date("2026-07-10T00:00:00.000Z"),
+      });
+
+      expect(result.decision).toBe("route");
+      expect(result.plan.launches).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "single",
+          command: expect.stringContaining("--start 'reviewer'"),
+        }),
+      ]));
     });
   });
 });

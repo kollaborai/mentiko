@@ -5,6 +5,7 @@ import { mkdirSync } from "fs";
 import { join, dirname } from "path";
 import config from "../config";
 import { ISSUE_TYPE_PREFIX } from "./task-store-types";
+import { TERMINAL_TASK_STATUSES, isTerminalTaskStatus } from "./task-status";
 import type {
   TaskRecord,
   TaskDep,
@@ -23,6 +24,7 @@ export type {
   TaskUpdateFields,
 };
 export { ISSUE_TYPE_PREFIX };
+export { TERMINAL_TASK_STATUSES, isTerminalTaskStatus } from "./task-status";
 
 // ---------- connection management ----------
 
@@ -150,6 +152,24 @@ function runMigrations(db: Database.Database): void {
         WHERE p.id = tasks.parent_id AND p.workspace_id IS NOT NULL
       )
   `);
+
+  // Repair lifecycle drift from older writers that only treated `closed` as
+  // terminal. Every terminal task must have a close timestamp, and reopened
+  // work must not retain one; otherwise default lists, dependency readiness,
+  // and UI receipts disagree about whether the task is done.
+  const terminalPlaceholders = TERMINAL_TASK_STATUSES.map(() => "?").join(", ");
+  db.prepare(`
+    UPDATE tasks
+    SET closed_at = COALESCE(NULLIF(closed_at, ''), updated_at)
+    WHERE status IN (${terminalPlaceholders})
+      AND (closed_at IS NULL OR closed_at = '')
+  `).run(...TERMINAL_TASK_STATUSES);
+  db.prepare(`
+    UPDATE tasks
+    SET closed_at = NULL
+    WHERE status NOT IN (${terminalPlaceholders})
+      AND closed_at IS NOT NULL
+  `).run(...TERMINAL_TASK_STATUSES);
 }
 
 // ---------- ID generation ----------
@@ -224,19 +244,6 @@ function now(): string {
   return new Date().toISOString();
 }
 
-// Terminal task statuses. `closed` is the original vocabulary; `complete` was
-// added later (chain-run completion, auto-run admission's DONE_STATUSES in
-// lib/runs/auto-run.ts already treats both as terminal) but taskUpdate only
-// ever special-cased `closed` for closed_at -- so a task patched to
-// `complete` was terminal-for-admission yet had no closed_at and (via
-// task-transforms.toTask, which independently must mirror this) wasn't shown
-// as completed in the UI. Both statuses now get identical closed_at handling.
-const TERMINAL_TASK_STATUSES = new Set(["closed", "complete"]);
-
-export function isTerminalTaskStatus(status: string | null | undefined): boolean {
-  return !!status && TERMINAL_TASK_STATUSES.has(status);
-}
-
 // ---------- CRUD ----------
 
 // Row cap used when a caller doesn't bound the query itself (e.g. the web UI's
@@ -263,7 +270,8 @@ function buildTaskWhere(
     conditions.push("status = ?");
     params.push(filter.status);
   } else if (!filter?.status) {
-    conditions.push("status != 'closed'");
+    conditions.push(`status NOT IN (${TERMINAL_TASK_STATUSES.map(() => "?").join(", ")})`);
+    params.push(...TERMINAL_TASK_STATUSES);
   }
 
   if (filter?.issue_type && filter.issue_type !== "all") {
@@ -472,14 +480,15 @@ export function taskUpdate(
   namespaceId?: string
 ): void {
   const db = getDb(namespaceId);
+  const timestamp = now();
   const sets: string[] = ["updated_at = ?"];
-  const params: unknown[] = [now()];
+  const params: unknown[] = [timestamp];
 
   if (fields.title !== undefined) { sets.push("title = ?"); params.push(fields.title); }
   if (fields.description !== undefined) { sets.push("description = ?"); params.push(fields.description); }
   if (fields.status !== undefined) {
     sets.push("status = ?"); params.push(fields.status);
-    if (isTerminalTaskStatus(fields.status)) { sets.push("closed_at = ?"); params.push(now()); }
+    if (isTerminalTaskStatus(fields.status)) { sets.push("closed_at = ?"); params.push(timestamp); }
     else { sets.push("closed_at = NULL"); }
   }
   if (fields.priority !== undefined) { sets.push("priority = ?"); params.push(fields.priority); }
@@ -634,11 +643,12 @@ export function taskDepsAllClosed(
   namespaceId?: string
 ): boolean {
   const db = getDb(namespaceId);
+  const terminalPlaceholders = TERMINAL_TASK_STATUSES.map(() => "?").join(", ");
   const row = db.prepare(`
     SELECT COUNT(*) as cnt FROM task_dependencies d
     JOIN tasks t ON t.id = d.depends_on_id AND t.org_id = ?
-    WHERE d.task_id = ? AND t.status NOT IN ('closed', 'resolved')
-  `).get(orgId, taskId) as { cnt: number };
+    WHERE d.task_id = ? AND t.status NOT IN (${terminalPlaceholders})
+  `).get(orgId, taskId, ...TERMINAL_TASK_STATUSES) as { cnt: number };
   return row.cnt === 0;
 }
 

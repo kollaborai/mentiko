@@ -1,5 +1,6 @@
 import {
   filterVisibleTaskRecords,
+  filterVisibleTaskRecordsWithVisibleParents,
   isHiddenDecisionGate,
   visibleTaskRecordIds,
 } from "./task-visibility";
@@ -67,6 +68,18 @@ describe("task visibility", () => {
     expect(filterVisibleTaskRecords([parent, generatedTask])).toEqual([
       parent,
       generatedTask,
+    ]);
+  });
+
+  it("removes parent pointers to hidden superseded decision gates", () => {
+    const hiddenParent = task("DEC-039", {
+      issue_type: "decision",
+      metadata: { decision_status: "superseded" },
+    });
+    const visibleChild = task("TASK-094", { parent_id: hiddenParent.id });
+
+    expect(filterVisibleTaskRecordsWithVisibleParents([hiddenParent, visibleChild])).toEqual([
+      { ...visibleChild, parent_id: null },
     ]);
   });
 });

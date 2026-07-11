@@ -1,6 +1,8 @@
 import { spawnSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { dirname, join } from "path";
+import { derivePtyDaemonName } from "@/lib/config";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
@@ -550,12 +552,22 @@ function runPtyMgr(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   args: string[],
 ): { status: number | null; stdout: string; stderr: string } | undefined {
+  const daemonName = derivePtyDaemonName(
+    env.MENTIKO_GLOBAL_ROOT || env.MENTIKO_ROOT || join(homedir(), ".mentiko"),
+    env.NAMESPACE_ID || "default",
+    env.ORG_ID || "default",
+  );
   const result = spawnSync(resolvePtyMgrBin(env), args, {
     encoding: "utf8",
     timeout: positiveIntValue(env.MENTIKO_RUNNER_V2_PTY_PROBE_TIMEOUT_MS, 2_000),
     env: stringEnv({
       ...process.env,
       ...env,
+      // Completion may be invoked by a monitor whose inherited env was
+      // stripped or stale. Always probe the daemon derived from this run's
+      // namespace/org; otherwise pty-mgr silently falls back to `default` and
+      // reports the live agent session as missing.
+      PTY_DAEMON: daemonName,
     }),
   });
   if (result.error) return undefined;

@@ -10,6 +10,7 @@ import type {
 } from "./task-types";
 import type { GoalStatus } from "@/components/ui/goal-card";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
+import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 
 // priority 0-4 -> UI priority
 export function mapPriority(rawPriority: number): TaskPriority {
@@ -50,16 +51,6 @@ function parseMetadata(
 
 function stringValue(value: unknown): string | undefined {
   return value ? String(value) : undefined;
-}
-
-// Terminal task statuses -- mirrors task-store.ts's isTerminalTaskStatus.
-// Kept as an independent copy (not imported) because task-store.ts pulls in
-// better-sqlite3 (native addon), which must never end up in a client bundle
-// that imports this file (components/task/* import toTask() directly).
-const TERMINAL_TASK_STATUSES = new Set(["closed", "complete"]);
-
-function isTerminalTaskStatus(status: string | null | undefined): boolean {
-  return !!status && TERMINAL_TASK_STATUSES.has(status);
 }
 
 function lastRunChainName(metadata: Record<string, unknown>): string {
@@ -331,9 +322,7 @@ export function groupByEpic(
       status: task.status,
       priority: task.rawPriority,
       total_children: children.length,
-      closed_children: children.filter(
-        (child) => child.status === "closed" || child.completed
-      ).length,
+      closed_children: children.filter((child) => child.completed).length,
     });
   }
 
@@ -354,14 +343,12 @@ export function groupByEpic(
       id: parentId,
       title: parentId,
       description: "",
-      status: children.every((child) => child.status === "closed" || child.completed)
+      status: children.every((child) => child.completed)
         ? "closed"
         : "open",
       priority: Math.min(...children.map((child) => child.rawPriority)),
       total_children: children.length,
-      closed_children: children.filter(
-        (child) => child.status === "closed" || child.completed
-      ).length,
+      closed_children: children.filter((child) => child.completed).length,
     });
   }
 
