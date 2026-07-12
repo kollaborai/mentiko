@@ -52,6 +52,19 @@ export function classifyMonitorTick(
     return { state, action: { type: "complete" } };
   }
 
+  // 2.5 context-window-limit wedge: an agent whose prompt exceeds the model's context
+  //     window emits the SAME API error every turn and can never generate output, so
+  //     it can never print AGENT_COMPLETE — nudging it only burns the budget on a
+  //     corpse (run-1783801010519 sat blocked with its pty alive for 2h+). Debounced
+  //     over consecutive ticks so a one-off error the CLI auto-compacts past is never
+  //     terminal. Checked AFTER the latch (a real completion always wins) and folded
+  //     into state so every path below carries the current streak.
+  const contextExhaustedStreak = obs.contextExhausted ? state.contextExhaustedStreak + 1 : 0;
+  state = { ...state, contextExhaustedStreak };
+  if (obs.contextExhausted && contextExhaustedStreak >= config.contextExhaustedMaxStreak) {
+    return { state, action: { type: "context-exhausted" } };
+  }
+
   // 3. process death is checked only for local workspaces; remote (ssh/docker)
   //    has no local pid to pgrep, so the shell skips it (:995). dead != succeeded.
   //    Reaching here means NOT latched, so death is genuine (no marker, no event);
@@ -90,6 +103,7 @@ export function classifyMonitorTick(
         staleCount: 0,
         nudgeEchoGrace: inEcho ? state.nudgeEchoGrace - 1 : 0,
         nudgeCount: inEcho ? state.nudgeCount : 0,
+        contextExhaustedStreak,
       },
       action: { type: "active" },
     };
@@ -146,6 +160,7 @@ export function resolveMonitorConfig(overrides: Partial<MonitorConfig> = {}): Mo
     maxStaleCount: overrides.maxStaleCount ?? MONITOR_DEFAULTS.maxStaleCount,
     advisorStaleThreshold: overrides.advisorStaleThreshold ?? MONITOR_DEFAULTS.advisorStaleThreshold,
     maxTotalNudges: overrides.maxTotalNudges ?? MONITOR_DEFAULTS.maxTotalNudges,
+    contextExhaustedMaxStreak: overrides.contextExhaustedMaxStreak ?? MONITOR_DEFAULTS.contextExhaustedMaxStreak,
     workspaceType: overrides.workspaceType ?? "local",
   };
 }

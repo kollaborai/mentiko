@@ -189,6 +189,46 @@ else
   bad "fabrication guard: durable completion produces the declared emits fallback event"
 fi
 
+# ---- transcript resolution: decoy-UUID resilience -------------------------
+# A capture routinely holds MORE than one UUID: the real transcript/session UUID
+# in the CLI status bar, plus decoys the agent's goal/prompt echoed earlier (a
+# decision_id, a task id). The old `head -1` stopped at the first (a decoy with
+# no file) and never found the durable marker, hanging completion. Resolution
+# must scan every UUID and accept the first that maps to a real transcript file.
+RESOLVE_HOME="$TMP_DIR/resolve-home"
+mkdir -p "$RESOLVE_HOME/.claude/projects/proj"
+REAL_UUID="9c775526-1481-48dd-99cb-bc8da80d47bc"
+DECOY_UUID="c11fb05f-fdf5-43ba-b76c-dd4f28c4d7a0"   # decision_id shape, no transcript file
+REAL_TRANSCRIPT="$RESOLVE_HOME/.claude/projects/proj/${REAL_UUID}.jsonl"
+cp "$CLAUDE_DONE" "$REAL_TRANSCRIPT"
+RESOLVE_PROFILE="$TMP_DIR/resolve-profile.json"
+printf '{"cli":"claude","log_path":"~/.claude/projects"}\n' > "$RESOLVE_PROFILE"
+
+# decoy appears FIRST in the scrollback, real UUID last (status-bar shape).
+SCREEN_FIXTURE=$"DECISION_ID: ${DECOY_UUID}"$'\n''...scroll...'$'\n'"bypass permissions ${REAL_UUID}  104416 tokens"
+resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" _agent_transcript_jsonl 'sess')"
+if [[ "$resolved" == "$REAL_TRANSCRIPT" ]]; then
+  ok "transcript resolution: skips a decoy UUID (first in capture) and resolves the real transcript file"
+else
+  bad "transcript resolution: skips a decoy UUID (first in capture) and resolves the real transcript file (got: '${resolved:-<empty>}')"
+fi
+
+# durable-marker completion works end-to-end when a decoy precedes the real UUID.
+if HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" agent-complete-marker-durable 'sess'; then
+  ok "durable marker: latches through a decoy-then-real UUID capture (regression: decision-chain completion hang)"
+else
+  bad "durable marker: latches through a decoy-then-real UUID capture (regression: decision-chain completion hang)"
+fi
+
+# only a decoy present (no matching transcript file) -> unresolved, fail closed.
+SCREEN_FIXTURE=$"DECISION_ID: ${DECOY_UUID} only"
+resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" _agent_transcript_jsonl 'sess')"
+if [[ -z "$resolved" ]]; then
+  ok "transcript resolution: a decoy-only capture resolves to nothing (fails closed, no mis-resolve)"
+else
+  bad "transcript resolution: a decoy-only capture resolves to nothing (got: '$resolved')"
+fi
+
 echo ""
 echo "passed: $PASS  failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

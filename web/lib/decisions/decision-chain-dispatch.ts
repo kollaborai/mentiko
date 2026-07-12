@@ -100,8 +100,15 @@ export async function startDecisionResearch({
   workspacePath,
 }: StartDecisionResearchInput) {
   const ws = workspacePath ?? decision.workspacePath;
+  // ISSUE-008 root cause: an unbounded "inspect files under this checkout" invitation
+  // lets the research agent read the whole tree on a large workspace (e.g. this monorepo)
+  // and exhaust its context window every turn — it then can never emit AGENT_COMPLETE and
+  // wedges the decision at intake. Bound the read set here (the single path ALL research
+  // launches, incl. completion-audit, go through) so research self-limits. The monitor
+  // now also detects+terminalizes a context-exhausted run (defense in depth), but the
+  // cheapest fix is to not blow the window in the first place.
   const workspaceContext = ws
-    ? `\nWORKSPACE CONTEXT:\n- Source checkout: ${ws}\n- If this decision involves code, inspect files under this checkout and cite repo-relative paths in references.\n`
+    ? `\nWORKSPACE CONTEXT:\n- Source checkout: ${ws}\n- If this decision involves code, inspect a BOUNDED, targeted set of files under this checkout and cite repo-relative paths in references.\n- CONTEXT BUDGET (required — do not exceed): prefer targeted search (grep/glob for the specific symbols, files, or errors named in the ask) over broad directory reads; open only the handful of files that directly bear on THIS decision; read the relevant sections, not whole large files; summarize findings instead of pasting large excerpts. Never read the entire tree or large generated/vendored directories (node_modules, .next, dist, build, coverage, .git). Research quality comes from citing the RIGHT files, not the MOST files — staying within this budget is required so the research run does not exhaust its context window and stall.\n`
     : "";
   const template = getTemplate(namespaceId, orgId, "decision_research");
   const researchPrompt = resolveTemplate(template.content, {

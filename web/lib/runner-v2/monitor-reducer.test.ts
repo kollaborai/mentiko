@@ -8,12 +8,13 @@ function obs(overrides: Partial<MonitorObservation> = {}): MonitorObservation {
     captureHash: "hash-A",
     completionEventPresent: false,
     latched: false,
+    contextExhausted: false,
     ...overrides,
   };
 }
 
 function state(overrides: Partial<MonitorState> = {}): MonitorState {
-  return { prevHash: "hash-A", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, ...overrides };
+  return { prevHash: "hash-A", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0, ...overrides };
 }
 
 describe("classifyMonitorTick — chain monitor parity", () => {
@@ -151,5 +152,54 @@ describe("classifyMonitorTick — chain monitor parity", () => {
     );
     expect(r.action.type).toBe("nudge-stale");
     if (r.action.type === "nudge-stale") expect(r.action.message).toBe(MONITOR_NUDGES.staleLate);
+  });
+
+  // ISSUE-008: context-window-limit wedge is a debounced terminal failure, not a stall.
+  it("does NOT terminalize on the first context-exhausted tick (debounce)", () => {
+    const r = classifyMonitorTick(
+      state({ contextExhaustedStreak: 0 }),
+      obs({ contextExhausted: true }),
+      resolveMonitorConfig(),
+    );
+    expect(r.action.type).not.toBe("context-exhausted");
+    expect(r.state.contextExhaustedStreak).toBe(1);
+  });
+
+  it("terminalizes as context-exhausted once the signal persists past the debounce", () => {
+    const r = classifyMonitorTick(
+      state({ contextExhaustedStreak: 1 }),
+      obs({ contextExhausted: true }),
+      resolveMonitorConfig(),
+    );
+    expect(r.action.type).toBe("context-exhausted");
+    expect(r.state.contextExhaustedStreak).toBe(2);
+  });
+
+  it("a real completion latch wins over a context-exhausted signal", () => {
+    const r = classifyMonitorTick(
+      state({ contextExhaustedStreak: 5 }),
+      obs({ contextExhausted: true, latched: true }),
+      resolveMonitorConfig(),
+    );
+    expect(r.action.type).toBe("complete");
+  });
+
+  it("resets the context-exhausted streak when the signal clears (a recovered one-off)", () => {
+    const r = classifyMonitorTick(
+      state({ contextExhaustedStreak: 1, prevHash: "hash-A" }),
+      obs({ contextExhausted: false, captureHash: "hash-B" }),
+      resolveMonitorConfig(),
+    );
+    expect(r.action.type).toBe("active");
+    expect(r.state.contextExhaustedStreak).toBe(0);
+  });
+
+  it("respects a configurable debounce threshold", () => {
+    const r = classifyMonitorTick(
+      state({ contextExhaustedStreak: 0 }),
+      obs({ contextExhausted: true }),
+      resolveMonitorConfig({ contextExhaustedMaxStreak: 1 }),
+    );
+    expect(r.action.type).toBe("context-exhausted");
   });
 });

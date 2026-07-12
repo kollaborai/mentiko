@@ -14,6 +14,9 @@ export const MONITOR_DEFAULTS = {
   advisorStaleThreshold: 3, //  MENTIKO_ADVISOR_STALE_COUNT default
   maxTotalNudges: 5, //         MENTIKO_MONITOR_MAX_NUDGES default
   nudgeEchoGraceCycles: 3, //   cycles of self-echo to not miscredit as progress
+  contextExhaustedMaxStreak: 2, // consecutive ticks a context-window-limit error must
+  //                               persist before the run is failed (debounce: a one-off
+  //                               error the CLI auto-compacts past must not terminate).
 } as const;
 
 // Nudge copy, verbatim from the shell fallbacks so behavior is identical.
@@ -40,6 +43,10 @@ export interface MonitorState {
   // remaining cycles to treat as our own nudge echo, not progress (so an echo
   // never refills the durable budget). Shell: nudge_echo_grace.
   nudgeEchoGrace: number;
+  // consecutive ticks a context-window-limit signal has been observed. A within-run
+  // debounce (like nudgeEchoGrace it resets to 0 on a fresh process): the wedge is
+  // persistent, so a restart rebuilds the streak in a couple of ticks.
+  contextExhaustedStreak: number;
 }
 
 // Everything the driver observes about the session this tick.
@@ -56,12 +63,16 @@ export interface MonitorObservation {
   // agent-completion-latched: sticky AGENT_COMPLETE marker (durable transcript)
   // OR emitted event. Authoritative "done" signal.
   latched: boolean;
+  // detectContextExhaustion: the capture shows an API-level context-window-limit
+  // error this tick. Debounced in the reducer before it terminalizes the run.
+  contextExhausted: boolean;
 }
 
 export interface MonitorConfig {
   maxStaleCount: number;
   advisorStaleThreshold: number;
   maxTotalNudges: number;
+  contextExhaustedMaxStreak: number;
   workspaceType: string; // "local" | "ssh" | "docker" | ...
 }
 
@@ -75,7 +86,8 @@ export type MonitorAction =
   | { type: "nudge-finish"; message: string } // event present -> nudge to finish (no budget charge)
   | { type: "nudge-stale"; message: string } //  idle stalled -> nudge (charges durable budget)
   | { type: "stalled-blocked" } //    stale >= max, no event -> monitor-agent-stalled BLOCKED
-  | { type: "stalled-escalate" }; //  durable nudge budget spent -> monitor-agent-stalled escalate
+  | { type: "stalled-escalate" } //   durable nudge budget spent -> monitor-agent-stalled escalate
+  | { type: "context-exhausted" }; // context-window-limit wedge (debounced) -> FAILED + tear down session
 
 export interface MonitorTickResult {
   state: MonitorState;
@@ -83,5 +95,5 @@ export interface MonitorTickResult {
 }
 
 export function initialMonitorState(currentHash = ""): MonitorState {
-  return { prevHash: currentHash, staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0 };
+  return { prevHash: currentHash, staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0 };
 }

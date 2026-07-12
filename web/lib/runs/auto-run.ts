@@ -370,6 +370,25 @@ export function reconcileActiveAutoRunTasks(
   return reconciled;
 }
 
+/**
+ * Durable terminal signal: a completion audit closed this task's execution.
+ * The completion_audit_* fields survive the non-execution-run metadata wipe
+ * that deletes last_run_* (the reopen-clobbers-close race, ISSUE-007), so this
+ * is the evidence both admission (canAdmitAutoRun) and the reconcile re-close
+ * sweep must agree on -- shared here so the two rules cannot drift.
+ * pending_close counts: the close verdict landed but taskClose has not stuck
+ * yet. A string chain_id (even "") distinguishes a real execution from
+ * pre-execution recommendation/generation bookkeeping.
+ */
+export function hasDurableAuditedClose(metadata: Record<string, unknown>): boolean {
+  return (
+    metadata.last_audit_verdict === "close" &&
+    (metadata.completion_audit_apply_status === "applied"
+      || metadata.completion_audit_apply_status === "pending_close") &&
+    typeof metadata.chain_id === "string"
+  );
+}
+
 export type AutoRunRejectReason =
   | "epic"
   | "auto_run_disabled"
@@ -486,6 +505,19 @@ export function canAdmitAutoRun(
   // absent entirely (chainId undefined either way), so that case is unchanged.
   if (lastRunStatus && COMPLETED_RUN_STATUSES.has(lastRunStatus) && chainId !== undefined) {
     return { admit: false, reason: "last execution run already completed", action: "already_completed" };
+  }
+
+  // An audited-closed execution is terminal even when last_run_status was
+  // wiped: the audit-run launch can clobber last_run_id, and the non-execution
+  // repair then deletes ALL last_run_* fields, blinding the rule above --
+  // auto-run then relaunched the finished chain in a close -> re-run ->
+  // re-audit loop (observed 2026-07-11: TASK-264/TASK-152/BUG-022). The
+  // completion_audit_* fields survive that wipe, so they are the durable
+  // terminal signal (hasDurableAuditedClose -- shared with the reconcile
+  // re-close sweep so the two rules cannot drift), and admission must not
+  // race the re-close with a fresh run.
+  if (hasDurableAuditedClose(metadata)) {
+    return { admit: false, reason: "completion audit already closed this execution", action: "already_completed" };
   }
 
   if (DONE_STATUSES.has(task.status)) {

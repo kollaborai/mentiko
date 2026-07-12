@@ -102,14 +102,6 @@ capture-agent-activity() {
                     [[ -n "$f" ]] && conv_files+=("$f")
                 done < <(find_conversation_files "$log_dir" "$start_epoch" "$cli")
             fi
-        else
-            local log_dir
-            log_dir=$(resolve_log_dir "claude" "$project_root")
-            if [[ -d "$log_dir" && "$start_epoch" -gt 0 ]]; then
-                while IFS= read -r f; do
-                    [[ -n "$f" ]] && conv_files+=("$f")
-                done < <(find_conversation_files "$log_dir" "$start_epoch" "claude")
-            fi
         fi
 
         if [[ "${#conv_files[@]}" -gt 0 ]]; then

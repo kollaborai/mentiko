@@ -46,6 +46,7 @@ import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { pruneInvalidChainBranches } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 
@@ -404,6 +405,24 @@ function sanitizeGeneratedChain(chain: Record<string, unknown>): Record<string, 
 
       return fixed;
     });
+  }
+
+  // Repair branches AFTER agents are finalized (emits/triggers are the branch
+  // vocabulary). LLM-generated chains routinely invent branch events/targets that
+  // no agent backs — those dangling branches fail validateChainBranches and make
+  // the whole chain unsaveable, stranding the task at generation-complete. Drop
+  // only the invalid branches (shared rule set with the validator) so the chain
+  // saves and runs its linear flow instead of being rejected outright.
+  if (sanitized.branches !== undefined) {
+    const pruned = pruneInvalidChainBranches(
+      sanitized.branches,
+      Array.isArray(sanitized.agents) ? (sanitized.agents as Array<Record<string, unknown>>) : [],
+    );
+    if (pruned) {
+      sanitized.branches = pruned;
+    } else {
+      delete sanitized.branches;
+    }
   }
 
   return sanitized;

@@ -5,6 +5,9 @@ import { dirname, join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
+import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
+import { hasDurableAuditedClose } from "@/lib/runs/auto-run";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getLiveSessions } from "@/lib/pty/pty-client";
@@ -58,7 +61,7 @@ interface ReconcileResult {
 // execution chain. The audit helper owns idempotency by run terminal
 // fingerprint; reconcile must not suppress a later terminal audit from a stale
 // completion_audit_run_id alone.
-function shouldAuditCompletedAutoRun(meta: Record<string, unknown>): boolean {
+function shouldAuditCompletedAutoRun(meta: Record<string, unknown>, autoRunEnabled: boolean): boolean {
   const generatedTaskHasExecutionChain =
     !meta.generation_job_id ||
     typeof meta.chain_id === "string" ||
@@ -66,10 +69,30 @@ function shouldAuditCompletedAutoRun(meta: Record<string, unknown>): boolean {
     typeof meta.last_run_chain === "string";
 
   return (
-    meta.auto_run === true &&
+    autoRunEnabled &&
     !!meta.last_run_id &&
     generatedTaskHasExecutionChain
   );
+}
+
+// Audit eligibility must use the SAME auto-run resolution as admission
+// (explicit meta.auto_run, else the workspace default): a workspace-default
+// task carries no explicit flag, so gating on meta.auto_run===true let it
+// execute its chain but never close (ISSUE-006). The workspace default is
+// fs-backed, so cache it per workspace path for the scan.
+function makeAutoRunEnabledResolver(namespaceId: string, orgId: string) {
+  const wsDefaultCache = new Map<string, boolean>();
+  return (issue: { workspace_id?: string | null }, meta: Record<string, unknown>): boolean => {
+    if (typeof meta.auto_run === "boolean") return meta.auto_run;
+    const wsPath = typeof issue.workspace_id === "string" ? issue.workspace_id : "";
+    if (!wsPath) return false;
+    let enabled = wsDefaultCache.get(wsPath);
+    if (enabled === undefined) {
+      enabled = resolveTaskAutoRunDefault({ namespaceId, orgId, workspacePath: wsPath });
+      wsDefaultCache.set(wsPath, enabled);
+    }
+    return enabled;
+  };
 }
 
 // GET /api/tasks/reconcile - sweep tasks with stale "running" status
@@ -92,6 +115,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const failed: Array<{ taskId: string; error: string }> = [];
 
   const issues = taskList(orgId, { status: "all" }, workspaceId, namespaceId);
+  const autoRunEnabledFor = makeAutoRunEnabledResolver(namespaceId, orgId);
 
   // filter to tasks with last_run_status=running in metadata
   const runningTasks = issues.filter((issue) => {
@@ -111,7 +135,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
       !!meta &&
       !!lastRunStatus &&
       TERMINAL_RUN_STATUSES.has(lastRunStatus) &&
-      shouldAuditCompletedAutoRun(meta)
+      shouldAuditCompletedAutoRun(meta, autoRunEnabledFor(issue, meta))
     );
   });
   const issueById = new Map(issues.map((issue) => [issue.id, issue]));
@@ -120,8 +144,34 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     return meta?.lifecycle_phase === "followup_blocked" && stringArray(meta.followup_task_ids).length > 0;
   });
+  // Reopened after an audited close, with the last_run_* evidence wiped: the
+  // terminal filter above needs last_run_status, which the non-execution-run
+  // repair deletes (the reopen-clobbers-close race, ISSUE-007). The durable
+  // completion_audit_* evidence survives the wipe, so re-apply the close here
+  // -- applyCompletionAudit's closeVerdictNotYetClosed path re-closes, restores
+  // the execution metadata, and fires the dependents-only nudge. Tasks the
+  // running/terminal sweeps CAN process are excluded: a fresh terminal run
+  // deserves its own audit verdict, not a re-close on stale evidence.
+  const activeSweepTaskIds = new Set(
+    [...runningTasks, ...terminalAutoRunTasks].map((issue) => issue.id),
+  );
+  const reopenedAuditedCloseTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    if (activeSweepTaskIds.has(issue.id)) return false;
+    const meta = parseMetadata(issue.metadata);
+    return (
+      !!meta &&
+      hasDurableAuditedClose(meta) &&
+      typeof meta.completion_audit_run_id === "string"
+    );
+  });
 
-  if (runningTasks.length === 0 && terminalAutoRunTasks.length === 0 && followupBlockedTasks.length === 0) {
+  if (
+    runningTasks.length === 0 &&
+    terminalAutoRunTasks.length === 0 &&
+    followupBlockedTasks.length === 0 &&
+    reopenedAuditedCloseTasks.length === 0
+  ) {
     return apiSuccess({ reconciled: 0, results: [] });
   }
 
@@ -218,7 +268,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         }
         taskUpdate(orgId, safeId, { metadata: updatedMeta }, namespaceId);
 
-        const autoRun = meta?.auto_run === true;
+        const autoRun = autoRunEnabledFor(issue, meta);
         if (autoRun && TERMINAL_RUN_STATUSES.has(newStatus)) {
           try {
             const lifecycle = await applyExecutionLifecycle({
@@ -459,9 +509,49 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
+  for (const issue of reopenedAuditedCloseTasks) {
+    const meta = parseMetadata(issue.metadata)!;
+    const runId = meta.completion_audit_run_id as string;
+    try {
+      const safeId = validateTaskId(issue.id);
+      const outcome = await applyCompletionAudit({
+        request,
+        namespaceId,
+        orgId,
+        task: issue,
+        audit: {
+          verdict: "close",
+          reason: "Re-applied audited close verdict after a reopen wiped the run evidence (task-reconciler).",
+        },
+        runId,
+        runFingerprint: typeof meta.completion_audit_run_fingerprint === "string"
+          ? meta.completion_audit_run_fingerprint
+          : undefined,
+        workspacePath: typeof issue.workspace_id === "string" ? issue.workspace_id : undefined,
+        metadata: meta,
+      });
+      writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        `task ${safeId} run ${runId}: reclose_${outcome.action}`,
+        "re-applied durable audited close after reopen");
+      results.push({
+        taskId: issue.id,
+        runId,
+        previousStatus: issue.status,
+        newStatus: `reclose_${outcome.action}`,
+        reason: "audited close re-applied after reopen wiped run evidence",
+      });
+    } catch (error) {
+      failed.push({
+        taskId: issue.id,
+        error: (error as Error).message,
+      });
+    }
+  }
+
   return apiSuccess({
     reconciled: results.length,
-    checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length,
+    checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length
+      + reopenedAuditedCloseTasks.length,
     failed: failed.length,
     results,
     errors: failed,

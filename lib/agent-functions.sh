@@ -292,6 +292,15 @@ agent-complete-marker-seen() {
 # UUID that is not an actual transcript filename simply does not match, so a
 # stray UUID in agent output cannot mis-resolve. Emits nothing (degraded, not an
 # error) when unresolvable, so callers fail closed to the durable event file.
+#
+# A capture routinely holds MORE than one UUID: the CLI status bar carries the
+# real transcript/session UUID, but the agent's goal or prompt commonly echoes
+# OTHER UUIDs — a decision_id, a task id — that appear EARLIER in the scrollback.
+# The old `head -1` stopped at the first match, so a decoy UUID with no transcript
+# file ended resolution and the durable AGENT_COMPLETE marker was never read,
+# hanging completion (decision chains especially: decision_id is always a UUID in
+# the prompt). Try every distinct UUID and accept the first that resolves to a
+# real file — decoys have no file and are skipped, matching the comment's promise.
 _agent_transcript_jsonl() {
     local session_name="$1"
 
@@ -301,18 +310,26 @@ _agent_transcript_jsonl() {
         return 0
     fi
 
-    local uuid
-    uuid=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null \
-        | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
-    [[ -z "$uuid" ]] && return 0
+    local profile_file="${MENTIKO_AGENT_PROFILE_PATH:-}"
+    [[ -n "$profile_file" && -f "$profile_file" ]] || return 0
 
-    local root hit
-    for root in "$HOME/.claude/projects" "$HOME/.kollab/projects" "$HOME/.codex/sessions" \
-                "$HOME/.config/opencode" "$HOME/.gemini/antigravity-cli"; do
-        [[ -d "$root" ]] || continue
+    local root
+    root=$(jq -r '.log_path // empty' "$profile_file" 2>/dev/null || true)
+    [[ -n "$root" ]] || return 0
+    root="${root/#\~/$HOME}"
+    root="${root%/}"
+    [[ -d "$root" ]] || return 0
+
+    local capture uuid hit
+    capture=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null)
+
+    while IFS= read -r uuid; do
+        [[ -z "$uuid" ]] && continue
         hit=$(find "$root" -maxdepth 4 -name "*${uuid}*.jsonl" -type f 2>/dev/null | head -1)
         [[ -n "$hit" ]] && { echo "$hit"; return 0; }
-    done
+    done < <(printf '%s\n' "$capture" \
+        | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+        | awk '!seen[$0]++')
     return 0
 }
 

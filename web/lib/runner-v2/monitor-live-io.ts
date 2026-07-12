@@ -5,7 +5,13 @@ import { dirname, join } from "node:path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
-import { classifyDeath, classifyStall, type MonitorDiagnosticEvent } from "@/lib/runner-v2/monitor-diagnostics";
+import {
+  classifyContextExhaustion,
+  classifyDeath,
+  classifyStall,
+  detectContextExhaustion,
+  type MonitorDiagnosticEvent,
+} from "@/lib/runner-v2/monitor-diagnostics";
 import {
   captureAssertsAgentComplete,
   captureHash,
@@ -146,6 +152,11 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         captureHash: captureHash(capture, 20),
         completionEventPresent: Boolean(eventFile),
         latched,
+        // Reuse the same 20-line capture: an agent wedged on a context-window-limit
+        // error shows it as its stuck tail every tick. Never override a real latch —
+        // the reducer checks latched first, so a completed-then-errored agent still
+        // completes.
+        contextExhausted: !latched && detectContextExhaustion(capture),
       };
     },
     sendNudge: async (session, message) => {
@@ -204,6 +215,25 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
       updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
+    },
+    onContextExhausted: async (session) => {
+      const verdict = classifyContextExhaustion({
+        runId: context.runId,
+        agentId: context.agentId,
+        reason:
+          "monitor: agent CLI exhausted its model context window (repeated context-limit error); " +
+          "the run cannot generate output to complete and its wedged session was torn down",
+        timestamp: timestamp(),
+      });
+      // FAILED (not blocked): a context-full agent is unresumable, so surface it in
+      // Runs/Activity as failed with a clear reason, not a resumable stall.
+      updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
+      updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
+      writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
+      // Tear the session down: a stall leaves the pty for a human to inspect, but a
+      // context-exhausted session can never make progress and only holds dead weight.
+      await pty.remove(session).catch(() => {});
+      console.log(`monitor: torn down context-exhausted session ${session} (run ${context.runId} failed)`);
     },
     sleep: (seconds) => sleepMs(seconds * 1000),
     loadState: loadMonitorState,
@@ -286,6 +316,33 @@ async function agentCompleteMarkerDurable(
   return false;
 }
 
+const TRANSCRIPT_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Pick a session's transcript JSONL from its screen capture. A capture routinely
+ * holds MORE than one UUID-shaped string: the CLI status bar carries the real
+ * transcript/session UUID, but the agent's goal or prompt commonly echoes OTHER
+ * UUIDs -- a decision_id, a task id -- that appear EARLIER in the scrollback.
+ * Matching only the first hit resolves to a decoy UUID with no transcript file,
+ * so the durable AGENT_COMPLETE marker is never read and the monitor nudges to a
+ * false stall until it escalates the run to blocked (the decision-chain hang:
+ * decision_id is always a UUID in the prompt, so it wins the first-match every
+ * time). Try every distinct UUID in capture order and accept the first that
+ * `resolve` maps to a real file -- decoys resolve to "" and are skipped, never
+ * guessed. Pure + injected `resolve` so it is unit-tested without the fs/pty.
+ */
+export function selectTranscriptFromCapture(
+  capture: string,
+  resolve: (uuid: string) => string,
+): string {
+  const uuids = [...new Set((capture.match(TRANSCRIPT_UUID_RE) ?? []).map((u) => u.toLowerCase()))];
+  for (const uuid of uuids) {
+    const hit = resolve(uuid);
+    if (hit) return hit;
+  }
+  return "";
+}
+
 async function resolveTranscriptJsonl(
   sessionName: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -294,20 +351,22 @@ async function resolveTranscriptJsonl(
   if (explicit && existsSync(explicit)) return explicit;
 
   const capture = await pty.capture(sessionName, positiveInt(env.MENTIKO_TRANSCRIPT_CAPTURE_LINES, 2000)).catch(() => "");
-  const uuid = capture.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
-  if (!uuid) return "";
-  const roots = [
-    join(homedir(), ".claude", "projects"),
-    join(homedir(), ".kollab", "projects"),
-    join(homedir(), ".codex", "sessions"),
-    join(homedir(), ".config", "opencode"),
-    join(homedir(), ".gemini", "antigravity-cli"),
-  ];
-  for (const root of roots) {
-    const hit = findJsonl(root, uuid, 4);
-    if (hit) return hit;
+  const root = transcriptRootFromProfile(env.MENTIKO_AGENT_PROFILE_PATH);
+  if (!root) return "";
+  return selectTranscriptFromCapture(capture, (uuid) => {
+    return findJsonl(root, uuid, 4);
+  });
+}
+
+export function transcriptRootFromProfile(profilePath: string | undefined): string {
+  if (!profilePath || !existsSync(profilePath)) return "";
+  try {
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as { log_path?: unknown };
+    if (typeof profile.log_path !== "string" || !profile.log_path.trim()) return "";
+    return profile.log_path.trim().replace(/^~(?=\/|$)/, homedir()).replace(/\/$/, "");
+  } catch {
+    return "";
   }
-  return "";
 }
 
 function assistantTexts(record: unknown): string[] {

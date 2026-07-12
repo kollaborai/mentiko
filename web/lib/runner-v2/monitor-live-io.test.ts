@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { createLiveMonitorIO } from "@/lib/runner-v2/monitor-live-io";
+import { createLiveMonitorIO, selectTranscriptFromCapture, transcriptRootFromProfile } from "@/lib/runner-v2/monitor-live-io";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 
@@ -383,3 +383,56 @@ describe("monitor-v2 live IO", () => {
 function readDirOne(dir: string): string {
   return jest.requireActual("node:fs").readdirSync(dir)[0];
 }
+
+describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker resolution)", () => {
+  const REAL = "9c775526-1481-48dd-99cb-bc8da80d47bc";
+  const DECOY = "c11fb05f-fdf5-43ba-b76c-dd4f28c4d7a0";
+  // Only the real session UUID has a transcript file on disk.
+  const resolve = (uuid: string) => (uuid === REAL ? `/transcripts/${uuid}.jsonl` : "");
+
+  it("skips a decoy UUID that appears FIRST in the capture and resolves the real one", () => {
+    // Reproduces the monitor completion hang: the agent's goal echoes a decision_id
+    // (a UUID) into the scrollback, so it precedes the CLI status-bar session UUID.
+    // First-match resolution picked the decoy (no file) and never found the marker.
+    const capture = [
+      `DECISION_ID: ${DECOY}`,
+      "...agent transcript scroll...",
+      "AGENT_COMPLETE",
+      `bypass permissions on  ${REAL}   104416 tokens`,
+    ].join("\n");
+    expect(selectTranscriptFromCapture(capture, resolve)).toBe(`/transcripts/${REAL}.jsonl`);
+  });
+
+  it("returns '' when no UUID in the capture resolves to a transcript file", () => {
+    expect(selectTranscriptFromCapture(`only ${DECOY} here`, resolve)).toBe("");
+  });
+
+  it("returns '' when the capture has no UUID at all", () => {
+    expect(selectTranscriptFromCapture("no uuids on this screen", resolve)).toBe("");
+  });
+
+  it("is case-insensitive and de-duplicates repeated UUIDs before resolving", () => {
+    const capture = `${REAL.toUpperCase()} ... ${REAL} ... ${REAL}`;
+    const seen: string[] = [];
+    const spy = (uuid: string) => { seen.push(uuid); return `/transcripts/${uuid}.jsonl`; };
+    expect(selectTranscriptFromCapture(capture, spy)).toBe(`/transcripts/${REAL}.jsonl`);
+    expect(seen).toEqual([REAL]); // lowercased + deduped to a single resolve attempt
+  });
+});
+
+describe("transcriptRootFromProfile", () => {
+  it("uses only the selected agent profile log_path", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-profile-log-"));
+    const profile = join(root, "codex.json");
+    writeFileSync(profile, JSON.stringify({ cli: "codex", log_path: join(root, "sessions") }));
+    expect(transcriptRootFromProfile(profile)).toBe(join(root, "sessions"));
+  });
+
+  it("fails closed when the selected profile has no configured log_path", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-profile-log-"));
+    const profile = join(root, "custom.json");
+    writeFileSync(profile, JSON.stringify({ cli: "custom-model" }));
+    expect(transcriptRootFromProfile(profile)).toBe("");
+    expect(transcriptRootFromProfile(undefined)).toBe("");
+  });
+});

@@ -357,15 +357,19 @@ human decision gate. Everything else is momentum. Concretely:
 - decision-type tasks are passive gates — EXCLUDED from the chain pipeline (canAdmitAutoRun);
   their Decision entity advances instead (below).
 
-decisions auto-advance too, server-side + headless (lib/decisions/decision-auto-advance.ts,
-driven from app/api/jobs/[id]/complete after each phase; idempotency-guarded so a browser tab and
-the server driver never double-generate):
+decisions auto-advance too, server-side + headless (lib/decisions/decision-auto-advance.ts's
+advanceDecisionAfterPhase, driven from BOTH phase-completion paths so it fires no matter how a
+phase finishes: app/api/jobs/[id]/complete (job-based phases) AND app/api/decisions/[id]/import
+(the `mentiko decision import` path that decision CHAIN runs use — this is the one that actually
+completes guided research/options/plan runs). idempotency-guarded — single-flight nudge ledger +
+guarded resolve — so a browser tab and either server driver never double-generate or double-resolve):
   research done (briefed) → auto-generate the DECK (round-1 questions)
   deck ready              → STOP: human answers the tradeoff cards
   options ready (round 2) → STOP: human SELECTS an option   ← the one and only gate
   plan ready (round 3)    → auto-resolve into tasks (no separate "Approve" click)
 so a person's single action — the selection — cascades straight through to created tasks, which
-then auto-run themselves.
+then auto-run themselves. (If you wire advanceDecisionAfterPhase into a NEW completion path, keep
+it after applyDecisionRunResult and pass the returned decision — see both sites above.)
 
 robustness (why it stays unjammed):
 - crashed/orphaned runs are reaped: a running/pending run with no agent liveness (heartbeat /

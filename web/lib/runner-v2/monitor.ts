@@ -16,7 +16,8 @@ export type MonitorExitReason =
   | "died"
   | "complete"
   | "stalled-blocked"
-  | "stalled-escalate";
+  | "stalled-escalate"
+  | "context-exhausted";
 
 export interface MonitorDriverIO {
   // transport_has_session
@@ -34,6 +35,9 @@ export interface MonitorDriverIO {
   onDied(session: string): Promise<void>;
   // stale != complete: monitor-agent-stalled — surfaces BLOCKED, never emits success.
   onStalled(session: string, kind: "blocked" | "escalate", count: number): Promise<void>;
+  // context-window-limit wedge (debounced) — FAILS the run with a clear reason AND
+  // tears down the unresumable session (a context-full agent is pure dead weight).
+  onContextExhausted(session: string): Promise<void>;
   sleep(seconds: number): Promise<void>;
   loadState(session: string): MonitorState;
   saveState(session: string, state: MonitorState): void;
@@ -54,6 +58,7 @@ const NO_OBSERVATION: Omit<MonitorObservation, "sessionAlive"> = {
   captureHash: "",
   completionEventPresent: false,
   latched: false,
+  contextExhausted: false,
 };
 
 export async function runChainMonitor(
@@ -110,6 +115,10 @@ export async function runChainMonitor(
         await io.onStalled(session, "escalate", state.nudgeCount);
         io.clearState(session);
         return { reason: "stalled-escalate", ticks, finalState: state };
+      case "context-exhausted":
+        await io.onContextExhausted(session);
+        io.clearState(session);
+        return { reason: "context-exhausted", ticks, finalState: state };
       case "nudge-finish":
       case "nudge-stale":
         await io.sendNudge(session, tick.action.message);

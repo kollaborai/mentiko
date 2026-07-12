@@ -111,6 +111,56 @@ function collectBranchTargets(target: unknown): string[] {
   return targets;
 }
 
+/**
+ * Return the chain's `branches` with every branch that would FAIL
+ * validateChainBranches removed — a dangling key (an event no agent emits or
+ * consumes) or a branch whose targets reference a missing agent. Used as a repair
+ * safety net for LLM-generated chains (auto-run's sanitizeGeneratedChain): the
+ * generator routinely invents branch events/targets that no agent backs, which
+ * makes the whole chain unsaveable and silently strands the task. Dropping only
+ * the invalid branches leaves the linear agent flow (triggers) intact and lets the
+ * chain run, rather than rejecting an otherwise-usable chain. Kept HERE, next to
+ * validateChainBranches, so repair and validation share one rule set and cannot
+ * drift. Returns undefined when no branches survive (or none were present) so the
+ * caller can omit the key entirely.
+ */
+export function pruneInvalidChainBranches(
+  branches: unknown,
+  agents: Array<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  if (!branches || typeof branches !== "object" || Array.isArray(branches)) return undefined;
+
+  const agentIds = new Set(
+    agents
+      .map((agent) => (typeof agent.id === "string" ? agent.id : typeof agent.$ref === "string" ? agent.$ref : ""))
+      .filter(Boolean),
+  );
+  const emittedEvents = new Set(
+    agents.map((agent) => (typeof agent.emits === "string" ? agent.emits : "")).filter(Boolean),
+  );
+  const consumedEvents = new Set(
+    agents.flatMap((agent) =>
+      Array.isArray(agent.triggers)
+        ? (agent.triggers as unknown[]).filter((t): t is string => typeof t === "string")
+        : [],
+    ),
+  );
+  const knownEvents = new Set([...emittedEvents, ...consumedEvents]);
+
+  const kept: Record<string, unknown> = {};
+  for (const [eventName, target] of Object.entries(branches as Record<string, unknown>)) {
+    if (emittedEvents.size > 0 && !knownEvents.has(eventName)) continue; // dangling key
+    const targets = collectBranchTargets(target);
+    const allTargetsResolve = targets.every(
+      (targetId) => isTerminalBranchTarget(targetId) || agentIds.has(targetId),
+    );
+    if (!allTargetsResolve) continue; // references a missing agent
+    kept[eventName] = target;
+  }
+
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 function isTerminalBranchTarget(target: string): boolean {
   return target === "stop";
 }

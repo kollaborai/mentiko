@@ -443,6 +443,74 @@ describe("getAutoRunCandidates", () => {
     );
   });
 
+  it("canAdmitAutoRun rejects an audited-closed execution even when last_run_* evidence was wiped", () => {
+    // The audit-run launch can clobber last_run_id, and the non-execution
+    // repair then deletes every last_run_* field -- leaving the
+    // already-completed rule blind. The completion_audit_* fields survive that
+    // wipe and must keep the finished chain terminal (the 2026-07-11
+    // close -> re-run -> re-audit loop on TASK-264/TASK-152/BUG-022).
+    const task = {
+      id: "TASK-264",
+      title: "Audited closed, evidence wiped",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "property-photo-sourcing-scope-audit",
+        last_audit_verdict: "close",
+        completion_audit_apply_status: "applied",
+        completion_audit_run_id: "run-exec",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission).toEqual(
+      expect.objectContaining({ admit: false, action: "already_completed" }),
+    );
+  });
+
+  it("canAdmitAutoRun rejects while a close verdict is pending_close (auditor re-close in flight)", () => {
+    const task = {
+      id: "TASK-095",
+      title: "Close verdict not yet landed",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_audit_verdict: "close",
+        completion_audit_apply_status: "pending_close",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission).toEqual(
+      expect.objectContaining({ admit: false, action: "already_completed" }),
+    );
+  });
+
+  it("canAdmitAutoRun does not treat a retry verdict as terminal", () => {
+    const task = {
+      id: "TASK-059",
+      title: "Retry verdict must re-admit",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_audit_verdict: "retry",
+        completion_audit_apply_status: "applied",
+        last_run_status: "retry_requested",
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission.action).not.toBe("already_completed");
+  });
+
   it("excludes a task paused via auto_run_paused_reason from auto-run candidates", () => {
     mockTaskList.mockReturnValue([
       {

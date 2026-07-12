@@ -11,6 +11,7 @@ import { internalApiUrl } from "@/lib/auth/internal-web-origin";
 import { applyDecisionRunResult, type DecisionRunPhase } from "@/lib/decisions/decision-run-results";
 import { advanceDecisionAfterPhase } from "@/lib/decisions/decision-auto-advance";
 import { processTaskGenerationResult } from "@/lib/tasks/generated-task-import";
+import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 import { enforceDeliveryGate } from "@/lib/tasks/completion-audit-delivery-gate";
@@ -311,10 +312,19 @@ export const POST = withErrorHandling(async (
           }, namespaceId);
         }
 
+        // Same auto-run resolution as the admission gate (explicit flag, else
+        // workspace default): a workspace-default task has no meta.auto_run,
+        // and gating on ===true stalled its recommend->generate continuation
+        // until the 60s poller (ISSUE-006 sibling).
         const shouldContinueAutoRun =
           updatedJob.status === "complete" &&
           (updatedJob.type === "recommend" || updatedJob.type === "generate") &&
-          existing.auto_run === true;
+          resolveTaskAutoRunDefault({
+            namespaceId,
+            orgId,
+            workspacePath: typeof task.workspace_id === "string" ? task.workspace_id : undefined,
+            explicitAutoRun: typeof existing.auto_run === "boolean" ? existing.auto_run : undefined,
+          });
 
         if (shouldContinueAutoRun) {
           await triggerAutoRunContinuation(request, namespaceId, orgId, updatedJob.taskId);

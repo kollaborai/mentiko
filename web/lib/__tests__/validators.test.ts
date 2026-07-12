@@ -1,4 +1,4 @@
-import { validateChain } from "../validators";
+import { validateChain, pruneInvalidChainBranches } from "../validators";
 
 function chainWithTimeout(timeout: number) {
   return {
@@ -163,5 +163,63 @@ describe("validateChain", () => {
     };
 
     expect(validateChain(chain).valid).toBe(true);
+  });
+});
+
+describe("pruneInvalidChainBranches — repair safety net for generated chains", () => {
+  const agents = [
+    { id: "architect", name: "Architect", triggers: ["chain_start"], emits: "design-done" },
+    { id: "worker", name: "Worker", triggers: ["design-done"], emits: "work-done" },
+  ];
+
+  it("drops a branch whose key no agent emits or consumes (dangling key)", () => {
+    const pruned = pruneInvalidChainBranches({ "made-up-event": "worker" }, agents);
+    expect(pruned).toBeUndefined(); // nothing valid survives -> caller omits branches
+  });
+
+  it("drops a branch that targets a missing agent, keeps a valid sibling", () => {
+    const pruned = pruneInvalidChainBranches(
+      {
+        "design-done": { fan_out: ["worker"] },            // valid: real event, real target
+        "work-done": { fan_out: ["worker", "ghost-agent"] }, // invalid target
+      },
+      agents,
+    );
+    expect(pruned).toEqual({ "design-done": { fan_out: ["worker"] } });
+  });
+
+  it("keeps a valid branch (real event, terminal target) untouched", () => {
+    const pruned = pruneInvalidChainBranches({ "work-done": "stop" }, agents);
+    expect(pruned).toEqual({ "work-done": "stop" });
+  });
+
+  it("reproduces the auto-run stall: a chain that FAILS validation passes after pruning", () => {
+    // The exact shape that stranded TASK-264: branch events + a target agent the
+    // generator invented that no agent backs.
+    const chain = {
+      name: "property-photo-sourcing-scope-audit",
+      description: "audit",
+      version: "1.0.0",
+      config: {},
+      agents: [
+        { id: "extractor", name: "Extractor", triggers: ["chain_start"], emits: "data-extracted" },
+        { id: "documenter", name: "Documenter", triggers: ["data-extracted"], emits: "requirements-documented" },
+        { id: "verifier", name: "Verifier", triggers: ["requirements-documented"], emits: "verified" },
+      ],
+      branches: {
+        "revision-needed": "documenter",     // dangling: no agent emits/consumes it
+        "audit-complete": "manual-complete",  // dangling key + missing target agent
+      },
+    };
+    expect(validateChain(chain).valid).toBe(false); // as generated -> unsaveable
+
+    const repaired = { ...chain, branches: pruneInvalidChainBranches(chain.branches, chain.agents) };
+    if (repaired.branches === undefined) delete (repaired as { branches?: unknown }).branches;
+    expect(validateChain(repaired).valid).toBe(true); // after pruning -> saves + runs
+  });
+
+  it("returns undefined for absent or non-object branches", () => {
+    expect(pruneInvalidChainBranches(undefined, agents)).toBeUndefined();
+    expect(pruneInvalidChainBranches([], agents)).toBeUndefined();
   });
 });

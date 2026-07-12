@@ -786,8 +786,6 @@ if [[ -n "$RUN_ID" ]]; then
             _log_dir=""
             if [[ -n "$_agent_profile_file" && -f "$_agent_profile_file" ]]; then
                 _log_dir=$(resolve_log_dir "$_agent_profile_file" "$_try_path") || _log_dir=""
-            else
-                _log_dir=$(resolve_log_dir "claude" "$_try_path") || _log_dir=""
             fi
 
             # empty _log_dir is handled here: an empty string fails `-d`, so we

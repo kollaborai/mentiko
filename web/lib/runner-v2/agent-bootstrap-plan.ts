@@ -96,6 +96,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     ORG_ID: input.orgId || input.env?.ORG_ID || "default",
     MENTIKO_AGENT_ID: agent.id || "",
     MENTIKO_AGENT_EMITS: agent.emits || "",
+    MENTIKO_AGENT_PROFILE_PATH: profile.path || "",
     MENTIKO_CODE_ROOT: config.codeRoot,
     MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",

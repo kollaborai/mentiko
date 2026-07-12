@@ -35,9 +35,19 @@ jest.mock("@/lib/tasks/task-outcome-audit", () => ({
   startTaskOutcomeAudit: (...args: unknown[]) => mockStartTaskOutcomeAudit(...args),
 }));
 
+const mockApplyCompletionAudit = jest.fn().mockResolvedValue({ action: "closed" });
+jest.mock("@/lib/tasks/completion-audit-apply", () => ({
+  applyCompletionAudit: (...args: unknown[]) => mockApplyCompletionAudit(...args),
+}));
+
 const mockCurrentRunTerminalFingerprint = jest.fn();
 jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   currentRunTerminalFingerprint: (...args: unknown[]) => mockCurrentRunTerminalFingerprint(...args),
+}));
+
+const mockResolveTaskAutoRunDefault = jest.fn();
+jest.mock("@/lib/tasks/task-auto-run-default", () => ({
+  resolveTaskAutoRunDefault: (...args: unknown[]) => mockResolveTaskAutoRunDefault(...args),
 }));
 
 // scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
@@ -415,6 +425,87 @@ describe("GET /api/tasks/reconcile", () => {
       }),
     );
     expect(mockTaskClose).not.toHaveBeenCalled();
+  });
+
+  it("audits a workspace-default auto-run task that carries no explicit auto_run flag", async () => {
+    // ISSUE-006: decision-generated tasks inherit auto-run from the workspace
+    // default and have no meta.auto_run — they must still be audit-eligible.
+    mockResolveTaskAutoRunDefault.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-264",
+      status: "completed",
+      chainId: "property-photo-sourcing-scope-audit",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-264",
+        title: "Audit photo sourcing scope",
+        status: "open",
+        workspace_id: "/Users/example/realtor-website",
+        metadata: {
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+          last_run_outcome: "complete",
+          last_run_decision_required: false,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-264",
+          runId: "run-exec",
+          newStatus: "audit_started",
+          reason: "completion audit triggered",
+        }),
+      ],
+    });
+    expect(mockResolveTaskAutoRunDefault).toHaveBeenCalledWith(
+      expect.objectContaining({ workspacePath: "/Users/example/realtor-website" }),
+    );
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "TASK-264", sourceRunId: "run-exec" }),
+    );
+  });
+
+  it("does not audit a completed task when neither the explicit flag nor the workspace default enables auto-run", async () => {
+    mockResolveTaskAutoRunDefault.mockReturnValue(false);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-264",
+      status: "completed",
+      chainId: "property-photo-sourcing-scope-audit",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-264",
+        title: "Audit photo sourcing scope",
+        status: "open",
+        workspace_id: "/Users/example/realtor-website",
+        metadata: {
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+          last_run_decision_required: false,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ reconciled: 0, results: [] });
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
   });
 
   it("does not close a completed analysis run while a generated chain is pending", async () => {
@@ -1209,5 +1300,122 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
+  });
+
+  it("re-applies an audited close on a reopened task whose run evidence was wiped", async () => {
+    // ISSUE-007 aftermath: the reopen actor wipes last_run_*, so the terminal
+    // filter can't see the task; the durable completion_audit_* evidence must
+    // drive a re-close (which restores metadata + fires the dependents nudge).
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-264",
+        title: "Audit photo sourcing scope",
+        status: "open",
+        workspace_id: "/Users/example/realtor-website",
+        metadata: {
+          chain_id: "property-photo-sourcing-scope-audit",
+          last_audit_verdict: "close",
+          completion_audit_run_id: "run-exec",
+          completion_audit_run_fingerprint: "completed:2026-07-11T20:26:38.669Z",
+          completion_audit_apply_status: "applied",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-264",
+          runId: "run-exec",
+          newStatus: "reclose_closed",
+          reason: "audited close re-applied after reopen wiped run evidence",
+        }),
+      ],
+    });
+    expect(mockApplyCompletionAudit).toHaveBeenCalledTimes(1);
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespaceId: "default",
+        orgId: "default",
+        runId: "run-exec",
+        runFingerprint: "completed:2026-07-11T20:26:38.669Z",
+        workspacePath: "/Users/example/realtor-website",
+        audit: expect.objectContaining({ verdict: "close" }),
+        task: expect.objectContaining({ id: "TASK-264" }),
+      }),
+    );
+  });
+
+  it("does not re-close when the durable audit verdict is not close", async () => {
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-264",
+        title: "Audit photo sourcing scope",
+        status: "open",
+        metadata: {
+          chain_id: "property-photo-sourcing-scope-audit",
+          last_audit_verdict: "retry",
+          completion_audit_run_id: "run-exec",
+          completion_audit_apply_status: "applied",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ reconciled: 0, results: [] });
+    expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
+  });
+
+  it("leaves a task with intact terminal run evidence to the terminal sweep instead of re-closing", async () => {
+    // A fresh terminal run deserves its own audit verdict; re-closing on the
+    // stale completion_audit_* evidence would clobber the new run's outcome.
+    mockResolveTaskAutoRunDefault.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec-2",
+      taskId: "TASK-152",
+      status: "completed",
+      chainId: "ai-summary-implementation",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-152",
+        title: "Implement AI summary",
+        status: "open",
+        workspace_id: "/Users/example/realtor-website",
+        metadata: {
+          chain_id: "ai-summary-implementation",
+          last_run_id: "run-exec-2",
+          last_run_status: "completed",
+          last_audit_verdict: "close",
+          completion_audit_run_id: "run-exec-1",
+          completion_audit_apply_status: "applied",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
+    expect(body.data).toMatchObject({
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-152",
+          runId: "run-exec-2",
+          newStatus: "audit_started",
+        }),
+      ],
+    });
   });
 });

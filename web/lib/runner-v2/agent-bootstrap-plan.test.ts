@@ -238,6 +238,7 @@ describe("runner-v2 agent bootstrap plan", () => {
 
     expect(plan.profileId).toBe("workspace-profile");
     expect(plan.profilePath).toBe(join(profilesDir, "workspace-profile.json"));
+    expect(plan.runContextExports.MENTIKO_AGENT_PROFILE_PATH).toBe(join(profilesDir, "workspace-profile.json"));
   });
 
   it("fails when a requested profile is missing and no valid fallback exists", () => {

@@ -1,7 +1,9 @@
 import {
   buildMonitorDiagnosticEvent,
+  classifyContextExhaustion,
   classifyDeath,
   classifyStall,
+  detectContextExhaustion,
   MONITOR_DIAGNOSTIC_SOURCE,
 } from "@/lib/runner-v2/monitor-diagnostics";
 
@@ -63,5 +65,40 @@ describe("monitor diagnostics — dead != succeeded, stale != complete", () => {
       expect(v.diagnostic.source).toBe("monitor");
       expect(v.diagnostic.source).not.toBe("a");
     }
+  });
+});
+
+describe("ISSUE-008 — context-window exhaustion detection", () => {
+  it("detects the API-level context-window-limit error strings the CLIs surface", () => {
+    for (const capture of [
+      "API Error: The model has reached its context window limit",
+      "prompt is too long: 202315 tokens > 200000 maximum",
+      "openai.BadRequestError: context_length_exceeded",
+      "Error: input length and `max_tokens` exceed context limit",
+      "⎿  API Error (400): the maximum context length for this model was reached",
+    ]) {
+      expect(detectContextExhaustion(capture)).toBe(true);
+    }
+  });
+
+  it("does NOT flag an agent that merely mentions the concept in normal working output", () => {
+    for (const capture of [
+      "Editing monitor.ts to guard the context window limit debounce path",
+      "The chain ran and produced 23 SVG files; no errors.",
+      "TODO: document how the context window is bounded for research agents",
+      "",
+    ]) {
+      expect(detectContextExhaustion(capture)).toBe(false);
+    }
+  });
+
+  it("classifies context exhaustion as FAILED with the agent-context-exhausted diagnostic", () => {
+    const v = classifyContextExhaustion({ runId: "run-9", agentId: "decision-researcher", reason: "ctx full", timestamp: TS });
+    expect(v.runStatus).toBe("failed");
+    expect(v.agentStatus).toBe("failed");
+    expect(v.diagnostic.event).toBe("agent-context-exhausted");
+    // still monitor-sourced so it can never route forward as a success handoff
+    expect(v.diagnostic.source).toBe("monitor");
+    expect(v.diagnostic.source).not.toBe("decision-researcher");
   });
 });

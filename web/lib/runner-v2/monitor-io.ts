@@ -69,6 +69,9 @@ export function loadMonitorState(session: string, dir: string = MONITOR_STATE_DI
     // echo grace is a within-run signal; the shell keeps it in a local, so a
     // fresh process starts at 0 (a restart cannot be mid-echo).
     nudgeEchoGrace: 0,
+    // context-exhaustion streak is likewise a within-run debounce: a restart
+    // re-observes and rebuilds it in a couple of ticks (the wedge is persistent).
+    contextExhaustedStreak: 0,
   };
 }
 

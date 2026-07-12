@@ -23,17 +23,18 @@ function tempDir() {
 describe("monitor-io — verifiable adapter core", () => {
   it("round-trips durable state and, on restart, preserves the nudge budget", () => {
     const dir = tempDir();
-    saveMonitorState("sess", { prevHash: "abc", staleCount: 2, nudgeCount: 3, nudgeEchoGrace: 5 }, dir);
+    saveMonitorState("sess", { prevHash: "abc", staleCount: 2, nudgeCount: 3, nudgeEchoGrace: 5, contextExhaustedStreak: 4 }, dir);
 
     // a fresh process (restart) re-loads from disk: prevHash/stale/nudges survive,
-    // echo-grace resets to 0 (a restart cannot be mid-echo).
+    // echo-grace and context-exhaustion streak reset to 0 (a restart cannot be
+    // mid-echo, and the persistent wedge rebuilds its streak in a couple ticks).
     const reloaded = loadMonitorState("sess", dir);
-    expect(reloaded).toEqual({ prevHash: "abc", staleCount: 2, nudgeCount: 3, nudgeEchoGrace: 0 });
+    expect(reloaded).toEqual({ prevHash: "abc", staleCount: 2, nudgeCount: 3, nudgeEchoGrace: 0, contextExhaustedStreak: 0 });
   });
 
   it("clears state files on terminal exit", () => {
     const dir = tempDir();
-    saveMonitorState("sess", { prevHash: "abc", staleCount: 1, nudgeCount: 1, nudgeEchoGrace: 0 }, dir);
+    saveMonitorState("sess", { prevHash: "abc", staleCount: 1, nudgeCount: 1, nudgeEchoGrace: 0, contextExhaustedStreak: 0 }, dir);
     expect(existsSync(monitorStatePaths("sess", dir).state)).toBe(true);
     clearMonitorState("sess", dir);
     expect(existsSync(monitorStatePaths("sess", dir).state)).toBe(false);

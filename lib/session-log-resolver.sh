@@ -7,21 +7,6 @@
 #   find_conversation_files <log_dir> <started_at_epoch> [cli]
 
 # -----------------------------------------------------------------------
-# default log paths per CLI (fallback when profile has no log_path)
-# mirrors provider-bundles.ts
-# -----------------------------------------------------------------------
-_default_log_path() {
-    case "$1" in
-        claude|claude-code) echo "$HOME/.claude/projects/" ;;
-        codex)              echo "$HOME/.codex/sessions/" ;;
-        opencode)           echo "$HOME/.config/opencode/" ;;
-        kollab*)            echo "$HOME/.kollab/projects/" ;;
-        agy|antigravity)    echo "$HOME/.gemini/antigravity-cli/" ;;
-        *)                  echo "" ;;
-    esac
-}
-
-# -----------------------------------------------------------------------
 # encode cwd into CLI-specific slug
 # -----------------------------------------------------------------------
 encode_cwd_slug() {
@@ -73,11 +58,8 @@ resolve_log_dir() {
 
     [[ -z "$cli" ]] && cli="claude"
 
-    if [[ -z "$log_path" ]]; then
-        log_path=$(_default_log_path "$cli")
-    fi
-
-    # unknown CLI with no explicit log_path: emit nothing, succeed (degraded capture)
+    # Transcript storage is an agent-profile contract. Never guess another
+    # provider's directory from the CLI name; missing config degrades capture.
     [[ -z "$log_path" ]] && return 0
 
     log_path="${log_path/#\~/$HOME}"

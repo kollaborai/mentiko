@@ -11,6 +11,7 @@ const NO_OBS: Omit<MonitorObservation, "sessionAlive"> = {
   captureHash: "",
   completionEventPresent: false,
   latched: false,
+  contextExhausted: false,
 };
 
 function scriptedIO(ticks: ScriptedTick[], initial?: Partial<MonitorState>) {
@@ -19,8 +20,9 @@ function scriptedIO(ticks: ScriptedTick[], initial?: Partial<MonitorState>) {
     complete: 0,
     died: 0,
     stalled: [] as Array<{ kind: string; count: number }>,
+    contextExhausted: 0,
   };
-  let state: MonitorState = { prevHash: "", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, ...initial };
+  let state: MonitorState = { prevHash: "", staleCount: 0, nudgeCount: 0, nudgeEchoGrace: 0, contextExhaustedStreak: 0, ...initial };
   let idx = -1; // -1 during the pre-loop session-wait check; advances on each sleep
 
   const io: MonitorDriverIO = {
@@ -30,6 +32,7 @@ function scriptedIO(ticks: ScriptedTick[], initial?: Partial<MonitorState>) {
     onComplete: async () => { calls.complete++; },
     onDied: async () => { calls.died++; },
     onStalled: async (_s, kind, count) => { calls.stalled.push({ kind, count }); },
+    onContextExhausted: async () => { calls.contextExhausted++; },
     sleep: async () => { idx++; },
     loadState: () => state,
     saveState: (_s, st) => { state = st; },
@@ -70,6 +73,30 @@ describe("runChainMonitor — driver", () => {
     expect(res.reason).toBe("complete");
     expect(calls.died).toBe(0);
     expect(calls.stalled).toHaveLength(0);
+  });
+
+  it("ISSUE-008: a context-exhausted agent is torn down after the debounce, not nudged forever", async () => {
+    const { io, calls } = scriptedIO([
+      { alive: true, obs: { captureHash: "err", contextExhausted: true } }, // streak 1 — below threshold
+      { alive: true, obs: { captureHash: "err", contextExhausted: true } }, // streak 2 — terminal
+    ]);
+    const res = await runChainMonitor("s", io, {}, 0);
+    expect(res.reason).toBe("context-exhausted");
+    expect(calls.contextExhausted).toBe(1);
+    expect(calls.nudges).toHaveLength(0); // never burned the nudge budget on a corpse
+    expect(calls.stalled).toHaveLength(0);
+    expect(calls.complete).toBe(0);
+  });
+
+  it("ISSUE-008: a one-off context error the agent recovers from is NOT terminal", async () => {
+    const { io, calls } = scriptedIO([
+      { alive: true, obs: { captureHash: "err", contextExhausted: true } },  // streak 1
+      { alive: true, obs: { captureHash: "h2" } },                            // recovered -> streak resets
+      { alive: true, obs: { captureHash: "h3", latched: true } },             // completes normally
+    ]);
+    const res = await runChainMonitor("s", io, {}, 0);
+    expect(res.reason).toBe("complete");
+    expect(calls.contextExhausted).toBe(0);
   });
 
   it("escalates a genuinely idle agent to BLOCKED (stale != complete), never completing it", async () => {
