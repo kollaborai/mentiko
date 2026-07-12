@@ -6,6 +6,7 @@ import Link from "next/link";
 import { signIn, isMockOAuth, authClient } from "@/lib/auth/auth-client";
 import { ONBOARDING_DISMISSED_KEY, OPEN_WELCOME_PANEL_KEY } from "@/lib/system/onboarding-storage";
 import { LiquidMetalBorder } from "@/components/ui/liquid-metal-border";
+import { EyeFilled, EyeSlashFilled } from "@aliimam/icons";
 
 export default function LoginPage() {
   return (
@@ -25,6 +26,7 @@ function LoginForm() {
   const emailParam = searchParams.get("email") || "";
   const [email, setEmail] = useState(emailParam);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
@@ -171,18 +173,34 @@ function LoginForm() {
             className="w-full bg-background rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
             disabled={loading}
           />
-          <input
-            ref={passwordRef}
-            name="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onInput={(e) => setPassword(e.currentTarget.value)}
-            placeholder="Password"
-            autoComplete="current-password"
-            className="w-full bg-background rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
-            disabled={loading}
-          />
+          <div className="relative">
+            <input
+              ref={passwordRef}
+              name="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onInput={(e) => setPassword(e.currentTarget.value)}
+              placeholder="Password"
+              autoComplete="current-password"
+              className="w-full bg-background rounded-md px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground"
+              disabled={loading}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((visible) => !visible)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+              className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50"
+              disabled={loading}
+            >
+              {showPassword ? (
+                <EyeSlashFilled className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <EyeFilled className="h-4 w-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
 
           {error && (
             <p className="text-xs text-red-400 bg-red-500/10 rounded px-2 py-1">
