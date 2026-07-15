@@ -15,10 +15,6 @@ import { DocumentFilled, SearchNormalFilled, SettingsFilled, FilterFilled } from
 import { FloatingFileSidebar } from "./floating-sidebar";
 
 const DEFAULT_SIDEBAR_W = 240;
-const WRAP_DEFAULT_WORKSPACES = new Set([
-  "/Users/malmazan/.mentiko/namespaces/default/workspace/ambient-fs",
-  "/Users/malmazan/.mentiko/namespaces/default/workspace/mentiko",
-]);
 
 function SidebarIcon({
   active,
@@ -51,8 +47,6 @@ export function CodeEditorClient() {
   const toggleSearchPanel = useEditorStore((s) => s.toggleSearchPanel);
   const sidebarView = useEditorStore((s) => s.sidebarView);
   const setSidebarView = useEditorStore((s) => s.setSidebarView);
-  const editorConfig = useEditorStore((s) => s.editorConfig);
-  const updateEditorConfig = useEditorStore((s) => s.updateEditorConfig);
   const { workspacePath } = useWorkspace();
   const [configRoot, setConfigRoot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,12 +71,6 @@ export function CodeEditorClient() {
   useEffect(() => {
     if (projectRoot) setTreeWorkspacePath(projectRoot);
   }, [projectRoot, setTreeWorkspacePath]);
-
-  useEffect(() => {
-    if (projectRoot && WRAP_DEFAULT_WORKSPACES.has(projectRoot) && editorConfig.wordWrap === "off") {
-      updateEditorConfig({ wordWrap: "on" });
-    }
-  }, [editorConfig.wordWrap, projectRoot, updateEditorConfig]);
 
   // cmd+p quick open, cmd+shift+f search
   useEffect(() => {

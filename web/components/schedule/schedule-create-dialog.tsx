@@ -514,7 +514,7 @@ export function ScheduleCreateDialog({ open, onClose, onCreated }: ScheduleCreat
                       <Input
                         value={fileDirectory}
                         onChange={(e) => setFileDirectory(e.target.value)}
-                        placeholder="/Users/malmazan/drop"
+                        placeholder="/path/to/watch"
                         className="mt-1.5 h-9 text-xs font-mono"
                       />
                     </div>
