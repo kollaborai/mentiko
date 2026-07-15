@@ -598,8 +598,6 @@ launch-chain-runner-complete() {
     fi
     if [[ -f "$script_dir/runner-v2-completion-launch.js" ]]; then
         completion_launcher="$script_dir/runner-v2-completion-launch.js"
-    elif [[ -f "$script_dir/../web/scripts/runner-v2-completion-launch.cjs" ]]; then
-        completion_launcher="$script_dir/../web/scripts/runner-v2-completion-launch.cjs"
     else
         echo "  runner-v2 completion failed closed: typed completion entrypoint missing" >&2
         return 1

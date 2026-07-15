@@ -10,7 +10,7 @@ import {
 } from "@/lib/runner-v2/completion-launch-context";
 
 describe("runner-v2 completion wrapper binding", () => {
-  it("loads the real CommonJS wrapper through the typed completion entrypoint", () => {
+  it("loads the compiled typed completion entrypoint", () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-completion-wrapper-binding-"));
     const runDir = join(root, "run-missing");
     const chainPath = join(root, "chain.json");
@@ -29,7 +29,7 @@ describe("runner-v2 completion wrapper binding", () => {
 
     try {
       const result = spawnSync(process.execPath, [
-        join(process.cwd(), "scripts", "runner-v2-complete.cjs"),
+        join(codeRoot, "lib", "runner-v2-complete.js"),
         "worker-run-missing",
         chainPath,
         context.path,

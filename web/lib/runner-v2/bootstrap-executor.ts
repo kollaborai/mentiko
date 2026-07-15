@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { basename, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
+import config from "@/lib/config";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
@@ -39,12 +40,36 @@ const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "complete
  */
 export class TerminalBootstrapStateError extends Error {}
 
+export class TypedMonitorRuntimeMissingError extends Error {}
+
+/**
+ * The monitor is part of the typed launch contract. Validate the checked-in
+ * runtime bundle before allocating an agent PTY, so a local checkout with an
+ * unbuilt bundle fails closed without leaving an unmonitored live agent.
+ */
+export function assertTypedMonitorRuntimeAvailable(codeRoot: string = config.codeRoot): void {
+  const monitorBundle = join(codeRoot, "lib", "monitor-v2.js");
+  if (!existsSync(monitorBundle) || !statSync(monitorBundle).isFile()) {
+    throw new TypedMonitorRuntimeMissingError(`typed monitor runtime bundle missing: ${monitorBundle}`);
+  }
+}
+
 export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Promise<RunnerV2LaunchResult> {
   if (context.env.WORKSPACE_TYPE && context.env.WORKSPACE_TYPE !== "local") {
     return {
       support: "unsupported",
       reason: `runner-v2 typed bootstrap only supports local workspaces, got ${context.env.WORKSPACE_TYPE}`,
       fallbackAllowed: true,
+    };
+  }
+
+  try {
+    assertTypedMonitorRuntimeAvailable();
+  } catch (error) {
+    return {
+      support: "unsupported",
+      reason: error instanceof Error ? error.message : "typed monitor runtime bundle missing",
+      fallbackAllowed: false,
     };
   }
 

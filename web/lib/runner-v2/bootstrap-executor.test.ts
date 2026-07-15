@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
+import { assertTypedMonitorRuntimeAvailable, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
 import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
 import { createRunRecordFile } from "@/lib/runs/run-record";
@@ -97,6 +97,23 @@ describe("runner-v2 bootstrap executor", () => {
   afterAll(() => {
     delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS;
     delete process.env.MENTIKO_RUNNER_V2_SUBMISSION_DEADLINE_MS;
+  });
+
+  it("fails before PTY allocation when the compiled typed monitor bundle is absent", () => {
+    const root = tempDir();
+
+    expect(() => assertTypedMonitorRuntimeAvailable(root)).toThrow(
+      `typed monitor runtime bundle missing: ${join(root, "lib", "monitor-v2.js")}`,
+    );
+  });
+
+  it("accepts a concrete compiled typed monitor bundle", () => {
+    const root = tempDir();
+    const monitor = join(root, "lib", "monitor-v2.js");
+    mkdirSync(join(root, "lib"), { recursive: true });
+    writeFileSync(monitor, "#!/usr/bin/env node\n");
+
+    expect(() => assertTypedMonitorRuntimeAvailable(root)).not.toThrow();
   });
 
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {

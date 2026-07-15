@@ -67,7 +67,7 @@ describe("runner-v2 completion PTY launcher", () => {
     const call = ptyMock.spawn.mock.calls[0];
     expect(call[1]).toBe(process.execPath);
     expect(call[2]).toEqual([
-      expect.stringContaining("runner-v2-complete.cjs"),
+      expect.stringContaining("runner-v2-complete.js"),
       "writer-run-1",
       "/tmp/chain.json",
       expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),

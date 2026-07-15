@@ -109,6 +109,26 @@ describe("runner-v2 run-state", () => {
     });
   });
 
+  it("clears a stale failure message when live agent work resumes", () => {
+    const file = runPath();
+    const run = createRunRecord({ runId: "run-resume", chainName: "chain", goal: "goal" });
+    updateRunJson(file, () => ({
+      ...run,
+      status: "blocked",
+      status_message: "chain-runner crashed before completion routing",
+      completed: "2026-07-15T00:00:00.000Z",
+    }));
+
+    const resumed = addRunSession(file, "writer-run-resume", "writer", "Writer");
+
+    expect(resumed).toMatchObject({
+      status: "running",
+      completed: undefined,
+      agents: [{ id: "writer", status: "running", session: "writer-run-resume" }],
+    });
+    expect(resumed.status_message).toBeUndefined();
+  });
+
   it("uses complete for agent success and sets completed only for terminal agent states", () => {
     const file = runPath();
     const run = createRunRecord({ chainName: "chain", goal: "goal" });

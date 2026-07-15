@@ -189,7 +189,7 @@ describe("chain-runner AI gateway source contract", () => {
 
   it("binds shell monitor completion to runner-v2 without a shell fallback", () => {
     expect(agentFunctions).toContain("runner-v2-completion-launch.js");
-    expect(agentFunctions).toContain("runner-v2-completion-launch.cjs");
+    expect(agentFunctions).not.toContain("runner-v2-completion-launch.cjs");
     expect(agentFunctions).not.toContain("chain-runner-complete.sh");
     expect(agentFunctions).not.toContain("complete-agent.sh");
     expect(agentFunctions).toContain("no shell completion fallback exists");

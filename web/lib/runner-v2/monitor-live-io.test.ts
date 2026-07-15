@@ -30,12 +30,14 @@ jest.mock("@/lib/config", () => ({
   derivePtyDaemonName: (root: string, namespace: string, org: string) =>
     `mentiko-${root.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "root"}-${namespace}-${org}`,
   default: {
+    root: "/repo",
     codeRoot: process.cwd().replace(/\/web$/, ""),
     globalRoot: "/data",
     namespaceId: "default",
     orgId: "default",
   },
   config: {
+    root: "/repo",
     codeRoot: process.cwd().replace(/\/web$/, ""),
     globalRoot: "/data",
     namespaceId: "default",
@@ -200,7 +202,7 @@ describe("monitor-v2 live IO", () => {
     expect(call[0]).toEqual(expect.stringMatching(/^complete-writer-run-123-/));
     expect(call[1]).toBe(process.execPath);
     expect(call[2]).toEqual([
-      join(codeRoot, "web", "scripts", "runner-v2-complete.cjs"),
+      join(codeRoot, "lib", "runner-v2-complete.js"),
       "writer-run-123",
       f.chainPath,
       expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),
@@ -245,7 +247,7 @@ describe("monitor-v2 live IO", () => {
       const f = fixture();
       await liveIo(f, { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "" }).onComplete("writer-run-123");
       expect(ptyMock.spawn.mock.calls[0][1]).toBe(process.execPath);
-      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.cjs");
+      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.js");
       expect(lastCompletionContext).toMatchObject({
         MENTIKO_RUNNER_V2: "1",
         MENTIKO_RUNNER_V2_COMPLETION: "1",
@@ -256,7 +258,7 @@ describe("monitor-v2 live IO", () => {
       const f = fixture();
       await liveIo(f, { MENTIKO_RUNNER_V2: "", MENTIKO_RUNNER_V2_COMPLETION: "1" }).onComplete("writer-run-123");
       expect(ptyMock.spawn.mock.calls[0][1]).toBe(process.execPath);
-      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.cjs");
+      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.js");
     });
 
     it("passes completion argv directly without a shell process", async () => {
@@ -265,7 +267,7 @@ describe("monitor-v2 live IO", () => {
       expect(ptyMock.spawn.mock.calls[0].slice(1, 3)).toEqual([
         process.execPath,
         [
-          expect.stringContaining("runner-v2-complete.cjs"),
+          expect.stringContaining("runner-v2-complete.js"),
           "writer-run-123",
           f.chainPath,
           expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),

@@ -501,9 +501,9 @@ process.stdout.write(createCompletionLaunchContext(process.env).path);
 NODE
 })"
 if [[ -n "$TIMEOUT_BIN" ]]; then
-  "$TIMEOUT_BIN" 60 node "$REPO_ROOT/web/scripts/runner-v2-complete.cjs" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
+  "$TIMEOUT_BIN" 60 node "$REPO_ROOT/lib/runner-v2-complete.js" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 else
-  node "$REPO_ROOT/web/scripts/runner-v2-complete.cjs" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
+  node "$REPO_ROOT/lib/runner-v2-complete.js" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 fi
 
 C_RUN_STATUS="$(jq -r '.status // "unknown"' "$C_RUN_DIR/run.json" 2>/dev/null)"

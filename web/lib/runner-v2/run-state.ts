@@ -98,15 +98,16 @@ export function updateRunStatus(
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
     const successfulTerminal = status === "completed";
+    const active = status === "running";
     return {
       ...current,
       status,
       ...(statusMessage
         ? { status_message: statusMessage }
-        : successfulTerminal ? { status_message: undefined } : {}),
+        : successfulTerminal || active ? { status_message: undefined } : {}),
       ...(TERMINAL_RUN_STATUSES.has(status) && (!current.completed || (successfulTerminal && current.status !== "completed"))
         ? { completed: nowIso(now) }
-        : {}),
+        : active ? { completed: undefined } : {}),
     };
   }, undefined, onMutation);
 }
@@ -138,6 +139,7 @@ export function addRunSession(
       ...current,
       status: "running",
       completed: undefined,
+      status_message: undefined,
       ...(runnerV2 ? { runnerV2 } : {}),
       sessions: Array.from(new Set([...(current.sessions || []), sessionName])),
       agents,

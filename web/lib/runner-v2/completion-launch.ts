@@ -55,9 +55,7 @@ export function resolveCompletionEntrypoint(
   fileExists: (path: string) => boolean = existsSync,
 ): string {
   const compiled = join(codeRoot, "lib", "runner-v2-complete.js");
-  const development = join(codeRoot, "web", "scripts", "runner-v2-complete.cjs");
   if (fileExists(compiled)) return compiled;
-  if (fileExists(development)) return development;
   throw new Error("runner-v2 completion failed closed: typed completion entrypoint missing");
 }
 

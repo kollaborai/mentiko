@@ -58,7 +58,7 @@ test("chain runner invokes the typed state boundary and delegates completion to 
   assert(!runnerSource.includes('cat > "$STATE_DIR/${state_id}.state"'), "chain runner must not write state records in shell");
   assert(!errorSource.includes('grep "^retry_attempt:"'), "error handling must not parse state records in shell");
   assert(agentFunctionsSource.includes("runner-v2-completion-launch.js"), "completion should invoke the compiled typed PTY launcher");
-  assert(agentFunctionsSource.includes("runner-v2-completion-launch.cjs"), "completion should retain the typed development PTY launcher");
+  assert(!agentFunctionsSource.includes("runner-v2-completion-launch.cjs"), "completion must not retain a development fallback");
   assert(!agentFunctionsSource.includes("MENTIKO_AI_GATEWAY_LOCAL_TOKEN="), "completion should not put the gateway token in PTY argv");
   assert(!agentFunctionsSource.includes("chain-runner-complete.sh"), "completion must not invoke the removed shell handler");
   assert(!agentFunctionsSource.includes("complete-agent.sh"), "completion must not invoke the removed standalone shell handler");

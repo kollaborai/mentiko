@@ -378,7 +378,7 @@ describe("typed runner-event producer contract", () => {
   it("binds every shell monitor completion to the typed entrypoint", () => {
     const source = readFileSync(AGENT_FUNCTIONS, "utf8");
     expect(source).toContain("runner-v2-completion-launch.js");
-    expect(source).toContain("runner-v2-completion-launch.cjs");
+    expect(source).not.toContain("runner-v2-completion-launch.cjs");
     expect(source).toContain("no shell completion fallback exists");
     expect(source).not.toContain("chain-runner-complete.sh");
     expect(source).not.toContain("complete-agent.sh");
