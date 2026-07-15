@@ -111,7 +111,6 @@ describe("data shape catalog", () => {
       "run-record",
       "batch-run-record",
       "runner-agent-state",
-      "runspace-manifest",
       "fan-group-state",
       "config-profile",
       "agent-profile",

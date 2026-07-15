@@ -10,6 +10,7 @@ const runLib = join(repoRoot, "lib", "run-lib.sh");
 const chainRunner = join(repoRoot, "lib", "chain-runner.sh");
 const agentFunctions = join(repoRoot, "lib", "agent-functions.sh");
 const errorHandling = join(repoRoot, "lib", "error-handling.sh");
+const runspaceManifestClient = join(repoRoot, "lib", "runspace-manifest-client.sh");
 const tmp = mkdtempSync(join(tmpdir(), "mentiko-shell-state-"));
 
 const tests = [];
@@ -110,6 +111,18 @@ test("startup blocked and failed state use only the compiled typed Run Record bo
   assert(!blocked.includes("jq"), "blocked state must not parse or mutate run.json in shell");
   assert(!failed.includes("jq"), "failed state must not parse or mutate run.json in shell");
   assert(!source.includes("_rmw_mark_run_agent_"), "chain runner must not retain shell Run Record writers");
+});
+
+test("runspace manifest creation uses only the compiled typed boundary", () => {
+  const source = readFileSync(chainRunner, "utf8");
+  const client = readFileSync(runspaceManifestClient, "utf8");
+  const runspaceSetup = source.slice(source.indexOf("# runspace:"), source.indexOf("AGENT_COUNT="));
+
+  assert(source.includes('source "$SCRIPT_DIR/runspace-manifest-client.sh"'), "chain runner should load the typed runspace client");
+  assert(runspaceSetup.includes("ensure-runspace-manifest --runs-dir"), "runspace setup should invoke the typed manifest operation");
+  assert(!runspaceSetup.includes("manifest.json\""), "runspace setup must not write or parse the manifest in shell");
+  assert(client.includes("runner-runspace-manifest.js"), "runspace client should invoke the compiled typed bundle");
+  assert(!client.includes("npx"), "runspace client must not use a development fallback");
 });
 
 test("agent run context exposes the mentiko CLI on PATH", () => {

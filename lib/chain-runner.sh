@@ -29,6 +29,7 @@ source "$SCRIPT_DIR/webhook-sender.sh"
 source "$SCRIPT_DIR/slack-integration.sh"
 source "$SCRIPT_DIR/run-lib.sh"
 source "$SCRIPT_DIR/run-record-client.sh"
+source "$SCRIPT_DIR/runspace-manifest-client.sh"
 
 # log crashes (set -e exits) and reflect them in run.json immediately.
 # NOTE: $LINENO inside an ERR trap is unreliable — when the failure is in a sourced
@@ -572,11 +573,7 @@ mkdir -p "$EVENTS_DIR" "$STATE_DIR" "$REPORTS_DIR"
 # runspace: per-run shared artifact directory (uses RUNS_DIR from config.sh)
 if [[ -n "$RUN_ID" ]]; then
     RUNSPACE_DIR="$RUNS_DIR/${RUN_ID}/runspace"
-    mkdir -p "$RUNSPACE_DIR"
-    # write initial manifest if it doesn't exist
-    if [[ ! -f "$RUNSPACE_DIR/manifest.json" ]]; then
-        echo '{"run_id":"'"$RUN_ID"'","chain":"'"$CHAIN_NAME"'","artifacts":[]}' > "$RUNSPACE_DIR/manifest.json"
-    fi
+    ensure-runspace-manifest --runs-dir "$RUNS_DIR" --run-id "$RUN_ID" --chain "$CHAIN_NAME" >/dev/null
 else
     RUNSPACE_DIR=""
 fi

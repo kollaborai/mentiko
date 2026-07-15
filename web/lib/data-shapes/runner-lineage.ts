@@ -361,18 +361,24 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "runspace-manifest": {
-    usage: "legacy-shell",
+    usage: "runner-v2",
     surfaces: [
       {
-        id: "shell-runspace-manifest",
-        label: "Initialize and read the runspace manifest",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
+        id: "typed-runspace-manifest",
+        label: "Create and validate the per-run artifact manifest",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/runspace-manifest.ts", "web/lib/runner-v2/runspace-manifest-cli.ts"],
+      },
+      {
+        id: "shell-runspace-command-boundary",
+        label: "Invoke the typed manifest owner during chain launch",
+        owner: "runner-v2",
+        paths: ["lib/runspace-manifest-client.sh", "lib/chain-runner.sh"],
       },
     ],
     legacyEquivalent: {
-      summary: "This contract remains shell-owned and has no typed runner-v2 owner yet.",
-      paths: ["lib/chain-runner.sh"],
+      summary: "The manifest is now created and validated by the typed boundary; shell launch only invokes its named ensure operation.",
+      paths: ["web/lib/runner-v2/runspace-manifest.ts", "lib/runspace-manifest-client.sh"],
     },
   },
   "session-policy-ledger": {

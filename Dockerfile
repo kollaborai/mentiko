@@ -177,6 +177,15 @@ RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
         --outfile=/context/lib/runner-run-record.js; \
     fi
 
+# compile the typed create-only runspace manifest boundary used by chain launch.
+RUN if [ -f /build/web/lib/runner-v2/runspace-manifest-cli.ts ]; then \
+      echo "=== compiling typed runner runspace manifest ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/runspace-manifest-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-runspace-manifest.js; \
+    fi
+
 # compile process-manager.ts (tsc — needs same anchor; use relative paths
 # from web/ so tsconfig.json auto-discovery picks up web/tsconfig.json)
 RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \
