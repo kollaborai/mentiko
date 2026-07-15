@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import config, { nsPath } from "@/lib/config";
-import { isPayloadCompatibleWithKind, jobTypeToGenerationKind } from "@/lib/generation/payload-contract.mjs";
+import { isPayloadCompatibleWithKind, jobTypeToGenerationKind } from "@/lib/generation/payload-contract";
 
 /**
  * Resolve the jobs directory for a given namespace.

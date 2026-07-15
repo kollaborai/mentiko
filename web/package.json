@@ -12,6 +12,7 @@
     "build:analyze": "ANALYZE=true next build --webpack",
     "start": "next start",
     "demo:gif": "node scripts/capture-readme-demo.mjs",
+    "generate:payload-contract": "ts-node --compiler-options '{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' scripts/generate-payload-contract-runtime.ts",
     "repair:data-shape-drift": "node scripts/repair-data-shape-drift-2026-07-14.mjs",
     "lint": "eslint",
     "test": "jest",

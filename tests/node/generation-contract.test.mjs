@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Cross-door contract test for the shared generation payload validator
-// (web/lib/generation/payload-contract.mjs).
+// (web/lib/generation/payload-contract.ts, compiled for bare node as
+// web/lib/generation/payload-contract.runtime.js).
 //
 // Background: generation-result.json was validated + normalized on the CLI
 // import path ONLY. The in-process hydration path (job-store.ts) trusted the
@@ -17,12 +18,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const contractPath = resolve(here, "../../web/lib/generation/payload-contract.mjs");
+const contractPath = resolve(here, "../../web/lib/generation/payload-contract.runtime.js");
 const { isPayloadCompatibleWithKind, normalizeResultForKind, jobTypeToGenerationKind } =
   await import(contractPath);
 
-// The CLI import door must resolve to the SAME shared module (proves the CLI is
-// no longer carrying its own copy of the validator).
+// The CLI import door must resolve to the generated runtime bound to the
+// canonical TypeScript source (proves the CLI carries no independent parser).
 const cliPath = resolve(here, "../../lib/mentiko-cli-generation.mjs");
 const cli = await import(cliPath);
 
@@ -122,9 +123,9 @@ check("chain_recommendation passes through unchanged", () => {
   assert.equal(normalizeResultForKind(p, "chain_recommendation"), p);
 });
 
-console.log("CLI import door shares the SAME contract:");
+console.log("CLI import door uses the generated canonical contract:");
 
-check("CLI re-exports the shared normalizeResultForKind with identical behavior", () => {
+check("CLI re-exports generated normalizeResultForKind with identical behavior", () => {
   assert.equal(typeof cli.normalizeResultForKind, "function");
   const out = cli.normalizeResultForKind({ name: "c", agents: [] }, "chain_generation");
   assert.equal(typeof out.output, "string");

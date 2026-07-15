@@ -36,7 +36,7 @@ export type GenerationChainKind =
   | "template_test";
 
 // 1.0.5: agent's only deliverable is generation-result.json; the orchestration owns the
-// `mentiko generation import` step (chain-runner-complete.sh backstop). Removes the
+// typed `mentiko generation import` completion effect. Removes the
 // agent-runs-import critical path and the conflicting import-vs-emit completion instruction.
 const GENERATION_CORE_CHAIN_VERSION = "1.0.5";
 
