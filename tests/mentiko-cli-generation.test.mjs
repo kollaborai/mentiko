@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const cliPath = join(repoRoot, "lib", "mentiko-cli-generation.mjs");
+const cliPath = join(repoRoot, "lib", "runner-generation-payload-import.js");
 const tmp = `/tmp/test-mentiko-cli-generation-${process.pid}`;
 const runDir = join(tmp, "runs", "run-token-file");
 const artifactsDir = join(runDir, "artifacts");
@@ -77,6 +77,7 @@ globalThis.fetch = async (url, init = {}) => {
       NODE_OPTIONS: `--import ${fetchHookPath}`,
       TEST_FETCH_LOG: fetchLogPath,
       MENTIKO_WEB_URL: "http://mentiko.test",
+      ARTIFACTS_DIR: artifactsDir,
       MENTIKO_JOB_IMPORT_TOKEN: "",
       BETTER_AUTH_SECRET: "",
       NAMESPACE_ID: "default",

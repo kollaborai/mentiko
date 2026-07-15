@@ -98,7 +98,7 @@ case "$CMD" in
         ;;
 
     generation)
-        node "$LIB_DIR/mentiko-cli-generation.mjs" "$@"
+        node "$LIB_DIR/runner-generation-payload-import.js" "$@"
         ;;
 
     list_schedules|create_schedule|update_schedule|delete_schedule|run_schedule_now|list_applications|register_application|update_application|delete_application)

@@ -5,11 +5,11 @@
 import { readFileSync } from "node:fs";
 import { parseAiJsonOutput } from "../../lib/job-runner-output-parser.mjs";
 
-describe("job-runner AI gateway source contract", () => {
-  const source = readFileSync(new URL("../../lib/job-runner.mjs", import.meta.url), "utf8");
+describe("typed job worker AI gateway source contract", () => {
+  const source = readFileSync(new URL("runner-v2/job-worker.ts", import.meta.url), "utf8");
 
   it("routes providerless child AI calls through the local gateway proxy", () => {
-    expect(source).toContain('import { buildAiGatewayAgentEnv } from "./ai-gateway-agent-env.mjs";');
+    expect(source).toContain('import { buildAiGatewayAgentEnv } from "../../../lib/ai-gateway-agent-env.mjs";');
     expect(source).toContain("const childEnv = buildAiGatewayAgentEnv(process.env, profileEnv);");
   });
 

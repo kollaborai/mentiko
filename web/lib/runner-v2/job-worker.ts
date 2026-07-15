@@ -1,19 +1,21 @@
 #!/usr/bin/env node
+// @ts-nocheck
 /**
  * Standalone job runner - executed via spawn() for background AI jobs.
  * Reads job file, spawns claude CLI via stdin, writes result back atomically.
  *
- * Usage: node lib/job-runner.mjs <jobId>
+ * Usage: node runner-job-worker.js <jobId>
  *
  * This runs as a detached process, surviving API handler lifecycle.
  */
 
-import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createDecipheriv, createHash, createHmac, pbkdf2Sync } from "node:crypto";
-import { buildAiGatewayAgentEnv } from "./ai-gateway-agent-env.mjs";
-import { cleanAiOutput, parseAiJsonOutput } from "./job-runner-output-parser.mjs";
+import { buildAiGatewayAgentEnv } from "../../../lib/ai-gateway-agent-env.mjs";
+import { cleanAiOutput, parseAiJsonOutput } from "../../../lib/job-runner-output-parser.mjs";
+import { parseJobRecord, requireJobId, resolveJobRecordPaths, writeJobRecord } from "@/lib/runs/job-record";
 // spawn imported inline below to avoid top-level collision with the detached child
 
 // 3-tier data hierarchy: global > namespace > org > project
@@ -25,7 +27,9 @@ const ORG_ID = process.env.ORG_ID || 'default';
 const ORG_ROOT = process.env.MENTIKO_ORG_ROOT || (ORG_ID === 'default' ? NAMESPACE_ROOT : join(NAMESPACE_ROOT, 'orgs', ORG_ID));
 // default project collapses to org root
 const PROJECT_ROOT = process.env.MENTIKO_PROJECT_ROOT || ORG_ROOT;
-const JOBS_DIR = join(PROJECT_ROOT, 'jobs');
+// Job records are namespace-scoped. Profile, secret, and workspace discovery
+// remains organization/project-scoped below.
+const JOBS_DIR = join(process.env.MENTIKO_NAMESPACE_ROOT || NAMESPACE_ROOT, 'jobs');
 const AGENT_PROFILES_DIR = join(ORG_ROOT, 'agent-profiles');
 const SECRETS_DIR = join(ORG_ROOT, 'secrets');
 const RUNNER_CHILD_TIMEOUT_MS = 480000;
@@ -400,18 +404,24 @@ function resolveDefaultProfile() {
 
 const jobId = process.argv[2];
 if (!jobId) {
-  console.error("Usage: node job-runner.mjs <jobId>");
+  console.error("Usage: node runner-job-worker.js <jobId>");
   process.exit(1);
 }
 
-const jobPath = join(JOBS_DIR, `${jobId}.json`);
-const tmpPath = join(JOBS_DIR, `${jobId}.tmp`);
+let jobPaths;
+try {
+  jobPaths = resolveJobRecordPaths(JOBS_DIR, requireJobId(jobId));
+} catch (err) {
+  console.error("Invalid job id:", err.message);
+  process.exit(1);
+}
+const jobPath = jobPaths.jobPath;
 
 // read job input
 let job;
 try {
   const content = readFileSync(jobPath, "utf-8");
-  job = JSON.parse(content);
+  job = parseJobRecord(content);
 } catch (err) {
   console.error("Failed to read job file:", err.message);
   process.exit(1);
@@ -423,8 +433,7 @@ job.startedAt = new Date().toISOString();
 job.activity = [{ time: new Date().toISOString(), msg: "started" }];
 
 try {
-  writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-  renameSync(tmpPath, jobPath);
+  persistJob(job);
 } catch (err) {
   console.error("Failed to update job status:", err.message);
   process.exit(1);
@@ -436,8 +445,7 @@ function addActivity(msg) {
   job.activity = job.activity || [];
   job.activity.push({ time: new Date().toISOString(), msg });
   try {
-    writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-    renameSync(tmpPath, jobPath);
+    persistJob(job);
   } catch { /* non-fatal */ }
 }
 
@@ -487,8 +495,7 @@ if (!prompt) {
   job.completedAt = new Date().toISOString();
   job.error = `job.input.prompt is empty for type=${job.type}`;
   try {
-    writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-    renameSync(tmpPath, jobPath);
+    persistJob(job);
   } catch {}
   // fire-and-forget callback - process will exit before it completes, but that's ok
   notifyCompletion().catch(() => {});
@@ -616,8 +623,7 @@ child.on("close", async (code) => {
     job.result = { raw: cleaned, parsed };
 
     try {
-      writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-      renameSync(tmpPath, jobPath);
+      persistJob(job);
     } catch (writeErr) {
       console.error("Failed to write completed job:", writeErr.message);
       process.exit(1);
@@ -695,8 +701,7 @@ child.on("close", async (code) => {
   job.result = result;
 
   try {
-    writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-    renameSync(tmpPath, jobPath);
+    persistJob(job);
   } catch (writeErr) {
     console.error("Failed to write completed job:", writeErr.message);
     process.exit(1);
@@ -714,8 +719,7 @@ async function failJob(job, errorMessage) {
   job.error = errorMessage;
 
   try {
-    writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-    renameSync(tmpPath, jobPath);
+    persistJob(job);
   } catch {}
 
   sysLog("error", `job failed: ${jobId}`, `type: ${job.type || "unknown"}, error: ${errorMessage.slice(0, 200)}`);
@@ -742,8 +746,11 @@ process.on("exit", (code) => {
     job.completedAt = new Date().toISOString();
     job.error = job.error || `process exited unexpectedly (code ${code})`;
     try {
-      writeFileSync(tmpPath, JSON.stringify(job, null, 2), "utf-8");
-      renameSync(tmpPath, jobPath);
+      persistJob(job);
     } catch { /* truly last resort, nothing more we can do */ }
   }
 });
+
+function persistJob(record) {
+  writeJobRecord(jobPaths.jobsDir, record);
+}

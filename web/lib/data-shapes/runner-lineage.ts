@@ -68,6 +68,42 @@ export function runnerMigrationCoverage(lineage: RunnerContractLineage): RunnerM
  * for each surface and are existence-checked by the catalog test suite.
  */
 export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> = {
+  "job-record": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-job-record-store",
+        label: "Validate, contain, and atomically persist job lifecycle records",
+        owner: "runner-v2",
+        paths: ["web/lib/runs/job-record.ts", "web/lib/runs/job-store.ts"],
+      },
+      {
+        id: "typed-detached-job-worker",
+        label: "Run the detached agent process and persist its terminal job lifecycle",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/job-worker.ts", "web/lib/runs/job-runner-launch.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces the standalone job-runner.mjs record parser and lifecycle writer with a compiled typed worker; the external agent CLI remains a child-process boundary.",
+      paths: ["web/lib/runner-v2/job-worker.ts"],
+    },
+  },
+  "task-generation-payload": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-generation-payload-resolution",
+        label: "Resolve and validate run-owned artifact, event, transcript, and output payload candidates",
+        owner: "runner-v2",
+        paths: ["web/lib/generation/payload-resolver.ts", "web/lib/generation/payload-import-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces mentiko-cli-generation.mjs payload salvage with a compiled typed command boundary.",
+      paths: ["web/lib/generation/payload-import-cli.ts"],
+    },
+  },
   "chain-definition": {
     usage: "shared",
     surfaces: [
@@ -400,6 +436,40 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         label: "Project terminal run status and exact blocked reason onto the linked task",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/run-task-sync.ts", "web/app/api/tasks/reconcile/route.ts", "web/lib/tasks/task-transforms.ts"],
+      },
+    ],
+  },
+  "runtime-profiler": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-runtime-profiler",
+        label: "Validate and atomically mutate per-session profile records",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/runtime-metrics.ts", "web/lib/runner-v2/runtime-metrics-cli.ts"],
+      },
+      {
+        id: "shell-pty-sample-boundary",
+        label: "Collect only live PTY and operating-system resource samples",
+        owner: "runner-v2",
+        paths: ["lib/profiler.sh"],
+      },
+    ],
+  },
+  "performance-metrics": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-performance-metrics",
+        label: "Own run performance mutation, reports, pricing, and cleanup",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/runtime-metrics.ts", "web/lib/runner-v2/runtime-metrics-cli.ts"],
+      },
+      {
+        id: "shell-pty-resource-boundary",
+        label: "Collect only real PTY process resource values",
+        owner: "runner-v2",
+        paths: ["lib/performance.sh"],
       },
     ],
   },

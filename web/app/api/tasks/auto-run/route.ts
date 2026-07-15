@@ -483,7 +483,7 @@ function asPlainObject(value: unknown): Record<string, unknown> | null {
  * generation-result.json as { output } for recommend jobs too
  * (isGenerationArtifactJob matches "recommend"). The inner json is itself
  * EITHER a bare { action, chain_id, ... } object OR a wrapped
- * { recommendation: {...} } (lib/mentiko-cli-generation.mjs normalizes with
+ * { recommendation: {...} } (the typed generation payload importer normalizes with
  * `obj.recommendation ?? obj`), so both are handled here.
  *
  * Returns the recommendation object ONLY when the shared payload contract deems
@@ -510,7 +510,7 @@ function resolveJobRecommendation(result: unknown): Record<string, unknown> | nu
   if (!recommendation) return null;
 
   // Validate through the shared payload contract — the SAME predicate the CLI
-  // import path (lib/mentiko-cli-generation.mjs) and the in-process hydration
+  // import path (typed generation payload importer) and the in-process hydration
   // boundary (job-store.ts readCompletedRunResult) use — so all three consumers
   // accept/reject the exact same recommendation payloads instead of each
   // re-guessing the shape. An unrelated/empty payload resolves to null and is

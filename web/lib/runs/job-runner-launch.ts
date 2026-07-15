@@ -53,7 +53,7 @@ export function launchJobRunner({
   callbackUrl,
   stdio,
 }: LaunchJobRunnerOptions): void {
-  const runnerPath = join(config.codeRoot, "lib", "job-runner.mjs");
+  const runnerPath = join(config.codeRoot, "lib", "runner-job-worker.js");
   const internalOrigin = origin ? resolveInternalWebOrigin(origin) : undefined;
   const resolvedCallbackUrl = callbackUrl ?? (internalOrigin ? `${internalOrigin}/api/jobs/[id]/complete` : undefined);
   const roots = resolveJobRunnerRoots(namespaceId, orgId);

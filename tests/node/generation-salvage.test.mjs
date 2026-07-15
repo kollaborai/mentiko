@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regression guard for the generation-import payload salvage (lib/mentiko-cli-generation.mjs).
+// Regression guard for the typed generation-import payload salvage bundle.
 //
 // Background: generation chains complete their *job* via `mentiko generation import`, which
 // must find the agent's JSON payload. LLM agents are unreliable about WHERE they leave it --
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve as pathResolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cliPath = pathResolve(here, "../../lib/mentiko-cli-generation.mjs");
+const cliPath = pathResolve(here, "../../lib/runner-generation-payload-import.js");
 const { resolveGenerationPayload, normalizeResultForKind } = await import(cliPath);
 
 let passed = 0;

@@ -186,6 +186,27 @@ RUN if [ -f /build/web/lib/runner-v2/batch-runner-cli.ts ]; then \
         --outfile=/context/lib/runner-batch-runner.js; \
     fi
 
+# compile the detached typed job worker. It owns job-record parsing and
+# lifecycle persistence; only the selected agent CLI remains an external child.
+RUN if [ -f /build/web/lib/runner-v2/job-worker.ts ]; then \
+      echo "=== compiling typed job worker ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/job-worker.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-job-worker.js; \
+    fi
+
+# compile the typed generation payload resolver/importer. The command boundary
+# may call the completion API, but artifact, event, and transcript parsing stay
+# in the TypeScript-owned resolver.
+RUN if [ -f /build/web/lib/generation/payload-import-cli.ts ]; then \
+      echo "=== compiling typed generation payload importer ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/generation/payload-import-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-generation-payload-import.js; \
+    fi
+
 # compile the sole runner agent-state owner used by shell invocation boundaries.
 RUN if [ -f /build/web/lib/runner-v2/agent-state-cli.ts ]; then \
       echo "=== compiling typed runner agent-state boundary ===" && \
@@ -232,6 +253,16 @@ RUN if [ -f /build/web/lib/runner-v2/runspace-manifest-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/runspace-manifest-cli.ts \
         --bundle --platform=node --target=node20 \
         --outfile=/context/lib/runner-runspace-manifest.js; \
+    fi
+
+# compile typed runtime profiler/performance ownership; shell callers only pass
+# live OS/PTY samples through this boundary.
+RUN if [ -f /build/web/lib/runner-v2/runtime-metrics-cli.ts ]; then \
+      echo "=== compiling typed runner runtime metrics ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/runtime-metrics-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-runtime-metrics.js; \
     fi
 
 # compile process-manager.ts (tsc — needs same anchor; use relative paths

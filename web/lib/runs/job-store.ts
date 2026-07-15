@@ -1,7 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import config, { nsPath } from "@/lib/config";
 import { isPayloadCompatibleWithKind, jobTypeToGenerationKind } from "@/lib/generation/payload-contract";
+import {
+  type JobRecord as Job,
+  type JobStatus,
+  type JobType,
+  JobRecordValidationError,
+  readJobRecord,
+  resolveJobRecordPaths,
+  writeJobRecord,
+} from "@/lib/runs/job-record";
+
+export type { JobRecord as Job, JobStatus, JobType } from "@/lib/runs/job-record";
 
 /**
  * Resolve the jobs directory for a given namespace.
@@ -12,37 +23,13 @@ function getJobsDir(namespaceId?: string): string {
   return nsPath(nsId, "jobs");
 }
 
-export type JobType = "recommend" | "generate" | "link" | "task" | "agent" | "artifact" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "template_test" | "link_summary" | "task_run_summary";
-export type JobStatus = "pending" | "running" | "complete" | "failed";
-
-export interface Job {
-  id: string;
-  type: JobType;
-  status: JobStatus;
-  taskId?: string;
-  decisionId?: string;  // for decision research/retrospective jobs
-  runId?: string;
-  chainId?: string;
-  createdBy?: string;   // user id of creator
-  input: Record<string, unknown>;
-  result?: Record<string, unknown>;
-  error?: string;
-  createdAt: string;
-  startedAt?: string;
-  completedAt?: string;
-}
-
 // stale detection: generation chains can run up to 8min; leave room for import.
 const STALE_MS = 10 * 60 * 1000;
 const FAILED_RUN_STATUSES = new Set(["blocked", "cancelled", "failed", "stopped"]);
 const COMPLETED_RUN_STATUSES = new Set(["complete", "completed"]);
 
 function getJobPath(id: string, namespaceId?: string): string {
-  return join(getJobsDir(namespaceId), `${id}.json`);
-}
-
-function getTmpPath(id: string, namespaceId?: string): string {
-  return join(getJobsDir(namespaceId), `${id}.tmp`);
+  return resolveJobRecordPaths(getJobsDir(namespaceId), id).jobPath;
 }
 
 function readCompletedRunResult(
@@ -140,13 +127,8 @@ function syncJobStatus(job: Job, namespaceId?: string): boolean {
 
 // atomic write: write to .tmp then rename (rename is atomic on POSIX)
 function writeJobAtomic(id: string, data: Job, namespaceId?: string): void {
-  const tmpPath = getTmpPath(id, namespaceId);
-  const finalPath = getJobPath(id, namespaceId);
-  // ensure directory exists
-  mkdirSync(getJobsDir(namespaceId), { recursive: true });
-
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-  renameSync(tmpPath, finalPath);
+  if (data.id !== id) throw new JobRecordValidationError("Job write identity does not match requested id.");
+  writeJobRecord(getJobsDir(namespaceId), data);
 }
 
 export function createJob(
@@ -174,14 +156,9 @@ export function createJob(
 }
 
 export function getJob(id: string, namespaceId?: string): Job | null {
-  const path = getJobPath(id, namespaceId);
-  if (!existsSync(path)) {
-    return null;
-  }
-
   try {
-    const content = readFileSync(path, "utf-8");
-    const job = JSON.parse(content) as Job;
+    const job = readJobRecord(getJobsDir(namespaceId), id);
+    if (!job) return null;
 
     if (syncJobStatus(job, namespaceId)) {
       writeJobAtomic(id, job, namespaceId);
@@ -220,8 +197,8 @@ export function listJobs(opts: ListOptions = {}, namespaceId?: string): Job[] {
 
   for (const file of files) {
     try {
-      const content = readFileSync(join(jobsDir, file), "utf-8");
-      const job = JSON.parse(content) as Job;
+      const job = readJobRecord(jobsDir, file.slice(0, -".json".length));
+      if (!job) continue;
       if (syncJobStatus(job, namespaceId)) {
         writeJobAtomic(job.id, job, namespaceId);
       }
@@ -251,17 +228,10 @@ export function listJobs(opts: ListOptions = {}, namespaceId?: string): Job[] {
 }
 
 export function deleteJob(id: string, namespaceId?: string): boolean {
-  const path = getJobPath(id, namespaceId);
-  if (!existsSync(path)) {
-    return false;
-  }
   try {
+    const path = getJobPath(id, namespaceId);
+    if (!existsSync(path)) return false;
     unlinkSync(path);
-    // also clean up .tmp if it exists
-    const tmpPath = getTmpPath(id, namespaceId);
-    if (existsSync(tmpPath)) {
-      unlinkSync(tmpPath);
-    }
     return true;
   } catch {
     return false;
@@ -280,8 +250,8 @@ export function cleanupOldJobs(maxAgeMs: number, namespaceId?: string): number {
 
   for (const file of files) {
     try {
-      const content = readFileSync(join(jobsDir, file), "utf-8");
-      const job = JSON.parse(content) as Job;
+      const job = readJobRecord(jobsDir, file.slice(0, -".json".length));
+      if (!job) continue;
       const created = new Date(job.createdAt).getTime();
 
       if (created < cutoff) {

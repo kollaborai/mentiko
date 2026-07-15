@@ -109,8 +109,6 @@ describe("data shape catalog", () => {
       "chain-definition",
       "agent-definition",
       "config-profile",
-      "runtime-profiler",
-      "performance-metrics",
     ]);
     expect(queue.every((shape) => shape.shell.every((path) => path.endsWith(".sh")))).toBe(true);
   });

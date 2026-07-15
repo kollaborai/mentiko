@@ -254,7 +254,7 @@ async function runProviderlessJobRunner() {
   try {
     const result = await runNode(
       process.execPath,
-      [join(repoRoot, "lib", "job-runner.mjs"), jobId],
+      [join(repoRoot, "lib", "runner-job-worker.js"), jobId],
       {
         cwd: repoRoot,
         env: {

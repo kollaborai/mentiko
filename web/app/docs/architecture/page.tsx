@@ -24,7 +24,7 @@ const layers = [
       { label: "launch-agent.sh", desc: "creates pty session, invokes ai cli" },
       { label: "event-lifecycle.ts", desc: "strict event lookup, processed mutation, and scoped archival" },
       { label: "background-worker.ts", desc: "owns typed chain watcher and watchdog lifecycle" },
-      { label: ".mjs files", desc: "job-runner.mjs, pty-manager.mjs, chain-generator.mjs" },
+      { label: "runtime workers", desc: "runner-job-worker.js, pty-manager.mjs, chain-generator.mjs" },
     ],
   },
   {

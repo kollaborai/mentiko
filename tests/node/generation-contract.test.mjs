@@ -24,7 +24,7 @@ const { isPayloadCompatibleWithKind, normalizeResultForKind, jobTypeToGeneration
 
 // The CLI import door must resolve to the generated runtime bound to the
 // canonical TypeScript source (proves the CLI carries no independent parser).
-const cliPath = resolve(here, "../../lib/mentiko-cli-generation.mjs");
+const cliPath = resolve(here, "../../lib/runner-generation-payload-import.js");
 const cli = await import(cliPath);
 
 let passed = 0;

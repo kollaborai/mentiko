@@ -964,7 +964,7 @@ describe("POST /api/tasks/auto-run", () => {
   it("auto-accepts a hydrated recommend job whose enveloped result is a BARE recommendation object -- assigns + runs the chain, no new analysis", async () => {
     // { output: "<json>" } where the inner json is the bare recommendation
     // { action, chain_id, ... } with NO { recommendation } wrapper. This is one
-    // of the two legal artifact shapes (lib/mentiko-cli-generation.mjs
+    // of the two legal artifact shapes (typed generation payload importer
     // normalizes with `obj.recommendation ?? obj`).
     mockTaskGet.mockReturnValue({
       id: "TASK-097",

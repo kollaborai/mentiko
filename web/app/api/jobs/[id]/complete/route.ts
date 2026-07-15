@@ -132,7 +132,7 @@ function removeAuditRunFromExecutionMetadata(
 /**
  * POST /api/jobs/[id]/complete
  *
- * Internal endpoint called by job-runner.mjs when a job completes.
+ * Internal endpoint called by the compiled typed job worker when a job completes.
  * Updates job status and linked entity metadata (task or decision).
  *
  * Auth: uses BETTER_AUTH_SECRET. Unconfigured local dev may use loopback.

@@ -112,7 +112,7 @@ reconnect()
 **Flow:**
 1. Generates device authorization link
 2. User approves in browser at `/mcp-auth`
-3. Stores refresh token in `~/.mentiko/mcp/session.json`
+3. Atomically stores a validated refresh/access-token sidecar in `~/.mentiko/mcp/session.json` (0600)
 4. Auto-exchanges refresh token on 401
 
 **Benefits:**

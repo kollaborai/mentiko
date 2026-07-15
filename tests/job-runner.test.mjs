@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * lib/job-runner.mjs black-box tests
+ * typed runner-job-worker.js black-box tests
  *
  * Tests the job runner via child process execution with mock CLI.
  * Exercises: job loading, profile resolution, secret decryption,
@@ -14,7 +14,7 @@ import { createHmac, pbkdf2Sync, createHash, createCipheriv, randomBytes as rb }
 
 const TMP = `/tmp/test-job-runner-${process.pid}`;
 const REPO_ROOT = join(import.meta.dirname, "..");
-const SCRIPT = join(REPO_ROOT, "lib", "job-runner.mjs");
+const SCRIPT = join(REPO_ROOT, "lib", "runner-job-worker.js");
 const TEST_SECRET = "test-job-runner-secret-key-2026";
 const NODE_BIN = dirname(execFileSync("which", ["node"], { encoding: "utf-8" }).trim());
 const MOCK_CLI_BIN_DIR = join(TMP, "mock-bin");
@@ -322,7 +322,7 @@ mkdirs();
 writeMockFetchHook();
 writeDeterministicMockCli();
 
-console.log("lib/job-runner.mjs tests\n");
+console.log("runner-job-worker.js tests\n");
 
 // ── job loading tests ──────────────────────────────────────────────────
 

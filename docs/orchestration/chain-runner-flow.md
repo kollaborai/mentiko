@@ -32,8 +32,8 @@ phase 0: initialization
    - slack-integration.sh    slack notifications
    - run-lib.sh              run tracking (create-run, update-run-status, etc)
    - metrics.sh              performance metrics
-   - performance.sh          performance tracking
-   - profiler.sh             agent profiling
+   - performance.sh          OS/PTY sample boundary for typed performance tracking
+   - profiler.sh             OS/PTY sample boundary for typed agent profiling
    - error-handling.sh       error handling
    - scheduler.sh            cron scheduling
    - runner-audit.js         typed audit CLI boundary
@@ -357,11 +357,11 @@ function: launch_chain_agent <agent-id> <round>
 
 13. performance tracking
    ----------------------
-   calls perf-start-agent from performance.sh
+   calls perf-start-agent through performance.sh; the wrapper invokes the compiled typed runtime-metrics CLI
 
 14. profiler: start tracking
    --------------------------
-   calls profiler-start from profiler.sh
+   calls profiler-start through profiler.sh; the wrapper invokes the compiled typed runtime-metrics CLI
 
 phase 6: execution (agent monitor session)
 ============================================
@@ -455,11 +455,11 @@ summary:
 
 9. performance tracking
    ----------------------
-   calls perf-complete-agent from performance.sh
+   calls perf-end-agent through performance.sh; the wrapper invokes the compiled typed runtime-metrics CLI
 
 10. profiler: stop tracking
    --------------------------
-   calls profiler-stop from profiler.sh
+   calls profiler-end through profiler.sh; the wrapper invokes the compiled typed runtime-metrics CLI
 
 11. find next agent
    ----------------

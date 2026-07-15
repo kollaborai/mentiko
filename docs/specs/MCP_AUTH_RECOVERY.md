@@ -165,6 +165,10 @@ Store the credential in a file the bridge reads at runtime, **not** baked into t
 MCP env config:
 
 - Path: `~/.mentiko/mcp/session.json` (mode 0600) — `{ refresh_token, session_token, updatedAt }`.
+  `session-store.ts` validates the physical JSON and required token fields, rejects
+  symlinks, preserves refresh credentials during access-token rotation, and publishes
+  replacement bytes by atomic rename. Invalid bytes fail closed; they are never
+  interpreted as an empty or absent credential.
 - Bridge precedence (`ops-client.ts` seed + `ensureToken`): **sidecar file → env
   `MENTIKO_SESSION_TOKEN` → engine refresh**. So after one reconnect, the sidecar is the
   source of truth; `~/.claude.json` only needs `MENTIKO_WEB_URL` + `MENTIKO_SESSION_ID`.
