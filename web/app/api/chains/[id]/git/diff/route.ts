@@ -8,27 +8,9 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { isGitRepository, readGitDiffSummary } from "@/lib/runner-v2/git-integration";
 
 export const dynamic = "force-dynamic";
-
-interface DiffFile {
-  status: string;
-  file: string;
-  additions?: number;
-  deletions?: number;
-}
-
-interface DiffResult {
-  from: string;
-  to: string;
-  files: DiffFile[];
-  summary: {
-    filesChanged: number;
-    additions: number;
-    deletions: number;
-  };
-  diff?: string;
-}
 
 // Reject option-like values (`--output=...`, `-S`, ...). Array form already
 // kills shell injection; this closes the separate flag-injection vector where
@@ -36,17 +18,6 @@ interface DiffResult {
 function assertRef(value: string, label: string): void {
   if (value.startsWith("-")) {
     throw new BadRequest(`Invalid ${label}`);
-  }
-}
-
-function getStatusSymbol(status: string): string {
-  switch (status) {
-    case "A": return "added";
-    case "D": return "deleted";
-    case "M": return "modified";
-    case "R": return "renamed";
-    case "C": return "copied";
-    default: return status;
   }
 }
 
@@ -72,65 +43,12 @@ export const GET = withErrorHandling(async (
   if (to) assertRef(to, "to");
 
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
-  const gitDir = join(chainDir, ".git");
 
-  if (!existsSync(gitDir)) {
+  if (!isGitRepository(chainDir)) {
     throw new BadRequest("Not a git repository");
   }
 
-  // Get diff summary
-  const diffOutput = runGit(chainDir, ["diff", "--numstat", from, toRev]);
-
-  const files: DiffFile[] = [];
-  let totalAdditions = 0;
-  let totalDeletions = 0;
-
-  diffOutput.split("\n").forEach((line) => {
-    if (!line.trim()) return;
-
-    const [addStr, delStr, ...fileParts] = line.split("\t");
-    const file = fileParts.join("\t").trim();
-
-    if (file) {
-      const additions = addStr === "-" ? 0 : parseInt(addStr, 10);
-      const deletions = delStr === "-" ? 0 : parseInt(delStr, 10);
-
-      totalAdditions += additions;
-      totalDeletions += deletions;
-
-      const statusOutput = runGit(
-        chainDir,
-        ["diff", "--name-status", from, toRev, "--", file]
-      );
-      const status = statusOutput.trim().split(" ")[0] || "M";
-
-      files.push({
-        status: getStatusSymbol(status),
-        file,
-        additions,
-        deletions,
-      });
-    }
-  });
-
-  const result: DiffResult = {
-    from,
-    to: toRev,
-    files,
-    summary: {
-      filesChanged: files.length,
-      additions: totalAdditions,
-      deletions: totalDeletions,
-    },
-  };
-
-  // Optionally include full diff content
-  if (includeContent) {
-    const diffContent = runGit(chainDir, ["diff", from, toRev]);
-    result.diff = diffContent;
-  }
-
-  return apiSuccess(result);
+  return apiSuccess(readGitDiffSummary(chainDir, from, toRev, includeContent));
 });
 
 // Get file content at a specific commit

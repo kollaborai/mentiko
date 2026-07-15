@@ -9,17 +9,9 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { validateChainId } from "@/lib/git/validate";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { isGitRepository, readGitBranches } from "@/lib/runner-v2/git-integration";
 
 export const dynamic = "force-dynamic";
-
-interface GitBranch {
-  name: string;
-  short: string;
-  author: string;
-  date: string;
-  message: string;
-  current: boolean;
-}
 
 /**
  * Check if the working tree has uncommitted changes.
@@ -55,36 +47,13 @@ export const GET = withErrorHandling(async (
   const orgId = await getOrgIdFromRequest(request);
 
   const chainDir = orgPath(namespaceId, orgId, "chains", chainId);
-  const gitDir = join(chainDir, ".git");
 
-  if (!existsSync(gitDir)) {
+  if (!isGitRepository(chainDir)) {
     throw new BadRequest("Not a git repository");
   }
 
-  // Get current branch
-  const currentBranch = runGit(chainDir, ["branch", "--show-current"]).trim();
-
-  // Get all branches using format with unit separator for safe parsing
-  const branchOutput = runGit(chainDir, [
-    "branch",
-    "-v",
-    "--format=%(refname:short)\x01%(objectname:short)\x01%(authorname)\x01%(committerdate:iso8601)\x01%(contents:subject)",
-  ]);
-
-  const branches: GitBranch[] = branchOutput
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => {
-      const parts = line.split("\x01");
-      return {
-        name: parts[0]?.trim() || "",
-        short: parts[1]?.trim() || "",
-        author: parts[2]?.trim() || "",
-        date: parts[3]?.trim() || "",
-        message: parts[4]?.trim() || "",
-        current: parts[0]?.trim() === currentBranch,
-      };
-    });
+  const branches = readGitBranches(chainDir);
+  const currentBranch = branches.find((branch) => branch.current)?.name ?? "HEAD";
 
   return apiSuccess({
     current: currentBranch,

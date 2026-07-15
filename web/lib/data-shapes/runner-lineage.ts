@@ -125,6 +125,85 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["lib/chain-generator.sh", "lib/chain-runner.sh", "lib/validate.sh", "lib/routing-lib.sh", "lib/monitor-completion.sh"],
     },
   },
+  "audit-remote-ship": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-audit-remote-shipper",
+      label: "Validate audit JSONL, derive remote object keys, retry rclone, and append failure breadcrumbs",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/audit-ship.ts", "web/lib/runner-v2/audit-ship-cli.ts", "lib/runner-audit-ship.js"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces audit-ship.sh jq/date/cut parsing, key derivation, retry orchestration, and failure JSON construction; rclone remains the required external CLI.",
+      paths: ["lib/audit-ship.sh"],
+    },
+  },
+  "notification-dispatch-envelope": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-notification-dispatch",
+      label: "Build and validate internal notification dispatch request/response envelopes",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/notification-dispatcher.ts", "web/lib/runner-v2/notification-dispatcher-cli.ts", "lib/runner-notification-dispatcher.js"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces notification-dispatcher.sh jq/curl payload and response parsing; the route now separates raw JSON decoding from normalized envelope validation, and HTTP remains the required internal API boundary.",
+      paths: ["lib/notification-dispatcher.sh"],
+    },
+  },
+  "chain-version-control": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-chain-version-owner",
+        label: "Validate, read, archive, compare, and atomically mutate chain version and metadata records",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/version-control.ts", "web/lib/runner-v2/version-control-cli.ts"],
+      },
+      {
+        id: "typed-chain-version-shell-boundary",
+        label: "Forward legacy version-control function calls to the compiled typed owner",
+        owner: "runner-v2",
+        paths: ["lib/version-control.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces version-control.sh jq/sed/loop JSON parsing, metadata serialization, path resolution, rollback mutation, and agent comparison with a compiled TypeScript contract; the external diff CLI remains the only child-process product boundary.",
+      paths: ["lib/version-control.sh", "tests/version-control.test.mjs"],
+    },
+  },
+  "git-integration-projection": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-git-projection",
+        label: "Parse external git status, history, diff, branch, conflict, commit, comparison, and stash output into typed records",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/git-integration.ts", "web/lib/runner-v2/git-integration-cli.ts", "lib/runner-git-integration.js"],
+      },
+      {
+        id: "typed-git-api-readers",
+        label: "Expose the typed projection to chain Git status/history/diff and read-only repository readers",
+        owner: "runner-v2",
+        paths: [
+          "web/app/api/chains/[id]/git/status/route.ts",
+          "web/app/api/chains/[id]/git/history/route.ts",
+          "web/app/api/chains/[id]/git/diff/route.ts",
+          "web/app/api/chains/[id]/git/branches/route.ts",
+        ],
+      },
+      {
+        id: "shell-git-invocation-boundary",
+        label: "Forward legacy git projection calls without parsing or serializing JSON",
+        owner: "runner-v2",
+        paths: ["lib/git-integration.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces git-integration.sh jq status/history/diff/branch/conflict/commit/comparison/stash JSON parsing and diff assembly with a compiled typed owner; git remains the external CLI product boundary and no shell fallback remains.",
+      paths: ["lib/git-integration.sh"],
+    },
+  },
   "agent-definition": {
     usage: "runner-v2",
     surfaces: [
@@ -487,6 +566,21 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
   },
+  "task-context-handoff": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-task-context-resolution",
+        label: "Validate task API envelopes, normalize task/comment records, and build the prompt context handoff",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/task-context.ts", "web/lib/runner-v2/task-context-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces chain-runner.sh curl/jq/sed task and comment parsing; the shell caller only invokes the compiled typed handoff writer.",
+      paths: ["lib/chain-runner.sh", "lib/runner-task-context.js"],
+    },
+  },
   "runtime-profiler": {
     usage: "runner-v2",
     surfaces: [
@@ -754,6 +848,32 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/runner-v2/agent-profile-cli.ts", "web/lib/runner-v2/readiness-policy.ts", "web/lib/runner-v2/readiness-cli.ts", "web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
       },
     ],
+  },
+  "teammux-agent-spec": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-teammux-agent-spec-bridge",
+      label: "Decode README/spec metadata and atomically export team-mux agent records",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/teammux-bridge.ts", "web/lib/runner-v2/teammux-bridge-cli.ts", "lib/runner-teammux-bridge.js"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces team-mux bridge jq/grep/sed parsing and heredoc JSON writes; lib/teammux-bridge.sh now only invokes the compiled typed boundary.",
+      paths: ["lib/teammux-bridge.sh"],
+    },
+  },
+  "teammux-memory-record": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-teammux-memory-reader",
+      label: "Resolve team-mux agent directories, validate memory JSON, and render summaries",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/teammux-bridge.ts", "web/lib/runner-v2/teammux-bridge-cli.ts", "lib/runner-teammux-bridge.js"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces shell glob/jq memory reads with a typed symlink-safe reader; no shell parser or fallback remains.",
+      paths: ["lib/teammux-bridge.sh"],
+    },
   },
   "secret-record": {
     usage: "runner-v2",

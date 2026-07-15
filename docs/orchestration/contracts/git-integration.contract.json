@@ -1,0 +1,35 @@
+{
+  "schema_version": "git-integration/v1",
+  "owner": "web/lib/runner-v2/git-integration.ts",
+  "cli": "web/lib/runner-v2/git-integration-cli.ts",
+  "compiled": "lib/runner-git-integration.js",
+  "legacy_boundary": "lib/git-integration.sh",
+  "owns": [
+    "git status porcelain parsing into staged, modified, untracked, and branch fields",
+    "record-separated git commit history parsing",
+    "git diff name-status parsing and base64 patch record serialization",
+    "local branch listing and current-branch projection parsing",
+    "unmerged conflict record normalization",
+    "commit metadata and changed-file projection",
+    "branch ahead/behind comparison projection",
+    "stash list projection"
+  ],
+  "invariants": [
+    "Git remains the required external CLI product behavior",
+    "the shell boundary forwards primitive arguments and never parses or serializes JSON",
+    "missing or symlinked repositories fail closed rather than inventing records",
+    "diff paths are passed after -- and patch bytes are encoded by TypeScript",
+    "record-shaped Git output is validated before normalized records are emitted"
+  ],
+  "external_processes": {
+    "status": "git status --porcelain=v1",
+    "history": "git log -n <count> --pretty=format:<record-separated fields>",
+    "diff": "git diff --name-status <from> <to> and git diff <from> <to> -- <file>",
+    "branches": "git for-each-ref refs/heads/",
+    "conflicts": "git diff --name-only --diff-filter=U",
+    "commit-info": "git show metadata and changed files",
+    "compare": "git rev-list --count for each direction",
+    "stash-list": "git stash list"
+  },
+  "deletion_gate": "remove lib/git-integration.sh once all legacy callers invoke lib/runner-git-integration.js directly and no shell function export remains required"
+}

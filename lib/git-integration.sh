@@ -19,6 +19,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Typed git status/history/diff contract boundary. Git itself remains the
+# external product CLI; shell only forwards primitive arguments and never
+# parses or serializes the returned records.
+_git_integration_cli() {
+    local cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-git-integration.js"
+    if ! command -v node >/dev/null 2>&1; then
+        echo "  mentiko: node is required for typed git integration" >&2
+        return 1
+    fi
+    if [[ ! -f "$cli" ]]; then
+        echo "  mentiko: typed git integration bundle missing: $cli" >&2
+        return 1
+    fi
+    node "$cli" "$@"
+}
+
 # -------------------------------------------------------------------
 # git_get_repo_dir: get the git repo dir for a chain
 # -------------------------------------------------------------------
@@ -90,58 +106,9 @@ git_init_chain() {
 # git_status: get working dir status
 # -------------------------------------------------------------------
 git_status() {
-    local chain_dir="$1"
-    local output_format="${2:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        if [[ "$output_format" == "json" ]]; then
-            echo '{"error":"not a git repo"}'
-        else
-            echo "not a git repo"
-        fi
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    local staged=()
-    local modified=()
-    local untracked=()
-    local branch
-    branch=$(git branch --show-current 2>/dev/null || echo "HEAD")
-
-    # parse status
-    while IFS= read -r line; do
-        local status="${line:0:2}"
-        local file="${line:3}"
-        case "$status" in
-            "M ") staged+=("$file") ;;
-            " M") modified+=("$file") ;;
-            "MM") staged+=("$file"); modified+=("$file") ;;
-            "A ") staged+=("$file") ;;
-            "??") untracked+=("$file") ;;
-        esac
-    done < <(git status --porcelain 2>/dev/null || true)
-
-    if [[ "$output_format" == "json" ]]; then
-        jq -n \
-            --arg branch "$branch" \
-            --argjson staged "$(printf '%s\n' "${staged[@]:-}" | jq -R . | jq -s .)" \
-            --argjson modified "$(printf '%s\n' "${modified[@]:-}" | jq -R . | jq -s .)" \
-            --argjson untracked "$(printf '%s\n' "${untracked[@]:-}" | jq -R . | jq -s .)" \
-            '{
-                branch: $branch,
-                staged: $staged,
-                modified: $modified,
-                untracked: $untracked,
-                has_changes: ($staged | length > 0 or $modified | length > 0 or $untracked | length > 0)
-            }'
-    else
-        echo "branch: $branch"
-        [[ ${#staged[@]} -gt 0 ]] && echo "staged: ${staged[*]}"
-        [[ ${#modified[@]} -gt 0 ]] && echo "modified: ${modified[*]}"
-        [[ ${#untracked[@]} -gt 0 ]] && echo "untracked: ${untracked[*]}"
-    fi
+    _git_integration_cli status \
+        --chain-dir "$1" \
+        --format "${2:-json}"
 }
 
 # -------------------------------------------------------------------
@@ -186,75 +153,21 @@ git_commit_chain() {
 # git_get_history: get commit history
 # -------------------------------------------------------------------
 git_get_history() {
-    local chain_dir="$1"
-    local max_count="${2:-50}"
-    local format="${3:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        if [[ "$format" == "json" ]]; then
-            echo '[]'
-        else
-            echo "not a git repo"
-        fi
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    if [[ "$format" == "json" ]]; then
-        git log -n "$max_count" --pretty=format:'{hash:"%H",short:"%h",author:"%an",date:"%ci",message:"%s"}' \
-            | jq -R . | jq -s . '
-                map(.message |= gsub("\""; "\\\""))
-            '
-    else
-        git log -n "$max_count" --pretty=format:'%h|%an|%ci|%s' --abbrev-commit
-    fi
+    _git_integration_cli history \
+        --chain-dir "$1" \
+        --max-count "${2:-50}" \
+        --format "${3:-json}"
 }
 
 # -------------------------------------------------------------------
 # git_diff_commits: show diff between two commits
 # -------------------------------------------------------------------
 git_diff_commits() {
-    local chain_dir="$1"
-    local from_commit="${2:-HEAD}"
-    local to_commit="${3:-}"
-    local output_format="${4:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        echo "error: not a git repo" >&2
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    local from_rev="$from_commit"
-    local to_rev="${to_commit:-HEAD}"
-
-    if [[ "$output_format" == "json" ]]; then
-        # get diff as structured json
-        local files_changed
-        files_changed=$(git diff --name-status "$from_rev" "$to_rev" 2>/dev/null || true)
-
-        local diff_array="[]"
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            local status="${line:0:1}"
-            local file="${line:2}"
-            local diff_content=""
-            diff_content=$(git diff "$from_rev" "$to_rev" -- "$file" 2>/dev/null | base64 2>/dev/null || echo "")
-
-            diff_array=$(echo "$diff_array" | jq --arg status "$status" --arg file "$file" --arg diff "$diff_content" \
-                '. += [{status: $status, file: $file, diff: $diff}]')
-        done <<< "$files_changed"
-
-        jq -n \
-            --arg from "$from_rev" \
-            --arg to "$to_rev" \
-            --argjson files "$diff_array" \
-            '{from: $from, to: $to, files: $files}'
-    else
-        git diff "$from_rev" "$to_rev" 2>/dev/null || true
-    fi
+    _git_integration_cli diff \
+        --chain-dir "$1" \
+        --from "${2:-HEAD}" \
+        --to "${3:-HEAD}" \
+        --format "${4:-json}"
 }
 
 # -------------------------------------------------------------------
@@ -338,38 +251,9 @@ git_create_branch() {
 # git_list_branches: list all branches
 # -------------------------------------------------------------------
 git_list_branches() {
-    local chain_dir="$1"
-    local format="${2:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        if [[ "$format" == "json" ]]; then
-            echo '[]'
-        else
-            echo "not a git repo"
-        fi
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    local current_branch
-    current_branch=$(git branch --show-current 2>/dev/null || echo "")
-
-    if [[ "$format" == "json" ]]; then
-        git branch -v --format='%(refname:short)|%(objectname:short)|%(authorname)|%(committerdate:iso8601)|%(contents:subject)' \
-            | jq -R . | jq -s --arg current "$current_branch" '
-                map(split("|") | {
-                    name: .[0],
-                    short: .[1],
-                    author: .[2],
-                    date: .[3],
-                    message: .[4],
-                    current: (.[0] == $current)
-                })
-            '
-    else
-        git branch -v
-    fi
+    _git_integration_cli branches \
+        --chain-dir "$1" \
+        --format "${2:-json}"
 }
 
 # -------------------------------------------------------------------
@@ -460,29 +344,9 @@ git_merge_branch() {
 # git_detect_conflicts: check for merge conflicts
 # -------------------------------------------------------------------
 git_detect_conflicts() {
-    local chain_dir="$1"
-
-    if ! git_is_repo "$chain_dir"; then
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    local conflicted_files
-    conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
-
-    if [[ -z "$conflicted_files" ]]; then
-        if [[ "$2" == "json" ]]; then
-            echo '[]'
-        fi
-        return 0
-    fi
-
-    if [[ "$2" == "json" ]]; then
-        echo "$conflicted_files" | jq -R . | jq -s '{conflicts: .}'
-    else
-        echo "$conflicted_files"
-    fi
+    _git_integration_cli conflicts \
+        --chain-dir "$1" \
+        --format "${2:-json}"
 }
 
 # -------------------------------------------------------------------
@@ -550,91 +414,30 @@ git_abort_merge() {
 # git_get_commit_info: get detailed info about a commit
 # -------------------------------------------------------------------
 git_get_commit_info() {
-    local chain_dir="$1"
-    local commit="$2"
-    local format="${3:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        echo "error: not a git repo" >&2
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    if [[ "$format" == "json" ]]; then
-        local info
-        info=$(git show -s --format='{
-            hash: "%H",
-            short: "%h",
-            author: "%an",
-            author_email: "%ae",
-            date: "%ci",
-            message: "%s",
-            body: "%b"
-        }' "$commit" 2>/dev/null || echo '{}')
-
-        # get files changed
-        local files
-        files=$(git show --name-status --format="" "$commit" 2>/dev/null | jq -R . | jq -s . || echo '[]')
-
-        echo "$info" | jq --argjson files "$files" '. + {files: $files}'
-    else
-        git show --stat "$commit" 2>/dev/null || true
-    fi
+    _git_integration_cli commit-info \
+        --chain-dir "$1" \
+        --commit "${2:-HEAD}" \
+        --format "${3:-json}"
 }
 
 # -------------------------------------------------------------------
 # git_compare_branches: compare two branches
 # -------------------------------------------------------------------
 git_compare_branches() {
-    local chain_dir="$1"
-    local branch1="${2:-HEAD}"
-    local branch2="${3:-main}"
-
-    if ! git_is_repo "$chain_dir"; then
-        echo "error: not a git repo" >&2
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    local ahead behind
-    ahead=$(git rev-list --count "$branch2..$branch1" 2>/dev/null || echo "0")
-    behind=$(git rev-list --count "$branch1..$branch2" 2>/dev/null || echo "0")
-
-    if [[ "$4" == "json" ]]; then
-        jq -n \
-            --arg branch1 "$branch1" \
-            --arg branch2 "$branch2" \
-            --argjson ahead "$ahead" \
-            --argjson behind "$behind" \
-            '{branch1: $branch1, branch2: $branch2, ahead: $ahead, behind: $behind}'
-    else
-        echo "$branch1 is $ahead commits ahead of $branch2"
-        echo "$branch1 is $behind commits behind $branch2"
-    fi
+    _git_integration_cli compare \
+        --chain-dir "$1" \
+        --branch1 "${2:-HEAD}" \
+        --branch2 "${3:-main}" \
+        --format "${4:-json}"
 }
 
 # -------------------------------------------------------------------
 # git_get_stash_list: list stashed changes
 # -------------------------------------------------------------------
 git_get_stash_list() {
-    local chain_dir="$1"
-    local format="${2:-json}"
-
-    if ! git_is_repo "$chain_dir"; then
-        echo "error: not a git repo" >&2
-        return 1
-    fi
-
-    cd "$chain_dir"
-
-    if [[ "$format" == "json" ]]; then
-        git stash list --format='{stash: "%H", branch: "%B", message: "%s", date: "%ci"}' \
-            | jq -R . | jq -s .
-    else
-        git stash list
-    fi
+    _git_integration_cli stash-list \
+        --chain-dir "$1" \
+        --format "${2:-json}"
 }
 
 # -------------------------------------------------------------------
@@ -657,6 +460,7 @@ git_stash_pop() {
 # export functions
 export -f git_get_repo_dir
 export -f git_is_repo
+export -f _git_integration_cli
 export -f git_init_chain
 export -f git_status
 export -f git_commit_chain

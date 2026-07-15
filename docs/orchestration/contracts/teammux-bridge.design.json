@@ -1,0 +1,23 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": [
+    "lib/teammux-bridge.sh",
+    "web/lib/runner-v2/teammux-bridge.ts",
+    "web/lib/runner-v2/teammux-bridge-cli.ts"
+  ],
+  "role": "typed interoperability boundary for external team-mux agent and memory records",
+  "ownership": {
+    "agent_spec": "TypeScript decodes configurations/agent-spec.json, extracts README metadata when the spec is absent, validates safe agent ids, and atomically writes exported README/spec files",
+    "memory": "TypeScript resolves the configured team-mux root, rejects symlinked roots/agent paths/memory directories, validates memory JSON objects, and renders summaries",
+    "shell": "lib/teammux-bridge.sh invokes the compiled node bundle and owns no JSON, text, path, or orchestration contract"
+  },
+  "invariants": [
+    "agent ids are single safe path components",
+    "JSON output is serialized by JSON.stringify rather than shell interpolation",
+    "exported files are written through private temporary files and atomic rename",
+    "memory reads are restricted to working, semantic, episodic, or all",
+    "malformed memory records render an explicit read error and are never parsed by shell tools",
+    "missing typed bundle or configured roots fails closed; no shell fallback is attempted"
+  ],
+  "deletion_gate": "remove lib/teammux-bridge.sh once all callers invoke lib/runner-teammux-bridge.js directly and the external CLI packaging no longer requires a shell entrypoint"
+}

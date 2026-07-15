@@ -12,6 +12,10 @@ export const IMPLEMENTATION_CONTRACT_FILES = [
   "monitor.contract.json",
   "monitor-v2.contract.json",
   "run-event.contract.json",
+  "chain-version-control.contract.json",
+  "git-integration.contract.json",
+  "audit-ship.contract.json",
+  "notification-dispatch.contract.json",
   "watcher-watchdog.contract.json",
 ] as const;
 

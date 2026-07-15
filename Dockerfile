@@ -228,6 +228,38 @@ RUN if [ -f /build/web/lib/runner-v2/error-handling-cli.ts ]; then \
         --outfile=/context/lib/runner-error-handling.js; \
     fi
 
+# compile the typed team-mux interoperability boundary. The legacy shell
+# command only invokes this bundle; agent, chain, and memory JSON stay typed.
+RUN if [ -f /build/web/lib/runner-v2/teammux-bridge-cli.ts ]; then \
+      echo "=== compiling typed team-mux bridge boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/teammux-bridge-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-teammux-bridge.js; \
+    fi
+
+# compile the typed audit ship boundary. The legacy shell entrypoint only
+# forwards stdin; entry parsing, S3 key derivation, rclone upload, retry backoff,
+# and failure-record construction stay in the compiled TypeScript owner.
+RUN if [ -f /build/web/lib/runner-v2/audit-ship-cli.ts ]; then \
+      echo "=== compiling typed audit ship boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/audit-ship-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-audit-ship.js; \
+    fi
+
+# compile the typed notification dispatcher boundary. The legacy shell wrappers
+# only forward primitive arguments; payload construction, HTTP dispatch, and
+# response parsing stay in the compiled TypeScript owner.
+RUN if [ -f /build/web/lib/runner-v2/notification-dispatcher-cli.ts ]; then \
+      echo "=== compiling typed notification dispatcher boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/notification-dispatcher-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-notification-dispatcher.js; \
+    fi
+
 # compile the typed cap claim and count/promote admission boundary.
 RUN if [ -f /build/web/lib/runner-v2/concurrency-admission-cli.ts ]; then \
       echo "=== compiling typed concurrency admission boundary ===" && \
@@ -322,6 +354,36 @@ RUN if [ -f /build/web/lib/runner-v2/chain-generation-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/chain-generation-cli.ts \
         --bundle --platform=node --target=node20 \
       --outfile=/context/lib/runner-chain-generation.js; \
+    fi
+
+# compile the typed task API/context handoff; chain-runner.sh only sources the
+# generated shell-safe environment and never parses task JSON itself.
+RUN if [ -f /build/web/lib/runner-v2/task-context-cli.ts ]; then \
+      echo "=== compiling typed task context boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/task-context-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-task-context.js; \
+    fi
+
+# compile typed chain version/metadata ownership; the legacy shell library
+# forwards only primitive version-control operations to this bundle.
+RUN if [ -f /build/web/lib/runner-v2/version-control-cli.ts ]; then \
+      echo "=== compiling typed runner version-control boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/version-control-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-version-control.js; \
+    fi
+
+# compile typed git status/history/diff projections. Git remains the external
+# CLI product boundary; shell callers only invoke this parser/serializer.
+RUN if [ -f /build/web/lib/runner-v2/git-integration-cli.ts ]; then \
+      echo "=== compiling typed runner git integration boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/git-integration-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-git-integration.js; \
     fi
 
 # Compile typed monitor completion resolution. Shell monitors only supply

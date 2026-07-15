@@ -118,12 +118,13 @@ phase 2: chain.json validation
 6. load task context
    ------------------
    if --task <id> provided:
-   - fetches task from native sqlite task store (task-store.ts)
+   - invokes the compiled `lib/runner-task-context.js` typed boundary
+   - validates the raw task API JSON envelope before normalizing the issue
    - extracts: id, title, description, type, priority,
               acceptance_criteria, design, notes
-   - fetches comments
-   - builds TASK_CONTEXT block
-   - exports TASK_ID, TASK_TITLE, TASK_DESCRIPTION, etc.
+   - fetches and normalizes optional comments through the same typed owner
+   - builds TASK_CONTEXT and writes a private 0600 shell-safe environment handoff
+   - sources that handoff; `chain-runner.sh` never parses task JSON or provides a fallback
 
 7. workspace config
    ------------------
@@ -519,6 +520,13 @@ webhooks:
 notifications:
   slack integration sends start/complete/fail messages
   can be configured per chain
+
+  chain-started audit and notification payloads are built by typed CLIs. The
+  chain runner forwards primitive `--meta` fields to `runner-audit.js` and an
+  explicit endpoint plus event/run/agent primitives to
+  `runner-notification-dispatcher.js`; it does not use jq or inline JSON for
+  these contracts. The notification route decodes raw JSON and validates the
+  normalized event envelope before writing user-visible effects.
 
 key files involved
 ==================

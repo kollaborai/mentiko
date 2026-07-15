@@ -8,9 +8,9 @@
  * - diff and agent comparison between versions
  * - metadata retrieval and validation
  *
- * Strategy: extract function bodies from version-control.sh via sed,
- * eval them in a bash child process with SEMVER_REGEX defined.
- * Each test runs in isolation under a fresh TMP dir.
+ * Strategy: source the invocation-only version-control.sh boundary in a bash
+ * child process. Every operation is forwarded to the compiled TypeScript
+ * contract; no test extracts or evaluates shell JSON logic.
  */
 
 import { execFileSync } from "child_process";
@@ -69,10 +69,10 @@ function readFileLines(filePath) {
 /**
  * Runs a bash snippet in a child process.
  *
- * Key design (mirrors watchdog.test.mjs):
- *   - SEMVER_REGEX defined globally
- *   - All vc_* functions extracted from version-control.sh via sed/eval
- *   - NOT sourcing version-control.sh directly (it has set -euo pipefail)
+ * Key design:
+ *   - MENTIKO_CODE_ROOT points at this checkout so the shell boundary can
+ *     locate lib/runner-version-control.js
+ *   - version-control.sh is sourced only to expose primitive forwarding names
  *   - Each test gets a fresh TMP
  */
 function runBash(body, extraEnv = {}) {
@@ -80,24 +80,8 @@ function runBash(body, extraEnv = {}) {
   const script = [
     'set -uo pipefail',
     '',
-    'SEMVER_REGEX="^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)$"',
-    '',
-    '# -- extract all vc_ functions via sed --',
-    '',
-    'eval "$(sed -n \'/^vc_parse_semver()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_format_version()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_bump_version()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_next_version()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_get_versions_dir()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_version_path()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_version_exists()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_create_version()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_list_versions()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_rollback()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_diff_versions()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_compare_agents()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_validate_version()/,/^}/p\' "' + VC + '")"',
-    'eval "$(sed -n \'/^vc_get_metadata()/,/^}/p\' "' + VC + '")"',
+    'export MENTIKO_CODE_ROOT="' + REPO_ROOT + '"',
+    'source "' + VC + '"',
     '',
     'TMP="' + TMP + '"',
     '',

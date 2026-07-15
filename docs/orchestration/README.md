@@ -63,6 +63,59 @@ child-process product boundary; there is no shell parser or alternate CLI
 fallback. The production image compiles this contract to
 `lib/runner-chain-generation.js`.
 
+typed chain version control
+---------------------------
+
+`lib/version-control.sh` is an invocation-only legacy boundary. The compiled
+`web/lib/runner-v2/version-control.ts` contract owns semver validation, chain
+version/metadata JSON parsing, snapshot creation, version listing, rollback
+backups, agent comparison, and all version-path resolution. Its CLI is
+`web/lib/runner-v2/version-control-cli.ts`, compiled in production to
+`lib/runner-version-control.js`. The external `diff` command remains the sole
+child-process product behavior for version diffs; shell does not parse JSON,
+serialize metadata, or provide a fallback. Ownership details live in
+`docs/orchestration/contracts/chain-version-control.design.json`.
+
+typed git projections
+---------------------
+
+`lib/git-integration.sh` keeps only the legacy function/invocation boundary
+for the read-only projection functions (`git_status`, `git_get_history`,
+`git_diff_commits`, `git_list_branches`, `git_detect_conflicts`,
+`git_get_commit_info`, `git_compare_branches`, and `git_get_stash_list`). The
+compiled `web/lib/runner-v2/git-integration-cli.ts`
+(`lib/runner-git-integration.js` in the production image) runs the required
+external Git CLI, parses status, history, diff, branch, conflict, commit,
+comparison, and stash output, and owns the normalized JSON records. Diff
+payloads are base64 encoded by TypeScript; shell does not run `jq`, assemble
+records, or provide a fallback. The external chain `.git` directory remains
+the source of truth and no Mentiko JSON projection is persisted.
+
+typed team-mux interoperability
+--------------------------------
+
+`lib/teammux-bridge.sh` is an invocation-only boundary. The compiled
+`web/lib/runner-v2/teammux-bridge-cli.ts` owner reads and validates external
+team-mux `configurations/agent-spec.json` and memory JSON records, extracts the
+documented README metadata, and atomically writes exported README/spec files.
+It also owns team-mux root and agent path resolution, including symlink
+rejection. No shell JSON parser, heredoc contract, or shell fallback remains;
+the production image compiles this boundary to `lib/runner-teammux-bridge.js`.
+
+typed audit shipping and notification dispatch
+----------------------------------------------
+
+`lib/audit-ship.sh` and `lib/notification-dispatcher.sh` are invocation-only
+boundaries. `web/lib/runner-v2/audit-ship.ts` validates raw JSONL before
+normalizing audit identity/timestamps, derives the external object key, owns
+rclone retry/failure records, and never turns malformed input into an invented
+audit object. `web/lib/runner-v2/notification-dispatcher.ts` owns the typed
+request/response envelope, the `chain-started` event mapping, event-specific
+messages, and malformed-response handling. The shell files contain no JSON,
+HTTP, retry, or fallback logic. Enforceable ownership is recorded in
+`docs/orchestration/contracts/audit-ship.contract.json` and
+`docs/orchestration/contracts/notification-dispatch.contract.json`.
+
 core components
 ===============
 
@@ -445,10 +498,16 @@ libraries:
   web/lib/runner-v2/event-lifecycle.ts strict scan, lookup, processed mutation, archive
   web/lib/runner-v2/routing-contract.ts typed branch/fan/error/timeout contract
   lib/routing-lib.sh               invocation-only routing compatibility boundary
+  web/lib/runner-v2/version-control.ts typed chain version/metadata contract
+  lib/version-control.sh            invocation-only version-control boundary
   web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
   lib/config.sh                    path resolution
   web/lib/runner-v2/activity-capture.ts typed artifact/provenance capture
   lib/agent-activity-capture.sh         invocation-only activity boundary
+  web/lib/runner-v2/task-context.ts typed task API normalization and prompt handoff
+  lib/runner-task-context.js            compiled task-context CLI boundary
+  web/lib/runner-v2/teammux-bridge.ts typed team-mux agent/spec/memory contract
+  lib/teammux-bridge.sh                 invocation-only team-mux boundary
 
 background services:
   web/server/background-worker.ts                process owner

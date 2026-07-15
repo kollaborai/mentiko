@@ -1775,7 +1775,7 @@ const endpoints: ApiEndpoint[] = [
     auth: true,
     description: "internal endpoint (chain-runner and other services only, X-Internal-Auth) - fans a chain/agent event out to every subscribed user's email/slack/webhook/push/in-app channels per their preferences",
     body: [
-      { name: "event", type: "string", required: true, description: "chain-completed|chain-stopped|chain-failed|chain-stalled|agent-completed|agent-failed|approval-requested|budget-threshold" },
+      { name: "event", type: "string", required: true, description: "chain-started|chain-completed|chain-stopped|chain-failed|chain-stalled|agent-completed|agent-failed|approval-requested|budget-threshold" },
       { name: "chainId", type: "string", required: false, description: "chain id" },
       { name: "runId", type: "string", required: false, description: "run id" },
       { name: "agentId", type: "string", required: false, description: "agent id" },

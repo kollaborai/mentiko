@@ -5,8 +5,9 @@
  * to dispatch notifications based on user preferences.
  *
  * Body: {
- *   event: "chain-completed" | "chain-stopped" | "agent-completed" |
- *          "approval-requested" | "budget-threshold",
+ *   event: "chain-started" | "chain-completed" | "chain-stopped" |
+ *          "chain-failed" | "chain-stalled" | "agent-completed" |
+ *          "agent-failed" | "approval-requested" | "budget-threshold",
  *   chainId?: string,
  *   runId?: string,
  *   agentId?: string,
@@ -23,21 +24,39 @@ import { sendEmail } from "@/lib/email/email";
 import { nsPath } from "@/lib/config";
 import { getOrgIdFromRequest } from "@/lib/namespace-config";
 import { loadPrefs, isInQuietHours } from "@/lib/notifications/notification-prefs";
-import { Unauthorized } from "@/lib/api-errors";
+import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
 
 export const dynamic = "force-dynamic";
 
-type NotificationEvent =
-  | "chain-completed"
-  | "chain-stopped"
-  | "chain-failed"
-  | "chain-stalled"
-  | "agent-completed"
-  | "agent-failed"
-  | "approval-requested"
-  | "budget-threshold";
+// Runtime vocabulary of the dispatch request envelope. Mirrors the sender's
+// typed contract (web/lib/runner-v2/notification-dispatcher.ts); the union is
+// derived from it so the compile-time type and the runtime guard cannot drift.
+const NOTIFICATION_EVENTS = [
+  "chain-started",
+  "chain-completed",
+  "chain-stopped",
+  "chain-failed",
+  "chain-stalled",
+  "agent-completed",
+  "agent-failed",
+  "approval-requested",
+  "budget-threshold",
+] as const;
+
+type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
+
+const DISPATCH_STRING_FIELDS = ["chainId", "runId", "agentId", "message", "namespaceId"] as const;
+
+type DispatchRequest = {
+  event: NotificationEvent;
+  chainId?: string;
+  runId?: string;
+  agentId?: string;
+  message?: string;
+  namespaceId?: string;
+};
 
 type InAppNotification = {
   id: string;
@@ -69,6 +88,7 @@ function eventToCategory(event: NotificationEvent): string {
 
 function eventToType(event: NotificationEvent): "agent_complete" | "agent_error" | "chain_complete" | "chain_failed" | "webhook_failed" | "webhook_delivered" | "chain_started" | "job_started" | "job_complete" | "job_failed" {
   switch (event) {
+    case "chain-started": return "chain_started";
     case "chain-completed": return "chain_complete";
     case "chain-stopped": return "chain_failed";
     case "chain-failed": return "chain_failed";
@@ -84,6 +104,7 @@ function eventToActionUrl(
   runId?: string,
 ): { actionUrl?: string; actionLabel?: string } {
   switch (event) {
+    case "chain-started":
     case "chain-completed":
     case "chain-stopped":
     case "chain-failed":
@@ -104,6 +125,7 @@ function eventToActionUrl(
 function buildSubject(event: NotificationEvent, chainId?: string): string {
   const chain = chainId ? `'${chainId}'` : "unknown chain";
   switch (event) {
+    case "chain-started": return `[mentiko] Chain ${chain} started`;
     case "chain-completed": return `[mentiko] Chain ${chain} completed`;
     case "chain-stopped": return `[mentiko] Chain ${chain} stopped`;
     case "chain-failed": return `[mentiko] Chain ${chain} failed`;
@@ -121,6 +143,7 @@ function buildText(event: NotificationEvent, chainId?: string, runId?: string, m
   const run = runId ? ` (run: ${runId})` : "";
   if (message) return message;
   switch (event) {
+    case "chain-started": return `Chain '${chain}' started${run}.`;
     case "chain-completed": return `Chain '${chain}' completed successfully${run}.`;
     case "chain-stopped": return `Chain '${chain}' stopped${run}. Check the runs page for details.`;
     case "chain-failed": return `Chain '${chain}' failed${run}. Check the logs for error details.`;
@@ -133,12 +156,51 @@ function buildText(event: NotificationEvent, chainId?: string, runId?: string, m
   }
 }
 
+/** Decode the raw request body before applying the normalized envelope contract. */
+async function parseRawDispatchRequest(request: NextRequest): Promise<unknown> {
+  try {
+    return (await request.json()) as unknown;
+  } catch {
+    throw new BadRequest("notification dispatch body must be valid JSON");
+  }
+}
+
+/**
+ * Validate the normalized request envelope. An unrecognized event is rejected
+ * rather than falling through the classification defaults, where a near-miss
+ * name (`chain-start`) would be dispatched as a fabricated `chain_complete`.
+ */
+function validateDispatchRequest(value: unknown): DispatchRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BadRequest("notification dispatch body must be a JSON object");
+  }
+
+  const body = value as Record<string, unknown>;
+  const event = body.event;
+  if (typeof event !== "string" || !(NOTIFICATION_EVENTS as readonly string[]).includes(event)) {
+    const received = typeof event === "string" ? event.slice(0, 64) : typeof event;
+    throw new BadRequest(`unsupported notification event: ${received}`, {
+      supported: [...NOTIFICATION_EVENTS],
+    });
+  }
+
+  const dispatch: DispatchRequest = { event: event as NotificationEvent };
+  for (const field of DISPATCH_STRING_FIELDS) {
+    const fieldValue = body[field];
+    if (fieldValue === undefined || fieldValue === null) continue;
+    if (typeof fieldValue !== "string") {
+      throw new BadRequest(`notification dispatch ${field} must be a string`);
+    }
+    dispatch[field] = fieldValue;
+  }
+  return dispatch;
+}
+
 export const POST = withErrorHandling(async (request: NextRequest): Promise<NextResponse> => {
   if (!hasInternalAuth(request, "notifications-dispatch")) {
     throw new Unauthorized();
   }
 
-  const body = await request.json();
   const {
     event,
     chainId,
@@ -146,14 +208,7 @@ export const POST = withErrorHandling(async (request: NextRequest): Promise<Next
     agentId,
     message,
     namespaceId: nsId,
-  } = body as {
-    event: NotificationEvent;
-    chainId?: string;
-    runId?: string;
-    agentId?: string;
-    message?: string;
-    namespaceId?: string;
-  };
+  } = validateDispatchRequest(await parseRawDispatchRequest(request));
 
   const namespaceId = nsId || process.env.NAMESPACE_ID || "default";
   const orgId = await getOrgIdFromRequest(request);

@@ -14,12 +14,19 @@ const pairs = [
   ["chain-validation-cli", "runner-chain-validation"], ["chain-generation-cli", "runner-chain-generation"],
   ["parallel-contract-cli", "runner-parallel-contract"], ["activity-capture-cli", "runner-activity-capture"],
   ["approval-gate-cli", "runner-approval-gate"], ["error-handling-cli", "runner-error-handling"],
+  ["teammux-bridge-cli", "runner-teammux-bridge"], ["version-control-cli", "runner-version-control"],
+  ["task-context-cli", "runner-task-context"],
+  ["git-integration-cli", "runner-git-integration"],
+  ["audit-ship-cli", "runner-audit-ship"],
+  ["notification-dispatcher-cli", "runner-notification-dispatcher"],
+  ["lib/system/audit-cli.ts", "runner-audit"],
 ];
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));
 try {
   for (const [source, bundle] of pairs) {
     const output = join(temp, `${bundle}.js`);
-    execFileSync("npx", ["esbuild", `lib/runner-v2/${source}.ts`, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
+    const sourcePath = source.endsWith(".ts") ? source : `lib/runner-v2/${source}.ts`;
+    execFileSync("npx", ["esbuild", sourcePath, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
     assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
   }
   console.log(`bundle parity: ${pairs.length}/${pairs.length}`);

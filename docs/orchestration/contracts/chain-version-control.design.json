@@ -1,0 +1,27 @@
+{
+  "schema_version": "chain-version-control/v1",
+  "owner": "web/lib/runner-v2/version-control.ts",
+  "cli": "web/lib/runner-v2/version-control-cli.ts",
+  "compiled": "lib/runner-version-control.js",
+  "legacy_boundary": "lib/version-control.sh",
+  "owns": [
+    "semver parsing, validation, formatting, and increment selection",
+    "chain.json and metadata.json parsing and normalized version-path resolution",
+    "snapshot creation, metadata history, atomic current-chain mutation, and changelog copying",
+    "version listing, rollback backup/restore, and typed agent comparison"
+  ],
+  "invariants": [
+    "the shell boundary forwards primitive arguments and never parses or serializes JSON",
+    "invalid JSON and malformed version-history records fail closed rather than selecting a shell fallback",
+    "current-chain and metadata-history JSON publication uses a temporary file and atomic rename; snapshot and rollback backup copies remain explicit copy operations",
+    "the external diff command is the only child-process behavior retained by the typed contract"
+  ],
+  "external_processes": {
+    "diff": "diff -u <from-chain.json> <to-chain.json>"
+  },
+  "migration_notes": [
+    "Keep lib/version-control.sh only while legacy callers still source its vc_* function names; new callers use the compiled CLI directly.",
+    "Before deleting the shell boundary, prove every vc_* caller uses runner-version-control.js and retain the external diff CLI as an explicit child-process boundary."
+  ],
+  "deletion_gate": "Remove lib/version-control.sh only after a repository-wide caller scan and shell-free regression run prove no vc_* export is required."
+}

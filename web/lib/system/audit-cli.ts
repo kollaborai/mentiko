@@ -15,12 +15,18 @@ type Command = "write" | "query" | "export-json" | "export-csv" | "summary" | "a
 export function runAuditCli(argv: string[], write: (line: string) => void = (line) => console.log(line)): void {
   const [command, ...rest] = argv;
   if (!isCommand(command)) throw new Error(usage());
-  const flags = parseFlags(rest);
+  // --meta key=value is the primitive metadata path (repeatable). It is extracted
+  // before parseFlags so the strict --key value pair parser never sees it and the
+  // shell boundary can forward metadata without building JSON. --metadata-json
+  // remains for legacy callers (bin/mentiko); when both are present --meta wins.
+  const { record: metaRecord, rest: flagArgs } = parseMetaPairs(rest);
+  const flags = parseFlags(flagArgs);
   const namespaceId = optional(flags, "--namespace-id");
+  if (command !== "write" && Object.keys(metaRecord).length > 0) throw new Error("--meta is not valid for audit");
   switch (command) {
     case "write": {
       requireOnly(flags, new Set(["--namespace-id", "--event-type", "--description", "--metadata-json", "--source", "--ip"]));
-      const metadata = jsonRecord(optional(flags, "--metadata-json") ?? "{}");
+      const metadata = { ...jsonRecord(optional(flags, "--metadata-json") ?? "{}"), ...metaRecord };
       write(JSON.stringify(writeAuditLog({ namespaceId, eventType: required(flags, "--event-type"), description: required(flags, "--description"), metadata, source: optional(flags, "--source"), ip: optional(flags, "--ip") })));
       return;
     }
@@ -67,6 +73,33 @@ function parseFlags(argv: string[]): Map<string, string> {
     flags.set(key, value);
   }
   return flags;
+}
+function parseMetaPairs(argv: string[]): { record: Record<string, string>; rest: string[] } {
+  const record: Record<string, string> = {};
+  const rest: string[] = [];
+  for (let index = 0; index < argv.length;) {
+    const token = argv[index];
+    if (token === "--meta") {
+      const pair = argv[index + 1];
+      if (pair === undefined) throw new Error("--meta requires a key=value argument");
+      const equals = pair.indexOf("=");
+      if (equals <= 0) throw new Error("--meta must be key=value");
+      record[pair.slice(0, equals)] = pair.slice(equals + 1);
+      index += 2;
+    } else {
+      rest.push(token);
+      // Preserve a normal flag's value as an opaque token. In particular, a
+      // description may literally be "--meta"; it must not be reinterpreted
+      // as the metadata switch for the next token.
+      if (token.startsWith("--") && argv[index + 1] !== undefined) {
+        rest.push(argv[index + 1]);
+        index += 2;
+      } else {
+        index += 1;
+      }
+    }
+  }
+  return { record, rest };
 }
 function requireOnly(flags: Map<string, string>, allowed: Set<string>): void { for (const key of flags.keys()) if (!allowed.has(key)) throw new Error(`${key} is not valid for audit`); }
 function required(flags: Map<string, string>, key: string): string { const value = flags.get(key); if (!value) throw new Error(`${key} is required`); return value; }

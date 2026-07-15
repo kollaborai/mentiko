@@ -162,6 +162,9 @@ TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_TYPE=""
 TASK_PRIORITY=""
+TASK_ACCEPTANCE_CRITERIA=""
+TASK_DESIGN=""
+TASK_NOTES=""
 TASK_CONTEXT=""
 TASK_COMMENTS=""
 
@@ -173,83 +176,29 @@ load_task_context() {
     fi
 
     local api_base="http://localhost:${WEB_PORT:-3000}"
-    local auth_header="Authorization: Bearer ${BETTER_AUTH_SECRET:-}"
-    local ns_header="x-namespace-id: ${NAMESPACE_ID:-default}"
-    local org_header="x-org-id: ${ORG_ID:-default}"
+    local env_file
+    env_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-task-context.XXXXXX")"
 
-    # fetch task from task store API
-    local task_json
-    task_json=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" \
-        "${api_base}/api/tasks/${task_id}" 2>/dev/null || echo "")
-
-    if [[ -z "$task_json" ]]; then
-        echo "  warning: task $task_id not found" >&2
+    if ! node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-task-context.js" load \
+        --task-id "$task_id" \
+        --api-base "$api_base" \
+        --auth-token "${BETTER_AUTH_SECRET:-}" \
+        --namespace-id "${NAMESPACE_ID:-default}" \
+        --org-id "${ORG_ID:-default}" \
+        --env-file "$env_file" >/dev/null; then
+        rm -f "$env_file"
+        echo "  warning: task $task_id not found or task context could not be loaded" >&2
         return 0
     fi
 
-    # extract task fields from API response (data.issue.*)
-    TASK_ID=$(echo "$task_json" | jq -r '.data.issue.id // ""' 2>/dev/null || echo "")
-    TASK_TITLE=$(echo "$task_json" | jq -r '.data.issue.title // ""' 2>/dev/null || echo "")
-    TASK_DESCRIPTION=$(echo "$task_json" | jq -r '.data.issue.description // ""' 2>/dev/null || echo "")
-    TASK_TYPE=$(echo "$task_json" | jq -r '.data.issue.issue_type // ""' 2>/dev/null || echo "")
-    TASK_PRIORITY=$(echo "$task_json" | jq -r '.data.issue.priority // ""' 2>/dev/null || echo "")
-    TASK_ACCEPTANCE_CRITERIA=$(echo "$task_json" | jq -r '.data.issue.acceptance_criteria // ""' 2>/dev/null || echo "")
-    TASK_DESIGN=$(echo "$task_json" | jq -r '.data.issue.design // ""' 2>/dev/null || echo "")
-    TASK_NOTES=$(echo "$task_json" | jq -r '.data.issue.notes // ""' 2>/dev/null || echo "")
-
-    # fetch comments from API
-    local comments_json
-    comments_json=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" \
-        "${api_base}/api/tasks/${task_id}/comments" 2>/dev/null || echo "")
-    local comments_count=$(echo "$comments_json" | jq '.data.comments | length' 2>/dev/null || echo "0")
-
-    if [[ "$comments_count" -gt 0 ]]; then
-        TASK_COMMENTS=$(
-            echo "$comments_json" | jq -r '.data.comments[] |
-                "[\(.created_at // "unknown") \(.author // "unknown")] \(.text // "")"' 2>/dev/null | \
-                sed 's/^/  /'
-        )
+    # The typed owner writes a shell-safe environment handoff. This boundary
+    # only sources the already-normalized values; it never parses task JSON.
+    if ! source "$env_file"; then
+        rm -f "$env_file"
+        echo "  warning: task $task_id context handoff could not be sourced" >&2
+        return 0
     fi
-
-    # build TASK_CONTEXT block
-    TASK_CONTEXT="TASK ID: ${TASK_ID}
-TITLE: ${TASK_TITLE}
-TYPE: ${TASK_TYPE}
-PRIORITY: ${TASK_PRIORITY}
-
-DESCRIPTION:
-${TASK_DESCRIPTION}"
-
-    if [[ -n "$TASK_ACCEPTANCE_CRITERIA" ]]; then
-        TASK_CONTEXT="${TASK_CONTEXT}
-
-ACCEPTANCE CRITERIA:
-${TASK_ACCEPTANCE_CRITERIA}"
-    fi
-
-    if [[ -n "$TASK_DESIGN" ]]; then
-        TASK_CONTEXT="${TASK_CONTEXT}
-
-DESIGN NOTES:
-${TASK_DESIGN}"
-    fi
-
-    if [[ -n "$TASK_NOTES" ]]; then
-        TASK_CONTEXT="${TASK_CONTEXT}
-
-NOTES:
-${TASK_NOTES}"
-    fi
-
-    if [[ -n "$TASK_COMMENTS" ]]; then
-        TASK_CONTEXT="${TASK_CONTEXT}
-
-COMMENTS:
-${TASK_COMMENTS}"
-    fi
-
-    # export for subprocesses
-    export TASK_ID TASK_TITLE TASK_DESCRIPTION TASK_TYPE TASK_PRIORITY TASK_CONTEXT TASK_COMMENTS TASK_ACCEPTANCE_CRITERIA TASK_DESIGN TASK_NOTES
+    rm -f "$env_file"
 
     echo "  task context loaded: $task_id"
     echo "    title: $TASK_TITLE"
@@ -1736,11 +1685,16 @@ MONEOF
     profiler-start "$session_name" "$agent_id" "$agent_name" "$RUN_ID" >/dev/null || true
 
     # audit index ownership is typed; shell only submits the launch fact.
+    # metadata is forwarded as repeated --meta primitives so the shell never
+    # builds JSON (runner-audit.js owns serialization).
     node "$SCRIPT_DIR/runner-audit.js" write \
         --namespace-id "$NAMESPACE_ID" \
         --event-type "agent_launch" \
         --description "Launched agent: $agent_name" \
-        --metadata-json "$(jq -nc --arg agent_id "$agent_id" --arg agent_name "$agent_name" --arg session "$session_name" --arg run_id "$RUN_ID" '{agent_id:$agent_id,agent_name:$agent_name,session:$session,run_id:$run_id}')" \
+        --meta agent_id="$agent_id" \
+        --meta agent_name="$agent_name" \
+        --meta session="$session_name" \
+        --meta run_id="$RUN_ID" \
         --source "cli" >/dev/null || true
 
     echo "  done."
@@ -1772,11 +1726,17 @@ if [[ -z "$RUN_ID" ]]; then
 fi
 
 # audit index ownership is typed; shell only submits the chain-start fact.
+# namespace_id is routing (--namespace-id above), not payload metadata, so it is
+# not duplicated here (matches the agent_launch site). agent_count is forwarded
+# as a string primitive; sanitizeMetadata stringifies either way.
 node "$SCRIPT_DIR/runner-audit.js" write \
     --namespace-id "$NAMESPACE_ID" \
     --event-type "chain_start" \
     --description "Started chain: $CHAIN_NAME" \
-    --metadata-json "$(jq -nc --arg chain_name "$CHAIN_NAME" --arg chain_file "$CHAIN_FILE" --arg run_id "$RUN_ID" --argjson agent_count "$AGENT_COUNT" '{chain_name:$chain_name,chain_file:$chain_file,run_id:$run_id,agent_count:$agent_count,namespace_id:$ENV.NAMESPACE_ID}')" \
+    --meta chain_name="$CHAIN_NAME" \
+    --meta chain_file="$CHAIN_FILE" \
+    --meta run_id="$RUN_ID" \
+    --meta agent_count="$AGENT_COUNT" \
     --source "cli" >/dev/null || true
 
 # export for subprocesses
@@ -1821,18 +1781,18 @@ send-webhook "chain_started" "$CHAIN_FILE" "agent_id=$FIRST_AGENT" "round=1" 2>/
 send-slack-chain-start "$CHAIN_FILE" "${GOAL:-}" 2>/dev/null || true
 
 # dispatch notifications: chain-started
+# endpoint is resolved with the legacy BETTER_AUTH_URL precedence in the shell
+# and forwarded as an explicit --endpoint primitive, so the typed dispatcher
+# never assumes BETTER_AUTH_URL is exported into its child environment. The typed
+# owner (runner-notification-dispatcher.js) builds the payload, performs the HTTP
+# POST, and parses the response; the shell owns no JSON.
 BASE_URL="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
-curl -s -X POST "${BASE_URL}/api/notifications/dispatch" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \
-    -d "$(jq -nc \
-        --arg event "chain-started" \
-        --arg chainId "$CHAIN_NAME" \
-        --arg runId "${RUN_ID:-}" \
-        --arg agentId "${FIRST_AGENT:-}" \
-        --arg nsId "${NAMESPACE_ID:-default}" \
-        '{event:$event,chainId:$chainId,runId:$runId,agentId:$agentId,namespaceId:$nsId}')" \
-    2>/dev/null || true
+node "$SCRIPT_DIR/runner-notification-dispatcher.js" dispatch \
+    --event chain-started \
+    --chain "$CHAIN_NAME" \
+    --run "${RUN_ID:-}" \
+    --agent "${FIRST_AGENT:-}" \
+    --endpoint "${BASE_URL}/api/notifications/dispatch" 2>/dev/null || true
 
 # fire plugins: chain-started
 run-plugins "chain-started" "$CHAIN_NAME" "$RUN_ID" "$FIRST_AGENT" "{}" >/dev/null || true

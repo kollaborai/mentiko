@@ -1,0 +1,25 @@
+{
+  "schema_version": "notification-dispatch/v1",
+  "owner": "web/lib/runner-v2/notification-dispatcher.ts",
+  "cli": "web/lib/runner-v2/notification-dispatcher-cli.ts",
+  "compiled": "lib/runner-notification-dispatcher.js",
+  "legacy_boundary": "lib/notification-dispatcher.sh",
+  "owns": [
+    "typed notification event and request-payload construction",
+    "dispatch endpoint and internal-auth header resolution",
+    "raw response decoding and dispatched-channel response validation",
+    "event-specific default messages and non-blocking dispatch outcome formatting"
+  ],
+  "invariants": [
+    "chain-started maps to the chain_started notification type rather than chain_complete",
+    "dispatch endpoint precedence honors an explicit endpoint, then MENTIKO_DISPATCH_ENDPOINT, BETTER_AUTH_URL, MENTIKO_WEB_URL, and the localhost port fallback",
+    "the dispatch route validates raw JSON and normalized event/string fields before side effects",
+    "malformed 2xx response bodies are failures and never fabricate a zero-channel success",
+    "the shell boundary forwards primitive arguments and never builds or parses JSON",
+    "HTTP remains the required internal API boundary and dispatch failure never blocks the caller"
+  ],
+  "external_processes": {
+    "http": "POST /api/notifications/dispatch with the typed request envelope"
+  },
+  "deletion_gate": "remove lib/notification-dispatcher.sh once all legacy callers invoke lib/runner-notification-dispatcher.js directly and no exported shell function remains required"
+}

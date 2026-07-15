@@ -66,11 +66,28 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     web/lib/runner-v2/chain-watcher-service.ts, web/lib/runner-v2/watchdog.ts,
     and web/server/background-worker.ts. the retired shell files remain listed
     only as parity references; the scheduler invariant remains independently bound.
+  - git-integration.contract.json: typed status/history/diff projection ownership
+    for lib/git-integration.sh. Git remains the required external CLI; the shell
+    file is only a primitive invocation boundary.
+  - chain-version-control.contract.json: typed semver, snapshot, metadata,
+    rollback, and comparison ownership for lib/version-control.sh. The external
+    diff command remains the only child-process product behavior.
+  - audit-ship.contract.json: typed raw/normalized audit-entry validation,
+    remote-key derivation, rclone retry, and failure-breadcrumb ownership for
+    lib/audit-ship.sh.
+  - notification-dispatch.contract.json: typed notification envelope,
+    chain-started mapping, response validation, and HTTP dispatch ownership for
+    lib/notification-dispatcher.sh.
 
 design docs (rationale + migration plan, not enforced):
   - monitor-v2.design.json: why the shell monitor is being ported to typescript
     (the TASK-093 liveness split-brain), the migration plan, entrypoints, and the
     shell-monitor deletion gate. pairs with monitor-v2.contract.json above.
+  - teammux-bridge.design.json: typed ownership of external team-mux agent/spec
+    and memory records, with the shell invocation boundary and deletion gate.
+  - chain-version-control.design.json: typed ownership of chain version,
+    metadata, snapshot, rollback, and comparison records; external `diff`
+    remains the only child-process behavior.
 
 proof artifacts (emitted by live runs, consumed by switch-readiness.ts):
   - runner-v2-runtime-proof.json: MENTIKO_RUNNER_V2 live launch proof.

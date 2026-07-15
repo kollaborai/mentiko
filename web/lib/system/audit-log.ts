@@ -140,7 +140,10 @@ export function writeAuditLog(input: {
   const serialized = JSON.stringify(entry);
   appendFileSync(paths.logFile, `${serialized}\n`, { encoding: "utf8", mode: 0o600 });
   writeIndex(paths, [entry, ...readIndex(paths)]);
-  void shipAuditEntry(serialized, paths, input.namespaceId ?? config.namespaceId);
+  // Remote shipping is optional and detached from the local audit commit. A
+  // missing entrypoint or spawn failure must never become an unhandled
+  // rejection in the request that already persisted this record.
+  void shipAuditEntry(serialized, paths, input.namespaceId ?? config.namespaceId).catch(() => undefined);
   return entry;
 }
 
@@ -225,7 +228,12 @@ function shipAuditEntry(entry: string, paths: AuditPaths, namespaceId: string): 
   const child = spawn("bash", [shipper], {
     detached: true,
     stdio: ["pipe", "ignore", "ignore"],
-    env: { ...process.env, AUDIT_DIR: paths.dir, NAMESPACE_ID: namespaceId },
+    env: {
+      ...process.env,
+      MENTIKO_CODE_ROOT: config.codeRoot,
+      AUDIT_DIR: paths.dir,
+      NAMESPACE_ID: namespaceId,
+    },
   });
   child.stdin.write(`${entry}\n`);
   child.stdin.end();
