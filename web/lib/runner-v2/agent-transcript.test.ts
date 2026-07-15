@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   agentCompleteMarkerDurable,
+  findTranscriptJsonl,
   selectTranscriptFromCapture,
 } from "@/lib/runner-v2/agent-transcript";
 
@@ -87,6 +88,23 @@ describe("agent transcript typed owner", () => {
         payload: { content: [{ type: "text", text: "AGENT_COMPLETE" }] },
       })}\n`);
       expect(agentCompleteMarkerDurable(path)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects matching directories and symlinks as transcript sources", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const directoryPath = join(root, `${REAL}.jsonl`);
+    const targetPath = join(root, "target.jsonl");
+    const symlinkPath = join(root, `${DECOY}.jsonl`);
+    try {
+      mkdirSync(directoryPath);
+      writeFileSync(targetPath, transcriptRecord(REAL, root, "done"));
+      symlinkSync(targetPath, symlinkPath);
+
+      expect(findTranscriptJsonl(root, REAL, 0)).toBe("");
+      expect(findTranscriptJsonl(root, DECOY, 0)).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

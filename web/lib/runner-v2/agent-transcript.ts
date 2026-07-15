@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -311,9 +311,14 @@ export function findTranscriptJsonl(root: string, uuid: string, depth: number): 
   }
   for (const entry of entries) {
     const path = join(root, entry);
-    if (entry.includes(uuid) && entry.endsWith(".jsonl")) return path;
     try {
-      if (statSync(path).isDirectory()) {
+      // Match the legacy `find ... -type f` boundary: a directory named like a
+      // transcript, or a symlink to one, is not a durable JSONL source. Fail
+      // closed instead of returning it and letting a later read hide the real
+      // nested transcript behind the name collision.
+      const entryStat = lstatSync(path);
+      if (entry.includes(uuid) && entry.endsWith(".jsonl") && entryStat.isFile()) return path;
+      if (entryStat.isDirectory()) {
         const nested = findTranscriptJsonl(path, uuid, depth - 1);
         if (nested) return nested;
       }

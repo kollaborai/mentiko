@@ -6,10 +6,11 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, parse as parsePath, resolve, sep } from "node:path";
 import {
   buildAgentProfileCommand,
   loadAgentProfile,
@@ -281,8 +282,8 @@ function writeStartupRecoveryArtifacts(recovery: StartupRecoveryInput | undefine
 
 function appendRecoveryDecision(recovery: StartupRecoveryInput, decision: Record<string, unknown>): void {
   if (!recovery.artifactDir || !recovery.agentId) return;
-  ensureDirectory(recovery.artifactDir, "startup recovery artifact directory");
-  const path = join(recovery.artifactDir, `${recovery.agentId}-startup-recovery-decisions.jsonl`);
+  const directory = ensureDirectory(recovery.artifactDir, "startup recovery artifact directory");
+  const path = join(directory, `${recovery.agentId}-startup-recovery-decisions.jsonl`);
   if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error("startup recovery decision log must not be a symlink");
   appendFileSync(path, `${JSON.stringify(decision)}\n`, { mode: 0o600 });
 }
@@ -297,23 +298,51 @@ function writeCaptureAtomically(path: string, content: string): void {
 }
 
 function writeAtomic(path: string, content: string): void {
-  const directory = dirname(path);
-  ensureDirectory(directory, "capture directory");
-  if (existsSync(path)) assertRegularInput(path, "capture");
-  const temporary = `${path}.${process.pid}.tmp`;
+  // macOS exposes /tmp as a symlink to /private/tmp. Canonicalize the parent
+  // before validating and publishing so a normal mktemp capture is accepted
+  // without weakening the non-symlink directory invariant.
+  const directory = ensureDirectory(dirname(path), "capture directory");
+  const target = join(directory, basename(path));
+  if (existsSync(target)) assertRegularInput(target, "capture");
+  const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, content, { mode: 0o600 });
-  renameSync(temporary, path);
+  renameSync(temporary, target);
 }
 
-function ensureDirectory(path: string, label: string): void {
-  if (existsSync(path)) {
-    const entry = lstatSync(path);
-    if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`${label} must be a non-symlink directory: ${path}`);
-    return;
+function ensureDirectory(path: string, label: string): string {
+  // macOS exposes trusted root aliases such as /tmp and /var beneath /private.
+  // Canonicalize only those OS-owned aliases; never realpath caller input.
+  const candidate = canonicalizeTrustedSystemAlias(path);
+  assertExistingDirectoryComponents(candidate, label, path);
+  if (!existsSync(candidate)) mkdirSync(candidate, { recursive: true, mode: 0o700 });
+  assertExistingDirectoryComponents(candidate, label, path);
+  return candidate;
+}
+
+function canonicalizeTrustedSystemAlias(path: string): string {
+  // These are macOS-owned root aliases. Only normalize this fixed allow-list;
+  // a configured artifact/capture directory may not use a caller-owned link.
+  for (const alias of ["/tmp", "/var", "/etc"]) {
+    if (path !== alias && !path.startsWith(`${alias}/`)) continue;
+    const canonical = realpathSync(alias);
+    return path === alias ? canonical : join(canonical, path.slice(alias.length + 1));
   }
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const entry = lstatSync(path);
-  if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`${label} must be a non-symlink directory: ${path}`);
+  return path;
+}
+
+/** Reject a symlink at every existing component, before mkdir can follow it. */
+function assertExistingDirectoryComponents(path: string, label: string, originalPath: string): void {
+  const absolute = resolve(path);
+  const root = parsePath(absolute).root;
+  let current = root;
+  for (const part of absolute.slice(root.length).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    if (!existsSync(current)) return;
+    const entry = lstatSync(current);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new Error(`${label} must be a non-symlink directory: ${originalPath}`);
+    }
+  }
 }
 
 function buildRecovery(values: Map<string, string>): StartupRecoveryInput | undefined {

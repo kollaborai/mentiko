@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForReadiness } from "@/lib/runner-v2/readiness-cli";
@@ -12,6 +12,54 @@ describe("typed readiness wait", () => {
   it("owns PTY polling and returns ready without shell state transitions", () => {
     const calls: string[] = []; const result = waitForReadiness({ profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 5, pollSecs: 1, failClosed: true, run: (_cmd, args) => { calls.push(args[0]); return args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : { status: 0, stdout: "READY" }; } });
     expect(result).toMatchObject({ exitCode: 0, result: { status: "ready" } }); expect(calls).toEqual(["alive", "pid", "capture"]);
+  });
+  it("writes a readiness capture through the macOS /tmp symlink", () => {
+    const capturePath = join("/tmp", `mentiko-readiness-${Date.now()}-${Math.random()}.txt`);
+    try {
+      const result = waitForReadiness({
+        profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 5, pollSecs: 1, failClosed: true, capturePath,
+        run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : { status: 0, stdout: "READY" },
+      });
+      expect(result).toMatchObject({ exitCode: 0, result: { status: "ready" } });
+      expect(readFileSync(capturePath, "utf8")).toBe("READY");
+    } finally {
+      rmSync(capturePath, { force: true });
+    }
+  });
+  it("rejects an arbitrary symlinked capture directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-symlink-"));
+    const outside = mkdtempSync(join(tmpdir(), "mentiko-readiness-outside-"));
+    const linkedDirectory = join(root, "capture-link");
+    symlinkSync(outside, linkedDirectory, "dir");
+    try {
+      expect(() => waitForReadiness({
+        profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 5, pollSecs: 1, failClosed: true,
+        capturePath: join(linkedDirectory, "capture.txt"),
+        run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : { status: 0, stdout: "READY" },
+      })).toThrow(`capture directory must be a non-symlink directory: ${linkedDirectory}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+  it("does not create recovery artifacts through a nested symlink ancestor", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-nested-symlink-"));
+    const outside = mkdtempSync(join(tmpdir(), "mentiko-readiness-nested-outside-"));
+    const profileDir = join(root, "profiles");
+    const linkedDirectory = join(root, "artifacts-link");
+    mkdirSync(profileDir);
+    symlinkSync(outside, linkedDirectory, "dir");
+    try {
+      expect(() => waitForReadiness({
+        profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 5, pollSecs: 1, failClosed: true,
+        run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : { status: 0, stdout: "LOGIN" },
+        recovery: { enabled: false, maxAttempts: 0, profilesDir: profileDir, artifactDir: join(linkedDirectory, "nested"), agentId: "agent" },
+      })).toThrow(`startup recovery artifact directory must be a non-symlink directory: ${join(linkedDirectory, "nested")}`);
+      expect(existsSync(join(outside, "nested"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
   it("fails closed on a blocked prompt or dead PTY", () => {
     const blocked = waitForReadiness({ profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 1, pollSecs: 1, failClosed: true, run: (_cmd, args) => args[0] === "alive" ? { status: 0, stdout: "alive" } : args[0] === "pid" ? { status: 0, stdout: "42" } : { status: 0, stdout: "LOGIN" } });

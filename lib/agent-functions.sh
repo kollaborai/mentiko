@@ -9,6 +9,7 @@ source "$_AF_SCRIPT_DIR/monitor-completion.sh" 2>/dev/null || true
 source "$_AF_SCRIPT_DIR/ai-gateway-agent-env.sh" 2>/dev/null || true
 source "$_AF_SCRIPT_DIR/agent-state-client.sh"
 source "$_AF_SCRIPT_DIR/agent-profile-client.sh"
+source "$_AF_SCRIPT_DIR/agent-transcript-client.sh"
 
 if ! transport_init; then
     echo "  mentiko: pty-manager daemon could not start"
@@ -197,69 +198,51 @@ agent-complete-marker-seen() {
 # -------------------------------------------------------------------
 
 # resolve the durable session transcript JSONL for a pty session, cwd-slug and
-# CLI independent. Uses the session UUID printed in the pane (the same handle
-# resolve_session_log uses) matched against the known CLI transcript roots. A
-# UUID that is not an actual transcript filename simply does not match, so a
-# stray UUID in agent output cannot mis-resolve. Emits nothing (degraded, not an
-# error) when unresolvable, so callers fail closed to the durable event file.
+# CLI independent. Invocation-only: the typed owner
+# (web/lib/runner-v2/agent-transcript.ts via lib/runner-agent-transcript.js)
+# resolves the transcript root from the agent profile, selects among EVERY UUID
+# in the capture, and binds the winner to THIS run attempt's identity. The shell
+# forwards the capture on stdin plus primitive identity arguments and nothing
+# else — no jq, no find, no fallback.
 #
-# A capture routinely holds MORE than one UUID: the CLI status bar carries the
-# real transcript/session UUID, but the agent's goal or prompt commonly echoes
-# OTHER UUIDs — a decision_id, a task id — that appear EARLIER in the scrollback.
-# The old `head -1` stopped at the first match, so a decoy UUID with no transcript
-# file ended resolution and the durable AGENT_COMPLETE marker was never read,
-# hanging completion (decision chains especially: decision_id is always a UUID in
-# the prompt). Try every distinct UUID and accept the first that resolves to a
-# real file — decoys have no file and are skipped, matching the comment's promise.
+# Emits nothing (degraded, not an error) when unresolvable, so callers fail
+# closed to the durable event file. A capture routinely holds MORE than one
+# UUID: the CLI status bar carries the real transcript/session UUID, but the
+# agent's goal or prompt commonly echoes OTHER UUIDs — a decision_id, a task id —
+# that appear EARLIER in the scrollback. Selecting on position alone let a decoy
+# answer for the run; the typed owner scores each candidate against the current
+# identity and returns nothing when the winner is unproven or tied.
 _agent_transcript_jsonl() {
     local session_name="$1"
+    _agent_transcript_identity_args
+    local args=("${_AGENT_TRANSCRIPT_IDENTITY_ARGS[@]}")
 
-    # test/caller seam: an explicit transcript path skips live resolution.
-    if [[ -n "${MENTIKO_TRANSCRIPT_JSONL:-}" ]]; then
-        [[ -f "$MENTIKO_TRANSCRIPT_JSONL" ]] && echo "$MENTIKO_TRANSCRIPT_JSONL"
-        return 0
+    # The capture is only needed for live resolution; the explicit seam skips it.
+    local capture=""
+    if [[ -z "${MENTIKO_TRANSCRIPT_JSONL:-}" ]]; then
+        capture=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null)
     fi
 
-    local profile_file="${MENTIKO_AGENT_PROFILE_PATH:-}"
-    [[ -n "$profile_file" && -f "$profile_file" ]] || return 0
-
-    local root
-    root=$(jq -r '.log_path // empty' "$profile_file" 2>/dev/null || true)
-    [[ -n "$root" ]] || return 0
-    root="${root/#\~/$HOME}"
-    root="${root%/}"
-    [[ -d "$root" ]] || return 0
-
-    local capture uuid hit
-    capture=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null)
-
-    while IFS= read -r uuid; do
-        [[ -z "$uuid" ]] && continue
-        hit=$(find "$root" -maxdepth 4 -name "*${uuid}*.jsonl" -type f 2>/dev/null | head -1)
-        [[ -n "$hit" ]] && { echo "$hit"; return 0; }
-    done < <(printf '%s\n' "$capture" \
-        | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
-        | awk '!seen[$0]++')
-    return 0
+    printf '%s' "$capture" | _agent_transcript_cli resolve "${args[@]}" 2>/dev/null || return 0
 }
 
 # durable standalone AGENT_COMPLETE: the marker on its own line in the agent's
 # recorded transcript output. Returns 0 iff durably present; fails closed (1)
-# when the transcript is unresolvable or jq is unavailable, so completion falls
-# back to the declared event file rather than trusting the rendered screen.
+# when the transcript is unresolvable, unproven against this run's identity, or
+# ambiguous, so completion falls back to the declared event file rather than
+# trusting the rendered screen. Invocation-only: identity binding and marker
+# validation both live in the typed owner.
 agent-complete-marker-durable() {
     local session_name="$1"
-    local jsonl
-    jsonl="$(_agent_transcript_jsonl "$session_name")"
-    [[ -n "$jsonl" && -f "$jsonl" ]] || return 1
-    command -v jq >/dev/null 2>&1 || return 1
+    _agent_transcript_identity_args
+    local args=("${_AGENT_TRANSCRIPT_IDENTITY_ARGS[@]}")
 
-    jq -r '
-        ( select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text ),
-        ( select((.type=="message" or .type=="response_item") and .role=="assistant")
-          | ((.content // .payload.content // [])[]? | (.text // empty)) )
-    ' "$jsonl" 2>/dev/null \
-        | grep -Eq '^[[:space:]]*AGENT_COMPLETE[[:space:]]*$'
+    local capture=""
+    if [[ -z "${MENTIKO_TRANSCRIPT_JSONL:-}" ]]; then
+        capture=$(transport_capture "$session_name" "${MENTIKO_TRANSCRIPT_CAPTURE_LINES:-2000}" 2>/dev/null)
+    fi
+
+    printf '%s' "$capture" | _agent_transcript_cli durable-marker "${args[@]}" 2>/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -1098,6 +1081,8 @@ export -f new-agent-session
 export -f new-agent-from-spec
 export -f peek-session
 export -f agent-complete-marker-seen
+export -f _agent_transcript_cli
+export -f _agent_transcript_identity_args
 export -f _agent_transcript_jsonl
 export -f agent-complete-marker-durable
 export -f agent-completion-latched
