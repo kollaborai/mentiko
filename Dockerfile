@@ -122,6 +122,16 @@ RUN if [ -f /build/web/lib/runner-v2/complete-cli.ts ]; then \
         --outfile=/context/lib/runner-v2-complete.js; \
     fi
 
+# compile the typed completion PTY launcher. It transfers the allowlisted
+# environment through a private one-shot file, keeping secrets out of PTY argv.
+RUN if [ -f /build/web/lib/runner-v2/completion-launch-cli.ts ]; then \
+      echo "=== compiling runner-v2 completion launcher ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/completion-launch-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-completion-launch.js; \
+    fi
+
 # compile typed routed-agent launcher; routed completion must not re-enter chain-runner.sh.
 RUN if [ -f /build/web/lib/runner-v2/launch-agent-cli.ts ]; then \
       echo "=== compiling runner-v2 routed-agent launcher ===" && \
@@ -147,6 +157,24 @@ RUN if [ -f /build/web/lib/runner-v2/event-emitter-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/event-emitter-cli.ts \
         --bundle --platform=node --target=node20 \
         --outfile=/context/lib/runner-event-emitter.js; \
+    fi
+
+# compile the strict event lifecycle boundary used by shell invocation surfaces.
+RUN if [ -f /build/web/lib/runner-v2/event-lifecycle-cli.ts ]; then \
+      echo "=== compiling typed runner event lifecycle ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/event-lifecycle-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-event-lifecycle.js; \
+    fi
+
+# compile the sole Run Record parser/writer/query boundary used by shell callers.
+RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
+      echo "=== compiling typed runner Run Record boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/run-record-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-run-record.js; \
     fi
 
 # compile process-manager.ts (tsc — needs same anchor; use relative paths
