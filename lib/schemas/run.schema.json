@@ -45,8 +45,8 @@
     },
     "status": {
       "type": "string",
-      "description": "Current vocabulary is pending, running, blocked, failed, stopped, or completed. Readers retain string compatibility for legacy artifacts.",
-      "x-mentiko-known-values": ["pending", "running", "blocked", "failed", "stopped", "completed"]
+      "description": "Canonical run status.",
+      "enum": ["pending", "running", "blocked", "failed", "stopped", "completed", "cancelled", "stalled"]
     },
     "status_message": {
       "type": "string"
@@ -76,6 +76,14 @@
     "taskId": {
       "type": "string"
     },
+    "type": {
+      "type": "string",
+      "description": "Optional run category such as link or chain."
+    },
+    "linkId": {
+      "type": "string",
+      "description": "Stable link identifier for link runs."
+    },
     "agentProfileId": {
       "type": "string"
     },
@@ -98,8 +106,8 @@
         "session": { "type": "string" },
         "status": {
           "type": "string",
-          "description": "Current vocabulary is pending, running, blocked, failed, stopped, cancelled, complete, or error. Readers retain string compatibility for legacy artifacts.",
-          "x-mentiko-known-values": ["pending", "running", "blocked", "failed", "stopped", "cancelled", "complete", "error"]
+          "description": "Canonical run-agent status.",
+          "enum": ["pending", "running", "blocked", "failed", "stopped", "cancelled", "complete", "error"]
         },
         "started": { "type": "string", "format": "date-time" },
         "completed": { "type": "string", "format": "date-time" },

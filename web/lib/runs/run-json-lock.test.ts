@@ -7,7 +7,7 @@
  * web/e2e/engine/engine-e2e-runjson.sh.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { withRunJsonLock, writeRunJsonAtomic } from "./run-json-lock";
@@ -27,6 +27,7 @@ describe("withRunJsonLock", () => {
     const result = withRunJsonLock(path, () => {
       // lock dir exists WHILE we hold it
       expect(existsSync(lockDir)).toBe(true);
+      expect(readFileSync(`${lockDir}/owner`, "utf-8")).toMatch(/^[a-f0-9-]{36}$/);
       return 42;
     });
 
@@ -68,7 +69,7 @@ describe("withRunJsonLock", () => {
     expect(final.agents.every((a: { status: string }) => a.status === "complete")).toBe(true);
   });
 
-  it("breaks a stale lock held by a dead pid and proceeds", () => {
+  it("breaks a legacy shell-shaped lock held by a provably dead pid and proceeds", () => {
     const path = makeRunJson();
     const lockDir = `${path}.lock`;
     // pre-seed a lock dir owned by a pid that cannot be alive.
@@ -83,44 +84,151 @@ describe("withRunJsonLock", () => {
     expect(existsSync(lockDir)).toBe(false); // broke the stale lock, then released cleanly
   });
 
-  it("breaks an aged-out lock (live holder, old mtime) via RUN_LOCK_STALE_SECS", () => {
-    const prev = process.env.RUN_LOCK_STALE_SECS;
+  it("breaks a tokened TypeScript lock held by a provably dead pid", () => {
+    const path = makeRunJson();
+    const lockDir = `${path}.lock`;
+    mkdirSync(lockDir);
+    writeFileSync(`${lockDir}/owner`, "dead-typescript-holder");
+    writeFileSync(`${lockDir}/pid`, String(2147483646));
+
+    let ran = false;
+    withRunJsonLock(path, () => { ran = true; });
+
+    expect(ran).toBe(true);
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it("recovers a dead owner-bearing takeover claim before breaking the dead holder", () => {
+    const path = makeRunJson();
+    const lockDir = `${path}.lock`;
+    const claimDir = `${lockDir}.takeover`;
+    mkdirSync(lockDir);
+    writeFileSync(`${lockDir}/owner`, "dead-holder");
+    writeFileSync(`${lockDir}/pid`, String(2147483646));
+    mkdirSync(claimDir);
+    writeFileSync(`${claimDir}/owner`, "dead-claimant");
+    writeFileSync(`${claimDir}/pid`, String(2147483646));
+
+    let ran = false;
+    withRunJsonLock(path, () => { ran = true; });
+
+    expect(ran).toBe(true);
+    expect(existsSync(lockDir)).toBe(false);
+    expect(existsSync(claimDir)).toBe(false);
+  });
+
+  it("migrates an old empty legacy takeover claim without evicting a live claimant", () => {
+    const path = makeRunJson();
+    const lockDir = `${path}.lock`;
+    const claimDir = `${lockDir}.takeover`;
+    mkdirSync(lockDir);
+    writeFileSync(`${lockDir}/owner`, "dead-holder");
+    writeFileSync(`${lockDir}/pid`, String(2147483646));
+    mkdirSync(claimDir);
+    const oldSecs = Math.floor(Date.now() / 1000) - 5;
+    utimesSync(claimDir, oldSecs, oldSecs);
+
+    let ran = false;
+    withRunJsonLock(path, () => { ran = true; });
+
+    expect(ran).toBe(true);
+    expect(existsSync(lockDir)).toBe(false);
+    expect(existsSync(claimDir)).toBe(false);
+  });
+
+  it("does not evict a live owner-bearing takeover claimant", () => {
     const prevWait = process.env.RUN_LOCK_WAIT_SECS;
-    // small stale window so the backdated lock is well past it; short wait so a
-    // failure-to-break would time out fast rather than hang the test.
-    process.env.RUN_LOCK_STALE_SECS = "1";
-    process.env.RUN_LOCK_WAIT_SECS = "20";
+    process.env.RUN_LOCK_WAIT_SECS = "0";
     jest.resetModules();
-    // re-import so the module re-reads the env knobs at load time.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
+    const path = makeRunJson();
+    const lockDir = `${path}.lock`;
+    const claimDir = `${lockDir}.takeover`;
+    mkdirSync(lockDir);
+    writeFileSync(`${lockDir}/owner`, "dead-holder");
+    writeFileSync(`${lockDir}/pid`, String(2147483646));
+    mkdirSync(claimDir);
+    writeFileSync(`${claimDir}/owner`, "live-claimant");
+    writeFileSync(`${claimDir}/pid`, String(process.pid));
+
+    let ran = false;
+    expect(() => lockFresh(path, () => { ran = true; })).toThrow("Could not acquire run.json lock");
+    expect(ran).toBe(false);
+    expect(readFileSync(`${claimDir}/owner`, "utf8")).toBe("live-claimant");
+
+    process.env.RUN_LOCK_WAIT_SECS = prevWait;
+    rmSync(lockDir, { recursive: true });
+    rmSync(claimDir, { recursive: true });
+  });
+
+  it("never evicts a live holder solely because its lock directory is old", () => {
+    const prevWait = process.env.RUN_LOCK_WAIT_SECS;
+    process.env.RUN_LOCK_WAIT_SECS = "0";
+    jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
 
     const path = makeRunJson();
     const lockDir = `${path}.lock`;
     mkdirSync(lockDir);
-    writeFileSync(`${lockDir}/pid`, String(process.pid)); // OUR pid, very much alive
-    // backdate the lock dir's mtime ~1h into the past via utimesSync.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { utimesSync } = require("fs");
+    writeFileSync(`${lockDir}/pid`, String(process.pid));
+    writeFileSync(`${lockDir}/owner`, "live-old-holder-token");
     const oldSecs = Math.floor(Date.now() / 1000) - 3600;
     utimesSync(lockDir, oldSecs, oldSecs);
-    expect(statSync(lockDir).mtimeMs).toBeLessThan(Date.now() - 1000);
 
     let ran = false;
-    lockFresh(path, () => { ran = true; });
-    expect(ran).toBe(true);
-    expect(existsSync(lockDir)).toBe(false);
+    expect(() => lockFresh(path, () => { ran = true; })).toThrow("Could not acquire run.json lock");
+    expect(ran).toBe(false);
+    expect(readFileSync(`${lockDir}/pid`, "utf-8")).toBe(String(process.pid));
+    expect(readFileSync(`${lockDir}/owner`, "utf-8")).toBe("live-old-holder-token");
+    expect(existsSync(lockDir)).toBe(true);
 
-    process.env.RUN_LOCK_STALE_SECS = prev;
     process.env.RUN_LOCK_WAIT_SECS = prevWait;
+    rmSync(lockDir, { recursive: true });
   });
 
-  it("proceeds (degraded) and invokes onTimeout when the lock cannot be acquired", () => {
+  it("an old holder release cannot delete a replacement lock instance", () => {
+    const path = makeRunJson();
+    const lockDir = `${path}.lock`;
+    const successorToken = "successor-owner-token";
+
+    withRunJsonLock(path, () => {
+      expect(readFileSync(`${lockDir}/owner`, "utf-8")).not.toBe(successorToken);
+      // Model an external replacement between acquisition and the old holder's
+      // finally release. Release must compare the per-instance owner token.
+      rmSync(lockDir, { recursive: true });
+      mkdirSync(lockDir);
+      writeFileSync(`${lockDir}/owner`, successorToken);
+      writeFileSync(`${lockDir}/pid`, String(process.pid));
+    });
+
+    expect(existsSync(lockDir)).toBe(true);
+    expect(readFileSync(`${lockDir}/owner`, "utf-8")).toBe(successorToken);
+    rmSync(lockDir, { recursive: true });
+  });
+
+  it("propagates non-EEXIST mkdir failures without running the mutation", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-runjson-lock-error-"));
+    const nonDirectory = join(root, "not-a-directory");
+    writeFileSync(nonDirectory, "blocking parent");
+    const path = join(nonDirectory, "run.json");
+    let ran = false;
+
+    let thrown: NodeJS.ErrnoException | undefined;
+    try {
+      withRunJsonLock(path, () => { ran = true; });
+    } catch (error) {
+      thrown = error as NodeJS.ErrnoException;
+    }
+    expect(thrown?.code).toBe("ENOTDIR");
+    expect(ran).toBe(false);
+  });
+
+  it("fails closed and invokes onTimeout without running the mutation", () => {
     const prevWait = process.env.RUN_LOCK_WAIT_SECS;
-    const prevStale = process.env.RUN_LOCK_STALE_SECS;
-    // 0 ticks => give up immediately; huge stale window => never break the live holder.
+    // 0 ticks => give up immediately while the holder PID remains live.
     process.env.RUN_LOCK_WAIT_SECS = "0";
-    process.env.RUN_LOCK_STALE_SECS = "100000";
     jest.resetModules();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { withRunJsonLock: lockFresh } = require("./run-json-lock") as typeof import("./run-json-lock");
@@ -133,15 +241,13 @@ describe("withRunJsonLock", () => {
 
     let timedOut = false;
     let ran = false;
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    lockFresh(path, () => { ran = true; }, () => { timedOut = true; });
-    warn.mockRestore();
+    expect(() => lockFresh(path, () => { ran = true; }, () => { timedOut = true; }))
+      .toThrow("Could not acquire run.json lock");
 
     expect(timedOut).toBe(true); // onTimeout fired
-    expect(ran).toBe(true);      // and we proceeded with the write anyway (never hang)
+    expect(ran).toBe(false);     // mutation never runs without lock ownership
 
     process.env.RUN_LOCK_WAIT_SECS = prevWait;
-    process.env.RUN_LOCK_STALE_SECS = prevStale;
   });
 });
 

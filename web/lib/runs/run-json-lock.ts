@@ -14,7 +14,7 @@
  * file. This module implements, byte-for-byte in protocol, the same mkdir-based lock
  * the bash side uses (lib/run-lib.sh `_run_lock_*` / `_with_run_lock`, itself modeled
  * on the fan-group lock in lib/routing-lib.sh). Because both sides use the SAME lock
- * directory (`${runJsonPath}.lock/`) and the SAME stale-break rule, a node writer and
+ * directory (`${runJsonPath}.lock/`) and the same PID liveness proof, a node writer and
  * a bash writer mutually exclude on the same file.
  *
  * INVARIANT — READS STAY LOCK-FREE. Writers always write-temp-then-rename (rename is
@@ -28,29 +28,32 @@
  * Why mkdir and not flock / a lockfile lib: mkdir(2) is atomic on POSIX filesystems
  * (exactly one caller wins the create when the dir is absent), needs ZERO npm
  * dependencies, and is portable to the macOS dev box and the linux tenant container
- * alike — matching the bash primitive exactly so the two languages interoperate.
+ * alike. Both implementations publish a PID plus a per-acquisition owner token so
+ * release can identify exactly the lock instance it acquired.
  *
- * Cross-language interop details (must stay in lockstep with lib/run-lib.sh):
+ * Cross-language protocol:
  *   - lock dir:        `${runJsonPath}.lock/`
  *   - holder pid file: `${lock}/pid` containing the writer's PID as decimal text
+ *   - owner file:      `${lock}/owner` containing a random per-acquisition token
+ *                      (older abandoned locks without one remain dead-recoverable)
  *   - liveness check:  a bash holder's pid is checkable from node via
  *                      process.kill(pid, 0) (ESRCH => dead); a node holder's pid is
  *                      checkable from bash via kill -0. Same syscall, both directions.
- *   - stale-break:     break iff the holder pid is dead OR the lock dir mtime age
- *                      exceeds RUN_LOCK_STALE_SECS (seconds). Re-races safely: rmdir
- *                      then re-attempt the atomic mkdir, so two breakers can't both win.
+ *   - stale-break:     TS breaks only a holder whose PID is provably dead. Lock age
+ *                      is never ownership proof: a long-running live writer remains live.
+ *                      lib/run-lib.sh uses the same dead-PID-only takeover and
+ *                      fail-closed timeout behavior.
  *   - wait budget:     RUN_LOCK_WAIT_SECS is a count of ~50ms spin ticks (same as the
  *                      bash loop's `sleep 0.05; waited++`), so both sides give up after
  *                      ~RUN_LOCK_WAIT_SECS * 50ms and never hang the request/engine.
  *
- * TIMEOUT POLICY (never hang): on bounded-wait expiry we log loudly and PROCEED with
- * the write anyway (degraded, last-writer-wins — exactly the pre-fix status quo) rather
- * than dropping the write or throwing. A dropped status write is strictly worse than a
- * raced one: the reconciler can repair a raced terminal status; it cannot resurrect a
- * write that never happened.
+ * TIMEOUT POLICY (never hang, never write unlocked): bounded-wait expiry throws a
+ * typed error before the critical section runs. Callers may retry or reconcile, but
+ * they may never trade mutual exclusion for a last-writer-wins update.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, rmSync, statSync, renameSync } from "fs";
+import { randomUUID } from "crypto";
+import { linkSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, unlinkSync } from "fs";
 
 /** Parse an env knob to a non-negative integer, falling back ONLY when unset/NaN.
  *  (Plain `Number(x) || default` would coerce a legitimate 0 to the default.) */
@@ -61,12 +64,12 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-/** A held run.json lock older than this (seconds) is treated as crashed and broken. */
-const RUN_LOCK_STALE_SECS = envInt("RUN_LOCK_STALE_SECS", 120);
 /** Max number of ~50ms spin ticks to wait for the lock (mirrors the bash loop). */
 const RUN_LOCK_WAIT_TICKS = envInt("RUN_LOCK_WAIT_SECS", 30);
 /** Duration of one spin tick, in ms. Matches the bash side's `sleep 0.05`. */
 const TICK_MS = 50;
+/** An uninitialized takeover claim older than this is an abandoned legacy/incomplete claim. */
+const TAKEOVER_CLAIM_INIT_GRACE_MS = 1_000;
 
 /** Sleep ~ms synchronously without pegging the CPU and without making the caller async. */
 function sleepSyncMs(ms: number): void {
@@ -82,26 +85,30 @@ function sleepSyncMs(ms: number): void {
   }
 }
 
-/** Age of the lock dir in seconds (0 if unknown / treat as fresh). Mirrors _run_lock_age. */
-function lockAgeSecs(lockDir: string): number {
-  try {
-    const mtimeMs = statSync(lockDir).mtimeMs;
-    if (mtimeMs > 0) return Math.floor((Date.now() - mtimeMs) / 1000);
-  } catch {
-    /* missing/unreadable — treat as fresh */
-  }
-  return 0;
+interface LockSnapshot {
+  pidText: string;
+  ownerToken?: string;
 }
 
-/** True iff the pid in the lock dir is provably gone (dead) — mirrors `! kill -0`. */
-function holderIsDead(lockDir: string): boolean {
-  let holder = "";
+function readLockSnapshot(lockDir: string): LockSnapshot | undefined {
+  let pidText = "";
   try {
-    holder = readFileSync(`${lockDir}/pid`, "utf-8").trim();
+    pidText = readFileSync(`${lockDir}/pid`, "utf-8").trim();
   } catch {
-    return false; // no/unreadable pid file — don't claim the holder is dead on this basis
+    return undefined;
   }
-  const pid = Number(holder);
+  let ownerToken: string | undefined;
+  try {
+    ownerToken = readFileSync(`${lockDir}/owner`, "utf-8").trim() || undefined;
+  } catch {
+    // A pre-token abandoned lock may not have an owner file.
+  }
+  return { pidText, ownerToken };
+}
+
+/** True iff the snapshotted PID is provably gone. EPERM remains live. */
+function snapshotHolderIsDead(snapshot: LockSnapshot): boolean {
+  const pid = Number(snapshot.pidText);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     // signal 0 performs error checking without sending a signal: throws ESRCH if the
@@ -114,56 +121,229 @@ function holderIsDead(lockDir: string): boolean {
   }
 }
 
+function snapshotsEqual(left: LockSnapshot, right: LockSnapshot | undefined): boolean {
+  return right !== undefined
+    && left.pidText === right.pidText
+    && left.ownerToken === right.ownerToken;
+}
+
 /**
- * Acquire the run.json lock by spinning on an atomic mkdir; break a provably-stale
- * lock (dead pid OR aged out). Returns true if acquired, false on wait-budget expiry.
+ * Acquire the run.json lock by spinning on an atomic mkdir; break only a lock
+ * whose snapshotted PID is still provably dead after an atomic quarantine rename.
+ * Returns this acquisition's owner token, or undefined on wait-budget expiry.
  * Mirrors lib/run-lib.sh `_run_lock_acquire`.
  */
-function acquireLock(lockDir: string): boolean {
+function acquireLock(lockDir: string): string | undefined {
   let waited = 0;
   for (;;) {
+    const ownerToken = randomUUID();
+    let created = false;
     try {
       mkdirSync(lockDir); // atomic: throws EEXIST if another holder already created it
+      created = true;
       try {
-        writeFileSync(`${lockDir}/pid`, String(process.pid));
-      } catch {
-        /* pid file is advisory; absence just disables our liveness break, never fatal */
+        // The token is mandatory: release cannot safely identify its lock instance
+        // without it. PID remains decimal-only for legacy shell kill -0 checks.
+        writeFileSync(`${lockDir}/owner`, ownerToken, { flag: "wx" });
+        writeFileSync(`${lockDir}/pid`, String(process.pid), { flag: "wx" });
+      } catch (error) {
+        cleanupIncompleteAcquisition(lockDir, ownerToken);
+        throw error;
       }
-      return true;
-    } catch {
-      // could not create — decide whether the current holder is dead/stale.
-      if (holderIsDead(lockDir) || lockAgeSecs(lockDir) >= RUN_LOCK_STALE_SECS) {
-        // break it, then retry the mkdir. rmdir-then-recreate re-races safely: if
-        // another breaker already removed+recreated, our removal simply no-ops.
-        try { rmSync(`${lockDir}/pid`, { force: true }); } catch { /* ignore */ }
-        try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
-        continue;
+      return ownerToken;
+    } catch (error) {
+      if (created) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const snapshot = readLockSnapshot(lockDir);
+      if (snapshot && snapshotHolderIsDead(snapshot)) {
+        if (breakDeadLock(lockDir, snapshot)) continue;
       }
-      if (waited >= RUN_LOCK_WAIT_TICKS) return false; // give up — caller proceeds degraded
+      if (waited >= RUN_LOCK_WAIT_TICKS) return undefined;
       sleepSyncMs(TICK_MS);
       waited += 1;
     }
   }
 }
 
-/** Release the run.json lock. Mirrors lib/run-lib.sh `_run_lock_release`. */
-function releaseLock(lockDir: string): void {
-  try { rmSync(`${lockDir}/pid`, { force: true }); } catch { /* ignore */ }
-  try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
+function breakDeadLock(lockDir: string, observed: LockSnapshot): boolean {
+  const takeoverClaim = `${lockDir}.takeover`;
+  const claimOwner = randomUUID();
+  try {
+    mkdirSync(takeoverClaim);
+    try {
+      writeFileSync(`${takeoverClaim}/owner`, claimOwner, { flag: "wx" });
+      writeFileSync(`${takeoverClaim}/pid`, String(process.pid), { flag: "wx" });
+    } catch (error) {
+      cleanupIncompleteAcquisition(takeoverClaim, claimOwner);
+      throw error;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return recoverAbandonedTakeoverClaim(takeoverClaim)
+        ? breakDeadLock(lockDir, observed)
+        : false;
+    }
+    throw error;
+  }
+
+  const quarantined = `${lockDir}.stale-${randomUUID()}`;
+  try {
+    const current = readLockSnapshot(lockDir);
+    if (!snapshotsEqual(observed, current) || !current || !snapshotHolderIsDead(current)) {
+      return false;
+    }
+    try {
+      renameSync(lockDir, quarantined);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+
+    const moved = readLockSnapshot(quarantined);
+    if (snapshotsEqual(current, moved) && moved && snapshotHolderIsDead(moved)) {
+      try { unlinkSync(`${quarantined}/pid`); } catch { /* absent or unwritable */ }
+      try { unlinkSync(`${quarantined}/owner`); } catch { /* legacy holder or unwritable */ }
+      rmdirSync(quarantined);
+      return true;
+    }
+
+    // We moved a different lock instance than the one proven dead. Restore it;
+    // never delete a successor based on the stale observation.
+    try {
+      renameSync(quarantined, lockDir);
+    } catch {
+      // Fail closed. Leaving the quarantined instance is safer than deleting it.
+    }
+    throw new Error(`Run.json lock ownership changed during stale takeover: ${lockDir}`);
+  } finally {
+    releaseLock(takeoverClaim, claimOwner);
+  }
+}
+
+interface TakeoverClaimSnapshot {
+  pidText?: string;
+  ownerToken?: string;
+  entries: string[];
+  mtimeMs: number;
+}
+
+function readTakeoverClaimSnapshot(claimDir: string): TakeoverClaimSnapshot | undefined {
+  try {
+    const entries = readdirSync(claimDir).sort();
+    let pidText: string | undefined;
+    let ownerToken: string | undefined;
+    try { pidText = readFileSync(`${claimDir}/pid`, "utf8").trim() || undefined; } catch { /* absent */ }
+    try { ownerToken = readFileSync(`${claimDir}/owner`, "utf8").trim() || undefined; } catch { /* absent */ }
+    return { pidText, ownerToken, entries, mtimeMs: statSync(claimDir).mtimeMs };
+  } catch {
+    return undefined;
+  }
+}
+
+function takeoverClaimSnapshotsEqual(
+  left: TakeoverClaimSnapshot,
+  right: TakeoverClaimSnapshot | undefined,
+): boolean {
+  return right !== undefined
+    && left.pidText === right.pidText
+    && left.ownerToken === right.ownerToken
+    && left.mtimeMs === right.mtimeMs
+    && isDeepStringArrayEqual(left.entries, right.entries);
+}
+
+function isDeepStringArrayEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function takeoverClaimIsRecoverable(snapshot: TakeoverClaimSnapshot): boolean {
+  if (snapshot.entries.some((entry) => entry !== "owner" && entry !== "pid")) return false;
+  if (snapshot.pidText) {
+    return snapshotHolderIsDead({ pidText: snapshot.pidText, ownerToken: snapshot.ownerToken });
+  }
+  // Legacy claims were empty directories. The grace interval also closes the
+  // mkdir-before-metadata window for the owner-bearing protocol.
+  return Date.now() - snapshot.mtimeMs >= TAKEOVER_CLAIM_INIT_GRACE_MS;
+}
+
+function recoverAbandonedTakeoverClaim(claimDir: string): boolean {
+  const observed = readTakeoverClaimSnapshot(claimDir);
+  if (!observed || !takeoverClaimIsRecoverable(observed)) return false;
+
+  const quarantined = `${claimDir}.abandoned-${randomUUID()}`;
+  try {
+    const current = readTakeoverClaimSnapshot(claimDir);
+    if (!takeoverClaimSnapshotsEqual(observed, current) || !current || !takeoverClaimIsRecoverable(current)) {
+      return false;
+    }
+    try {
+      renameSync(claimDir, quarantined);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+
+    const moved = readTakeoverClaimSnapshot(quarantined);
+    if (takeoverClaimSnapshotsEqual(current, moved) && moved && takeoverClaimIsRecoverable(moved)) {
+      try { unlinkSync(`${quarantined}/pid`); } catch { /* legacy empty/incomplete */ }
+      try { unlinkSync(`${quarantined}/owner`); } catch { /* legacy empty */ }
+      rmdirSync(quarantined);
+      return true;
+    }
+
+    try { renameSync(quarantined, claimDir); } catch { /* leave quarantined fail closed */ }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function readOwnerToken(lockDir: string): string | undefined {
+  try {
+    return readFileSync(`${lockDir}/owner`, "utf-8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanupIncompleteAcquisition(lockDir: string, ownerToken: string): void {
+  if (readOwnerToken(lockDir) === ownerToken) {
+    try { unlinkSync(`${lockDir}/pid`); } catch { /* absent or unwritable */ }
+    try { unlinkSync(`${lockDir}/owner`); } catch { /* absent or unwritable */ }
+  }
+  try { rmdirSync(lockDir); } catch { /* nonempty/replaced: leave fail-closed */ }
+}
+
+/** Release only this acquisition's lock instance. */
+function releaseLock(lockDir: string, ownerToken: string): void {
+  if (readOwnerToken(lockDir) !== ownerToken) return;
+
+  const retired = `${lockDir}.release-${ownerToken}`;
+  try {
+    // Move our still-tokened instance out of the acquisition path atomically.
+    // A successor may mkdir lockDir immediately; cleanup touches only retired.
+    renameSync(lockDir, retired);
+  } catch {
+    return;
+  }
+  if (readOwnerToken(retired) !== ownerToken) {
+    try { renameSync(retired, lockDir); } catch { /* never delete the mismatch */ }
+    return;
+  }
+  try { unlinkSync(`${retired}/pid`); } catch { /* absent or unwritable */ }
+  try { unlinkSync(`${retired}/owner`); } catch { /* absent or unwritable */ }
+  try { rmdirSync(retired); } catch { /* leave unexpected entries fail-closed */ }
 }
 
 /**
  * Run `fn` while holding the run.json lock for `runJsonPath`.
  *
  * Acquire the lock adjacent to the file, run `fn` (which MUST re-read the file and
- * write it via {@link writeRunJsonAtomic}), then release on EVERY path (finally). On
- * acquire-timeout we log loudly and run `fn` anyway (degraded last-writer-wins) — see
- * the timeout-policy note at the top of this file.
+ * write it via {@link writeRunJsonAtomic}), then release on EVERY path (finally).
+ * Acquire timeout throws before `fn` runs; no mutation is allowed without ownership.
  *
  * @param runJsonPath absolute path to the run.json being mutated
  * @param fn the read-modify-write to perform under mutual exclusion
- * @param onTimeout optional hook (test/observability) invoked when the lock could not
- *        be acquired and we proceed unlocked
+ * @param onTimeout optional observability hook invoked before the timeout error
  */
 export function withRunJsonLock<T>(
   runJsonPath: string,
@@ -171,19 +351,15 @@ export function withRunJsonLock<T>(
   onTimeout?: (lockDir: string) => void
 ): T {
   const lockDir = `${runJsonPath}.lock`;
-  const acquired = acquireLock(lockDir);
-  if (!acquired) {
-    // never hang the request: proceed unlocked, last-writer-wins (status quo).
-    console.warn(
-      `[run-json-lock] could not acquire ${lockDir} within ${RUN_LOCK_WAIT_TICKS} ticks (~${RUN_LOCK_WAIT_TICKS * TICK_MS}ms) — writing UNLOCKED (degraded, last-writer-wins)`
-    );
+  const ownerToken = acquireLock(lockDir);
+  if (!ownerToken) {
     onTimeout?.(lockDir);
-    return fn();
+    throw new RunJsonLockTimeoutError(lockDir, RUN_LOCK_WAIT_TICKS, TICK_MS);
   }
   try {
     return fn();
   } finally {
-    releaseLock(lockDir);
+    releaseLock(lockDir, ownerToken);
   }
 }
 
@@ -193,7 +369,34 @@ export function withRunJsonLock<T>(
  * never a truncated one. Use this for ALL run.json writes inside a locked section.
  */
 export function writeRunJsonAtomic(runJsonPath: string, data: unknown): void {
-  const tmp = `${runJsonPath}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, runJsonPath); // atomic on POSIX
+  const tmp = `${runJsonPath}.tmp.${process.pid}.${randomUUID()}`;
+  try {
+    writeFileSync(tmp, JSON.stringify(data, null, 2), { flag: "wx" });
+    renameSync(tmp, runJsonPath); // atomic on POSIX
+  } catch (error) {
+    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    throw error;
+  }
+}
+
+/** Publish a complete run.json only if the destination does not exist. */
+export function writeRunJsonExclusive(runJsonPath: string, data: unknown): void {
+  const tmp = `${runJsonPath}.create.${process.pid}.${randomUUID()}`;
+  try {
+    writeFileSync(tmp, JSON.stringify(data, null, 2), { flag: "wx" });
+    linkSync(tmp, runJsonPath);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+  }
+}
+
+export class RunJsonLockTimeoutError extends Error {
+  constructor(
+    readonly lockDir: string,
+    readonly waitTicks: number,
+    readonly tickMs: number,
+  ) {
+    super(`Could not acquire run.json lock ${lockDir} within ${waitTicks} ticks (~${waitTicks * tickMs}ms).`);
+    this.name = "RunJsonLockTimeoutError";
+  }
 }
