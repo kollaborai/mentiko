@@ -11,6 +11,7 @@ const pairs = [
   ["routing-contract-cli", "runner-routing-contract"], ["schedule-contract-cli", "runner-schedule-contract"],
   ["concurrency-admission-cli", "runner-concurrency-admission"], ["retry-circuit-cli", "runner-retry-circuit"],
   ["monitor-completion-cli", "runner-monitor-completion"], ["readiness-cli", "runner-readiness"],
+  ["chain-validation-cli", "runner-chain-validation"], ["parallel-contract-cli", "runner-parallel-contract"],
 ];
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));
 try {

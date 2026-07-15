@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitForReadiness } from "@/lib/runner-v2/readiness-cli";
@@ -18,5 +18,57 @@ describe("typed readiness wait", () => {
     expect(blocked).toMatchObject({ exitCode: 2, result: { status: "blocked" } });
     const dead = waitForReadiness({ profilePath: profile(), ptyCommand: "p", session: "s", maxWaitSecs: 1, pollSecs: 1, failClosed: true, run: () => ({ status: 1, stdout: "" }) });
     expect(dead.exitCode).toBe(1);
+  });
+
+  it("applies only a typed low-risk startup recovery decision within the budget", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-readiness-recovery-"));
+    const agentPath = join(root, "agent.json");
+    const advisorPath = join(root, "advisor.json");
+    const artifactDir = join(root, "artifacts");
+    writeFileSync(agentPath, JSON.stringify({
+      id: "agent", name: "Agent", cli: "stub", readiness: {
+        enabled: true,
+        ready_patterns: [{ name: "ready", value: "READY", type: "text" }],
+        recoverable_patterns: [{ name: "press-enter", value: "Press Enter", type: "text", action: "recover", risk: "low" }],
+      },
+    }));
+    writeFileSync(advisorPath, JSON.stringify({ id: "advisor", name: "Advisor", cli: "advisor-cli", isAdvisorDefault: true }));
+
+    const calls: string[] = [];
+    let captures = 0;
+    const result = waitForReadiness({
+      profilePath: agentPath,
+      ptyCommand: "p",
+      session: "s",
+      maxWaitSecs: 2,
+      pollSecs: 1,
+      failClosed: true,
+      recovery: {
+        enabled: true,
+        maxAttempts: 1,
+        profilesDir: root,
+        runId: "run-1",
+        agentId: "agent",
+        profileId: "agent",
+        artifactDir,
+      },
+      run: (_command, args) => {
+        calls.push(args[0]);
+        if (args[0] === "alive") return { status: 0, stdout: "alive" };
+        if (args[0] === "pid") return { status: 0, stdout: "42" };
+        if (args[0] === "send") return { status: 0, stdout: "" };
+        captures += 1;
+        return { status: 0, stdout: captures === 1 ? "Press Enter" : "READY" };
+      },
+      advisorRun: () => ({
+        status: 0,
+        stdout: JSON.stringify({ action: "send_keys", keys: ["ENTER"], confidence: 0.99, risk: "low", reason: "benign prompt" }),
+      }),
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, result: { status: "ready" } });
+    expect(calls).toContain("send");
+    expect(existsSync(join(artifactDir, "agent-startup-recovery-decisions.jsonl"))).toBe(true);
+    expect(readFileSync(join(artifactDir, "agent-startup-recovery-decisions.jsonl"), "utf8")).toContain("send_keys");
   });
 });

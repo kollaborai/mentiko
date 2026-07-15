@@ -81,8 +81,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{orgRoot}/chains/{chainId}/chain.json", "{orgRoot}/chains/{chainId}/.git-backup/chain.json.{timestamp}", "{runRoot}/{runId}/chain.json (execution snapshot)"],
     assurance: "enforced",
     schemaPath: "lib/schemas/chain.schema.json",
-    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts"],
-    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts"],
+    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts"],
+    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts"],
     writers: [
       "web/app/api/chains/save/route.ts",
       "web/lib/chains/chains-store.ts",
@@ -100,6 +100,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     readers: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
     samples: { root: "organization", patterns: [["chains", "*", "chain.json"]], format: "json" },
+    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag."],
   }),
   shape({
     id: "agent-definition",
@@ -1553,6 +1554,15 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     readers: ["web/lib/runner-v2/runtime-metrics.ts", "web/lib/config.ts"],
     samples: { root: "project", patterns: [["profiles", "*.json"]], format: "json" },
     sensitive: true,
+  }),
+  shape({
+    id: "parallel-group-state",
+    name: "Parallel Group State",
+    category: "runner",
+    description: "Typed lifecycle, PIDs, and completion outcomes for parallel agent groups.",
+    scope: "project", format: "json", storage: ["{projectRoot}/state/parallel/parallel-{groupId}.json"], assurance: "typed",
+    typePaths: ["web/lib/runner-v2/parallel-contract.ts"], validatorPaths: ["web/lib/runner-v2/parallel-contract.ts"], writers: ["web/lib/runner-v2/parallel-contract.ts"], readers: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
+    samples: { root: "project", patterns: [["state","parallel","*.json"]], format: "json" }, notes: ["Shell parallel adapters and the chain-runner invoke the typed group contract; only external agent process launch and wait remain shell boundaries."],
   }),
   shape({
     id: "legacy-metrics-state",

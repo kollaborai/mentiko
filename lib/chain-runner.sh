@@ -59,7 +59,6 @@ source "$SCRIPT_DIR/approval-gate.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/plugin-runner.sh"
 source "$SCRIPT_DIR/ai-gateway-agent-env.sh"
 source "$SCRIPT_DIR/cli-readiness.sh" 2>/dev/null || true
-source "$SCRIPT_DIR/advisor-recovery.sh" 2>/dev/null || true
 
 # Global run-id for this execution (from env var or new run)
 RUN_ID="${MENTIKO_RUN_ID:-${AGENT_CHAIN_RUN_ID:-${RUN_ID:-}}}"
@@ -577,206 +576,54 @@ $prior_summaries
 EOF
 }
 
-session_has_active_command() {
-    local session_name="$1"
-    command -v pgrep >/dev/null 2>&1 || return 0
-
-    local session_pid
-    session_pid="$(transport_pid "$session_name" 2>/dev/null || true)"
-    [[ -n "$session_pid" ]] || return 0
-
-    pgrep -P "$session_pid" >/dev/null 2>&1
-}
-
-write_startup_recovery_artifacts() {
-    local agent_id="$1" profile_id="$2" profile_cli="$3" cwd="$4" cli_cmd="$5" state_file="$6" capture_file="$7" readiness_json="$8"
-
-    [[ -n "${RUN_ID:-}" ]] || return 0
-
-    local artifact_dir="$RUNS_DIR/${RUN_ID}/artifacts"
-    mkdir -p "$artifact_dir"
-    cp "$capture_file" "$artifact_dir/${agent_id}-startup-capture.txt" 2>/dev/null || true
-    printf '%s\n' "$readiness_json" > "$artifact_dir/${agent_id}-startup-readiness.json"
-
-    if declare -f advisor_recovery_prompt >/dev/null 2>&1; then
-        advisor_recovery_prompt \
-            --run-id "${RUN_ID:-}" \
-            --agent-id "$agent_id" \
-            --profile-id "$profile_id" \
-            --cli "$profile_cli" \
-            --cwd "$cwd" \
-            --command "$cli_cmd" \
-            --state-file "$state_file" \
-            --capture-file "$capture_file" \
-            > "$artifact_dir/${agent_id}-startup-recovery-prompt.txt" 2>/dev/null || true
-    fi
-}
-
-# _startup_recovery_send_key <session> <key>
-# Translate a small, safe set of named keys to raw bytes; anything else is sent as
-# literal text. Only ever reached for an advisor action already gated to risk=low,
-# confidence>=0.85, so this is a bounded "answer a benign prompt", never free-form auto-typing.
-_startup_recovery_send_key() {
-    local session="$1" key="$2"
-    case "$key" in
-        ENTER|RETURN|CR|$'\r'|$'\n') transport_send_raw "$session" $'\r' ;;
-        ESC|ESCAPE)                  transport_send_raw "$session" $'\e' ;;
-        CTRL_C|"^C")                 transport_send_raw "$session" $'\003' ;;
-        TAB)                         transport_send_raw "$session" $'\t' ;;
-        SPACE)                       transport_send_raw "$session" ' ' ;;
-        *)                           transport_send_raw "$session" "$key" ;;
-    esac
-}
-
-# attempt_startup_recovery <agent_id> <profile_id> <cli> <cwd> <cli_cmd> <state_file> <capture_file> <session>
-# Consult the PHASE-AWARE startup advisor (advisor-recovery.sh contract — it is told
-# "no agent task has been delivered yet; do not tell a nonexistent agent to keep working")
-# and, ONLY when it returns a low-risk, high-confidence send_keys/retry_launch action,
-# apply it ONCE. Every decision is recorded for audit. rc 0 = an action was applied (the
-# caller should re-poll to see if startup resolved); rc 1 = escalate (block). The caller
-# enforces a hard per-startup budget on how many times this may act, so recovery is
-# always bounded — it can never become the unbounded-nudge problem.
-attempt_startup_recovery() {
-    local agent_id="$1" profile_id="$2" profile_cli="$3" cwd="$4" cli_cmd="$5" state_file="$6" capture_file="$7" session="$8"
-
-    # Need the advisor contract plus a typed-resolved advisor command, else escalate.
-    declare -f advisor_recovery_prompt >/dev/null 2>&1 || return 1
-    declare -f advisor_recovery_validate_json >/dev/null 2>&1 || return 1
-    declare -f advisor_recovery_should_auto_apply >/dev/null 2>&1 || return 1
-    local advisor_id advisor_file advisor_cmd
-    advisor_id="$(agent_profile_advisor_field "$AGENT_PROFILES_DIR" "id" 2>/dev/null || true)"
-    advisor_file="$(agent_profile_advisor_field "$AGENT_PROFILES_DIR" "path" 2>/dev/null || true)"
-    [[ -n "$advisor_id" && -n "$advisor_file" ]] || return 1
-    advisor_cmd="$(agent_profile_command "$advisor_file" false "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" 2>/dev/null || true)"
-    [[ -n "$advisor_cmd" ]] || return 1
-
-    local prompt response payload
-    prompt="$(advisor_recovery_prompt \
-        --run-id "${RUN_ID:-}" --agent-id "$agent_id" --profile-id "$profile_id" \
-        --cli "$profile_cli" --cwd "$cwd" --command "$cli_cmd" \
-        --state-file "$state_file" --capture-file "$capture_file" 2>/dev/null)"
-    response="$(printf '%s' "$prompt" | bash -lc "$advisor_cmd" 2>/dev/null || true)"
-    [[ -n "$response" ]] || return 1
-
-    # the advisor is told to return strict JSON; be defensive and extract the object.
-    payload="$(printf '%s' "$response" | sed -n '/{/,/}/p')"
-    [[ -n "$payload" ]] || payload="$response"
-    advisor_recovery_validate_json "$payload" >/dev/null 2>&1 || return 1
-
-    # durable audit of every decision (applied or not), so a startup is reconstructable.
-    if [[ -n "${RUN_ID:-}" ]]; then
-        local adir="$RUNS_DIR/${RUN_ID}/artifacts"
-        mkdir -p "$adir" 2>/dev/null || true
-        printf '%s\n' "$payload" >> "$adir/${agent_id}-startup-recovery-decisions.jsonl" 2>/dev/null || true
-    fi
-
-    # ONLY low-risk + confidence>=0.85 + send_keys/retry_launch auto-applies.
-    advisor_recovery_should_auto_apply "$payload" >/dev/null 2>&1 || return 1
-
-    local action
-    action="$(printf '%s' "$payload" | jq -r '.action // ""' 2>/dev/null || echo "")"
-    case "$action" in
-        send_keys)
-            local k applied=0
-            while IFS= read -r k; do
-                [[ -n "$k" ]] || continue
-                _startup_recovery_send_key "$session" "$k"
-                applied=1
-            done < <(printf '%s' "$payload" | jq -r '.keys[]?' 2>/dev/null)
-            [[ "$applied" == "1" ]] || return 1
-            declare -f _sys_log >/dev/null 2>&1 && _sys_log "info" "startup-recovery" "auto-applied send_keys for ${agent_id}" || true
-            return 0
-            ;;
-        retry_launch)
-            send-message "$session" "$cli_cmd" 2>/dev/null || true
-            declare -f _sys_log >/dev/null 2>&1 && _sys_log "info" "startup-recovery" "auto-applied retry_launch for ${agent_id}" || true
-            return 0
-            ;;
-    esac
-    return 1
-}
-
 # wait_for_profile_readiness <session> <state-prefix> <run-id> <agent_id> <profile_file> <profile_id> <cli> <cmd> <cwd>
-# Profile readiness is data-driven. It never writes CLI config, never pins a CLI,
-# and never auto-accepts a prompt. rc: 0 ready, 1 recoverable/blocked/unknown, 2 exited.
+# Profile readiness and bounded startup recovery are typed. This shell function only
+# passes process/session arguments and applies the resulting lifecycle state.
 wait_for_profile_readiness() {
     local session="$1" state_prefix="$2" state_run_id="${3:-}" agent_id="$4" profile_file="${5:-}" profile_id="${6:-}" profile_cli="${7:-}" cli_cmd="${8:-}" cwd="${9:-}"
     local state_file
     state_file="$(_agent_state_cli path --state-dir "$STATE_DIR" --session-prefix "$state_prefix" --run-id "$state_run_id")"
     local timeout="${MENTIKO_CLI_READY_TIMEOUT:-90}"
     local poll="${MENTIKO_CLI_READY_POLL:-2}"
-    local deadline=$(( $(date +%s) + timeout ))
     local capture_file readiness_json readiness_status readiness_reason
-    # bounded, phase-aware startup recovery (advisor-recovery.sh). On by default; a hard
-    # per-startup action budget guarantees recovery can never loop into the nudge problem.
-    local recovery_enabled="${MENTIKO_STARTUP_RECOVERY:-1}"
-    local recovery_budget="${MENTIKO_STARTUP_RECOVERY_MAX:-2}"
-    local recovery_used=0
-
-    while (( $(date +%s) < deadline )); do
-        if ! session_has_active_command "$session"; then
+    capture_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-cli-readiness-${agent_id}.XXXXXX")"
+    local fail_closed=false
+    [[ "${MENTIKO_READINESS_FAIL_CLOSED:-0}" == "1" ]] && fail_closed=true
+    local pty_cmd="${PTY_CMD:?PTY_CMD must be configured}"
+    local recovery_enabled=true
+    [[ "${MENTIKO_STARTUP_RECOVERY:-1}" == "0" ]] && recovery_enabled=false
+    local recovery_args=(
+        --recovery-enabled "$recovery_enabled"
+        --recovery-max "${MENTIKO_STARTUP_RECOVERY_MAX:-2}"
+        --profiles-dir "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}"
+        --namespace-id "${NAMESPACE_ID:-default}"
+        --org-id "${ORG_ID:-default}"
+        --run-id "${RUN_ID:-}"
+        --agent-id "$agent_id"
+        --profile-id "$profile_id"
+        --cli "$profile_cli"
+        --cwd "$cwd"
+        --command "$cli_cmd"
+        --state-file "$state_file"
+    )
+    if [[ -n "${RUN_ID:-}" ]]; then
+        recovery_args+=(--artifact-dir "${RUNS_DIR:?RUNS_DIR must be configured}/${RUN_ID}/artifacts")
+    fi
+    if readiness_json="$(_cli_readiness_cli wait --profile-path "$profile_file" --pty-cmd "$pty_cmd" --session "$session" --max-wait-secs "$timeout" --poll-secs "$poll" --fail-closed "$fail_closed" --capture-path "$capture_file" "${recovery_args[@]}")"; then
+        readiness_status="$(cli_readiness_field "$readiness_json" status)"
+        [[ "$readiness_status" == "ready" ]] && { rm -f "$capture_file"; return 0; }
+    else
+        local readiness_rc=$?
+        if [[ "$readiness_rc" -ne 1 && "$readiness_rc" -ne 2 ]]; then
+            rm -f "$capture_file"
             return 2
         fi
-
-        capture_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-cli-readiness-${agent_id}.XXXXXX")"
-        transport_capture "$session" 120 > "$capture_file" 2>/dev/null || true
-        readiness_json="$(cli_readiness_check "$profile_file" "$capture_file" 2>/dev/null)"
-        readiness_status="$(cli_readiness_field "$readiness_json" status)"
-        readiness_reason="$(cli_readiness_field "$readiness_json" reason)"
-
-        if [[ "$readiness_status" == "ready" ]]; then
-            rm -f "$capture_file"
-            return 0
-        fi
-
-        # KNOWN-terminal startup states block immediately: a blocked/recover/retry
-        # PATTERN matched, or (fail-closed) there is no ready signal to ever observe.
-        # `unknown` is deliberately NOT here — it means a ready signal is expected but
-        # has not appeared YET, so it must keep polling through the startup grace
-        # window and only block at the deadline below. (Previously `unknown` blocked
-        # on the first cycle, which made the grace window + deadline fallback dead code.)
-        if [[ "$readiness_status" == "blocked" || "$readiness_status" == "recover" || "$readiness_status" == "retry" || "$readiness_status" == "no_ready_signal" ]]; then
-            # Phase-aware advisor recovery for RUNTIME-recoverable states (a matched
-            # blocked/recover/retry pattern — e.g. a benign "press enter" prompt). It is
-            # bounded by recovery_budget so it can act at most a fixed number of times.
-            # no_ready_signal is a config error (no readiness policy) the advisor cannot
-            # fix, so it escalates immediately.
-            if [[ "$recovery_enabled" == "1" && "$readiness_status" != "no_ready_signal" && "$recovery_used" -lt "$recovery_budget" ]]; then
-                recovery_used=$((recovery_used + 1))
-                if attempt_startup_recovery "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$session"; then
-                    rm -f "$capture_file"
-                    sleep "$poll"
-                    continue   # an action was applied — re-poll to see if startup resolved
-                fi
-            fi
-            write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
-            rm -f "$capture_file"
-            mark_state_blocked "$state_prefix" "$state_run_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
-            mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
-            return 1
-        fi
-
-        # unknown / not-yet-ready: a ready signal is expected but hasn't appeared.
-        #   - enforce (MENTIKO_READINESS_FAIL_CLOSED=1): keep polling through the grace
-        #     window and block at the deadline below.
-        #   - legacy (flag off): do NOT gate on a missing banner — proceed. This keeps
-        #     adding ready_patterns to a profile INERT until a deployment turns the flag
-        #     on, so the catalog can be populated CLI-by-CLI without changing behavior.
-        if [[ "${MENTIKO_READINESS_FAIL_CLOSED:-0}" != "1" ]]; then
-            rm -f "$capture_file"
-            return 0
-        fi
-        rm -f "$capture_file"
-        sleep "$poll"
-    done
-
-    capture_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-cli-readiness-${agent_id}.XXXXXX")"
-    transport_capture "$session" 120 > "$capture_file" 2>/dev/null || true
-    readiness_json="$(cli_readiness_json "unknown" "CLI readiness unresolved after ${timeout}s")"
-    write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
+    fi
+    readiness_status="$(cli_readiness_field "$readiness_json" status)"
+    readiness_reason="$(cli_readiness_field "$readiness_json" reason)"
     rm -f "$capture_file"
-    mark_state_blocked "$state_prefix" "$state_run_id" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
-    mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
+    mark_state_blocked "$state_prefix" "$state_run_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
+    mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
     return 1
 }
 
@@ -1994,15 +1841,13 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
     echo ""
     echo "  parallel mode: launching ${#PARALLEL_AGENTS[@]} agent(s)"
 
-    # create a tracking file for this parallel group
-    group_id="$(date +%Y%m%d-%H%M%S)-$$"
-    tracking_file="$STATE_DIR/parallel/${group_id}.tracking"
-    mkdir -p "$STATE_DIR/parallel"
-
-    echo "status: running" > "$tracking_file"
-    echo "started: $(date -Iseconds)" >> "$tracking_file"
-    echo "agents: ${PARALLEL_AGENTS[*]}" >> "$tracking_file"
-    echo "pending: ${PARALLEL_AGENTS[*]}" >> "$tracking_file"
+    # The typed contract owns the durable group record. Shell retains only the
+    # required external-process launch/wait boundary.
+    parallel_contract_cli() {
+        node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-parallel-contract.js" "$@"
+    }
+    parallel_agents_csv="$(IFS=,; printf '%s' "${PARALLEL_AGENTS[*]}")"
+    group_id="$(parallel_contract_cli create-id --state-dir "${STATE_DIR:?STATE_DIR must be configured}" --agents "$parallel_agents_csv")"
 
     # launch each agent in background
     pids=()
@@ -2015,8 +1860,9 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
         (
             launch_chain_agent "$agent_id" 1
         ) &
-        pids+=($!)
-        echo "pid_${agent_id}: $!" >> "$tracking_file"
+        agent_pid=$!
+        pids+=("$agent_pid")
+        parallel_contract_cli pid --state-dir "$STATE_DIR" --id "$group_id" --agent "$agent_id" --pid "$agent_pid" >/dev/null
     done
 
     echo ""
@@ -2025,10 +1871,15 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
     # wait for all background jobs
     failed=0
     for i in "${!pids[@]}"; do
-        if ! wait "${pids[$i]}"; then
-            echo "  [parallel] agent ${PARALLEL_AGENTS[$i]} failed with code $?"
+        exit_code=0
+        if wait "${pids[$i]}"; then
+            :
+        else
+            exit_code=$?
+            echo "  [parallel] agent ${PARALLEL_AGENTS[$i]} failed with code $exit_code"
             failed=1
         fi
+        parallel_contract_cli result --state-dir "$STATE_DIR" --id "$group_id" --agent "${PARALLEL_AGENTS[$i]}" --exit "$exit_code" >/dev/null
     done
 
     if [[ $failed -eq 0 ]]; then
@@ -2039,8 +1890,6 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
         _sys_log "warn" "chain-runner" "parallel launch had failures" "run: ${RUN_ID:-unknown}, agents: ${PARALLEL_AGENTS[*]}"
     fi
 
-    echo "  status: complete" >> "$tracking_file"
-    echo "  completed: $(date -Iseconds)" >> "$tracking_file"
 else
     launch_chain_agent "$FIRST_AGENT" 1
 fi

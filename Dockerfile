@@ -177,6 +177,11 @@ RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
         --outfile=/context/lib/runner-run-record.js; \
     fi
 
+RUN if [ -f /build/web/lib/runner-v2/parallel-contract-cli.ts ]; then \
+      cd /build/web && npx --yes esbuild /build/web/lib/runner-v2/parallel-contract-cli.ts \
+        --bundle --platform=node --target=node20 --outfile=/context/lib/runner-parallel-contract.js; \
+    fi
+
 # compile typed counters, gauges, timers, active timers, and webhook metric records.
 RUN if [ -f /build/web/lib/runner-v2/legacy-metrics-cli.ts ]; then \
       echo "=== compiling typed legacy metrics boundary ===" && \
@@ -269,6 +274,16 @@ RUN if [ -f /build/web/lib/runner-v2/chain-contract-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/chain-contract-cli.ts \
         --bundle --platform=node --target=node20 \
       --outfile=/context/lib/runner-chain-contract.js; \
+    fi
+
+# compile typed raw and normalized chain validation; the shell command is only
+# the compatibility entrypoint and never parses chain JSON itself.
+RUN if [ -f /build/web/lib/runner-v2/chain-validation-cli.ts ]; then \
+      echo "=== compiling typed runner chain validation boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/chain-validation-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-chain-validation.js; \
     fi
 
 # Compile typed monitor completion resolution. Shell monitors only supply

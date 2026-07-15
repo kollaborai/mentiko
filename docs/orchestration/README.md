@@ -447,6 +447,8 @@ supporting:
   lib/webhook-sender.sh            webhook notifications
   lib/slack-integration.sh         slack notifications
   lib/metrics.sh                   performance metrics
+  lib/parallel-launcher.sh         external parallel agent process boundary; typed group records live in runner-v2
+  lib/chain-runner.sh              invokes the typed parallel group record while retaining only process launch/wait
   lib/profiler.sh                  agent profiling
 
 binary:
@@ -501,3 +503,5 @@ related docs
 # Typed readiness boundary
 
 `lib/cli-readiness-enhanced.sh` is an invocation-only adapter. `web/lib/runner-v2/readiness-cli.ts` owns PTY readiness polling, capture classification, fail-closed behavior, and terminal outcome codes; it invokes the configured PTY command as the required external product boundary.
+
+The legacy `wait_for_profile_readiness` entrypoint delegates the same typed command with the bounded startup-recovery budget and artifact directory. Advisor selection, decision validation, key translation, retry application, and recovery audit records are owned by `readiness-cli.ts`; the shell only applies the resulting run/agent lifecycle state.

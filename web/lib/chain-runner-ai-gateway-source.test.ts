@@ -91,12 +91,20 @@ describe("chain-runner AI gateway source contract", () => {
   it("checks profile-driven readiness before sending instructions to a launched CLI", () => {
     const guard = "wait_for_profile_readiness";
     const sendInstructions = 'send-message "$session_name" "$instruction_pointer"';
+    const readinessStart = chainRunner.indexOf("wait_for_profile_readiness()" );
+    const readinessEnd = chainRunner.indexOf("instruction_submission_marker()", readinessStart);
+    const readinessBody = chainRunner.slice(readinessStart, readinessEnd);
 
     expect(chainRunner).toContain('source "$SCRIPT_DIR/cli-readiness.sh"');
-    expect(chainRunner).toContain('source "$SCRIPT_DIR/advisor-recovery.sh"');
     expect(chainRunner).toContain(guard);
     expect(chainRunner).toContain("startup_recovery");
-    expect(chainRunner).toContain("write_startup_recovery_artifacts");
+    expect(readinessBody).toContain("_cli_readiness_cli wait");
+    expect(readinessBody).toContain("--recovery-enabled");
+    expect(readinessBody).toContain("--artifact-dir");
+    expect(readinessBody).not.toContain("write_startup_recovery_artifacts");
+    expect(readinessBody).not.toContain("transport_capture");
+    expect(readinessBody).not.toContain("jq");
+    expect(readinessBody).not.toMatch(/\bwhile\b|\bsleep\b|\bdate\b/);
     expect(chainRunner).not.toContain("cli-startup-prompts.sh");
     expect(chainRunner).not.toContain("seed-agent-cli-config.sh");
     expect(chainRunner.indexOf(guard)).toBeGreaterThan(-1);
