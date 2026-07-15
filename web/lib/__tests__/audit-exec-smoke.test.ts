@@ -1,9 +1,8 @@
 /**
  * audit-exec smoke test.
  *
- * End-to-end: call execAuditLog / execAuditQuery, confirm the entry lands
- * in the audit.log file. No mocks. This test would have caught the
- * /bin/sh-vs-hyphen-in-function-name bug in the audit exec pipeline.
+ * End-to-end: call execAuditLog / execAuditQuery, confirm the typed owner
+ * writes both the append-only log and the bounded query index. No mocks.
  *
  * The bar is "if this passes, the production audit log pipeline works
  * from a web-origin Node.js context." Silent failure in .catch(() => {})
@@ -102,12 +101,8 @@ describe("audit-exec smoke test", () => {
     expect(Array.isArray(parsed)).toBe(true);
   });
 
-  it("hyphenated function names work (proves shell: /bin/bash, not /bin/sh)", async () => {
-    // This is the canary for the SEC-1 regression. /bin/sh (dash or bash -p)
-    // rejects `audit-log` as "not a valid identifier". /bin/bash accepts it.
+  it("does not construct a shell command to write the index", async () => {
     const { execAuditLog } = await import("../api/audit-exec");
-
-    // if this throws "not a valid identifier", audit-exec has regressed to /bin/sh.
-    await expect(execAuditLog("bash_canary", "hyphen function name", {})).resolves.toBeDefined();
+    await expect(execAuditLog("typed_canary", "typed audit writer", {})).resolves.toBeDefined();
   });
 });

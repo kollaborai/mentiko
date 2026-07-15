@@ -51,7 +51,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const limit = searchParams.get("limit") || "100";
   const format = searchParams.get("format") || "json";
 
-  // Build the audit-query command
+  // Resolve the typed audit query filter.
   let filterType = type;
   let filterValue = "";
 
@@ -66,8 +66,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     filterValue = runId;
   }
 
+  if (!(["all", "event_type", "user", "chain", "run_id", "auth"] as const).includes(filterType as never)) {
+    throw new BadRequest("Invalid audit filter type");
+  }
+
   const stdout = await execAuditQuery(
-    { filterType, filterValue, since, limit },
+    { filterType: filterType as "all" | "event_type" | "user" | "chain" | "run_id" | "auth", filterValue, since, limit },
     { ip }
   );
 

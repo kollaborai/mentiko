@@ -202,7 +202,27 @@ RUN if [ -f /build/web/lib/runner-v2/agent-profile-cli.ts ]; then \
       cd /build/web && \
       npx --yes esbuild /build/web/lib/runner-v2/agent-profile-cli.ts \
         --bundle --platform=node --target=node20 \
-        --outfile=/context/lib/runner-agent-profile.js; \
+      --outfile=/context/lib/runner-agent-profile.js; \
+    fi
+
+# compile typed plugin registry dispatch; plugin hook scripts remain external
+# commands, but they never parse registry state or resolve their own paths.
+RUN if [ -f /build/web/lib/system/plugin-dispatch-cli.ts ]; then \
+      echo "=== compiling typed plugin dispatch boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/system/plugin-dispatch-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-plugin-dispatch.js; \
+    fi
+
+# compile the audit log/index owner used by web, CLI, and remaining shell
+# command boundaries. Remote rclone shipping stays an external command only.
+RUN if [ -f /build/web/lib/system/audit-cli.ts ]; then \
+      echo "=== compiling typed audit boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/system/audit-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-audit.js; \
     fi
 
 # compile the typed create-only runspace manifest boundary used by chain launch.

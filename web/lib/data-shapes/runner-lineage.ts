@@ -301,16 +301,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/external-effects.ts", "web/server/background-worker.ts"],
       },
       {
-        id: "shell-plugin-compatibility",
-        label: "Execute plugin hooks through the shell compatibility runner",
-        owner: "legacy-shell",
-        paths: ["lib/plugin-runner.sh"],
+        id: "typed-plugin-dispatch",
+        label: "Validate registry ownership and invoke declared plugin hooks",
+        owner: "runner-v2",
+        paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"],
       },
     ],
-    legacyEquivalent: {
-      summary: "External side effects previously ran inline during shell completion; runner v2 queues and audits them, while plugin execution still delegates to the shell plugin runner.",
-      paths: ["web/lib/runner-v2/adapters.ts", "lib/plugin-runner.sh"],
-    },
   },
   "completion-event-emission-ledger": {
     usage: "runner-v2",

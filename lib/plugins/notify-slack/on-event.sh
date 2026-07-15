@@ -1,6 +1,6 @@
 #!/bin/bash
 # Slack notification plugin — on-event handler
-# Called by plugin-runner.sh when a matching event fires.
+# Called by the typed plugin dispatcher when a matching event fires.
 # Env vars provided: PLUGIN_EVENT_TYPE, PLUGIN_CHAIN_ID, PLUGIN_RUN_ID,
 #                   PLUGIN_WEBHOOK_URL, PLUGIN_CHANNEL, PLUGIN_NOTIFY_ON
 

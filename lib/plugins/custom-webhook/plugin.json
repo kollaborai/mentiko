@@ -7,6 +7,7 @@
   "category": "outbound-webhook",
   "builtin": true,
   "events": ["chain-completed", "chain-stopped", "agent-completed"],
+  "onEventScript": "on-event.sh",
   "configSchema": [
     {
       "key": "url",

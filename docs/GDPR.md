@@ -69,4 +69,4 @@ entering audit logs going forward.
 - `web/app/api/gdpr/delete/route.ts` — delete endpoint
 - `lib/gdpr-sweep.sh` — filesystem cleanup
 - `scripts/scrub-audit-pii.mjs` — PII migration for audit logs
-- `lib/audit-log.sh` — PII rejection in audit logging
+- `web/lib/system/audit-log.ts` — typed PII rejection and audit-index ownership

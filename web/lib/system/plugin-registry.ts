@@ -10,8 +10,9 @@
  *   namespaces/{ns}/plugins/registry.json
  */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "fs";
 import { join } from "path";
+import { randomUUID } from "crypto";
 import { config as globalConfig, orgPath } from "@/lib/config";
 import type { PluginManifest, PluginRegistration, PluginState } from "@/lib/system/plugin-types";
 import { encrypt, decrypt } from "@/lib/secrets/secrets-store";
@@ -84,14 +85,17 @@ function getRegistryPath(namespaceId: string, orgId: string): string {
 function loadManifest(pluginDir: string): PluginManifest | null {
   const manifestPath = join(pluginDir, "plugin.json");
   if (!existsSync(manifestPath)) return null;
+  let manifest: unknown;
   try {
-    return JSON.parse(readFileSync(manifestPath, "utf-8")) as PluginManifest;
+    manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
   } catch {
-    return null;
+    throw new Error(`Invalid plugin manifest: ${manifestPath}`);
   }
+  if (!isPluginManifest(manifest)) throw new Error(`Invalid plugin manifest: ${manifestPath}`);
+  return manifest;
 }
 
-function loadRegistry(namespaceId: string, orgId: string): PluginState {
+export function loadPluginRegistry(namespaceId: string, orgId: string): PluginState {
   const registryPath = getRegistryPath(namespaceId, orgId);
   if (!existsSync(registryPath)) {
     return {
@@ -100,14 +104,17 @@ function loadRegistry(namespaceId: string, orgId: string): PluginState {
       updatedAt: new Date().toISOString(),
     };
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(readFileSync(registryPath, "utf-8")) as PluginState;
+    parsed = JSON.parse(readFileSync(registryPath, "utf-8"));
   } catch {
-    return { namespaceId, plugins: [], updatedAt: new Date().toISOString() };
+    throw new Error(`Invalid plugin registry: ${registryPath}`);
   }
+  if (!isPluginState(parsed, namespaceId)) throw new Error(`Invalid plugin registry: ${registryPath}`);
+  return parsed;
 }
 
-function saveRegistry(namespaceId: string, orgId: string, state: PluginState): void {
+export function savePluginRegistry(namespaceId: string, orgId: string, state: PluginState): void {
   const dir = getNamespacePluginsDir(namespaceId, orgId);
   mkdirSync(dir, { recursive: true });
   const registryPath = getRegistryPath(namespaceId, orgId);
@@ -120,7 +127,9 @@ function saveRegistry(namespaceId: string, orgId: string, state: PluginState): v
       config: encryptConfig(p.config, p.manifest?.configSchema ?? []),
     })),
   };
-  writeFileSync(registryPath, JSON.stringify(stateToPersist, null, 2), "utf-8");
+  const temp = `${registryPath}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temp, JSON.stringify(stateToPersist, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
+  renameSync(temp, registryPath);
 }
 
 /**
@@ -175,7 +184,7 @@ export function discoverPlugins(namespaceId: string, orgId: string): Array<{ man
  */
 export function getPlugins(namespaceId: string, orgId: string): PluginRegistration[] {
   const discovered = discoverPlugins(namespaceId, orgId);
-  const registry = loadRegistry(namespaceId, orgId);
+  const registry = loadPluginRegistry(namespaceId, orgId);
 
   return discovered.map(({ manifest, pluginDir }) => {
     const existing = registry.plugins.find((p) => p.id === manifest.id);
@@ -208,7 +217,7 @@ export function enablePlugin(
   const plugin = getPlugin(namespaceId, orgId, pluginId);
   if (!plugin) return null;
 
-  const registry = loadRegistry(namespaceId, orgId);
+  const registry = loadPluginRegistry(namespaceId, orgId);
   const idx = registry.plugins.findIndex((p) => p.id === pluginId);
   const updated: PluginRegistration = {
     ...plugin,
@@ -224,7 +233,7 @@ export function enablePlugin(
     registry.plugins.push(updated);
   }
 
-  saveRegistry(namespaceId, orgId, registry);
+  savePluginRegistry(namespaceId, orgId, registry);
   return updated;
 }
 
@@ -235,7 +244,7 @@ export function disablePlugin(namespaceId: string, orgId: string, pluginId: stri
   const plugin = getPlugin(namespaceId, orgId, pluginId);
   if (!plugin) return null;
 
-  const registry = loadRegistry(namespaceId, orgId);
+  const registry = loadPluginRegistry(namespaceId, orgId);
   const idx = registry.plugins.findIndex((p) => p.id === pluginId);
   const updated: PluginRegistration = {
     ...plugin,
@@ -249,7 +258,7 @@ export function disablePlugin(namespaceId: string, orgId: string, pluginId: stri
     registry.plugins.push(updated);
   }
 
-  saveRegistry(namespaceId, orgId, registry);
+  savePluginRegistry(namespaceId, orgId, registry);
   return updated;
 }
 
@@ -265,7 +274,7 @@ export function configurePlugin(
   const plugin = getPlugin(namespaceId, orgId, pluginId);
   if (!plugin) return null;
 
-  const registry = loadRegistry(namespaceId, orgId);
+  const registry = loadPluginRegistry(namespaceId, orgId);
   const idx = registry.plugins.findIndex((p) => p.id === pluginId);
   const updated: PluginRegistration = { ...plugin, config: pluginConfig };
 
@@ -275,6 +284,36 @@ export function configurePlugin(
     registry.plugins.push(updated);
   }
 
-  saveRegistry(namespaceId, orgId, registry);
+  savePluginRegistry(namespaceId, orgId, registry);
   return updated;
+}
+
+function isPluginManifest(value: unknown): value is PluginManifest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const manifest = value as Partial<PluginManifest>;
+  return typeof manifest.id === "string" && manifest.id.length > 0
+    && typeof manifest.name === "string"
+    && typeof manifest.description === "string"
+    && typeof manifest.version === "string"
+    && typeof manifest.category === "string"
+    && Array.isArray(manifest.events) && manifest.events.every((event) => typeof event === "string")
+    && Array.isArray(manifest.configSchema)
+    && typeof manifest.onEventScript === "string" && manifest.onEventScript.length > 0;
+}
+
+function isPluginState(value: unknown, namespaceId: string): value is PluginState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Partial<PluginState>;
+  return state.namespaceId === namespaceId
+    && typeof state.updatedAt === "string"
+    && Array.isArray(state.plugins)
+    && state.plugins.every((plugin) => {
+      if (!plugin || typeof plugin !== "object") return false;
+      const registration = plugin as Partial<PluginRegistration>;
+      return typeof registration.id === "string"
+        && typeof registration.enabled === "boolean"
+        && typeof registration.pluginDir === "string"
+        && Boolean(registration.config) && typeof registration.config === "object" && !Array.isArray(registration.config)
+        && isPluginManifest(registration.manifest);
+    });
 }

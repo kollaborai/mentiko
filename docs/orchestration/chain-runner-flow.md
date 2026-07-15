@@ -36,10 +36,10 @@ phase 0: initialization
    - profiler.sh             agent profiling
    - error-handling.sh       error handling
    - scheduler.sh            cron scheduling
-   - audit-log.sh            audit logging
+   - runner-audit.js         typed audit CLI boundary
    - retry-utils.sh          retry logic
    - approval-gate.sh        human approval gates
-   - plugin-runner.sh        plugin system
+   - plugin-runner.sh        typed plugin-dispatch CLI invocation boundary
    - budget-check.sh         spending limits
 
    runner-event emission and lifecycle are not sourced shell libraries. process
@@ -228,9 +228,10 @@ phase 4: run initialization
    - metric-counter "chain_{name}_runs" 1
    - metric-start-timer "run_{runId}"
 
-4. audit-log: chain start
-   ------------------------
-   calls audit-log-chain-start if available
+4. audit: chain start
+   -------------------
+   submits the chain-start fact to the compiled typed audit CLI; the CLI owns
+   JSONL append, index validation, and atomic index publication
 
 phase 5: agent launch
 =====================
@@ -544,9 +545,11 @@ lib/budget-check.sh           spending limits
 web/lib/runner-v2/chain-watcher-service.ts  file-event chain launches (see [chain-watcher.md](./chain-watcher.md))
 web/lib/runner-v2/watchdog.ts               stalled run detection (see [watchdog.md](./watchdog.md))
 lib/scheduler.sh              cron scheduling
-lib/audit-log.sh              audit logging
+web/lib/system/audit-log.ts   typed audit logging and index ownership
+web/lib/system/audit-cli.ts   compiled audit command source
 lib/retry-utils.sh            retry logic
-lib/plugin-runner.sh          plugin system
+web/lib/system/plugin-dispatch.ts typed registry parsing and hook dispatch
+lib/plugin-runner.sh          minimal typed plugin-dispatch invocation boundary
 lib/token-extractor.sh        token usage extraction
 
 related daemons

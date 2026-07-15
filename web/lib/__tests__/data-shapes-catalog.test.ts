@@ -109,8 +109,6 @@ describe("data shape catalog", () => {
       "chain-definition",
       "agent-definition",
       "config-profile",
-      "plugin-registry",
-      "audit-index",
       "runtime-profiler",
       "performance-metrics",
     ]);

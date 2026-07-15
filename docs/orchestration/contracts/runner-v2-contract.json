@@ -95,7 +95,7 @@
       "plugin",
       "legacy-webhook"
     ],
-    "plugin_dispatch": "delegates to lib/plugin-runner.sh run-plugins so plugin behavior cannot drift from the shell runner; live-drain opt-in only \u2014 probe and proof dispatch never invoke real plugins",
+    "plugin_dispatch": "web/lib/system/plugin-dispatch.ts parses the typed registry, validates declared hook paths, and invokes only those external hook commands; live-drain opt-in only \u2014 probe and proof dispatch never invoke real plugins",
     "legacy_webhook_network": "live drain delivers legacy webhooks over the network (SSRF guards live in outbound-webhook-delivery); probe dispatch requires explicit opt-in",
     "plain_fail_steps": "plain fail decisions (agent failed, no retry policy) emit terminal-failure steps mirroring the shell no-event failure path: task-status failed, circuit-breaker record-failure, agent-failed notification, failed metadata-webhooks; the shell fires no plugins on this path so neither does typed",
     "agent_completion_steps": "every typed completion that marks the agent complete (route, loop-complete, max-rounds-stop, terminal, generation-terminal) queues agent-completed plugin, agent-completed notification (agent_complete type, never chain-level), and chain-config agent_complete webhooks (config.webhooks enabled + subscribed, queued as legacy-webhook records per url); failure verdicts do not fire agent-completed",

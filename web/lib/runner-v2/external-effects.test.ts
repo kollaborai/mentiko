@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { execFile, spawn, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import {
   dispatchExternalEffects,
   drainExternalEffectsOutbox,
@@ -19,6 +19,7 @@ import {
   taskUpdate,
 } from "@/lib/tasks/task-store";
 import { claimProcessIdentityHash } from "@/lib/runner-v2/file-claim";
+import { dispatchPlugins } from "@/lib/system/plugin-dispatch";
 
 jest.mock("@/lib/webhooks/webhook-utils", () => ({
   fireWebhooks: jest.fn(() => Promise.resolve()),
@@ -39,12 +40,7 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskUpdate: jest.fn(),
 }));
 
-jest.mock("child_process", () => ({
-  ...jest.requireActual("child_process"),
-  execFile: jest.fn((_cmd: string, _args: string[], _opts: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
-    callback(null, "", "");
-  }),
-}));
+jest.mock("@/lib/system/plugin-dispatch", () => ({ dispatchPlugins: jest.fn(() => ({ launched: [], skipped: [] })) }));
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), "runner-v2-external-effects-"));
@@ -471,12 +467,12 @@ describe("runner-v2 external effects dispatcher", () => {
 
     const result = await dispatchExternalEffects({ outboxPath, namespaceId: "default", orgId: "default" });
 
-    expect(execFile).not.toHaveBeenCalled();
+    expect(dispatchPlugins).not.toHaveBeenCalled();
     expect(result).toMatchObject({ handled: 1, dispatched: 0, skipped: 1, failed: 0 });
     expect(readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8")).toContain("live drain opt-in");
   });
 
-  it("invokes the shared shell plugin runner when plugin dispatch is allowed", async () => {
+  it("dispatches enabled plugins through the typed registry owner when plugin dispatch is allowed", async () => {
     const dir = tempDir();
     const outboxPath = writeOutbox(dir, [
       {
@@ -493,20 +489,15 @@ describe("runner-v2 external effects dispatcher", () => {
       allowPluginDispatch: true,
     });
 
-    expect(execFile).toHaveBeenCalledWith(
-      "bash",
-      expect.arrayContaining([
-        expect.stringContaining("plugin-runner.sh"),
-        "chain-completed",
-        "Build Chain",
-        "run-123",
-        "writer",
-      ]),
-      expect.objectContaining({
-        env: expect.objectContaining({ NAMESPACE_ID: "default", ORG_ID: "default" }),
-      }),
-      expect.any(Function),
-    );
+    expect(dispatchPlugins).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      event: "chain-completed",
+      chainId: "Build Chain",
+      runId: "run-123",
+      agentId: "writer",
+      data: {},
+    });
     expect(result).toMatchObject({ handled: 1, dispatched: 1, skipped: 0, failed: 0 });
   });
 
@@ -895,7 +886,7 @@ describe("runner-v2 external effects drain", () => {
     });
 
     expect(result).toMatchObject({ outboxes: 2, handled: 2, dispatched: 2, failed: 0 });
-    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(dispatchPlugins).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(existsSync(join(stateDir, "external-effects.jsonl"))).toBe(false);
     expect(existsSync(join(runsDir, "run-1", "state", "external-effects.jsonl"))).toBe(false);

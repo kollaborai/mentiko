@@ -40,13 +40,14 @@ source "$LIB_DIR/session-transport.sh"
 CMD="${1:-help}"
 shift || true
 
-# Load audit log (suppress errors if not available)
-source "$LIB_DIR/audit-log.sh" 2>/dev/null || true
-
-# log cli command
-if declare -f audit-log-cli-command > /dev/null; then
-    audit-log-cli-command "$CMD" "$*" 2>/dev/null || true
-fi
+# Audit storage is owned by the typed audit CLI. This shell only submits the
+# command fact before dispatching the requested external behavior.
+node "$LIB_DIR/runner-audit.js" write \
+    --namespace-id "$NAMESPACE_ID" \
+    --event-type "cli_command" \
+    --description "CLI command: $CMD" \
+    --metadata-json "$(jq -nc --arg command "$CMD" --arg args "$*" '{command:$command,args:$args}')" \
+    --source "cli" >/dev/null || true
 
 case "$CMD" in
 
@@ -146,9 +147,12 @@ case "$CMD" in
         transport_send_keys "$SESSION" "$MESSAGE"
         echo "  sent to $SESSION"
 
-        if declare -f audit-log-agent-action > /dev/null; then
-            audit-log-agent-action "send" "$SESSION" "message: ${MESSAGE:0:100}" 2>/dev/null || true
-        fi
+        node "$LIB_DIR/runner-audit.js" write \
+            --namespace-id "$NAMESPACE_ID" \
+            --event-type "agent_action" \
+            --description "Agent action: send $SESSION" \
+            --metadata-json "$(jq -nc --arg action "send" --arg target "$SESSION" --arg details "message: ${MESSAGE:0:100}" '{action:$action,target:$target,details:$details}')" \
+            --source "cli" >/dev/null || true
         ;;
 
     kill)
@@ -167,9 +171,12 @@ case "$CMD" in
         transport_kill_session "$SESSION"
         echo "  killed: $SESSION"
 
-        if declare -f audit-log-agent-action > /dev/null; then
-            audit-log-agent-action "kill" "$SESSION" 2>/dev/null || true
-        fi
+        node "$LIB_DIR/runner-audit.js" write \
+            --namespace-id "$NAMESPACE_ID" \
+            --event-type "agent_action" \
+            --description "Agent action: kill $SESSION" \
+            --metadata-json "$(jq -nc --arg action "kill" --arg target "$SESSION" '{action:$action,target:$target}')" \
+            --source "cli" >/dev/null || true
         ;;
 
     kill-all)
@@ -263,9 +270,12 @@ case "$CMD" in
             exit 1
         fi
 
-        if declare -f audit-log-event-emit > /dev/null; then
-            audit-log-event-emit "$EVENT_NAME" "$SOURCE" 2>/dev/null || true
-        fi
+        node "$LIB_DIR/runner-audit.js" write \
+            --namespace-id "$NAMESPACE_ID" \
+            --event-type "event_emit" \
+            --description "Event emitted: $EVENT_NAME" \
+            --metadata-json "$(jq -nc --arg event_name "$EVENT_NAME" --arg source "$SOURCE" '{event_name:$event_name,source:$source}')" \
+            --source "cli" >/dev/null || true
         ;;
 
     init)
@@ -325,56 +335,40 @@ EOF
 
         case "$AUDIT_SUBCMD" in
             summary)
-                SINCE="${1:-}"
-                if declare -f audit-summary > /dev/null; then
-                    audit-summary "$SINCE"
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                node "$LIB_DIR/runner-audit.js" summary --namespace-id "$NAMESPACE_ID"
                 ;;
             export-json)
                 OUTPUT="${1:-}"
                 SINCE="${2:-}"
                 EVENT="${3:-}"
-                if declare -f audit-export-json > /dev/null; then
-                    audit-export-json "$OUTPUT" "$SINCE" "$EVENT"
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                EXPORT_ARGS=(export-json --namespace-id "$NAMESPACE_ID")
+                [[ -n "$OUTPUT" ]] && EXPORT_ARGS+=(--output "$OUTPUT")
+                [[ -n "$SINCE" ]] && EXPORT_ARGS+=(--since "$SINCE")
+                [[ -n "$EVENT" ]] && EXPORT_ARGS+=(--event-type "$EVENT")
+                node "$LIB_DIR/runner-audit.js" "${EXPORT_ARGS[@]}"
                 ;;
             export-csv)
                 OUTPUT="${1:-}"
                 SINCE="${2:-}"
                 EVENT="${3:-}"
-                if declare -f audit-export-csv > /dev/null; then
-                    audit-export-csv "$OUTPUT" "$SINCE" "$EVENT"
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                EXPORT_ARGS=(export-csv --namespace-id "$NAMESPACE_ID")
+                [[ -n "$OUTPUT" ]] && EXPORT_ARGS+=(--output "$OUTPUT")
+                [[ -n "$SINCE" ]] && EXPORT_ARGS+=(--since "$SINCE")
+                [[ -n "$EVENT" ]] && EXPORT_ARGS+=(--event-type "$EVENT")
+                node "$LIB_DIR/runner-audit.js" "${EXPORT_ARGS[@]}"
                 ;;
             query)
                 TYPE="${1:-all}"
                 VALUE="${2:-}"
                 SINCE="${3:-}"
                 LIMIT="${4:-100}"
-                if declare -f audit-query > /dev/null; then
-                    audit-query "$TYPE" "$VALUE" "$SINCE" "$LIMIT"
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                QUERY_ARGS=(query --namespace-id "$NAMESPACE_ID" --filter-type "$TYPE" --filter-value "$VALUE" --limit "$LIMIT")
+                [[ -n "$SINCE" ]] && QUERY_ARGS+=(--since "$SINCE")
+                node "$LIB_DIR/runner-audit.js" "${QUERY_ARGS[@]}"
                 ;;
             archive)
                 DAYS="${1:-30}"
-                if declare -f audit-archive > /dev/null; then
-                    audit-archive "$DAYS"
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                node "$LIB_DIR/runner-audit.js" archive --namespace-id "$NAMESPACE_ID" --days "$DAYS"
                 ;;
             clear)
                 if [[ "${1:-}" != "--confirm" ]]; then
@@ -382,12 +376,7 @@ EOF
                     echo "  usage: mentiko audit clear --confirm"
                     exit 1
                 fi
-                if declare -f audit-clear > /dev/null; then
-                    audit-clear --confirm
-                else
-                    echo "  error: audit-log.sh not available"
-                    exit 1
-                fi
+                node "$LIB_DIR/runner-audit.js" clear --namespace-id "$NAMESPACE_ID" --confirm true
                 ;;
             *)
                 echo "  audit subcommands:"

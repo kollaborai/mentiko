@@ -1,17 +1,17 @@
 import { basename, dirname, join } from "path";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
-import { execFile } from "child_process";
 import { createHash } from "crypto";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { fireWebhooks, type WebhookEvent } from "@/lib/webhooks/webhook-utils";
 import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
+import { dispatchPlugins } from "@/lib/system/plugin-dispatch";
 import {
   taskClaimMetadataKeyIfUnset,
   taskGet,
   taskMergeMeta,
   taskUpdate,
 } from "@/lib/tasks/task-store";
-import config, { orgPath } from "@/lib/config";
+import config from "@/lib/config";
 import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import {
   claimProcessIdentity,
@@ -68,7 +68,6 @@ type DispatchAuditRecord = {
 
 const DEFAULT_MAX_DISPATCH_ATTEMPTS = 3;
 const ORPHANED_CLAIM_MIN_AGE_MS = 5 * 60_000;
-const PLUGIN_DISPATCH_TIMEOUT_MS = 30_000;
 
 export interface ExternalEffectEnqueueRecord {
   idempotencyKey: string;
@@ -523,7 +522,15 @@ async function dispatchOperation(
       // the live drain may invoke real org plugins.
       return { status: "skipped", reason: "plugin dispatch requires live drain opt-in" };
     }
-    await runPluginsViaShell(operation, context);
+    dispatchPlugins({
+      namespaceId: context.namespaceId,
+      orgId: context.orgId,
+      event: operation.event,
+      chainId: operation.chainName,
+      runId: operation.runId,
+      agentId: operation.agentId,
+      data: {},
+    });
     return { status: "dispatched" };
   }
 
@@ -548,55 +555,6 @@ async function dispatchOperation(
   }
 
   return { status: "skipped", reason: "operation is not an external dispatcher record" };
-}
-
-/**
- * The plugin system is bash-owned (lib/plugin-runner.sh reads the org plugin
- * registry and invokes each enabled plugin). Typed dispatch delegates to the
- * same run-plugins entrypoint the shell completion uses, so plugin behavior
- * cannot drift between runners.
- */
-function runPluginsViaShell(
-  operation: Extract<AdapterOperation, { type: "plugin" }>,
-  context: OperationDispatchContext,
-): Promise<void> {
-  const pluginRunner = join(config.codeRoot, "lib", "plugin-runner.sh");
-  if (!existsSync(pluginRunner)) {
-    throw new Error(`plugin runner not found: ${pluginRunner}`);
-  }
-  return new Promise((resolve, reject) => {
-    execFile(
-      "bash",
-      [
-        "-c",
-        'source "$0" && run-plugins "$1" "$2" "$3" "$4"',
-        pluginRunner,
-        operation.event,
-        operation.chainName,
-        operation.runId,
-        operation.agentId || "",
-      ],
-      {
-        timeout: PLUGIN_DISPATCH_TIMEOUT_MS,
-        env: {
-          ...process.env,
-          NAMESPACE_ID: context.namespaceId,
-          ORG_ID: context.orgId,
-          MENTIKO_ORG_ROOT: orgPath(context.namespaceId, context.orgId),
-          ...(operation.idempotencyKey
-            ? { MENTIKO_EXTERNAL_EFFECT_ID: operation.idempotencyKey }
-            : {}),
-        },
-      },
-      (error, _stdout, stderr) => {
-        if (error) {
-          reject(new Error(`plugin dispatch failed: ${error.message}${stderr ? ` (${stderr.trim().slice(-200)})` : ""}`));
-          return;
-        }
-        resolve();
-      },
-    );
-  });
 }
 
 function notificationFromOperation(operation: Extract<AdapterOperation, { type: "notification" }>): {

@@ -61,10 +61,9 @@ source "$SCRIPT_DIR/performance.sh"
 source "$SCRIPT_DIR/profiler.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/error-handling.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/scheduler.sh" 2>/dev/null || true
-source "$SCRIPT_DIR/audit-log.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/retry-utils.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/approval-gate.sh" 2>/dev/null || true
-source "$SCRIPT_DIR/plugin-runner.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/plugin-runner.sh"
 source "$SCRIPT_DIR/ai-gateway-agent-env.sh"
 source "$SCRIPT_DIR/cli-readiness.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/advisor-recovery.sh" 2>/dev/null || true
@@ -2174,10 +2173,13 @@ MONEOF
     # profiler: start tracking
     profiler-start "$session_name" "$agent_id" "$agent_name" "$RUN_ID" >/dev/null || true
 
-    # audit log: agent launch
-    if declare -f audit-log-agent-launch > /dev/null; then
-        audit-log-agent-launch "$agent_id" "$agent_name" "$session_name" "$RUN_ID" || true
-    fi
+    # audit index ownership is typed; shell only submits the launch fact.
+    node "$SCRIPT_DIR/runner-audit.js" write \
+        --namespace-id "$NAMESPACE_ID" \
+        --event-type "agent_launch" \
+        --description "Launched agent: $agent_name" \
+        --metadata-json "$(jq -nc --arg agent_id "$agent_id" --arg agent_name "$agent_name" --arg session "$session_name" --arg run_id "$RUN_ID" '{agent_id:$agent_id,agent_name:$agent_name,session:$session,run_id:$run_id}')" \
+        --source "cli" >/dev/null || true
 
     echo "  done."
 }
@@ -2210,10 +2212,13 @@ if [[ -z "$RUN_ID" ]]; then
     _sys_log "info" "chain-runner" "run created: $RUN_ID" "chain: $CHAIN_NAME, first_agent: $FIRST_AGENT, workspace: ${WORKSPACE_PATH:-local}"
 fi
 
-# audit log: chain start
-if declare -f audit-log-chain-start > /dev/null; then
-    audit-log-chain-start "$CHAIN_FILE" "$RUN_ID"
-fi
+# audit index ownership is typed; shell only submits the chain-start fact.
+node "$SCRIPT_DIR/runner-audit.js" write \
+    --namespace-id "$NAMESPACE_ID" \
+    --event-type "chain_start" \
+    --description "Started chain: $CHAIN_NAME" \
+    --metadata-json "$(jq -nc --arg chain_name "$CHAIN_NAME" --arg chain_file "$CHAIN_FILE" --arg run_id "$RUN_ID" --argjson agent_count "$(jq '.agents | length' "$CHAIN_FILE")" '{chain_name:$chain_name,chain_file:$chain_file,run_id:$run_id,agent_count:$agent_count,namespace_id:$ENV.NAMESPACE_ID}')" \
+    --source "cli" >/dev/null || true
 
 # export for subprocesses
 export RUN_ID
@@ -2271,9 +2276,7 @@ curl -s -X POST "${BASE_URL}/api/notifications/dispatch" \
     2>/dev/null || true
 
 # fire plugins: chain-started
-if declare -f run-plugins &>/dev/null; then
-    run-plugins "chain-started" "$CHAIN_NAME" "${RUN_ID:-}" "${FIRST_AGENT:-}" 2>/dev/null || true
-fi
+run-plugins "chain-started" "$CHAIN_NAME" "$RUN_ID" "$FIRST_AGENT" "{}" >/dev/null || true
 
 if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
     echo ""
