@@ -113,4 +113,31 @@ describe("GET /api/conversations/find-by-agent", () => {
       requestId: expect.any(String),
     });
   });
+
+  it("does not bind a sibling agent from later shared-run mentions", async () => {
+    const claudeDir = join(workspaceRoot, "claude-code");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, "diagnostician.jsonl"), [
+      JSON.stringify({
+        payload: { type: "message", message: { role: "user", content: [{
+          type: "text",
+          text: "You are Mentiko agent: diagnostician. Read /tmp/runs/run-99/artifacts/diagnostician-instructions.md",
+        }] } },
+      }),
+      JSON.stringify({
+        payload: { type: "message", message: { role: "assistant", content: [{
+          type: "text",
+          text: "The shared run lists fixer and verifier for run-99.",
+        }] } },
+      }),
+    ].join("\n") + "\n");
+
+    const response = await GET(makeRequest("/api/conversations/find-by-agent", {
+      runId: "run-99",
+      agentId: "fixer",
+      cwd: workspaceRoot,
+    }));
+
+    expect((await response.json()).data).toEqual({ conversationId: null });
+  });
 });

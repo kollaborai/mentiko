@@ -7,6 +7,7 @@ import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { matchesAgentConversationBootstrap } from "@/lib/runs/session-conversation-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -279,7 +280,6 @@ export const GET = withErrorHandling(async (
 
       if (session && logDirs.length > 0) {
         const startMs = runJson.started ? new Date(runJson.started).getTime() : 0;
-        const agentName = session.replace(/-\d{8}-\d{6}$/, "").replace(/-/g, " ");
         try {
           const jsonlFiles = logDirs
             .flatMap((dir) =>
@@ -300,19 +300,9 @@ export const GET = withErrorHandling(async (
 
             const firstUser = msgs.find((m) => m.role === "user");
             const text = firstUser?.content || "";
-            if (text.includes(agentName) || text.includes(session)) {
+            if (matchesAgentConversationBootstrap(text, { runId, agentId })) {
               conversations = [{ path: jf.path, messages: msgs }];
               break;
-            }
-          }
-
-          // if no name match, try all files near start time and pick by content
-          if (conversations.length === 0 && jsonlFiles.length > 0) {
-            const agentIndex = runJson.agents?.findIndex((a) => a.id === agentId) ?? -1;
-            const matchedFiles = jsonlFiles.filter((jf) => parseConversation(jf.path).length > 0);
-            if (agentIndex >= 0 && agentIndex < matchedFiles.length) {
-              const jf = matchedFiles[agentIndex];
-              conversations = [{ path: jf.path, messages: parseConversation(jf.path) }];
             }
           }
         } catch { /* ignore filesystem errors */ }

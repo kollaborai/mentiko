@@ -6,6 +6,7 @@ import { resolveLogDir } from "@/lib/runs/session-log-resolver";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { matchesAgentConversationBootstrap, matchesAgentNameBootstrap } from "@/lib/runs/session-conversation-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -75,10 +76,6 @@ function listConversationFiles(
   return files;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -117,13 +114,14 @@ function extractTextFromContent(content: unknown): string {
 }
 
 function extractMessageRole(entry: Record<string, unknown>): string {
-  if (typeof entry.type === "string") return entry.type;
-
   const payload = isRecord(entry.payload) ? entry.payload : undefined;
   if (payload?.type === "message") {
     const payloadMessage = isRecord(payload.message) ? payload.message : undefined;
     if (typeof payloadMessage?.role === "string") return payloadMessage.role;
   }
+
+  if (typeof entry.role === "string") return entry.role;
+  if (typeof entry.type === "string") return entry.type;
 
   return "";
 }
@@ -141,50 +139,6 @@ function getMessageText(obj: unknown): string {
   }
 
   return "";
-}
-
-function hasAgentName(text: string, agentName: string): boolean {
-  if (!agentName) return false;
-  const escapedName = escapeRegExp(agentName);
-  const patterns = [
-    new RegExp(`you are[^\\n]{0,40}\\b${escapedName}\\b`, "i"),
-    new RegExp(`you are the[^\\n]{0,40}\\b${escapedName}\\b`, "i"),
-    new RegExp(`agent\\s*(?:name|id)[^\\n]{0,40}:?\\s*["']?${escapedName}["']?`, "i"),
-    new RegExp(`\\b${escapedName}\\b`, "i"),
-  ];
-  return patterns.some((pattern) => pattern.test(text));
-}
-
-function hasIdentifierPair(text: string, runId: string, agentId: string): boolean {
-  if (!runId || !agentId) return false;
-
-  const runMatches =
-    text.includes(runId) ||
-    text.includes(`"${runId}"`) ||
-    new RegExp(`run[-_\\s]?id[^\\n]{0,40}[:= ]["']?${escapeRegExp(runId)}["']?`, "i").test(text) ||
-    new RegExp(`["']?runId["']?[^\\n]{0,12}[:= ]["']?${escapeRegExp(runId)}["']?`, "i").test(text) ||
-    new RegExp(`["']?run_id["']?[^\\n]{0,12}[:= ]["']?${escapeRegExp(runId)}["']?`, "i").test(text) ||
-    new RegExp(`["']?run-id["']?[^\\n]{0,12}[:= ]["']?${escapeRegExp(runId)}["']?`, "i").test(text);
-
-  const agentMatches =
-    text.includes(agentId) ||
-    text.includes(`"${agentId}"`) ||
-    new RegExp(`agent[-_\\s]?id[^\\n]{0,40}[:= ]["']?${escapeRegExp(agentId)}["']?`, "i").test(text) ||
-    new RegExp(`\\(\\s*${escapeRegExp(agentId)}\\s*\\)`, "i").test(text);
-
-  return runMatches && agentMatches;
-}
-
-function hasIdentifierPairEntry(entry: unknown, runId: string, agentId: string): boolean {
-  if (!isRecord(entry)) return false;
-  const text = getMessageText(entry);
-  if (hasIdentifierPair(text, runId, agentId)) return true;
-
-  let raw = "";
-  try {
-    raw = JSON.stringify(entry);
-  } catch {}
-  return hasIdentifierPair(raw, runId, agentId);
 }
 
 // scan conversation entries for agent name match
@@ -211,11 +165,8 @@ async function checkFirstUserMessage(
         const text = getMessageText(obj);
         if (isRecord(obj)) {
           const role = extractMessageRole(obj);
-          if (
-            (role === "user" || role === "assistant") &&
-            hasAgentName(text, agentName)
-          ) {
-            found = true;
+          if (role === "user") {
+            found = matchesAgentNameBootstrap(text, agentName);
             rl.close();
             stream.destroy();
             return;
@@ -253,12 +204,8 @@ async function checkAgentIdentifier(
 
       try {
         const obj = JSON.parse(line);
-        const text = getMessageText(obj);
-        if (
-          hasIdentifierPair(text, runId, agentId) ||
-          hasIdentifierPairEntry(obj, runId, agentId)
-        ) {
-          found = true;
+        if (isRecord(obj) && extractMessageRole(obj) === "user") {
+          found = matchesAgentConversationBootstrap(getMessageText(obj), { runId, agentId });
           rl.close();
           stream.destroy();
         }
