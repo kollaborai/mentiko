@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/run-record-client.sh"
 source "$SCRIPT_DIR/terminal-sanitize.sh"
 
 # PROJECT_ROOT for data paths (namespace runs, reports, etc.)
@@ -35,174 +36,32 @@ _sys_log() {
         "http://localhost:${WEB_PORT:-3000}/api/system/logs" >/dev/null 2>&1 &
 }
 
-# ===================================================================
-# run.json single-writer lock (mkdir-based, portable)
-# ===================================================================
-#
-# THE PROBLEM (bug #7): three independent processes read-modify-write the same
-# run.json — the bash completion/monitor handlers (via the helpers below), the
-# typed watchdog, and the web heartbeat route. Each write is atomic
-# in isolation (jq -> tmp -> mv, so a READER never sees a half-written file), but
-# there is no mutual exclusion ACROSS writers. That is a classic lost-update: an
-# agent-status write can be silently clobbered by a concurrent watchdog rewrite or
-# heartbeat write because both read the same base, then both rename their own full
-# rewrite over the top — the second mv wins and the first writer's change is gone.
-# Group C made this worse-exposed by launching multiple concurrent detached
-# chain-runner workers that all touch run.json.
-#
-# THE FIX: serialize the FULL read-modify-write of run.json behind one lock taken
-# adjacent to the file (${run_file}.lock/ with a pid file). Every mutation helper
-# in this file routes its RMW through _with_run_lock. The typed watchdog and heartbeat
-# route use the shared TypeScript lock implementation
-# replicates this exact protocol (web/lib/runs/run-json-lock.ts) so a node writer
-# and a bash writer mutually exclude on the same lock dir.
-#
-# INVARIANT — READS STAY LOCK-FREE. Writers always tmp+rename (atomic on POSIX), so
-# any reader (get-run, list-runs, the reconciler, every web GET, jq elsewhere) sees
-# either the pre- or post-write file, never a partial one. The lock exists ONLY to
-# prevent writer-vs-writer lost updates; it is never needed to read.
-#
-# Why mkdir and not flock(1): flock is absent on macOS (the engine ships to linux,
-# but the test suite must pass on a developer mac too) and is used nowhere else in
-# this repo. mkdir(2) is atomic on POSIX filesystems — exactly one caller wins the
-# create when the dir is absent — and behaves identically under bash 3.2 (macOS)
-# and bash 5.x (CI/linux). This mirrors group B's fan-group lock in routing-lib.sh
-# byte-for-byte in spirit; we deliberately do NOT source routing-lib.sh here (it
-# drags in the whole fan-group machinery), so these are sibling helpers.
-#
-# Stale-lock strategy (matches B): the winner writes its pid into <lock>/pid. A
-# caller that loses the mkdir breaks the lock only if the holder is provably gone —
-# the pid is dead (kill -0 fails) OR the lock dir is older than RUN_LOCK_STALE_SECS
-# (guards a crashed holder, and a recycled-but-live pid number). Breaking re-races
-# safely: rmdir then re-attempt the atomic mkdir, so two breakers cannot both win.
-#
-# Timeout policy (never hang the engine): on bounded-wait expiry the caller logs
-# loudly and PROCEEDS with the write anyway (degraded, last-writer-wins — exactly
-# today's status quo) rather than dropping the write or crashing. A dropped status
-# write is strictly worse than a raced one: the reconciler can repair a raced
-# terminal status, but it cannot resurrect a write that never happened.
+# Shell invocation boundary for the typed runner-event writer. This function
+# supplies semantic inputs only; TypeScript owns validation, serialization,
+# filenames, configured-root resolution, collision handling, and persistence.
+emit-runner-event() {
+    local event_name="$1"
+    local source_name="$2"
+    local data="${3:-}"
+    local scope="${4:-run}"
+    local run_id="${5:-${MENTIKO_RUN_ID:-${RUN_ID:-}}}"
+    local emitter="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js"
 
-RUN_LOCK_STALE_SECS="${RUN_LOCK_STALE_SECS:-120}"   # a held run.json lock older than this is treated as crashed
-RUN_LOCK_WAIT_SECS="${RUN_LOCK_WAIT_SECS:-30}"      # max time (in ~50ms ticks) to spin waiting for the lock
-
-# _run_lock_age <lock_dir> -> echoes age in seconds (0 if unknown / fresh)
-_run_lock_age() {
-    local lock_dir="$1" mtime now
-    # portable mtime: GNU stat, then BSD stat; fall back to 0 (treat as fresh).
-    mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo 0)"
-    now="$(date +%s)"
-    if [[ "$mtime" -gt 0 ]]; then echo $(( now - mtime )); else echo 0; fi
-}
-
-# _run_lock_acquire <lock_dir> -> 0 on success, 1 on timeout.
-# Spins on an atomic mkdir; breaks a provably-stale lock (dead pid or aged out).
-_run_lock_acquire() {
-    local lock_dir="$1"
-    local waited=0
-    while true; do
-        if mkdir "$lock_dir" 2>/dev/null; then
-            echo "$$" > "$lock_dir/pid" 2>/dev/null || true
-            return 0
-        fi
-        # could not acquire — decide whether the current holder is dead/stale.
-        local holder age
-        holder="$(cat "$lock_dir/pid" 2>/dev/null || echo "")"
-        age="$(_run_lock_age "$lock_dir")"
-        if { [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; } \
-           || [[ "$age" -ge "$RUN_LOCK_STALE_SECS" ]]; then
-            # holder is gone (or lock aged out). break it, then retry the mkdir.
-            # rmdir is atomic; if another breaker already removed+recreated it,
-            # our rmdir simply fails and we loop back into mkdir contention.
-            rm -f "$lock_dir/pid" 2>/dev/null || true
-            rmdir "$lock_dir" 2>/dev/null || true
-            continue
-        fi
-        # holder alive and lock fresh — back off briefly and retry.
-        if [[ "$waited" -ge "$RUN_LOCK_WAIT_SECS" ]]; then
-            return 1
-        fi
-        sleep 0.05 2>/dev/null || sleep 1
-        waited=$((waited + 1))
-    done
-}
-
-# _run_lock_release <lock_dir>
-_run_lock_release() {
-    local lock_dir="$1"
-    rm -f "$lock_dir/pid" 2>/dev/null || true
-    rmdir "$lock_dir" 2>/dev/null || true
-}
-
-# _with_run_lock <run_file> <fn> [args...]
-#
-# THE single entrypoint every run.json mutation routes through. Acquires the lock
-# adjacent to <run_file>, invokes <fn> "$run_file" args... (which performs the full
-# read-modify-write via jq -> tmp -> mv), then releases the lock on EVERY path.
-#
-# Robust under `set -e` (this file runs `set -euo pipefail`): we capture <fn>'s exit
-# status without letting a non-zero rc abort the script before we release, so a
-# failing mutation can never leak a held lock. On acquire timeout we log loudly and
-# run <fn> anyway (degraded last-writer-wins) — see the timeout-policy note above.
-_with_run_lock() {
-    local run_file="$1"; shift
-    local lock_dir="${run_file}.lock"
-    local rc=0
-
-    if _run_lock_acquire "$lock_dir"; then
-        "$@" "$run_file"
-        rc=$?
-        _run_lock_release "$lock_dir"
-    else
-        _sys_log "warn" "run-lib" "run.json lock timeout; proceeding unlocked (degraded)" \
-            "file: $run_file (held > ${RUN_LOCK_WAIT_SECS} ticks; last-writer-wins this write)"
-        echo "  run-lib: WARNING could not acquire run.json lock for $run_file (timed out) — writing UNLOCKED (degraded)" >&2
-        "$@" "$run_file"
-        rc=$?
+    if [[ -z "$event_name" || -z "$source_name" ]]; then
+        echo "error: typed runner event requires event and source" >&2
+        return 1
     fi
-    return $rc
+
+    node "$emitter" emit \
+        --scope "$scope" \
+        --event "$event_name" \
+        --source "$source_name" \
+        --run-id "$run_id" \
+        --data "$data"
 }
 
-# -------------------------------------------------------------------
-# _mint_run_id: collision-proof run id (engine bug #20)
-# -------------------------------------------------------------------
-# The old scheme `run-$(date +%s)` was epoch-SECONDS: two chains started in the
-# same wall-clock second minted the SAME id, so their run dirs collided and one
-# run silently clobbered the other (proven by the 2026-06-10 load drill at N=4).
-#
-# New scheme: run-<epoch_millis>-<random hex>. Two properties make it safe:
-#   - millisecond resolution shrinks the same-instant window ~1000x, and
-#   - the random suffix removes collisions even WITHIN the same millisecond
-#     (two launches that race the clock still differ in the suffix).
-#
-# Portability: GNU `date +%s%3N` gives millis on linux (the tenant container),
-# but macOS/BSD `date` has no %N — there it yields a literal "3N", which we
-# detect (non-digit) and fall back to seconds + a millisecond-ish counter so the
-# dev box and CI on a mac still get a monotonic-enough, unique id. The random
-# suffix carries the uniqueness guarantee on BOTH platforms regardless.
-#
-# Format stays within SAFE_RUN_ID_RE (^run-[A-Za-z0-9_-]{1,120}$, the regex the
-# web service validates against): only [0-9a-f-] characters, ~30 chars total.
-# Event filenames (${run_id}-${source}-${event}.event) and run-dir names already
-# tolerate hyphens (run ids always contained one); parsers are field-based, not
-# positional on the id, so the extra "-<hex>" segment changes nothing downstream.
-_mint_run_id() {
-    local millis suffix
-    # epoch millis, portable. GNU: 13 digits. BSD/macOS: "<secs>3N" -> fall back.
-    millis="$(date +%s%3N 2>/dev/null)"
-    if ! [[ "$millis" =~ ^[0-9]+$ ]]; then
-        # macOS/BSD: no %N. Use seconds + a 3-digit pseudo-millis so two ids in the
-        # same second still differ in this segment before the random suffix even runs.
-        millis="$(date +%s)$(printf '%03d' "$(( (RANDOM % 1000) ))")"
-    fi
-    # 8 hex chars (32 bits) of randomness — keeps collisions astronomically unlikely even
-    # for many launches inside one millisecond. /dev/urandom when available (strongest),
-    # else two $RANDOM draws. Mirrors the web mint site (randomBytes(4) -> 8 hex).
-    suffix="$(head -c4 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-8)"
-    if [[ -z "$suffix" || ! "$suffix" =~ ^[0-9a-f]+$ ]]; then
-        suffix="$(printf '%04x%04x' "$(( RANDOM ))" "$(( RANDOM ))")"
-    fi
-    printf 'run-%s-%s\n' "$millis" "$suffix"
-}
+# Legacy function names below remain as minimal invocation adapters. The shared
+# `_run_record_cli` boundary from run-record-client.sh is the only shell-to-runtime seam.
 
 # -------------------------------------------------------------------
 # create-run: create a new run object
@@ -221,63 +80,11 @@ create-run() {
         return 1
     fi
 
-    local chain_name=$(jq -r '.name' "$chain_file")
-    # collision-proof run id (#20): epoch-millis + random suffix. Retry on the
-    # astronomically-rare event that the dir already exists (e.g. a re-run reusing
-    # a clock value) so create-run never silently writes into an existing run dir.
-    local run_id run_dir run_file attempt=0
-    while :; do
-        run_id="$(_mint_run_id)"
-        run_dir="$RUNS_DIR/$run_id"
-        if [[ ! -d "$run_dir" ]]; then
-            break
-        fi
-        attempt=$((attempt + 1))
-        [[ "$attempt" -ge 5 ]] && break   # give up re-rolling; mkdir below will still write
-    done
-    run_file="$run_dir/run.json"
-
-    mkdir -p "$run_dir"
-
-    # A freshly-created run has NOT launched an agent yet, so it does not hold a
-    # concurrency slot. Create it `pending` (the queue/waiting state) — the chain-runner's
-    # cap gate (lib/concurrency-cap.sh cap_acquire_chain_slot) promotes it to `running`
-    # the instant it admits the run. This removes the create→gate window in which a
-    # not-yet-admitted run briefly showed `running` and was wrongly counted as a slot
-    # holder by concurrent launchers (which let the sampled concurrency momentarily
-    # exceed the cap). `pending` is existing vocabulary (UI renders it neutral/"waiting")
-    # and the watchdog ignores non-running runs, so this transient is inert. The gate
-    # runs unconditionally in chain-runner.sh right after create-run, so the promote is
-    # immediate for every real run. (The web path writes run.json directly and does not
-    # use create-run.)
-    # NOTE: jq -n instead of heredoc. create-run is `export -f`'d; bash cannot
-    # serialize a heredoc inside an exported function body — child shells fail to
-    # import the function. jq -n + --arg handles JSON escaping for all fields.
-    local _started
-    _started="$(date -Iseconds)"
-    jq -n \
-        --arg id        "$run_id" \
-        --arg chain     "$chain_name" \
-        --arg goal      "$goal" \
-        --arg started   "$_started" \
-        --arg parent    "${MENTIKO_PARENT_RUN_ID:-}" \
-        --arg workspace "$workspace_path" \
-        --arg taskId    "$task_id" '
-        {
-            id:       $id,
-            chain:    $chain,
-            goal:     $goal,
-            started:  $started,
-            status:   "pending",
-            sessions: [],
-            agents:   []
-        }
-        | if $parent    != "" then . + {parent_run_id: $parent}    else . end
-        | if $workspace != "" then . + {workspacePath: $workspace} else . end
-        | if $taskId    != "" then . + {taskId: $taskId}            else . end
-    ' > "$run_file"
-
-    echo "$run_id"
+    local args=(create --runs-dir "$RUNS_DIR" --chain-file "$chain_file" --goal "$goal")
+    [[ -n "${MENTIKO_PARENT_RUN_ID:-}" ]] && args+=(--parent-run-id "$MENTIKO_PARENT_RUN_ID")
+    [[ -n "$workspace_path" ]] && args+=(--workspace-path "$workspace_path")
+    [[ -n "$task_id" ]] && args+=(--task-id "$task_id")
+    _run_record_cli "${args[@]}"
 }
 
 # -------------------------------------------------------------------
@@ -289,38 +96,9 @@ update-run-status() {
     local status="$2"
     local status_message="${3:-}"
 
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    if [[ ! -f "$run_file" ]]; then
-        return 1
-    fi
-
-    # full read-modify-write serialized behind the run.json lock.
-    _with_run_lock "$run_file" _rmw_update_run_status "$status" "$status_message"
-}
-
-# _rmw_update_run_status <status> <status_message> <run_file>
-# (internal — only called via _with_run_lock, which appends <run_file> as last arg)
-_rmw_update_run_status() {
-    local status="$1" status_message="$2" run_file="$3"
-
-    local completed_at
-    completed_at="$(date -Iseconds)"
-
-    # write via tmp+rename so readers never observe a partial file.
-    jq --arg st "$status" --arg completed "$completed_at" '
-        .status = $st |
-        if $st != "running" and (.completed // null) == null then
-            .completed = $completed
-        else
-            .
-        end
-    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
-
-    if [[ -n "$status_message" ]]; then
-        jq --arg msg "$status_message" '.status_message = $msg' "$run_file" > "$run_file.tmp" \
-            && mv "$run_file.tmp" "$run_file"
-    fi
+    local args=(set-status --runs-dir "$RUNS_DIR" --run-id "$run_id" --status "$status")
+    [[ -n "$status_message" ]] && args+=(--message "$status_message")
+    _run_record_cli "${args[@]}" >/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -333,35 +111,12 @@ add-run-session() {
     local agent_id="$3"
     local agent_name="${4:-}"
 
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    if [[ ! -f "$run_file" ]]; then
-        return 1
-    fi
-
-    _with_run_lock "$run_file" _rmw_add_run_session "$session_name" "$agent_id" "$agent_name"
-}
-
-# _rmw_add_run_session <session-name> <agent-id> <agent-name> <run_file>
-# (internal — only called via _with_run_lock)
-_rmw_add_run_session() {
-    local session_name="$1" agent_id="$2" agent_name="$3" run_file="$4"
-
-    local ts
-    ts=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
-    jq --arg sess "$session_name" --arg aid "$agent_id" --arg ts "$ts" --arg name "$agent_name" '
-        .status = "running" |
-        del(.completed) |
-        .sessions = (((.sessions // []) + [$sess]) | unique) |
-        if (.agents | map(.id) | index($aid)) then
-            .agents |= map(if .id == $aid then
-                .session = $sess | .status = "running" | .started = $ts |
-                (if $name != "" then .name = $name else . end)
-            else . end)
-        else
-            .agents += [{id: $aid, name: (if $name != "" then $name else $aid end), session: $sess, status: "running", started: $ts}]
-        end
-    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+    _run_record_cli add-session \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --session "$session_name" \
+        --agent-id "$agent_id" \
+        --agent-name "${agent_name:-$agent_id}" >/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -373,31 +128,11 @@ update-run-agent() {
     local agent_id="$2"
     local status="$3"
 
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    if [[ ! -f "$run_file" ]]; then
-        return 1
-    fi
-
-    _with_run_lock "$run_file" _rmw_update_run_agent "$agent_id" "$status"
-}
-
-# _rmw_update_run_agent <agent-id> <status> <run_file>
-# (internal — only called via _with_run_lock)
-_rmw_update_run_agent() {
-    local agent_id="$1" status="$2" run_file="$3"
-
-    local ts
-    ts=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
-    jq --arg aid "$agent_id" --arg st "$status" --arg ts "$ts" '
-        .agents |= map(
-            if .id == $aid then
-                .status = $st |
-                if $st == "complete" or $st == "error" or $st == "cancelled" then .completed = $ts else . end
-            else .
-            end
-        )
-    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+    _run_record_cli set-agent-status \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --agent-id "$agent_id" \
+        --status "$status" >/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -406,14 +141,7 @@ _rmw_update_run_agent() {
 # args: <run-id>
 get-run() {
     local run_id="$1"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    if [[ ! -f "$run_file" ]]; then
-        echo '{"error": "run not found"}'
-        return 1
-    fi
-
-    cat "$run_file"
+    _run_record_cli inspect --runs-dir "$RUNS_DIR" --run-id "$run_id"
 }
 
 # -------------------------------------------------------------------
@@ -422,23 +150,9 @@ get-run() {
 # args: [chain-name]
 list-runs() {
     local chain_filter="${1:-}"
-
-    for run_dir in "$RUNS_DIR"/run-*; do
-        [[ -d "$run_dir" ]] || continue
-
-        local run_file="$run_dir/run.json"
-        [[ -f "$run_file" ]] || continue
-
-        # filter by chain if provided
-        if [[ -n "$chain_filter" ]]; then
-            local chain=$(jq -r '.chain' "$run_file")
-            if [[ "$chain" != "$chain_filter" ]]; then
-                continue
-            fi
-        fi
-
-        jq -c '.' "$run_file"
-    done | jq -s '.' 2>/dev/null || echo "[]"
+    local args=(list --runs-dir "$RUNS_DIR")
+    [[ -n "$chain_filter" ]] && args+=(--chain "$chain_filter")
+    _run_record_cli "${args[@]}"
 }
 
 # -------------------------------------------------------------------
@@ -447,8 +161,7 @@ list-runs() {
 # args: [days]
 cleanup-old-runs() {
     local days="${1:-30}"
-
-    find "$RUNS_DIR" -type d -name "run-*" -mtime +$days -exec rm -rf {} \; 2>/dev/null
+    _run_record_cli cleanup-old-runs --runs-dir "$RUNS_DIR" --days "$days" >/dev/null
     echo "  cleaned runs older than ${days} days"
 }
 
@@ -564,179 +277,13 @@ export -f clear-debug-state
 # output: JSON summary for run.json, task metadata, and UI display
 build-run-summary-json() {
     local run_id="$1"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-    local artifacts_dir="$RUNS_DIR/$run_id/artifacts"
-
-    if [[ ! -f "$run_file" ]]; then
-        echo '{}'
-        return 1
-    fi
-
-    local summaries_file
-    summaries_file=$(mktemp)
-    echo '[]' > "$summaries_file"
-
-    if [[ -d "$artifacts_dir" ]]; then
-        local summary_files=()
-        while IFS= read -r summary_file; do
-            [[ -n "$summary_file" ]] && summary_files+=("$summary_file")
-        done < <(find "$artifacts_dir" -maxdepth 1 -type f -name '*-summary.json' ! -name 'run-summary.json' | sort 2>/dev/null)
-
-        if [[ "${#summary_files[@]}" -gt 0 ]]; then
-            local enriched_file
-            enriched_file=$(mktemp)
-            : > "$enriched_file"
-            for summary_file in "${summary_files[@]}"; do
-                local summary_agent_id
-                summary_agent_id=$(basename "$summary_file" -summary.json)
-                jq -c \
-                    --arg aid "$summary_agent_id" \
-                    --arg file "$summary_file" \
-                    '. + {agentId: (.agentId // .agent_id // $aid), _file: $file}' \
-                    "$summary_file" >> "$enriched_file" 2>/dev/null || true
-            done
-            jq -s 'map(select(type == "object"))' "$enriched_file" > "$summaries_file" 2>/dev/null || echo '[]' > "$summaries_file"
-            rm -f "$enriched_file"
-        fi
-    fi
-
-    jq -n \
-        --slurpfile run "$run_file" \
-        --slurpfile summaries "$summaries_file" '
-        def text_blob($s):
-            [
-                ($s.status // ""),
-                ($s.executiveSummary // ""),
-                (($s.workCompleted // [])[]?),
-                (($s.findings // [])[]?),
-                (($s.risks // [])[]?),
-                (($s.nextAgentHints // [])[]?)
-            ] | map(tostring) | join("\n");
-
-        def lower_blob($s): text_blob($s) | ascii_downcase;
-
-        def status_failed($s):
-            (($s.status // "") | ascii_downcase) as $st |
-            ["failed", "failure", "error", "blocked"] | index($st);
-
-        def explicit_fail($s):
-            lower_blob($s) | test("overall result:[[:space:]]*fail|result:[[:space:]]*fail");
-
-        def explicit_partial($s):
-            ((($s.status // "") | ascii_downcase) == "partial") or
-            (lower_blob($s) | test("overall result:[[:space:]]*partial[[:space:]-]*pass|result:[[:space:]]*partial[[:space:]-]*pass|partial[[:space:]-]*pass"));
-
-        def explicit_pass($s):
-            lower_blob($s) | test("overall result:[[:space:]]*pass|result:[[:space:]]*pass|pipeline passes|passes all");
-
-        def agent_rank($r; $agentId):
-            ([$r.agents[]?.id] | index($agentId)) // -1;
-
-        def uniq_order:
-            reduce .[] as $item ([]; if index($item) then . else . + [$item] end);
-
-        ($run[0] // {}) as $r |
-        ($summaries[0] // []) as $s |
-        ($s | sort_by(agent_rank($r; (.agentId // "")))) as $ordered |
-        ($ordered | reverse) as $latest_first |
-        (($latest_first[0] // {})) as $final_summary |
-        (if any($s[]; status_failed(.) or explicit_fail(.)) then "fail"
-         elif any($s[]; explicit_partial(.)) then "partial_pass"
-         elif any($s[]; explicit_pass(.)) then "pass"
-         elif (($r.status // "") == "completed" or ($r.status // "") == "complete") then
-             # Guard: if every agent summary is a stub with status "unknown" or
-             # "needs_review" (i.e. the agent produced no real verdict), do NOT
-             # auto-close as "complete" — that would trigger task close without
-             # evidence. Resolve to "needs_review" so decision_required fires.
-             if ([$s[] | select(
-                     ((.status // "") | ascii_downcase) != "unknown" and
-                     ((.status // "") | ascii_downcase) != "needs_review" and
-                     ((.status // "") | ascii_downcase) != ""
-                 )] | length) > 0
-             then "complete"
-             else "needs_review"
-             end
-         else ($r.status // "unknown") end) as $outcome |
-        {
-            run_id: ($r.id // ""),
-            chain: ($r.chain // ""),
-            status: ($r.status // ""),
-            outcome: $outcome,
-            decision_required: ($outcome == "partial_pass" or $outcome == "fail" or $outcome == "needs_review"),
-            recommendation: (
-                if $outcome == "partial_pass" then "review_before_next_task"
-                elif $outcome == "fail" then "fix_or_rerun"
-                elif $outcome == "pass" or $outcome == "complete" then "move_forward"
-                else "inspect_run"
-                end
-            ),
-            summary: (
-                ($ordered | map(.executiveSummary // empty) | last) //
-                (if ($r.status // "") == "completed" then "Run completed (no agent verdict — inspect run)." else "Run status: " + ($r.status // "unknown") end)
-            ),
-            agents: (($r.agents // []) | map({
-                id,
-                name,
-                status,
-                session,
-                started,
-                completed
-            })),
-            findings: (
-                if $outcome == "pass" then (($final_summary.findings // []) | uniq_order | .[0:8])
-                else ($latest_first | map(.findings // []) | add // [] | uniq_order | .[0:8])
-                end
-            ),
-            risks: (
-                if $outcome == "pass" then (($final_summary.risks // []) | uniq_order | .[0:8])
-                else ($latest_first | map(.risks // []) | add // [] | uniq_order | .[0:8])
-                end
-            ),
-            next_actions: (
-                if $outcome == "pass" then (($final_summary.nextAgentHints // []) | uniq_order | .[0:6])
-                else ($latest_first | map(.nextAgentHints // []) | add // [] | uniq_order | .[0:6])
-                end
-            ),
-            artifacts_count: (($r.artifacts // []) | length),
-            generated_at: (now | todateiso8601)
-        }
-    ' 2>/dev/null || echo '{}'
-
-    rm -f "$summaries_file"
+    _run_record_cli build-summary --runs-dir "$RUNS_DIR" --run-id "$run_id"
 }
 
 # write-run-summary-artifact: persist aggregated verdict on run.json.
 write-run-summary-artifact() {
     local run_id="$1"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-    local artifacts_dir="$RUNS_DIR/$run_id/artifacts"
-    local summary_artifact="$artifacts_dir/run-summary.json"
-
-    [[ ! -f "$run_file" ]] && return 1
-    mkdir -p "$artifacts_dir"
-
-    local summary_json
-    summary_json=$(build-run-summary-json "$run_id")
-    echo "$summary_json" > "$summary_artifact"
-
-    # persist .summary + .artifacts onto run.json under the shared lock so this
-    # rewrite can't clobber a concurrent agent-status / heartbeat / watchdog write.
-    _with_run_lock "$run_file" _rmw_write_run_summary "$summary_json" "$summary_artifact"
-
-    echo "$summary_json"
-}
-
-# _rmw_write_run_summary <summary_json> <summary_artifact_path> <run_file>
-# (internal — only called via _with_run_lock)
-_rmw_write_run_summary() {
-    local summary_json="$1" summary_artifact="$2" run_file="$3"
-    jq --argjson summary "$summary_json" \
-       --arg path "$summary_artifact" \
-       '.summary = $summary |
-        .artifacts = ((.artifacts // [])
-            | map(select(.type != "run-summary"))
-            + [{"type":"run-summary","path":$path,"timestamp":(now | todateiso8601)}])' \
-       "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+    _run_record_cli write-summary --runs-dir "$RUNS_DIR" --run-id "$run_id"
 }
 
 # -------------------------------------------------------------------
@@ -748,170 +295,10 @@ _rmw_write_run_summary() {
 update-task-from-run() {
     local run_id="$1"
     local status="$2"
-
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    if [[ ! -f "$run_file" ]]; then
-        return 1
-    fi
-
-    local task_id=$(jq -r '.taskId // empty' "$run_file" 2>/dev/null)
-    if [[ -z "$task_id" ]]; then
-        return 0  # no linked task, nothing to do
-    fi
-
-    local api_base="http://localhost:${WEB_PORT:-3000}"
-    local auth_header="Authorization: Bearer ${BETTER_AUTH_SECRET:-}"
-    local ns_header="x-namespace-id: ${NAMESPACE_ID:-default}"
-    local org_header="x-org-id: ${ORG_ID:-default}"
-    local generation_kind
-    generation_kind=$(jq -r '.metadata.generationKind // empty' "$run_file" 2>/dev/null || echo "")
-    local chain_id
-    chain_id=$(jq -r '.chainId // empty' "$run_file" 2>/dev/null || echo "")
-
-    if [[ -n "$generation_kind" ]]; then
-        local audit_status="$status"
-        case "$audit_status" in
-            completed|complete) audit_status="complete" ;;
-            failed|stopped|cancelled|error) audit_status="failed" ;;
-            *) audit_status="running" ;;
-        esac
-
-        local task_resp
-        local current_meta
-        task_resp=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" "${api_base}/api/tasks/${task_id}" 2>/dev/null || echo "")
-        current_meta=$(echo "$task_resp" | jq -c '.data.issue.metadata // {}' 2>/dev/null || echo '{}')
-
-        local audit_meta=""
-        case "$generation_kind" in
-            chain_recommendation)
-                audit_meta=$(echo "$current_meta" | jq --arg st "$audit_status" --arg rid "$run_id" --arg cid "$chain_id" '
-                    .analysis_status = $st |
-                    .recommendation_run_id = $rid |
-                    if $cid != "" then .recommendation_chain_id = $cid else . end
-                ' 2>/dev/null || echo "$current_meta")
-                ;;
-            chain_generation)
-                audit_meta=$(echo "$current_meta" | jq --arg st "$audit_status" --arg rid "$run_id" --arg cid "$chain_id" '
-                    .generation_status = $st |
-                    .generated_chain_run_id = $rid |
-                    if $cid != "" then .generated_chain_source_chain_id = $cid else . end
-                ' 2>/dev/null || echo "$current_meta")
-                ;;
-        esac
-
-        if [[ -n "$audit_meta" ]]; then
-            curl -sf -X PATCH \
-                -H "$auth_header" \
-                -H "$ns_header" \
-                -H "$org_header" \
-                -H "Content-Type: application/json" \
-                -d "$(jq -nc --argjson meta "$audit_meta" '{metadata: $meta}')" \
-                "${api_base}/api/tasks/${task_id}" >/dev/null 2>&1 || true
-            echo "  recorded task audit run $run_id ($generation_kind, $audit_status)"
-        else
-            echo "  skipped task execution metadata for audit run $run_id ($generation_kind)"
-        fi
-        return 0
-    fi
-
-    echo "  updating task $task_id: last_run_status=$status"
-
-    # build run summary
-    local chain_name=$(jq -r '.chain // "unknown"' "$run_file")
-    local started=$(jq -r '.started // "unknown"' "$run_file")
-    local completed=$(jq -r '.completed // "running"' "$run_file")
-
-    # get agents with their status
-    local agents_summary=$(jq -r '.agents[]? | "\(.id // "unknown")|\(.status // "unknown")"' "$run_file" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-
-    local run_summary_json
-    run_summary_json=$(write-run-summary-artifact "$run_id" 2>/dev/null || build-run-summary-json "$run_id")
-    local run_outcome
-    run_outcome=$(echo "$run_summary_json" | jq -r '.outcome // "unknown"' 2>/dev/null || echo "unknown")
-    local decision_required
-    decision_required=$(echo "$run_summary_json" | jq -r '.decision_required // false' 2>/dev/null || echo "false")
-
-    # get artifacts
-    local artifacts_json=$(jq -c '.artifacts // []' "$run_file" 2>/dev/null || echo '[]')
-    local artifacts_count=$(echo "$artifacts_json" | jq 'length')
-
-    # get current metadata from task via API
-    local current_meta
-    local task_resp
-    task_resp=$(curl -sf -H "$auth_header" -H "$ns_header" -H "$org_header" "${api_base}/api/tasks/${task_id}" 2>/dev/null || echo "")
-    current_meta=$(echo "$task_resp" | jq -c '.data.issue.metadata // {}' 2>/dev/null || echo '{}')
-    local current_task_status
-    current_task_status=$(echo "$task_resp" | jq -r '.data.issue.status // empty' 2>/dev/null || echo "")
-
-    # build updated metadata with artifacts
-    local updated_meta
-    updated_meta=$(echo "$current_meta" | jq --arg st "$status" --arg rid "$run_id" \
-        --arg chain "$chain_name" --arg started "$started" --arg completed "$completed" \
-        --arg agents "$agents_summary" --arg outcome "$run_outcome" \
-        --argjson decisionRequired "$decision_required" \
-        --argjson artifacts "$artifacts_json" \
-        --argjson runSummary "$run_summary_json" '
-        .last_run_status = $st |
-        .last_run_id = $rid |
-        .last_run_chain = $chain |
-        .last_run_started = $started |
-        .last_run_completed = $completed |
-        .last_run_agents = $agents |
-        .last_run_artifacts = $artifacts |
-        .last_run_outcome = $outcome |
-        .last_run_decision_required = $decisionRequired |
-        .last_run_summary = $runSummary
-    ' 2>/dev/null || echo "{\"last_run_status\":\"$status\",\"last_run_id\":\"$run_id\"}")
-
-    local task_patch_payload
-    if [[ "$status" == "completed" && "$current_task_status" != "open" ]]; then
-        task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta, status: "open"}')
-    else
-        task_patch_payload=$(jq -nc --argjson meta "$updated_meta" '{metadata: $meta}')
-    fi
-
-    curl -sf -X PATCH \
-        -H "$auth_header" \
-        -H "$ns_header" \
-        -H "$org_header" \
-        -H "Content-Type: application/json" \
-        -d "$task_patch_payload" \
-        "${api_base}/api/tasks/${task_id}" >/dev/null 2>&1 || true
-
-    # write final summary comment on task completion
-    if [[ "$status" == "completed" || "$status" == "failed" || "$status" == "stopped" ]]; then
-        local summary_note="Chain run $run_id ${status}.
-Chain: $chain_name
-Outcome: $run_outcome
-Decision required: $decision_required
-Started: $started
-Completed: $completed
-Agents: $agents_summary
-Artifacts: $artifacts_count files"
-
-        curl -sf -X POST \
-            -H "$auth_header" \
-            -H "$ns_header" \
-            -H "$org_header" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -nc --arg text "$summary_note" '{text: $text, author: "chain-runner"}')" \
-            "${api_base}/api/tasks/${task_id}/comments" >/dev/null 2>&1 || true
-        echo "  task summary written ($artifacts_count artifacts)"
-    fi
-
-    if [[ "$status" == "completed" ]]; then
-        if [[ "$current_task_status" != "open" ]]; then
-            echo "  set task $task_id open (chain completed; manual close required)"
-        else
-            echo "  leaving task $task_id open (chain completed; manual close required)"
-        fi
-    fi
-
-    # emit event for traceability
-    if declare -f emit-event > /dev/null 2>/dev/null; then
-        emit-event "task-status-updated" "run-$run_id" "task=$task_id status=$status"
-    fi
+    _run_record_cli sync-task \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --status "$status"
 }
 
 # -------------------------------------------------------------------
@@ -923,31 +310,11 @@ Artifacts: $artifacts_count files"
 # is deleted. Active watchdog mutations use web/lib/runner-v2/run-state.ts.
 watchdog-stop-run() {
     local run_id="$1"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-
-    [[ -f "$run_file" ]] || return 1
-
-    _with_run_lock "$run_file" _rmw_watchdog_stop_run
-}
-
-# _rmw_watchdog_stop_run <run_file>  (internal — only called via _with_run_lock)
-_rmw_watchdog_stop_run() {
-    local run_file="$1"
-    jq '
-        .status = "stopped" |
-        .completed = (now | todate) |
-        .agents |= map(
-            if .status == "running" and (.session == "" or .session == null) then .status = "cancelled"
-            elif .status == "running" then .status = "stopped"
-            elif .status == "pending" then .status = "cancelled"
-            else .
-            end
-        )
-    ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+    _run_record_cli watchdog-stop --runs-dir "$RUNS_DIR" --run-id "$run_id" >/dev/null
 }
 
 # export functions
-export -f _mint_run_id
+export -f _run_record_cli
 export -f create-run
 export -f update-run-status
 export -f add-run-session
@@ -958,17 +325,6 @@ export -f list-runs
 export -f cleanup-old-runs
 export -f build-run-summary-json
 export -f write-run-summary-artifact
+export -f emit-runner-event
 export -f update-task-from-run
 export -f watchdog-stop-run
-# run.json lock primitive + the internal locked read-modify-write bodies.
-# exported so background detached completion/fan-out subshells (group C launches
-# several) and watchdog reach them after sourcing this file. mirrors routing-lib.sh.
-export -f _run_lock_age
-export -f _run_lock_acquire
-export -f _run_lock_release
-export -f _with_run_lock
-export -f _rmw_update_run_status
-export -f _rmw_add_run_session
-export -f _rmw_update_run_agent
-export -f _rmw_write_run_summary
-export -f _rmw_watchdog_stop_run

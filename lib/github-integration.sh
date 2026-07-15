@@ -8,6 +8,7 @@
 # Source config for namespace-aware paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
+source "$SCRIPT_DIR/run-record-client.sh"
 
 # -------------------------------------------------------------------
 # github-get-token: read GITHUB_TOKEN from env or .env
@@ -116,50 +117,19 @@ github-agent-error-issue() {
         return 1
     fi
 
-    local namespace_id="${NAMESPACE_ID:-default}"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-    local run_info="{}"
-    if [[ -f "$run_file" ]]; then
-        run_info=$(cat "$run_file")
-    fi
-
-    local chain=$(echo "$run_info" | jq -r '.chain // "unknown"')
-    local goal=$(echo "$run_info" | jq -r '.goal // "no goal"')
-    local started=$(echo "$run_info" | jq -r '.started // "unknown"')
-    local status=$(echo "$run_info" | jq -r '.status // "unknown"')
-
-    local output_section=""
-    if [[ -n "$output_file" && -f "$output_file" ]]; then
-        local last_lines=$(tail -100 "$output_file")
-        output_section="
-
-## Agent Output (last 100 lines)
-$(printf '%s\n' "$last_lines" | sed 's/`/\\`/g' | sed 's/\\/\\\\/g')"
-    fi
-
-    local body="## Agent Error Report
-
-**Run ID:** \`$run_id\`
-**Agent:** \`$agent_id\`
-**Chain:** $chain
-**Status:** $status
-**Started:** $started
-
-## Goal
-$goal
-
-## Error
-$(printf '%s\n' "$error_msg" | sed 's/`/\\`/g' | sed 's/\\/\\\\/g')
-$output_section
-
-## Run Info
-$(printf '%s\n' "$run_info" | jq -r 'to_entries | map("- **\(.key):** \(.value)") | join("\n")')
-
----
-Created by mentiko github integration
-Timestamp: $(date -Iseconds)"
-
-    local title="Agent Error: $agent_id failed in $chain"
+    local title
+    title=$(_run_record_cli github-error-title \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --agent-id "$agent_id") || return 1
+    local args=(github-error-body \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --agent-id "$agent_id" \
+        --error-message "$error_msg")
+    [[ -n "$output_file" ]] && args+=(--output-file "$output_file")
+    local body
+    body=$(_run_record_cli "${args[@]}") || return 1
     local labels="agent-error,bug,automated"
 
     github-create-issue "$repo" "$title" "$body" "$labels"

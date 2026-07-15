@@ -1,5 +1,9 @@
 #!/bin/bash
 # concurrency-cap.sh — engine-level concurrency ceiling with QUEUE semantics.
+
+CONCURRENCY_CAP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$CONCURRENCY_CAP_SCRIPT_DIR/config.sh"
+source "$CONCURRENCY_CAP_SCRIPT_DIR/run-record-client.sh"
 #
 # WHY THIS EXISTS (phase-2 step 2; inputs from load-drill-2026-06-10.md)
 # ---------------------------------------------------------------------
@@ -105,19 +109,9 @@ _cap_lock_release() {
 # count "everyone holding a slot except me" (its own pre-gate status is irrelevant).
 _cap_count_running_chains() {
     local exclude="${1:-}" runs_dir="${RUNS_DIR:-$HOME/.mentiko/runs}"
-    local count=0 d rid st
-    [[ -d "$runs_dir" ]] || { echo 0; return 0; }
-    for d in "$runs_dir"/run-*; do
-        [[ -d "$d" ]] || continue
-        [[ -f "$d/run.json" ]] || continue
-        rid="$(basename "$d")"
-        [[ -n "$exclude" && "$rid" == "$exclude" ]] && continue
-        st="$(jq -r '.status // ""' "$d/run.json" 2>/dev/null || echo "")"
-        if [[ "$st" == "running" ]]; then
-            count=$((count + 1))
-        fi
-    done
-    echo "$count"
+    local args=(count-running --runs-dir "$runs_dir")
+    [[ -n "$exclude" ]] && args+=(--exclude-run-id "$exclude")
+    _run_record_cli "${args[@]}"
 }
 
 # _cap_count_active_agents
@@ -190,7 +184,17 @@ cap_acquire_chain_slot() {
     start="$(date +%s)"
     while true; do
         if _cap_lock_acquire; then
-            others="$(_cap_count_running_chains "$run_id")"   # slot-holders other than me
+            # Corrupt Run Record evidence is not a free slot. The typed counter
+            # returns nonzero, and admission blocks rather than under-counting.
+            if ! others="$(_cap_count_running_chains "$run_id")"; then
+                _cap_lock_release
+                update-run-status "$run_id" "blocked" \
+                    "concurrency admission blocked: invalid run record in configured runs root" 2>/dev/null || true
+                _sys_log "error" "concurrency-cap" "run $run_id blocked: typed run count failed" \
+                    "runs root: ${RUNS_DIR:-unset}"
+                echo "  concurrency-cap: blocked admission because a run record is invalid" >&2
+                return 1
+            fi
             if [[ "$others" -lt "$cap" ]]; then
                 # take the slot: mark self `running` so the NEXT counter sees me, THEN
                 # drop the lock. The status write happens inside the critical section.

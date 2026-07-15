@@ -39,7 +39,7 @@ encode_cwd_slug() {
 #   location. That is a DEGRADED-CAPTURE condition (we just can't harvest JSONL
 #   transcripts for that CLI), NOT a fatal error — so we return 0 with EMPTY
 #   stdout rather than a non-zero status. A non-zero return propagated up through
-#   `set -e` callers (notably chain-runner-complete.sh's completion handler) and
+#   `set -e` callers (including the typed completion launch boundary) and
 #   stuck the whole run at "running" forever. Every caller already guards the
 #   result with `[[ -d "$log_dir" ]]` or `[[ -z "$log_dir" ]]`, so empty output
 #   is handled correctly downstream; none depend on the non-zero status.

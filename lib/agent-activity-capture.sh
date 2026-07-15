@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/session-log-resolver.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/run-lib.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/run-record-client.sh"
 
 capture-agent-activity() {
     local agent_id="${1:-}"
@@ -134,35 +135,12 @@ capture-agent-activity() {
     # -----------------------------------------------------------------------
     # 4. write artifact manifest to run.json (non-critical, best-effort)
     # -----------------------------------------------------------------------
-    local run_json="${RUNS_DIR:-${MENTIKO_PROJECT_ROOT:-$HOME/.mentiko/namespaces/${namespace_id}}/runs}/${run_id}/run.json"
-    if [[ -f "$run_json" ]] && command -v jq &>/dev/null; then
-        local diff_file="$artifacts_dir/${agent_id}-diff.patch"
-        local changed_file="$artifacts_dir/${agent_id}-files-changed.json"
-        local diff_lines=0 file_count=0
-        [[ -f "$diff_file" ]] && diff_lines=$(wc -l < "$diff_file" 2>/dev/null || echo 0)
-        [[ -f "$changed_file" ]] && file_count=$(jq 'length' "$changed_file" 2>/dev/null || echo 0)
-
-        # write jq filter to temp file (avoids shell quoting issues with != operator)
-        local jq_filter tmp
-        jq_filter=$(mktemp)
-        tmp=$(mktemp)
-        cat > "$jq_filter" << 'JQ_EOF'
-def upsert(obj):
-  .artifacts = ((.artifacts // [])
-    | map(select(.agentId != $aid or .type != obj.type))
-    + [obj]);
-. | upsert({"agentId":$aid,"type":"diff","diffLines":$dl,"timestamp":$ts})
-  | upsert({"agentId":$aid,"type":"conversations","timestamp":$ts})
-  | upsert({"agentId":$aid,"type":"output","timestamp":$ts})
-  | if $fc > 0 then upsert({"agentId":$aid,"type":"files","fileCount":$fc,"timestamp":$ts}) else . end
-JQ_EOF
-        jq --arg aid "$agent_id" \
-           --arg ts "$(date -Iseconds)" \
-           --argjson dl "${diff_lines:-0}" \
-           --argjson fc "${file_count:-0}" \
-           -f "$jq_filter" \
-           "$run_json" > "$tmp" 2>/dev/null \
-           && mv "$tmp" "$run_json" 2>/dev/null || rm -f "$tmp"
-        rm -f "$jq_filter"
+    local runs_dir="${RUNS_DIR:-${MENTIKO_PROJECT_ROOT:-$HOME/.mentiko/namespaces/${namespace_id}}/runs}"
+    if [[ -f "$runs_dir/$run_id/run.json" ]]; then
+        _run_record_cli activity-manifest \
+            --runs-dir "$runs_dir" \
+            --run-id "$run_id" \
+            --agent-id "$agent_id" >/dev/null \
+            || echo "  activity: typed run.json manifest update failed" >&2
     fi
 }

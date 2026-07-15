@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/../lib/agent-profile.sh"
 source "$SCRIPT_DIR/../lib/session-log-resolver.sh"
 source "$SCRIPT_DIR/../lib/session-transport.sh"
 source "$SCRIPT_DIR/../lib/run-lib.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/../lib/run-record-client.sh"
 
 # log crashes (set -e exits)
 trap '_sys_log "error" "peer-manager" "CRASHED at line $LINENO (exit $?)" "peer1: ${PEER1:-unknown}, peer2: ${PEER2:-unknown}, run: ${LINK_RUN_ID:-unknown}"' ERR
@@ -208,19 +209,24 @@ STEER_MESSAGE=""
 PEER1_JSONL=""
 PEER2_JSONL=""
 
-# ─── run.json helpers ───
+# ─── typed run-record boundaries ───
 
-_run_json_path() {
-  [[ -z "${LINK_RUN_ID:-}" ]] && return 1
-  local p="${RUNS_DIR:-${MENTIKO_PROJECT_ROOT:-$NAMESPACE_ROOT}/runs}/${LINK_RUN_ID}/run.json"
-  [[ -f "$p" ]] && echo "$p" || return 1
+start_peer_run_record() {
+  [[ -z "${LINK_RUN_ID:-}" ]] && return 0
+  _run_record_cli peer-start \
+    --runs-dir "${RUNS_DIR:?RUNS_DIR must be configured}" \
+    --run-id "$LINK_RUN_ID" \
+    --first-session "$PEER1" \
+    --second-session "$PEER2" >/dev/null
 }
 
-update_run_json() {
-  local rj
-  rj=$(_run_json_path) || return 0
-  local tmp=$(mktemp /tmp/run-update-XXXXXX)
-  jq "$@" "$rj" > "$tmp" && mv "$tmp" "$rj"
+complete_peer_run_record() {
+  local rounds="$1"
+  [[ -z "${LINK_RUN_ID:-}" ]] && return 0
+  _run_record_cli peer-complete \
+    --runs-dir "${RUNS_DIR:?RUNS_DIR must be configured}" \
+    --run-id "$LINK_RUN_ID" \
+    --rounds "$rounds" >/dev/null
 }
 
 # ─── session helpers ───
@@ -737,10 +743,7 @@ else
   # ─── fresh start ───
 
   # update run.json with peer session names
-  update_run_json \
-    --arg p1 "$PEER1" --arg p2 "$PEER2" \
-    '.agents[0].session = $p1 | .agents[0].status = "running" | .agents[1].session = $p2 | .agents[1].status = "running"' \
-    2>/dev/null || true
+  start_peer_run_record || { log "typed peer run start failed"; exit 1; }
 
   "$P" config screen 120x50 >/dev/null 2>&1
   BASELINE_1=$(spawn_peer "$PEER1" "$CLI_CMD_1")
@@ -857,9 +860,7 @@ _sys_log "info" "peer-manager" "link run completed: ${LINK_RUN_ID:-unknown}" "ro
 
 # ─── completion ───
 
-update_run_json --arg rounds "$round" \
-  '.status = "completed" | .completed = (now | todate) | .agents[0].status = "complete" | .agents[1].status = "complete" | .rounds = ($rounds | tonumber)' \
-  2>/dev/null || true
+complete_peer_run_record "$round" || { log "typed peer run completion failed"; exit 1; }
 
 # capture agent activity
 if [[ -n "${LINK_RUN_ID:-}" ]]; then

@@ -10,9 +10,13 @@ set -euo pipefail
 
 USER_ID="${1:?usage: gdpr-sweep.sh <user_id> <namespace_id>}"
 NAMESPACE_ID="${2:-default}"
+export NAMESPACE_ID
 
 GLOBAL_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
 NS_ROOT="$GLOBAL_ROOT/namespaces/$NAMESPACE_ID"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+source "$SCRIPT_DIR/run-record-client.sh"
 
 echo "[gdpr-sweep] starting sweep for user=$USER_ID namespace=$NAMESPACE_ID"
 
@@ -31,13 +35,10 @@ fi
 # runs by this user
 RUNS_DIR="$NS_ROOT/runs"
 if [[ -d "$RUNS_DIR" ]]; then
-    for run_dir in "$RUNS_DIR"/*/; do
-        run_file="$run_dir/run.json"
-        if [[ -f "$run_file" ]] && grep -q "\"user_id\":\"$USER_ID\"" "$run_file" 2>/dev/null; then
-            echo "[gdpr-sweep] removing run: $run_dir"
-            rm -rf "$run_dir"
-        fi
-    done
+    deleted_runs=$(_run_record_cli delete-user-runs --runs-dir "$RUNS_DIR" --user-id "$USER_ID")
+    while IFS= read -r run_dir; do
+        [[ -n "$run_dir" ]] && echo "[gdpr-sweep] removed run: $run_dir"
+    done <<< "$deleted_runs"
 fi
 
 # conversations by this user
