@@ -253,9 +253,8 @@ monitor_stale_advisor_message() {
     declare -f transport_capture >/dev/null 2>&1 || return 1
 
     if [[ -n "$advisor_profile_id" ]]; then
-        local advisor_profile_json advisor_profile_file
-        advisor_profile_json="$(agent_profile_select_json "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" "$advisor_profile_id" 2>/dev/null || true)"
-        advisor_profile_file="$(printf '%s' "$advisor_profile_json" | jq -r '.path // empty' 2>/dev/null)"
+        local advisor_profile_file
+        advisor_profile_file="$(agent_profile_select_field "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" "$advisor_profile_id" "path" 2>/dev/null || true)"
         [[ -n "$advisor_profile_file" ]] || return 1
         advisor_command="$(agent_profile_command "$advisor_profile_file" false "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" 2>/dev/null || true)"
     else

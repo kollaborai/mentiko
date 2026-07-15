@@ -56,10 +56,8 @@ resolve_log_dir() {
     local cli="" log_path=""
 
     if [[ -f "$profile_or_cli" ]]; then
-        local profile_json
-        profile_json="$(agent_profile_transcript_json "$profile_or_cli" 2>/dev/null || true)"
-        cli=$(printf '%s' "$profile_json" | jq -r '.cli // ""' 2>/dev/null)
-        log_path=$(printf '%s' "$profile_json" | jq -r '.logPath // ""' 2>/dev/null)
+        cli="$(agent_profile_transcript_field "$profile_or_cli" "cli" 2>/dev/null || true)"
+        log_path="$(agent_profile_transcript_field "$profile_or_cli" "logPath" 2>/dev/null || true)"
     else
         cli="$profile_or_cli"
     fi

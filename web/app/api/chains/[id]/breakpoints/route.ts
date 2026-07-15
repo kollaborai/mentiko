@@ -2,16 +2,48 @@ import { NextRequest } from "next/server";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import config, { orgPath } from "@/lib/config";
+import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { join } from "node:path";
 import {
+  BreakpointRecordValidationError,
   loadBreakpoints,
   setBreakpoint,
   clearBreakpoint,
   clearAllBreakpoints,
+  replaceBreakpoints,
   requestResume,
   type Breakpoint,
 } from "@/lib/runs/breakpoint-store";
 
 export const dynamic = "force-dynamic";
+
+/** Match config.sh: default project collapses into the request org; named projects live below it. */
+async function resolveRequestBreakpointDebugDir(request: Request): Promise<string> {
+  const namespaceId = await getNamespaceIdFromRequest(request);
+  const orgId = await getOrgIdFromRequest(request);
+  const requestOrgRoot = orgPath(namespaceId, orgId);
+  const requestProjectRoot = config.projectDir === config.codeRoot
+    ? requestOrgRoot
+    : join(requestOrgRoot, "projects", config.projectId);
+  return join(requestProjectRoot, "debug");
+}
+
+function asBadRequest(error: unknown): never {
+  if (error instanceof BreakpointRecordValidationError) throw new BadRequest(error.message);
+  throw error;
+}
+
+async function requestBody(request: NextRequest): Promise<Record<string, unknown>> {
+  try {
+    const value = await request.json();
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new BadRequest("Breakpoint request body must be an object.");
+    return value as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof BadRequest) throw error;
+    throw new BadRequest("Breakpoint request body must be valid JSON.");
+  }
+}
 
 // GET - list breakpoints for a chain
 export const GET = withErrorHandling(async (
@@ -25,16 +57,20 @@ export const GET = withErrorHandling(async (
   const { id } = await _context.params;
   const chainId = decodeURIComponent(id);
 
-  const state = loadBreakpoints(chainId);
+  try {
+    const state = loadBreakpoints(chainId, await resolveRequestBreakpointDebugDir(request));
 
-  return apiSuccess({
-    chainId: state.chainId,
-    breakpoints: state.breakpoints,
-    pausedAt: state.pausedAt,
-    pausedAtTimestamp: state.pausedAtTimestamp,
-    resumeRequested: state.resumeRequested,
-    lastUpdated: state.lastUpdated,
-  });
+    return apiSuccess({
+      chainId: state.chainId,
+      breakpoints: state.breakpoints,
+      pausedAt: state.pausedAt,
+      pausedAtTimestamp: state.pausedAtTimestamp,
+      resumeRequested: state.resumeRequested,
+      lastUpdated: state.lastUpdated,
+    });
+  } catch (error) {
+    asBadRequest(error);
+  }
 });
 
 // POST - set/clear breakpoints or resume
@@ -48,59 +84,52 @@ export const POST = withErrorHandling(async (
 
   const { id } = await _context.params;
   const chainId = decodeURIComponent(id);
-  const body = await request.json();
-
+  const body = await requestBody(request);
   const { action, agentId, enabled, breakpoints } = body;
+  const debugDir = await resolveRequestBreakpointDebugDir(request);
 
-  let result;
+  try {
+    let result;
+    switch (action) {
+      case "set":
+        if (typeof agentId !== "string" || !agentId) throw new BadRequest("agentId required");
+        if (enabled !== undefined && typeof enabled !== "boolean") throw new BadRequest("enabled must be boolean");
+        result = setBreakpoint(chainId, agentId, enabled !== false, debugDir);
+        break;
 
-  switch (action) {
-    case "set":
-      if (!agentId) {
-        throw new BadRequest("agentId required");
-      }
-      result = setBreakpoint(chainId, agentId, enabled !== false);
-      break;
+      case "clear":
+        if (typeof agentId !== "string" || !agentId) throw new BadRequest("agentId required");
+        result = clearBreakpoint(chainId, agentId, debugDir);
+        break;
 
-    case "clear":
-      if (!agentId) {
-        throw new BadRequest("agentId required");
-      }
-      result = clearBreakpoint(chainId, agentId);
-      break;
+      case "clearAll":
+        result = clearAllBreakpoints(chainId, debugDir);
+        break;
 
-    case "clearAll":
-      result = clearAllBreakpoints(chainId);
-      break;
+      case "setMultiple":
+        if (!Array.isArray(breakpoints)) throw new BadRequest("breakpoints array required");
+        result = replaceBreakpoints(chainId, breakpoints as Breakpoint[], debugDir);
+        break;
 
-    case "setMultiple":
-      if (!Array.isArray(breakpoints)) {
-        throw new BadRequest("breakpoints array required");
-      }
-      // clear existing, then set new ones
-      result = clearAllBreakpoints(chainId);
-      for (const bp of breakpoints as Breakpoint[]) {
-        setBreakpoint(chainId, bp.agentId, bp.enabled);
-      }
-      result = loadBreakpoints(chainId);
-      break;
+      case "resume":
+        result = requestResume(chainId, debugDir);
+        break;
 
-    case "resume":
-      result = requestResume(chainId);
-      break;
+      default:
+        throw new BadRequest("Invalid action");
+    }
 
-    default:
-      throw new BadRequest("Invalid action");
+    return apiSuccess({
+      success: true,
+      chainId: result.chainId,
+      breakpoints: result.breakpoints,
+      pausedAt: result.pausedAt,
+      resumeRequested: result.resumeRequested,
+      lastUpdated: result.lastUpdated,
+    });
+  } catch (error) {
+    asBadRequest(error);
   }
-
-  return apiSuccess({
-    success: true,
-    chainId: result.chainId,
-    breakpoints: result.breakpoints,
-    pausedAt: result.pausedAt,
-    resumeRequested: result.resumeRequested,
-    lastUpdated: result.lastUpdated,
-  });
 });
 
 // DELETE - remove all breakpoints
@@ -115,7 +144,12 @@ export const DELETE = withErrorHandling(async (
   const { id } = await _context.params;
   const chainId = decodeURIComponent(id);
 
-  const result = clearAllBreakpoints(chainId);
+  let result;
+  try {
+    result = clearAllBreakpoints(chainId, await resolveRequestBreakpointDebugDir(request));
+  } catch (error) {
+    asBadRequest(error);
+  }
 
   return apiSuccess({
     success: true,

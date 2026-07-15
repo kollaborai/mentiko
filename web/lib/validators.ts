@@ -215,6 +215,17 @@ function validateChainBranches(
         collect(errors, `branches.${eventName}`, `targets missing agent id: ${targetId}`);
       }
     }
+
+    if (target && typeof target === "object" && !Array.isArray(target)) {
+      const branch = target as Record<string, unknown>;
+      if (
+        typeof branch.fan_in === "string"
+        && Array.isArray(branch.fan_out)
+        && branch.fan_out.some((candidate) => candidate === branch.fan_in)
+      ) {
+        collect(errors, `branches.${eventName}`, "fan_in must not also appear in fan_out");
+      }
+    }
   }
 }
 

@@ -118,8 +118,7 @@ if [[ "$MONITOR" == "--monitor" ]]; then
     MONITOR_SESSION="monitor-${SESSION_NAME}"
     MONITOR_INTERVAL="${MENTIKO_MONITOR_INTERVAL:-60}"
     MONITOR_SCRIPT="/tmp/monitor-${SESSION_NAME}.sh"
-    _monitor_advisor_json="$(agent_profile_advisor_json "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" 2>/dev/null || true)"
-    MONITOR_ADVISOR_PROFILE="$(printf '%s' "$_monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
+    MONITOR_ADVISOR_PROFILE="$(agent_profile_advisor_field "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" "id" 2>/dev/null || true)"
 
     {
         echo "#!/bin/bash"

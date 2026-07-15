@@ -77,16 +77,12 @@ global vars:
 phase 2: chain.json validation
 ===============================
 
-1. check jq installed
-   -------------------
-   exits if jq not found (brew install jq / apt install jq)
+1. resolve and validate the chain contract
+   ------------------------------------------
+   shell invokes the compiled typed chain-contract CLI. it owns raw JSON
+   decoding, reference expansion, normalized validation, and materialization.
 
-2. validate JSON syntax
-   ----------------------
-   jq empty "$CHAIN_FILE"
-   exits if invalid JSON
-
-3. extract chain config
+2. extract chain config
    ----------------------
    CHAIN_NAME          chain name
    CHAIN_CLI           executor to use (claude, codex, aider, kollabor)
@@ -257,9 +253,9 @@ function: launch_chain_agent <agent-id> <round>
 2. breakpoint check
    -----------------
    if breakpoint enabled for agent:
-   - calls pause_at_breakpoint
-   - updates breakpoints.json with pausedAt, hitCount
-   - calls wait_for_resume (polls breakpoints.json for resumeRequested)
+   - shell invokes the compiled typed breakpoint CLI
+   - TypeScript validates and atomically locks/mutates breakpoints.json
+   - calls wait_for_resume, which atomically consumes resumeRequested
 
 3. build agent instructions
    --------------------------

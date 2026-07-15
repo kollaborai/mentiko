@@ -17,13 +17,6 @@ NAMESPACE_ID="${NAMESPACE_ID:-default}"
 # Load config
 source "$SCRIPT_DIR/config.sh"
 
-# check jq
-if ! command -v jq &> /dev/null; then
-    echo "  error: jq required but not installed"
-    echo "  install: brew install jq (mac) or apt install jq (linux)"
-    exit 1
-fi
-
 source "$SCRIPT_DIR/agent-functions.sh"
 source "$SCRIPT_DIR/webhook-sender.sh"
 source "$SCRIPT_DIR/slack-integration.sh"
@@ -127,203 +120,38 @@ if [[ -n "$WORKSPACE_PATH" ]]; then
     WORKSPACE_PATH="$(cd "$WORKSPACE_PATH" && pwd)"
 fi
 
-# validate JSON
-if ! jq empty "$CHAIN_FILE" 2>/dev/null; then
-    echo "  error: invalid JSON in $CHAIN_FILE"
-    exit 1
-fi
-
-resolve_chain_agent_refs() {
-    local source_file="$1"
-    local ref_count
-
-    ref_count=$(jq '[.agents[]? | select(has("$ref"))] | length' "$source_file" 2>/dev/null || echo "0")
-    if [[ "${ref_count:-0}" -eq 0 ]]; then
-        echo "$source_file"
-        return 0
-    fi
-
-    local resolved_file
-    local agents_file
-    local agent_count
-    resolved_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-resolved-chain-${RUN_ID:-cli}.XXXXXX")"
-    agents_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-resolved-agents-${RUN_ID:-cli}.XXXXXX")"
-    agent_count=$(jq '.agents | length' "$source_file")
-
-    echo "[" > "$agents_file"
-    for i in $(seq 0 $((agent_count - 1))); do
-        local ref
-        local agent_file
-        ref=$(jq -r ".agents[$i].\"\$ref\" // empty" "$source_file")
-        [[ "$i" -gt 0 ]] && echo "," >> "$agents_file"
-
-        if [[ -n "$ref" ]]; then
-            if [[ -f "$AGENTS_DIR/$ref/agent.json" ]]; then
-                agent_file="$AGENTS_DIR/$ref/agent.json"
-            elif [[ -f "$AGENTS_DIR/$ref.json" ]]; then
-                agent_file="$AGENTS_DIR/$ref.json"
-            else
-                echo "  error: agent ref not found: $ref" >&2
-                rm -f "$agents_file" "$resolved_file"
-                return 1
-            fi
-
-            jq -s '.[0] * .[1] | del(."$ref")' "$agent_file" <(jq ".agents[$i]" "$source_file") >> "$agents_file"
-        else
-            jq ".agents[$i]" "$source_file" >> "$agents_file"
-        fi
-    done
-    echo "]" >> "$agents_file"
-
-    jq --slurpfile agents "$agents_file" '.agents = $agents[0]' "$source_file" > "$resolved_file"
-    rm -f "$agents_file"
-    echo "$resolved_file"
-}
-
-CHAIN_FILE="$(resolve_chain_agent_refs "$CHAIN_FILE")"
-if [[ ! -f "$CHAIN_FILE" ]]; then
-    echo "  error: failed to resolve chain agent references"
-    exit 1
-fi
+# Raw chain decoding, reference expansion, normalized-record validation, and
+# materialization are TypeScript-owned. The shell receives only the normalized
+# file path that it hands to product commands.
+CHAIN_FILE="$(chain_contract_resolve "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR")"
 
 # -------------------------------------------------------------------
 # read chain config
 # -------------------------------------------------------------------
 
-CHAIN_NAME=$(jq -r '.name' "$CHAIN_FILE")
-
-# resolve_executor: map friendly executor names to CLI binaries
-# executor field takes precedence over cli field; MENTIKO_CLI env overrides both
-resolve_executor() {
-    local name="${1:-}"
-    case "$name" in
-        claude)   echo "claude" ;;
-        codex)    echo "codex" ;;
-        aider)    echo "aider" ;;
-        kollab|codex|aider) echo "$name" ;;
-        "")       echo "" ;;
-        *)        echo "$name" ;;  # pass-through for unknown values
-    esac
-}
-
-# chain-level executor: executor field > cli field > MENTIKO_CLI env > "claude"
-_chain_executor=$(jq -r '.config.executor // ""' "$CHAIN_FILE")
-_chain_cli=$(jq -r '.config.cli // ""' "$CHAIN_FILE")
-if [[ -n "${MENTIKO_CLI:-}" ]]; then
-    CHAIN_CLI="$MENTIKO_CLI"
-elif [[ -n "$_chain_executor" ]]; then
-    CHAIN_CLI=$(resolve_executor "$_chain_executor")
-elif [[ -n "$_chain_cli" ]]; then
-    CHAIN_CLI="$_chain_cli"
-else
-    CHAIN_CLI="claude"
-fi
-CHAIN_CLI_ARGS=$(jq -r '(.config.cli_args // []) | join(" ")' "$CHAIN_FILE")
-CHAIN_MONITOR=$(jq -r '.config.monitor // true' "$CHAIN_FILE")
-CHAIN_DEFAULT_AGENT_PROFILE=$(jq -r '.default_agent_profile // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
-CHAIN_MONITOR_INTERVAL=$(jq -r '.config.monitor_interval // 5' "$CHAIN_FILE")
-CHAIN_MAX_ROUNDS=$(jq -r '.config.max_rounds // 3' "$CHAIN_FILE")
-CHAIN_SESSION_PREFIX=$(jq -r '.config.session_prefix // ""' "$CHAIN_FILE")
-CHAIN_ON_COMPLETE=$(jq -r '.config.on_complete // "stop"' "$CHAIN_FILE")
-CHAIN_WEBHOOK=$(jq -r '.config.webhook_url // ""' "$CHAIN_FILE")
-CHAIN_SCHEDULE=$(jq -r '.config.schedule // ""' "$CHAIN_FILE")
-
-# routing defaults
-DEFAULT_TIMEOUT=$(jq -r '.routing.default_timeout // 0' "$CHAIN_FILE" 2>/dev/null || echo "0")
-DEFAULT_ERROR_HANDLER=$(jq -r '.routing.error_handler // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
-DEFAULT_TIMEOUT_AGENT=$(jq -r '.routing.timeout_agent // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
-DEFAULT_TIMEOUT_HANDLER=$(jq -r '.routing.timeout_handler // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
+CHAIN_NAME=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "name" "${MENTIKO_CLI:-}")
+CHAIN_CLI=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "cli" "${MENTIKO_CLI:-}")
+CHAIN_CLI_ARGS=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "cli_args" "${MENTIKO_CLI:-}")
+CHAIN_MONITOR=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "monitor" "${MENTIKO_CLI:-}")
+CHAIN_DEFAULT_AGENT_PROFILE=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "default_agent_profile" "${MENTIKO_CLI:-}")
+CHAIN_MONITOR_INTERVAL=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "monitor_interval" "${MENTIKO_CLI:-}")
+CHAIN_MAX_ROUNDS=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "max_rounds" "${MENTIKO_CLI:-}")
+CHAIN_MAX_STALE_COUNT=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "max_stale_count" "${MENTIKO_CLI:-}")
+CHAIN_SESSION_PREFIX=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "session_prefix" "${MENTIKO_CLI:-}")
+CHAIN_ON_COMPLETE=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "on_complete" "${MENTIKO_CLI:-}")
+CHAIN_WEBHOOK=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "webhook_url" "${MENTIKO_CLI:-}")
+CHAIN_SCHEDULE=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "schedule" "${MENTIKO_CLI:-}")
+DEFAULT_TIMEOUT=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "routing.default_timeout" "${MENTIKO_CLI:-}")
+DEFAULT_ERROR_HANDLER=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "routing.error_handler" "${MENTIKO_CLI:-}")
+DEFAULT_TIMEOUT_AGENT=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "routing.timeout_agent" "${MENTIKO_CLI:-}")
+DEFAULT_TIMEOUT_HANDLER=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "routing.timeout_handler" "${MENTIKO_CLI:-}")
 
 # export for error-handling.sh
 export DEFAULT_ERROR_HANDLER
 export DEFAULT_TIMEOUT_AGENT
 
-# read gateways
-GATEWAYS_JSON=$(jq -c '.gateways // {}' "$CHAIN_FILE" 2>/dev/null || echo '{}')
-
-# -------------------------------------------------------------------
-# resolve_config_profiles: load chain-level config profiles
-# -------------------------------------------------------------------
-resolve_config_profiles() {
-    local chain_profiles=$(jq -r '.profiles // {}' "$CHAIN_FILE" 2>/dev/null || echo '{}')
-
-    # execution profile
-    local exec_profile=$(echo "$chain_profiles" | jq -r '.execution // empty' 2>/dev/null)
-    if [[ -n "$exec_profile" && "$exec_profile" != "null" ]]; then
-        local profile_file="$CONFIG_PROFILES_DIR/execution/${exec_profile}.json"
-        if [[ -f "$profile_file" ]]; then
-            local _profile_executor=$(jq -r '.data.executor // empty' "$profile_file" 2>/dev/null)
-            if [[ -n "$_profile_executor" ]]; then
-                CHAIN_CLI=$(resolve_executor "$_profile_executor")
-            else
-                CHAIN_CLI=$(jq -r '.data.cli // empty' "$profile_file" 2>/dev/null || echo "$CHAIN_CLI")
-            fi
-            local cli_args=$(jq -r '.data.cli_args // [] | join(" ")' "$profile_file" 2>/dev/null)
-            [[ -n "$cli_args" ]] && CHAIN_CLI_ARGS="$cli_args"
-            CHAIN_MONITOR=$(jq -r '.data.monitor // empty' "$profile_file" 2>/dev/null || echo "$CHAIN_MONITOR")
-            local max_rounds=$(jq -r '.data.max_rounds // empty' "$profile_file" 2>/dev/null)
-            [[ -n "$max_rounds" ]] && CHAIN_MAX_ROUNDS="$max_rounds"
-            local max_stale=$(jq -r '.data.max_stale_count // empty' "$profile_file" 2>/dev/null)
-            [[ -n "$max_stale" ]] && CHAIN_MAX_STALE_COUNT="$max_stale"
-            CHAIN_ON_COMPLETE=$(jq -r '.data.on_complete // empty' "$profile_file" 2>/dev/null || echo "$CHAIN_ON_COMPLETE")
-        fi
-    fi
-
-    # model profile (can override cli and cli_args)
-    local model_profile=$(echo "$chain_profiles" | jq -r '.model // empty' 2>/dev/null)
-    if [[ -n "$model_profile" && "$model_profile" != "null" ]]; then
-        local profile_file="$CONFIG_PROFILES_DIR/model/${model_profile}.json"
-        if [[ -f "$profile_file" ]]; then
-            CHAIN_CLI=$(jq -r '.data.cli // empty' "$profile_file" 2>/dev/null || echo "$CHAIN_CLI")
-            local cli_args=$(jq -r '.data.cli_args // [] | join(" ")' "$profile_file" 2>/dev/null)
-            [[ -n "$cli_args" ]] && CHAIN_CLI_ARGS="$cli_args"
-        fi
-    fi
-}
-
-# -------------------------------------------------------------------
-# resolve_agent_profiles: load agent-level config profiles
-# returns values via stdout for capture
-# -------------------------------------------------------------------
 resolve_agent_profiles() {
-    local agent_id="$1"
-    local field="$2"  # cli, cli_args, monitor, max_rounds, max_stale_count, on_complete
-
-    local agent_profiles=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .profiles // {}' "$CHAIN_FILE" 2>/dev/null || echo '{}')
-
-    # check execution profile first
-    local exec_profile=$(echo "$agent_profiles" | jq -r '.execution // empty' 2>/dev/null)
-    if [[ -n "$exec_profile" && "$exec_profile" != "null" ]]; then
-        local profile_file="$CONFIG_PROFILES_DIR/execution/${exec_profile}.json"
-        if [[ -f "$profile_file" ]]; then
-            case "$field" in
-                cli) jq -r '.data.cli // empty' "$profile_file" 2>/dev/null ;;
-                cli_args) jq -r '.data.cli_args // [] | join(" ")' "$profile_file" 2>/dev/null ;;
-                monitor) jq -r '.data.monitor // empty' "$profile_file" 2>/dev/null ;;
-                max_rounds) jq -r '.data.max_rounds // empty' "$profile_file" 2>/dev/null ;;
-                max_stale_count) jq -r '.data.max_stale_count // empty' "$profile_file" 2>/dev/null ;;
-                on_complete) jq -r '.data.on_complete // empty' "$profile_file" 2>/dev/null ;;
-            esac
-            return
-        fi
-    fi
-
-    # check model profile
-    local model_profile=$(echo "$agent_profiles" | jq -r '.model // empty' 2>/dev/null)
-    if [[ -n "$model_profile" && "$model_profile" != "null" ]]; then
-        local profile_file="$CONFIG_PROFILES_DIR/model/${model_profile}.json"
-        if [[ -f "$profile_file" ]]; then
-            case "$field" in
-                cli) jq -r '.data.cli // empty' "$profile_file" 2>/dev/null ;;
-                cli_args) jq -r '.data.cli_args // [] | join(" ")' "$profile_file" 2>/dev/null ;;
-            esac
-            return
-        fi
-    fi
-
-    # no agent profile found, return empty
-    echo ""
+    chain_contract_agent_profile_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$1" "$2"
 }
 
 # -------------------------------------------------------------------
@@ -471,7 +299,7 @@ substitute_placeholders() {
     text="${text//\{RUN_ID\}/$run_id}"
 
     # note: GOAL is not set in bash runner, but include for consistency
-    local goal="${GOAL:-$(jq -r '.description // .name // ""' "$CHAIN_FILE")}"
+    local goal="${GOAL:-$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "description")}"
     text="${text//\{GOAL\}/$goal}"
 
     text="${text//\{CHAIN_NAME\}/$chain_name}"
@@ -480,9 +308,6 @@ substitute_placeholders() {
     echo "$text"
 }
 
-# resolve chain-level profiles (overrides inline config)
-resolve_config_profiles
-
 # load task context if TASK_ID provided
 load_task_context "$TASK_ID"
 
@@ -490,19 +315,19 @@ load_task_context "$TASK_ID"
 # workspace config
 # -------------------------------------------------------------------
 
-WORKSPACE_TYPE=$(jq -r '.config.workspace.type // "local"' "$CHAIN_FILE" 2>/dev/null || echo "local")
+WORKSPACE_TYPE=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.type")
 
 # ssh config
-SSH_HOST=$(jq -r '.config.workspace.ssh.host // ""' "$CHAIN_FILE" 2>/dev/null)
-SSH_USER=$(jq -r '.config.workspace.ssh.user // ""' "$CHAIN_FILE" 2>/dev/null)
-SSH_PATH=$(jq -r '.config.workspace.ssh.path // ""' "$CHAIN_FILE" 2>/dev/null)
-SSH_KEY=$(jq -r '.config.workspace.ssh.key // ""' "$CHAIN_FILE" 2>/dev/null)
-SSH_PORT=$(jq -r '.config.workspace.ssh.port // "22"' "$CHAIN_FILE" 2>/dev/null)
+SSH_HOST=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.host")
+SSH_USER=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.user")
+SSH_PATH=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.path")
+SSH_KEY=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.key")
+SSH_PORT=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.port")
 
 # docker config
-DOCKER_CONTAINER=$(jq -r '.config.workspace.docker.container // ""' "$CHAIN_FILE" 2>/dev/null)
-DOCKER_PATH=$(jq -r '.config.workspace.docker.path // ""' "$CHAIN_FILE" 2>/dev/null)
-DOCKER_USER=$(jq -r '.config.workspace.docker.user // ""' "$CHAIN_FILE" 2>/dev/null)
+DOCKER_CONTAINER=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.docker.container")
+DOCKER_PATH=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.docker.path")
+DOCKER_USER=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.docker.user")
 
 # -------------------------------------------------------------------
 # transport helpers
@@ -534,7 +359,7 @@ split_profile_env() {
 if [[ -n "$WORKSPACE_PATH" ]]; then
     CHAIN_PROJECT_ROOT="$WORKSPACE_PATH"
 else
-    CHAIN_PROJECT_ROOT=$(jq -r '.config.project_root // "auto"' "$CHAIN_FILE")
+    CHAIN_PROJECT_ROOT=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "project_root")
     if [[ "$CHAIN_PROJECT_ROOT" == "auto" ]]; then
         CHAIN_PROJECT_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
     fi
@@ -578,7 +403,7 @@ else
     RUNSPACE_DIR=""
 fi
 
-AGENT_COUNT=$(jq '.agents | length' "$CHAIN_FILE")
+AGENT_COUNT=$(chain_contract_agent_count "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR")
 
 build_completion_contract() {
     local agent_id="$1"
@@ -587,7 +412,7 @@ build_completion_contract() {
     local agent_emits="$3"
     local core_generation_chain="false"
     if [[ -n "${CHAIN_FILE:-}" && -f "${CHAIN_FILE:-}" ]]; then
-        core_generation_chain=$(jq -r '.metadata.coreGenerationChain // false' "$CHAIN_FILE" 2>/dev/null || echo "false")
+        core_generation_chain=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "metadata.coreGenerationChain")
     fi
 
     if [[ "$core_generation_chain" == "true" ]]; then
@@ -675,7 +500,7 @@ build_agent_context_block() {
     local agent_emits="$4"
 
     local chain_description
-    chain_description=$(jq -r '.description // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
+    chain_description=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "description")
 
     local run_goal=""
     if [[ -n "${RUN_ID:-}" ]]; then
@@ -689,11 +514,12 @@ build_agent_context_block() {
     [[ -z "$upstream_agents" ]] && upstream_agents="- none yet"
 
     local downstream_agents=""
-    downstream_agents=$(jq -r --arg ev "$agent_emits" --arg id "$agent_id" '
-        .agents[]? |
-        select(.id != $id and any(.triggers[]?; . == $ev)) |
-        "- " + (.name // .id) + " (" + (.id // "unknown") + ")"
-    ' "$CHAIN_FILE" 2>/dev/null || true)
+    while IFS= read -r downstream_id; do
+        [[ -z "$downstream_id" || "$downstream_id" == "$agent_id" ]] && continue
+        if chain_contract_agent_array "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$downstream_id" "triggers" | grep -Fqx "$agent_emits"; then
+            downstream_agents+="- $(chain_contract_agent_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$downstream_id" "name") ($downstream_id)"$'\n'
+        fi
+    done < <(chain_contract_agent_ids "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR")
     [[ -z "$downstream_agents" ]] && downstream_agents="- none declared"
 
     local prior_artifacts=""
@@ -817,10 +643,9 @@ attempt_startup_recovery() {
     declare -f advisor_recovery_prompt >/dev/null 2>&1 || return 1
     declare -f advisor_recovery_validate_json >/dev/null 2>&1 || return 1
     declare -f advisor_recovery_should_auto_apply >/dev/null 2>&1 || return 1
-    local advisor_json advisor_id advisor_file advisor_cmd
-    advisor_json="$(agent_profile_advisor_json "$AGENT_PROFILES_DIR" 2>/dev/null || true)"
-    advisor_id="$(printf '%s' "$advisor_json" | jq -r '.id // empty' 2>/dev/null)"
-    advisor_file="$(printf '%s' "$advisor_json" | jq -r '.path // empty' 2>/dev/null)"
+    local advisor_id advisor_file advisor_cmd
+    advisor_id="$(agent_profile_advisor_field "$AGENT_PROFILES_DIR" "id" 2>/dev/null || true)"
+    advisor_file="$(agent_profile_advisor_field "$AGENT_PROFILES_DIR" "path" 2>/dev/null || true)"
     [[ -n "$advisor_id" && -n "$advisor_file" ]] || return 1
     advisor_cmd="$(agent_profile_command "$advisor_file" false "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" 2>/dev/null || true)"
     [[ -n "$advisor_cmd" ]] || return 1
@@ -1075,16 +900,16 @@ echo ""
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "  dry run - chain graph:"
     echo "  ---"
-    for i in $(seq 0 $((AGENT_COUNT - 1))); do
-        local_id=$(jq -r ".agents[$i].id" "$CHAIN_FILE")
-        local_name=$(jq -r ".agents[$i].name" "$CHAIN_FILE")
-        local_triggers=$(jq -r ".agents[$i].triggers | join(\", \")" "$CHAIN_FILE")
-        local_emits=$(jq -r ".agents[$i].emits" "$CHAIN_FILE")
+    while IFS= read -r local_id; do
+        [[ -z "$local_id" ]] && continue
+        local_name=$(chain_contract_agent_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$local_id" "name")
+        local_triggers=$(chain_contract_agent_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$local_id" "triggers")
+        local_emits=$(chain_contract_agent_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$local_id" "emits")
         echo "  [$local_id] $local_name"
         echo "    triggers: $local_triggers"
         echo "    emits:    $local_emits"
         echo ""
-    done
+    done < <(chain_contract_agent_ids "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR")
     exit 0
 fi
 
@@ -1113,23 +938,14 @@ get_agent_config() {
     local field="$2"
     local default="${3:-}"
 
-    local val
-    val=$(jq -r --arg id "$agent_id" --arg f "$field" \
-        '.agents[] | select(.id == $id) | .[$f] // empty' "$CHAIN_FILE" 2>/dev/null || true)
-
-    if [[ -z "$val" || "$val" == "null" ]]; then
-        echo "$default"
-    else
-        echo "$val"
-    fi
+    chain_contract_agent_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$agent_id" "$field" "$default"
 }
 
 get_agent_array() {
     local agent_id="$1"
     local field="$2"
 
-    jq -r --arg id "$agent_id" --arg f "$field" \
-        '.agents[] | select(.id == $id) | .[$f] // [] | .[]' "$CHAIN_FILE" 2>/dev/null || true
+    chain_contract_agent_array "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$agent_id" "$field"
 }
 
 # -------------------------------------------------------------------
@@ -1140,15 +956,15 @@ get_gateway_config() {
     local field="$2"
     local default="${3:-}"
 
-    echo "$GATEWAYS_JSON" | jq -r --arg g "$gateway_key" --arg f "$field" \
-        '.[$g] | .[$f] // empty' 2>/dev/null || echo "$default"
+    local value
+    value=$(chain_contract_gateway_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$gateway_key" "$field")
+    echo "${value:-$default}"
 }
 
 get_gateway_env() {
     local gateway_key="$1"
 
-    echo "$GATEWAYS_JSON" | jq -r --arg g "$gateway_key" \
-        '.[$g] | .env // {} | to_entries[] | "\(.key)=\(.value)"' 2>/dev/null || true
+    chain_contract_gateway_env "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$gateway_key"
 }
 
 # -------------------------------------------------------------------
@@ -1205,9 +1021,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/agent-profile-client.sh"
 find_agent_by_trigger() {
     local event_name="$1"
 
-    jq -r --arg ev "$event_name" \
-        '.agents[] | select(.triggers[] | ascii_downcase == ($ev | ascii_downcase)) | .id' \
-        "$CHAIN_FILE" 2>/dev/null | head -1
+    chain_contract_first_agent "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$event_name"
 }
 
 # -------------------------------------------------------------------
@@ -1216,61 +1030,42 @@ find_agent_by_trigger() {
 
 # get chain id from chain file (for breakpoint lookup)
 get_chain_id() {
-    local chain_id=$(jq -r '.config.session_prefix // .name' "$CHAIN_FILE" 2>/dev/null)
+    local chain_id="${CHAIN_SESSION_PREFIX:-$CHAIN_NAME}"
     echo "$chain_id" | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
 }
 
-# get breakpoint file path (namespace-aware)
-breakpoint_file() {
-    local chain_id=$(get_chain_id)
+# Shell selects the workspace debug root only. The typed breakpoint runtime owns
+# record paths, parsing, validation, and locked mutation.
+breakpoint_debug_dir() {
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
-        echo "$DEBUG_DIR/${chain_id}/breakpoints.json"
+        echo "$DEBUG_DIR"
     else
         # Remote workspace: build namespace-aware path with collapse
         if [[ "${ORG_ID:-default}" == "default" ]]; then
-            echo "$REMOTE_PROJECT_ROOT/debug/${chain_id}/breakpoints.json"
+            echo "$REMOTE_PROJECT_ROOT/debug"
         else
-            echo "$REMOTE_PROJECT_ROOT/namespaces/${NAMESPACE_ID}/debug/${chain_id}/breakpoints.json"
+            echo "$REMOTE_PROJECT_ROOT/namespaces/${NAMESPACE_ID}/debug"
         fi
     fi
 }
 
-# check if breakpoint is set for an agent
-check_breakpoint() {
-    local agent_id="$1"
-    local bp_file=$(breakpoint_file)
-
-    if [[ ! -f "$bp_file" ]]; then
-        return 1  # no breakpoint file, no breakpoints
-    fi
-
-    # check if agent has enabled breakpoint
-    local enabled=$(jq -r --arg id "$agent_id" \
-        '.breakpoints[] | select(.agentId == $id and .enabled == true) | .agentId' \
-        "$bp_file" 2>/dev/null | head -1)
-
-    if [[ -n "$enabled" ]]; then
-        return 0  # breakpoint hit
-    fi
-    return 1
+_breakpoint_cli() {
+    local cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-breakpoint.js"
+    command -v node >/dev/null 2>&1 || { echo "  mentiko: node is required for breakpoints" >&2; return 1; }
+    [[ -f "$cli" ]] || { echo "  mentiko: typed breakpoint bundle missing: $cli" >&2; return 1; }
+    node "$cli" "$@"
 }
 
-# pause at breakpoint - update state file
+check_breakpoint() {
+    local agent_id="$1"
+    local result
+    result=$(_breakpoint_cli check --chain-id "$(get_chain_id)" --debug-dir "$(breakpoint_debug_dir)" --agent-id "$agent_id") || return $?
+    [[ "$result" == "true" ]]
+}
+
 pause_at_breakpoint() {
     local agent_id="$1"
-    local bp_file=$(breakpoint_file)
-
-    if [[ ! -f "$bp_file" ]]; then
-        return
-    fi
-
-    # update pausedAt and increment hitCount
-    local tmp=$(mktemp)
-    jq --arg id "$agent_id" --arg ts "$(date -Iseconds)" \
-        '.pausedAt = $id | .pausedAtTimestamp = $ts |
-        (.breakpoints[] | select(.agentId == $id) | .hitCount) += 1' \
-        "$bp_file" > "$tmp" 2>/dev/null || cat "$bp_file" > "$tmp"
-    mv "$tmp" "$bp_file"
+    _breakpoint_cli pause --chain-id "$(get_chain_id)" --debug-dir "$(breakpoint_debug_dir)" --agent-id "$agent_id" >/dev/null
 
     echo ""
     echo "  *** breakpoint hit: $agent_id ***"
@@ -1280,22 +1075,10 @@ pause_at_breakpoint() {
 
 # wait for resume from breakpoint
 wait_for_resume() {
-    local bp_file=$(breakpoint_file)
-
     while true; do
-        if [[ ! -f "$bp_file" ]]; then
-            break
-        fi
-
-        local resume=$(jq -r '.resumeRequested // false' "$bp_file" 2>/dev/null)
-        if [[ "$resume" == "true" ]]; then
-            # clear resume flag and pausedAt
-            local tmp=$(mktemp)
-            jq '.resumeRequested = false | .pausedAt = null | .pausedAtTimestamp = null' \
-                "$bp_file" > "$tmp" 2>/dev/null || cat "$bp_file" > "$tmp"
-            mv "$tmp" "$bp_file"
-            break
-        fi
+        local resume
+        resume=$(_breakpoint_cli consume-resume --chain-id "$(get_chain_id)" --debug-dir "$(breakpoint_debug_dir)") || return $?
+        [[ "$resume" == "missing" || "$resume" == "true" ]] && break
 
         sleep 1
     done
@@ -1372,14 +1155,12 @@ launch_chain_agent() {
 
     # Resolve agent profile through the typed contract. This shell receives
     # only the selected path and executable command, never profile JSON.
-    local profile_json
-    profile_json=$(agent_profile_resolve_json "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT" "$AGENT_PROFILES_DIR" "${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}") || return 1
     local profile_id
-    profile_id=$(printf '%s' "$profile_json" | jq -r '.id // empty' 2>/dev/null)
+    profile_id=$(agent_profile_resolve_field "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT" "$AGENT_PROFILES_DIR" "${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}" "id") || return 1
     local profile_file
-    profile_file=$(printf '%s' "$profile_json" | jq -r '.path // empty' 2>/dev/null)
+    profile_file=$(agent_profile_resolve_field "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT" "$AGENT_PROFILES_DIR" "${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}" "path") || return 1
     local profile_source
-    profile_source=$(printf '%s' "$profile_json" | jq -r '.source // empty' 2>/dev/null)
+    profile_source=$(agent_profile_resolve_field "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT" "$AGENT_PROFILES_DIR" "${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}" "source") || return 1
     local use_legacy_cli=false
     local profile_cmd=""
 
@@ -1419,7 +1200,7 @@ launch_chain_agent() {
         # executor field overrides cli (friendly name: claude, codex, aider, kollab)
         local agent_executor_override=$(get_agent_config "$agent_id" "executor" "")
         if [[ -n "$agent_executor_override" ]]; then
-            agent_cli=$(resolve_executor "$agent_executor_override")
+            agent_cli="$agent_executor_override"
         fi
     else
         # new system: gateway env vars still apply (override profile env)
@@ -1439,8 +1220,7 @@ launch_chain_agent() {
     # resolve cli_args for legacy path only
     local agent_cli_args=""
     if [[ "$use_legacy_cli" == "true" ]]; then
-        local agent_inline_args=$(jq -r --arg id "$agent_id" \
-            '.agents[] | select(.id == $id) | (.cli_args // []) | join(" ")' "$CHAIN_FILE" 2>/dev/null || true)
+        local agent_inline_args=$(get_agent_config "$agent_id" "cli_args" "")
 
         if [[ -z "$agent_inline_args" ]]; then
             # try agent profile
@@ -1448,8 +1228,7 @@ launch_chain_agent() {
         fi
 
         if [[ -z "$agent_cli_args" && -n "$agent_gateway" ]]; then
-            agent_cli_args=$(echo "$GATEWAYS_JSON" | jq -r --arg g "$agent_gateway" \
-                '.[$g] | .cli_args // [] | join(" ")' 2>/dev/null || true)
+            agent_cli_args=$(get_gateway_config "$agent_gateway" "cli_args" "")
         fi
 
         [[ -z "$agent_cli_args" ]] && agent_cli_args="$CHAIN_CLI_ARGS"
@@ -1476,8 +1255,7 @@ launch_chain_agent() {
     # substitute placeholders in agent_prompt
     agent_prompt=$(substitute_placeholders "$agent_prompt")
 
-    local agent_workspace=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .context.workspace // ""' "$CHAIN_FILE" 2>/dev/null || true)
+    local agent_workspace=$(get_agent_config "$agent_id" "context.workspace" "")
     agent_workspace=$(substitute_placeholders "$agent_workspace")
     local agent_emits=$(get_agent_config "$agent_id" "emits")
 
@@ -1488,16 +1266,11 @@ launch_chain_agent() {
     fi
 
     # retry config
-    local retry_max=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.max_retries // 0' "$CHAIN_FILE" 2>/dev/null || echo "0")
-    local retry_backoff=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.backoff // "exponential"' "$CHAIN_FILE" 2>/dev/null || echo "exponential")
-    local retry_delay=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.initial_delay // 5' "$CHAIN_FILE" 2>/dev/null || echo "5")
-    local retry_max_delay=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.max_delay // 300' "$CHAIN_FILE" 2>/dev/null || echo "300")
-    local retry_multiplier=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.backoff_multiplier // 2.0' "$CHAIN_FILE" 2>/dev/null || echo "2.0")
+    local retry_max=$(get_agent_config "$agent_id" "retry.max_retries" "0")
+    local retry_backoff=$(get_agent_config "$agent_id" "retry.backoff" "exponential")
+    local retry_delay=$(get_agent_config "$agent_id" "retry.initial_delay" "5")
+    local retry_max_delay=$(get_agent_config "$agent_id" "retry.max_delay" "300")
+    local retry_multiplier=$(get_agent_config "$agent_id" "retry.backoff_multiplier" "2.0")
 
     # error handlers
     local on_error=$(get_agent_config "$agent_id" "on_error" "")
@@ -1612,14 +1385,7 @@ Working directory: $REMOTE_PROJECT_ROOT"
         while IFS= read -r auth; do
             [[ -n "$auth" ]] && can_do="$can_do
 - $auth"
-        done < <(jq -r --arg id "$agent_id" \
-            '.agents[] | select(.id == $id) |
-                (.authorities // []) as $auth |
-                if ($auth | type) == "array" then
-                    $auth[]
-                else
-                    ($auth.can // [])[]
-                end' "$CHAIN_FILE" 2>/dev/null || true)
+        done < <(chain_contract_agent_authorities "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$agent_id")
 
         instructions="$run_context_block
 
@@ -1666,26 +1432,10 @@ Working directory: $REMOTE_PROJECT_ROOT"
             done || true)
 
             local rs_produces=""
-            rs_produces=$(jq -r --arg id "$agent_id" '
-                .agents[] | select(.id == $id) |
-                .artifacts.produces // [] | .[] |
-                . as $a |
-                ($id + "." + $a.id + (
-                    if $a.type == "json" then ".json"
-                    elif $a.type == "patch" then ".patch"
-                    elif $a.type == "csv" then ".csv"
-                    elif $a.type == "code" then ".txt"
-                    elif $a.type == "text" then ".txt"
-                    else ".md" end
-                )) + (if $a.description then " - " + $a.description else "" end)
-            ' "$CHAIN_FILE" 2>/dev/null | sed 's/^/  /' || true)
+            rs_produces=$(chain_contract_agent_artifacts "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$agent_id" "produces" | sed 's/^/  /' || true)
 
             local rs_consumes=""
-            rs_consumes=$(jq -r --arg id "$agent_id" '
-                .agents[] | select(.id == $id) |
-                .artifacts.consumes // [] | .[] |
-                .from + "." + .artifact + " (from " + .from + ")"
-            ' "$CHAIN_FILE" 2>/dev/null | sed 's/^/  /' || true)
+            rs_consumes=$(chain_contract_agent_artifacts "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$agent_id" "consumes" | sed 's/^/  /' || true)
 
             if [[ -n "$rs_produces" || -n "$rs_consumes" ]]; then
                 instructions="$instructions
@@ -1883,7 +1633,7 @@ $rs_produces
 
     local profile_cli=""
     if [[ "$use_legacy_cli" == "false" && -f "${profile_file:-}" ]]; then
-        profile_cli="$(jq -r '.cli // empty' "$profile_file" 2>/dev/null || true)"
+        profile_cli="$(agent_profile_field "$profile_file" "cli" 2>/dev/null || true)"
     else
         profile_cli="$agent_cli"
     fi
@@ -1977,30 +1727,15 @@ $rs_produces
         local profile_cli=""
         local profile_file_path=""
         if [[ "$use_legacy_cli" == "false" ]]; then
-            profile_file_path="$AGENT_PROFILES_DIR/${profile_id}.json"
-            if [[ -f "$profile_file_path" ]]; then
-                profile_cli=$(jq -r '.cli // empty' "$profile_file_path" 2>/dev/null || echo "")
-            fi
+            profile_file_path="$profile_file"
+            profile_cli=$(agent_profile_field "$profile_file_path" "cli" 2>/dev/null || true)
         else
             profile_cli="$agent_cli"
         fi
-        jq -n \
-            --arg agentId "$agent_id" \
-            --arg profileId "${profile_id:-}" \
-            --arg profileSource "${profile_source:-}" \
-            --arg profileFile "$profile_file_path" \
-            --arg cli "$profile_cli" \
-            --arg session "$session_name" \
-            --arg timestamp "$(date -Iseconds)" \
-            '{
-                agent_id: $agentId,
-                profile_id: $profileId,
-                profile_source: $profileSource,
-                profile_file: $profileFile,
-                cli: $cli,
-                session: $session,
-                timestamp: $timestamp
-            }' > "$snap_artifacts_dir/${agent_id}-profile.json" 2>/dev/null || true
+        agent_profile_write_snapshot \
+            "$snap_artifacts_dir/${agent_id}-profile.json" \
+            "$agent_id" "${profile_id:-}" "${profile_source:-}" "$profile_file_path" \
+            "$profile_cli" "$session_name" "$(date -Iseconds)" >/dev/null 2>&1 || true
     fi
 
     echo "  agent launched: $session_name"
@@ -2077,9 +1812,8 @@ $rs_produces
     if [[ "$agent_monitor" == "true" ]]; then
         local agent_context="Chain: $CHAIN_NAME. Agent: $agent_name ($agent_id). Emits: $agent_emits. Round: $round. Workspace: $WORKSPACE_TYPE."
         local monitor_session="monitor-${session_name}"
-        local monitor_advisor_profile monitor_advisor_json
-        monitor_advisor_json="$(agent_profile_advisor_json "$AGENT_PROFILES_DIR" 2>/dev/null || true)"
-        monitor_advisor_profile="$(printf '%s' "$monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
+        local monitor_advisor_profile
+        monitor_advisor_profile="$(agent_profile_advisor_field "$AGENT_PROFILES_DIR" "id" 2>/dev/null || true)"
 
         # build monitor script to avoid send-message pasting function bodies
         # NOTE: use double quotes for variable expansion in heredoc
@@ -2192,10 +1926,7 @@ if [[ -n "$START_AGENT" ]]; then
     FIRST_AGENT="$START_AGENT"
 else
     # find agent with "manual-start" trigger or first agent
-    FIRST_AGENT=$(jq -r '.agents[] | select(.triggers[] == "manual-start") | .id' "$CHAIN_FILE" | head -1)
-    if [[ -z "$FIRST_AGENT" ]]; then
-        FIRST_AGENT=$(jq -r '.agents[0].id' "$CHAIN_FILE")
-    fi
+    FIRST_AGENT=$(chain_contract_first_agent "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "manual-start")
 fi
 
 echo "  starting chain with: $FIRST_AGENT"
@@ -2206,7 +1937,7 @@ echo "  starting chain with: $FIRST_AGENT"
 
 if [[ -z "$RUN_ID" ]]; then
     # no goal when run directly from cli (use chain description)
-    goal=$(jq -r '.description // .name // ""' "$CHAIN_FILE")
+    goal=$(chain_contract_field "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "description")
     RUN_ID=$(create-run "$CHAIN_FILE" "$goal" "$WORKSPACE_PATH" "$TASK_ID")
     echo "  run-id: $RUN_ID"
     _sys_log "info" "chain-runner" "run created: $RUN_ID" "chain: $CHAIN_NAME, first_agent: $FIRST_AGENT, workspace: ${WORKSPACE_PATH:-local}"
@@ -2217,7 +1948,7 @@ node "$SCRIPT_DIR/runner-audit.js" write \
     --namespace-id "$NAMESPACE_ID" \
     --event-type "chain_start" \
     --description "Started chain: $CHAIN_NAME" \
-    --metadata-json "$(jq -nc --arg chain_name "$CHAIN_NAME" --arg chain_file "$CHAIN_FILE" --arg run_id "$RUN_ID" --argjson agent_count "$(jq '.agents | length' "$CHAIN_FILE")" '{chain_name:$chain_name,chain_file:$chain_file,run_id:$run_id,agent_count:$agent_count,namespace_id:$ENV.NAMESPACE_ID}')" \
+    --metadata-json "$(jq -nc --arg chain_name "$CHAIN_NAME" --arg chain_file "$CHAIN_FILE" --arg run_id "$RUN_ID" --argjson agent_count "$AGENT_COUNT" '{chain_name:$chain_name,chain_file:$chain_file,run_id:$run_id,agent_count:$agent_count,namespace_id:$ENV.NAMESPACE_ID}')" \
     --source "cli" >/dev/null || true
 
 # export for subprocesses
@@ -2295,7 +2026,7 @@ if [[ "$PARALLEL_MODE" == "true" && ${#PARALLEL_AGENTS[@]} -gt 0 ]]; then
     # launch each agent in background
     pids=()
     for agent_id in "${PARALLEL_AGENTS[@]}"; do
-        agent_name=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .name' "$CHAIN_FILE")
+        agent_name=$(get_agent_config "$agent_id" "name")
         echo ""
         echo "  [parallel] launching: $agent_name ($agent_id)"
 

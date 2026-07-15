@@ -100,17 +100,12 @@ describe("data shape catalog", () => {
     }
   });
 
-  it("indexes every data shape with a direct shell contract owner", () => {
+  it("has no documented data shape with a direct shell contract owner", () => {
     const queue = DATA_SHAPE_CATALOG
       .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
       .filter((shape) => shape.shell.length > 0);
 
-    expect(queue.map((shape) => shape.id)).toEqual([
-      "chain-definition",
-      "agent-definition",
-      "config-profile",
-    ]);
-    expect(queue.every((shape) => shape.shell.every((path) => path.endsWith(".sh")))).toBe(true);
+    expect(queue).toEqual([]);
   });
 
   it("documents pending handoff as read-and-retire pre-cutover evidence", () => {

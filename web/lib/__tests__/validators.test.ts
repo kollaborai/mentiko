@@ -19,6 +19,21 @@ function chainWithTimeout(timeout: number) {
 }
 
 describe("validateChain", () => {
+  it("rejects a fan-in target that is also a member of its fan-out", () => {
+    const chain = {
+      name: "invalid-self-join",
+      description: "A duplicate launch must never be generated.",
+      version: "1.0.0",
+      config: {},
+      agents: [{ id: "verifier", name: "Verifier", prompt: "Verify", triggers: ["manual-start"], emits: "verified" }],
+      branches: { verified: { fan_out: ["verifier"], fan_in: "verifier", wait_for: "all" } },
+    };
+
+    expect(validateChain(chain)).toEqual(expect.objectContaining({
+      valid: false,
+      errors: expect.arrayContaining(["branches.verified: fan_in must not also appear in fan_out"]),
+    }));
+  });
   it("accepts generated agent timeout sentinels", () => {
     expect(validateChain(chainWithTimeout(0)).valid).toBe(true);
     expect(validateChain(chainWithTimeout(-1)).valid).toBe(true);

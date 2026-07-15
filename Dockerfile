@@ -226,6 +226,26 @@ RUN if [ -f /build/web/lib/runner-v2/agent-profile-cli.ts ]; then \
       --outfile=/context/lib/runner-agent-profile.js; \
     fi
 
+# compile the typed chain/agent/config-profile decoder used by the remaining
+# shell invocation boundary. Shell must never own definition parsing or mutation.
+RUN if [ -f /build/web/lib/runner-v2/chain-contract-cli.ts ]; then \
+      echo "=== compiling typed runner chain contract boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/chain-contract-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-chain-contract.js; \
+    fi
+
+# compile typed breakpoint record access; shell orchestration may only invoke
+# this boundary and never parse or mutate breakpoints.json directly.
+RUN if [ -f /build/web/lib/runner-v2/breakpoint-cli.ts ]; then \
+      echo "=== compiling typed runner breakpoint boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/breakpoint-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-breakpoint.js; \
+    fi
+
 # compile typed plugin registry dispatch; plugin hook scripts remain external
 # commands, but they never parse registry state or resolve their own paths.
 RUN if [ -f /build/web/lib/system/plugin-dispatch-cli.ts ]; then \

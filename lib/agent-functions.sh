@@ -131,9 +131,8 @@ new-agent-from-spec() {
         local monitor_session="monitor-${session_name}"
         local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         local mon_script="/tmp/monitor-${session_name}.sh"
-        local monitor_advisor_profile monitor_advisor_json
-        monitor_advisor_json="$(agent_profile_advisor_json "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" 2>/dev/null || true)"
-        monitor_advisor_profile="$(printf '%s' "$monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
+        local monitor_advisor_profile
+        monitor_advisor_profile="$(agent_profile_advisor_field "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" "id" 2>/dev/null || true)"
         {
             echo "#!/bin/bash"
             printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"

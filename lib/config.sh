@@ -207,13 +207,18 @@ export PTY_DAEMON
 # helper functions
 # -------------------------------------------------------------------
 
+# Definition contracts belong to the typed runtime. These helpers remain only
+# as invocation boundaries for scripts that need a primitive workspace value.
+if [[ -f "$LIB_DIR/chain-contract-client.sh" ]]; then
+  source "$LIB_DIR/chain-contract-client.sh"
+fi
+
 # Get config from chain.json
 chain_config() {
   local chain_file="$1"
   local key="$2"
   if [[ -f "$chain_file" ]]; then
-    grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$chain_file" 2>/dev/null | \
-      cut -d'"' -f4 | head -1
+    chain_contract_raw_field "$chain_file" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "$key" 2>/dev/null || true
   fi
 }
 
@@ -229,17 +234,17 @@ chain_id_from_name() {
 
 workspace_type() {
   local chain_file="$1"
-  jq -r '.config.workspace.type // "local"' "$chain_file" 2>/dev/null || echo "local"
+  chain_contract_field "$chain_file" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.type" 2>/dev/null || echo "local"
 }
 
 workspace_ssh_config() {
   local chain_file="$1"
   local field="$2"
-  jq -r ".config.workspace.ssh.${field} // empty" "$chain_file" 2>/dev/null
+  chain_contract_field "$chain_file" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.ssh.${field}" 2>/dev/null || true
 }
 
 workspace_docker_config() {
   local chain_file="$1"
   local field="$2"
-  jq -r ".config.workspace.docker.${field} // empty" "$chain_file" 2>/dev/null
+  chain_contract_field "$chain_file" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR" "workspace.docker.${field}" 2>/dev/null || true
 }

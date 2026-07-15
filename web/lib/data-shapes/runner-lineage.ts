@@ -105,44 +105,32 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "chain-definition": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
-        id: "typed-chain-planning",
-        label: "Typed bootstrap and completion planning",
+        id: "typed-chain-contract",
+        label: "Decode, expand references, validate, and resolve runtime chain fields",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
-      },
-      {
-        id: "shell-chain-planning",
-        label: "Shell launch and route planning",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
+        paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "The same chain.json contract remains shared; runner v2 adds a typed consumer rather than replacing the file.",
+      summary: "Replaces direct shell jq decoding and reference expansion; the shell remains only as a primitive-argument CLI invocation boundary.",
       paths: ["lib/chain-runner.sh"],
     },
   },
   "agent-definition": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
-        id: "typed-agent-planning",
-        label: "Typed agent/profile bootstrap planning",
+        id: "typed-agent-contract",
+        label: "Resolve normalized agent fields, arrays, authorities, artifacts, and trigger selection",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-bootstrap-plan.ts"],
-      },
-      {
-        id: "shell-agent-planning",
-        label: "Shell agent configuration and launch",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
+        paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "The agent.json contract is still read by both engines while initial local bootstrap migrates to typed planning.",
+      summary: "Replaces direct shell jq reads of agent configuration while preserving the external CLI launch boundary.",
       paths: ["lib/chain-runner.sh"],
     },
   },
@@ -605,18 +593,33 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "config-profile": {
-    usage: "legacy-shell",
+    usage: "runner-v2",
     surfaces: [
       {
-        id: "shell-config-profile",
-        label: "Load execution and model overlays",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh", "lib/config.sh"],
+        id: "typed-config-profile",
+        label: "Decode and resolve execution and model overlays",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "This is a shell-only compatibility contract; runner v2 uses agent profiles instead.",
+      summary: "Replaces direct shell profile-file decoding; shell only invokes the typed field resolver.",
       paths: ["lib/chain-runner.sh", "lib/config.sh"],
+    },
+  },
+  "breakpoints": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-breakpoint-record",
+        label: "Validate, lock, and atomically mutate debugger breakpoint state",
+        owner: "runner-v2",
+        paths: ["web/lib/runs/breakpoint-store.ts", "web/lib/runner-v2/breakpoint-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces shell jq parsing and unlocked breakpoints.json writes; shell only invokes the compiled typed CLI.",
+      paths: ["lib/chain-runner.sh"],
     },
   },
   "agent-profile": {

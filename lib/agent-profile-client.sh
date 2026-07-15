@@ -20,12 +20,24 @@ agent_profile_advisor_json() {
     _agent_profile_cli advisor --profiles-dir "$1"
 }
 
+agent_profile_advisor_field() {
+    _agent_profile_cli advisor-field --profiles-dir "$1" --field "$2"
+}
+
 agent_profile_select_json() {
     _agent_profile_cli select --profiles-dir "$1" --profile-id "$2"
 }
 
+agent_profile_select_field() {
+    _agent_profile_cli select-field --profiles-dir "$1" --profile-id "$2" --field "$3"
+}
+
 agent_profile_resolve_json() {
     _agent_profile_cli resolve --chain-path "$1" --agent-id "$2" --project-root "$3" --profiles-dir "$4" --org-root "$5"
+}
+
+agent_profile_resolve_field() {
+    _agent_profile_cli resolve-field --chain-path "$1" --agent-id "$2" --project-root "$3" --profiles-dir "$4" --org-root "$5" --field "$6"
 }
 
 agent_profile_command() {
@@ -39,4 +51,16 @@ agent_profile_command() {
 
 agent_profile_transcript_json() {
     _agent_profile_cli transcript --profile-path "$1"
+}
+
+agent_profile_transcript_field() {
+    _agent_profile_cli transcript-field --profile-path "$1" --field "$2"
+}
+
+agent_profile_field() {
+    _agent_profile_cli field --profile-path "$1" --field "$2"
+}
+
+agent_profile_write_snapshot() {
+    _agent_profile_cli snapshot --output-path "$1" --agent-id "$2" --profile-id "$3" --profile-source "$4" --profile-file "$5" --cli "$6" --session "$7" --timestamp "$8"
 }
