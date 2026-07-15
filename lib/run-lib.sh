@@ -168,83 +168,42 @@ cleanup-old-runs() {
 # -------------------------------------------------------------------
 # debug state management (namespace-aware)
 # -------------------------------------------------------------------
-# DEBUG_DIR from config.sh
-
-# write-debug-state: write debug state for current step
-# args: <run-id> <agent-id> <agent-name> <session> <round> <status>
-write-debug-state() {
-    local run_id="$1"
-    local agent_id="$2"
-    local agent_name="$3"
-    local session="$4"
-    local round="${5:-1}"
-    local status="${6:-running}"
-    local output="${7:-}"
-
-    local debug_file="$DEBUG_DIR/${run_id}.json"
-
-    # ensure debug dir exists
-    mkdir -p "$DEBUG_DIR"
-
-    # read existing or create new
-    if [[ -f "$debug_file" ]]; then
-        local existing=$(cat "$debug_file")
-    else
-        local existing='{"run_id":"'$run_id'","steps":[]}'
-    fi
-
-    local timestamp=$(date -Iseconds)
-
-    # sanitize output: strip ANSI codes, truncate to 200 chars for JSON safety
-    # ANSI pattern: CSI sequences, OSC, DCS, SOS, PM, APC, simple escapes
-    local sanitized=$(printf '%s' "$output" | strip-terminal-control | \
-                     tr '\n' ' ' | tr -s ' ' | cut -c1-200)
-    [[ -z "$sanitized" ]] && sanitized="(no output)"
-    [[ ${#output} -gt 200 ]] && sanitized="${sanitized}..."
-
-    # append step
-    local updated=$(echo "$existing" | jq \
-        --arg aid "$agent_id" \
-        --arg aname "$agent_name" \
-        --arg sess "$session" \
-        --arg rnd "$round" \
-        --arg st "$status" \
-        --arg ts "$timestamp" \
-        --arg out "$sanitized" \
-        '.steps += [{
-            agent_id: $aid,
-            agent_name: $aname,
-            session: $sess,
-            round: $rnd | tonumber,
-            status: $st,
-            timestamp: $ts,
-            output: $out
-        }] | .current_step = (.steps | length - 1)')
-
-    echo "$updated" > "$debug_file"
-}
-
-# get-debug-state: read current debug state
-# args: <run-id>
-get-debug-state() {
-    local run_id="$1"
-    local debug_file="$DEBUG_DIR/${run_id}.json"
-
-    if [[ ! -f "$debug_file" ]]; then
-        echo '{"error":"debug state not found"}'
+# DEBUG_DIR from config.sh. The persisted record is owned by the typed store;
+# these functions are primitive invocation adapters kept for older callers.
+_debug_state_cli() {
+    local cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-debug-state.js"
+    if ! command -v node >/dev/null 2>&1; then
+        echo "  mentiko: node is required for typed debug state" >&2
         return 1
     fi
-
-    cat "$debug_file"
+    if [[ ! -f "$cli" ]]; then
+        echo "  mentiko: typed debug-state bundle missing: $cli" >&2
+        return 1
+    fi
+    node "$cli" "$@"
 }
 
-# clear-debug-state: remove debug state file
+# args: <run-id> <agent-id> <agent-name> <session> <round> <status> [output]
+write-debug-state() {
+    _debug_state_cli write-step \
+        --debug-dir "$DEBUG_DIR" \
+        --run-id "$1" \
+        --agent-id "$2" \
+        --agent-name "$3" \
+        --session "$4" \
+        --round "${5:-1}" \
+        --status "${6:-running}" \
+        --output "${7:-}"
+}
+
+# args: <run-id>
+get-debug-state() {
+    _debug_state_cli get --debug-dir "$DEBUG_DIR" --run-id "$1"
+}
+
 # args: <run-id>
 clear-debug-state() {
-    local run_id="$1"
-    local debug_file="$DEBUG_DIR/${run_id}.json"
-
-    rm -f "$debug_file"
+    _debug_state_cli clear --debug-dir "$DEBUG_DIR" --run-id "$1" >/dev/null
 }
 
 # export debug functions

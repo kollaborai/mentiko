@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { readFileSync, existsSync, writeFileSync, readdirSync, unlinkSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
@@ -7,6 +7,13 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty } from "@/lib/pty/pty-client";
 import { findRunnerAgentStateBySession } from "@/lib/runner-v2/agent-state";
+import {
+  clearDebugState,
+  emptyDebugState,
+  loadDebugState,
+  mutateDebugState,
+  type DebugAction,
+} from "@/lib/runs/debug-state-store";
 
 export const dynamic = "force-dynamic";
 
@@ -169,18 +176,7 @@ export const GET = withErrorHandling(async (
   }
 
   // normal debug state mode
-  const debugFile = join(DEBUG_DIR, `${runId}.json`);
-
-  if (!existsSync(debugFile)) {
-    return apiSuccess({
-      status: "idle",
-      current_step: null,
-      steps: [],
-    });
-  }
-
-  const content = readFileSync(debugFile, "utf-8");
-  return apiSuccess(JSON.parse(content));
+  return apiSuccess(loadDebugState(runId, DEBUG_DIR) || emptyDebugState());
 });
 
 // POST - control debug run (continue/skip/retry/abort/pause/step)
@@ -194,80 +190,19 @@ export const POST = withErrorHandling(async (
 
   const { id } = await _context.params;
   const runId = decodeURIComponent(id);
-  const { action, stepIndex, breakpoints } = await request.json();
+  const body = await request.json() as { action?: unknown; stepIndex?: unknown; breakpoints?: unknown };
+  const action = body.action;
+  if (!isDebugAction(action)) throw new BadRequest("Invalid action");
+  const stepIndex = body.stepIndex === undefined ? undefined : body.stepIndex;
+  if (stepIndex !== undefined && (typeof stepIndex !== "number" || !Number.isSafeInteger(stepIndex) || stepIndex < 0)) throw new BadRequest("Invalid stepIndex");
+  if (action === "set_breakpoints" && body.breakpoints !== undefined && !Array.isArray(body.breakpoints)) throw new BadRequest("Invalid breakpoints");
 
-  const debugFile = join(DEBUG_DIR, `${runId}.json`);
-
-  if (!existsSync(debugFile)) {
-    const initialState = {
-      status: "initialized",
-      current_step: null,
-      steps: [],
-      breakpoints: breakpoints || [],
-      last_action: action,
-      last_action_at: new Date().toISOString(),
-    };
-    writeFileSync(debugFile, JSON.stringify(initialState, null, 2));
-    return apiSuccess({ success: true, state: initialState });
-  }
-
-  const state = JSON.parse(readFileSync(debugFile, "utf-8"));
-
-  switch (action) {
-    case "pause":
-      state.status = "paused";
-      state.last_action = "pause";
-      state.last_action_at = new Date().toISOString();
-      break;
-
-    case "continue":
-    case "resume":
-      state.status = "running";
-      state.last_action = action;
-      state.last_action_at = new Date().toISOString();
-      break;
-
-    case "step":
-      state.status = "stepping";
-      state.current_step = typeof stepIndex === "number" ? stepIndex : (state.current_step ?? -1) + 1;
-      state.last_action = "step";
-      state.last_action_at = new Date().toISOString();
-      break;
-
-    case "skip":
-      state.last_action = "skip";
-      state.last_action_at = new Date().toISOString();
-      if (typeof stepIndex === "number" && state.steps[stepIndex]) {
-        state.steps[stepIndex].status = "skipped";
-      }
-      break;
-
-    case "retry":
-      state.last_action = "retry";
-      state.last_action_at = new Date().toISOString();
-      if (typeof stepIndex === "number" && state.steps[stepIndex]) {
-        state.steps[stepIndex].status = "pending";
-      }
-      break;
-
-    case "abort":
-      state.last_action = "abort";
-      state.last_action_at = new Date().toISOString();
-      state.status = "aborted";
-      break;
-
-    case "set_breakpoints":
-      state.breakpoints = breakpoints || [];
-      state.last_action = "set_breakpoints";
-      state.last_action_at = new Date().toISOString();
-      break;
-
-    default:
-      throw new BadRequest("Invalid action");
-  }
-
-  writeFileSync(debugFile, JSON.stringify(state, null, 2));
-
+  const state = mutateDebugState({
+    runId,
+    action,
+    stepIndex: stepIndex as number | undefined,
+    breakpoints: body.breakpoints as unknown[] | undefined,
+  }, DEBUG_DIR);
   return apiSuccess({ success: true, state });
 });
 
@@ -282,11 +217,12 @@ export const DELETE = withErrorHandling(async (
 
   const { id } = await _context.params;
   const runId = decodeURIComponent(id);
-  const debugFile = join(DEBUG_DIR, `${runId}.json`);
-
-  if (existsSync(debugFile)) {
-    unlinkSync(debugFile);
-  }
+  clearDebugState(runId, DEBUG_DIR);
 
   return apiSuccess({ success: true, message: "Debug state cleared" });
 });
+
+function isDebugAction(value: unknown): value is DebugAction {
+  return value === "pause" || value === "continue" || value === "resume" || value === "step"
+    || value === "skip" || value === "retry" || value === "abort" || value === "set_breakpoints";
+}
