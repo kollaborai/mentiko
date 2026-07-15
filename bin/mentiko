@@ -46,7 +46,7 @@ node "$LIB_DIR/runner-audit.js" write \
     --namespace-id "$NAMESPACE_ID" \
     --event-type "cli_command" \
     --description "CLI command: $CMD" \
-    --metadata-json "$(jq -nc --arg command "$CMD" --arg args "$*" '{command:$command,args:$args}')" \
+    --meta command="$CMD" --meta args="$*" \
     --source "cli" >/dev/null || true
 
 case "$CMD" in
@@ -151,7 +151,7 @@ case "$CMD" in
             --namespace-id "$NAMESPACE_ID" \
             --event-type "agent_action" \
             --description "Agent action: send $SESSION" \
-            --metadata-json "$(jq -nc --arg action "send" --arg target "$SESSION" --arg details "message: ${MESSAGE:0:100}" '{action:$action,target:$target,details:$details}')" \
+            --meta action="send" --meta target="$SESSION" --meta details="message: ${MESSAGE:0:100}" \
             --source "cli" >/dev/null || true
         ;;
 
@@ -175,7 +175,7 @@ case "$CMD" in
             --namespace-id "$NAMESPACE_ID" \
             --event-type "agent_action" \
             --description "Agent action: kill $SESSION" \
-            --metadata-json "$(jq -nc --arg action "kill" --arg target "$SESSION" '{action:$action,target:$target}')" \
+            --meta action="kill" --meta target="$SESSION" \
             --source "cli" >/dev/null || true
         ;;
 
@@ -274,7 +274,7 @@ case "$CMD" in
             --namespace-id "$NAMESPACE_ID" \
             --event-type "event_emit" \
             --description "Event emitted: $EVENT_NAME" \
-            --metadata-json "$(jq -nc --arg event_name "$EVENT_NAME" --arg source "$SOURCE" '{event_name:$event_name,source:$source}')" \
+            --meta event_name="$EVENT_NAME" --meta source="$SOURCE" \
             --source "cli" >/dev/null || true
         ;;
 
