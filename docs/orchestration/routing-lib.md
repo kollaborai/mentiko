@@ -28,85 +28,11 @@ this library provides the backing functions for these patterns.
 fan-out / fan-in
 ================
 
-fan-out: single event triggers multiple agents in parallel.
-fan-in: wait for multiple agents before triggering next.
-
-fan-group-create <group-id> <event-name> <fan-out-agents> [fan-in-agent] [wait-for] [quorum] [on-error]
-  ------------------------------------------------------------------------------------------------------------------------
-  create a fan-out group tracking state.
-
-  args:
-    group-id       - unique identifier for this fan-group
-    event-name     - event that triggered fan-out
-    fan-out-agents - space-separated agent ids to launch in parallel
-    fan-in-agent   - agent to trigger after completion (optional)
-    wait-for       - "all", "any", or "quorum" (default: "all")
-    quorum         - number of agents for quorum (default: 0)
-    on-error       - agent to trigger on failure (optional)
-
-  state file: STATE_DIR/fan-groups/{group-id}.state
-    status: running | complete
-    started: ISO timestamp
-    event: event name
-    fan_out_agents: space-separated list
-    fan_in_agent: agent id or empty
-    wait_for: all | any | quorum
-    quorum: number
-    on_error: agent id or empty
-    completed: count
-    failed: count
-    total: count
-
-  usage:
-    fan-group-create "group-1" "data-ready" "parser analyzer" "merger" "all" 0 "error-handler"
-
-fan-group-agent-complete <group-id> <agent-id> [status]
-  -------------------------------------------------------
-  mark a fan-out agent as complete.
-
-  args:
-    group-id  - fan group identifier
-    agent-id  - agent that completed
-    status    - "complete" or "failed" (default: "complete")
-
-  flow:
-    1. read current state file
-    2. increment completed or failed counter
-    3. write updated state
-    4. call fan-group-check-trigger
-
-  usage:
-    fan-group-agent-complete "group-1" "parser" "complete"
-    fan-group-agent-complete "group-1" "analyzer" "failed"
-
-fan-group-check-trigger <group-id>
-  ---------------------------------
-  check if fan-in condition is met and trigger if so.
-
-  evaluates wait_for condition:
-    all     - completed + failed >= total
-    any      - completed >= 1
-    quorum   - completed >= quorum
-
-  if condition met:
-    1. mark group status as complete
-    2. check if errors occurred and on_error set
-    3. if errors + on_error, route to error handler instead
-    4. trigger fan-in agent via chain-runner.sh
-    5. export AGENT_FAN_GROUP_ID for agent context
-
-  usage: called automatically by fan-group-agent-complete
-
-fan-group-get <group-id> <field>
-  -------------------------------
-  get a specific field from fan-group state.
-
-  fields: status, started, event, fan_out_agents, fan_in_agent,
-          wait_for, quorum, on_error, completed, failed, total
-
-  usage:
-    completed=$(fan-group-get "group-1" "completed")
-    total=$(fan-group-get "group-1" "total")
+Fan-group state is owned by `web/lib/runner-v2/fan-group-store.ts` as
+`{runtimeRoot}/state/fan-groups/{groupId}.json`. Typed completion creates the
+group, records each member exactly once under the group lock, and starts the
+fan-in agent only after durable launch acceptance. Legacy `.state` files are
+unsupported and fail closed; `routing-lib.sh` has no fan-group commands.
 
 fan-out example
 ===============
@@ -128,9 +54,8 @@ flow:
   2. typed completion resolves the branch plan
   3. creates fan-group with 3 agents
   4. launches parser, analyzer, validator in parallel
-  5. each agent calls fan-group-agent-complete on finish
-  6. when all 3 complete, fan-group-check-trigger fires
-  7. launches merger agent (or error-handler if any failed)
+  5. typed completion records each member in the JSON ledger
+  6. the typed claim launches merger (or error-handler if any failed)
 
 retry logic
 ===========
@@ -263,10 +188,6 @@ exported functions
 ==================
 
 after sourcing:
-  - fan-group-create
-  - fan-group-agent-complete
-  - fan-group-check-trigger
-  - fan-group-get
   - retry-calculate-delay
   - branch-parse
   - error-handler-resolve
@@ -283,10 +204,9 @@ troubleshooting
 ===============
 
 fan-in not triggering?
-  - check fan-group state file in STATE_DIR/fan-groups/
-  - verify completed + failed counts
+  - inspect the canonical JSON ledger in STATE_DIR/fan-groups/
+  - verify completed + failed counts and member ledger
   - check wait_for condition (all/any/quorum)
-  - fan-group-get to inspect state
 
 retry not working?
   - check agent.retry config in chain.json

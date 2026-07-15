@@ -94,7 +94,9 @@ function runScopedFingerprintArray(value: unknown, currentRunId: string | undefi
 
 /** Narrow a raw run status string onto the state's typed union (else undefined). */
 function narrowRunStatus(raw: string | undefined): TaskLifecycleState["currentRunStatus"] {
-  return raw === "running" || raw === "completed" || raw === "failed" || raw === "stopped" ? raw : undefined;
+  return raw === "running" || raw === "completed" || raw === "failed" || raw === "stopped" || raw === "blocked"
+    ? raw
+    : undefined;
 }
 
 /**
@@ -117,6 +119,10 @@ function derivePhase(input: {
   const raw = input.rawStatus;
   if (raw === "running") return "executing";
   if (raw === "completed" || raw === "complete") return "summarizing";
+  // A runner-v2 block is deliberate terminal state, not an execution retry.
+  // Reconciliation emits a non-retryable failure and starts the audit; until
+  // then, hydrate it as waiting for that audit rather than resurrecting it.
+  if (raw === "blocked") return "summarizing";
   if (raw && RETRYABLE_TERMINAL_STATUSES.has(raw)) {
     // Under budget → still retrying; exhausted → awaiting outcome summary.
     return input.executionRetryCount < input.retryBudget ? "retrying" : "summarizing";

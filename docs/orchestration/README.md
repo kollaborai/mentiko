@@ -203,9 +203,6 @@ supporting libraries
   advanced routing patterns.
 
   functions:
-    - fan-group-create          create fan-out state
-    - fan-group-agent-complete  mark agent done
-    - fan-group-check-trigger   check if fan-in ready
     - retry-calculate-delay     exponential backoff
     - branch-parse              parse branch config
     - error-handler-resolve     find error handler
@@ -430,7 +427,7 @@ libraries:
   lib/run-lib.sh                   run object management
   web/lib/runner-v2/event-lifecycle.ts strict scan, lookup, processed mutation, archive
   lib/routing-lib.sh               fan-out/fan-in, retry
-  lib/agent-profile.sh             profile resolution
+  web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
   lib/config.sh                    path resolution
   lib/agent-activity-capture.sh    artifact capture
 

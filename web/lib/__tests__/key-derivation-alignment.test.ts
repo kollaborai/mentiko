@@ -7,7 +7,7 @@
  * the same derived AES key from the same BETTER_AUTH_SECRET:
  *   - web/lib/secrets-store.ts
  *   - lib/job-runner.mjs
- *   - bin/secrets-resolve.mjs
+ *   - the typed runner-v2 agent-profile secret resolver
  *   - bin/secrets-rotate
  *
  * The 2026-05-07 audit found that these had diverged (different salts,

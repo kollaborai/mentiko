@@ -176,13 +176,15 @@ phase 3: agent resolution
    priority: agent.agent_profile > chain.default_agent_profile >
               workspace default > namespace default
 
-   returns: profile_id or "__inline__" for inline legacy fallback
+   an explicitly selected profile must exist and validate; malformed or absent
+   selections fail closed rather than selecting a lower-priority profile.
 
 3. build profile command
    ----------------------
-   calls build_profile_command from agent-profile.sh
+   calls the typed runner-agent-profile command compiler
 
-   returns: source /tmp/agent-env-XXXXXX; rm -f /tmp/agent-env-XXXXXX; claude ...
+   returns a typed-produced command that sources a private temporary env file,
+   deletes it immediately, then invokes the external CLI.
 
    env vars are NEVER inlined in command string (security + cleanliness).
 
@@ -526,7 +528,7 @@ key files involved
 lib/chain-runner.sh           main orchestrator (this file)
 web/lib/runner-v2/completion-entrypoint.ts  completion owner (see [completion-entrypoint.md](./completion-entrypoint.md))
 lib/agent-functions.sh        function library (see [agent-functions.md](./agent-functions.md))
-lib/agent-profile.sh          profile resolution
+web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
 lib/launch-agent.sh           agent launcher (legacy)
 lib/config.sh                 namespace/path config
 lib/run-lib.sh                run tracking

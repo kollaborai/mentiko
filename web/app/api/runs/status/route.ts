@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { readdirSync, readFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 import { getNamespaceConfig, getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { checkAuth } from "@/lib/auth/api-auth";
@@ -8,6 +8,7 @@ import { checkRunAccess } from "@/lib/auth/run-acl";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { readRunnerAgentStateDirectory } from "@/lib/runner-v2/agent-state";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +29,12 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
   const { searchParams } = new URL(req.url);
   const runId = searchParams.get("run-id");
 
-  // If run-id is provided, read from run-specific state directory
+  // If run-id is provided, select from the same namespace-scoped canonical
+  // state root used by every runner writer.
   if (runId) {
     const namespaceId = await getNamespaceIdFromRequest(req);
     const orgId = await getOrgIdFromRequest(req);
+    const namespaceConfig = await getNamespaceConfig(req);
     const runsDir = resolveLinkRunsDir(namespaceId, orgId);
 
     // workspace ACL: user must have access to this run's workspace
@@ -42,30 +45,7 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
       }
       throw new Unauthorized();
     }
-    const runStateDir = join(runsDir, runId, "state");
-    if (!existsSync(runStateDir)) {
-      return apiSuccess({ sessions: [], states: [] });
-    }
-
-    const files = readdirSync(runStateDir).filter((f) => f.endsWith(".state"));
-    const states: StateFile[] = files.map((file) => {
-      const content = readFileSync(join(runStateDir, file), "utf-8");
-      const lines = content.split("\n").reduce((acc, line) => {
-        const [key, ...rest] = line.split(":");
-        if (key && rest.length > 0) {
-          acc[key.trim()] = rest.join(":").trim();
-        }
-        return acc;
-      }, {} as Record<string, string>);
-      return {
-        status: lines.status || "unknown",
-        session: lines.session || "",
-        agent_id: lines.agent_id || file.replace(".state", ""),
-        emits: lines.emits,
-        started: lines.started,
-        completed: lines.completed,
-      };
-    });
+    const states: StateFile[] = Object.values(readRunnerAgentStateDirectory(namespaceConfig.stateDir, runId));
 
     // filter sessions to only those in this run
     const sessionNames = new Set(states.map((s) => s.session).filter(Boolean));
@@ -104,24 +84,7 @@ export const GET = withErrorHandling(async (req: NextRequest) => {
   let states: StateFile[] = [];
   if (existsSync(stateDir)) {
     try {
-      const files = readdirSync(stateDir).filter((f) => f.endsWith(".state"));
-      states = files.map((file) => {
-        const content = readFileSync(join(stateDir, file), "utf-8");
-        const lines = content.split("\n").reduce((acc, line) => {
-          const [key, ...rest] = line.split(":");
-          if (key && rest.length > 0) {
-            acc[key.trim()] = rest.join(":").trim();
-          }
-          return acc;
-        }, {} as Record<string, string>);
-        return {
-          status: lines.status || "unknown",
-          session: lines.session || "",
-          agent_id: lines.agent_id || file.replace(".state", ""),
-          emits: lines.emits,
-          started: lines.started,
-        };
-      });
+      states = Object.values(readRunnerAgentStateDirectory(stateDir));
     } catch {
       // ignore state read errors
     }

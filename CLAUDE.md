@@ -35,7 +35,6 @@ code root (this git checkout):
   peer-swarm        multi-peer swarm launcher
   peer-swarm-watch  monitor swarm sessions
   peer-watch        watch single peer session
-  secrets-resolve   resolve secret references (mjs)
   validate-artifacts artifact validation
   docker-entrypoint entrypoint for tenant container
 
@@ -611,7 +610,7 @@ spec: docs/specs/MCP_AUTH_RECOVERY.md
 env vars are NEVER inlined in commands -- sourced from temp file, deleted immediately.
 CRITICAL: mktemp on macOS -- NEVER add suffix after X template (no .sh). it won't randomize.
 details: .kdex/articles/agent-profiling-team-coordination.md
-source: lib/agent-profile.sh (build_profile_command), lib/chain-runner.sh (gateway env)
+source: web/lib/runner-v2/agent-profile.ts (typed command compiler), lib/chain-runner.sh (gateway env)
 
 ## output tab behavior
 

@@ -114,6 +114,8 @@ export interface TaskChainBinding {
   last_run_outcome?: string;
   last_run_decision_required?: boolean;
   last_run_error?: string;
+  /** Exact producer-owned reason for a terminal runner-v2 blocked run. */
+  last_run_blocked_reason?: string;
   last_run_completed?: string;
   auto_run_retries?: number;
   // explicit user pause (distinct from auto_run_retries exhaustion above):

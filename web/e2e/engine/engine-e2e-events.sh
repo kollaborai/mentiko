@@ -249,35 +249,24 @@ else
   # the fan-in agent ran.
   [[ "$(agent_status "$RUN_FO" collector)" == "complete" ]] && pass "A: collector (fan-in) completed" || fail "A: collector not complete (got '$(agent_status "$RUN_FO" collector)')"
 
-  # fan-in fired EXACTLY once: the group status flips to 'complete' (the single
-  # idempotent claim). Typed completion stores fan groups as JSON; shell stores
-  # them as .state key-value files. Accept both stores so this e2e remains a
-  # live engine proof rather than a shell-format-only assertion.
-  FO_GROUP_FILE="$(ls -1 "$DATA_ROOT/namespaces/default/state/fan-groups/"*.json "$DATA_ROOT/namespaces/default/state/fan-groups/"*.state 2>/dev/null | head -1)"
+  # Fan-in fired EXACTLY once: the canonical typed JSON group flips to complete
+  # after the single idempotent claim.
+  FO_GROUP_FILE="$(ls -1 "$DATA_ROOT/namespaces/default/state/fan-groups/"*.json 2>/dev/null | head -1)"
   if [[ -n "$FO_GROUP_FILE" ]]; then
-    if [[ "$FO_GROUP_FILE" == *.json ]]; then
-      FO_GROUP_STATUS="$(jq -r '.status // ""' "$FO_GROUP_FILE")"
-      FO_GROUP_COMPLETED="$(jq -r '.completed // 0' "$FO_GROUP_FILE")"
-      FO_GROUP_MEMBER_A="$(jq -r '.members.worker_a // ""' "$FO_GROUP_FILE")"
-      FO_GROUP_MEMBER_B="$(jq -r '.members.worker_b // ""' "$FO_GROUP_FILE")"
-    else
-      FO_GROUP_STATUS="$(grep '^status:' "$FO_GROUP_FILE" | head -1 | cut -d' ' -f2-)"
-      FO_GROUP_COMPLETED="$(grep '^completed:' "$FO_GROUP_FILE" | head -1 | tr -dc '0-9')"
-      FO_GROUP_MEMBER_A="legacy-state"
-      FO_GROUP_MEMBER_B="legacy-state"
-    fi
+    FO_GROUP_STATUS="$(jq -r '.status // ""' "$FO_GROUP_FILE")"
+    FO_GROUP_COMPLETED="$(jq -r '.completed // 0' "$FO_GROUP_FILE")"
+    FO_GROUP_MEMBER_A="$(jq -r '.members.worker_a // ""' "$FO_GROUP_FILE")"
+    FO_GROUP_MEMBER_B="$(jq -r '.members.worker_b // ""' "$FO_GROUP_FILE")"
     note "A: fan-group state: file=$(basename "$FO_GROUP_FILE") status=$FO_GROUP_STATUS completed=$FO_GROUP_COMPLETED members=$FO_GROUP_MEMBER_A/$FO_GROUP_MEMBER_B"
     [[ "$FO_GROUP_STATUS" == "complete" ]] && pass "A: fan-group claimed exactly once (status=complete = fan-in launched)" \
                                            || fail "A: fan-group status is '$FO_GROUP_STATUS' (expected complete)"
     [[ "$FO_GROUP_COMPLETED" == "2" ]] && pass "A: both completers counted in fan-group (completed=2, no lost update)" \
                                        || fail "A: fan-group completed=$FO_GROUP_COMPLETED (expected 2)"
-    if [[ "$FO_GROUP_FILE" == *.json ]]; then
-      [[ "$FO_GROUP_MEMBER_A" == "complete" && "$FO_GROUP_MEMBER_B" == "complete" ]] \
-        && pass "A: typed fan-group member ledger counted both workers" \
-        || fail "A: typed fan-group member ledger mismatch (worker_a=$FO_GROUP_MEMBER_A worker_b=$FO_GROUP_MEMBER_B)"
-    fi
+    [[ "$FO_GROUP_MEMBER_A" == "complete" && "$FO_GROUP_MEMBER_B" == "complete" ]] \
+      && pass "A: typed fan-group member ledger counted both workers" \
+      || fail "A: typed fan-group member ledger mismatch (worker_a=$FO_GROUP_MEMBER_A worker_b=$FO_GROUP_MEMBER_B)"
   else
-    fail "A: no fan-group state file created (neither typed JSON nor shell .state)"
+    fail "A: no typed fan-group JSON ledger created"
   fi
 
   # both siblings' completion events must be owned and processed. The shell path

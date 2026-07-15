@@ -6,6 +6,7 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { pty } from "@/lib/pty/pty-client";
+import { findRunnerAgentStateBySession } from "@/lib/runner-v2/agent-state";
 
 export const dynamic = "force-dynamic";
 
@@ -37,14 +38,25 @@ interface InspectData {
   };
 }
 
-// Helper: get state file path for a session
-function getSessionStatePath(sessionName: string): string | null {
+interface SessionStateMatch {
+  statePath: string;
+  state: unknown;
+  isRunnerAgentState: boolean;
+}
+
+// Runner-agent state has a typed canonical owner. The remaining scan below is
+// deliberately only for generic JSON/YAML debug artifacts, never `.state`.
+function getSessionState(sessionName: string): SessionStateMatch | null {
+  const runnerState = findRunnerAgentStateBySession(config.stateDir, sessionName);
+  if (runnerState) {
+    return { statePath: runnerState.path, state: runnerState.state, isRunnerAgentState: true };
+  }
   try {
     const stateDir = join(AGENTS_DIR, "state");
     if (!existsSync(stateDir)) return null;
 
     const stateFiles = readdirSync(stateDir).filter((f: string) =>
-      f.endsWith(".json") || f.endsWith(".yaml") || f.endsWith(".yml") || f.endsWith(".state")
+      f.endsWith(".json") || f.endsWith(".yaml") || f.endsWith(".yml")
     );
     for (const file of stateFiles) {
       const filePath = join(stateDir, file);
@@ -54,7 +66,7 @@ function getSessionStatePath(sessionName: string): string | null {
             content.includes(`session: "${sessionName}"`) ||
             content.includes(`'${sessionName}'`) ||
             content.includes(`agent_id: ${sessionName}`)) {
-          return filePath;
+          return { statePath: filePath, state: undefined, isRunnerAgentState: false };
         }
       } catch {
         // skip invalid files
@@ -116,15 +128,17 @@ export const GET = withErrorHandling(async (
         const runData = JSON.parse(readFileSync(runJsonPath, "utf-8"));
         const agentInfo = runData.agents?.find((a: AgentInfo) => a.id === agentId);
         if (agentInfo?.session) {
-          const statePath = getSessionStatePath(agentInfo.session);
-          if (statePath && existsSync(statePath)) {
-            inspectData.stateRaw = readStateRaw(statePath);
-            inspectData.statePath = statePath;
+          const stateMatch = getSessionState(agentInfo.session);
+          if (stateMatch && existsSync(stateMatch.statePath)) {
+            inspectData.stateRaw = readStateRaw(stateMatch.statePath);
+            inspectData.statePath = stateMatch.statePath;
 
             try {
-              inspectData.state = JSON.parse(readFileSync(statePath, "utf-8"));
+              inspectData.state = stateMatch.isRunnerAgentState
+                ? stateMatch.state
+                : JSON.parse(readFileSync(stateMatch.statePath, "utf-8"));
             } catch {
-              // not json, keep raw
+              // Keep the raw diagnostic view when a generic debug artifact is invalid.
             }
           }
 

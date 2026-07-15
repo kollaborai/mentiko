@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import {
@@ -11,27 +11,41 @@ import {
 } from "@/lib/runner-v2/fan-group";
 
 export function fanGroupPath(stateDir: string, groupId: string): string {
+  assertValidGroupId(groupId);
   return join(stateDir, "fan-groups", `${groupId}.json`);
 }
 
-export function fanGroupStatePath(stateDir: string, groupId: string): string {
+function legacyFanGroupStatePath(stateDir: string, groupId: string): string {
+  assertValidGroupId(groupId);
   return join(stateDir, "fan-groups", `${groupId}.state`);
 }
 
 export function writeFanGroup(stateDir: string, group: FanGroupState): void {
-  if (existsSync(fanGroupStatePath(stateDir, group.id)) && !existsSync(fanGroupPath(stateDir, group.id))) {
-    writeStateAtomic(fanGroupStatePath(stateDir, group.id), group);
-    return;
-  }
+  assertNoLegacyFanGroupState(stateDir, group.id);
+  assertFanGroupState(group, group.id);
   writeJsonAtomic(fanGroupPath(stateDir, group.id), group);
 }
 
 export function readFanGroup(stateDir: string, groupId: string): FanGroupState | null {
+  assertNoLegacyFanGroupState(stateDir, groupId);
   const path = fanGroupPath(stateDir, groupId);
-  if (existsSync(path)) return JSON.parse(readFileSync(path, "utf8")) as FanGroupState;
-  const statePath = fanGroupStatePath(stateDir, groupId);
-  if (existsSync(statePath)) return parseStateFile(groupId, readFileSync(statePath, "utf8"));
-  return null;
+  if (!existsSync(path)) return null;
+  return parseFanGroupJson(groupId, readFileSync(path, "utf8"));
+}
+
+/** Canonical fan-group inventory. Legacy text files are rejected, never parsed. */
+export function listFanGroups(stateDir: string): FanGroupState[] {
+  const dir = join(stateDir, "fan-groups");
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir);
+  const legacy = files.find((file) => file.endsWith(".state"));
+  if (legacy) {
+    throw new Error(`unsupported legacy fan-group state: ${join(dir, legacy)}`);
+  }
+  return files
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => readFanGroup(stateDir, file.slice(0, -".json".length)))
+    .filter((group): group is FanGroupState => group !== null);
 }
 
 export function createFanGroup(stateDir: string, input: FanGroupCreateInput): FanGroupState {
@@ -41,9 +55,8 @@ export function createFanGroup(stateDir: string, input: FanGroupCreateInput): Fa
 }
 
 export function createFanGroupIfAbsent(stateDir: string, group: FanGroupState): FanGroupState {
-  const path = existsSync(fanGroupStatePath(stateDir, group.id)) && !existsSync(fanGroupPath(stateDir, group.id))
-    ? fanGroupStatePath(stateDir, group.id)
-    : fanGroupPath(stateDir, group.id);
+  assertNoLegacyFanGroupState(stateDir, group.id);
+  const path = fanGroupPath(stateDir, group.id);
   return withFanGroupLock(path, () => {
     const existing = readFanGroup(stateDir, group.id);
     if (existing) {
@@ -74,9 +87,8 @@ export function completeFanGroupMemberLocked(
   input: Omit<FanGroupCompletionInput, "group"> & { groupId: string },
   acceptLaunch?: (plan: FanGroupCompletionPlan) => void,
 ): FanGroupCompletionPlan | null {
-  const path = existsSync(fanGroupStatePath(stateDir, input.groupId)) && !existsSync(fanGroupPath(stateDir, input.groupId))
-    ? fanGroupStatePath(stateDir, input.groupId)
-    : fanGroupPath(stateDir, input.groupId);
+  assertNoLegacyFanGroupState(stateDir, input.groupId);
+  const path = fanGroupPath(stateDir, input.groupId);
   return withFanGroupLock(path, () => {
     const group = readFanGroup(stateDir, input.groupId);
     if (!group) return null;
@@ -107,58 +119,84 @@ function writeJsonAtomic(path: string, data: unknown): void {
   renameSync(tmp, path);
 }
 
-function writeStateAtomic(path: string, group: FanGroupState): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp.${process.pid}`;
-  const lines = [
-    `status: ${group.status}`,
-    `started: ${new Date().toISOString()}`,
-    `event: ${group.event}`,
-    `fan_out_agents: ${group.fanOutAgents.join(" ")}`,
-    `fan_in_agent: ${group.fanInAgent || ""}`,
-    `wait_for: ${group.waitFor}`,
-    `quorum: ${group.quorum || 0}`,
-    `on_error: ${group.onError || ""}`,
-    `completed: ${group.completed}`,
-    `failed: ${group.failed}`,
-    `total: ${group.total}`,
-    ...(group.chainPath ? [`chain_file: ${group.chainPath}`] : []),
-    ...(group.runId ? [`run_id: ${group.runId}`] : []),
-    ...Object.entries(group.members || {}).map(([agent, status]) => `member_${agent}: ${status}`),
-    "",
-  ];
-  writeFileSync(tmp, lines.join("\n"));
-  renameSync(tmp, path);
+function assertNoLegacyFanGroupState(stateDir: string, groupId: string): void {
+  const legacyPath = legacyFanGroupStatePath(stateDir, groupId);
+  if (existsSync(legacyPath)) {
+    throw new Error(`unsupported legacy fan-group state: ${legacyPath}`);
+  }
 }
 
-function parseStateFile(groupId: string, body: string): FanGroupState {
-  const fields: Record<string, string> = {};
-  const members: Record<string, "complete" | "failed"> = {};
-  for (const line of body.split("\n")) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-    if (key.startsWith("member_") && (value === "complete" || value === "failed")) {
-      members[key.slice("member_".length)] = value;
-    } else {
-      fields[key] = value;
-    }
+function parseFanGroupJson(groupId: string, body: string): FanGroupState {
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    throw new Error(`invalid fan-group JSON: ${groupId}`);
   }
-  return {
-    id: groupId,
-    status: fields.status === "complete" || fields.status === "triggered" ? fields.status : "running",
-    event: fields.event || "",
-    fanOutAgents: (fields.fan_out_agents || "").split(/\s+/).filter(Boolean),
-    fanInAgent: fields.fan_in_agent || undefined,
-    waitFor: fields.wait_for || "all",
-    quorum: Number.parseInt(fields.quorum || "0", 10) || 0,
-    onError: fields.on_error || undefined,
-    completed: Number.parseInt(fields.completed || "0", 10) || 0,
-    failed: Number.parseInt(fields.failed || "0", 10) || 0,
-    total: Number.parseInt(fields.total || "0", 10) || 0,
-    chainPath: fields.chain_file,
-    runId: fields.run_id,
-    members,
-  };
+  return assertFanGroupState(value, groupId);
+}
+
+function assertFanGroupState(value: unknown, expectedId: string): FanGroupState {
+  if (!isRecord(value)
+    || value.id !== expectedId
+    || !isFanGroupStatus(value.status)
+    || typeof value.event !== "string"
+    || !Array.isArray(value.fanOutAgents)
+    || !value.fanOutAgents.every(isNonEmptyString)
+    || new Set(value.fanOutAgents).size !== value.fanOutAgents.length
+    || !isWaitFor(value.waitFor)
+    || !isNonNegativeInteger(value.quorum)
+    || !isNonNegativeInteger(value.completed)
+    || !isNonNegativeInteger(value.failed)
+    || !isNonNegativeInteger(value.total)
+    || value.total !== value.fanOutAgents.length
+    || value.completed + value.failed > value.total
+    || (value.fanInAgent !== undefined && !isNonEmptyString(value.fanInAgent))
+    || (value.onError !== undefined && !isNonEmptyString(value.onError))
+    || (value.chainPath !== undefined && !isNonEmptyString(value.chainPath))
+    || (value.runId !== undefined && !isNonEmptyString(value.runId))
+    || !isMembers(value.members, value.fanOutAgents, value.completed, value.failed)) {
+    throw new Error(`invalid fan-group JSON: ${expectedId}`);
+  }
+  return value as unknown as FanGroupState;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isFanGroupStatus(value: unknown): value is FanGroupState["status"] {
+  return value === "running" || value === "complete" || value === "triggered";
+}
+
+function isWaitFor(value: unknown): value is "all" | "any" | "quorum" {
+  return value === "all" || value === "any" || value === "quorum";
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isMembers(
+  value: unknown,
+  fanOutAgents: string[],
+  completed: number,
+  failed: number,
+): value is Record<string, "complete" | "failed"> {
+  if (!isRecord(value)) return false;
+  const members = Object.entries(value);
+  return members.length === completed + failed
+    && members.every(([agentId, status]) => fanOutAgents.includes(agentId) && (status === "complete" || status === "failed"))
+    && members.filter(([, status]) => status === "complete").length === completed
+    && members.filter(([, status]) => status === "failed").length === failed;
+}
+
+function assertValidGroupId(groupId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(groupId)) {
+    throw new Error(`invalid fan-group id: ${groupId}`);
+  }
 }

@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export MENTIKO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/../lib/config.sh"
-source "$SCRIPT_DIR/../lib/agent-profile.sh"
+source "$SCRIPT_DIR/../lib/agent-profile-client.sh"
 
 SESSION_A="${1:-}"
 SESSION_B="${2:-}"
@@ -37,23 +37,21 @@ DATE_SUFFIX=$(date +%Y%m%d-%H%M%S)
 
 # resolve profile: --profile flag > namespace default
 if [[ -z "$PROFILE_ID" ]]; then
-    PROFILE_ID=$(find_default_profile)
+    PROFILE_JSON=$(agent_profile_default_json "$AGENT_PROFILES_DIR") || exit 1
+else
+    PROFILE_JSON=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE_ID") || exit 1
 fi
 
-if [[ -z "$PROFILE_ID" ]]; then
+PROFILE_ID=$(printf '%s' "$PROFILE_JSON" | jq -r '.id // empty')
+PROFILE_FILE=$(printf '%s' "$PROFILE_JSON" | jq -r '.path // empty')
+PROFILE_NAME=$(printf '%s' "$PROFILE_JSON" | jq -r '.name // empty')
+if [[ -z "$PROFILE_ID" || -z "$PROFILE_FILE" ]]; then
     echo "  error: no agent profile found"
     echo "  set a default in settings or pass --profile <id>"
     exit 1
 fi
 
-PROFILE_FILE="$NAMESPACE_ROOT/agent-profiles/${PROFILE_ID}.json"
-if [[ ! -f "$PROFILE_FILE" ]]; then
-    echo "  error: profile '$PROFILE_ID' not found"
-    exit 1
-fi
-
-CLI_CMD=$(build_profile_command "$PROFILE_FILE" --interactive)
-PROFILE_NAME=$(jq -r '.name // .id' "$PROFILE_FILE")
+CLI_CMD=$(agent_profile_command "$PROFILE_FILE" true "${NAMESPACE_ID:-default}" "${ORG_ID:-default}") || exit 1
 
 # full session names
 FULL_A="${SESSION_A}-${DATE_SUFFIX}"

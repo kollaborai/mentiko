@@ -7,6 +7,12 @@
 #   find_conversation_files <log_dir> <started_at_epoch> [cli]
 
 # -----------------------------------------------------------------------
+# Agent profile parsing belongs to runner-v2. This script only consumes its
+# typed transcript projection when a profile path is supplied.
+_SLR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_SLR_SCRIPT_DIR/agent-profile-client.sh"
+
+# -----------------------------------------------------------------------
 # encode cwd into CLI-specific slug
 # -----------------------------------------------------------------------
 encode_cwd_slug() {
@@ -50,13 +56,15 @@ resolve_log_dir() {
     local cli="" log_path=""
 
     if [[ -f "$profile_or_cli" ]]; then
-        cli=$(jq -r '.cli // ""' "$profile_or_cli" 2>/dev/null || echo "")
-        log_path=$(jq -r '.log_path // ""' "$profile_or_cli" 2>/dev/null || echo "")
+        local profile_json
+        profile_json="$(agent_profile_transcript_json "$profile_or_cli" 2>/dev/null || true)"
+        cli=$(printf '%s' "$profile_json" | jq -r '.cli // ""' 2>/dev/null)
+        log_path=$(printf '%s' "$profile_json" | jq -r '.logPath // ""' 2>/dev/null)
     else
         cli="$profile_or_cli"
     fi
 
-    [[ -z "$cli" ]] && cli="claude"
+    [[ -z "$cli" ]] && return 0
 
     # Transcript storage is an agent-profile contract. Never guess another
     # provider's directory from the CLI name; missing config degrades capture.

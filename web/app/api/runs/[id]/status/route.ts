@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
+import { getNamespaceConfig, getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { readAgentStates, mergeAgentStates } from "@/lib/runs/run-state";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
@@ -17,6 +17,7 @@ export const GET = withErrorHandling(async (
   const { id: runId } = await context.params;
   const namespaceId = await getNamespaceIdFromRequest(req);
   const orgId = await getOrgIdFromRequest(req);
+  const namespaceConfig = await getNamespaceConfig(req);
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);
   const acl = await checkRunAccess(req, runId, runsDir);
   if (!acl.ok) {
@@ -35,7 +36,7 @@ export const GET = withErrorHandling(async (
 
   // read state files and merge for real-time agent statuses
   // pass run.status so stale state files don't override terminal agent statuses
-  const agentStates = readAgentStates(runDir);
+  const agentStates = readAgentStates(namespaceConfig.stateDir, runId);
   const agents = mergeAgentStates(run.agents || [], agentStates, run.status);
 
   // annotate each agent with heartbeat staleness

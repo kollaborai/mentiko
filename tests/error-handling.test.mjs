@@ -16,6 +16,7 @@ import { dirname, join } from "path";
 const TMP = `/tmp/test-error-handling-${process.pid}`;
 const REPO_ROOT = join(import.meta.dirname, "..");
 const SCRIPT = join(REPO_ROOT, "lib", "error-handling.sh");
+const RUN_ID = "run-error-test";
 
 const tests = [];
 let passed = 0;
@@ -59,7 +60,7 @@ function resetTmp() {
  * Returns { stdout, stderr, status }.
  */
 function runBash(snippet, opts = {}) {
-  const env = { ...process.env, ...opts.env };
+  const env = { ...process.env, MENTIKO_CODE_ROOT: REPO_ROOT, RUN_ID, ...opts.env };
   try {
     const stdout = execFileSync("bash", ["-c", snippet], {
       encoding: "utf-8",
@@ -74,6 +75,24 @@ function runBash(snippet, opts = {}) {
       status: err.status || 1,
     };
   }
+}
+
+function statePath(stateDir, sessionPrefix) {
+  const normalize = (value) => value.replaceAll("-", "_").replaceAll(/[^a-zA-Z0-9_]/g, "_");
+  return join(stateDir, `${normalize(sessionPrefix)}_${normalize(RUN_ID)}.state`);
+}
+
+function writeState(stateDir, sessionPrefix, retryAttempt = "0", fields = {}) {
+  const state = {
+    status: "running",
+    session: `${sessionPrefix}-${RUN_ID}`,
+    agent_id: sessionPrefix,
+    retry_attempt: String(retryAttempt),
+    ...fields,
+  };
+  writeFileSync(statePath(stateDir, sessionPrefix), Object.entries(state)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n") + "\n");
 }
 
 // ============================================================
@@ -247,7 +266,7 @@ test("get-agent-retry-count reads retry_attempt from state file", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, "my_agent.state"), "status: running\nretry_attempt: 3\n");
+  writeState(stateDir, "my_agent", "3");
   const result = runBash(`
     source "${SCRIPT}"
     STATE_DIR="${stateDir}"
@@ -256,28 +275,24 @@ test("get-agent-retry-count reads retry_attempt from state file", () => {
   assert(result.stdout === "3", `expected "3", got "${result.stdout}"`);
 });
 
-test("get-agent-retry-count outputs empty when retry_attempt key absent (BUG: || echo 0 is dead code)", () => {
-  // BUG in source: `grep "..." file | sed "..." || echo "0"`
-  // When grep finds no match it exits 1, but the pipe to sed means sed runs
-  // with empty stdin and exits 0. so || never triggers. output is empty.
+test("get-agent-retry-count returns zero when retry metadata is absent", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, "agent.state"), "status: running\n");
+  writeFileSync(statePath(stateDir, "agent"), "status: running\nsession: agent-run-error-test\nagent_id: agent\n");
   const result = runBash(`
     source "${SCRIPT}"
     STATE_DIR="${stateDir}"
     get-agent-retry-count "agent"
   `);
-  // documents actual (broken) behavior -- should be "0" when fixed
-  assert(result.stdout === "", `expected "" (bug: dead || echo "0"), got "${result.stdout}"`);
+  assert(result.stdout === "0", `expected "0", got "${result.stdout}"`);
 });
 
 test("increment-retry-count bumps retry_attempt and outputs new value", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, "worker.state"), "status: running\nretry_attempt: 2\n");
+  writeState(stateDir, "worker", "2");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -287,11 +302,11 @@ test("increment-retry-count bumps retry_attempt and outputs new value", () => {
   assert(result.stdout === "3", `expected "3", got "${result.stdout}"`);
 
   // verify the file was actually updated
-  const contents = readFileSync(join(stateDir, "worker.state"), "utf-8");
+  const contents = readFileSync(statePath(stateDir, "worker"), "utf-8");
   assert(contents.includes("retry_attempt: 3"), `file should contain "retry_attempt: 3", got: ${contents}`);
 });
 
-test("increment-retry-count returns 0 when state file missing", () => {
+test("increment-retry-count fails closed when state file is missing", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
@@ -300,14 +315,15 @@ test("increment-retry-count returns 0 when state file missing", () => {
     STATE_DIR="${stateDir}"
     increment-retry-count "nonexistent"
   `);
-  assert(result.stdout === "0", `expected "0", got "${result.stdout}"`);
+  assert(result.status !== 0, `expected a missing-state failure, got ${result.status}`);
+  assert(result.stderr.includes("does not exist"), `expected missing-state error, got "${result.stderr}"`);
 });
 
 test("increment-retry-count preserves other state fields", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, "preserve.state"), "status: running\nretry_attempt: 1\nextra: value\n");
+  writeState(stateDir, "preserve", "1", { emits: "preserved-event" });
 
   runBash(`
     source "${SCRIPT}"
@@ -315,9 +331,9 @@ test("increment-retry-count preserves other state fields", () => {
     increment-retry-count "preserve"
   `);
 
-  const contents = readFileSync(join(stateDir, "preserve.state"), "utf-8");
+  const contents = readFileSync(statePath(stateDir, "preserve"), "utf-8");
   assert(contents.includes("status: running"), `should preserve "status: running"`);
-  assert(contents.includes("extra: value"), `should preserve "extra: value"`);
+  assert(contents.includes("emits: preserved-event"), `should preserve "emits: preserved-event"`);
   assert(contents.includes("retry_attempt: 2"), `should update retry_attempt to 2`);
 });
 
@@ -325,7 +341,7 @@ test("increment-retry-count works sequentially from 0 to 3", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(join(stateDir, "seq.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "seq", "0");
 
   for (let i = 1; i <= 3; i++) {
     const result = runBash(`
@@ -336,7 +352,7 @@ test("increment-retry-count works sequentially from 0 to 3", () => {
     assert(result.stdout === String(i), `expected "${i}", got "${result.stdout}"`);
   }
 
-  const finalContents = readFileSync(join(stateDir, "seq.state"), "utf-8");
+  const finalContents = readFileSync(statePath(stateDir, "seq"), "utf-8");
   assert(finalContents.includes("retry_attempt: 3"), `final should be retry_attempt: 3`);
 });
 
@@ -447,7 +463,7 @@ test("handle-agent-error outputs error header with retry info", () => {
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "error: something broke\n");
 
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -476,7 +492,7 @@ test("handle-agent-error schedules retry when under max_retries", () => {
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "error: transient failure\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -489,7 +505,7 @@ test("handle-agent-error schedules retry when under max_retries", () => {
   assert(result.stdout.includes("scheduling retry"), `expected "scheduling retry", got: ${result.stdout}`);
 
   // verify retry count was incremented
-  const stateContents = readFileSync(join(stateDir, "agent_1.state"), "utf-8");
+  const stateContents = readFileSync(statePath(stateDir, "agent-1"), "utf-8");
   assert(stateContents.includes("retry_attempt: 1"), `expected retry_attempt: 1, got: ${stateContents}`);
 });
 
@@ -514,7 +530,7 @@ test("handle-agent-error routes to on_error handler when max retries reached", (
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "fatal: unrecoverable\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 1\n");
+  writeState(stateDir, "agent-1", "1");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -528,7 +544,7 @@ test("handle-agent-error routes to on_error handler when max retries reached", (
   assert(result.stdout.includes("error-handler-agent"), `expected handler agent name, got: ${result.stdout}`);
 
   // verify state was marked failed
-  const stateContents = readFileSync(join(stateDir, "agent_1.state"), "utf-8");
+  const stateContents = readFileSync(statePath(stateDir, "agent-1"), "utf-8");
   assert(stateContents.includes("status: failed"), `expected "status: failed", got: ${stateContents}`);
   assert(stateContents.includes("failed_reason: error"), `expected "failed_reason: error", got: ${stateContents}`);
 });
@@ -550,7 +566,7 @@ test("handle-agent-error returns 1 when no handler configured and retries exhaus
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "error: total failure\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 1\n");
+  writeState(stateDir, "agent-1", "1");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -588,7 +604,7 @@ test("handle-agent-error uses on_timeout for timeout error type", () => {
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "timeout: operation exceeded limit\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 1\n");
+  writeState(stateDir, "agent-1", "1");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -622,7 +638,7 @@ test("handle-agent-error falls back to on_error when on_timeout not set", () => 
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "timeout: deadline exceeded\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -652,7 +668,7 @@ test("handle-agent-error uses chain-level default error handler", () => {
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "error: chain level\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -679,7 +695,7 @@ test("handle-agent-error handles missing report file gracefully", () => {
     }],
   }));
 
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -706,7 +722,7 @@ test("handle-agent-error defaults to 0 max retries when retry config missing", (
 
   const reportFile = join(TMP, "report.txt");
   writeFileSync(reportFile, "error: no retry config\n");
-  writeFileSync(join(stateDir, "agent_1.state"), "retry_attempt: 0\n");
+  writeState(stateDir, "agent-1", "0");
 
   const result = runBash(`
     source "${SCRIPT}"
@@ -750,23 +766,20 @@ test("calculate-retry-delay linear capped by max_delay", () => {
   assert(result.stdout === "200", `expected "200", got "${result.stdout}"`);
 });
 
-test("state file dash-to-underscore conversion for state_id", () => {
+test("typed state key normalizes a dash-containing session prefix", () => {
   resetTmp();
   const stateDir = join(TMP, "state");
   mkdirSync(stateDir, { recursive: true });
-  // agent id "my-cool-agent" -> state file "my_cool_agent.state"
-  writeFileSync(join(stateDir, "my_cool_agent.state"), "retry_attempt: 5\n");
+  writeState(stateDir, "my-cool-agent", "5");
 
   const result = runBash(`
     source "${SCRIPT}"
     STATE_DIR="${stateDir}"
     get-agent-retry-count "my-cool-agent"
   `);
-  // get-agent-retry-count takes the raw state_id, no conversion in that function
-  // the conversion happens in handle-agent-error. so we test with "my_cool_agent" directly.
-  assert(result.stdout === "0", `expected "0" (no conversion in get fn), got "${result.stdout}"`);
+  assert(result.stdout === "5", `expected "5", got "${result.stdout}"`);
 
-  // test with the underscore version
+  // The historical normalized spelling resolves the same TypeScript-owned key.
   const result2 = runBash(`
     source "${SCRIPT}"
     STATE_DIR="${stateDir}"

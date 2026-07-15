@@ -138,6 +138,42 @@ describe("typed linked-task synchronization", () => {
     });
   });
 
+  it("persists a runner-v2 blocked reason, writes a terminal receipt, and never treats it as running", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-run-task-blocked-"));
+    const runJsonPath = createRunRecordFile(root, {
+      id: "run-blocked",
+      chain: "typed-chain",
+      goal: "surface readiness failure",
+      started: "2026-07-15T00:00:00Z",
+      status: "blocked",
+      blockedReason: "startup_recovery:blocked: authentication required",
+      taskId: "TASK-BLOCKED",
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-blocked", status: "blocked", lastMessage: "authentication required" }],
+    }).runJsonPath;
+    const calls: Array<{ method: string; body?: string }> = [];
+    const fetchImpl = jest.fn(async (_input: string | URL | Request, init: RequestInit = {}) => {
+      calls.push({ method: init.method || "GET", body: init.body ? String(init.body) : undefined });
+      if (!init.method || init.method === "GET") {
+        return jsonResponse({ data: { issue: { status: "open", metadata: { auto_run: true } } } });
+      }
+      return jsonResponse({});
+    }) as typeof fetch;
+
+    const result = await syncLinkedTaskFromRun(runJsonPath, "blocked", taskContext(fetchImpl));
+
+    expect(result).toMatchObject({ status: "updated", commentWritten: true });
+    expect(calls.map((call) => call.method)).toEqual(["GET", "PATCH", "POST"]);
+    expect(JSON.parse(calls[1].body || "{}")).toMatchObject({
+      metadata: {
+        last_run_id: "run-blocked",
+        last_run_status: "blocked",
+        last_run_error: "startup_recovery:blocked: authentication required",
+        last_run_blocked_reason: "startup_recovery:blocked: authentication required",
+      },
+    });
+    expect(calls[2].body).toContain("Blocked reason: startup_recovery:blocked: authentication required");
+  });
+
   it("rejects an unsupported generation kind without mutating the task", async () => {
     const root = mkdtempSync(join(tmpdir(), "mentiko-run-task-unsupported-"));
     const runJsonPath = createRunRecordFile(root, {

@@ -1163,38 +1163,21 @@ describe("runner-v2 completion entrypoint", () => {
     expect(run.agents?.[0]).toMatchObject({ id: "verifier", status: "complete" });
   });
 
-  it("accounts shell-state fan-group members through typed completion without normal routing", () => {
+  it("fails closed on a legacy fan-group state file", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root);
     emitVerifierEvent(fixture.eventsDir);
 
-    // v1-format fan-group state file listing this agent as a running member
     const groupsDir = join(fixture.stateDir, "fan-groups");
     mkdirSync(groupsDir, { recursive: true });
-    writeFileSync(join(groupsDir, "review-fan-1.state"), [
-      "status: running",
-      "started: 2026-07-04T00:00:00Z",
-      "event: fan-out-review",
-      "fan_out_agents: verifier other-agent",
-      "fan_in_agent: merger",
-      "wait_for: all",
-      "quorum: 0",
-      "on_error: ",
-      "completed: 0",
-      "failed: 0",
-      "total: 2",
-      "",
-    ].join("\n"));
+    writeFileSync(join(groupsDir, "review-fan-1.state"), "status: running\n");
 
-    const result = runRunnerV2CompletionEntrypoint({
+    expect(() => runRunnerV2CompletionEntrypoint({
       sessionName: "verifier-run-123",
       chainPath: fixture.chainPath,
       env: routedEnv(fixture),
       now: new Date("2026-07-04T00:00:00.000Z"),
-    });
-    expect(result).toMatchObject({ status: "handled", decision: "fan-group-member" });
-    expect(readFileSync(join(groupsDir, "review-fan-1.state"), "utf8")).toContain("completed: 1");
-    expect(readFileSync(join(groupsDir, "review-fan-1.state"), "utf8")).toContain("member_verifier: complete");
+    })).toThrow(/unsupported legacy fan-group state/);
     expect(readRunJson(fixture.runJsonPath).status).toBe("running");
   });
 
@@ -1205,21 +1188,34 @@ describe("runner-v2 completion entrypoint", () => {
 
     const groupsDir = join(fixture.stateDir, "fan-groups");
     mkdirSync(groupsDir, { recursive: true });
-    // triggered group: fan-in already claimed, completion must proceed typed
-    writeFileSync(join(groupsDir, "done-fan.state"), [
-      "status: triggered",
-      "fan_out_agents: verifier",
-      "",
-    ].join("\n"));
+    // Triggered group: fan-in already claimed, completion must proceed typed.
+    writeJson(join(groupsDir, "done-fan.json"), {
+      id: "done-fan",
+      status: "complete",
+      event: "fan-out-review",
+      fanOutAgents: ["verifier"],
+      fanInAgent: "merger",
+      waitFor: "all",
+      quorum: 0,
+      completed: 1,
+      failed: 0,
+      total: 1,
+      members: { verifier: "complete" },
+    });
     // typed-format group scoped to another run
     writeJson(join(groupsDir, "other-run.json"), {
       id: "other-run",
       status: "running",
+      event: "fan-out-review",
       fanOutAgents: ["verifier"],
+      fanInAgent: "merger",
+      waitFor: "all",
+      quorum: 0,
       runId: "run-999",
       completed: 0,
       failed: 0,
       total: 1,
+      members: {},
     });
 
     const result = runRunnerV2CompletionEntrypoint({
@@ -1241,11 +1237,16 @@ describe("runner-v2 completion entrypoint", () => {
     writeJson(join(groupsDir, "typed-fan.json"), {
       id: "typed-fan",
       status: "running",
+      event: "fan-out-review",
       fanOutAgents: ["verifier", "other"],
+      fanInAgent: "merger",
+      waitFor: "all",
+      quorum: 0,
       runId: "run-123",
       completed: 0,
       failed: 0,
       total: 2,
+      members: {},
     });
 
     const result = runRunnerV2CompletionEntrypoint({

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import config from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { parseRunnerEventStreamFile, runnerEventBelongsToStream } from "./runner-event-stream";
+import { readRunnerAgentState, type RunnerAgentState } from "@/lib/runner-v2/agent-state";
 
 export const dynamic = "force-dynamic";
 
@@ -27,35 +28,9 @@ interface StreamConnection {
   lastJobStatus: Map<string, string>;
 }
 
-interface AgentState {
-  status: string;
-  session: string;
-  agent_id: string;
-  emits?: string;
-  started?: string;
-  completed?: string;
-}
+type AgentState = RunnerAgentState;
 
 const activeStreams = new Map<string, StreamConnection>();
-
-function parseStateFile(content: string, filename: string): AgentState {
-  const lines = content.split("\n").reduce((acc, line) => {
-    const [key, ...rest] = line.split(":");
-    if (key && rest.length > 0) {
-      acc[key.trim()] = rest.join(":").trim();
-    }
-    return acc;
-  }, {} as Record<string, string>);
-
-  return {
-    status: lines.status || "unknown",
-    session: lines.session || "",
-    agent_id: lines.agent_id || filename.replace(".state", ""),
-    emits: lines.emits,
-    started: lines.started,
-    completed: lines.completed,
-  };
-}
 
 function sendEvent(controller: ReadableStreamDefaultController, event: StreamEvent) {
   try {
@@ -110,8 +85,8 @@ function setupWatchers(streamId: string): () => void {
       if (!existsSync(filePath)) return;
 
       try {
-        const content = readFileSync(filePath, "utf-8");
-        const newState = parseStateFile(content, filename);
+        const newState = readRunnerAgentState(filePath);
+        if (!newState) return;
         const oldState = current.lastStates.get(filename);
 
         if (!oldState ||

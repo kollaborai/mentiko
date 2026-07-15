@@ -155,9 +155,9 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/chains/generate-v2` | Generate chain from prompt with agent catalog | cliPipe + getAllStandaloneAgents + getTemplate + getChainSchema | checkAuth | Yes | chains/new | |
 | POST | `/api/chains/recommend` | Recommend existing chain or suggest generation | getAllChains + buildChainSummary + cliPipe | checkAuth | No | (not used in web/) | expects complex task object |
 | POST | `/api/chains/run` | Execute chain (spawn detached process) | Filesystem: runsDir + chain-runner.sh spawn | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | executor, runId params not documented |
-| POST | `/api/chains/run-batch` | Run multiple chains in parallel/sequential mode | Filesystem: batches/ + multi-chain-runner.sh | checkAuth | Yes | batch-runner | |
+| POST | `/api/chains/run-batch` | Run multiple chains in parallel/sequential mode | Typed batch record + typed detached batch worker | checkAuth | Yes | batch-runner | |
 | GET | `/api/chains/run-batch` | List batches or get specific batch status | Filesystem: batches/ | checkAuth | Yes | batch-runner | |
-| DELETE | `/api/chains/run-batch` | Cancel running batch by killing PIDs | Filesystem: batch pid files + process.kill() | checkAuth | Yes | batch-runner | |
+| DELETE | `/api/chains/run-batch` | Request batch cancellation; its typed worker terminates only the child it owns | Typed batch record + typed worker-owned child process | checkAuth | Yes | batch-runner | |
 
 ### Chains by ID
 

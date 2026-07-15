@@ -112,6 +112,7 @@ export function toTask(issue: TaskRecord): Task {
           ? metadata.last_run_decision_required
           : undefined,
       last_run_error: executionRunId ? stringValue(metadata.last_run_error) : undefined,
+      last_run_blocked_reason: executionRunId ? stringValue(metadata.last_run_blocked_reason) : undefined,
       last_run_completed: executionRunId ? stringValue(metadata.last_run_completed) : undefined,
       auto_run_retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : undefined,
       auto_run_paused: (metadata.auto_run_paused as boolean) ?? false,

@@ -132,6 +132,12 @@ const TERMINAL_PHASES = new Set<AgentAttemptPhase>([
   "released",
 ]);
 
+/** Terminal attempts are historical evidence; a stale live-state overlay must
+ * never be allowed to erase or outrank them during launch admission. */
+export function isTerminalAgentAttemptPhase(phase: AgentAttemptPhase): boolean {
+  return TERMINAL_PHASES.has(phase);
+}
+
 const NEXT_DESIRED_PHASE: Partial<Record<AgentAttemptPhase, AgentAttemptPhase>> = {
   created: "lease_acquired",
   lease_acquired: "pty_allocated",
@@ -164,7 +170,7 @@ export function createAgentAttempt(input: {
   );
   const latest = matching[matching.length - 1];
   const attemptId = input.attemptId || (
-    latest && TERMINAL_PHASES.has(latest.phase)
+    latest && isTerminalAgentAttemptPhase(latest.phase)
       ? `${input.runId}:${input.agentId}:${matching.length + 1}`
       : latest?.id || `${input.runId}:${input.agentId}:1`
   );
@@ -218,7 +224,7 @@ export function adoptAgentAttemptForCompletion(input: {
   // completion_failed while the agent is still working — when the real
   // completion evidence arrives, record it on a fresh adopted attempt instead
   // of rejecting the legal-history transition and aborting the whole handoff.
-  if (existing && (existing.phase === "completed" || !TERMINAL_PHASES.has(existing.phase))) {
+  if (existing && (existing.phase === "completed" || !isTerminalAgentAttemptPhase(existing.phase))) {
     return existing;
   }
 
@@ -426,7 +432,7 @@ export function reconcileAgentAttempt(input: {
 }): AgentAttemptRecord {
   const now = input.now || new Date();
   const attempt = readAttempt(input.runJsonPath, input.attemptId);
-  if (TERMINAL_PHASES.has(attempt.phase)) return attempt;
+  if (isTerminalAgentAttemptPhase(attempt.phase)) return attempt;
   if (!attempt.desiredPhase || attempt.desiredPhase === attempt.observedPhase) return attempt;
   if (now.getTime() - new Date(attempt.updatedAt).getTime() < input.reconciliationWindowMs) return attempt;
 
@@ -581,7 +587,7 @@ function markLatestAttemptFailed(input: {
   // completion failure only applies to an attempt that actually reached a running
   // agent; leave already-terminal or pre-instructions attempts untouched instead
   // of throwing an invalid-transition error into the live completion path.
-  if (TERMINAL_PHASES.has(attempt.phase)) return attempt;
+  if (isTerminalAgentAttemptPhase(attempt.phase)) return attempt;
   if (!canTransition(attempt.phase, "completion_failed")) return attempt;
   return transitionAgentAttempt({
     runJsonPath: input.runJsonPath,

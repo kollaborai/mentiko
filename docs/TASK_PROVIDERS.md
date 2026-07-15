@@ -53,7 +53,7 @@ credentials never appear in:
   - API responses (masked as "........")
   - terminal output (sanitize-output.ts strips them)
   - log files
-  - temp files (agent-profile.sh sources + deletes immediately)
+  - typed agent-profile temporary env files (sourced + deleted immediately)
 
 ## API endpoints
 
@@ -101,4 +101,4 @@ credentials never appear in:
   web/components/workspace/workspace-settings.tsx  UI + migration
   web/app/api/workspaces/[id]/task-provider/route.ts  API endpoints
   web/app/api/secrets/route.ts             secrets CRUD
-  bin/secrets-resolve.mjs                  bash-side secret decryption
+  web/lib/secrets/secrets-store.ts         typed secret decryption

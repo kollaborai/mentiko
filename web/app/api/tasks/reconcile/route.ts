@@ -46,7 +46,7 @@ const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 // Any terminal run state hands off to the completion auditor, which owns the
 // retry-vs-decision-vs-close call. A genuine failure becomes the auditor's
 // "retry"; a run that needs a human becomes "decision".
-const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "failed", "stopped", "deleted", "unknown", "cancelled"]);
+const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "blocked", "failed", "stopped", "deleted", "unknown", "cancelled"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
 
@@ -269,7 +269,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           reason = lateRecovery.reason;
         } else if (run.status !== "running" && run.status !== "pending") {
           newStatus = run.status;
-          reason = `run.json status is ${run.status}`;
+          reason = terminalRunReason(run);
         } else {
           const agents = run.agents || [];
           if (allDeclaredAgentsComplete(run, runDir)) {
@@ -317,7 +317,13 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     if (newStatus) {
       try {
         const safeId = validateTaskId(issue.id);
-        const updatedMeta: Record<string, unknown> = { ...meta, last_run_status: newStatus };
+        const updatedMeta: Record<string, unknown> = {
+          ...meta,
+          last_run_status: newStatus,
+          ...(newStatus === "blocked"
+            ? { last_run_error: reason, last_run_blocked_reason: reason }
+            : { last_run_blocked_reason: undefined }),
+        };
         if (newStatus === "completed") {
           updatedMeta.last_run_completed = new Date().toISOString();
         }
@@ -470,7 +476,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         metadata: meta,
         runId,
         runStatus: run.status,
-        reason: `run.json status is ${run.status}`,
+        reason: terminalRunReason(run),
       });
       const retried = lifecycle.effects.some((effect) => effect.type === "retry_execution");
       if (retried) {
@@ -632,10 +638,23 @@ async function applyExecutionLifecycle(input: {
   if (currentMetadata.last_run_id !== input.runId) {
     return { effects: [] };
   }
+  const metadataWithTerminalReason = input.runStatus === "blocked"
+    ? {
+        ...currentMetadata,
+        last_run_error: input.reason,
+        last_run_blocked_reason: input.reason,
+      }
+    : currentMetadata;
+  // Persist the producer's terminal cause before starting the audit job. The
+  // audit reads the task afresh, so this ordering makes the reason available
+  // to both its prompt and the task UI even if later audit work fails.
+  if (metadataWithTerminalReason !== currentMetadata) {
+    taskUpdate(input.orgId, input.taskId, { metadata: metadataWithTerminalReason }, input.namespaceId);
+  }
   const runFingerprint = currentRunTerminalFingerprint(input.namespaceId, input.orgId, input.runId);
   let auditStatus: string | undefined;
   const transition = await applyLifecycleEvent({
-    state: hydrateLifecycleState(input.taskId, currentMetadata),
+    state: hydrateLifecycleState(input.taskId, metadataWithTerminalReason),
     event:
       input.runStatus === "completed" || input.runStatus === "complete"
         ? { type: "execution.completed", taskId: input.taskId, runId: input.runId, fingerprint: runFingerprint }
@@ -645,6 +664,10 @@ async function applyExecutionLifecycle(input: {
             runId: input.runId,
             fingerprint: runFingerprint,
             reason: input.reason,
+            // `blocked` means runner-v2 reached a deliberate terminal policy
+            // decision (for example readiness/auth/cap). Retrying it blindly
+            // hides the evidence and recreates the same bad launch.
+            nonRetryable: input.runStatus === "blocked",
           },
     context: {
       request: input.request,
@@ -657,7 +680,7 @@ async function applyExecutionLifecycle(input: {
       orgId: input.orgId,
       workspaceId: input.workspaceId,
       taskId: input.taskId,
-      metadata: currentMetadata,
+      metadata: metadataWithTerminalReason,
       runId: input.runId,
       runStatus: input.runStatus,
       reason: input.reason,
@@ -748,6 +771,17 @@ function parseMetadata(
     }
   }
   return raw;
+}
+
+function terminalRunReason(run: Record<string, unknown>): string {
+  if (run.status !== "blocked") return `run.json status is ${String(run.status || "unknown")}`;
+  if (typeof run.blockedReason === "string" && run.blockedReason.trim()) return run.blockedReason.trim();
+  if (typeof run.status_message === "string" && run.status_message.trim()) return run.status_message.trim();
+  const blockedAgent = Array.isArray(run.agents)
+    ? run.agents.find((agent): agent is Record<string, unknown> => Boolean(agent) && typeof agent === "object" && (agent as Record<string, unknown>).status === "blocked")
+    : undefined;
+  if (typeof blockedAgent?.lastMessage === "string" && blockedAgent.lastMessage.trim()) return blockedAgent.lastMessage.trim();
+  return "runner-v2 blocked this run without a recorded reason";
 }
 
 function stringArray(value: unknown): string[] {

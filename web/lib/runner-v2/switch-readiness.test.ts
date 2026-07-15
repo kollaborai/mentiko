@@ -37,8 +37,7 @@ jest.mock("fs", () => ({
     || path.endsWith("bootstrap-executor.ts")
     || path.endsWith("controller.ts")
     || path.endsWith("agent-functions.sh")
-    || path.endsWith("agent-profile.sh")
-    || path.endsWith("secrets-resolve.mjs")
+    || path.endsWith("agent-profile.ts")
     || path.endsWith("chain-runner.sh")
     || path.endsWith("Dockerfile")
     || path.endsWith("launch-plan.ts")
@@ -91,11 +90,8 @@ jest.mock("fs", () => ({
     if (path.endsWith("agent-functions.sh")) {
       return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-completion-launch.js";
     }
-    if (path.endsWith("agent-profile.sh")) {
-      return "jq select((.value | test(\"^\\\\{secret:[^}]+\\\\}$\")) | not)";
-    }
-    if (path.endsWith("secrets-resolve.mjs")) {
-      return "console.error('# unresolved secret reference skipped')";
+    if (path.endsWith("agent-profile.ts")) {
+      return "const SECRET_REFERENCE = /^\\{secret:([^}]+)\\}$/;";
     }
     if (path.endsWith("chain-runner.sh")) {
       return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="1"\nexport MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"';
@@ -244,8 +240,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "monitor-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-monitor-gate", status: "pass" }),
       expect.objectContaining({ id: "routed-monitor-v2-default-on", status: "pass" }),
-      expect.objectContaining({ id: "profile-secret-placeholder-skip", status: "pass" }),
-      expect.objectContaining({ id: "profile-fallback-secret-filter", status: "pass" }),
+      expect.objectContaining({ id: "typed-profile-secret-filter", status: "pass" }),
       expect.objectContaining({ id: "loop-state-shell-typed-interop", status: "pass" }),
       expect.objectContaining({ id: "completion-dry-run-shell-loop-restore", status: "pass" }),
       expect.objectContaining({ id: "completion-idempotent-duplicate", status: "pass" }),

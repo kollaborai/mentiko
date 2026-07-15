@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-05",
   "revised_at": "2026-07-15",
-  "revision_note": "cut completion ownership over to the typed entrypoint and launcher, removed shell completion fallbacks, and bound the active completion contract in the switch gate",
+  "revision_note": "cut completion ownership over to the typed entrypoint and launcher, removed shell completion fallbacks, bound the active completion contract in the switch gate, and moved agent-profile parsing, validation, resolution, and command compilation into runner-v2",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -47,6 +47,12 @@
     }
   },
   "disk_contracts": {
+    "agent_profile": {
+      "path": "{orgRoot}/agent-profiles/{profileId}.json",
+      "owner": "web/lib/runner-v2/agent-profile.ts",
+      "resolution": "agent profile, chain default, workspace default, then namespace default; an explicit selection that is absent or malformed fails closed",
+      "shell_boundary": "lib/agent-profile-client.sh invokes compiled runner-agent-profile.js and never reads profile JSON"
+    },
     "run_json": {
       "path": "$RUNS_DIR/<run_id>/run.json",
       "lock": "<run.json>.lock/",
@@ -192,7 +198,7 @@
       "invariant:a missing agent summary stubs as status unknown; an all-stub completed run resolves needs_review with decision_required, never complete (0c96b73)": { "status": "shell-owned", "reason": "verdict/stub logic lives in shell build-run-summary-json; the typed quality gate honors the summary status it reads (run-1783231933089 status_message)" },
       "invariant:archive only events owned by run id plus source or agent": { "status": "covered", "evidence": "web/lib/runner-v2/event-side-effects.ts grants an explicit physical trigger claim only when the accepted validated record is present at the same direct .event path, then captures its exact raw hash, normalized-record hash, and file-generation token before launches. Synthetic and pathless records remain filesystem no-ops. The token is folded into routed-launch and completion-effect occurrence identity. web/lib/runner-v2/adapters.ts applies event consumption last after synchronous effects and launch acceptance. Under the configured event-root claim, event-lifecycle validates the exact accepted trigger, archives strict same-run owned siblings first, then claims processed trigger bytes plus a version-2 occurrence receipt and unlinks only unchanged trigger bytes last. Sibling cleanup failure preserves the active trigger. Lifecycle and adapter regressions cover old-receipt-versus-new-content, byte-identical file recreation, launch-before-consume, exact-run isolation, prefix guards, collisions, and error propagation." },
       "invariant:quality gates run before generation import and downstream routing": { "status": "covered", "evidence": "typed completion pipeline runs the quality gate before routing (completion-entrypoint quality-gate branch; run-1783231933089)" },
-      "invariant:fan-in claim commits only after the typed target launch is durably accepted; rejection leaves the claim retryable": { "status": "covered", "evidence": "typed completion-entrypoint resolves live fan-group membership from shell .state and typed .json stores and suppresses normal member routing. completeFanGroupMemberLocked runs the bounded typed launcher before committing the claim, so a rejected or unproven launch remains retryable and only a durably accepted target wins. Covered by fan-group-store and adapters rejection/retry/acceptance tests." },
+      "invariant:fan-in claim commits only after the typed target launch is durably accepted; rejection leaves the claim retryable": { "status": "covered", "evidence": "typed completion-entrypoint resolves live fan-group membership from the strict JSON-only typed store and suppresses normal member routing. Legacy .state files fail closed instead of being parsed. completeFanGroupMemberLocked runs the bounded typed launcher before committing the claim, so a rejected or unproven launch remains retryable and only a durably accepted target wins. Covered by fan-group-store and adapters rejection/retry/acceptance tests." },
       "invariant:typed routed and fan-out launches wait synchronously for bounded CLI exit plus durable run agent, session, and AgentAttempt proof before consuming the parent event": { "status": "covered", "evidence": "Typed routed and fan-out plans invoke runner-v2-launch-agent directly through bounded spawnSync. The adapter requires zero CLI exit plus matching run agent, session, and accepted AgentAttempt state before the parent event is consumed. Replay preflights that durable state and does not relaunch. routed-launch-plan and completion-entrypoint launch-acceptance tests cover the cutover." },
       "invariant:task status propagation happens on completed, failed, and stopped": { "status": "covered", "evidence": "external-effects task-status operations dispatched on typed completions (dispatch ledger run-1783232579797; plain-fail steps 0dbf677)" }
     },

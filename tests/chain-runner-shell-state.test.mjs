@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "..");
-const runLib = join(repoRoot, "lib", "run-lib.sh");
 const chainRunner = join(repoRoot, "lib", "chain-runner.sh");
 const agentFunctions = join(repoRoot, "lib", "agent-functions.sh");
 const errorHandling = join(repoRoot, "lib", "error-handling.sh");
 const runspaceManifestClient = join(repoRoot, "lib", "runspace-manifest-client.sh");
+const agentStateClient = join(repoRoot, "lib", "agent-state-client.sh");
 const tmp = mkdtempSync(join(tmpdir(), "mentiko-shell-state-"));
 
 const tests = [];
@@ -39,33 +39,30 @@ function runBash(script, env = {}) {
   }).trim();
 }
 
-test("run-scoped-state-id prevents same chain agent from sharing state across runs", () => {
-  const first = runBash(`source ${JSON.stringify(runLib)}; RUN_ID=run-111; run-scoped-state-id decision-research-decision-researcher`);
-  const second = runBash(`source ${JSON.stringify(runLib)}; RUN_ID=run-222; run-scoped-state-id decision-research-decision-researcher`);
-
-  assert(first !== second, `state ids should differ: ${first} vs ${second}`);
-  assert(first.includes("run_111"), `first state id missing run id: ${first}`);
-  assert(second.includes("run_222"), `second state id missing run id: ${second}`);
-});
-
-test("chain runner scopes shell bootstrap state and delegates completion to runner-v2", () => {
+test("chain runner invokes the typed state boundary and delegates completion to runner-v2", () => {
   const runnerSource = readFileSync(chainRunner, "utf8");
   const agentFunctionsSource = readFileSync(agentFunctions, "utf8");
   const errorSource = readFileSync(errorHandling, "utf8");
+  const clientSource = readFileSync(agentStateClient, "utf8");
 
   assert(
-    runnerSource.includes('state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"'),
-    "chain-runner.sh should scope agent state by run id"
+    runnerSource.includes("state_start_args=(") && runnerSource.includes('    start'),
+    "chain-runner.sh should invoke the typed state start operation through its validated argument vector"
   );
+  assert(
+    runnerSource.includes('_agent_state_cli "${state_start_args[@]}"'),
+    "chain-runner.sh should pass the typed state command as an argv vector"
+  );
+  assert(clientSource.includes("runner-agent-state.js"), "state client should invoke the compiled typed bundle");
+  assert(!clientSource.includes("npx"), "state client must not use a development fallback");
+  assert(!runnerSource.includes('cat > "$STATE_DIR/${state_id}.state"'), "chain runner must not write state records in shell");
+  assert(!errorSource.includes('grep "^retry_attempt:"'), "error handling must not parse state records in shell");
   assert(agentFunctionsSource.includes("runner-v2-completion-launch.js"), "completion should invoke the compiled typed PTY launcher");
   assert(agentFunctionsSource.includes("runner-v2-completion-launch.cjs"), "completion should retain the typed development PTY launcher");
   assert(!agentFunctionsSource.includes("MENTIKO_AI_GATEWAY_LOCAL_TOKEN="), "completion should not put the gateway token in PTY argv");
   assert(!agentFunctionsSource.includes("chain-runner-complete.sh"), "completion must not invoke the removed shell handler");
   assert(!agentFunctionsSource.includes("complete-agent.sh"), "completion must not invoke the removed standalone shell handler");
-  assert(
-    errorSource.includes('state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"'),
-    "error-handling.sh should resolve the same run-scoped state file"
-  );
+  assert(errorSource.includes("_agent_state_cli increment-retry"), "error handling should invoke typed retry mutation");
 });
 
 test("chain runner marks startup exits failed before sending instructions", () => {
@@ -78,8 +75,8 @@ test("chain runner marks startup exits failed before sending instructions", () =
     "chain-runner.sh should know how to detect exited startup commands"
   );
   assert(
-    runnerSource.includes('mark_state_failed "$STATE_DIR/${state_id}.state" "$startup_failed_reason"'),
-    "chain-runner.sh should mark shell state failed on startup exit"
+    runnerSource.includes('mark_state_failed "$s_prefix" "${RUN_ID:-}" "$startup_failed_reason"'),
+    "chain-runner.sh should mark typed state failed on startup exit"
   );
   assert(
     runnerSource.includes('mark_run_agent_failed "${RUN_ID:-}" "$agent_id" "$startup_failed_reason"'),
@@ -153,6 +150,9 @@ test("agent run context exposes the mentiko CLI on PATH", () => {
 
 test("instruction pointer stays cli agnostic", () => {
   const source = readFileSync(chainRunner, "utf8");
+  const pointerStart = source.indexOf("build-instruction-pointer()");
+  const pointerEnd = source.indexOf("mark_state_blocked()", pointerStart);
+  const pointerSource = source.slice(pointerStart, pointerEnd);
 
   assert(
     !source.includes("Use Kollab native file_read"),
@@ -167,13 +167,24 @@ test("instruction pointer stays cli agnostic", () => {
     "instruction pointer must not hardcode token-specific recovery wording"
   );
   assert(
-    source.includes("Start with a local shell read"),
+    pointerSource.includes("Start with a local shell read"),
     "instruction pointer should make shell reads the first path"
   );
   assert(
-    source.includes("cat \"$instruction_file\""),
-    "instruction pointer should include a CLI-agnostic shell fallback"
+    pointerSource.includes("cat %q"),
+    "instruction pointer should include a CLI-agnostic local shell read"
   );
+  assert(
+    !pointerSource.includes("cat <<EOF"),
+    "instruction pointer must remain one terminal submission, not a multiline heredoc"
+  );
+
+  const pointer = runBash(`
+    eval "$(sed -n '/^build-instruction-pointer()/,/^}/p' ${JSON.stringify(chainRunner)})"
+    build-instruction-pointer "writer" "/tmp/instruction files/writer.md"
+  `);
+  assert(!pointer.includes("\n"), "instruction pointer output must be one terminal input line");
+  assert(pointer.includes("cat /tmp/instruction\\ files/writer.md"), "instruction pointer should carry the exact local instruction path");
 });
 
 for (const item of tests) {

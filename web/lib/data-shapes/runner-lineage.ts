@@ -231,24 +231,22 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "runner-agent-state": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
-        id: "typed-state-overlay",
-        label: "Typed bootstrap state overlay",
+        id: "typed-agent-state-owner",
+        label: "Typed parse, path resolution, and locked state transitions",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/bootstrap-executor.ts"],
-      },
-      {
-        id: "shell-agent-state",
-        label: "Shell .state lifecycle ownership",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
+        paths: [
+          "web/lib/runner-v2/agent-state.ts",
+          "web/lib/runner-v2/agent-state-cli.ts",
+          "web/lib/runner-v2/bootstrap-executor.ts",
+        ],
       },
     ],
     legacyEquivalent: {
-      summary: "This is the legacy line-oriented state contract itself; runner v2 currently overlays it for interoperability.",
-      paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
+      summary: "The persisted key-value format remains readable, but shell callers now invoke the compiled TypeScript boundary and do not parse or mutate state records.",
+      paths: ["lib/agent-state-client.sh", "web/lib/runner-v2/agent-state-cli.ts"],
     },
   },
   "completion-launch-context": {
@@ -377,6 +375,38 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["web/lib/runner-v2/runspace-manifest.ts", "lib/runspace-manifest-client.sh"],
     },
   },
+  "batch-run-record": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-batch-store",
+        label: "Validate, persist, and atomically mutate batch lifecycle records",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/batch-run-record.ts"],
+      },
+      {
+        id: "typed-batch-worker",
+        label: "Launch batch chains and record aggregate completion through the typed worker",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/batch-runner-cli.ts", "web/app/api/chains/run-batch/route.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces multi-chain-runner.sh JSON parsing, lifecycle mutation, PID files, and result writes. Shell remains only as the invoked chain runner process boundary.",
+      paths: ["web/lib/runner-v2/batch-runner.ts", "lib/chain-runner.sh"],
+    },
+  },
+  "task-database": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-run-task-terminal-sync",
+        label: "Project terminal run status and exact blocked reason onto the linked task",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/run-task-sync.ts", "web/app/api/tasks/reconcile/route.ts", "web/lib/tasks/task-transforms.ts"],
+      },
+    ],
+  },
   "session-policy-ledger": {
     usage: "runner-v2",
     surfaces: [
@@ -456,7 +486,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "fan-group-state": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-fan-group-state",
@@ -464,17 +494,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/fan-group-store.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
       },
-      {
-        id: "shell-fan-group-state",
-        label: "Legacy .state fan-out and fan-in tracking",
-        owner: "legacy-shell",
-        paths: ["lib/routing-lib.sh"],
-      },
     ],
-    legacyEquivalent: {
-      summary: "The typed JSON store replaces the shell .state format, but runner v2 reads both while side-by-side runs remain possible.",
-      paths: ["lib/routing-lib.sh", "web/lib/runner-v2/fan-group-store.ts"],
-    },
   },
   "run-artifacts": {
     usage: "runner-v2",
@@ -534,25 +554,26 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "agent-profile": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-profile-resolution",
-        label: "Typed profile, readiness, and transcript resolution",
+        label: "Typed profile validation, resolution, command compilation, readiness, and transcript resolution",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
-      },
-      {
-        id: "shell-profile-resolution",
-        label: "Shell profile resolution and command launch",
-        owner: "legacy-shell",
-        paths: ["lib/agent-profile.sh", "lib/chain-runner.sh"],
+        paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/runner-v2/agent-profile-cli.ts", "web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
       },
     ],
-    legacyEquivalent: {
-      summary: "The persisted profile is shared; typed bootstrap and monitoring are replacing the shell profile loader one lifecycle surface at a time.",
-      paths: ["lib/agent-profile.sh", "lib/chain-runner.sh"],
-    },
+  },
+  "secret-record": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-profile-secret-resolution",
+        label: "Resolve profile secret references through the typed secrets store before CLI launch",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/secrets/secrets-store.ts"],
+      },
+    ],
   },
   "schedule-runtime-state": {
     usage: "runner-v2",

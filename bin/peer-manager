@@ -13,7 +13,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export MENTIKO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/../lib/config.sh"
-source "$SCRIPT_DIR/../lib/agent-profile.sh"
+source "$SCRIPT_DIR/../lib/agent-profile-client.sh"
 source "$SCRIPT_DIR/../lib/session-log-resolver.sh"
 source "$SCRIPT_DIR/../lib/session-transport.sh"
 source "$SCRIPT_DIR/../lib/run-lib.sh" 2>/dev/null || true
@@ -31,8 +31,6 @@ _md5() { if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' '
 _json_get() { python3 -c "import json,sys; print(json.load(sys.stdin).get('$1','$2'))" 2>/dev/null; }
 _json_escape() { python3 -c "import json,sys; print(json.dumps(sys.stdin.read().strip()))" 2>/dev/null || echo '""'; }
 _shell_quote() { printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"; }
-_safe_profile_id() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; }
-
 log() { echo "  [manager] $*" >&2; }
 
 # claude sets CLAUDECODE in its env -- child CLIs see it and refuse to run.
@@ -93,83 +91,45 @@ fi
 
 # ─── profile ───
 
-PROFILE_ID="${PROFILE_ID:-$(find_default_profile)}"
-[[ -z "$PROFILE_ID" ]] && { echo "  error: no agent profile found"; exit 1; }
-_safe_profile_id "$PROFILE_ID" || { echo "  error: invalid profile id"; exit 1; }
-
-PROFILE_FILE="${AGENT_PROFILES_DIR:-$MENTIKO_ORG_ROOT/agent-profiles}/${PROFILE_ID}.json"
-[[ ! -f "$PROFILE_FILE" ]] && { echo "  error: profile '$PROFILE_ID' not found"; exit 1; }
+if [[ -z "$PROFILE_ID" ]]; then
+  PROFILE_JSON=$(agent_profile_default_json "$AGENT_PROFILES_DIR") || exit 1
+else
+  PROFILE_JSON=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE_ID") || exit 1
+fi
+PROFILE_ID=$(printf '%s' "$PROFILE_JSON" | jq -r '.id // empty')
+PROFILE_FILE=$(printf '%s' "$PROFILE_JSON" | jq -r '.path // empty')
+PROFILE_NAME=$(printf '%s' "$PROFILE_JSON" | jq -r '.name // empty')
+[[ -z "$PROFILE_ID" || -z "$PROFILE_FILE" ]] && { echo "  error: no agent profile found"; exit 1; }
 
 # per-agent profile overrides (--profile1, --profile2)
 PROFILE_FILE_1="$PROFILE_FILE"
 PROFILE_FILE_2="$PROFILE_FILE"
 if [[ -n "$PROFILE1_OVERRIDE" ]]; then
-  if ! _safe_profile_id "$PROFILE1_OVERRIDE"; then
-    log "warning: invalid profile '$PROFILE1_OVERRIDE' for agent 1, using default"
-  else
-  _p1="${AGENT_PROFILES_DIR:-$MENTIKO_ORG_ROOT/agent-profiles}/${PROFILE1_OVERRIDE}.json"
-  if [[ -f "$_p1" ]]; then
-    PROFILE_FILE_1="$_p1"
-    log "agent 1 profile override: $PROFILE1_OVERRIDE"
-  else
-    log "warning: profile '$PROFILE1_OVERRIDE' not found for agent 1, using default"
-  fi
-  fi
+  _p1_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE1_OVERRIDE") || exit 1
+  PROFILE_FILE_1=$(printf '%s' "$_p1_json" | jq -r '.path // empty')
+  [[ -n "$PROFILE_FILE_1" ]] || { log "error: profile '$PROFILE1_OVERRIDE' has no path"; exit 1; }
+  log "agent 1 profile override: $PROFILE1_OVERRIDE"
 fi
 if [[ -n "$PROFILE2_OVERRIDE" ]]; then
-  if ! _safe_profile_id "$PROFILE2_OVERRIDE"; then
-    log "warning: invalid profile '$PROFILE2_OVERRIDE' for agent 2, using default"
-  else
-  _p2="${AGENT_PROFILES_DIR:-$MENTIKO_ORG_ROOT/agent-profiles}/${PROFILE2_OVERRIDE}.json"
-  if [[ -f "$_p2" ]]; then
-    PROFILE_FILE_2="$_p2"
-    log "agent 2 profile override: $PROFILE2_OVERRIDE"
-  else
-    log "warning: profile '$PROFILE2_OVERRIDE' not found for agent 2, using default"
-  fi
-  fi
+  _p2_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE2_OVERRIDE") || exit 1
+  PROFILE_FILE_2=$(printf '%s' "$_p2_json" | jq -r '.path // empty')
+  [[ -n "$PROFILE_FILE_2" ]] || { log "error: profile '$PROFILE2_OVERRIDE' has no path"; exit 1; }
+  log "agent 2 profile override: $PROFILE2_OVERRIDE"
 fi
 
-CLI_CMD_1=$(build_profile_command "$PROFILE_FILE_1" --interactive)
-CLI_CMD_2=$(build_profile_command "$PROFILE_FILE_2" --interactive)
-PROFILE_NAME=$(jq -r '.name // .id' "$PROFILE_FILE")
+CLI_CMD_1=$(agent_profile_command "$PROFILE_FILE_1" true "${NAMESPACE_ID:-default}" "${ORG_ID:-default}") || exit 1
+CLI_CMD_2=$(agent_profile_command "$PROFILE_FILE_2" true "${NAMESPACE_ID:-default}" "${ORG_ID:-default}") || exit 1
 
 # relay config (for capture_and_clean pipe)
 # if --relay-profile was passed, use that profile for relay instead of the agent profile
 RELAY_PROFILE_FILE="$PROFILE_FILE"
 if [[ -n "$RELAY_PROFILE_OVERRIDE" ]]; then
-  if ! _safe_profile_id "$RELAY_PROFILE_OVERRIDE"; then
-    log "warning: invalid relay profile '$RELAY_PROFILE_OVERRIDE', using default"
-  else
-  _rp="${AGENT_PROFILES_DIR:-$MENTIKO_ORG_ROOT/agent-profiles}/${RELAY_PROFILE_OVERRIDE}.json"
-  if [[ -f "$_rp" ]]; then
-    RELAY_PROFILE_FILE="$_rp"
-    log "using relay profile override: $RELAY_PROFILE_OVERRIDE"
-  else
-    log "warning: relay profile '$RELAY_PROFILE_OVERRIDE' not found, using default"
-  fi
-  fi
+  _rp_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$RELAY_PROFILE_OVERRIDE") || exit 1
+  RELAY_PROFILE_FILE=$(printf '%s' "$_rp_json" | jq -r '.path // empty')
+  [[ -n "$RELAY_PROFILE_FILE" ]] || { log "error: relay profile '$RELAY_PROFILE_OVERRIDE' has no path"; exit 1; }
+  log "using relay profile override: $RELAY_PROFILE_OVERRIDE"
 fi
-
-RELAY_CLI=$(jq -r '.cli // "claude"' "$RELAY_PROFILE_FILE")
-RELAY_PIPE_FLAG=$(jq -r '.pipe_flag // "-p"' "$RELAY_PROFILE_FILE")
-RELAY_MODEL=$(jq -r '.relay_model // .model // "haiku"' "$RELAY_PROFILE_FILE")
-[[ -n "$RELAY_MODEL_OVERRIDE" ]] && RELAY_MODEL="$RELAY_MODEL_OVERRIDE"
-RELAY_PRE_EXEC=$(jq -r '.pre_exec // empty' "$RELAY_PROFILE_FILE")
-
-RELAY_ENV_FILE=""
-_has_env=$(jq -r '.env // {} | length' "$RELAY_PROFILE_FILE" 2>/dev/null || echo "0")
-if [[ "$_has_env" -gt 0 ]]; then
-  RELAY_ENV_FILE=$(mktemp /tmp/relay-env-XXXXXX)
-  chmod 600 "$RELAY_ENV_FILE"
-  _resolve="$MENTIKO_CODE_ROOT/bin/secrets-resolve.mjs"
-  if [[ -f "$_resolve" ]]; then
-    node "$_resolve" "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" "$RELAY_PROFILE_FILE" > "$RELAY_ENV_FILE" 2>/dev/null || \
-    jq -r '.env // {} | to_entries[] | "export " + .key + "=" + (.value | @sh)' "$RELAY_PROFILE_FILE" > "$RELAY_ENV_FILE" 2>/dev/null
-  else
-    jq -r '.env // {} | to_entries[] | "export " + .key + "=" + (.value | @sh)' "$RELAY_PROFILE_FILE" > "$RELAY_ENV_FILE" 2>/dev/null
-  fi
-fi
+RELAY_COMMAND=$(agent_profile_command "$RELAY_PROFILE_FILE" false "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" "$RELAY_MODEL_OVERRIDE" relay) || exit 1
 
 # ─── peer names ───
 
@@ -444,15 +404,8 @@ RELAY
     
   } > "$tmp_full"
 
-  # source profile env vars + pre_exec, then pipe everything via stdin (no positional arg)
-  local _setup="unset CLAUDECODE; "
-  [[ -n "$RELAY_ENV_FILE" && -f "$RELAY_ENV_FILE" ]] && _setup+="set -a; source '$RELAY_ENV_FILE'; set +a; "
-  [[ -n "$RELAY_PRE_EXEC" ]] && _setup+="$RELAY_PRE_EXEC; "
-
   local result
-  result=$(bash -c "${_setup}exec \"\$@\"" _ \
-    "$RELAY_CLI" $RELAY_PIPE_FLAG --model "$RELAY_MODEL" \
-    < "$tmp_full" 2>/dev/null) || result=""
+  result=$(bash -c "unset CLAUDECODE; ${RELAY_COMMAND}" < "$tmp_full" 2>/dev/null) || result=""
   rm -f "$tmp_input" "$tmp_full"
 
   if [[ -z "$result" ]]; then
@@ -643,7 +596,7 @@ cleanup() {
   _sys_log "info" "peer-manager" "cleaning up sessions" "run: ${LINK_RUN_ID:-unknown}, peer1: ${PEER1:-unknown}, peer2: ${PEER2:-unknown}"
   "$P" remove "$PEER1" 2>/dev/null || true
   "$P" remove "$PEER2" 2>/dev/null || true
-  rm -f "$STATUS_FILE" "$RELAY_ENV_FILE" 2>/dev/null || true
+  rm -f "$STATUS_FILE" 2>/dev/null || true
   exit 0
 }
 trap cleanup INT TERM
@@ -884,5 +837,5 @@ fi
 log "cleaning up peer sessions..."
 "$P" remove "$PEER1" >/dev/null 2>&1
 "$P" remove "$PEER2" >/dev/null 2>&1
-rm -f "$STATUS_FILE" "$RELAY_ENV_FILE" 2>/dev/null || true
+rm -f "$STATUS_FILE" 2>/dev/null || true
 log "done"

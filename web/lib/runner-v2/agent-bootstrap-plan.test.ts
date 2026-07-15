@@ -8,6 +8,7 @@ jest.mock("@/lib/config", () => ({
   default: {
     codeRoot: "/repo",
     eventsDir: "/project/events",
+    stateDir: "/project/state",
   },
   ptyDaemonEnv: () => ({ PTY_DAEMON: "mentiko-test", PTY_MANAGER_DIR: "/repo/.pty-manager" }),
 }));
@@ -34,6 +35,7 @@ describe("runner-v2 agent bootstrap plan", () => {
     const chainPath = join(runDir, "chain.json");
     writeJson(join(profilesDir, "stub-default.json"), {
       id: "stub-default",
+      name: "Stub Default",
       cli: "/tmp/stub-cli",
       env: { STUB_MODE: "complete" },
     });
@@ -88,7 +90,7 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.instructionPointer).toContain("You are Mentiko agent: writer.");
     expect(plan.profilePath).toBe(join(profilesDir, "stub-default.json"));
     expect(plan.localStartCommand).not.toContain("STUB_MODE");
-    expect(plan.localStartCommand).toContain("build_profile_command");
+    expect(plan.localStartCommand).toContain("runner-agent-profile.js' command");
     expect(plan.localStartCommand).toContain(join(profilesDir, "stub-default.json"));
     expect(plan.monitorCommand).toContain("monitor-chain-agent 'workspace-build-writer-run-123'");
     // the monitor must hand the runner-v2 flags to the completion session or
@@ -174,6 +176,7 @@ describe("runner-v2 agent bootstrap plan", () => {
     const chainPath = join(runDir, "chain.json");
     writeJson(join(profilesDir, "secret-profile.json"), {
       id: "secret-profile",
+      name: "Secret Profile",
       cli: "claude",
       env: {
         ANTHROPIC_API_KEY: "{secret:ANTHROPIC_API_KEY}",
@@ -198,7 +201,7 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.localStartCommand).not.toContain("ANTHROPIC_API_KEY");
     expect(plan.localStartCommand).not.toContain("{secret:ANTHROPIC_API_KEY}");
     expect(plan.localStartCommand).not.toContain("do-not-inline");
-    expect(plan.localStartCommand).toContain("build_profile_command");
+    expect(plan.localStartCommand).toContain("runner-agent-profile.js' command");
   });
 
   it("resolves profile fallback through workspace and namespace defaults", () => {
@@ -212,10 +215,12 @@ describe("runner-v2 agent bootstrap plan", () => {
     const chainPath = join(runDir, "chain.json");
     writeJson(join(profilesDir, "workspace-profile.json"), {
       id: "workspace-profile",
+      name: "Workspace Profile",
       cli: "claude",
     });
     writeJson(join(profilesDir, "namespace-profile.json"), {
       id: "namespace-profile",
+      name: "Namespace Profile",
       cli: "claude",
       isDefault: true,
     });
@@ -262,6 +267,6 @@ describe("runner-v2 agent bootstrap plan", () => {
         AGENT_PROFILES_DIR: profilesDir,
         PATH: "/bin",
       },
-    })).toThrow("requested agent profile 'missing-profile' was not found");
+    })).toThrow("Agent profile 'missing-profile' does not exist");
   });
 });

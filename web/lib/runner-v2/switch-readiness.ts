@@ -155,16 +155,10 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "shell chain-runner monitors do not default MENTIKO_MONITOR_V2 on for routed/relaunched agents",
   ));
   checks.push(sourceContainsCheck(
-    "profile-secret-placeholder-skip",
-    join(config.codeRoot, "bin/secrets-resolve.mjs"),
-    "unresolved secret reference skipped",
-    "secret resolution can still export raw {secret:NAME} placeholders into runtime env",
-  ));
-  checks.push(sourceContainsCheck(
-    "profile-fallback-secret-filter",
-    join(config.codeRoot, "lib/agent-profile.sh"),
-    "secret:[^}]+",
-    "agent profile fallback can still export raw {secret:NAME} placeholders when the resolver fails",
+    "typed-profile-secret-filter",
+    join(config.codeRoot, "web/lib/runner-v2/agent-profile.ts"),
+    "SECRET_REFERENCE",
+    "typed agent profile command compiler can export raw {secret:NAME} placeholders",
   ));
   checks.push(sourceContainsCheck(
     "initial-launch-typed",

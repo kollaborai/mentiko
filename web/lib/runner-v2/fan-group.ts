@@ -71,6 +71,7 @@ export function createFanGroupState(input: FanGroupCreateInput): FanGroupState {
     total: input.fanOutAgents.length,
     chainPath: input.chainPath,
     runId: input.runId,
+    members: {},
   };
 }
 

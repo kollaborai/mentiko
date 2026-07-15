@@ -226,6 +226,8 @@ update-task-from-run <run-id> <status>
     last_run_completed
     last_run_agents      (comma-separated id|status pairs)
     last_run_artifacts   (json array)
+    last_run_error       (terminal execution error or block reason)
+    last_run_blocked_reason (exact runner-v2 reason when last_run_status=blocked)
 
   usage: called at shell launch boundaries; typed completion uses the shared locked writer
 

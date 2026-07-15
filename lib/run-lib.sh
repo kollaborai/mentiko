@@ -166,24 +166,6 @@ cleanup-old-runs() {
 }
 
 # -------------------------------------------------------------------
-# run-scoped-state-id: state file key for one agent in one run
-# -------------------------------------------------------------------
-# args: <session-prefix-or-agent-key> [run-id]
-run-scoped-state-id() {
-    local raw_prefix="$1"
-    local raw_run_id="${2:-${RUN_ID:-${MENTIKO_RUN_ID:-}}}"
-    local prefix_id="$raw_prefix"
-    local run_id="${raw_run_id:-no_run}"
-
-    prefix_id="${prefix_id//-/_}"
-    prefix_id="${prefix_id//[^[:alnum:]_]/_}"
-    run_id="${run_id//-/_}"
-    run_id="${run_id//[^[:alnum:]_]/_}"
-
-    printf '%s_%s\n' "$prefix_id" "$run_id"
-}
-
-# -------------------------------------------------------------------
 # debug state management (namespace-aware)
 # -------------------------------------------------------------------
 # DEBUG_DIR from config.sh
@@ -307,7 +289,6 @@ export -f create-run
 export -f update-run-status
 export -f add-run-session
 export -f update-run-agent
-export -f run-scoped-state-id
 export -f get-run
 export -f list-runs
 export -f cleanup-old-runs

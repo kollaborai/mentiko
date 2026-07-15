@@ -108,11 +108,7 @@ describe("data shape catalog", () => {
     expect(queue.map((shape) => shape.id)).toEqual([
       "chain-definition",
       "agent-definition",
-      "batch-run-record",
-      "runner-agent-state",
-      "fan-group-state",
       "config-profile",
-      "agent-profile",
       "plugin-registry",
       "audit-index",
       "runtime-profiler",

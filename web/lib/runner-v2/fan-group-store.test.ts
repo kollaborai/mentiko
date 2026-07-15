@@ -77,6 +77,29 @@ describe("runner-v2 fan group store", () => {
     })).toBeNull();
   });
 
+  it("rejects legacy text state instead of parsing or overwriting it", () => {
+    const dir = stateDir();
+    const legacyDir = join(dir, "fan-groups");
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, "group-legacy.state"), "status: running\n");
+
+    expect(() => readFanGroup(dir, "group-legacy")).toThrow(/unsupported legacy fan-group state/);
+    expect(() => createFanGroup(dir, {
+      id: "group-legacy",
+      event: "draft-ready",
+      fanOutAgents: ["a"],
+    })).toThrow(/unsupported legacy fan-group state/);
+  });
+
+  it("rejects malformed canonical JSON instead of coercing it", () => {
+    const dir = stateDir();
+    const groupsDir = join(dir, "fan-groups");
+    mkdirSync(groupsDir, { recursive: true });
+    writeFileSync(join(groupsDir, "group-invalid.json"), JSON.stringify({ id: "group-invalid", status: "running" }));
+
+    expect(() => readFanGroup(dir, "group-invalid")).toThrow(/invalid fan-group JSON/);
+  });
+
   it("retires a crashed owner claim and lets replay commit the member", () => {
     const dir = stateDir();
     createFanGroup(dir, {

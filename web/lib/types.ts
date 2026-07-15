@@ -154,6 +154,8 @@ export type WorkspaceType = "local" | "ssh" | "docker";
 export type ExportFormat = "json" | "yaml" | "markdown";
 
 export type BatchMode = "parallel" | "sequential";
+export type BatchRunLifecycleStatus = "running" | "complete" | "partial" | "failed" | "cancelled";
+export type BatchChainLifecycleStatus = "pending" | "running" | "complete" | "failed" | "cancelled";
 
 export type MessageRole = "user" | "assistant" | "system";
 
@@ -794,11 +796,15 @@ export interface BatchRequest {
 
 export interface BatchChainStatus {
   id: string;
+  file?: string;
+  goal?: string;
   run_id?: string;
-  status: RunStatus;
+  status: BatchChainLifecycleStatus;
   started?: string;
   completed?: string;
   duration?: number;
+  pid?: number;
+  exit_code?: number | null;
   output?: string;
   error?: string;
 }
@@ -806,9 +812,11 @@ export interface BatchChainStatus {
 export interface BatchStatus {
   id: string;
   mode: BatchMode;
-  status: RunStatus;
+  status: BatchRunLifecycleStatus;
   started: string;
   completed?: string;
+  cancel_requested_at?: string;
+  status_message?: string;
   chains: BatchChainStatus[];
 }
 

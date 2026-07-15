@@ -3,13 +3,16 @@ import { basename, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
-import { addRunSession, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
+import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
   type AgentAttemptTerminalReason,
   classifyReadinessFailure,
   createAgentAttempt,
+  isTerminalAgentAttemptPhase,
+  readRunnerV2AttemptState,
   recordAgentAttemptProcess,
   releaseAgentAttempt,
   submitAgentAttemptInstructions,
@@ -26,6 +29,15 @@ export interface RunnerV2BootstrapExecutor {
   sendRaw?(name: string, text: string): Promise<void>;
   capture(name: string, lines?: number): Promise<string>;
 }
+
+const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "completed", "cancelled"]);
+
+/**
+ * `run.json` and AgentAttempt are terminal authority. The .state file is only
+ * a live overlay: it cannot justify another bootstrap after completion. This
+ * prevents the completion -> stale-state -> relaunch missing-script race.
+ */
+export class TerminalBootstrapStateError extends Error {}
 
 export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Promise<RunnerV2LaunchResult> {
   if (context.env.WORKSPACE_TYPE && context.env.WORKSPACE_TYPE !== "local") {
@@ -83,6 +95,7 @@ export async function executeLocalBootstrap(
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
   const runJsonPath = join(context.runDir, "run.json");
+  assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId);
   const attempt = createAgentAttempt({
     runJsonPath,
     runId: context.runId,
@@ -111,7 +124,7 @@ export async function executeLocalBootstrap(
   mkdirSync(plan.eventsDir, { recursive: true });
   mkdirSync(dirname(plan.statePath), { recursive: true });
   writeFileSync(plan.instructionPath, buildInitialInstructions(plan, context), { mode: 0o600 });
-  writeFileSync(plan.statePath, buildInitialState(plan), { mode: 0o600 });
+  createRunnerAgentState(plan.statePath, buildInitialState(plan));
 
   const startScriptPath = join(context.runDir, "artifacts", `${plan.agentId}-start.sh`);
   writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
@@ -185,6 +198,33 @@ export async function executeLocalBootstrap(
   }
 }
 
+function assertBootstrapLaunchable(
+  runJsonPath: string,
+  runId: string,
+  agentId: string,
+): void {
+  const run = readRunJson(runJsonPath);
+  if (run.id !== runId) {
+    throw new TerminalBootstrapStateError(`runner-v2 bootstrap run id ${runId} does not match durable run record ${run.id}`);
+  }
+  if (TERMINAL_RUN_STATUSES.has(run.status)) {
+    throw new TerminalBootstrapStateError(`runner-v2 bootstrap rejected: run ${run.id} is terminal (${run.status})`);
+  }
+
+  const latestAttempt = [...readRunnerV2AttemptState(runJsonPath).attempts]
+    .reverse()
+    .find((attempt) => attempt.runId === runId && attempt.agentId === agentId);
+  if (!latestAttempt || !isTerminalAgentAttemptPhase(latestAttempt.phase)) return;
+
+  // An environment occurrence id is only a caller claim, not durable proof of
+  // a newer route. Existing routed launches are replayed from their persisted
+  // acceptance receipt by adapters.ts before bootstrap is reached; a direct
+  // bootstrap therefore fails closed on terminal attempt evidence.
+  throw new TerminalBootstrapStateError(
+    `runner-v2 bootstrap rejected: agent ${agentId} has terminal attempt ${latestAttempt.id} (${latestAttempt.phase})`,
+  );
+}
+
 function buildStartScript(plan: AgentBootstrapPlan): string {
   return [
     "#!/usr/bin/env bash",
@@ -215,17 +255,15 @@ function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2Lau
   ].join("\n");
 }
 
-function buildInitialState(plan: AgentBootstrapPlan): string {
-  return [
-    "status: running",
-    `session: ${plan.sessionName}`,
-    `agent_id: ${plan.agentId}`,
-    "round: 1",
-    `started: ${new Date().toISOString()}`,
-    `emits: ${plan.runContextExports.MENTIKO_AGENT_EMITS || ""}`,
-    "workspace: local",
-    "",
-  ].join("\n");
+function buildInitialState(plan: AgentBootstrapPlan) {
+  return {
+    session: plan.sessionName,
+    agent_id: plan.agentId,
+    round: "1",
+    started: new Date().toISOString(),
+    emits: plan.runContextExports.MENTIKO_AGENT_EMITS || "",
+    workspace: "local",
+  };
 }
 
 function registerRunSession(context: RunnerV2LaunchContext, plan: AgentBootstrapPlan): void {
@@ -392,24 +430,7 @@ function writeStartupReadinessArtifacts(
 }
 
 function markStateBlocked(statePath: string, reason: string): void {
-  const at = new Date().toISOString();
-  const current = existsSync(statePath) ? readFileSync(statePath, "utf8").split(/\r?\n/) : [];
-  const next: string[] = [];
-  let wroteStatus = false;
-  for (const line of current) {
-    if (line.startsWith("status:")) {
-      next.push("status: blocked");
-      wroteStatus = true;
-    } else if (line.startsWith("blocked_reason:") || line.startsWith("blocked_at:")) {
-      continue;
-    } else if (line.length > 0) {
-      next.push(line);
-    }
-  }
-  if (!wroteStatus) next.push("status: blocked");
-  next.push(`blocked_reason: ${reason}`);
-  next.push(`blocked_at: ${at}`);
-  writeFileSync(statePath, `${next.join("\n")}\n`);
+  transitionRunnerAgentState(statePath, "blocked", reason);
 }
 
 function markRunAgentBlocked(runJsonPath: string, agentId: string, reason: string): void {

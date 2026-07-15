@@ -138,7 +138,7 @@ if [[ "$STUB_MODE" == "echo-stall" ]]; then
 fi
 
 # advisor-probe mode: stand in for the stale-advisor CLI. When the monitor invokes
-# the advisor (build_profile_command on the isAdvisorDefault profile, prompt piped
+# the advisor (typed agent-profile command compiler on the isAdvisorDefault profile, prompt piped
 # on stdin), this records that a consultation HAPPENED — appends to
 # $STUB_ADVISOR_MARKER — then exits without a reply. Kept as a SEPARATE profile from
 # the agent so its invocation is detectable and never pollutes the agent's stdin

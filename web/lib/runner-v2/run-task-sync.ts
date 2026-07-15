@@ -46,7 +46,7 @@ export async function syncLinkedTaskFromRun(
   const generationKind = metadataString(run.metadata, "generationKind");
   if (generationKind) {
     const auditStatus = normalizedAuditStatus(status);
-    const metadata = generationAuditMetadata(run, task.metadata, generationKind, auditStatus);
+    const metadata = generationAuditMetadata(run, task.metadata, generationKind, auditStatus, terminalReason(run, status));
     if (!metadata) {
       return {
         status: "skipped",
@@ -66,6 +66,7 @@ export async function syncLinkedTaskFromRun(
     .map((agent) => `${agent.id || "unknown"}|${agent.status || "unknown"}`)
     .join(",");
   const artifacts = Array.isArray(summarizedRun.artifacts) ? summarizedRun.artifacts : [];
+  const blockedReason = status === "blocked" ? terminalReason(summarizedRun, status) : undefined;
   const updatedMetadata = {
     ...task.metadata,
     last_run_status: status,
@@ -78,6 +79,16 @@ export async function syncLinkedTaskFromRun(
     last_run_outcome: summary.outcome,
     last_run_decision_required: summary.decision_required,
     last_run_summary: summary,
+    // A block is a terminal, non-retryable execution result. Keep its exact
+    // producer-owned reason on the task so reconciliation and the UI never
+    // need to infer it from a stale .state file or a lossy run summary.
+    ...(blockedReason
+      ? {
+          last_run_error: blockedReason,
+          last_run_blocked_reason: blockedReason,
+        }
+      : {}),
+    ...(status !== "blocked" ? { last_run_blocked_reason: undefined } : {}),
   };
   const taskReopened = status === "completed" && task.status !== "open";
   await patchTask(run.taskId, {
@@ -85,12 +96,12 @@ export async function syncLinkedTaskFromRun(
     ...(taskReopened ? { status: "open" } : {}),
   }, context);
 
-  const terminal = status === "completed" || status === "failed" || status === "stopped";
+  const terminal = status === "completed" || status === "failed" || status === "stopped" || status === "blocked";
   if (terminal) {
     // Task comments are intentionally at-least-once. A retry after an ambiguous
     // HTTP response may append the same terminal note again; no task-comment
     // idempotency key exists in the current API contract.
-    await addTaskComment(run.taskId, taskSummaryNote(summarizedRun, summary, status, agents, completed), context);
+    await addTaskComment(run.taskId, taskSummaryNote(summarizedRun, summary, status, agents, completed, blockedReason), context);
   }
 
   let eventPath: string | undefined;
@@ -188,6 +199,7 @@ function generationAuditMetadata(
   current: Record<string, unknown>,
   generationKind: string,
   auditStatus: string,
+  reason?: string,
 ): Record<string, unknown> | undefined {
   if (generationKind === "chain_recommendation") {
     return {
@@ -195,6 +207,7 @@ function generationAuditMetadata(
       analysis_status: auditStatus,
       recommendation_run_id: run.id,
       ...(run.chainId ? { recommendation_chain_id: run.chainId } : {}),
+      ...(reason ? { analysis_error: reason } : {}),
     };
   }
   if (generationKind === "chain_generation") {
@@ -203,6 +216,7 @@ function generationAuditMetadata(
       generation_status: auditStatus,
       generated_chain_run_id: run.id,
       ...(run.chainId ? { generated_chain_source_chain_id: run.chainId } : {}),
+      ...(reason ? { generation_error: reason } : {}),
     };
   }
   return undefined;
@@ -210,7 +224,7 @@ function generationAuditMetadata(
 
 function normalizedAuditStatus(status: string): "complete" | "failed" | "running" {
   if (status === "completed" || status === "complete") return "complete";
-  if (["failed", "stopped", "cancelled", "error"].includes(status)) return "failed";
+  if (["blocked", "failed", "stopped", "cancelled", "error"].includes(status)) return "failed";
   return "running";
 }
 
@@ -220,6 +234,7 @@ function taskSummaryNote(
   status: string,
   agents: string,
   completed: string,
+  blockedReason?: string,
 ): string {
   const artifacts = Array.isArray(run.artifacts) ? run.artifacts.length : 0;
   return [
@@ -231,7 +246,23 @@ function taskSummaryNote(
     `Completed: ${completed}`,
     `Agents: ${agents}`,
     `Artifacts: ${artifacts} files`,
+    ...(blockedReason ? [`Blocked reason: ${blockedReason}`] : []),
   ].join("\n");
+}
+
+/**
+ * The run record is authoritative for terminal cause. Agent state is only a
+ * live overlay and must never be consulted to reconstruct a terminal task.
+ */
+function terminalReason(run: RunRecord, status: string): string | undefined {
+  if (status !== "blocked") return undefined;
+  if (typeof run.blockedReason === "string" && run.blockedReason.trim()) return run.blockedReason.trim();
+  if (typeof run.status_message === "string" && run.status_message.trim()) return run.status_message.trim();
+  const blockedAgent = run.agents.find((agent) => agent.status === "blocked");
+  if (typeof blockedAgent?.lastMessage === "string" && blockedAgent.lastMessage.trim()) {
+    return blockedAgent.lastMessage.trim();
+  }
+  return "runner-v2 blocked this run without a recorded reason";
 }
 
 function taskUrl(apiBase: string, taskId: string): string {

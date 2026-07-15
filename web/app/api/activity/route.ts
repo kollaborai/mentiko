@@ -5,6 +5,7 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import { readRunnerAgentStateDirectory, type RunnerAgentState } from "@/lib/runner-v2/agent-state";
 import config from "@/lib/config";
 
 export const dynamic = "force-dynamic";
@@ -20,13 +21,7 @@ interface Run {
   agents?: Array<{ id: string; name?: string; status: string }>;
 }
 
-interface AgentState {
-  status: string;
-  session: string;
-  agent_id: string;
-  started?: string;
-  completed?: string;
-}
+type AgentState = RunnerAgentState;
 
 interface ActivityEvent {
   id: string;
@@ -42,24 +37,6 @@ interface ActivityEvent {
     agentName?: string;
     status?: string;
   };
-}
-
-function parseStateFile(content: string): Partial<AgentState> {
-  const result: Partial<AgentState> = {};
-  const lines = content.split("\n");
-  for (const line of lines) {
-    const [key, ...rest] = line.split(":");
-    if (key && rest.length > 0) {
-      const k = key.trim();
-      const v = rest.join(":").trim();
-      if (k === "status") result.status = v;
-      if (k === "session") result.session = v;
-      if (k === "agent_id") result.agent_id = v;
-      if (k === "started") result.started = v;
-      if (k === "completed") result.completed = v;
-    }
-  }
-  return result;
 }
 
 function generateId(): string {
@@ -171,35 +148,18 @@ export const GET = withErrorHandling(async (request: Request) => {
 
   // 2. Read state files for agent status changes
   if (existsSync(namespaceConfig.stateDir)) {
-    try {
-      const stateEntries = readdirSync(namespaceConfig.stateDir, { withFileTypes: true })
-        .filter((f) => f.isFile() && f.name.endsWith(".state"))
-        .slice(0, limit);
-
-      for (const entry of stateEntries) {
-        const stateFile = join(namespaceConfig.stateDir, entry.name);
-        try {
-          const content = readFileSync(stateFile, "utf-8");
-          const state = parseStateFile(content);
-          const agentId = state.agent_id || entry.name.replace(".state", "");
-          const timestamp = state.completed || state.started || new Date().toISOString();
-
-          if (state.completed === "true" && state.status === "completed") {
-            events.push({
-              id: generateId(),
-              type: "agent_completed",
-              title: `Agent completed: ${agentId}`,
-              message: `Agent finished successfully`,
-              timestamp,
-              metadata: { agentId, agentName: agentId, status: "completed" },
-            });
-          }
-        } catch {
-          // skip invalid state files
-        }
+    for (const state of Object.values(readRunnerAgentStateDirectory(namespaceConfig.stateDir)).slice(0, limit)) {
+      const timestamp = state.completed || state.started || new Date().toISOString();
+      if (state.status === "completed") {
+        events.push({
+          id: generateId(),
+          type: "agent_completed",
+          title: `Agent completed: ${state.agent_id}`,
+          message: "Agent finished successfully",
+          timestamp,
+          metadata: { agentId: state.agent_id, agentName: state.agent_id, status: "completed" },
+        });
       }
-    } catch {
-      // ignore directory read errors
     }
   }
 

@@ -7,6 +7,8 @@ _AF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_AF_SCRIPT_DIR/session-transport.sh"
 source "$_AF_SCRIPT_DIR/monitor-completion.sh" 2>/dev/null || true
 source "$_AF_SCRIPT_DIR/ai-gateway-agent-env.sh" 2>/dev/null || true
+source "$_AF_SCRIPT_DIR/agent-state-client.sh"
+source "$_AF_SCRIPT_DIR/agent-profile-client.sh"
 
 if ! transport_init; then
     echo "  mentiko: pty-manager daemon could not start"
@@ -115,11 +117,13 @@ new-agent-from-spec() {
     # update state if available (use config.sh STATE_DIR)
     local state_dir="${STATE_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/state}"
     if [[ -d "$state_dir" ]]; then
-        local agent_id=$(echo "$session_prefix" | tr '-' '_')
-        mkdir -p "$state_dir"
-        echo "status: running" > "$state_dir/${agent_id}.state"
-        echo "session: $session_name" >> "$state_dir/${agent_id}.state"
-        echo "started: $(date -Iseconds)" >> "$state_dir/${agent_id}.state"
+        _agent_state_cli start \
+            --state-dir "$state_dir" \
+            --session-prefix "$session_prefix" \
+            --session "$session_name" \
+            --agent-id "$session_prefix" \
+            --workspace "local" \
+            >/dev/null
     fi
 
     if [[ "$monitor" == "--monitor" ]]; then
@@ -127,8 +131,9 @@ new-agent-from-spec() {
         local monitor_session="monitor-${session_name}"
         local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         local mon_script="/tmp/monitor-${session_name}.sh"
-        local monitor_advisor_profile
-        monitor_advisor_profile="$(find_advisor_profile 2>/dev/null || true)"
+        local monitor_advisor_profile monitor_advisor_json
+        monitor_advisor_json="$(agent_profile_advisor_json "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" 2>/dev/null || true)"
+        monitor_advisor_profile="$(printf '%s' "$monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
         {
             echo "#!/bin/bash"
             printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"

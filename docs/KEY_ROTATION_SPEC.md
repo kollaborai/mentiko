@@ -235,8 +235,8 @@ bin/secrets-rotate [options]
 ### 4.4 Standalone Mode (no web server)
 
 `secrets-rotate` can run directly against the filesystem without the web
-server. It duplicates the rotation logic from `secrets-store.ts` as pure node
-(like `secrets-resolve.mjs` duplicates decrypt). Useful for disaster recovery
+server. It duplicates the rotation logic from `secrets-store.ts` as pure node.
+Useful for disaster recovery
 when the web server won't start because all secrets are unreadable.
 
 ```
@@ -365,14 +365,13 @@ They are never written. Operator must delete or repair them manually.
 
 ### 6.6 Keychain Mismatch Between Web and CLI
 
-`secrets-resolve.mjs` and `job-runner.mjs` duplicate the decryption logic
-in plain JS (they can't import TypeScript). Both must be updated to handle
-v1 ciphertext format. If only one is updated, the other will fail on v1
+`job-runner.mjs` duplicates the decryption logic in plain JS (it cannot import
+the TypeScript store). It must be updated to handle v1 ciphertext format. If it
+is not updated, it will fail on v1
 ciphertext (split() returns 5 parts, old code expects 3).
 
-The ciphertext parser must be updated in all three locations atomically:
+The ciphertext parser must be updated in both locations atomically:
 - `web/lib/secrets-store.ts`
-- `bin/secrets-resolve.mjs`
 - `lib/job-runner.mjs`
 
 ## 7. Files to Change
@@ -393,16 +392,10 @@ The ciphertext parser must be updated in all three locations atomically:
 - new export: `getSecretsStatus(namespaceId, orgId)` — returns per-secret
   status (ok / unreadable / unknown) without decrypted values
 
-### 7.2 bin/secrets-resolve.mjs
+### 7.2 lib/job-runner.mjs
 
 - `getDerivedKey()`: no change
-- `decrypt()`: update parser to handle v1 format (5-part), v0 still works
-- no other changes needed
-
-### 7.3 lib/job-runner.mjs
-
-- `getDerivedKey()`: no change
-- `decrypt()`: same v1 format update as secrets-resolve
+- `decrypt()`: apply the same v1 format update as the typed secrets store
 - `getSecretByName()`: add warning log on failure (stderr, won't break bash)
 
 ### 7.4 web/app/api/secrets/rotate/route.ts (new file)
@@ -521,9 +514,6 @@ test: GET /api/secrets
 ### 8.5 Regression Tests
 
 ```
-test: secrets-resolve.mjs handles v1 ciphertext
-  - create v1 secret, run secrets-resolve, verify output bash export
-
 test: job-runner.mjs decrypts v1 ciphertext
   - create v1 secret, run job that uses it, verify env var set correctly
 

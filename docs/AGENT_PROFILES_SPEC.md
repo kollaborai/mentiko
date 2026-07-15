@@ -1,6 +1,11 @@
 # Agent Profiles — Implementation Spec
 # reviewed by 2 independent agents, updated with all feedback
 
+> Current runtime ownership is `web/lib/runner-v2/agent-profile.ts` and its
+> compiled `runner-agent-profile.js` boundary. The historical shell snippets
+> below are retained as design history only; `lib/agent-profile.sh` is retired
+> and must not be restored.
+
 ## Overview
 
 Agent Profiles are named CLI execution configurations that define HOW an agent

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { Task } from "@/lib/tasks/task-types";
 import { TaskRunStoryPanels } from "../task-run-story-panels";
 
@@ -159,5 +159,33 @@ describe("TaskRunStoryPanels", () => {
     expect(section?.querySelector(":scope > .rounded-sm.bg-muted")).not.toHaveTextContent("Summary");
     expect(screen.getByText("Generation failed.")).toBeInTheDocument();
     expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
+  });
+
+  it("shows the exact typed blocked reason and treats blocked as terminal for audit", async () => {
+    const blockedTask: Task = {
+      ...task,
+      completed: false,
+      status: "open",
+      closedAt: undefined,
+      chainBinding: {
+        ...task.chainBinding!,
+        last_run_id: "run-blocked",
+        last_run_status: "blocked",
+        last_run_outcome: "blocked",
+        last_run_blocked_reason: "startup_recovery:blocked: authentication required",
+      },
+      metadata: {
+        last_run_blocked_reason: "startup_recovery:blocked: authentication required",
+      },
+    };
+
+    render(<TaskRunStoryPanels task={blockedTask} />);
+
+    expect(screen.getByText("Run blocked")).toBeInTheDocument();
+    expect(screen.getAllByText(/startup_recovery:blocked: authentication required/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+      "/api/tasks/TASK-1/outcome-summary",
+      expect.objectContaining({ method: "POST" }),
+    ));
   });
 });

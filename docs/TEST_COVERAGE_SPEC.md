@@ -32,7 +32,6 @@ notes
 
 bin
 ☐ [agent-1] bin/secrets-rotate
-☐ [agent-2] bin/secrets-resolve.mjs
 ☐ [agent-3] bin/validate-artifacts
 
 lib
@@ -61,7 +60,6 @@ lib
 
 agent priority order
 1 lib/pty-manager.mjs
-2 bin/secrets-resolve.mjs
 3 lib/job-runner.mjs
 5 bin/secrets-rotate
 6 bin/validate-artifacts

@@ -30,6 +30,7 @@ source "$SCRIPT_DIR/slack-integration.sh"
 source "$SCRIPT_DIR/run-lib.sh"
 source "$SCRIPT_DIR/run-record-client.sh"
 source "$SCRIPT_DIR/runspace-manifest-client.sh"
+source "$SCRIPT_DIR/agent-state-client.sh"
 
 # log crashes (set -e exits) and reflect them in run.json immediately.
 # NOTE: $LINENO inside an ERR trap is unreliable — when the failure is in a sourced
@@ -813,19 +814,16 @@ _startup_recovery_send_key() {
 attempt_startup_recovery() {
     local agent_id="$1" profile_id="$2" profile_cli="$3" cwd="$4" cli_cmd="$5" state_file="$6" capture_file="$7" session="$8"
 
-    # need the advisor contract + an advisor profile + the command builder, else escalate.
+    # Need the advisor contract plus a typed-resolved advisor command, else escalate.
     declare -f advisor_recovery_prompt >/dev/null 2>&1 || return 1
     declare -f advisor_recovery_validate_json >/dev/null 2>&1 || return 1
     declare -f advisor_recovery_should_auto_apply >/dev/null 2>&1 || return 1
-    declare -f find_advisor_profile >/dev/null 2>&1 || return 1
-    declare -f build_profile_command >/dev/null 2>&1 || return 1
-
-    local advisor_id advisor_file advisor_cmd
-    advisor_id="$(find_advisor_profile 2>/dev/null || true)"
-    [[ -n "$advisor_id" ]] || return 1
-    advisor_file="$(agent_profile_path "$advisor_id" 2>/dev/null || true)"
-    [[ -f "$advisor_file" ]] || return 1
-    advisor_cmd="$(build_profile_command "$advisor_file" 2>/dev/null || true)"
+    local advisor_json advisor_id advisor_file advisor_cmd
+    advisor_json="$(agent_profile_advisor_json "$AGENT_PROFILES_DIR" 2>/dev/null || true)"
+    advisor_id="$(printf '%s' "$advisor_json" | jq -r '.id // empty' 2>/dev/null)"
+    advisor_file="$(printf '%s' "$advisor_json" | jq -r '.path // empty' 2>/dev/null)"
+    [[ -n "$advisor_id" && -n "$advisor_file" ]] || return 1
+    advisor_cmd="$(agent_profile_command "$advisor_file" false "${NAMESPACE_ID:-default}" "${ORG_ID:-default}" 2>/dev/null || true)"
     [[ -n "$advisor_cmd" ]] || return 1
 
     local prompt response payload
@@ -874,11 +872,13 @@ attempt_startup_recovery() {
     return 1
 }
 
-# wait_for_profile_readiness <session> <state_file> <agent_id> <profile_file> <profile_id> <cli> <cmd> <cwd>
+# wait_for_profile_readiness <session> <state-prefix> <run-id> <agent_id> <profile_file> <profile_id> <cli> <cmd> <cwd>
 # Profile readiness is data-driven. It never writes CLI config, never pins a CLI,
 # and never auto-accepts a prompt. rc: 0 ready, 1 recoverable/blocked/unknown, 2 exited.
 wait_for_profile_readiness() {
-    local session="$1" state_file="$2" agent_id="$3" profile_file="${4:-}" profile_id="${5:-}" profile_cli="${6:-}" cli_cmd="${7:-}" cwd="${8:-}"
+    local session="$1" state_prefix="$2" state_run_id="${3:-}" agent_id="$4" profile_file="${5:-}" profile_id="${6:-}" profile_cli="${7:-}" cli_cmd="${8:-}" cwd="${9:-}"
+    local state_file
+    state_file="$(_agent_state_cli path --state-dir "$STATE_DIR" --session-prefix "$state_prefix" --run-id "$state_run_id")"
     local timeout="${MENTIKO_CLI_READY_TIMEOUT:-90}"
     local poll="${MENTIKO_CLI_READY_POLL:-2}"
     local deadline=$(( $(date +%s) + timeout ))
@@ -927,7 +927,7 @@ wait_for_profile_readiness() {
             fi
             write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
             rm -f "$capture_file"
-            mark_state_blocked "$state_file" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
+            mark_state_blocked "$state_prefix" "$state_run_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
             mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:${readiness_status}: ${readiness_reason}" || true
             return 1
         fi
@@ -951,7 +951,7 @@ wait_for_profile_readiness() {
     readiness_json="$(cli_readiness_json "unknown" "CLI readiness unresolved after ${timeout}s")"
     write_startup_recovery_artifacts "$agent_id" "$profile_id" "$profile_cli" "$cwd" "$cli_cmd" "$state_file" "$capture_file" "$readiness_json"
     rm -f "$capture_file"
-    mark_state_blocked "$state_file" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
+    mark_state_blocked "$state_prefix" "$state_run_id" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
     mark_run_agent_blocked "${RUN_ID:-}" "$agent_id" "startup_recovery:unknown: CLI readiness unresolved after ${timeout}s" || true
     return 1
 }
@@ -1005,71 +1005,24 @@ build-instruction-pointer() {
     local agent_id="$1"
     local instruction_file="$2"
 
-    cat <<EOF
-You are Mentiko agent: $agent_id.
-
-Your full instructions are in this file:
-$instruction_file
-
-Read that file first, then execute it exactly. Start with a local shell read,
-for example cat "$instruction_file" or sed -n '1,220p' "$instruction_file".
-If your CLI provides a local file-reading capability, that is also acceptable,
-but do not use app-specific, remote, networked, or session-gated helper tools
-for this local instruction artifact.
-
-Do not work from this short pointer alone. Do not output AGENT_COMPLETE unless
-you actually read the full instruction file and completed it.
-
-When the instructions are complete, finish with AGENT_COMPLETE on its own final line.
-EOF
+    # This becomes one terminal submission. Newlines are interpreted by the shell
+    # behind a CLI before the agent can consume them, so the pointer must be atomic.
+    printf 'You are Mentiko agent: %s. Your full instructions are in %q. Read that file first and execute it exactly. Start with a local shell read: cat %q. Do not work from this pointer alone. Do not output AGENT_COMPLETE unless you actually read the full instruction file and completed it. When the instructions are complete, finish with AGENT_COMPLETE on its own final line.' \
+        "$agent_id" "$instruction_file" "$instruction_file"
 }
 
 mark_state_blocked() {
-    local state_file="$1"
-    local reason="$2"
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    awk -v reason="$reason" -v at="$(date -Iseconds)" '
-        BEGIN { wrote_status = 0 }
-        /^status:/ {
-            print "status: blocked"
-            wrote_status = 1
-            next
-        }
-        /^blocked_reason:/ { next }
-        /^blocked_at:/ { next }
-        { print }
-        END {
-            if (!wrote_status) print "status: blocked"
-            print "blocked_reason: " reason
-            print "blocked_at: " at
-        }
-    ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+    local state_prefix="$1"
+    local state_run_id="$2"
+    local reason="$3"
+    _agent_state_cli block --state-dir "$STATE_DIR" --session-prefix "$state_prefix" --run-id "$state_run_id" --reason "$reason" >/dev/null
 }
 
 mark_state_failed() {
-    local state_file="$1"
-    local reason="$2"
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    awk -v reason="$reason" -v at="$(date -Iseconds)" '
-        BEGIN { wrote_status = 0 }
-        /^status:/ {
-            print "status: failed"
-            wrote_status = 1
-            next
-        }
-        /^error:/ { next }
-        /^failed_at:/ { next }
-        { print }
-        END {
-            if (!wrote_status) print "status: failed"
-            print "error: " reason
-            print "failed_at: " at
-        }
-    ' "$state_file" > "$tmp_file" && mv "$tmp_file" "$state_file"
+    local state_prefix="$1"
+    local state_run_id="$2"
+    local reason="$3"
+    _agent_state_cli fail --state-dir "$STATE_DIR" --session-prefix "$state_prefix" --run-id "$state_run_id" --reason "$reason" >/dev/null
 }
 
 mark_run_agent_blocked() {
@@ -1243,47 +1196,9 @@ agent_run_context_export_command() {
 }
 
 # -------------------------------------------------------------------
-# agent-profile resolution (shared lib)
+# Agent-profile data is resolved and compiled by the typed runtime.
 # -------------------------------------------------------------------
-source "$(dirname "${BASH_SOURCE[0]}")/agent-profile.sh"
-
-# resolve_agent_profile: determines which profile to use for an agent
-# priority: agent > chain > workspace > namespace
-# returns: profile_id, "__inline__" for legacy fallback, or exits on error
-resolve_agent_profile() {
-    local agent_id="$1"
-    local chain_default="${2:-}"
-
-    local requested_profile_id
-    requested_profile_id=$(get_agent_config "$agent_id" "agent_profile" "")
-    [[ -z "$requested_profile_id" ]] && requested_profile_id="$chain_default"
-
-    local profile_id
-    profile_id=$(resolve_agent_profile_id "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT")
-
-    if [[ -n "$profile_id" ]]; then
-        if [[ -n "$requested_profile_id" && "$requested_profile_id" != "$profile_id" ]]; then
-            echo "  warning: profile '$requested_profile_id' not found, using '$profile_id'" >&2
-        fi
-        echo "$profile_id"
-        return
-    fi
-
-    if [[ -n "$requested_profile_id" ]]; then
-        echo "ERROR: requested agent profile '$requested_profile_id' was not found and no valid fallback profile exists." >&2
-        exit 1
-    fi
-
-    local legacy_cli
-    legacy_cli=$(jq -r '.config.cli // empty' "$CHAIN_FILE" 2>/dev/null)
-    if [[ -n "$legacy_cli" ]]; then
-        echo "[DEPRECATION] chain uses inline cli config; migrate to agent profiles" >&2
-        echo "__inline__"
-        return
-    fi
-    echo "ERROR: no agent profile resolved for agent '$agent_id'. Set up a default profile." >&2
-    exit 1
-}
+source "$(dirname "${BASH_SOURCE[0]}")/agent-profile-client.sh"
 
 # -------------------------------------------------------------------
 # find_agent_by_trigger: find which agent handles a given event
@@ -1456,43 +1371,26 @@ launch_chain_agent() {
     local agent_role=$(get_agent_config "$agent_id" "role" "")
     local agent_gateway=$(get_agent_config "$agent_id" "gateway" "")
 
-    # resolve agent profile (new system)
-    local profile_id=$(resolve_agent_profile "$agent_id" "$CHAIN_DEFAULT_AGENT_PROFILE")
+    # Resolve agent profile through the typed contract. This shell receives
+    # only the selected path and executable command, never profile JSON.
+    local profile_json
+    profile_json=$(agent_profile_resolve_json "$CHAIN_FILE" "$agent_id" "$CHAIN_PROJECT_ROOT" "$AGENT_PROFILES_DIR" "${MENTIKO_ORG_ROOT:-$NAMESPACE_ROOT}") || return 1
+    local profile_id
+    profile_id=$(printf '%s' "$profile_json" | jq -r '.id // empty' 2>/dev/null)
+    local profile_file
+    profile_file=$(printf '%s' "$profile_json" | jq -r '.path // empty' 2>/dev/null)
+    local profile_source
+    profile_source=$(printf '%s' "$profile_json" | jq -r '.source // empty' 2>/dev/null)
     local use_legacy_cli=false
     local profile_cmd=""
-    local profile_source=""
 
-    if [[ "$profile_id" == "__inline__" ]]; then
+    if [[ -z "$profile_id" ]]; then
         # legacy path: use old inline CLI construction
         use_legacy_cli=true
         profile_source="legacy"
     else
-        # new path: use agent profile
-        local profile_file="$AGENT_PROFILES_DIR/${profile_id}.json"
-        if [[ -f "$profile_file" ]]; then
-            # --interactive: skips pipe_flag (-p) from the profile.
-            # pipe_flag is for job-runner.mjs (single-turn stdin pipe).
-            # chain agents run in live PTY sessions and must NOT get -p,
-            # or they lose the ability to write files between turns.
-            profile_cmd=$(build_profile_command "$profile_file" --interactive)
-            # determine source for display
-            local agent_level_profile=$(get_agent_config "$agent_id" "agent_profile" "")
-            if [[ -n "$agent_level_profile" ]]; then
-                profile_source="agent override"
-            elif [[ -n "$CHAIN_DEFAULT_AGENT_PROFILE" ]]; then
-                profile_source="chain default"
-            else
-                local ws_profile=$(find_workspace_profile)
-                if [[ -n "$ws_profile" && "$profile_id" == "$ws_profile" ]]; then
-                    profile_source="workspace default"
-                else
-                    profile_source="namespace default"
-                fi
-            fi
-        else
-            echo "  error: resolved profile '$profile_id' not found at $profile_file" >&2
-            return 1
-        fi
+        [[ -n "$profile_file" ]] || { echo "  error: typed profile resolution returned no path for '$profile_id'" >&2; return 1; }
+        profile_cmd=$(agent_profile_command "$profile_file" true "${NAMESPACE_ID:-default}" "${ORG_ID:-default}") || return 1
     fi
 
     # legacy CLI resolution (used when no profile or inline fallback)
@@ -1854,28 +1752,32 @@ $rs_produces
 
     # update state before CLI launch so startup prompts can mark the run blocked
     # without first pasting task instructions into the parent shell.
-    mkdir -p "$STATE_DIR"
-    local state_id
-    state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
-    cat > "$STATE_DIR/${state_id}.state" <<SEOF
-status: running
-session: $session_name
-agent_id: $agent_id
-round: $round
-started: $(date -Iseconds)
-chain: $CHAIN_NAME
-emits: $agent_emits
-workspace: $WORKSPACE_TYPE
-timeout: ${agent_timeout:-0}
-retry_max: ${retry_max:-0}
-retry_attempt: 0
-on_error: ${on_error:-}
-on_timeout: ${on_timeout:-}
-start_sha: $(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-SEOF
+    # The typed state CLI accepts optional fields only when they have a value.
+    # Do not pass empty flag/value pairs: its strict parser must fail closed on
+    # malformed input, but an absent optional retry/handler is valid here.
+    local -a state_start_args=(
+        start
+        --state-dir "$STATE_DIR"
+        --session-prefix "$s_prefix"
+        --session "$session_name"
+        --agent-id "$agent_id"
+        --round "$round"
+        --emits "$agent_emits"
+        --workspace "$WORKSPACE_TYPE"
+        --timeout "${agent_timeout:-0}"
+        --retry-max "${retry_max:-0}"
+    )
+    [[ -n "${RUN_ID:-}" ]] && state_start_args+=(--run-id "$RUN_ID")
+    [[ -n "${CHAIN_NAME:-}" ]] && state_start_args+=(--chain "$CHAIN_NAME")
+    [[ -n "${on_error:-}" ]] && state_start_args+=(--on-error "$on_error")
+    [[ -n "${on_timeout:-}" ]] && state_start_args+=(--on-timeout "$on_timeout")
+    local start_sha
+    start_sha="$(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || true)"
+    [[ -n "$start_sha" ]] && state_start_args+=(--start-sha "$start_sha")
+    _agent_state_cli "${state_start_args[@]}" >/dev/null
 
     # start CLI - env vars are sourced from file (never inlined in command)
-    # profile env is already handled by build_profile_command (writes env file)
+    # Profile env is already handled by the typed command compiler (writes env file).
     # gateway env (legacy) also written to a temp file if present
     # always unset CLAUDECODE so claude doesn't refuse to run inside another session
     if [[ "$WORKSPACE_TYPE" == "local" ]]; then
@@ -1993,7 +1895,8 @@ SEOF
     local _ready_rc=0
     wait_for_profile_readiness \
         "$session_name" \
-        "$STATE_DIR/${state_id}.state" \
+        "$s_prefix" \
+        "${RUN_ID:-}" \
         "$agent_id" \
         "${profile_file:-}" \
         "${profile_id:-legacy}" \
@@ -2003,7 +1906,7 @@ SEOF
         || _ready_rc=$?
     if [[ $_ready_rc -eq 2 ]]; then
         local startup_failed_reason="agent CLI exited before instructions were sent"
-        mark_state_failed "$STATE_DIR/${state_id}.state" "$startup_failed_reason"
+        mark_state_failed "$s_prefix" "${RUN_ID:-}" "$startup_failed_reason"
         mark_run_agent_failed "${RUN_ID:-}" "$agent_id" "$startup_failed_reason"
         echo "  agent startup failed: $startup_failed_reason"
         _sys_log "error" "chain-runner" "agent CLI exited before instructions" "run: ${RUN_ID:-unknown}, session: $session_name, agent: $agent_id"
@@ -2111,7 +2014,8 @@ SEOF
         local _hb_url="http://localhost:${_hb_port}/api/runs/${RUN_ID}/agents/${agent_id}/heartbeat"
         local _hb_secret="${BETTER_AUTH_SECRET:-}"
         local _hb_agent_id="$agent_id"
-        local _hb_state_file="$STATE_DIR/${state_id}.state"
+        local _hb_state_prefix="$s_prefix"
+        local _hb_state_run_id="${RUN_ID:-}"
         local _hb_session_name="$session_name"
         # parent runner PID — if the runner dies without writing a terminal state,
         # the loop must not outlive it (see exit conditions below).
@@ -2143,13 +2047,9 @@ SEOF
                 [[ "$(date +%s)" -ge "$_hb_deadline" ]] && break
 
                 # stop if state file says agent is done
-                if [[ -f "$_hb_state_file" ]]; then
-                    local _cur_status
-                    _cur_status=$(grep "^status:" "$_hb_state_file" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "")
-                    [[ "$_cur_status" != "running" ]] && break
-                else
-                    break
-                fi
+                local _cur_status
+                _cur_status=$(_agent_state_cli status --state-dir "$STATE_DIR" --session-prefix "$_hb_state_prefix" --run-id "$_hb_state_run_id" 2>/dev/null || echo "")
+                [[ "$_cur_status" != "running" ]] && break
 
                 # POST heartbeat. curl emits the HTTP status, or "000" if it could
                 # not connect at all (network down, web server gone).
@@ -2178,8 +2078,9 @@ SEOF
     if [[ "$agent_monitor" == "true" ]]; then
         local agent_context="Chain: $CHAIN_NAME. Agent: $agent_name ($agent_id). Emits: $agent_emits. Round: $round. Workspace: $WORKSPACE_TYPE."
         local monitor_session="monitor-${session_name}"
-        local monitor_advisor_profile
-        monitor_advisor_profile="$(find_advisor_profile 2>/dev/null || true)"
+        local monitor_advisor_profile monitor_advisor_json
+        monitor_advisor_json="$(agent_profile_advisor_json "$AGENT_PROFILES_DIR" 2>/dev/null || true)"
+        monitor_advisor_profile="$(printf '%s' "$monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
 
         # build monitor script to avoid send-message pasting function bodies
         # NOTE: use double quotes for variable expansion in heredoc

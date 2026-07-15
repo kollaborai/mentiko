@@ -17,7 +17,7 @@ import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAg
 import { livePendingHandoffAgentIds } from "@/lib/runner-v2/handoff-liveness";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import { readLoopState, restoreLoopMutations, type LoopFileMutation, type LoopMutationObserver } from "@/lib/runner-v2/loop-state";
-import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
+import { listFanGroups, readFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
@@ -68,8 +68,6 @@ export function runRunnerV2CompletionEntrypoint(
 
   // Fan-out members must suppress normal routing: their completion is an input
   // to the durable fan-group counter, and only the claim winner launches fan-in.
-  // Read both shell and typed stores so routed shell-started members can still
-  // complete through this typed entrypoint.
   const fanGroupId = findLiveFanGroupMembership(stateDir, agent.id, runId);
   const fanGroup = fanGroupId ? readFanGroup(stateDir, fanGroupId) || undefined : undefined;
 
@@ -922,49 +920,14 @@ function parseChainWebhooks(value: unknown): { enabled?: boolean; urls?: string[
   };
 }
 
-/**
- * Mirror of the shell fallback membership resolution in
- * the retired shell completion handler: a live (status running) fan group whose member
- * list contains this agent, scoped to this run when both sides know the run
- * id. Reads both stores under <stateDir>/fan-groups: v1 .state key-value files
- * and typed .json files.
- */
+/** Find a live canonical JSON fan group for this agent and run. */
 function findLiveFanGroupMembership(stateDir: string, agentId: string, runId: string): string | undefined {
-  const groupsDir = join(stateDir, "fan-groups");
-  if (!existsSync(groupsDir)) return undefined;
-  for (const file of readdirSync(groupsDir)) {
-    const path = join(groupsDir, file);
-    if (file.endsWith(".state")) {
-      const content = readOptionalFile(path);
-      if (!content) continue;
-      const status = matchKeyValue(content, "status");
-      if (status !== "running") continue;
-      const groupRunId = matchKeyValue(content, "run_id");
-      if (runId && groupRunId && groupRunId !== runId) continue;
-      const members = (matchKeyValue(content, "fan_out_agents") || "").split(/\s+/).filter(Boolean);
-      if (members.includes(agentId)) return file.slice(0, -".state".length);
-    } else if (file.endsWith(".json")) {
-      const group = readJsonObject(path);
-      if (!group || group.status !== "running") continue;
-      if (runId && typeof group.runId === "string" && group.runId && group.runId !== runId) continue;
-      const members = Array.isArray(group.fanOutAgents) ? group.fanOutAgents : [];
-      if (members.includes(agentId)) return file.slice(0, -".json".length);
-    }
+  for (const group of listFanGroups(stateDir)) {
+    if (group.status !== "running") continue;
+    if (runId && group.runId && group.runId !== runId) continue;
+    if (group.fanOutAgents.includes(agentId)) return group.id;
   }
   return undefined;
-}
-
-function matchKeyValue(content: string, key: string): string | undefined {
-  const match = content.match(new RegExp(`^${key}:\\s*(.*)$`, "m"));
-  return match ? match[1].trim() : undefined;
-}
-
-function readOptionalFile(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
 }
 
 function readEvents(eventsDir: string): RunnerEventRecord[] {

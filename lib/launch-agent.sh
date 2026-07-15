@@ -14,6 +14,8 @@ source "$SCRIPT_DIR/config.sh"
 # source core functions
 source "$SCRIPT_DIR/agent-functions.sh"
 source "$SCRIPT_DIR/run-lib.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/agent-state-client.sh"
+source "$SCRIPT_DIR/agent-profile-client.sh"
 
 # log crashes (set -e exits)
 trap '_sys_log "error" "launch-agent" "CRASHED at line $LINENO (exit $?)" "session: ${SESSION_NAME:-unknown}, agent: ${AGENT_NAME:-unknown}"' ERR
@@ -94,16 +96,20 @@ send-message "$SESSION_NAME" "$INIT_MSG" && sleep 1
 _sys_log "info" "launch-agent" "prompt injected: $SESSION_NAME" "agent: $AGENT_NAME, spec: $SPEC_FILE"
 
 # update state (STATE_DIR from config.sh)
-AGENT_ID=$(echo "$SESSION_PREFIX" | tr '-' '_')
-mkdir -p "$STATE_DIR"
-echo "status: running" > "$STATE_DIR/${AGENT_ID}.state"
-echo "session: $SESSION_NAME" >> "$STATE_DIR/${AGENT_ID}.state"
-echo "pid: $CLI_PID" >> "$STATE_DIR/${AGENT_ID}.state"
-echo "started: $(date -Iseconds)" >> "$STATE_DIR/${AGENT_ID}.state"
+AGENT_ID="$SESSION_PREFIX"
+_agent_state_cli start \
+    --state-dir "$STATE_DIR" \
+    --session-prefix "$SESSION_PREFIX" \
+    --session "$SESSION_NAME" \
+    --agent-id "$AGENT_ID" \
+    --pid "$CLI_PID" \
+    --workspace "local" \
+    >/dev/null
+AGENT_STATE_PATH=$(_agent_state_cli path --state-dir "$STATE_DIR" --session-prefix "$SESSION_PREFIX")
 
 echo "  agent launched:"
 echo "    session:  $SESSION_NAME"
-echo "    state:    namespaces/${NAMESPACE_ID}/state/${AGENT_ID}.state"
+echo "    state:    $AGENT_STATE_PATH"
 echo ""
 
 # start monitor if requested
@@ -112,7 +118,8 @@ if [[ "$MONITOR" == "--monitor" ]]; then
     MONITOR_SESSION="monitor-${SESSION_NAME}"
     MONITOR_INTERVAL="${MENTIKO_MONITOR_INTERVAL:-60}"
     MONITOR_SCRIPT="/tmp/monitor-${SESSION_NAME}.sh"
-    MONITOR_ADVISOR_PROFILE="$(find_advisor_profile 2>/dev/null || true)"
+    _monitor_advisor_json="$(agent_profile_advisor_json "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" 2>/dev/null || true)"
+    MONITOR_ADVISOR_PROFILE="$(printf '%s' "$_monitor_advisor_json" | jq -r '.id // empty' 2>/dev/null)"
 
     {
         echo "#!/bin/bash"

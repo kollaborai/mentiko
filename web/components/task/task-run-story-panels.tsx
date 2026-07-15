@@ -115,7 +115,7 @@ function aiOutcomeSummary(value: unknown): AiOutcomeSummary | undefined {
 }
 
 function isTerminalRunStatus(status?: string) {
-  return status === "completed" || status === "complete" || status === "failed" || status === "stopped";
+  return status === "completed" || status === "complete" || status === "blocked" || status === "failed" || status === "stopped";
 }
 
 function toneFor(outcome?: string, decisionRequired?: boolean) {
@@ -236,11 +236,12 @@ export function TaskRunStoryPanels({
   const summaryStatus = stringValue(metadata.task_outcome_summary_status);
   const summaryError = stringValue(metadata.task_outcome_summary_error);
   const summaryJobRunId = stringValue(metadata.task_outcome_summary_run_id);
+  const blockedReason = binding?.last_run_blocked_reason || stringValue(metadata.last_run_blocked_reason);
   const [localStatus, setLocalStatus] = useState<string | undefined>();
   const startedForRun = useRef<string | undefined>(undefined);
 
-  const narrative = matchingAiSummary?.narrative || summary?.summary || binding?.last_run_error || "run finished without a summary";
-  const headline = matchingAiSummary?.headline || (outcome === "complete" ? "Task completed" : "Task outcome needs review");
+  const narrative = matchingAiSummary?.narrative || blockedReason || summary?.summary || binding?.last_run_error || "run finished without a summary";
+  const headline = matchingAiSummary?.headline || (binding?.last_run_status === "blocked" ? "Run blocked" : outcome === "complete" ? "Task completed" : "Task outcome needs review");
   const confidence = matchingAiSummary?.confidence || (summary ? "medium" : "low");
   const findings = matchingAiSummary?.what_happened?.length
     ? matchingAiSummary.what_happened
@@ -311,7 +312,7 @@ export function TaskRunStoryPanels({
   const visibleSummaryStatus = matchingAiSummary
     ? "ready"
     : localStatus || (staleStoredRunningStatus ? undefined : summaryStatus) || (summary ? undefined : "queued");
-  const outcomeTone = outcome === "failed" || outcome === "error" ? "bad" : decisionRequired ? "warn" : "good";
+  const outcomeTone = binding?.last_run_status === "blocked" || outcome === "failed" || outcome === "error" ? "bad" : decisionRequired ? "warn" : "good";
 
   return (
     <section className="px-4 py-3">
@@ -326,6 +327,7 @@ export function TaskRunStoryPanels({
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-foreground/85">{headline}</h3>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-foreground/60">{narrative}</p>
+            {blockedReason ? <p className="mt-1 text-[10px] text-red-300">Blocked reason: {blockedReason}</p> : null}
             {summaryError ? <p className="mt-1 text-[10px] text-red-300">{summaryError}</p> : null}
           </div>
           <div className={cn("rounded-sm px-2.5 py-2 text-right", toneFor(outcome, decisionRequired))}>

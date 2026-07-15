@@ -61,7 +61,7 @@ function plan(root: string): AgentBootstrapPlan {
     },
     instructionPath: join(root, "artifacts", "writer-instructions.md"),
     instructionPointer: `Read ${join(root, "artifacts", "writer-instructions.md")}`,
-    localStartCommand: "source '/repo/lib/agent-profile.sh' && eval \"$(build_profile_command '/tmp/profile.json' --interactive)\"",
+    localStartCommand: "eval \"$(node '/repo/lib/runner-agent-profile.js' command --profile-path '/tmp/profile.json' --interactive true --namespace-id 'default' --org-id 'default')\"",
     monitorCommand: "monitor-chain-agent workspace-writer-run-1",
   };
 }
@@ -132,7 +132,7 @@ describe("runner-v2 bootstrap executor", () => {
 
     expect(readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8")).toContain("Agent-ID: writer");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
-    expect(startScript).toContain("build_profile_command");
+    expect(startScript).toContain("runner-agent-profile.js");
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
@@ -236,6 +236,79 @@ describe("runner-v2 bootstrap executor", () => {
         started: expect.any(String),
       }],
     });
+  });
+
+  it("rejects a terminal run before stale state can relaunch an already completed agent", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "completed");
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "writer-run-1.state"), "session: workspace-writer-run-1\nagent_id: writer\nstatus: completed\n");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      agents: [{ id: "writer", name: "Writer", session: "workspace-writer-run-1", status: "complete" }],
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await expect(executeLocalBootstrap(plan(root), context(root), executor)).rejects.toThrow(
+      "run run-1 is terminal (completed)",
+    );
+
+    expect(executor.spawn).not.toHaveBeenCalled();
+    expect(executor.sendKeys).not.toHaveBeenCalled();
+    expect(readFileSync(join(root, "state", "writer-run-1.state"), "utf8")).toContain("status: completed");
+    expect(JSON.parse(readFileSync(runJsonPath, "utf8"))).toMatchObject({
+      status: "completed",
+      runnerV2: { attempts: [expect.objectContaining({ phase: "completed" })] },
+    });
+  });
+
+  it("rejects an unscoped relaunch when the target AgentAttempt is terminal", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-1", status: "complete" }],
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await expect(executeLocalBootstrap(plan(root), context(root), executor)).rejects.toThrow(
+      "agent writer has terminal attempt run-1:writer:1 (completed)",
+    );
+    expect(executor.spawn).not.toHaveBeenCalled();
   });
 
   it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {

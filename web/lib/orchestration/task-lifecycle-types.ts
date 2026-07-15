@@ -37,7 +37,7 @@ export interface TaskLifecycleState {
   taskId: string;
   chainId?: string;
   currentRunId?: string;
-  currentRunStatus?: "running" | "completed" | "failed" | "stopped";
+  currentRunStatus?: "running" | "completed" | "failed" | "stopped" | "blocked";
   // C1: backed by metadata.execution_retries, NOT auto_run_retries (which is also
   // incremented on generation/analysis failures and would over-count executions).
   executionRetryCount: number;

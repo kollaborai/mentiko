@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # load slack integration for error notifications
 source "$SCRIPT_DIR/slack-integration.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/agent-state-client.sh"
 
 # -------------------------------------------------------------------
 # detect-agent-error: check if agent output contains errors
@@ -41,39 +42,22 @@ detect-agent-error() {
 # -------------------------------------------------------------------
 # get-agent-retry-count: read current retry count from state
 # -------------------------------------------------------------------
-# args: <state_id>
+# args: <session-prefix>
 # outputs: current retry count
 # NOTE: uses STATE_DIR from caller (set by chain-runner)
 get-agent-retry-count() {
-    local state_id="$1"
-    local state_file="${STATE_DIR}/${state_id}.state"
-
-    if [[ -f "$state_file" ]]; then
-        grep "^retry_attempt:" "$state_file" 2>/dev/null | sed 's/retry_attempt: //' || echo "0"
-    else
-        echo "0"
-    fi
+    local session_prefix="$1"
+    _agent_state_cli retry-attempt --state-dir "$STATE_DIR" --session-prefix "$session_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}"
 }
 
 # -------------------------------------------------------------------
 # increment-retry-count: update state with new retry count
 # -------------------------------------------------------------------
-# args: <state_id>
+# args: <session-prefix>
 # outputs: new retry count
 increment-retry-count() {
-    local state_id="$1"
-    local state_file="${STATE_DIR}/${state_id}.state"
-
-    if [[ -f "$state_file" ]]; then
-        local current=$(get-agent-retry-count "$state_id")
-        local next=$((current + 1))
-        # use temp file for sed compatibility
-        sed "s/^retry_attempt:.*/retry_attempt: $next/" "$state_file" > "${state_file}.tmp"
-        mv "${state_file}.tmp" "$state_file"
-        echo "$next"
-    else
-        echo "0"
-    fi
+    local session_prefix="$1"
+    _agent_state_cli increment-retry --state-dir "$STATE_DIR" --session-prefix "$session_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}"
 }
 
 # -------------------------------------------------------------------
@@ -145,7 +129,7 @@ handle-agent-error() {
     local default_error_handler=$(jq -r '.routing.error_handler // ""' "$chain_file" 2>/dev/null || echo "")
     local default_timeout_agent=$(jq -r '.routing.timeout_agent // ""' "$chain_file" 2>/dev/null || echo "")
 
-    # determine state id
+    # determine the canonical typed state prefix
     local s_prefix
     s_prefix=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .session_prefix // ""' "$chain_file" 2>/dev/null || echo "")
     if [[ -z "$s_prefix" ]]; then
@@ -157,13 +141,7 @@ handle-agent-error() {
             s_prefix="$agent_id"
         fi
     fi
-    local state_id
-    if declare -f run-scoped-state-id >/dev/null 2>&1; then
-        state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"
-    else
-        state_id=$(echo "$s_prefix" | tr '-' '_')
-    fi
-    local retry_count=$(get-agent-retry-count "$state_id")
+    local retry_count=$(get-agent-retry-count "$s_prefix")
 
     echo ""
     echo "  *** $error_type detected in agent $agent_id"
@@ -200,7 +178,7 @@ handle-agent-error() {
         local delay=$(calculate-retry-delay "$retry_count" "$agent_backoff" "$agent_delay" "$agent_max_delay" "$agent_multiplier")
 
         echo "      scheduling retry $next_count in ${delay}s..."
-        increment-retry-count "$state_id"
+        increment-retry-count "$s_prefix"
 
         # schedule retry
         (
@@ -217,12 +195,7 @@ handle-agent-error() {
     if [[ -n "$handler_agent" ]]; then
         echo "      max retries reached. routing to error handler: $handler_agent"
         # update state to failed before routing
-        local state_file="${STATE_DIR}/${state_id}.state"
-        if [[ -f "$state_file" ]]; then
-            echo "status: failed" >> "${state_file}"
-            echo "failed_reason: $error_type" >> "${state_file}"
-            echo "failed_at: $(date -Iseconds)" >> "${state_file}"
-        fi
+        _agent_state_cli fail --state-dir "$STATE_DIR" --session-prefix "$s_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}" --reason "$error_type" >/dev/null
 
         # launch error handler
         (

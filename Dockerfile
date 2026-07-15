@@ -177,6 +177,34 @@ RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
         --outfile=/context/lib/runner-run-record.js; \
     fi
 
+# compile the typed batch record worker; the API never shells through bash to orchestrate batches.
+RUN if [ -f /build/web/lib/runner-v2/batch-runner-cli.ts ]; then \
+      echo "=== compiling typed runner batch worker ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/batch-runner-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-batch-runner.js; \
+    fi
+
+# compile the sole runner agent-state owner used by shell invocation boundaries.
+RUN if [ -f /build/web/lib/runner-v2/agent-state-cli.ts ]; then \
+      echo "=== compiling typed runner agent-state boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/agent-state-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-agent-state.js; \
+    fi
+
+# compile the typed agent-profile resolver and command compiler used by every
+# remaining shell invocation boundary.
+RUN if [ -f /build/web/lib/runner-v2/agent-profile-cli.ts ]; then \
+      echo "=== compiling typed runner agent-profile boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/agent-profile-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-agent-profile.js; \
+    fi
+
 # compile the typed create-only runspace manifest boundary used by chain launch.
 RUN if [ -f /build/web/lib/runner-v2/runspace-manifest-cli.ts ]; then \
       echo "=== compiling typed runner runspace manifest ===" && \

@@ -1,7 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import config, { ptyDaemonEnv } from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
+import { runnerAgentStatePath } from "@/lib/runner-v2/agent-state";
+import { resolveAgentProfile as resolveTypedAgentProfile } from "@/lib/runner-v2/agent-profile";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface BootstrapChainAgent {
@@ -74,18 +76,15 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   // One configured project event root. Runner children may receive the same
   // root through EVENTS_DIR; there is no run-local compatibility directory.
   const eventsDir = input.env?.EVENTS_DIR || config.eventsDir;
-  const stateDir = input.env?.STATE_DIR || join(input.runDir, "state");
+  // Agent state has one namespace-scoped canonical root. A run-local parallel
+  // record made mixed shell/typed runs invisible to the live stream reader.
+  const stateDir = input.env?.STATE_DIR || config.stateDir;
   const sessionPrefix = resolveSessionPrefix(chain, agent);
   const projectName = basename(projectRoot) || "workspace";
   const sessionName = `${projectName}-${sessionPrefix}-${input.runId}`;
-  const statePath = join(stateDir, `${sessionPrefix}-${input.runId}.state`);
+  const statePath = runnerAgentStatePath(stateDir, sessionPrefix, input.runId);
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
-  const profile = resolveAgentProfile({
-    chain,
-    agent,
-    projectRoot,
-    env: input.env,
-  });
+  const profile = resolveAgentProfile(input.chainPath, agent.id || "", projectRoot, input.env);
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
     MENTIKO_BIN: join(config.codeRoot, "bin", "mentiko"),
@@ -189,84 +188,17 @@ interface ProfileResolution {
   readiness?: AgentProfileReadinessConfig;
 }
 
-function resolveAgentProfile(input: ProfileResolutionInput): ProfileResolution {
-  const profilesDir = resolveProfilesDir(input.env);
-  const requested = [
-    (input.agent as BootstrapChainAgent & { agent_profile?: string }).agent_profile,
-    input.chain.default_agent_profile,
-  ].filter(Boolean) as string[];
-  const workspaceProfile = resolveWorkspaceDefaultProfile(input.projectRoot, input.env);
-  const namespaceDefault = resolveNamespaceDefaultProfile(profilesDir);
-  const candidates = [...requested, workspaceProfile, namespaceDefault].filter(Boolean) as string[];
-
-  for (const id of candidates) {
-    const path = profilePathForId(profilesDir, id);
-    if (path && existsSync(path)) {
-      return { id, path, readiness: readProfileReadiness(path) };
-    }
-  }
-
-  if (requested.length > 0) {
-    throw new Error(`requested agent profile '${requested[0]}' was not found and no valid fallback profile exists`);
-  }
-  return {};
-}
-
-function readProfileReadiness(path: string): AgentProfileReadinessConfig | undefined {
-  try {
-    const profile = JSON.parse(readFileSync(path, "utf8")) as {
-      readiness?: AgentProfileReadinessConfig;
-    };
-    return profile.readiness;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveProfilesDir(env: Record<string, string | undefined> | undefined): string {
-  return env?.AGENT_PROFILES_DIR
-    || join(env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT || "", "agent-profiles");
-}
-
-function profilePathForId(profilesDir: string, id: string): string | undefined {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) return undefined;
-  return join(profilesDir, `${id}.json`);
-}
-
-function resolveWorkspaceDefaultProfile(
+function resolveAgentProfile(
+  chainPath: string,
+  agentId: string,
   projectRoot: string,
   env: Record<string, string | undefined> | undefined,
-): string | undefined {
+): ProfileResolution {
   const orgRoot = env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT;
-  if (!orgRoot) return undefined;
-  const workspacesPath = join(orgRoot, "workspaces.json");
-  if (!existsSync(workspacesPath)) return undefined;
-  try {
-    const workspaces = JSON.parse(readFileSync(workspacesPath, "utf8")) as Array<{
-      path?: string;
-      default_agent_profile?: string;
-    }>;
-    return workspaces.find((workspace) => workspace.path === projectRoot)?.default_agent_profile;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveNamespaceDefaultProfile(profilesDir: string): string | undefined {
-  if (!profilesDir || !existsSync(profilesDir)) return undefined;
-  try {
-    for (const file of readdirSync(profilesDir)) {
-      if (!file.endsWith(".json")) continue;
-      const profile = JSON.parse(readFileSync(join(profilesDir, file), "utf8")) as {
-        id?: string;
-        isDefault?: boolean;
-      };
-      if (profile.isDefault && profile.id) return profile.id;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
+  const profilesDir = env?.AGENT_PROFILES_DIR || (orgRoot ? join(orgRoot, "agent-profiles") : undefined);
+  if (!profilesDir) return {};
+  const profile = resolveTypedAgentProfile({ chainPath, agentId, projectRoot, profilesDir, orgRoot });
+  return profile ? { id: profile.id, path: profile.path, readiness: profile.profile.readiness } : {};
 }
 
 function buildInstructionPointer(agentId: string, instructionPath: string): string {
@@ -288,9 +220,9 @@ function buildLocalStartCommand(
   env: Record<string, string | undefined> | undefined,
 ): string {
   const cli = env?.MENTIKO_CLI || "claude";
-  const agentProfileLib = join(config.codeRoot, "lib", "agent-profile.sh");
+  const agentProfileCli = join(config.codeRoot, "lib", "runner-agent-profile.js");
   const profileCommand = profilePath
-    ? `source ${shellEscape(agentProfileLib)} && eval "$(build_profile_command ${shellEscape(profilePath)} --interactive)"`
+    ? `eval "$(node ${shellEscape(agentProfileCli)} command --profile-path ${shellEscape(profilePath)} --interactive true --namespace-id ${shellEscape(runContextExports.NAMESPACE_ID)} --org-id ${shellEscape(runContextExports.ORG_ID)})"`
     : `exec ${shellEscape(cli)}`;
   return [
     `cd ${shellEscape(projectRoot)}`,

@@ -1,0 +1,82 @@
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildAgentProfileCommand, resolveAgentProfile } from "@/lib/runner-v2/agent-profile";
+
+jest.mock("@/lib/secrets/secrets-store", () => ({
+  getSecretByName: jest.fn((_namespaceId: string, _orgId: string, name: string) => name === "AVAILABLE" ? "resolved-secret" : null),
+}));
+
+function tempDir() {
+  return mkdtempSync(join(tmpdir(), "runner-v2-agent-profile-"));
+}
+
+function writeJson(path: string, value: unknown) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+describe("runner-v2 agent profile contract", () => {
+  it("resolves the documented priority through typed paths", () => {
+    const root = tempDir();
+    const orgRoot = join(root, "org");
+    const profilesDir = join(orgRoot, "agent-profiles");
+    const workspace = join(root, "workspace");
+    const chainPath = join(root, "chain.json");
+    mkdirSync(profilesDir, { recursive: true });
+    writeJson(join(profilesDir, "namespace.json"), { id: "namespace", name: "Namespace", cli: "claude", isDefault: true });
+    writeJson(join(profilesDir, "workspace.json"), { id: "workspace", name: "Workspace", cli: "codex" });
+    writeJson(join(profilesDir, "chain.json"), { id: "chain", name: "Chain", cli: "kollab" });
+    writeJson(join(profilesDir, "agent.json"), { id: "agent", name: "Agent", cli: "agy" });
+    writeJson(join(orgRoot, "workspaces.json"), [{ path: workspace, default_agent_profile: "workspace" }]);
+    writeJson(chainPath, {
+      default_agent_profile: "chain",
+      agents: [{ id: "writer", agent_profile: "agent" }],
+    });
+
+    const resolved = resolveAgentProfile({ chainPath, agentId: "writer", projectRoot: workspace, profilesDir, orgRoot });
+    expect(resolved).toMatchObject({ id: "agent", source: "agent", path: join(profilesDir, "agent.json") });
+  });
+
+  it("fails closed when an explicitly selected profile is absent instead of selecting a lower-priority default", () => {
+    const root = tempDir();
+    const profilesDir = join(root, "profiles");
+    const chainPath = join(root, "chain.json");
+    mkdirSync(profilesDir, { recursive: true });
+    writeJson(join(profilesDir, "namespace.json"), { id: "namespace", name: "Namespace", cli: "claude", isDefault: true });
+    writeJson(chainPath, { default_agent_profile: "missing", agents: [{ id: "writer" }] });
+
+    expect(() => resolveAgentProfile({ chainPath, agentId: "writer", profilesDir })).toThrow("Agent profile 'missing' does not exist");
+  });
+
+  it("builds a command without leaking unresolved secret references and preserves resolved values only in a private env file", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, {
+      id: "profile",
+      name: "Profile",
+      cli: "claude",
+      permission_flag: "--dangerously-skip-permissions",
+      env: { AVAILABLE: "{secret:AVAILABLE}", MISSING: "{secret:MISSING}", PLAIN: "visible-only-in-file" },
+      extra_args: ["--flag", "value with spaces"],
+    });
+
+    const command = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
+    expect(command).toContain("--allow-dangerously-skip-permissions --permission-mode bypassPermissions");
+    expect(command).not.toContain("{secret:");
+    expect(command).not.toContain("resolved-secret");
+    expect(command).not.toContain("visible-only-in-file");
+    const envFile = command.match(/source '([^']+)'/)?.[1];
+    expect(envFile).toBeDefined();
+    const env = readFileSync(envFile!, "utf8");
+    expect(env).toContain("export AVAILABLE='resolved-secret'");
+    expect(env).toContain("export PLAIN='visible-only-in-file'");
+    expect(env).not.toContain("MISSING");
+  });
+
+  it("rejects malformed profile values before they reach an external CLI", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, { id: "profile", name: "Profile", cli: "claude", env: { invalid: "no" } });
+    expect(() => buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" })).toThrow("Invalid profile env entry");
+  });
+});

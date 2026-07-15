@@ -21,67 +21,17 @@
 // that already ended.
 // -------------------------------------------------------------------
 
-import { readFileSync, existsSync, readdirSync } from "fs";
-import { join } from "path";
+import {
+  readRunnerAgentStateDirectory,
+  type RunnerAgentState,
+} from "@/lib/runner-v2/agent-state";
 
-export interface AgentState {
-  agent_id: string;
-  status: string;
-  session: string;
-  emits?: string;
-  started?: string;
-  completed?: string;
-}
+export type AgentState = RunnerAgentState;
 
-function parseStateFile(content: string): Record<string, string> {
-  return content.split("\n").reduce((acc, line) => {
-    const [key, ...rest] = line.split(":");
-    if (key && rest.length > 0) acc[key.trim()] = rest.join(":").trim();
-    return acc;
-  }, {} as Record<string, string>);
-}
-
-// parse all .state files in a run's state directory.
-// falls back to searching the global namespace state dir by run ID when
-// no run-specific state dir exists (legacy layout).
-export function readAgentStates(runDir: string): Record<string, AgentState> {
-  const states: Record<string, AgentState> = {};
-
-  function loadStateDir(dir: string, runIdFilter?: string) {
-    if (!existsSync(dir)) return;
-    const files = readdirSync(dir).filter((f) => f.endsWith(".state"));
-    for (const file of files) {
-      try {
-        const content = readFileSync(join(dir, file), "utf-8");
-        const lines = parseStateFile(content);
-        // if filtering by run ID, skip state files for other runs
-        if (runIdFilter && lines.session && !lines.session.includes(runIdFilter)) continue;
-        const agentId = lines.agent_id || file.replace(".state", "");
-        states[agentId] = {
-          agent_id: agentId,
-          status: lines.status || "unknown",
-          session: lines.session || "",
-          emits: lines.emits,
-          started: lines.started,
-          completed: lines.completed,
-        };
-      } catch { /* skip bad state files */ }
-    }
-  }
-
-  // primary: run-specific state dir
-  const runStateDir = join(runDir, "state");
-  if (existsSync(runStateDir)) {
-    loadStateDir(runStateDir);
-    return states;
-  }
-
-  // fallback: global namespace state dir, filtered by run ID
-  const runId = runDir.split("/").pop() || "";
-  const globalStateDir = join(runDir, "..", "..", "state");
-  loadStateDir(globalStateDir, runId);
-
-  return states;
+// Select only records for a run from the explicit namespace-scoped canonical
+// state root. There is no alternate-location lookup.
+export function readAgentStates(stateDir: string, runId: string): Record<string, AgentState> {
+  return readRunnerAgentStateDirectory(stateDir, runId);
 }
 
 // phantom agent IDs that are branch termination values, not real agents

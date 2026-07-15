@@ -2,7 +2,7 @@ import { writeFileSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
-import { getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
+import { getNamespaceConfig, getOrgIdFromRequest, getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { readAgentStates, mergeAgentStates } from "@/lib/runs/run-state";
 import { pty } from "@/lib/pty/pty-client";
 import { checkRunAccess } from "@/lib/auth/run-acl";
@@ -22,6 +22,7 @@ export const GET = withErrorHandling(async (
   const { id: runId } = await context.params;
   const namespaceId = await getNamespaceIdFromRequest(req);
   const orgId = await getOrgIdFromRequest(req);
+  const namespaceConfig = await getNamespaceConfig(req);
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);
   const acl = await checkRunAccess(req, runId, runsDir);
   if (!acl.ok) {
@@ -40,7 +41,7 @@ export const GET = withErrorHandling(async (
 
   // Read state files and merge for real-time agent statuses
   // pass run.status so stale state files don't override terminal agent statuses
-  const agentStates = readAgentStates(runDir);
+  const agentStates = readAgentStates(namespaceConfig.stateDir, runId);
   const agents = mergeAgentStates(run.agents || [], agentStates, run.status);
 
   // Extract agent ID from session name: mentiko-{chain}-{agentId}-run-{runId}

@@ -1,7 +1,7 @@
 import { completeFanGroupMember, createFanGroupState, fanGroupConditionMet } from "@/lib/runner-v2/fan-group";
 
 describe("runner-v2 fan group planner", () => {
-  it("creates shell-compatible fan-group state", () => {
+  it("creates canonical JSON fan-group state", () => {
     expect(createFanGroupState({
       id: "draft-ready-20260626-1234",
       event: "draft-ready",
@@ -26,6 +26,7 @@ describe("runner-v2 fan group planner", () => {
       total: 2,
       chainPath: "/chains/build.json",
       runId: "run-123",
+      members: {},
     });
   });
 
