@@ -14,8 +14,8 @@ describe("chain profile UI source contract", () => {
     expect(source).toContain("default_agent_profile: chain.default_agent_profile");
   });
 
-  it("the direct run page resolves the selected workspace default", () => {
-    const source = readFileSync("app/(workflows)/chains/[id]/run/page.tsx", "utf8");
+  it("the run panel resolves the selected workspace default", () => {
+    const source = readFileSync("components/chain/run-chain-panel.tsx", "utf8");
 
     expect(source).toContain("selectedWorkspaceDefaultProfileId");
     expect(source).toContain("workspaceDefaultProfileId: selectedWorkspaceDefaultProfileId");
