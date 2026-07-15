@@ -8,26 +8,23 @@
 #                              completion events that were never processed. The
 #                              fix scopes archival to exactly what THIS completion
 #                              owns (its run + its source); siblings and other runs
-#                              survive. (lib/event-trigger.sh archive-run-events)
-#   #2  fabricated-success    — chain-runner-complete.sh's no-event fallback used
-#       (complete.sh side)      to FABRICATE the agent's declared emits SUCCESS
+#                              survive. The locked typed event lifecycle CLI
+#                              scopes `consume` to the explicit run + owner.
+#   #2  fabricated-success    — the retired shell completion fallback used to
+#                               FABRICATE the agent's declared emits SUCCESS
 #                              event when the agent finished without writing one,
 #                              advancing the chain as if it had succeeded
 #                              (on_error never fired). The fix: dead/quiescent
 #                              WITHOUT the declared emits event = FAILURE — write
-#                              run+agent FAILED and an agent-error DIAGNOSTIC
-#                              (source: chain-runner-complete, NOT the emits name),
-#                              never a synthesized handoff.
-#   #15 fangroup-name-mismatch — chain-runner-complete.sh called `fan_group_create`
-#                              (underscores) but the routing-lib function is
-#                              `fan-group-create` (hyphens) with no alias, so under
-#                              set -e the fan-OUT creation path DIED and the fan-in
-#                              never fired (run hangs). The fix corrects the call.
+#                              run+agent FAILED through the typed completion
+#                              entrypoint, never a synthesized handoff.
+#   #15 fan-group liveness     — completion must account for both fan-out members
+#                              and launch the fan-in exactly once.
 #
 # It drives the REAL bash engine (`./bin/mentiko run`) with the deterministic stub
-# CLI for the end-to-end fan-out proof, and the REAL lib functions directly
-# (sourced into a throwaway data root) for the deterministic, race-free archival
-# and fallback-failure proofs. Zero model traffic, throwaway MENTIKO_GLOBAL_ROOT,
+# CLI for the end-to-end fan-out proof, the locked typed lifecycle CLI for the
+# deterministic archival proof, and runner-v2 completion for no-event failure.
+# Zero model traffic, throwaway MENTIKO_GLOBAL_ROOT,
 # uniquely-named PTY daemon (never touches the dev's ~/.mentiko or dev sessions),
 # every live run wrapped in a hard timeout so a hang FAILS the test.
 #
@@ -43,8 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MENTIKO_BIN="$REPO_ROOT/bin/mentiko"
 PTY_MGR_BIN_DEFAULT="$HOME/.pty-mgr/bin/pty-mgr"
-EVENT_TRIGGER_SH="$REPO_ROOT/lib/event-trigger.sh"
-ROUTING_LIB="$REPO_ROOT/lib/routing-lib.sh"
+EVENT_LIFECYCLE_CLI="$REPO_ROOT/lib/runner-event-lifecycle.js"
 
 pick_bash() {
   if [[ "${BASH_VERSINFO:-0}" -ge 4 ]]; then command -v bash; return; fi
@@ -104,9 +100,10 @@ export STUB_CLI="$SCRIPT_DIR/fixtures/stub-agent-cli.sh"
 # events/runs/state live under the (collapsed default) project root.
 EVENTS_DIR_LIVE="$DATA_ROOT/namespaces/default/events"
 RUNS_DIR_LIVE="$DATA_ROOT/namespaces/default/runs"
+STATE_DIR_LIVE="$DATA_ROOT/namespaces/default/state"
 
 PROFILES_DIR="$DATA_ROOT/namespaces/default/agent-profiles"
-mkdir -p "$PROFILES_DIR" "$EVENTS_DIR_LIVE" "$RUNS_DIR_LIVE"
+mkdir -p "$PROFILES_DIR" "$EVENTS_DIR_LIVE" "$RUNS_DIR_LIVE" "$STATE_DIR_LIVE"
 chmod +x "$STUB_CLI" 2>/dev/null || true
 
 git -C "$WORKSPACE" init -q >/dev/null 2>&1 || true
@@ -125,6 +122,12 @@ write_profile() {  # <profile_id> <stub_mode>
   "log_path": "${STUB_LOG_HOME}",
   "isDefault": true,
   "isAdvisorDefault": true,
+  "readiness": {
+    "enabled": true,
+    "ready_patterns": [
+      { "name": "stub-ready", "type": "text", "value": "REPL ready" }
+    ]
+  },
   "env": { "STUB_MODE": "${mode}" }
 }
 JSON
@@ -161,7 +164,8 @@ agent_status() {  # <run_dir> <agent_id>
 }
 
 # count GENUINE success-handoff events for <emits_name>: `event: <emits>` on its
-# own line AND source != monitor/chain-runner-complete (so diagnostics + the
+# own line AND source is not a known diagnostic source (including the retired
+# chain-runner-complete label on pre-cutover fixtures), so diagnostics + the
 # aggregate chain-complete event are never miscounted). Scans active + archive.
 count_success_events() {  # <emits_name>
   local emits="$1" n=0 f
@@ -191,53 +195,6 @@ command -v jq >/dev/null 2>&1 || { printf '%sFATAL: jq is required%s\n' "$C_RED"
 if [[ "$("$ENGINE_BASH" -c 'echo ${BASH_VERSINFO:-0}')" -lt 4 ]]; then
   printf '%sFATAL: need bash 4+ to run the engine%s\n' "$C_RED" "$C_NC"; exit 2
 fi
-
-# ---------------------------------------------------------------------
-# #15 PRE-FIX PROOF — the underscore call dies; the hyphen function is the real one.
-# We do NOT mutate git state: we read the COMMITTED version via `git show HEAD:`
-# and prove (a) it literally contains the buggy `fan_group_create` underscore
-# call, and (b) that calling an underscore-named function under the same
-# `set -euo pipefail` the completion handler runs aborts (command not found),
-# while the hyphenated `fan-group-create` defined by routing-lib succeeds.
-# ---------------------------------------------------------------------
-printf '%s[0] #15 pre-fix proof — fan_group_create (underscore) was a dead call at HEAD%s\n' "$C_BLU" "$C_NC"
-HEAD_COMPLETE="$TMP_ROOT/complete.HEAD.sh"
-if git -C "$REPO_ROOT" show HEAD:lib/chain-runner-complete.sh > "$HEAD_COMPLETE" 2>/dev/null && [[ -s "$HEAD_COMPLETE" ]]; then
-  if grep -qE '^\s*fan_group_create ' "$HEAD_COMPLETE"; then
-    note "HEAD:lib/chain-runner-complete.sh calls 'fan_group_create' (underscore) at line $(grep -nE '^\s*fan_group_create ' "$HEAD_COMPLETE" | head -1 | cut -d: -f1)"
-    pass "#15 pre-fix: committed HEAD contains the buggy underscore call fan_group_create"
-  else
-    note "HEAD no longer has the underscore call (already fixed in a prior commit?)"
-    pass "#15 pre-fix: (HEAD clean) — current tree uses the hyphen form (asserted below)"
-  fi
-else
-  note "${C_YEL}could not read HEAD:lib/chain-runner-complete.sh (skipping committed-source check)${C_NC}"
-fi
-
-# functional proof: routing-lib defines the HYPHEN form, not the underscore form.
-# Under set -e an unknown command (the underscore call) returns 127 and aborts.
-underscore_rc="$("$ENGINE_BASH" -c '
-  set -euo pipefail
-  STATE_DIR="'"$TMP_ROOT"'/p15-state"; SCRIPT_DIR="'"$TMP_ROOT"'/p15-sd"; mkdir -p "$STATE_DIR" "$SCRIPT_DIR"
-  source "'"$ROUTING_LIB"'" >/dev/null 2>&1
-  fan_group_create g ev "a b" fin all 0 "" >/dev/null 2>&1
-  echo "REACHED"
-' 2>/dev/null; echo "rc=$?")"
-if [[ "$underscore_rc" == *"REACHED"* ]]; then
-  fail "#15 functional: fan_group_create (underscore) somehow ran — an alias exists? (unexpected)"
-else
-  pass "#15 functional: fan_group_create (underscore) is undefined; aborts under set -e (rc=${underscore_rc##*rc=})"
-fi
-hyphen_ok="$("$ENGINE_BASH" -c '
-  set -euo pipefail
-  STATE_DIR="'"$TMP_ROOT"'/p15-state2"; SCRIPT_DIR="'"$TMP_ROOT"'/p15-sd2"; mkdir -p "$STATE_DIR" "$SCRIPT_DIR"
-  source "'"$ROUTING_LIB"'" >/dev/null 2>&1
-  sf="$(fan-group-create g ev "a b" fin all 0 "")"
-  [[ -f "$sf" ]] && echo "OK"
-' 2>/dev/null || true)"
-[[ "$hyphen_ok" == "OK" ]] && pass "#15 functional: fan-group-create (hyphen) is the real function and creates group state" \
-                           || fail "#15 functional: fan-group-create (hyphen) did not create group state"
-echo
 
 # ---------------------------------------------------------------------
 # SCENARIO A — FAN-OUT END TO END (#15 + group B locking in vivo).
@@ -343,18 +300,19 @@ echo
 
 # ---------------------------------------------------------------------
 # SCENARIO B — SIBLING EVENT SURVIVAL (#6), deterministic + race-free.
-# Drive the REAL archive-run-events (the exact function chain-runner-complete.sh
-# now calls) against a realistic shared events dir holding TWO sibling completion
-# events from one run PLUS an event from a second concurrent run. After the FIRST
-# sibling's completion archives, assert: the SECOND sibling's not-yet-processed
-# event SURVIVES, the cross-run event SURVIVES, and the first sibling can then be
-# processed normally. (The old global archive-all-events wiped all three.)
+# Drive the locked typed lifecycle CLI's `consume` command against a realistic
+# shared events dir holding TWO sibling completion events from one run PLUS an
+# event from a second concurrent run. After the FIRST sibling consumes its
+# explicit trigger, assert: that trigger is archived with processed:true, the
+# SECOND sibling's not-yet-processed event SURVIVES, the cross-run event SURVIVES,
+# and the second sibling can then be processed normally. No legacy event helper
+# is sourced. (The old global archive-all behavior wiped all three.)
 # ---------------------------------------------------------------------
 printf '%s[B] sibling event survival (#6) — first completer must not wipe the second%s\n' "$C_BLU" "$C_NC"
 B_EVDIR="$TMP_ROOT/b-events"
 mkdir -p "$B_EVDIR"
 
-# canonical names: ${run_id}-${source}-${event}.event (emit-event's scheme).
+# canonical names: ${run_id}-${source}-${event}.event (typed emitter scheme).
 cat > "$B_EVDIR/run-A1-worker_a-worker-a-done.event" <<EOF
 event: worker-a-done
 source: worker_a
@@ -390,19 +348,41 @@ agent: worker_b
 timestamp: $(date -Iseconds)
 reason: sibling diagnostic
 processed: false
+data: sibling diagnostic
 EOF
 
 B_BEFORE="$(ls -1 "$B_EVDIR"/*.event 2>/dev/null | wc -l | tr -d ' ')"
 note "B: seeded $B_BEFORE events (2 run-A1 siblings + 1 run-A2 + 1 sibling diagnostic)"
 
-# run worker_a's scoped archive exactly as the completion handler does.
-"$ENGINE_BASH" -c '
-  set -uo pipefail
-  export EVENTS_DIR="'"$B_EVDIR"'"
-  source "'"$EVENT_TRIGGER_SH"'" >/dev/null 2>&1
-  # worker_a completes: triggered = its own event; owner key = its agent id.
-  archive-run-events "run-A1" "worker_a" "$EVENTS_DIR/run-A1-worker_a-worker-a-done.event" >/dev/null 2>&1
-' >/dev/null 2>&1
+# worker_a completes through the same locked typed entrypoint used by runtime
+# callers. Both configured-root inputs are explicit and must resolve identically.
+B_A_TRIGGER="$B_EVDIR/run-A1-worker_a-worker-a-done.event"
+if B_A_CONSUME_JSON="$(
+  MENTIKO_CODE_ROOT="$REPO_ROOT" EVENTS_DIR="$B_EVDIR" \
+    node "$EVENT_LIFECYCLE_CLI" consume \
+      --events-dir "$B_EVDIR" \
+      --run-id "run-A1" \
+      --source "worker_a" \
+      --triggered "$B_A_TRIGGER" \
+      --session-name "fanout-worker_a" \
+      --all-agent-id "worker_a" \
+      --all-agent-id "worker_b" \
+      --output json
+)"; then
+  pass "B: worker_a consumed its explicit trigger through the typed lifecycle CLI"
+else
+  B_A_CONSUME_JSON=""
+  fail "B: typed lifecycle consume failed for worker_a"
+fi
+
+B_A_ARCHIVED="$B_EVDIR/archive/run-A1-worker_a-worker-a-done.event"
+if [[ -f "$B_A_ARCHIVED" ]] \
+   && grep -qiE '^processed:[[:space:]]*true[[:space:]]*$' "$B_A_ARCHIVED" \
+   && [[ "$(jq -r '.triggered.event.processed // false' <<<"$B_A_CONSUME_JSON" 2>/dev/null)" == "true" ]]; then
+  pass "B: worker_a's explicit trigger was archived with processed:true"
+else
+  fail "B: worker_a's explicit trigger lacks archived processed:true proof"
+fi
 
 if [[ -f "$B_EVDIR/run-A1-worker_b-worker-b-done.event" ]]; then
   pass "B: sibling worker_b's not-yet-processed event SURVIVED worker_a's completion (#6)"
@@ -419,23 +399,41 @@ if [[ -f "$B_EVDIR/20260101T000000-run-A1-worker_b-agent-error.event" ]]; then
 else
   fail "B: sibling worker_b's diagnostic was archived by worker_a"
 fi
-if [[ -f "$B_EVDIR/archive/run-A1-worker_a-worker-a-done.event" ]]; then
-  pass "B: worker_a's OWN completion event was archived (owned cleanup still works)"
+if grep -qE '^[[:space:]]*source[[:space:]]+.*event-trigger' "$0"; then
+  fail "B: script still sources the obsolete event helper"
 else
-  fail "B: worker_a's own event was not archived"
+  pass "B: lifecycle proof has no obsolete event-helper source"
 fi
 
-# now worker_b completes — its event + its diagnostic archive; run-A2 still safe.
-"$ENGINE_BASH" -c '
-  set -uo pipefail
-  export EVENTS_DIR="'"$B_EVDIR"'"
-  source "'"$EVENT_TRIGGER_SH"'" >/dev/null 2>&1
-  archive-run-events "run-A1" "worker_b" "$EVENTS_DIR/run-A1-worker_b-worker-b-done.event" >/dev/null 2>&1
-' >/dev/null 2>&1
-if [[ -f "$B_EVDIR/archive/run-A1-worker_b-worker-b-done.event" && ! -f "$B_EVDIR/run-A1-worker_b-worker-b-done.event" ]]; then
-  pass "B: worker_b then completed normally (its event archived once it was the owner)"
+# now worker_b completes through typed consume; run-A2 remains outside its scope.
+B_B_TRIGGER="$B_EVDIR/run-A1-worker_b-worker-b-done.event"
+if MENTIKO_CODE_ROOT="$REPO_ROOT" EVENTS_DIR="$B_EVDIR" \
+  node "$EVENT_LIFECYCLE_CLI" consume \
+    --events-dir "$B_EVDIR" \
+    --run-id "run-A1" \
+    --source "worker_b" \
+    --triggered "$B_B_TRIGGER" \
+    --session-name "fanout-worker_b" \
+    --all-agent-id "worker_a" \
+    --all-agent-id "worker_b" \
+    --output json >/dev/null; then
+  B_B_ARCHIVED="$B_EVDIR/archive/run-A1-worker_b-worker-b-done.event"
 else
-  fail "B: worker_b's event did not archive on its own completion"
+  B_B_ARCHIVED=""
+fi
+if [[ -n "$B_B_ARCHIVED" && -f "$B_B_ARCHIVED" && ! -f "$B_B_TRIGGER" ]] \
+   && grep -qiE '^processed:[[:space:]]*true[[:space:]]*$' "$B_B_ARCHIVED"; then
+  pass "B: worker_b then consumed normally (its trigger archived processed:true)"
+else
+  fail "B: worker_b's trigger did not archive processed:true on its own completion"
+fi
+B_B_DIAGNOSTIC_ARCHIVED="$B_EVDIR/archive/20260101T000000-run-A1-worker_b-agent-error.event"
+if [[ -f "$B_B_DIAGNOSTIC_ARCHIVED" ]] \
+   && [[ ! -f "$B_EVDIR/20260101T000000-run-A1-worker_b-agent-error.event" ]] \
+   && grep -qiE '^processed:[[:space:]]*true[[:space:]]*$' "$B_B_DIAGNOSTIC_ARCHIVED"; then
+  pass "B: worker_b's strict diagnostic archived processed:true with its owner"
+else
+  fail "B: worker_b's strict diagnostic did not archive with its owner"
 fi
 [[ -f "$B_EVDIR/run-A2-worker_a-worker-a-done.event" ]] && pass "B: run-A2 STILL survives after both run-A1 siblings completed" \
                                                         || fail "B: run-A2 was eventually wiped (cross-run leak)"
@@ -443,12 +441,12 @@ echo
 
 # ---------------------------------------------------------------------
 # SCENARIO C — NO-EVENT FALLBACK = FAILURE (#2).
-# Drive chain-runner-complete.sh the way the engine does, for an agent that
+# Drive runner-v2 completion the way the engine does, for an agent that
 # reached the completion handler but NEVER wrote its declared emits event (no
 # matching event file in EVENTS_DIR). Assert: NO success event is fabricated,
-# run+agent end FAILED, and an agent-error DIAGNOSTIC exists with
-# source: chain-runner-complete. (The old fallback fabricated event: <emits>,
-# source: <session-prefix> and advanced the chain as a success.)
+# agent ends FAILED and the run stops after retry policy is exhausted. (The old
+# fallback fabricated event: <emits>, source: <session-prefix> and advanced the
+# chain as a success.)
 # ---------------------------------------------------------------------
 printf '%s[C] no-event fallback = FAILURE (#2) — handler must not fabricate the success event%s\n' "$C_BLU" "$C_NC"
 write_profile "stub-default" "complete"   # profile present; we invoke the handler directly
@@ -471,35 +469,52 @@ JSON
 # real engine writes; update-run-status/agent operate on $RUNS_DIR/<id>/run.json).
 C_RUN_ID="run-noevent-$RANDOM"
 C_RUN_DIR="$RUNS_DIR_LIVE/$C_RUN_ID"
+C_SESSION="worker-run-$RANDOM"
 mkdir -p "$C_RUN_DIR/artifacts"
 cat > "$C_RUN_DIR/run.json" <<JSON
 {
   "id": "${C_RUN_ID}",
   "chain": "events-e2e-noevent",
+  "goal": "prove missing completion fails closed",
   "status": "running",
   "started": "$(date -Iseconds)",
   "workspacePath": "${WORKSPACE}",
-  "sessions": [],
+  "sessions": ["${C_SESSION}"],
   "artifacts": [],
   "agents": [
-    { "id": "worker", "name": "Worker", "status": "running", "started": "$(date -Iseconds)" }
+    { "id": "worker", "name": "Worker", "session": "${C_SESSION}", "status": "running", "started": "$(date -Iseconds)" }
   ]
 }
 JSON
 
 # session name maps to agent id "worker": SESSION_PREFIX strips a "-run-<n>" suffix.
 # (PROJECT_NAME = basename of the data root, which is not a prefix of this name.)
-C_SESSION="worker-run-$RANDOM"
 
 # events dir is empty of any 'worker' event — this is the no-event precondition.
 # Run the REAL completion handler with the run-scoped env the engine exports.
 C_LOG="$TMP_ROOT/c-complete.log"
+C_CONTEXT="$({
+  cd "$REPO_ROOT/web"
+  MENTIKO_RUN_ID="$C_RUN_ID" RUN_ID="$C_RUN_ID" MENTIKO_RUN_DIR="$C_RUN_DIR" \
+    EVENTS_DIR="$EVENTS_DIR_LIVE" STATE_DIR="$STATE_DIR_LIVE" MENTIKO_CODE_ROOT="$REPO_ROOT" \
+    MENTIKO_RUNNER_V2=1 MENTIKO_RUNNER_V2_COMPLETION=1 \
+    node - <<'NODE'
+const { resolve } = require("path");
+process.env.TS_NODE_COMPILER_OPTIONS = JSON.stringify({
+  module: "commonjs",
+  moduleResolution: "node",
+  baseUrl: ".",
+});
+require("ts-node/register/transpile-only");
+require("tsconfig-paths").register({ baseUrl: resolve(process.cwd()), paths: { "@/*": ["*"] } });
+const { createCompletionLaunchContext } = require("./lib/runner-v2/completion-launch-context");
+process.stdout.write(createCompletionLaunchContext(process.env).path);
+NODE
+})"
 if [[ -n "$TIMEOUT_BIN" ]]; then
-  MENTIKO_RUN_ID="$C_RUN_ID" RUN_ID="$C_RUN_ID" \
-    "$TIMEOUT_BIN" 60 "$ENGINE_BASH" "$REPO_ROOT/lib/chain-runner-complete.sh" "$C_SESSION" "$C_CHAIN" >"$C_LOG" 2>&1 || true
+  "$TIMEOUT_BIN" 60 node "$REPO_ROOT/web/scripts/runner-v2-complete.cjs" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 else
-  MENTIKO_RUN_ID="$C_RUN_ID" RUN_ID="$C_RUN_ID" \
-    "$ENGINE_BASH" "$REPO_ROOT/lib/chain-runner-complete.sh" "$C_SESSION" "$C_CHAIN" >"$C_LOG" 2>&1 || true
+  node "$REPO_ROOT/web/scripts/runner-v2-complete.cjs" "$C_SESSION" "$C_CHAIN" "$C_CONTEXT" >"$C_LOG" 2>&1 || true
 fi
 
 C_RUN_STATUS="$(jq -r '.status // "unknown"' "$C_RUN_DIR/run.json" 2>/dev/null)"
@@ -521,42 +536,13 @@ else
   pass "C: no worker-done -fallback.event fabricated"
 fi
 
-# (2) run + agent must be FAILED.
-[[ "$C_RUN_STATUS" == "failed" ]] && pass "C: run status is FAILED (no-event = failure, not success)" \
-                                  || fail "C: run status is '$C_RUN_STATUS' (expected failed)"
+# (2) run must stop and the agent must be FAILED.
+[[ "$C_RUN_STATUS" == "stopped" ]] && pass "C: run status is STOPPED (missing event exhausted retry policy)" \
+                                   || fail "C: run status is '$C_RUN_STATUS' (expected stopped)"
 [[ "$C_AGENT_STATUS" == "failed" ]] && pass "C: worker agent status is FAILED" \
                                     || fail "C: worker agent status is '$C_AGENT_STATUS' (expected failed)"
 
-# (3) an agent-error diagnostic with source: chain-runner-complete must exist.
-C_DIAG_OK=0
-shopt -s nullglob
-for f in "$EVENTS_DIR_LIVE"/*.event "$EVENTS_DIR_LIVE"/archive/*.event; do
-  [[ -f "$f" ]] || continue
-  if grep -qiE "^event:[[:space:]]*agent-error[[:space:]]*$" "$f" 2>/dev/null \
-     && grep -qiE "^source:[[:space:]]*chain-runner-complete[[:space:]]*$" "$f" 2>/dev/null \
-     && grep -qiE "^agent:[[:space:]]*worker[[:space:]]*$" "$f" 2>/dev/null; then
-    C_DIAG_OK=1; C_DIAG_FILE="$(basename "$f")"
-  fi
-done
-shopt -u nullglob
-if [[ "$C_DIAG_OK" == "1" ]]; then
-  pass "C: agent-error diagnostic written (source: chain-runner-complete, agent: worker) [$C_DIAG_FILE]"
-else
-  fail "C: no agent-error diagnostic with source: chain-runner-complete found"
-  note "C: handler log tail: $(tail -5 "$C_LOG" 2>/dev/null | tr '\n' '|')"
-fi
-
-# (4) the diagnostic's source must NOT be the agent id (cannot be read as a handoff)
-#     and the event name must NOT be the agent's emits name.
-if ls "$EVENTS_DIR_LIVE"/*agent-error*.event "$EVENTS_DIR_LIVE"/archive/*agent-error*.event >/dev/null 2>&1; then
-  if grep -rqiE "^source:[[:space:]]*worker[[:space:]]*$" "$EVENTS_DIR_LIVE"/*agent-error*.event "$EVENTS_DIR_LIVE"/archive/*agent-error*.event 2>/dev/null; then
-    fail "C: agent-error diagnostic has source: worker (could be mis-read as a handoff)"
-  else
-    pass "C: diagnostic source is NOT the agent id (completion matcher can never read it as success)"
-  fi
-fi
-
-# (5) downstream 'after' must never have launched.
+# (3) downstream 'after' must never have launched.
 C_AFTER_STATUS="$(agent_status "$C_RUN_DIR" after)"
 [[ "$C_AFTER_STATUS" == "absent" || -z "$C_AFTER_STATUS" ]] && pass "C: downstream 'after' never launched on the failure" \
                                                             || fail "C: downstream 'after' ran (status '$C_AFTER_STATUS')"

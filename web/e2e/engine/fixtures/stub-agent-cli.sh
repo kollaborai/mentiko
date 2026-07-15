@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # stub-agent-cli.sh — deterministic, hermetic stand-in for a real agent CLI
 # (claude / codex / aider). Used by the engine-level e2e to drive the REAL bash
-# orchestration engine (lib/chain-runner.sh + monitor + chain-runner-complete.sh)
+# orchestration engine (lib/chain-runner.sh + monitor + typed completion)
 # without any model provider, API key, network call, or paid inference.
 #
 # WHY THIS IS FAITHFUL TO THE CONTRACT

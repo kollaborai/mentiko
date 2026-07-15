@@ -4,7 +4,7 @@
 # This is the real thing the product is: it invokes `./bin/mentiko run <chain.json>`
 # against the ACTUAL bash orchestration engine (lib/chain-runner.sh spawns a PTY
 # agent session, lib/agent-functions.sh monitor-chain-agent watches it for
-# AGENT_COMPLETE, lib/chain-runner-complete.sh advances/finishes the chain), and
+# AGENT_COMPLETE, typed completion advances/finishes the chain), and
 # asserts on the run state, the file-based events, and cross-step output
 # propagation — for BOTH a succeeding chain and a failing chain.
 #

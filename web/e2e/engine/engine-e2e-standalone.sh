@@ -14,7 +14,7 @@
 #   #8  resolve-logdir-crash — when an agent profile's `cli` is NOT in the
 #       hardcoded recognized set (claude/codex/opencode/kollab*/agy) AND no
 #       explicit log_path is set, lib/session-log-resolver.sh::resolve_log_dir
-#       used to `return 1`. The completion handler (chain-runner-complete.sh)
+#       used to `return 1`. The retired shell completion handler historically
 #       runs under `set -euo pipefail` with an ERR trap, so that non-zero return
 #       crashed it mid-finalize and stranded the run at "running" forever.
 #       (a) FULL CHAIN: a 2-step chain whose profile sets cli=<stub path>
@@ -177,7 +177,7 @@ fi
 # ---------------------------------------------------------------------
 # #8 (b) — PROOF THE REGRESSION TEST CATCHES THE BUG.
 # Reproduce the EXACT failing completion-handler snippet (the conversation-
-# capture block from chain-runner-complete.sh) under `set -euo pipefail` + an
+# capture block from the retired shell completion handler) under `set -euo pipefail` + an
 # ERR trap, sourcing a given resolver implementation. The snippet returns 0 only
 # if it ran to the end; the ERR trap forces a non-zero exit if resolve_log_dir
 # aborts it. We run it twice: against HEAD's PRE-FIX resolver (must crash) and
@@ -202,7 +202,7 @@ else
   PREFIX_RESOLVER=""
 fi
 
-# A faithful, minimal copy of the chain-runner-complete.sh:585-622 capture block —
+# A historical regression fixture copied from the retired shell handler's capture block —
 # the lines that crashed. It runs under the SAME shell options + ERR trap the real
 # completion handler uses. $RESOLVER_SH selects which resolver implementation to load.
 # A profile with cli=<unrecognized> and NO log_path is the trigger.
