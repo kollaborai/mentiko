@@ -13,7 +13,6 @@ source "$SCRIPT_DIR/config.sh"
 
 # source core functions
 source "$SCRIPT_DIR/agent-functions.sh"
-source "$SCRIPT_DIR/event-trigger.sh"
 source "$SCRIPT_DIR/run-lib.sh" 2>/dev/null || true
 
 # log crashes (set -e exits)
@@ -120,7 +119,6 @@ if [[ "$MONITOR" == "--monitor" ]]; then
         printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"
         printf 'export MENTIKO_MONITOR_PROFILE_ID=%q\n' "$MONITOR_ADVISOR_PROFILE"
         printf 'source %q 2>/dev/null\n' "${SCRIPT_DIR}/agent-functions.sh"
-        printf 'source %q 2>/dev/null\n' "${SCRIPT_DIR}/event-trigger.sh"
         printf 'monitor-with-ai %q %q %q\n' "$SESSION_NAME" "$MONITOR_INTERVAL" "$AGENT_CONTEXT"
     } > "$MONITOR_SCRIPT"
     chmod +x "$MONITOR_SCRIPT"

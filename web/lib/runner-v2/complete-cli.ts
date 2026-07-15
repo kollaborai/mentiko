@@ -1,18 +1,19 @@
 #!/usr/bin/env node
-// anchor import MUST stay first: it pins MENTIKO_CODE_ROOT before config's
-// parent-of-cwd fallback runs (the completion PTY's cwd is in the data root).
-import "@/lib/runner-v2/entry-code-root-anchor";
-import { runRunnerV2CompletionEntrypoint, RunnerV2CompletionUnsupportedError } from "@/lib/runner-v2/completion-entrypoint";
+import { consumeCompletionLaunchContext } from "@/lib/runner-v2/completion-launch-context";
 
-const sessionName = process.argv[2];
-const chainPath = process.argv[3];
-
-if (!sessionName || !chainPath) {
-  console.error("usage: runner-v2-complete <session-name> <chain.json>");
-  process.exit(64);
-}
-
-try {
+async function main(): Promise<void> {
+  const sessionName = process.argv[2];
+  const chainPath = process.argv[3];
+  const contextPath = process.argv[4];
+  if (!sessionName || !chainPath || !contextPath) {
+    console.error("usage: runner-v2-complete <session-name> <chain.json> <context.json>");
+    process.exitCode = 64;
+    return;
+  }
+  consumeCompletionLaunchContext(contextPath);
+  const { anchorCodeRootEnv } = await import("@/lib/runner-v2/entry-code-root");
+  anchorCodeRootEnv(__dirname);
+  const { runRunnerV2CompletionEntrypoint } = await import("@/lib/runner-v2/completion-entrypoint");
   const result = runRunnerV2CompletionEntrypoint({
     sessionName,
     chainPath,
@@ -27,12 +28,15 @@ try {
     launchesStarted: result.adapter.launchesStarted.length,
     runJsonPath: result.runJsonPath,
   }));
-} catch (error) {
+}
+
+main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof RunnerV2CompletionUnsupportedError) {
+  if ((error as { code?: string })?.code === "RUNNER_V2_COMPLETION_UNSUPPORTED") {
     console.error(`runner-v2 completion unsupported: ${message}`);
-    process.exit(64);
+    process.exitCode = 64;
+    return;
   }
   console.error(`runner-v2 completion failed: ${message}`);
-  process.exit(1);
-}
+  process.exitCode = 1;
+});

@@ -8,7 +8,7 @@ import { join } from "node:path";
 const repoRoot = join(import.meta.dirname, "..");
 const runLib = join(repoRoot, "lib", "run-lib.sh");
 const chainRunner = join(repoRoot, "lib", "chain-runner.sh");
-const chainComplete = join(repoRoot, "lib", "chain-runner-complete.sh");
+const agentFunctions = join(repoRoot, "lib", "agent-functions.sh");
 const errorHandling = join(repoRoot, "lib", "error-handling.sh");
 const watchdog = join(repoRoot, "lib", "watchdog.sh");
 const tmp = mkdtempSync(join(tmpdir(), "mentiko-shell-state-"));
@@ -48,23 +48,20 @@ test("run-scoped-state-id prevents same chain agent from sharing state across ru
   assert(second.includes("run_222"), `second state id missing run id: ${second}`);
 });
 
-test("chain runner and completion handler both use run-scoped state files", () => {
+test("chain runner scopes shell bootstrap state and delegates completion to runner-v2", () => {
   const runnerSource = readFileSync(chainRunner, "utf8");
-  const completeSource = readFileSync(chainComplete, "utf8");
+  const agentFunctionsSource = readFileSync(agentFunctions, "utf8");
   const errorSource = readFileSync(errorHandling, "utf8");
 
   assert(
     runnerSource.includes('state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"'),
     "chain-runner.sh should scope agent state by run id"
   );
-  assert(
-    completeSource.includes('STATE_ID="$(run-scoped-state-id "$SESSION_PREFIX" "${RUN_ID:-}")"'),
-    "chain-runner-complete.sh should update the same run-scoped state file"
-  );
-  assert(
-    completeSource.includes('retry_state_file="$STATE_DIR/retry_${STATE_ID}.count"'),
-    "completion retry state should be scoped by run"
-  );
+  assert(agentFunctionsSource.includes("runner-v2-completion-launch.js"), "completion should invoke the compiled typed PTY launcher");
+  assert(agentFunctionsSource.includes("runner-v2-completion-launch.cjs"), "completion should retain the typed development PTY launcher");
+  assert(!agentFunctionsSource.includes("MENTIKO_AI_GATEWAY_LOCAL_TOKEN="), "completion should not put the gateway token in PTY argv");
+  assert(!agentFunctionsSource.includes("chain-runner-complete.sh"), "completion must not invoke the removed shell handler");
+  assert(!agentFunctionsSource.includes("complete-agent.sh"), "completion must not invoke the removed standalone shell handler");
   assert(
     errorSource.includes('state_id="$(run-scoped-state-id "$s_prefix" "${RUN_ID:-}")"'),
     "error-handling.sh should resolve the same run-scoped state file"
@@ -73,7 +70,7 @@ test("chain runner and completion handler both use run-scoped state files", () =
 
 test("chain runner marks startup exits failed before sending instructions", () => {
   const runnerSource = readFileSync(chainRunner, "utf8");
-  const activeCheck = 'if ! session_has_active_command "$session_name"; then';
+  const activeCheck = 'if ! session_has_active_command "$session"; then';
   const sendInstructions = 'instruction_send_capture="$(send-message "$session_name" "$instruction_pointer")"';
 
   assert(
@@ -98,12 +95,30 @@ test("chain runner marks startup exits failed before sending instructions", () =
   );
 });
 
+test("startup blocked and failed state use only the compiled typed Run Record boundary", () => {
+  const source = readFileSync(chainRunner, "utf8");
+  assert(
+    source.includes('_run_record_cli mark-agent-blocked'),
+    "blocked startup state should invoke the named typed operation"
+  );
+  assert(
+    source.includes('_run_record_cli mark-agent-failed'),
+    "failed startup state should invoke the named typed operation"
+  );
+  const blocked = source.slice(source.indexOf("mark_run_agent_blocked()"), source.indexOf("mark_run_agent_failed()"));
+  const failed = source.slice(source.indexOf("mark_run_agent_failed()"), source.indexOf('echo ""', source.indexOf("mark_run_agent_failed()")));
+  assert(!blocked.includes("curl"), "blocked state must not use an HTTP-then-shell fallback");
+  assert(!blocked.includes("jq"), "blocked state must not parse or mutate run.json in shell");
+  assert(!failed.includes("jq"), "failed state must not parse or mutate run.json in shell");
+  assert(!source.includes("_rmw_mark_run_agent_"), "chain runner must not retain shell Run Record writers");
+});
+
 test("watchdog does not reap completion sessions as orphans", () => {
   const source = readFileSync(watchdog, "utf8");
 
   assert(
     source.includes('[[ "$session" == complete-* ]] && continue'),
-    "watchdog should skip chain-runner-complete pty sessions"
+    "watchdog should skip typed completion PTY sessions"
   );
 });
 
@@ -119,7 +134,7 @@ test("agent run context exposes the mentiko CLI on PATH", () => {
     MENTIKO_WEB_URL=http://localhost:3333
     KOLLABOR_ENGINE_URL=http://localhost:4444
     eval "$(agent_run_context_export_command chain-recommender chain-recommendation-complete)"
-    printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n%s' "$MENTIKO_BIN" "$(command -v mentiko)" "$MENTIKO_SESSION_ID" "$MENTIKO_SESSION_TOKEN" "$MENTIKO_WEB_URL" "$KOLLABOR_ENGINE_URL" "$KOLLAB_NO_HUB" "$KOLLAB_HUB_DISABLED"
+    printf '%s\\n%s\\n%s\\n%s\\n%s\\n%s' "$MENTIKO_BIN" "$(command -v mentiko)" "$MENTIKO_SESSION_ID" "$MENTIKO_SESSION_TOKEN" "$MENTIKO_WEB_URL" "$KOLLABOR_ENGINE_URL"
   `;
   const lines = runBash(command).split("\n");
 
@@ -129,8 +144,8 @@ test("agent run context exposes the mentiko CLI on PATH", () => {
   assert(lines[3] === "token-ctx", `MENTIKO_SESSION_TOKEN should survive run context: ${lines[3]}`);
   assert(lines[4] === "http://localhost:3333", `MENTIKO_WEB_URL should survive run context: ${lines[4]}`);
   assert(lines[5] === "http://localhost:4444", `KOLLABOR_ENGINE_URL should survive run context: ${lines[5]}`);
-  assert(lines[6] === "1", `KOLLAB_NO_HUB should default on for chain agents: ${lines[6]}`);
-  assert(lines[7] === "1", `KOLLAB_HUB_DISABLED should default on for chain agents: ${lines[7]}`);
+  assert(!readFileSync(chainRunner, "utf8").includes("KOLLAB_NO_HUB"), "chain runner should not disable Kollab hub mode");
+  assert(!readFileSync(chainRunner, "utf8").includes("KOLLAB_HUB_DISABLED"), "chain runner should not disable Kollab hub mode");
 });
 
 test("instruction pointer stays cli agnostic", () => {

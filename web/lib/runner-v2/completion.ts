@@ -1,4 +1,5 @@
 import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import { runnerEventIdentityMatches } from "@/lib/runner-v2/event-identity";
 
 export interface CompletionAgentRef {
   id: string;
@@ -22,6 +23,7 @@ export interface CompletionMatchResult {
   reason?: string;
 }
 
+// The retired source label remains read-only compatibility for pre-cutover diagnostics.
 const DIAGNOSTIC_SOURCES = new Set(["monitor", "chain-runner-complete", "watchdog"]);
 
 export function findCompletionEvent(input: CompletionMatchInput): CompletionMatchResult {
@@ -76,45 +78,16 @@ export function sourceMatchesAgent(
   agent: CompletionAgentRef,
   allAgentIds?: string[],
 ): boolean {
-  const normalizedSource = normalize(source);
-  if (!normalizedSource) {
-    return false;
-  }
-
-  const candidates = [agent.id, agent.sessionPrefix]
-    .map((value) => normalize(value))
-    .filter((value): value is string => Boolean(value));
-
-  // exact identity always wins.
-  if (candidates.includes(normalizedSource)) {
-    return true;
-  }
-
-  // Prefix match mirrors the shell's _event-belongs-to (lib/event-trigger.sh
-  // L181-188, documented as intentional): a session-suffixed source like
-  // "researcher-7f3a" must still be owned by bare agent id "researcher".
-  // Guarded against the sibling-id collision this creates (owner "api"
-  // wrongly claiming "api-reviewer" or "api-reviewer-run-123" -- structurally
-  // identical to the legitimate session-suffix case): when the full chain
-  // agent-id set is known, a source that names a DIFFERENT declared agent, with
-  // or without that agent's session suffix, is never claimed via prefix match.
-  // Callers that cannot supply allAgentIds keep the shell-parity substring
-  // behavior unguarded.
-  const namesAnotherAgent = allAgentIds?.some((id) => {
-    const normalizedId = normalize(id);
-    return normalizedId !== ""
-      && !candidates.includes(normalizedId)
-      && (normalizedSource === normalizedId || normalizedSource.startsWith(`${normalizedId}-`));
-  });
-  if (namesAnotherAgent) {
-    return false;
-  }
-
-  return candidates.some((candidate) => normalizedSource.includes(candidate));
+  return runnerEventIdentityMatches(
+    source,
+    agent.id,
+    agent.sessionPrefix,
+    allAgentIds,
+  );
 }
 
-// Exact identity ownership. NO substring. Mirrors shell _event-belongs-to /
-// archive-run-events (CURRENT_AGENT_ID exact). sessionName covers the paths that
+// Exact identity ownership. NO substring. The current agent id is exact;
+// sessionName covers the paths that
 // stamp source with the session id instead of the bare agent id.
 export function agentOwnsEvent(
   event: RunnerEventRecord,

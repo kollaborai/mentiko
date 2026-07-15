@@ -134,7 +134,6 @@ new-agent-from-spec() {
             printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"
             printf 'export MENTIKO_MONITOR_PROFILE_ID=%q\n' "$monitor_advisor_profile"
             printf 'source %q 2>/dev/null\n' "${lib_dir}/agent-functions.sh"
-            printf 'source %q 2>/dev/null\n' "${lib_dir}/event-trigger.sh"
             printf 'monitor-with-ai %q %q %q\n' "$session_name" "$MENTIKO_MONITOR_INTERVAL" "$agent_context"
         } > "$mon_script"
         chmod +x "$mon_script"
@@ -275,6 +274,9 @@ agent-complete-marker-durable() {
 #      its handoff, independent of terminal scrollback entirely.
 #
 # Either one latches completion. Caller passes the latch file path.
+# Returns 0 when complete, 1 when no completion signal exists yet, and 2 when
+# the typed event lookup itself failed. Callers must stop on 2; it is not a
+# normal no-match.
 # -------------------------------------------------------------------
 agent-completion-latched() {
     local session_name="$1"
@@ -304,11 +306,15 @@ agent-completion-latched() {
     # signal 2: the agent's declared emits event file exists for this run.
     # This is authoritative even if the marker never appears in the capture
     # window (chatty agent) — the durable event file proves handoff.
-    if [[ -n "$chain_file" && -f "$chain_file" ]] && declare -f monitor_completion_event_file >/dev/null; then
+    if [[ -n "$chain_file" && -f "$chain_file" ]]; then
+        if ! declare -f monitor_completion_event_file >/dev/null; then
+            echo "error: typed completion-event lookup is unavailable for session '$session_name'; stopping monitor" >&2
+            return 2
+        fi
         local ev=""
-        ev="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id" 2>/dev/null || true)"
-        if [[ -z "$ev" && -n "$chain_file" ]]; then
-            ev="$(monitor_completion_event_file "$session_name" "$chain_file" "$(dirname "$chain_file")/events" "$agent_id" 2>/dev/null || true)"
+        if ! ev="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id")"; then
+            echo "error: completion-event lookup failed for session '$session_name'; stopping monitor" >&2
+            return 2
         fi
         if [[ -n "$ev" ]]; then
             [[ -n "$latch_file" ]] && : > "$latch_file" 2>/dev/null || true
@@ -430,8 +436,8 @@ _monitor_agent_process_gone() {
 }
 
 # lazily make run-lib status helpers available to the monitor. agent-functions.sh
-# does not source run-lib.sh directly; in the live engine event-trigger.sh pulls
-# it in, but be defensive for standalone/test sourcing.
+# does not source run-lib.sh directly, so standalone monitor scripts load it only
+# when durable status mutation is needed.
 _monitor_ensure_run_helpers() {
     if declare -f update-run-agent >/dev/null && declare -f update-run-status >/dev/null; then
         return 0
@@ -516,7 +522,8 @@ monitor-agent-stalled() {
 # that is a FAILURE, never a fabricated success. Record failure + diagnostic and
 # do NOT run the success completion path.
 # Returns 0 if it handled a real completion (caller should still break),
-# returns 1 if it recorded a failure (caller should break without completing).
+# 1 if it recorded a failure (caller should break without completing), and
+# 2 if completion-event lookup failed before either classification was safe.
 monitor-agent-died() {
     local session_name="$1"
     local chain_file="${2:-}"
@@ -529,10 +536,14 @@ monitor-agent-died() {
 
     # Did the agent already emit its declared completion event for this run?
     local completion_event=""
-    if [[ -n "$chain_file" && -f "$chain_file" ]] && declare -f monitor_completion_event_file >/dev/null; then
-        completion_event="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id" 2>/dev/null || true)"
-        if [[ -z "$completion_event" && -n "$chain_file" ]]; then
-            completion_event="$(monitor_completion_event_file "$session_name" "$chain_file" "$(dirname "$chain_file")/events" "$agent_id" 2>/dev/null || true)"
+    if [[ -n "$chain_file" && -f "$chain_file" ]]; then
+        if ! declare -f monitor_completion_event_file >/dev/null; then
+            echo "error: cannot classify exited agent '$session_name'; typed completion-event lookup is unavailable" >&2
+            return 2
+        fi
+        if ! completion_event="$(monitor_completion_event_file "$session_name" "$chain_file" "$events_dir" "$agent_id")"; then
+            echo "error: cannot classify exited agent '$session_name'; completion-event lookup failed" >&2
+            return 2
         fi
     fi
 
@@ -566,104 +577,45 @@ launch-chain-runner-complete() {
     local session_name="$1"
     local chain_file="$2"
     local script_dir
-    local completion_session
-    local run_id
-
     if [[ -z "$session_name" || -z "$chain_file" || ! -f "$chain_file" ]]; then
-        echo "  chain-runner-complete not launched: missing chain.json"
+        echo "  runner-v2 completion not launched: missing chain.json"
         return 1
     fi
 
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
-    completion_session="complete-${session_name}-$(date +%s)"
-    local completion_env_file=""
-    local completion_script_q=""
-    local runner_v2_compiled_script_q=""
-    local runner_v2_completion_script_q=""
-    local session_name_q=""
-    local chain_file_q=""
-    local completion_cmd=""
-    local completion_run_dir=""
-    local typed_completion_enabled=false
+    local completion_launcher=""
 
-    printf -v completion_script_q "%q" "$script_dir/chain-runner-complete.sh"
-    printf -v runner_v2_compiled_script_q "%q" "$script_dir/runner-v2-complete.js"
-    printf -v runner_v2_completion_script_q "%q" "$script_dir/../web/scripts/runner-v2-complete.cjs"
-    printf -v session_name_q "%q" "$session_name"
-    printf -v chain_file_q "%q" "$chain_file"
-    completion_cmd="$completion_script_q $session_name_q $chain_file_q"
-    if [[ "${MENTIKO_RUNNER_V2:-}" =~ ^(1|true|yes|on)$ ]] && \
-       [[ "${MENTIKO_RUNNER_V2_COMPLETION:-}" =~ ^(1|true|yes|on)$ ]]; then
-        typed_completion_enabled=true
-        completion_cmd="if ! command -v node >/dev/null 2>&1; then echo 'runner-v2 completion failed closed: node unavailable' >&2; exit 64; fi; if [[ -f $runner_v2_compiled_script_q ]]; then node $runner_v2_compiled_script_q $session_name_q $chain_file_q; exit \"\$?\"; fi; if [[ -f $runner_v2_completion_script_q ]]; then node $runner_v2_completion_script_q $session_name_q $chain_file_q; exit \"\$?\"; fi; echo 'runner-v2 completion failed closed: typed completion entrypoint missing' >&2; exit 64"
-    fi
-    # typed-bootstrap monitors export MENTIKO_RUN_DIR directly (their env has
-    # no RUNS_DIR); honor it first so the typed completion bridge can resolve
-    # the run instead of exiting unsupported.
-    if [[ -n "${MENTIKO_RUN_DIR:-}" ]]; then
-        completion_run_dir="${MENTIKO_RUN_DIR}"
-    elif [[ -n "${RUNS_DIR:-}" && -n "$run_id" ]]; then
-        completion_run_dir="${RUNS_DIR}/${run_id}"
-    fi
-
-    if [[ "${MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED:-}" == "true" ]] && \
-       [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_BASE_URL:-}" ]] && \
-       [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_TOKEN:-}" ]]; then
-        completion_env_file=$(mktemp /tmp/complete-gw-env-XXXXXX)
-        chmod 600 "$completion_env_file"
-        ai_gateway_append_local_proxy_control_exports "$completion_env_file"
-
-        local completion_env_file_q=""
-        printf -v completion_env_file_q "%q" "$completion_env_file"
-        completion_cmd="trap 'rm -f $completion_env_file_q' EXIT; source $completion_env_file_q; rm -f $completion_env_file_q; trap - EXIT; $completion_cmd"
-    fi
-
-    # Run completion in its own PTY session. The handler kills the monitor
-    # session as part of cleanup, so it cannot be a child of that monitor PTY.
-    if declare -f transport_new_session >/dev/null; then
-        # code root from this script's own location: the completion session's
-        # cwd lives in the data root, and the typed bridge derives every
-        # chain-runner.sh launch path from MENTIKO_CODE_ROOT (parent-of-cwd
-        # fallback would resolve it under ~/.mentiko).
-        local completion_code_root=""
-        completion_code_root="${MENTIKO_CODE_ROOT:-$(cd "$script_dir/.." && pwd)}"
-        if transport_new_session "$completion_session" env \
-            MENTIKO_RUN_ID="$run_id" \
-            RUN_ID="$run_id" \
-            NAMESPACE_ID="${NAMESPACE_ID:-default}" \
-            ORG_ID="${ORG_ID:-default}" \
-            WORKSPACE_TYPE="${WORKSPACE_TYPE:-local}" \
-            MENTIKO_RUN_DIR="$completion_run_dir" \
-            MENTIKO_CODE_ROOT="$completion_code_root" \
-            EVENTS_DIR="${EVENTS_DIR:-}" \
-            STATE_DIR="${STATE_DIR:-}" \
-            MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}" \
-            MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}" \
-            bash -lc "$completion_cmd"; then
-            echo "  chain-runner-complete session started: $completion_session"
-            return 0
-        fi
-        [[ -n "$completion_env_file" ]] && rm -f "$completion_env_file"
-        echo "  chain-runner-complete session failed: $completion_session"
-    fi
-
-    if [[ "$typed_completion_enabled" == "true" ]]; then
-        # Typed completion must fail closed: a shell fallback here could
-        # double-complete against the typed bridge (see b34fd72).
-        echo "  runner-v2 completion failed closed; shell completion fallback disabled"
+    # Completion ownership is unconditionally typed, including agents launched
+    # by the remaining shell bootstrap. Missing/unsupported typed completion
+    # fails closed; there is no shell handler or detached fallback.
+    if ! command -v node >/dev/null 2>&1; then
+        echo "  runner-v2 completion failed closed: node unavailable" >&2
         return 1
     fi
+    if [[ -f "$script_dir/runner-v2-completion-launch.js" ]]; then
+        completion_launcher="$script_dir/runner-v2-completion-launch.js"
+    elif [[ -f "$script_dir/../web/scripts/runner-v2-completion-launch.cjs" ]]; then
+        completion_launcher="$script_dir/../web/scripts/runner-v2-completion-launch.cjs"
+    else
+        echo "  runner-v2 completion failed closed: typed completion entrypoint missing" >&2
+        return 1
+    fi
+    # The typed launcher copies the allowlisted environment into a private,
+    # one-shot 0600 context file. PTY metadata receives only its random path.
+    if node "$completion_launcher" "$session_name" "$chain_file"; then
+        echo "  runner-v2 completion session started"
+        return 0
+    fi
 
-    # Non-typed (legacy default) path: the completion PTY session failed to
-    # launch, so fall back to a detached shell completion agent -- the same
-    # safety net that existed before b34fd72. Without it a PTY-launch failure
-    # strands the run with no completion handler until the 60s watchdog trips.
-    echo "  chain-runner-complete session failed; falling back to detached shell completion"
-    nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-    disown $! 2>/dev/null || true
-    echo "  chain-runner-complete launched (pid: $!, disowned)"
-    return 0
+    echo "  runner-v2 completion failed closed; no shell completion fallback exists"
+    return 1
+}
+
+completion-chain-required() {
+    local session_name="${1:-unknown}"
+    echo "  runner-v2 completion unsupported: no chain.json for session $session_name" >&2
+    echo "  completion left active and unacknowledged; no shell completion fallback exists" >&2
+    return 2
 }
 
 # -------------------------------------------------------------------
@@ -671,10 +623,8 @@ launch-chain-runner-complete() {
 # trigger completion handler on AGENT_COMPLETE
 # -------------------------------------------------------------------
 monitor-with-ai() {
-    # See monitor-chain-agent: the live monitor inherits a leaked
-    # `set -euo pipefail` (via event-trigger.sh -> run-lib.sh). Relax it so this
-    # long-lived poll loop — full of intentionally-non-zero probes and optional
-    # vars — is not aborted mid-flight, which would strand the run as "running".
+    # This long-lived poll loop contains intentionally-non-zero probes and reads
+    # optional vars. Keep forgiving shell options regardless of its caller.
     set +e +u +o pipefail 2>/dev/null || true
 
     local session_name="$1"
@@ -727,8 +677,12 @@ monitor-with-ai() {
             sleep 3
             # monitor-agent-died completes normally IFF a real event exists,
             # otherwise records failure + diagnostic (never fabricates success).
-            monitor-agent-died "$session_name" "$chain_file" || true
+            monitor-agent-died "$session_name" "$chain_file"
+            local died_rc=$?
             rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed" "$state_dir/${session_name}_armed_grace"
+            if [[ "$died_rc" -eq 2 ]]; then
+                return 2
+            fi
             break
         fi
 
@@ -737,23 +691,22 @@ monitor-with-ai() {
         # a chatty agent that scrolls the marker off-screen still completes
         # (finding #4). The marker must be on its own line so prose like
         # "output AGENT_COMPLETE" in the prompt is ignored.
-        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file"; then
+        agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file"
+        local completion_latch_rc=$?
+        if [[ "$completion_latch_rc" -eq 0 ]]; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             echo "  triggering completion handler..."
 
-            local project_root
-            project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-
-            local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
-            if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
-                nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                disown $!
-                echo "  complete-agent.sh launched (pid: $!, disowned)"
+            if [[ -n "$chain_file" && -f "$chain_file" ]]; then
+                launch-chain-runner-complete "$session_name" "$chain_file" || return $?
             else
-                echo "  complete-agent.sh not found at: $runtime_dir"
+                completion-chain-required "$session_name"
+                return 2
             fi
             rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
+        elif [[ "$completion_latch_rc" -eq 2 ]]; then
+            return 2
         fi
 
         # md5 of the last 20 lines is a QUIESCENCE trigger for nudges/diagnostics
@@ -819,15 +772,9 @@ monitor-with-ai() {
 # supports local, ssh, and docker workspaces
 # -------------------------------------------------------------------
 monitor-chain-agent() {
-    # The monitor runs as a long-lived poll loop with many commands that
-    # legitimately return non-zero (liveness probes that say "alive", completion
-    # checks that say "not yet", grep -q misses) and reads optional vars. In the
-    # live engine the monitor script sources event-trigger.sh -> run-lib.sh, whose
-    # top-level `set -euo pipefail` LEAKS into this shell (proven: monitor flags
-    # are "ehuB"). Under errexit/nounset a single such non-zero/unset would abort
-    # the whole monitor, stranding the run as "running". Relax those inherited
-    # flags here so the loop has the forgiving semantics it was written for. (No
-    # effect when sourced standalone without strict mode.)
+    # The monitor runs as a long-lived poll loop with commands that legitimately
+    # return non-zero (alive probes, not-yet completion, grep misses) and optional
+    # vars. Keep forgiving shell options so one probe cannot strand the run.
     set +e +u +o pipefail 2>/dev/null || true
 
     local session_name="$1"
@@ -898,8 +845,12 @@ monitor-chain-agent() {
             if _monitor_agent_process_gone "$session_name" "$state_dir/${session_name}_armed"; then
                 echo "  agent CLI in session '$session_name' is no longer running."
                 monitor-agent-died "$session_name" "$chain_file" \
-                    "monitor: agent CLI process exited before producing its completion event" || true
+                    "monitor: agent CLI process exited before producing its completion event"
+                local died_rc=$?
                 rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$state_dir/${session_name}_armed" "$state_dir/${session_name}_armed_grace"
+                if [[ "$died_rc" -eq 2 ]]; then
+                    return 2
+                fi
                 break
             fi
         fi
@@ -908,13 +859,13 @@ monitor-chain-agent() {
         # the kill signal. The agent still owns its final terminal response and
         # must print AGENT_COMPLETE before the chain completion handler runs.
         local completion_event_file=""
-        if declare -f monitor_completion_event_file >/dev/null; then
-            completion_event_file="$(monitor_completion_event_file "$session_name" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}" 2>/dev/null || true)"
-            if [[ -z "$completion_event_file" && -n "$chain_file" ]]; then
-                local run_events_dir
-                run_events_dir="$(dirname "$chain_file")/events"
-                completion_event_file="$(monitor_completion_event_file "$session_name" "$chain_file" "$run_events_dir" "${MENTIKO_AGENT_ID:-}" 2>/dev/null || true)"
-            fi
+        if ! declare -f monitor_completion_event_file >/dev/null; then
+            echo "error: typed completion-event observation is unavailable for session '$session_name'; stopping monitor" >&2
+            return 2
+        fi
+        if ! completion_event_file="$(monitor_completion_event_file "$session_name" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}")"; then
+            echo "error: completion-event observation failed for session '$session_name'; stopping monitor" >&2
+            return 2
         fi
         if [[ -n "$completion_event_file" && "$completion_event_file" != "$observed_completion_event_file" ]]; then
             observed_completion_event_file="$completion_event_file"
@@ -943,7 +894,9 @@ monitor-chain-agent() {
         # Check completion before classifying output as "active". Some CLIs repaint
         # status lines after the agent's final text, so waiting for a stable hash
         # can miss the completion window and send a stale nudge.
-        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"; then
+        agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"
+        local completion_latch_rc=$?
+        if [[ "$completion_latch_rc" -eq 0 ]]; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             sleep 3
 
@@ -954,20 +907,16 @@ monitor-chain-agent() {
 
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                echo "  using chain-runner-complete (JSON mode)"
-                launch-chain-runner-complete "$session_name" "$chain_file"
+                echo "  using runner-v2 completion"
+                launch-chain-runner-complete "$session_name" "$chain_file" || return $?
             else
-                echo "  no chain.json, falling back to complete-agent.sh"
-                local project_root
-                project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
-                if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
-                    nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                    disown $!
-                fi
+                completion-chain-required "$session_name"
+                return 2
             fi
             rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
+        elif [[ "$completion_latch_rc" -eq 2 ]]; then
+            return 2
         fi
 
         local new_state=$(transport_capture "$session_name" 20 | md5sum | cut -d' ' -f1)
@@ -1037,7 +986,9 @@ monitor-chain-agent() {
         # hash stable → agent is idle. Use the latched completion signal (marker
         # sighting OR emitted event file); the prompt contains AGENT_COMPLETE too,
         # so the marker check intentionally avoids substring matches.
-        if agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"; then
+        agent-completion-latched "$session_name" "$state_dir/${session_name}_complete" "$chain_file" "$EVENTS_DIR" "${MENTIKO_AGENT_ID:-}"
+        completion_latch_rc=$?
+        if [[ "$completion_latch_rc" -eq 0 ]]; then
             echo "$(date '+%H:%M:%S') - AGENT_COMPLETE detected"
             sleep 3
 
@@ -1048,20 +999,16 @@ monitor-chain-agent() {
 
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             if [[ -n "$chain_file" && -f "$chain_file" ]]; then
-                echo "  using chain-runner-complete (JSON mode)"
-                launch-chain-runner-complete "$session_name" "$chain_file"
+                echo "  using runner-v2 completion"
+                launch-chain-runner-complete "$session_name" "$chain_file" || return $?
             else
-                echo "  no chain.json, falling back to complete-agent.sh"
-                local project_root
-                project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
-                if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
-                    nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
-                    disown $!
-                fi
+                completion-chain-required "$session_name"
+                return 2
             fi
             rm -f "$state_file" "$stale_count_file" "$state_dir/${session_name}_complete" "$nudge_count_file"
             break
+        elif [[ "$completion_latch_rc" -eq 2 ]]; then
+            return 2
         fi
 
         # idle but no AGENT_COMPLETE → agent is stalled, nudge it

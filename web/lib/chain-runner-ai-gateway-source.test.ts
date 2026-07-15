@@ -16,7 +16,6 @@ describe("chain-runner AI gateway source contract", () => {
   const chainRunner = readFileSync(new URL("../../lib/chain-runner.sh", import.meta.url), "utf8");
   const ptyManager = readFileSync(new URL("../../lib/pty-manager.mjs", import.meta.url), "utf8");
   const agentFunctions = readFileSync(new URL("../../lib/agent-functions.sh", import.meta.url), "utf8");
-  const chainRunnerComplete = readFileSync(new URL("../../lib/chain-runner-complete.sh", import.meta.url), "utf8");
   const sessionLogResolverPath = fileURLToPath(new URL("../../lib/session-log-resolver.sh", import.meta.url));
   const sessionLogResolver = readFileSync(new URL("../../lib/session-log-resolver.sh", import.meta.url), "utf8");
   const shellHelper = readFileSync(new URL("../../lib/ai-gateway-agent-env.sh", import.meta.url), "utf8");
@@ -52,13 +51,11 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain('rm -f "\\$0"');
     expect(chainRunner).toContain("ai_gateway_append_local_proxy_control_exports");
     expect(chainRunner).toContain('if [[ "$WORKSPACE_TYPE" == "local" ]]; then');
-    expect(agentFunctions).toContain("MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED");
-    expect(agentFunctions).toContain("MENTIKO_AI_GATEWAY_LOCAL_BASE_URL");
-    expect(agentFunctions).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN");
-    expect(agentFunctions).toContain("complete-gw-env-XXXXXX");
-    expect(agentFunctions).toContain('chmod 600 "$completion_env_file"');
-    expect(agentFunctions).toContain('bash -lc "$completion_cmd"');
-    expect(agentFunctions).not.toContain('MENTIKO_AI_GATEWAY_LOCAL_TOKEN="${MENTIKO_AI_GATEWAY_LOCAL_TOKEN:-}"');
+    expect(agentFunctions).toContain("runner-v2-completion-launch.js");
+    expect(agentFunctions).toContain('node "$completion_launcher" "$session_name" "$chain_file"');
+    expect(agentFunctions).not.toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN=");
+    expect(agentFunctions).not.toContain("complete-gw-env-XXXXXX");
+    expect(agentFunctions).not.toContain("bash -lc");
   });
 
   it("resolves better-sqlite3 via the web node_modules from pty-manager", () => {
@@ -114,13 +111,6 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain('instructions still visible after send; pressing enter again');
     expect(chainRunner).toContain('transport_send_raw "$session_name" $\'\\r\'');
     expect(chainRunner).toContain('ensure-instructions-submitted "$session_name" "$instruction_pointer" "$instruction_send_capture"');
-  });
-
-  it("hard-fails generation jobs when the agent did not produce an importable payload", () => {
-    expect(chainRunnerComplete).toContain("fail_generation_job()");
-    expect(chainRunnerComplete).toContain('{status:$status,error:$error,runId:$runId,generationKind:$generationKind}');
-    expect(chainRunnerComplete).toContain("generation import failed for job");
-    expect(chainRunnerComplete).toContain('quality_gate_fail_chain "generation import failed" "$_gen_error"');
   });
 
   it("keeps conversation birth-time lookup numeric on GNU stat", () => {
@@ -183,12 +173,18 @@ describe("chain-runner AI gateway source contract", () => {
     expect(smokeAgent).not.toContain("normalizedContent.includes(expectedContent)");
   });
 
-  it("uses org-scoped profile paths in bash run and completion flows", () => {
+  it("uses org-scoped profile paths in the remaining shell bootstrap", () => {
     expect(chainRunner).toContain("AGENT_PROFILES_DIR");
     expect(chainRunner).not.toContain("NAMESPACE_ROOT/agent-profiles");
-    expect(chainRunnerComplete).toContain("AGENT_PROFILES_DIR");
-    expect(chainRunnerComplete).not.toContain("NAMESPACE_ROOT/agent-profiles");
     expect(sessionLogResolver).toContain('[[ "$value" =~ ^[0-9]+$');
+  });
+
+  it("binds shell monitor completion to runner-v2 without a shell fallback", () => {
+    expect(agentFunctions).toContain("runner-v2-completion-launch.js");
+    expect(agentFunctions).toContain("runner-v2-completion-launch.cjs");
+    expect(agentFunctions).not.toContain("chain-runner-complete.sh");
+    expect(agentFunctions).not.toContain("complete-agent.sh");
+    expect(agentFunctions).toContain("no shell completion fallback exists");
   });
 });
 

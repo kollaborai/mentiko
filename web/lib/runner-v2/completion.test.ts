@@ -31,6 +31,7 @@ describe("runner-v2 completion matcher", () => {
         // legitimate shell-parity prefix match, not an exact agent id/prefix.
         eventContent({ event: "draft-ready", source: "content-writer-run-123", runId: "run-123" }),
       ],
+      allAgentIds: ["writer"],
     });
 
     expect(result.matched).toBe(true);
@@ -74,11 +75,10 @@ describe("runner-v2 completion matcher", () => {
   it("matches source against agent id or session prefix, exact or session-suffixed", () => {
     expect(sourceMatchesAgent("writer", agent)).toBe(true);
     expect(sourceMatchesAgent("content-writer", agent)).toBe(true);
-    // session-suffixed source (session prefix + run suffix) is a legitimate
-    // prefix match -- mirrors the shell's _event-belongs-to, which documents
-    // this as intentional (a session like "researcher-7f3a" must still be
-    // owned by bare agent id "researcher").
-    expect(sourceMatchesAgent("content-writer-run-123", agent)).toBe(true);
+    // Delimiter-token matching requires the full identity set; otherwise a
+    // sibling id is structurally indistinguishable from a session suffix.
+    expect(sourceMatchesAgent("content-writer-run-123", agent)).toBe(false);
+    expect(sourceMatchesAgent("content-writer-run-123", agent, ["writer"])).toBe(true);
     expect(sourceMatchesAgent("reviewer", agent)).toBe(false);
   });
 
@@ -87,7 +87,7 @@ describe("runner-v2 completion matcher", () => {
     // of "api" -- structurally identical to the legitimate prefix case above,
     // so it is only resolvable with the full chain agent-id set.
     const api = { id: "api" };
-    expect(sourceMatchesAgent("api-reviewer", api)).toBe(true); // unguarded: shell-parity, still collides
+    expect(sourceMatchesAgent("api-reviewer", api)).toBe(false); // unguarded prefix matching fails closed
     expect(sourceMatchesAgent("api-reviewer", api, ["api", "api-reviewer"])).toBe(false); // guarded: disambiguated
     // the exactly-named agent itself is unaffected by the guard
     expect(sourceMatchesAgent("api-reviewer", { id: "api-reviewer" }, ["api", "api-reviewer"])).toBe(true);
@@ -101,6 +101,17 @@ describe("runner-v2 completion matcher", () => {
     expect(sourceMatchesAgent("api-reviewer-run-123", api, agentIds)).toBe(false);
     expect(sourceMatchesAgent("api-run-123", api, agentIds)).toBe(true);
     expect(sourceMatchesAgent("api-7f3a", api, agentIds)).toBe(true);
+  });
+
+  it("does not route a notwriter completion event to writer", () => {
+    expect(findCompletionEvent({
+      agent,
+      runId: "run-123",
+      allAgentIds: ["writer"],
+      events: [
+        eventContent({ event: "draft-ready", source: "notwriter", runId: "run-123" }),
+      ],
+    })).toEqual({ matched: false, reason: "no matching completion event" });
   });
 
   it("does not fabricate success for agents with no declared emits event", () => {

@@ -5,8 +5,9 @@ import {
   RunnerV2CompletionUnsupportedError,
   runRunnerV2CompletionEntrypoint,
 } from "@/lib/runner-v2/completion-entrypoint";
+import { parseRunnerEvent } from "@/lib/runner-v2/events";
 import { shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
-import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { createRunRecord, readRunJson, updateRunJson, type AgentStatus } from "@/lib/runner-v2/run-state";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function tempRoot() {
@@ -174,6 +175,61 @@ describe("runner-v2 completion entrypoint", () => {
       status: "running",
     });
     expect(readFileSync(eventPath, "utf8")).toContain("processed: false");
+  });
+
+  it("does not route or consume a notwriter event for writer", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      agents: [
+        { id: "writer", name: "Writer", emits: "draft-ready" },
+        { id: "reviewer", name: "Reviewer", triggers: ["draft-ready"] },
+      ],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "running" }],
+      sessions: ["writer-run-123"],
+    }));
+    const eventPath = join(eventsDir, "notwriter-draft-ready.event");
+    writeFileSync(eventPath, runnerEventFixture({
+      event: "draft-ready",
+      source: "notwriter",
+      runId: "run-123",
+      data: "wrong owner",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+      },
+      dryRun: true,
+    });
+
+    expect(result.decision).not.toBe("route");
+    expect(result.plan.effects.some((effect) => effect.type === "event-side-effects")).toBe(false);
+    expect(readFileSync(eventPath, "utf8")).toContain("processed: false");
+    expect(existsSync(join(eventsDir, "archive"))).toBe(false);
   });
 
   it("routes a monitor-latched AGENT_COMPLETE completion when no event file exists", () => {
@@ -395,6 +451,59 @@ describe("runner-v2 completion entrypoint", () => {
     });
   });
 
+  it("rolls back adopted and agent state when the quality-gate terminal write fails", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [{ id: "validator", name: "Validator", emits: "validated" }],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "validator", name: "Validator", session: "validator-run-123", status: "running" }],
+      sessions: ["validator-run-123"],
+    }));
+    writeJson(join(artifactsDir, "validator-summary.json"), { status: "failed" });
+
+    let mutations = 0;
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "validator-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      now: new Date("2026-06-26T00:00:00.000Z"),
+      onRunMutation: () => {
+        mutations += 1;
+        if (mutations === 3) throw new Error("injected quality-gate status write failure");
+      },
+    })).toThrow("injected quality-gate status write failure");
+
+    const restored = readRunJson(runJsonPath);
+    expect(restored).toMatchObject({
+      status: "running",
+      agents: [expect.objectContaining({ id: "validator", status: "running" })],
+    });
+    expect(restored).not.toHaveProperty("status_message");
+    expect((restored.runnerV2 as { attempts?: unknown[] } | undefined)?.attempts || []).toHaveLength(0);
+  });
+
   it("handles core generation completion without an emitted event when a payload exists", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");
@@ -526,7 +635,7 @@ describe("runner-v2 completion entrypoint", () => {
 
   function seedRoutedRun(root: string, options?: {
     downstream?: boolean;
-    downstreamStatus?: string;
+    downstreamStatus?: AgentStatus;
     omitChainId?: boolean;
     runChainId?: string;
     runMetadata?: Record<string, unknown>;
@@ -634,6 +743,15 @@ describe("runner-v2 completion entrypoint", () => {
     expect(run.agents?.[0]).toMatchObject({ id: "verifier", status: "complete" });
     expect(run.status).toBe("completed");
 
+    const activeEventPath = join(fixture.eventsDir, "run-123-verifier-verification-complete.event");
+    const archivedEventPath = join(fixture.eventsDir, "archive", "run-123-verifier-verification-complete.event");
+    expect(existsSync(activeEventPath)).toBe(false);
+    expect(parseRunnerEvent(readFileSync(archivedEventPath, "utf8"))).toMatchObject({
+      event: "verification-complete",
+      runId: "run-123",
+      processed: true,
+    });
+
     // run-terminal external side effects queued to the outbox with tenant identity
     const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
       .trim()
@@ -646,6 +764,20 @@ describe("runner-v2 completion entrypoint", () => {
     // per-agent effects ride the same outbox
     expect(outbox.some((record) => record.type === "plugin" && record.operation?.event === "agent-completed")).toBe(true);
     expect(outbox.some((record) => record.type === "notification" && record.operation?.event === "agent-completed")).toBe(true);
+
+    const outboxBeforeReplay = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8");
+    const replay = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:01:00.000Z"),
+    });
+    expect(replay).toMatchObject({
+      status: "handled",
+      decision: "already-completed",
+      plan: { action: "already-completed", effects: [], launches: [] },
+    });
+    expect(readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")).toBe(outboxBeforeReplay);
   });
 
   it("uses run.chainId for terminal external effects when run-local chain.json has no id", () => {
@@ -753,6 +885,78 @@ describe("runner-v2 completion entrypoint", () => {
     expect(outbox.some((record) => record.operation?.event === "agent-completed")).toBe(false);
   });
 
+  it("hydrates the run-scoped typed retry count and cannot exceed max_retries without retry env", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    writeJson(fixture.chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [{
+        id: "verifier",
+        name: "Verifier",
+        emits: "verification-complete",
+        retry: { max_retries: 1, base_delay_ms: 0, max_delay_ms: 0 },
+      }],
+    });
+    const retryDir = join(fixture.stateDir, "retry");
+    mkdirSync(retryDir, { recursive: true });
+    writeJson(join(retryDir, "retry_run-123_verifier.json"), {
+      version: 1,
+      runId: "run-123",
+      agentId: "verifier",
+      attempt: 1,
+      status: "active",
+    });
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "exhausted",
+      plan: {
+        effects: expect.arrayContaining([
+          expect.objectContaining({
+            type: "retry",
+            plan: expect.objectContaining({ action: "exhausted", currentAttempt: 1, maxRetries: 1 }),
+          }),
+        ]),
+      },
+    });
+    expect(JSON.parse(readFileSync(join(retryDir, "retry_run-123_verifier.json"), "utf8"))).toMatchObject({
+      attempt: 1,
+      status: "exhausted",
+    });
+    const replay = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:01.000Z"),
+    });
+    expect(replay).toMatchObject({ decision: "exhausted" });
+    expect(replay.plan.launches).toHaveLength(0);
+  });
+
+  it("fails closed on corrupt typed retry state", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root);
+    const retryDir = join(fixture.stateDir, "retry");
+    mkdirSync(retryDir, { recursive: true });
+    writeFileSync(join(retryDir, "retry_run-123_verifier.json"), "not-json\n");
+
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    })).toThrow(/corrupt typed retry state.*run-123.*verifier/);
+  });
+
   it("plans mid-chain routed completions with adoption, launches, and per-agent effects (dry run leaves no trace)", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root, { downstream: true });
@@ -771,7 +975,7 @@ describe("runner-v2 completion entrypoint", () => {
       decision: "route",
       plan: {
         action: "route",
-        launches: [{ kind: "single", detached: true }],
+        launches: [{ kind: "single" }],
       },
     });
     expect(result.plan.effects.some((effect) => effect.type === "agent-completion")).toBe(true);
@@ -788,6 +992,32 @@ describe("runner-v2 completion entrypoint", () => {
     };
     expect(run.runnerV2?.attempts || []).toHaveLength(0);
     expect(run.status).toBe("running");
+    expect(existsSync(join(fixture.runDir, "chain-loop-state.json"))).toBe(false);
+    expect(existsSync(shellLoopStatePath(fixture.runDir))).toBe(false);
+  });
+
+  it("rolls back completion-owned writes when attempt completion fails mid-pipeline", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { downstream: true });
+    emitVerifierEvent(fixture.eventsDir);
+    let mutations = 0;
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+      onRunMutation: () => {
+        mutations += 1;
+        if (mutations === 3) throw new Error("injected attempt completion failure");
+      },
+    })).toThrow("injected attempt completion failure");
+
+    const restored = readRunJson(fixture.runJsonPath);
+    expect(restored).toMatchObject({
+      status: "running",
+      agents: expect.arrayContaining([expect.objectContaining({ id: "verifier", status: "running" })]),
+    });
+    expect((restored.runnerV2 as { attempts?: unknown[] } | undefined)?.attempts || []).toHaveLength(0);
     expect(existsSync(join(fixture.runDir, "chain-loop-state.json"))).toBe(false);
     expect(existsSync(shellLoopStatePath(fixture.runDir))).toBe(false);
   });

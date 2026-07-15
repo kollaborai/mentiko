@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export MENTIKO_CODE_ROOT="$PROJECT_ROOT"
 
 TEST_TMP_DIR="$(mktemp -d)"
 trap 'rm -r "$TEST_TMP_DIR"' EXIT
@@ -41,8 +42,10 @@ JSON
 cat > "$EVENTS_DIR/uam-middleware-architect-architecture-designed.event" <<'EOF'
 event: architecture-designed
 source: uam-middleware-architect
+run_id: run-uam
 timestamp: 2026-05-04T02:45:44Z
 processed: false
+data: done
 EOF
 
 cat > "$EVENTS_DIR/vt-task-pipeline-investigator-pipeline-artifacts-collected.event" <<'EOF'
@@ -106,7 +109,41 @@ assert_not_contains() {
   echo "PASS: $message"
 }
 
-event_file="$(monitor_completion_event_file \
+PREFIX_CHAIN_A_FIRST="$TEST_TMP_DIR/prefix-chain-a-first.json"
+PREFIX_CHAIN_ALPHA_FIRST="$TEST_TMP_DIR/prefix-chain-alpha-first.json"
+AMBIGUOUS_CHAIN="$TEST_TMP_DIR/ambiguous-chain.json"
+printf '%s\n' \
+  '{"agents":[{"id":"a"},{"id":"alpha"}]}' \
+  > "$PREFIX_CHAIN_A_FIRST"
+printf '%s\n' \
+  '{"agents":[{"id":"alpha"},{"id":"a"}]}' \
+  > "$PREFIX_CHAIN_ALPHA_FIRST"
+printf '%s\n' \
+  '{"agents":[{"id":"a"},{"id":"project-a"}]}' \
+  > "$AMBIGUOUS_CHAIN"
+
+assert_eq "alpha" \
+  "$(MENTIKO_AGENT_ID= monitor_agent_id_for_session 'project-alpha-run-1' "$PREFIX_CHAIN_A_FIRST")" \
+  "prefix-sharing agent ids resolve by delimiter token when shorter id is first"
+assert_eq "alpha" \
+  "$(MENTIKO_AGENT_ID= monitor_agent_id_for_session 'project-alpha-run-1' "$PREFIX_CHAIN_ALPHA_FIRST")" \
+  "prefix-sharing agent ids resolve by delimiter token when longer id is first"
+if MENTIKO_AGENT_ID= monitor_agent_id_for_session \
+  'project-a-run-1' "$AMBIGUOUS_CHAIN" >/dev/null 2>&1; then
+  echo "FAIL: ambiguous session identity should fail closed"
+  exit 1
+else
+  echo "PASS: ambiguous session identity fails closed"
+fi
+if MENTIKO_AGENT_ID= RUN_ID=run-ambiguous monitor_completion_event_file \
+  'project-a-run-1' "$AMBIGUOUS_CHAIN" "$EVENTS_DIR" >/dev/null 2>&1; then
+  echo "FAIL: completion lookup should propagate ambiguous session identity"
+  exit 1
+else
+  echo "PASS: completion lookup propagates ambiguous session identity"
+fi
+
+event_file="$(RUN_ID=run-uam monitor_completion_event_file \
   "mentiko-uam-middleware-architect-run-1777862548347" \
   "$CHAIN_FILE" \
   "$EVENTS_DIR")"
@@ -115,22 +152,21 @@ assert_eq "$EVENTS_DIR/uam-middleware-architect-architecture-designed.event" \
   "$event_file" \
   "detects completion event for current agent even if terminal marker scrolled away"
 
-missing_event_file="$(monitor_completion_event_file \
+missing_event_file="$(RUN_ID=run-uam monitor_completion_event_file \
   "mentiko-uam-rbac-guest-enforcer-run-1777862548347" \
   "$CHAIN_FILE" \
   "$EVENTS_DIR")"
 
 assert_eq "" "$missing_event_file" "does not match another agent's event"
 
-json_event_file="$(monitor_completion_event_file \
+json_event_file="$(RUN_ID=run-vt monitor_completion_event_file \
   "mentiko-vt-task-pipeline-investigator-run-1779142350356" \
   "$CHAIN_FILE" \
   "$EVENTS_DIR" \
   "task-pipeline-investigator")"
 
-assert_eq "$EVENTS_DIR/vt-task-pipeline-investigator-pipeline-artifacts-collected.event" \
-  "$json_event_file" \
-  "detects JSON completion event files emitted by agents"
+assert_eq "" "$json_event_file" \
+  "rejects obsolete JSON completion files"
 
 RUN_EVENTS_DIR="$TEST_TMP_DIR/run-events"
 RUN_CHAIN_DIR="$TEST_TMP_DIR/run-chain"
@@ -154,6 +190,7 @@ event: task-generation-complete
 source: task-generation-task-generator
 timestamp: 2026-05-26T16:22:46Z
 processed: false
+data: stale
 EOF
 touch -t 202605261622 "$RUN_EVENTS_DIR/task-generation-task-generator-task-generation-complete.event"
 touch -t 202605261641 "$RUN_CHAIN_DIR/artifacts/task-generator-started-at.txt"
@@ -172,6 +209,7 @@ source: task-generation-task-generator
 run_id: run-other
 timestamp: 2026-05-26T16:42:46Z
 processed: false
+data: other run
 EOF
 
 mismatched_run_event_file="$(RUN_ID=run-current monitor_completion_event_file \
@@ -188,6 +226,7 @@ source: task-generation-task-generator
 run_id: run-current
 timestamp: 2026-05-26T16:42:46Z
 processed: false
+data: current run
 EOF
 
 current_run_event_file="$(RUN_ID=run-current monitor_completion_event_file \
@@ -200,17 +239,144 @@ assert_eq "$RUN_EVENTS_DIR/run-current-task-generation-task-generator-task-gener
   "$current_run_event_file" \
   "detects run-scoped completion event for current run"
 
+# A typed lifecycle operational failure is different from a legitimate no-match.
+# Exercise the three shell integration points with an injected lookup failure so
+# none can classify it as "no event yet" or a dead agent without a handoff.
+extract_agent_function() {
+  sed -n "/^$1() {/,/^}/p" "$PROJECT_ROOT/lib/agent-functions.sh"
+}
+eval "$(extract_agent_function 'agent-completion-latched')"
+eval "$(extract_agent_function 'monitor-agent-died')"
+eval "$(extract_agent_function 'monitor-with-ai')"
+eval "$(extract_agent_function 'monitor-chain-agent')"
+
+agent-complete-marker-seen() { return 1; }
+agent-complete-marker-durable() { return 1; }
+_monitor_resolve_agent_id() { printf '%s\n' "middleware-architect"; }
+transport_has_session() { return 0; }
+transport_capture() { printf '%s\n' "stable output"; }
+_monitor_agent_process_gone() { [[ "${INJECT_PROCESS_GONE:-0}" == "1" ]]; }
+sleep() { :; }
+
+lifecycle_failure_marker="$TEST_TMP_DIR/lifecycle-failure-misclassified"
+monitor_completion_event_file() {
+  echo "error: injected typed lifecycle failure" >&2
+  return 1
+}
+_monitor_emit_diagnostic_event() {
+  : > "$lifecycle_failure_marker"
+}
+
+set +e
+latch_failure_output="$(
+  MENTIKO_RUN_ID="run-uam" EVENTS_DIR="$EVENTS_DIR" \
+    agent-completion-latched \
+      "mentiko-uam-middleware-architect-run-1777862548347" \
+      "$TEST_TMP_DIR/lifecycle-failure-latch" \
+      "$CHAIN_FILE" \
+      "$EVENTS_DIR" \
+      "middleware-architect" 2>&1
+)"
+latch_failure_rc=$?
+set -e
+assert_eq "2" "$latch_failure_rc" "completion latch propagates typed lifecycle operational failure"
+assert_contains "$latch_failure_output" \
+  "injected typed lifecycle failure" \
+  "completion latch preserves typed lifecycle error evidence"
+
+set +e
+dead_agent_failure_output="$(
+  MENTIKO_RUN_ID="run-uam" EVENTS_DIR="$EVENTS_DIR" \
+    monitor-agent-died \
+      "mentiko-uam-middleware-architect-run-1777862548347" \
+      "$CHAIN_FILE" 2>&1
+)"
+dead_agent_failure_rc=$?
+set -e
+assert_eq "2" "$dead_agent_failure_rc" "dead-agent classifier propagates typed lifecycle operational failure"
+assert_contains "$dead_agent_failure_output" \
+  "cannot classify exited agent" \
+  "dead-agent classifier records why classification stopped"
+if [[ -f "$lifecycle_failure_marker" ]]; then
+  echo "FAIL: lifecycle lookup failure must not emit a false dead-agent diagnostic"
+  exit 1
+fi
+echo "PASS: lifecycle lookup failure does not emit a false dead-agent diagnostic"
+
+monitor_test_home="$TEST_TMP_DIR/monitor-home"
+mkdir -p "$monitor_test_home"
+set +e
+dead_monitor_failure_output="$(
+  HOME="$monitor_test_home" \
+  CHAIN_FILE="$CHAIN_FILE" \
+  EVENTS_DIR="$EVENTS_DIR" \
+  MENTIKO_RUN_ID="run-uam" \
+  INJECT_PROCESS_GONE="1" \
+    monitor-with-ai \
+      "mentiko-uam-middleware-architect-run-1777862548347" \
+      0 2>&1
+)"
+dead_monitor_failure_rc=$?
+set -e
+assert_eq "2" "$dead_monitor_failure_rc" "legacy monitor stops when dead-agent lifecycle lookup fails"
+assert_not_contains "$dead_monitor_failure_output" \
+  "process gone with NO completion event" \
+  "legacy monitor does not translate lifecycle failure into missing handoff"
+
+set +e
+chain_monitor_failure_output="$(
+  HOME="$monitor_test_home" \
+  WORKSPACE_TYPE="ssh" \
+  EVENTS_DIR="$EVENTS_DIR" \
+  MENTIKO_RUN_ID="run-uam" \
+  MENTIKO_AGENT_ID="middleware-architect" \
+    monitor-chain-agent \
+      "mentiko-uam-middleware-architect-run-1777862548347" \
+      0 \
+      "" \
+      "$CHAIN_FILE" \
+      2 2>&1
+)"
+chain_monitor_failure_rc=$?
+set -e
+assert_eq "2" "$chain_monitor_failure_rc" "chain monitor stops when event observation lifecycle lookup fails"
+assert_contains "$chain_monitor_failure_output" \
+  "completion-event observation failed" \
+  "chain monitor records why event observation stopped"
+assert_not_contains "$chain_monitor_failure_output" \
+  "completion event observed" \
+  "chain monitor does not translate lifecycle failure into observed or absent event state"
+
+unset -f monitor_completion_event_file
+set +e
+missing_lookup_output="$(
+  MENTIKO_RUN_ID="run-uam" EVENTS_DIR="$EVENTS_DIR" \
+    agent-completion-latched \
+      "mentiko-uam-middleware-architect-run-1777862548347" \
+      "$TEST_TMP_DIR/missing-lookup-latch" \
+      "$CHAIN_FILE" \
+      "$EVENTS_DIR" \
+      "middleware-architect" 2>&1
+)"
+missing_lookup_rc=$?
+set -e
+assert_eq "2" "$missing_lookup_rc" "completion latch fails closed when typed lookup is unavailable"
+assert_contains "$missing_lookup_output" \
+  "typed completion-event lookup is unavailable" \
+  "missing typed lookup is recorded as an operational failure"
+
+unset -f sleep
+
 emit_event_tmp="$TEST_TMP_DIR/emit-events"
 mkdir -p "$emit_event_tmp"
 (
-  EVENTS_DIR="$emit_event_tmp"
-  RUN_ID="run-emit-test"
-  source "$PROJECT_ROOT/lib/event-trigger.sh"
-  emit-event "artifact-ready" "artifact-agent" "ok"
+  EVENTS_DIR="$emit_event_tmp" \
+  MENTIKO_RUN_ID="run-emit-test" RUN_ID="run-emit-test" \
+    bash "$PROJECT_ROOT/bin/mentiko" emit "artifact-ready" "artifact-agent" "ok"
 )
 emitted_event_file="$(find "$emit_event_tmp" -type f -name '*.event' | head -1)"
-assert_contains "$(basename "$emitted_event_file")" "run-emit-test" "emit-event prefixes run id in filename"
-assert_contains "$(cat "$emitted_event_file")" "run_id: run-emit-test" "emit-event writes run id payload"
+assert_contains "$(basename "$emitted_event_file")" "run-emit-test" "typed emit prefixes run id in filename"
+assert_contains "$(cat "$emitted_event_file")" "run_id: run-emit-test" "typed emit writes run id payload"
 
 first_nudge="$(monitor_stale_nudge_message 1)"
 assert_not_eq "proceed" "$first_nudge" "first stale nudge is not bare proceed"
@@ -240,10 +406,10 @@ assert_contains "$event_specific_nudge" \
   "rbac-guest-enforcer" \
   "stale fallback nudge includes exact current agent id"
 
-completion_matcher_block="$(sed -n '/for event_file in "$EVENTS_DIR"/,/# fallback: if no event found/p' "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
-assert_contains "$completion_matcher_block" \
-  "EXPECTED_EVENT" \
-  "chain completion filters current-agent events by declared emits event"
+monitor_lookup_block="$(cat "$PROJECT_ROOT/lib/monitor-completion.sh")"
+assert_not_contains "$monitor_lookup_block" \
+  '--recover-consumed' \
+  "monitor scans stay active-event-only and cannot replay consumed triggers"
 
 if monitor_should_ask_advisor 1 3; then
   echo "FAIL: advisor should not run on first stale check"
@@ -371,26 +537,37 @@ assert_contains "$chain_monitor_source" \
   "chain monitor uses a dedicated completion launcher"
 
 assert_contains "$chain_monitor_source" \
-  'transport_new_session "$completion_session" env' \
-  "chain completion handler starts in a separate pty session"
-
+  'runner-v2-completion-launch.js' \
+  "chain completion delegates pty creation to the typed launcher"
+assert_contains "$chain_monitor_source" \
+  'node "$completion_launcher" "$session_name" "$chain_file"' \
+  "shell monitor invokes the typed launcher with non-secret argv"
 assert_not_contains "$chain_monitor_source" \
-  'exec $completion_script_q $session_name_q $chain_file_q' \
-  "typed completion does not exec shell completion after runner-v2 exit 64"
+  'bash -lc' \
+  "chain completion does not add a shell process around the typed entrypoint"
+assert_not_contains "$chain_monitor_source" \
+  'MENTIKO_AI_GATEWAY_LOCAL_TOKEN=' \
+  "chain completion never places the gateway token in pty argv"
 
 assert_contains "$chain_monitor_source" \
-  'if [[ "$typed_completion_enabled" == "true" ]]; then' \
-  "typed completion has an explicit fail-closed guard before the legacy shell path"
+  'runner-v2 completion failed closed; no shell completion fallback exists' \
+  "typed completion rejects shell fallback when completion pty spawn fails"
+assert_not_contains "$chain_monitor_source" \
+  'chain-runner-complete.sh' \
+  "completion launcher has no shell completion handler reference"
+assert_not_contains "$chain_monitor_source" \
+  'complete-agent.sh' \
+  "completion monitors have no legacy no-chain handler reference"
 assert_contains "$chain_monitor_source" \
-  'runner-v2 completion failed closed; shell completion fallback disabled' \
-  "typed completion rejects shell completion when completion pty spawn fails"
+  'runner-v2 completion unsupported: no chain.json' \
+  "no-chain completion fails closed with an explicit diagnostic"
 
-# the monitor loops delegate to launch-chain-runner-complete; they must not nohup
-# the completion script themselves.
+# the monitor loops delegate to typed completion and must not nohup a shell
+# completion script themselves.
 chain_monitor_body="$(sed -n '/^monitor-with-ai() {/,$p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_not_contains "$chain_monitor_body" \
   'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
-  "chain monitor does not launch completion as a monitor-child nohup job"
+  "chain monitor does not launch retired shell completion as a child job"
 
 chain_completion_gate_source="$(sed -n '/^monitor-chain-agent() {/,$p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_contains "$chain_completion_gate_source" \
@@ -425,13 +602,3 @@ assert_contains "$launch_agent_source" \
 assert_contains "$spec_monitor_launcher_source" \
   'MENTIKO_MONITOR_PROFILE_ID' \
   "spec monitor carries advisor profile selection"
-
-chain_complete_cleanup_source="$(cat "$PROJECT_ROOT/lib/chain-runner-complete.sh")"
-assert_contains "$chain_complete_cleanup_source" \
-  'transport_session_exists "$MONITOR_SESSION"' \
-  "chain completion removes exited monitor sessions"
-
-legacy_complete_cleanup_source="$(sed -n '130,142p' "$PROJECT_ROOT/lib/complete-agent.sh")"
-assert_contains "$legacy_complete_cleanup_source" \
-  'transport_session_exists "$MONITOR_SESSION"' \
-  "legacy completion removes exited monitor sessions"

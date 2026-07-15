@@ -8,22 +8,75 @@ source "$MONITOR_COMPLETION_DIR/agent-profile.sh" 2>/dev/null || true
 monitor_agent_id_for_session() {
     local session_name="$1"
     local chain_file="$2"
+    local derived_prefix="${3:-$session_name}"
 
     if [[ -n "${MENTIKO_AGENT_ID:-}" ]]; then
-        echo "$MENTIKO_AGENT_ID"
-        return 0
+        local explicit_count
+        explicit_count=$(jq -r --arg id "$MENTIKO_AGENT_ID" \
+            '[.agents[]? | select(.id == $id)] | length' "$chain_file" 2>/dev/null || echo 0)
+        if [[ "$explicit_count" -eq 1 ]]; then
+            echo "$MENTIKO_AGENT_ID"
+            return 0
+        fi
+        echo "error: configured agent id '$MENTIKO_AGENT_ID' is not unique in $chain_file" >&2
+        return 1
     fi
 
     [[ -f "$chain_file" ]] || return 0
 
-    local agent_id=""
+    local chain_prefix
+    chain_prefix=$(jq -r '.config.session_prefix // empty' "$chain_file" 2>/dev/null || true)
+    local -a candidates=("$derived_prefix")
+    if [[ -n "$chain_prefix" && "$derived_prefix" == "$chain_prefix-"* ]]; then
+        candidates+=("${derived_prefix#"$chain_prefix-"}")
+    fi
+
+    local agent_id="" configured_prefix="" candidate=""
+    local -a exact_matches=()
+    while IFS=$'\t' read -r agent_id configured_prefix; do
+        [[ -n "$agent_id" && "$agent_id" != "null" ]] || continue
+        for candidate in "${candidates[@]}"; do
+            if [[ "$candidate" == "$agent_id" ]] \
+               || [[ -n "$configured_prefix" && "$configured_prefix" != "null" && "$candidate" == "$configured_prefix" ]]; then
+                if [[ " ${exact_matches[*]} " != *" $agent_id "* ]]; then
+                    exact_matches+=("$agent_id")
+                fi
+            fi
+        done
+    done < <(jq -r '.agents[]? | [(.id // ""), (.session_prefix // "")] | @tsv' "$chain_file" 2>/dev/null)
+
+    if [[ "${#exact_matches[@]}" -eq 1 ]]; then
+        echo "${exact_matches[0]}"
+        return 0
+    fi
+    if [[ "${#exact_matches[@]}" -gt 1 ]]; then
+        echo "error: session '$session_name' has ambiguous exact agent matches: ${exact_matches[*]}" >&2
+        return 1
+    fi
+
+    local -a token_matches=()
     while IFS= read -r agent_id; do
         [[ -n "$agent_id" && "$agent_id" != "null" ]] || continue
-        if [[ "$session_name" == *"$agent_id"* ]]; then
-            echo "$agent_id"
-            return 0
-        fi
+        for candidate in "$session_name" "${candidates[@]}"; do
+            if [[ "-$candidate-" == *"-$agent_id-"* ]]; then
+                if [[ " ${token_matches[*]} " != *" $agent_id "* ]]; then
+                    token_matches+=("$agent_id")
+                fi
+            fi
+        done
     done < <(jq -r '.agents[]?.id // empty' "$chain_file" 2>/dev/null)
+
+    if [[ "${#token_matches[@]}" -eq 1 ]]; then
+        echo "${token_matches[0]}"
+        return 0
+    fi
+    if [[ "${#token_matches[@]}" -gt 1 ]]; then
+        echo "error: session '$session_name' ambiguously matches agent ids: ${token_matches[*]}" >&2
+        return 1
+    fi
+
+    echo "error: session '$session_name' does not uniquely identify a chain agent" >&2
+    return 1
 }
 
 monitor_completion_event_file() {
@@ -32,12 +85,21 @@ monitor_completion_event_file() {
     local events_dir="$3"
     local agent_id="${4:-}"
     local run_id="${5:-${MENTIKO_RUN_ID:-${RUN_ID:-}}}"
-    local event_run_id=""
 
-    [[ -d "$events_dir" && -f "$chain_file" ]] || return 0
+    [[ -f "$chain_file" ]] || return 0
+    if [[ -z "$events_dir" || ! -d "$events_dir" ]]; then
+        echo "error: configured EVENTS_DIR is unavailable" >&2
+        return 1
+    fi
+    if [[ -z "$run_id" ]]; then
+        echo "error: completion-event lookup requires a run id" >&2
+        return 1
+    fi
 
     if [[ -z "$agent_id" ]]; then
-        agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"
+        if ! agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"; then
+            return 1
+        fi
     fi
     [[ -n "$agent_id" ]] || return 0
 
@@ -45,34 +107,38 @@ monitor_completion_event_file() {
     expected_event="$(jq -r --arg id "$agent_id" '.agents[]? | select(.id == $id) | .emits // empty' "$chain_file" 2>/dev/null)"
     [[ -n "$expected_event" && "$expected_event" != "null" ]] || return 0
 
-    local event_file event_name event_name_lower expected_event_lower source_name
-    expected_event_lower="$(printf '%s' "$expected_event" | tr '[:upper:]' '[:lower:]')"
-    for event_file in "$events_dir"/*; do
-        [[ -f "$event_file" ]] || continue
+    if [[ -z "${MENTIKO_CODE_ROOT:-}" ]]; then
+        echo "error: MENTIKO_CODE_ROOT must be configured" >&2
+        return 1
+    fi
+    local lifecycle="$MENTIKO_CODE_ROOT/lib/runner-event-lifecycle.js"
+    local args=(
+        find
+        --events-dir "$events_dir"
+        --run-id "$run_id"
+        --expected-event "$expected_event"
+        --agent-id "$agent_id"
+        --session-name "$session_name"
+        --output text
+    )
+    local sibling_id
+    while IFS= read -r sibling_id; do
+        [[ -n "$sibling_id" && "$sibling_id" != "null" ]] || continue
+        args+=(--all-agent-id "$sibling_id")
+    done < <(jq -r '.agents[]?.id // empty' "$chain_file" 2>/dev/null)
 
-        event_name="$(grep -im1 "^event:" "$event_file" 2>/dev/null | sed 's/^[Ee]vent:[[:space:]]*//' | xargs)"
-        source_name="$(grep -im1 "^source:" "$event_file" 2>/dev/null | sed 's/^[Ss]ource:[[:space:]]*//' | xargs)"
-        if [[ -z "$event_name" && -z "$source_name" ]] && jq -e . "$event_file" >/dev/null 2>&1; then
-            event_name="$(jq -r '.event // .event_name // empty' "$event_file" 2>/dev/null)"
-            source_name="$(jq -r '.source // .source_agent // .agent // empty' "$event_file" 2>/dev/null)"
-        fi
-        event_name_lower="$(printf '%s' "$event_name" | tr '[:upper:]' '[:lower:]')"
-
-        [[ "$event_name_lower" == "$expected_event_lower" ]] || continue
-        printf '%s\n' "$source_name" | grep -qiF "$agent_id" || continue
-
-        if [[ -n "$run_id" ]]; then
-            event_run_id="$(grep -im1 "^run_id:" "$event_file" 2>/dev/null | sed 's/^[Rr]un_id:[[:space:]]*//' | xargs || true)"
-            if [[ -z "$event_run_id" && -f "$event_file" ]] && jq -e . "$event_file" >/dev/null 2>&1; then
-                event_run_id="$(jq -r '.run_id // .runId // empty' "$event_file" 2>/dev/null)"
-            fi
-
-            [[ "$event_run_id" == "$run_id" ]] || continue
-        fi
-
-        echo "$event_file"
+    local result=""
+    if result="$(node "$lifecycle" "${args[@]}")"; then
+        printf '%s\n' "$result"
         return 0
-    done
+    else
+        local rc=$?
+        if [[ "$rc" -eq 3 ]]; then
+            return 0
+        fi
+    fi
+    echo "error: typed completion-event lookup failed" >&2
+    return 1
 }
 
 monitor_expected_event_for_session() {
@@ -83,7 +149,9 @@ monitor_expected_event_for_session() {
     [[ -f "$chain_file" ]] || return 0
 
     if [[ -z "$agent_id" ]]; then
-        agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"
+        if ! agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"; then
+            return 1
+        fi
     fi
     [[ -n "$agent_id" ]] || return 0
 
@@ -99,7 +167,9 @@ monitor_emit_command_hint() {
     [[ -f "$chain_file" ]] || return 0
 
     if [[ -z "$agent_id" ]]; then
-        agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"
+        if ! agent_id="$(monitor_agent_id_for_session "$session_name" "$chain_file")"; then
+            return 1
+        fi
     fi
     [[ -n "$agent_id" ]] || return 0
 

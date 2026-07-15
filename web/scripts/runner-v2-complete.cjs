@@ -2,6 +2,8 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { resolve } = require("path");
 
+const contextPath = process.argv[4];
+
 let RunnerV2CompletionUnsupportedError;
 let runRunnerV2CompletionEntrypoint;
 
@@ -16,6 +18,8 @@ try {
     baseUrl: resolve(__dirname, ".."),
     paths: { "@/*": ["*"] },
   });
+  if (!contextPath) throw new Error("completion launch context path missing");
+  require("../lib/runner-v2/completion-launch-context").consumeCompletionLaunchContext(contextPath);
   // anchor MENTIKO_CODE_ROOT from this script's location BEFORE config loads:
   // the completion PTY's cwd sits in the data root, so config's parent-of-cwd
   // fallback would resolve chain-runner.sh under ~/.mentiko.
@@ -34,7 +38,7 @@ const sessionName = process.argv[2];
 const chainPath = process.argv[3];
 
 if (!sessionName || !chainPath) {
-  console.error("usage: runner-v2-complete.cjs <session-name> <chain.json>");
+  console.error("usage: runner-v2-complete.cjs <session-name> <chain.json> <context.json>");
   process.exit(64);
 }
 

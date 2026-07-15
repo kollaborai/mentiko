@@ -2,22 +2,25 @@ import { spawnSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
+import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
-import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
+import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
-import { eventMatchesRunId, parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
+import { eventMatchesRunId, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { captureHash, monitorStatePaths } from "@/lib/runner-v2/monitor-io";
-import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAgentRecord, type RunJsonMutation, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import { livePendingHandoffAgentIds } from "@/lib/runner-v2/handoff-liveness";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
-import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
+import { readLoopState, restoreLoopMutations, type LoopFileMutation, type LoopMutationObserver } from "@/lib/runner-v2/loop-state";
 import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
-import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import config from "@/lib/config";
 
@@ -27,6 +30,7 @@ export interface RunnerV2CompletionEntrypointInput {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
   dryRun?: boolean;
   now?: Date;
+  onRunMutation?: RunMutationObserver;
 }
 
 export interface RunnerV2CompletionEntrypointResult {
@@ -44,7 +48,7 @@ export function runRunnerV2CompletionEntrypoint(
   input: RunnerV2CompletionEntrypointInput,
 ): RunnerV2CompletionEntrypointResult {
   const env = input.env || process.env;
-  const chain = readChain(input.chainPath);
+  const chainDefinition = readChain(input.chainPath);
   const runId = env.MENTIKO_RUN_ID || env.RUN_ID;
   if (!runId) {
     throw unsupported("missing MENTIKO_RUN_ID/RUN_ID");
@@ -57,6 +61,7 @@ export function runRunnerV2CompletionEntrypoint(
   }
 
   const run = readRunJson(runJsonPath);
+  const chain = hydrateChainRuntimeState(chainDefinition, run);
   const executionTaskId = shouldRecordTaskExecutionMetadata(run.metadata) ? run.taskId : undefined;
   const agent = resolveAgent(input.sessionName, chain, run);
   const stateDir = resolveStateDir(env, runDir);
@@ -70,8 +75,18 @@ export function runRunnerV2CompletionEntrypoint(
 
   const eventsDir = resolveEventsDir(env);
   const events = readEvents(eventsDir);
+  // Archived processed events are replay evidence only. Keep them out of the
+  // completion pipeline so an old handoff can never become a new trigger, but
+  // let an already-completed agent prove that this exact event was consumed.
+  const archivedEvents = readEvents(join(eventsDir, "archive"));
   const generationDuplicate = alreadyCompletedGeneration(run, runJsonPath, stateDir, agent.id);
-  const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId })
+  const duplicate = alreadyCompletedVerdict({
+    run,
+    agent,
+    sessionName: input.sessionName,
+    events: [...events, ...archivedEvents],
+    runId,
+  })
     || generationDuplicate;
   if (duplicate) {
     if (!input.dryRun && generationDuplicate) {
@@ -98,13 +113,15 @@ export function runRunnerV2CompletionEntrypoint(
       eventsDir,
     };
   }
-  const runJsonSnapshot = readFileSync(runJsonPath, "utf8");
-  const eventSnapshots = snapshotEvents(events);
-  const loopStateSnapshots = [
-    snapshotOptionalFile(loopStatePath(runDir)),
-    snapshotOptionalFile(shellLoopStatePath(runDir)),
-  ];
+  const runMutationJournal: RunJsonMutation[] = [];
+  const loopMutationJournal: LoopFileMutation[] = [];
+  const onRunMutation: RunMutationObserver = (mutation) => {
+    runMutationJournal.push(mutation);
+    input.onRunMutation?.(mutation);
+  };
+  const onLoopMutation: LoopMutationObserver = (mutation) => { loopMutationJournal.push(mutation); };
 
+  try {
   // routed/relaunched agents (launched by shell chain-runner.sh, including
   // launches the typed bridge itself fired) have no AgentAttempt record —
   // only the typed bootstrap creates them. Adopt one now so this completion
@@ -117,6 +134,7 @@ export function runRunnerV2CompletionEntrypoint(
     agentId: agent.id,
     sessionName: input.sessionName,
     now: input.now,
+    onMutation: onRunMutation,
   });
 
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
@@ -129,6 +147,12 @@ export function runRunnerV2CompletionEntrypoint(
     run,
     agentId: agent.id,
   });
+  const retryOccurrenceId = completionAttemptOccurrenceId({
+    runId,
+    agentId: agent.id,
+    attemptId: completionAttempt.id,
+    loopRound: readLoopState(runDir).round,
+  });
   const qualityGate = maybeHandleQualityGateFailure({
     run,
     runDir,
@@ -139,10 +163,11 @@ export function runRunnerV2CompletionEntrypoint(
     orgId: env.ORG_ID || "default",
     now: input.now,
     dryRun: input.dryRun,
+    onRunMutation,
     });
   if (qualityGate) {
     if (input.dryRun) {
-      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
@@ -174,7 +199,6 @@ export function runRunnerV2CompletionEntrypoint(
     };
   }
 
-  try {
     const pipeline = runCompletionPipeline({
       runDir,
       runJsonPath,
@@ -196,15 +220,23 @@ export function runRunnerV2CompletionEntrypoint(
       agentCompleteMarker: monitorCompletionLatchAccepted(env),
       fanGroup,
       liveness,
+      onRunMutation,
+      onLoopMutation,
       retry: {
         policy: objectValue(agent.retry) || objectValue(chain.config?.retry),
-        currentAttempt: numberValue(env.MENTIKO_RETRY_ATTEMPT || env.RETRY_ATTEMPT) || 0,
+        currentAttempt: resolveRetryAttempt({
+          env,
+          runJsonPath,
+          stateDir,
+          agentId: agent.id,
+        }),
         chainId: completionChainId,
         chainPath: input.chainPath,
         workspacePath,
         taskId: executionTaskId,
         startSha: stringValue(run.startSha),
         debug: env.DEBUG === "1" || env.MENTIKO_DEBUG === "1",
+        occurrenceId: retryOccurrenceId,
       },
     });
     if (pipeline.decision.action === "await-liveness") {
@@ -214,12 +246,19 @@ export function runRunnerV2CompletionEntrypoint(
           agentId: agent.id,
           decision: pipeline.decision.liveness,
           now: input.now,
+          onMutation: onRunMutation,
         });
       }
     } else if (liveness && !input.dryRun) {
-      clearCompletionLivenessExtension(runJsonPath, agent.id);
+      clearCompletionLivenessExtension(runJsonPath, agent.id, onRunMutation);
     }
 
+    const occurrenceId = completionOccurrenceId({
+      runId,
+      agentId: agent.id,
+      attemptId: completionAttempt.id,
+      pipeline,
+    });
     const plan = buildTypedExecutorPlan({
       pipeline,
       allEvents: events,
@@ -236,12 +275,7 @@ export function runRunnerV2CompletionEntrypoint(
         runId,
         chainName: completionChainName,
         agentId: agent.id,
-        occurrenceId: completionOccurrenceId({
-          runId,
-          agentId: agent.id,
-          attemptId: completionAttempt.id,
-          pipeline,
-        }),
+        occurrenceId,
         agentName: agent.name,
         sessionName: input.sessionName,
         chainWebhooks: parseChainWebhooks(chain.config?.webhooks),
@@ -259,6 +293,7 @@ export function runRunnerV2CompletionEntrypoint(
           WORKSPACE_TYPE: env.WORKSPACE_TYPE,
           MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
           MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
+          MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
         },
       },
     });
@@ -271,10 +306,11 @@ export function runRunnerV2CompletionEntrypoint(
       eventsDir,
       eventsArchiveDir: join(eventsDir, "archive"),
       dryRun: input.dryRun,
+      onRunMutation,
     });
 
     if (input.dryRun) {
-      restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
     } else if (pipeline.decision.action !== "await-liveness") {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself.
@@ -294,7 +330,7 @@ export function runRunnerV2CompletionEntrypoint(
       eventsDir,
     };
   } catch (error) {
-    restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
+    restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
     if (!input.dryRun && error instanceof GenerationImportError) {
       // The generation agent did finish and produced an accepted artifact; the
       // system failed while importing that artifact. Do not restore the run to
@@ -359,16 +395,23 @@ function alreadyCompletedVerdict(input: {
   if (!runAgent || !["complete", "completed"].includes(runAgent.status || "")) return false;
   const emitted = input.agent.emits;
   if (!emitted) return false;
+  const matchingEvent = (event: RunnerEventRecord) => (
+    event.event === emitted
+    && eventMatchesRunId(event, input.runId)
+    && agentOwnsEvent(event, input.agent, input.sessionName)
+  );
+  // A fresh active occurrence always wins over an older processed archive
+  // receipt. Loop visits commonly reuse the same agent/event identity; treating
+  // the prior receipt as the current occurrence strands iteration two.
+  if (input.events.some((event) => !event.processed && matchingEvent(event))) return false;
   return input.events.some((event) => (
     event.processed
-    && event.event === emitted
-    && eventMatchesRunId(event, input.runId)
+    && matchingEvent(event)
     // canonical event source is the AGENT ID, not the session name -- a bare
     // (!event.source || event.source === sessionName) guard missed the common
     // "source: <agent id>" shape and let an already-completed agent be
     // re-routed/retried/failed. agentOwnsEvent checks exact identity against
     // the agent id, its declared session prefix, and the session name.
-    && agentOwnsEvent(event, input.agent, input.sessionName)
   ));
 }
 
@@ -382,6 +425,7 @@ function maybeHandleQualityGateFailure(input: {
   orgId: string;
   now?: Date;
   dryRun?: boolean;
+  onRunMutation?: RunMutationObserver;
 }) {
   const artifactsDir = join(input.runDir, "artifacts");
   const summaryPath = join(artifactsDir, `${input.agent.id}-summary.json`);
@@ -442,8 +486,8 @@ function maybeHandleQualityGateFailure(input: {
   }) : { status: "planned" as const };
 
   if (!input.dryRun) {
-    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now);
-    updateRunStatus(input.runJsonPath, "failed", result.reason, input.now);
+    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
+    updateRunStatus(input.runJsonPath, "failed", result.reason, input.now, input.onRunMutation);
   }
   return artifact;
 }
@@ -547,17 +591,26 @@ export function completionOccurrenceId(input: {
   pipeline: CompletionPipelineResult;
 }): string {
   const event = "event" in input.pipeline.decision ? input.pipeline.decision.event : undefined;
-  const identity = {
+  return completionAttemptOccurrenceId({
     runId: input.runId,
     agentId: input.agentId,
     attemptId: input.attemptId,
     loopRound: input.pipeline.loopStateBefore.round,
-    event: event ? {
+    ...(event ? { event: {
       path: event.path || "",
       fields: event.fields,
-    } : undefined,
-  };
-  const digest = createHash("sha256").update(stableSerialize(identity)).digest("hex").slice(0, 32);
+    } } : {}),
+  });
+}
+
+function completionAttemptOccurrenceId(input: {
+  runId: string;
+  agentId: string;
+  attemptId: string;
+  loopRound: number;
+  event?: { path: string; fields: Record<string, string> };
+}): string {
+  const digest = createHash("sha256").update(stableSerialize(input)).digest("hex").slice(0, 32);
   return `runner-v2-completion:${digest}:v1`;
 }
 
@@ -585,6 +638,8 @@ interface ChainAgent {
   name?: string;
   emits?: string;
   triggers?: string[];
+  status?: string;
+  lastAttemptCreatedAt?: string;
   session_prefix?: string;
   retry?: unknown;
 }
@@ -609,6 +664,35 @@ function readChain(path: string): ChainFile {
   const chain = JSON.parse(readFileSync(path, "utf8")) as ChainFile;
   if (!Array.isArray(chain.agents)) throw unsupported("chain agents missing");
   return chain;
+}
+
+function hydrateChainRuntimeState(chain: ChainFile, run: RunRecord): ChainFile {
+  const persistedStatus = new Map(
+    (run.agents || []).map((agent) => [agent.id, agent.status]),
+  );
+  const liveHandoffTargets = livePendingHandoffAgentIds(run);
+  const attempts = readRunnerV2AttemptStateFromRun(run);
+  return {
+    ...chain,
+    agents: chain.agents.map((agent) => {
+      const status = liveHandoffTargets.has(agent.id)
+        ? "running"
+        : persistedStatus.get(agent.id);
+      const latestAttempt = [...attempts].reverse().find((attempt) => attempt.agentId === agent.id && attempt.runId === run.id);
+      return status || latestAttempt
+        ? {
+            ...agent,
+            ...(status ? { status } : {}),
+            ...(latestAttempt?.createdAt ? { lastAttemptCreatedAt: latestAttempt.createdAt } : {}),
+          }
+        : agent;
+    }),
+  };
+}
+
+function readRunnerV2AttemptStateFromRun(run: RunRecord): AgentAttemptRecord[] {
+  const runnerV2 = objectValue(run.runnerV2);
+  return Array.isArray(runnerV2?.attempts) ? runnerV2.attempts as AgentAttemptRecord[] : [];
 }
 
 function resolveRunDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, runId: string): string {
@@ -753,6 +837,7 @@ function recordCompletionLivenessExtension(input: {
   agentId: string;
   decision: { disposition: string; reason: string };
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): RunRecord {
   return updateRunJson(input.runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${input.runJsonPath}`);
@@ -774,10 +859,14 @@ function recordCompletionLivenessExtension(input: {
         },
       },
     };
-  });
+  }, undefined, input.onMutation);
 }
 
-function clearCompletionLivenessExtension(runJsonPath: string, agentId: string): RunRecord {
+function clearCompletionLivenessExtension(
+  runJsonPath: string,
+  agentId: string,
+  onMutation?: RunMutationObserver,
+): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
     const runnerV2 = objectValue(current.runnerV2);
@@ -793,7 +882,7 @@ function clearCompletionLivenessExtension(runJsonPath: string, agentId: string):
         completionLiveness: nextLiveness,
       },
     };
-  });
+  }, undefined, onMutation);
 }
 
 function monitorCompletionLatchAccepted(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
@@ -835,7 +924,7 @@ function parseChainWebhooks(value: unknown): { enabled?: boolean; urls?: string[
 
 /**
  * Mirror of the shell fallback membership resolution in
- * chain-runner-complete.sh: a live (status running) fan group whose member
+ * the retired shell completion handler: a live (status running) fan group whose member
  * list contains this agent, scoped to this run when both sides know the run
  * id. Reads both stores under <stateDir>/fan-groups: v1 .state key-value files
  * and typed .json files.
@@ -880,16 +969,7 @@ function readOptionalFile(path: string): string | undefined {
 
 function readEvents(eventsDir: string): RunnerEventRecord[] {
   if (!existsSync(eventsDir)) return [];
-  return readdirSync(eventsDir)
-    .filter((file) => file.endsWith(".event"))
-    .flatMap((file) => {
-      const path = join(eventsDir, file);
-      try {
-        return [{ ...parseRunnerEvent(readFileSync(path, "utf8")), path }];
-      } catch {
-        return [];
-      }
-    });
+  return scanRunnerEventFiles(eventsDir).valid.map((file) => file.event);
 }
 
 function resolveAgent(sessionName: string, chain: ChainFile, run: RunRecord): ChainAgent {
@@ -943,51 +1023,258 @@ function numberValue(value: unknown): number | undefined {
   return undefined;
 }
 
+function resolveRetryAttempt(input: {
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  runJsonPath: string;
+  stateDir: string;
+  agentId: string;
+}): number {
+  const rawValues = [input.env.MENTIKO_RETRY_ATTEMPT, input.env.RETRY_ATTEMPT]
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "");
+  const parsedValues = rawValues.map((value) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(`invalid retry attempt for agent ${input.agentId}: ${value}`);
+    }
+    return parsed;
+  });
+  if (new Set(parsedValues).size > 1) {
+    throw new Error(`ambiguous retry attempt environment for agent ${input.agentId}: ${rawValues.join(",")}`);
+  }
+  const persisted = readTypedRetryAttempt(input.agentId, {
+    runJsonPath: input.runJsonPath,
+    stateDir: input.stateDir,
+  });
+  const fromEnv = parsedValues[0];
+  if (fromEnv !== undefined && persisted !== undefined && fromEnv !== persisted) {
+    throw new Error(`retry attempt disagreement for agent ${input.agentId}: env=${fromEnv} persisted=${persisted}`);
+  }
+  return persisted ?? fromEnv ?? 0;
+}
+
 function objectValue<T extends object = Record<string, unknown>>(value: unknown): T | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as T : undefined;
 }
 
-function snapshotEvents(events: RunnerEventRecord[]): Map<string, string> {
-  const snapshots = new Map<string, string>();
-  for (const event of events) {
-    if (event.path && existsSync(event.path)) {
-      snapshots.set(event.path, readFileSync(event.path, "utf8"));
-    }
-  }
-  return snapshots;
-}
-
-interface OptionalFileSnapshot {
-  path: string;
-  existed: boolean;
-  content?: string;
-}
-
-function snapshotOptionalFile(path: string): OptionalFileSnapshot {
-  return existsSync(path)
-    ? { path, existed: true, content: readFileSync(path, "utf8") }
-    : { path, existed: false };
-}
-
-function restoreOptionalFile(snapshot: OptionalFileSnapshot): void {
-  if (snapshot.existed) {
-    writeFileSync(snapshot.path, snapshot.content || "");
-  } else {
-    rmSync(snapshot.path, { force: true });
-  }
-}
-
 function restoreSnapshots(
   runJsonPath: string,
-  runJsonSnapshot: string,
-  eventSnapshots: Map<string, string>,
-  loopStateSnapshots: OptionalFileSnapshot[],
+  runMutations: RunJsonMutation[],
+  loopMutations: LoopFileMutation[],
 ): void {
-  writeFileSync(runJsonPath, runJsonSnapshot);
-  for (const [path, content] of eventSnapshots) {
-    writeFileSync(path, content);
+  restoreRunMutationsLocked(runJsonPath, runMutations);
+  restoreLoopMutations(loopMutations);
+}
+
+function restoreRunMutationsLocked(
+  runJsonPath: string,
+  mutations: RunJsonMutation[],
+): void {
+  if (mutations.length === 0) return;
+  updateRunJson(runJsonPath, (current) => {
+    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    return [...mutations].reverse().reduce((run, mutation) => (
+      mutation.before
+        ? rollbackCompletionOwnedRun(mutation.before, mutation.after, run)
+        : run
+    ), current);
+  });
+}
+
+const RUN_LIFECYCLE_KEYS = new Set(["status", "completed", "status_message"]);
+
+interface PropertyState {
+  present: boolean;
+  value?: unknown;
+}
+
+function rollbackCompletionOwnedRun(
+  baseline: RunRecord,
+  completionOwned: RunRecord,
+  current: RunRecord,
+): RunRecord {
+  const merged = rollbackOwnedRecord(
+    baseline as unknown as Record<string, unknown>,
+    completionOwned as unknown as Record<string, unknown>,
+    current as unknown as Record<string, unknown>,
+    new Set([...RUN_LIFECYCLE_KEYS, "agents", "runnerV2"]),
+  );
+
+  const lifecycle = rollbackProperty(
+    present(pickProperties(baseline as unknown as Record<string, unknown>, RUN_LIFECYCLE_KEYS)),
+    present(pickProperties(completionOwned as unknown as Record<string, unknown>, RUN_LIFECYCLE_KEYS)),
+    present(pickProperties(current as unknown as Record<string, unknown>, RUN_LIFECYCLE_KEYS)),
+    "lifecycle",
+  ).value as Record<string, unknown>;
+  for (const key of RUN_LIFECYCLE_KEYS) delete merged[key];
+  Object.assign(merged, lifecycle);
+
+  merged.agents = rollbackKeyedArray(
+    baseline.agents || [],
+    completionOwned.agents || [],
+    current.agents || [],
+  );
+
+  const runnerV2 = rollbackProperty(
+    property(baseline as unknown as Record<string, unknown>, "runnerV2"),
+    property(completionOwned as unknown as Record<string, unknown>, "runnerV2"),
+    property(current as unknown as Record<string, unknown>, "runnerV2"),
+    "runnerV2",
+  );
+  if (runnerV2.present) merged.runnerV2 = runnerV2.value;
+  else delete merged.runnerV2;
+
+  return merged as unknown as RunRecord;
+}
+
+function rollbackOwnedRecord(
+  baseline: Record<string, unknown> | undefined,
+  completionOwned: Record<string, unknown> | undefined,
+  current: Record<string, unknown> | undefined,
+  skip = new Set<string>(),
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const keys = new Set([
+    ...Object.keys(baseline || {}),
+    ...Object.keys(completionOwned || {}),
+    ...Object.keys(current || {}),
+  ]);
+  for (const key of keys) {
+    if (skip.has(key)) continue;
+    const rolledBack = rollbackProperty(
+      property(baseline, key),
+      property(completionOwned, key),
+      property(current, key),
+      key,
+    );
+    if (rolledBack.present) result[key] = rolledBack.value;
   }
-  for (const snapshot of loopStateSnapshots) {
-    restoreOptionalFile(snapshot);
+  return result;
+}
+
+function rollbackProperty(
+  baseline: PropertyState,
+  completionOwned: PropertyState,
+  current: PropertyState,
+  key: string,
+): PropertyState {
+  if (propertyEqual(completionOwned, baseline)) return current;
+  if (propertyEqual(current, completionOwned)) return baseline;
+
+  if (
+    completionOwned.present && current.present
+    && Array.isArray(completionOwned.value) && Array.isArray(current.value)
+    && (key === "agents" || key === "attempts")
+    && (!baseline.present || Array.isArray(baseline.value))
+  ) {
+    return present(rollbackKeyedArray(
+      baseline.present ? baseline.value as unknown[] : [],
+      completionOwned.value,
+      current.value,
+    ));
   }
+
+  const baselineRecord = recordValue(baseline);
+  const completionOwnedRecord = recordValue(completionOwned);
+  const currentRecord = recordValue(current);
+  if (completionOwnedRecord && currentRecord && (baselineRecord || !baseline.present)) {
+    const value = rollbackOwnedRecord(baselineRecord, completionOwnedRecord, currentRecord);
+    if (!baseline.present && Object.keys(value).length === 0) return absent();
+    return present(value);
+  }
+
+  // The current value differs from both baseline and the completion-owned
+  // snapshot. Another writer won this field; preserve it rather than guessing.
+  return current;
+}
+
+function rollbackKeyedArray(
+  baseline: unknown[],
+  completionOwned: unknown[],
+  current: unknown[],
+): unknown[] {
+  const baselineMap = keyedArrayMap(baseline);
+  const completionOwnedMap = keyedArrayMap(completionOwned);
+  const currentMap = keyedArrayMap(current);
+  if (!baselineMap || !completionOwnedMap || !currentMap) return current;
+
+  const ids = [
+    ...currentMap.keys(),
+    ...[...baselineMap.keys()].filter((id) => !currentMap.has(id)),
+  ];
+  const result: unknown[] = [];
+  for (const id of ids) {
+    const baselineProperty = mapProperty(baselineMap, id);
+    const completionOwnedProperty = mapProperty(completionOwnedMap, id);
+    const currentProperty = mapProperty(currentMap, id);
+    const baselineRecord = recordValue(baselineProperty);
+    const completionOwnedRecord = recordValue(completionOwnedProperty);
+    const currentRecord = recordValue(currentProperty);
+    const rolledBack = baselineRecord && completionOwnedRecord && currentRecord
+      ? present(rollbackOwnedRecord(baselineRecord, completionOwnedRecord, currentRecord))
+      : rollbackAtomicProperty(
+        baselineProperty,
+        completionOwnedProperty,
+        currentProperty,
+      );
+    if (rolledBack.present) result.push(rolledBack.value);
+  }
+  return result;
+}
+
+function rollbackAtomicProperty(
+  baseline: PropertyState,
+  completionOwned: PropertyState,
+  current: PropertyState,
+): PropertyState {
+  if (propertyEqual(completionOwned, baseline)) return current;
+  if (propertyEqual(current, completionOwned)) return baseline;
+  return current;
+}
+
+function keyedArrayMap(values: unknown[]): Map<string, unknown> | undefined {
+  const result = new Map<string, unknown>();
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const id = (value as { id?: unknown }).id;
+    if (typeof id !== "string" || result.has(id)) return undefined;
+    result.set(id, value);
+  }
+  return result;
+}
+
+function pickProperties(source: Record<string, unknown>, keys: Set<string>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) result[key] = source[key];
+  }
+  return result;
+}
+
+function property(source: Record<string, unknown> | undefined, key: string): PropertyState {
+  return source && Object.prototype.hasOwnProperty.call(source, key)
+    ? present(source[key])
+    : absent();
+}
+
+function mapProperty(source: Map<string, unknown>, key: string): PropertyState {
+  return source.has(key) ? present(source.get(key)) : absent();
+}
+
+function present(value: unknown): PropertyState {
+  return { present: true, value };
+}
+
+function absent(): PropertyState {
+  return { present: false };
+}
+
+function propertyEqual(left: PropertyState, right: PropertyState): boolean {
+  return left.present === right.present
+    && (!left.present || isDeepStrictEqual(left.value, right.value));
+}
+
+function recordValue(state: PropertyState): Record<string, unknown> | undefined {
+  return state.present && state.value && typeof state.value === "object" && !Array.isArray(state.value)
+    ? state.value as Record<string, unknown>
+    : undefined;
 }
