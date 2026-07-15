@@ -3,24 +3,31 @@
   "source_files": [
     "web/lib/runner-v2/monitor-reducer.ts",
     "web/lib/runner-v2/monitor.ts",
-    "web/lib/runner-v2/monitor-diagnostics.ts"
+    "web/lib/runner-v2/monitor-diagnostics.ts",
+    "web/lib/runner-v2/monitor-live-io.ts",
+    "web/lib/runner-v2/pty-scope.ts"
   ],
-  "role": "typed chain monitor decision core (ports lib/agent-functions.sh monitor-chain-agent): watch the agent, latch completion, classify stale/dead, and gate the completion handoff on a genuine done signal. Design rationale + migration plan live in monitor-v2-contract.json; this file is the enforceable owns/invariants bound by the switch-readiness gate.",
+  "role": "typed chain monitor decision core (ports lib/agent-functions.sh monitor-chain-agent): watch the agent, latch completion, classify stale/dead, and gate the completion handoff on a genuine done signal. Design rationale + migration plan live in monitor-v2.design.json; this file is the enforceable owns/invariants bound by the switch-readiness gate.",
   "owns": [
     "the typed chain monitor poll-loop decision (classifyMonitorTick) and its action set",
-    "the completion latch decision (sticky AGENT_COMPLETE marker OR emitted event)",
+    "the authoritative completion evidence decision (declared event OR durable AGENT_COMPLETE marker OR compatible core-generation artifact)",
+    "transcript identity selection bound to the selected agent profile and current run attempt",
     "stale/nudge classification with a durable, restart-surviving nudge budget",
-    "event-first death classification and BLOCKED stall surfacing"
+    "event-first death classification and BLOCKED stall surfacing",
+    "terminal PTY ownership handoff and namespaced cleanup verification"
   ],
   "invariants": [
     "stale is not complete",
     "dead without a declared event is not success (event-first death)",
-    "the completion latch wins over process death",
+    "authoritative completion evidence wins over process death, session disappearance, stall escalation, and context exhaustion",
     "liveness wins: an alive, producing agent with no event is never failed",
     "the durable nudge budget survives screen-echo resets (echo grace)",
     "diagnostic events use source monitor, never the agent id, so they cannot satisfy the completion matcher",
-    "completion is invoked only on a genuine latch, never while alive and eventless",
+    "completion is invoked only on authoritative evidence, never while alive and evidence-free",
     "remote (ssh/docker) workspaces skip the local process-death check",
-    "late-event recovery or an explicit replacement is connected before readiness"
+    "transcript selection fails closed when current-attempt identity is absent or ambiguous; terminal position is not identity evidence",
+    "a core-generation artifact is evidence only when chain, run, job, attempt freshness, token, canonical path, and shared payload contract agree",
+    "actionable blocked runs retain an owned PTY; successful and non-actionable terminal runs release monitor then agent on the derived namespace daemon with retryable cleanup evidence",
+    "late-event recovery or an explicit generation-artifact recovery path is connected before readiness"
   ]
 }

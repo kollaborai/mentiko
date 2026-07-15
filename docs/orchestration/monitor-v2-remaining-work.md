@@ -4,7 +4,7 @@ Honest, complete list of everything left. Written 2026-07-07 after porting the
 monitor decision core to TypeScript. Nothing here is "done" until it is proven on
 a live chain run.
 
-Contracts: `docs/orchestration/contracts/monitor-v2-contract.json` (design + plan),
+Contracts: `docs/orchestration/contracts/monitor-v2.design.json` (design + plan),
 `monitor-v2.contract.json` (enforceable owns/invariants, bound in the switch gate).
 
 ---
@@ -29,7 +29,7 @@ Committed this session:
 ## CRITICAL PATH — monitor-v2 migration (the TASK-093 fix)
 
 ### Done (committed, unit-tested)
-- [x] Contract: `monitor-v2-contract.json` + enforceable `monitor-v2.contract.json`, bound in `runner-v2-contract.json` implementation_coverage, enforced by `switch-readiness.binding.test.ts`.
+- [x] Contract: `monitor-v2.design.json` + enforceable `monitor-v2.contract.json`, bound in `runner-v2-contract.json` implementation_coverage, enforced by `switch-readiness.binding.test.ts`.
 - [x] Reducer `classifyMonitorTick` (`web/lib/runner-v2/monitor-reducer.ts`) — full state machine: session-gone → latch (wins over death) → process-death → active/stale, durable nudge budget, echo grace.
 - [x] Driver `runChainMonitor` (`web/lib/runner-v2/monitor.ts`) — poll loop over injected I/O.
 - [x] Diagnostics (`web/lib/runner-v2/monitor-diagnostics.ts`) — event-first death, BLOCKED stall, `source: monitor` never the agent id.

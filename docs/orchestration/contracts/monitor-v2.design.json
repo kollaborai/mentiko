@@ -11,7 +11,7 @@
   },
   "why": {
     "problem": "the monitor — the loop that watches an agent over time and owns the patient 'wait, nudge, then latch' behavior — is still shell, while the completion verdict (a one-shot) is typed. The shell monitor is PATIENT: it nudges a stalled-but-alive agent and only latches completion on a real declared event or a standalone AGENT_COMPLETE. But the typed completion bridge it invokes runs its OWN blind retry/exhaust with no view of liveness. That split-brain — patient shell watcher, impatient typed verdict — is exactly what failed TASK-093: the typed bridge exhausted and declared the agent failed while the agent was still alive and emitted its declared event ~4.5 minutes later.",
-    "fix": "unify the watch loop and the completion verdict under ONE typed owner that shares a single liveness view. Once the monitor is typed, completion is invoked ONLY when the agent is genuinely done (latched event / AGENT_COMPLETE / dead-with-event), never speculatively while the agent is alive and eventless. There is then no blind exhaustion to make. The false-failure guards in runner-v2-contract.json (completion_liveness_contract: liveness_wins, bounded_await, late_event_recovery) become structurally enforced by the owner that actually observes liveness, instead of being built-but-unfed as they are today.",
+    "fix": "unify the watch loop and completion verdict under one typed owner and one completion-evidence probe. Completion is invoked only for a declared event, a standalone AGENT_COMPLETE in the current-attempt durable transcript, or a compatible canonical generation-result.json owned by a core generation run. Every terminal path rechecks that evidence before mutation; an alive evidence-free agent is never speculatively completed.",
     "deletion_gate": "the shell monitor scripts MUST NOT be deleted until this typed monitor reaches proven parity (every invariant below) and MENTIKO_MONITOR_V2 defaults on. Deleting them earlier removes agent monitoring entirely — nothing else watches sessions, latches completion, or re-triggers the verdict."
   },
   "entrypoints": {
@@ -24,22 +24,22 @@
   },
   "monitor_loop": {
     "watch": "poll the session capture on an interval (shell: lib/mentiko-monitor.sh while-loop with CHECK_INTERVAL); the typed port keeps the same poll-until-terminal shape and must NOT block or run inside the completion PTY",
-    "completion_latch": "OR-latch (monitor.contract.json completion_latch): a standalone AGENT_COMPLETE line on its own stripped terminal line, OR a declared emits event whose source contains the agent id and whose run id matches. Latch recorded at ~/.mentiko_monitor/${session}_complete.",
+    "completion_latch": "OR-latch from authoritative evidence: a standalone AGENT_COMPLETE line in the current-attempt durable transcript, a declared emits event owned by this agent/run, or a compatible canonical generation-result.json whose core-chain/run/job/token/attempt freshness boundaries agree. Latch recorded at ~/.mentiko_monitor/${session}_complete.",
     "stale": "md5 of the last 20 captured lines unchanged marks a stale tick (advisor_threshold MENTIKO_ADVISOR_STALE_COUNT default 3, max_stale default 5). Stale drives advisor nudges / blocked diagnostics ONLY — never completion. 'stale output does not imply completion.'",
     "nudge_budget": "durable ceiling MENTIKO_MONITOR_MAX_NUDGES tracked in ~/.mentiko_monitor/${session}_nudges; survives screen-echo stale resets and monitor restarts; an exhausted budget escalates (awaits latch) instead of nudging forever (20ce3b1). The typed port MUST persist this to disk, not memory, or a monitor restart resets the budget.",
     "death": "local workspaces: pgrep the child process under the pane pid. remote (ssh/docker): SKIP local process-death checks. Death classification is EVENT-FIRST: process gone WITH a genuine completion event -> complete normally; process gone WITHOUT an event -> failed diagnostic agent-error (agent-functions.sh monitor-agent-died).",
     "liveness_wins": "an agent whose session is alive and still producing output is NEVER classified dead or failed for a missing event; the loop keeps watching and nudging within budget. This is the structural form of runner-v2-contract.json completion_liveness_contract.liveness_wins — enforced here by the component that actually observes liveness."
   },
   "completion_handoff": {
-    "invoke": "the monitor launches the completion verdict in a SEPARATE pty (never the monitor pty), and ONLY on a genuine latch (event / AGENT_COMPLETE) or on death-with-event — never speculatively while the agent is alive and eventless",
+    "invoke": "the monitor launches the completion verdict in a separate pty and only on authoritative event/marker/core-generation-artifact evidence; a validated generation artifact is the explicit exception to the eventless rule because generation-result.json is the product handoff",
     "shared_liveness": "because the typed monitor already holds the liveness view, it either (a) passes that view into the typed completion verdict, or (b) simply does not invoke completion until the agent is genuinely done. Either way the typed completion's blind retry/exhaust — the root of TASK-093 — is removed. This is where completion-runner.ts evaluateAgentLiveness/await-liveness finally receives a real signal from its true owner.",
     "one_owner": "exactly one owner applies completion side effects. In the typed path there is NO shell completion fallback; the typed monitor + typed completion are the single owner. A typed exit 64 or completion PTY spawn failure fails closed instead of execing/nohuping shell completion.",
     "no_blind_exhaustion": "the migrated path MUST NOT contain a completion verdict that terminalizes an agent for a missing event without the monitor's liveness view. Blind exhaustion is the specific defect being removed; a parity test must prove a stalled-but-alive agent is never failed."
   },
   "death_latch_ordering": {
-    "rule": "the completion latch (sticky AGENT_COMPLETE marker OR emitted event) is evaluated BEFORE process-death. An agent that produced its handoff and then exited completes normally, never 'died'. This DELIBERATELY supersedes the shell order: agent-functions.sh checks process-gone (:995) before the latch (:1044), and monitor-agent-died re-checks only the EVENT FILE, so a marker-only latch was lost on death. Latch-first fixes that latent bug.",
-    "reducer_order": "web/lib/runner-v2/monitor-reducer.ts classifyMonitorTick: session-gone -> latched (complete) -> processGone (died) -> hash. Proven by monitor-reducer.test.ts 'latch wins over process death: a process that exited AFTER latching completes, not dies'.",
-    "onDied_race_guard": "even so, onDied re-checks the event file (classifyDeath is event-first) so an event that lands between observe and onDied still completes rather than fails."
+    "rule": "authoritative completion evidence is evaluated before process death, session disappearance, stall escalation, and context exhaustion. A handoff that became durable before terminal mutation always wins.",
+    "reducer_order": "monitor-reducer remains session-gone -> latched -> processGone -> hash, while monitor.ts performs the authoritative evidence probe before handling session-gone or any other non-success terminal action.",
+    "onDied_race_guard": "the driver probes once after classification and the live terminal callback probes the same evidence source again immediately before mutation; late valid events retain the reconciler backstop and generation artifacts retain explicit typed completion re-entry."
   },
   "command_contract": {
     "current_shell": "monitor-chain-agent <session> <interval> <context> <chainPath> <maxStale> (agent-functions.sh:919; emitted by buildMonitorCommand agent-bootstrap-plan.ts:326 and lib/chain-runner.sh:2360)",
@@ -91,7 +91,9 @@
   "parity_requirements": [
     "md5-of-last-20-lines stale detection reproduced, or a proven-equivalent change detector that never regresses 'stale is not complete'",
     "durable nudge budget persisted to disk, surviving screen-echo stale resets and monitor restarts",
-    "AGENT_COMPLETE latch requires a standalone marker in the DURABLE transcript JSONL, never the rendered screen (BUG-022)",
+    "AGENT_COMPLETE latch requires a standalone marker in the uniquely identified current-attempt DURABLE transcript JSONL, never the rendered screen (BUG-022)",
+    "transcript resolution uses the selected profile log_path and fails closed on missing or ambiguous current-attempt identity",
+    "core generation artifact evidence uses the shared generation payload validator and canonical run-scoped artifact path",
     "event match respects agent id (source superstring) and run id",
     "death classification is event-first, and skips local process-death checks for ssh/docker workspaces",
     "completion handler runs in a separate pty, never the monitor pty",
@@ -107,11 +109,12 @@
     "screen-echo repaints never grant more nudges: the nudge budget is durable (20ce3b1)",
     "liveness wins: never classify an alive, producing agent as dead or failed for a missing event",
     "death is event-first: process gone WITH a completion event completes normally",
-    "the monitor is the re-check loop: completion is invoked only when genuinely done, so no verdict makes a blind, liveness-unaware exhaustion decision (the TASK-093 fix)",
+    "the monitor is the re-check loop: completion is invoked only on authoritative evidence, so no verdict makes a blind, liveness-unaware exhaustion decision (the TASK-093 fix)",
+    "actionable blocked runs retain their owned agent PTY; handled terminal outcomes verify namespaced monitor-then-agent cleanup and persist retryable failures",
     "do not delete the shell monitor until typed parity is proven and MENTIKO_MONITOR_V2 defaults on"
   ],
   "known_gaps": [
-    "the typed completion bridge (completion-runner.ts) still contains a liveness-aware await path (evaluateAgentLiveness / await-liveness) that is built but unfed (runner-v2-contract.json known_gaps). Monitor-v2 gates invocation on genuine-done and late-event recovery is connected through reconcile, so this is now cleanup rather than a monitor-v2 readiness blocker.",
+    "automatic periodic reconciliation of a core generation artifact that lands after both terminal probes remains separate from the explicit typed completion recovery path; the monitor closes both in-loop race windows before terminal mutation",
     "the shell md5-of-20-lines detector is heuristic and known-blind to spinner redraws (agent-functions.sh comment); the port should preserve behavior but may improve the change detector without weakening 'stale is not complete'",
     "remote (ssh/docker) liveness has no local pid to pgrep; the typed monitor must reproduce the shell remote-skip and lean on event/transcript evidence for those workspaces",
     "the monitor is a long-lived per-agent PTY loop, not a one-shot; the typed port must handle its own restart/idempotency (durable latch + nudge files) the way the shell monitor does"
