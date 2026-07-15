@@ -1,7 +1,7 @@
 export interface QualityGateFailedPayload {
   event: {
     name: "quality_gate.failed";
-    source: "runner-v2" | "chain-runner-complete";
+    source: "runner-v2";
     timestamp: string;
   };
   namespace: {

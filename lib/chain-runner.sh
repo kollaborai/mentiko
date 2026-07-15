@@ -25,10 +25,10 @@ if ! command -v jq &> /dev/null; then
 fi
 
 source "$SCRIPT_DIR/agent-functions.sh"
-source "$SCRIPT_DIR/event-trigger.sh"
 source "$SCRIPT_DIR/webhook-sender.sh"
 source "$SCRIPT_DIR/slack-integration.sh"
 source "$SCRIPT_DIR/run-lib.sh"
+source "$SCRIPT_DIR/run-record-client.sh"
 
 # log crashes (set -e exits) and reflect them in run.json immediately.
 # NOTE: $LINENO inside an ERR trap is unreliable — when the failure is in a sourced
@@ -680,22 +680,14 @@ build_agent_context_block() {
     local chain_description
     chain_description=$(jq -r '.description // ""' "$CHAIN_FILE" 2>/dev/null || echo "")
 
-    local run_file=""
     local run_goal=""
     if [[ -n "${RUN_ID:-}" ]]; then
-        run_file="$RUNS_DIR/${RUN_ID}/run.json"
-        if [[ -f "$run_file" ]]; then
-            run_goal=$(jq -r '.goal // ""' "$run_file" 2>/dev/null || echo "")
-        fi
+        run_goal=$(_run_record_cli goal --runs-dir "$RUNS_DIR" --run-id "$RUN_ID")
     fi
 
     local upstream_agents=""
-    if [[ -n "$run_file" && -f "$run_file" ]]; then
-        upstream_agents=$(jq -r '
-            .agents[]? |
-            select(.status == "complete") |
-            "- " + (.name // .id) + " (" + (.id // "unknown") + ")"
-        ' "$run_file" 2>/dev/null || true)
+    if [[ -n "${RUN_ID:-}" ]]; then
+        upstream_agents=$(_run_record_cli completed-agents --runs-dir "$RUNS_DIR" --run-id "$RUN_ID")
     fi
     [[ -z "$upstream_agents" ]] && upstream_agents="- none yet"
 
@@ -1089,61 +1081,11 @@ mark_run_agent_blocked() {
     local reason="$3"
 
     [[ -z "$run_id" ]] && return 0
-
-    local now
-    now="$(date -Iseconds)"
-
-    if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        local hb_port="${PORT:-3000}"
-        local hb_url="http://localhost:${hb_port}/api/runs/${run_id}/agents/${agent_id}/heartbeat"
-        local hb_secret="${BETTER_AUTH_SECRET:-}"
-        local hb_payload
-        local hb_status
-
-        hb_payload=$(jq -nc \
-            --arg status "blocked" \
-            --arg message "$reason" \
-            '{status: $status, message: $message}')
-        hb_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hb_url" \
-            -H "Content-Type: application/json" \
-            ${hb_secret:+-H "Authorization: Bearer $hb_secret"} \
-            -d "$hb_payload" \
-            --max-time 5 2>/dev/null || echo "0")
-        if [[ "$hb_status" =~ ^2 ]]; then
-            return 0
-        fi
-    fi
-
-    local run_file="$RUNS_DIR/$run_id/run.json"
-    [[ -f "$run_file" ]] || return 0
-    command -v jq >/dev/null 2>&1 || return 0
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    jq --arg aid "$agent_id" --arg reason "$reason" --arg now "$now" '
-        .status = "blocked" |
-        .blockedAt = (.blockedAt // $now) |
-        .blockedReason = $reason |
-        .agents = (
-            if ((.agents // []) | any(.id == $aid)) then
-                (.agents // []) | map(
-                    if .id == $aid then
-                        .status = "blocked" |
-                        .lastHeartbeat = $now |
-                        .lastMessage = $reason
-                    else .
-                    end
-                )
-            else
-                (.agents // []) + [{
-                    id: $aid,
-                    status: "blocked",
-                    lastHeartbeat: $now,
-                    lastMessage: $reason
-                }]
-            end
-        )
-    ' "$run_file" > "$tmp_file" && mv "$tmp_file" "$run_file"
+    _run_record_cli mark-agent-blocked \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --agent-id "$agent_id" \
+        --reason "$reason" >/dev/null
 }
 
 mark_run_agent_failed() {
@@ -1153,42 +1095,11 @@ mark_run_agent_failed() {
 
     [[ -z "$run_id" ]] && return 0
 
-    update-run-status "$run_id" "failed" "$reason" 2>/dev/null || true
-
-    local now
-    now="$(date -Iseconds)"
-    local run_file="$RUNS_DIR/$run_id/run.json"
-    [[ -f "$run_file" ]] || return 0
-    command -v jq >/dev/null 2>&1 || return 0
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    jq --arg aid "$agent_id" --arg reason "$reason" --arg now "$now" '
-        .status = "failed" |
-        .status_message = $reason |
-        .completed = (.completed // $now) |
-        .agents = (
-            if ((.agents // []) | any(.id == $aid)) then
-                (.agents // []) | map(
-                    if .id == $aid then
-                        .status = "failed" |
-                        .completed = (.completed // $now) |
-                        .lastHeartbeat = $now |
-                        .lastMessage = $reason
-                    else .
-                    end
-                )
-            else
-                (.agents // []) + [{
-                    id: $aid,
-                    status: "failed",
-                    completed: $now,
-                    lastHeartbeat: $now,
-                    lastMessage: $reason
-                }]
-            end
-        )
-    ' "$run_file" > "$tmp_file" && mv "$tmp_file" "$run_file"
+    _run_record_cli mark-agent-failed \
+        --runs-dir "$RUNS_DIR" \
+        --run-id "$run_id" \
+        --agent-id "$agent_id" \
+        --reason "$reason" >/dev/null
 }
 
 echo ""
@@ -2282,9 +2193,7 @@ SEOF
 #!/bin/bash
 trap 'rm -f "\$0"' EXIT
 source "${SCRIPT_DIR}/agent-functions.sh" 2>/dev/null
-source "${SCRIPT_DIR}/event-trigger.sh" 2>/dev/null
 export CHAIN_FILE="${CHAIN_FILE}"
-export CHAIN_RUNNER="${SCRIPT_DIR}/chain-runner-complete.sh"
 export WORKSPACE_TYPE="${WORKSPACE_TYPE}"
 export MENTIKO_RUN_ID="${RUN_ID}"
 export RUN_ID="${RUN_ID}"
@@ -2303,13 +2212,10 @@ export EVENTS_DIR="${EVENTS_DIR:-}"
 export STATE_DIR="${STATE_DIR:-}"
 export MENTIKO_CODE_ROOT="${MENTIKO_CODE_ROOT:-}"
 export MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"
-# runner-v2 completion context: the pty daemon whitelists spawn env, so this
-# monitor only sees what is exported here. Without these the completion
-# handoff (launch-chain-runner-complete) can never choose the typed bridge for
-# agents this shell runner launched — including relaunches the typed bridge
-# itself routed — and their completions silently fall back to the v1 handler.
-export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"
-export MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"
+# Completion is typed regardless of initial bootstrap owner. Preserve this
+# through the PTY daemon's explicit spawn environment for every routed agent.
+export MENTIKO_RUNNER_V2="1"
+export MENTIKO_RUNNER_V2_COMPLETION="1"
 MONEOF
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
             ai_gateway_append_local_proxy_control_exports "$mon_script"

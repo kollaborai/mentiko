@@ -59,7 +59,7 @@ try {
     payload: {
       event: {
         name: "quality_gate.failed",
-        source: "chain-runner-complete",
+        source: "runner-v2",
         timestamp: new Date().toISOString(),
       },
       namespace: { id: namespaceId },

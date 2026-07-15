@@ -153,8 +153,8 @@ function setupWatchers(streamId: string): () => void {
         current.lastEvents.add(filename);
         if (!runnerEventBelongsToStream(event, current.runId)) return;
 
-        // The bash producer writes the canonical HYPHEN form (`chain-complete`)
-        // into the .event file (see lib/event-trigger.sh emit-event). Match that.
+        // The typed emitter writes the canonical HYPHEN form (`chain-complete`)
+        // into the .event file. Match that persisted contract.
         // The outbound SSE message `type` stays "chain_complete" (underscore)
         // because the client listens for that event name (web/hooks/use-event-stream.ts).
         if (lifecycleType) {

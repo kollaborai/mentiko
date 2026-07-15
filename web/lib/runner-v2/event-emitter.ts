@@ -1,7 +1,8 @@
-import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import config from "@/lib/config";
+import { requireConfiguredEventsDir } from "@/lib/runner-v2/event-lifecycle";
 import { parseRunnerEvent, serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 
 export type RunnerEventFilenameMode = "canonical" | "diagnostic";
@@ -31,6 +32,12 @@ export interface EmitRunnerEventInput {
   scope: RunnerEventScope;
   data: string;
   filenameMode: RunnerEventFilenameMode;
+  /** Explicit typed event root for request/run-scoped callers. */
+  eventsDir?: string;
+  /** Stable identity for one completion operation across process replay. */
+  idempotencyKey?: string;
+  /** Distinguishes legitimate later attempts or loop visits. */
+  occurrenceId?: string;
   diagnosticAgent?: string;
   diagnosticReason?: string;
   diagnosticStaleCount?: number;
@@ -53,6 +60,7 @@ export interface EmitRunnerEventResult {
 export function emitRunnerEvent(input: EmitRunnerEventInput): EmitRunnerEventResult {
   assertModeRequirements(input);
 
+  const eventsDir = requireConfiguredEventsDir(input.eventsDir || config.eventsDir);
   const timestamp = input.timestamp ?? new Date().toISOString();
   const content = serializeRunnerEvent({
     event: input.event,
@@ -61,18 +69,23 @@ export function emitRunnerEvent(input: EmitRunnerEventInput): EmitRunnerEventRes
     timestamp,
     processed: false,
     data: input.data,
-    extensionFields: diagnosticExtensionFields(input),
+    extensionFields: eventExtensionFields(input),
   });
   const requestedFilename = buildRunnerEventFilename(input, timestamp);
   const temporaryPath = join(
-    config.eventsDir,
+    eventsDir,
     `.${basename(requestedFilename)}.${process.pid}.${randomUUID()}.tmp`,
   );
 
-  mkdirSync(config.eventsDir, { recursive: true });
   writeFileSync(temporaryPath, content, { encoding: "utf8", flag: "wx" });
   try {
-    return persistWithoutClobber({ requestedFilename, temporaryPath, content });
+    return persistWithoutClobber({
+      eventsDir,
+      requestedFilename,
+      temporaryPath,
+      content,
+      idempotencyKey: input.idempotencyKey,
+    });
   } finally {
     try {
       unlinkSync(temporaryPath);
@@ -121,23 +134,31 @@ function assertModeRequirements(input: EmitRunnerEventInput): void {
   }
 }
 
-function diagnosticExtensionFields(input: EmitRunnerEventInput): Record<string, string> | undefined {
-  if (input.filenameMode !== "diagnostic") return undefined;
-  return {
-    agent: input.diagnosticAgent!,
-    reason: input.diagnosticReason!,
-    ...(input.diagnosticStaleCount !== undefined
-      ? { stale_count: String(input.diagnosticStaleCount) }
+function eventExtensionFields(input: EmitRunnerEventInput): Record<string, string> | undefined {
+  const fields = {
+    ...(input.filenameMode === "diagnostic"
+      ? {
+        agent: input.diagnosticAgent!,
+        reason: input.diagnosticReason!,
+        ...(input.diagnosticStaleCount !== undefined
+          ? { stale_count: String(input.diagnosticStaleCount) }
+          : {}),
+      }
       : {}),
+    ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
+    ...(input.occurrenceId ? { completion_occurrence_id: input.occurrenceId } : {}),
   };
+  return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
 function persistWithoutClobber(input: {
+  eventsDir: string;
   requestedFilename: string;
   temporaryPath: string;
   content: string;
+  idempotencyKey?: string;
 }): EmitRunnerEventResult {
-  const requestedPath = join(config.eventsDir, input.requestedFilename);
+  const requestedPath = join(input.eventsDir, input.requestedFilename);
   try {
     linkSync(input.temporaryPath, requestedPath);
     return resultFor(requestedPath, input.requestedFilename, input.content);
@@ -150,14 +171,21 @@ function persistWithoutClobber(input: {
     return resultFor(requestedPath, input.requestedFilename, existingContent);
   }
 
-  for (;;) {
-    const collisionFilename = collisionSafeFilename(input.requestedFilename);
-    const collisionPath = join(config.eventsDir, collisionFilename);
+  for (let attempt = 0;; attempt += 1) {
+    const collisionFilename = collisionSafeFilename(
+      input.requestedFilename,
+      attempt === 0 ? input.idempotencyKey : undefined,
+    );
+    const collisionPath = join(input.eventsDir, collisionFilename);
     try {
       linkSync(input.temporaryPath, collisionPath);
       return resultFor(collisionPath, collisionFilename, input.content);
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
+    }
+    const collisionContent = readFileSync(collisionPath, "utf8");
+    if (eventsAreSemanticallyIdentical(collisionContent, input.content)) {
+      return resultFor(collisionPath, collisionFilename, collisionContent);
     }
   }
 }
@@ -186,13 +214,18 @@ function semanticEventFields(event: RunnerEventRecord): string {
     .sort(([left], [right]) => left.localeCompare(right)));
 }
 
-function collisionSafeFilename(filename: string): string {
+function collisionSafeFilename(filename: string, idempotencyKey?: string): string {
   const stem = filename.endsWith(".event") ? filename.slice(0, -".event".length) : filename;
+  if (idempotencyKey) {
+    const digest = createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 20);
+    return `${stem}-occurrence-${digest}.event`;
+  }
   return `${stem}-collision-${process.pid}-${randomUUID()}.event`;
 }
 
 function isAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EEXIST";
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return error.code === "EEXIST";
 }
 
 function buildRunnerEventFilename(input: EmitRunnerEventInput, timestamp: string): string {

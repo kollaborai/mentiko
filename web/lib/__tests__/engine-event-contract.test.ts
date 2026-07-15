@@ -25,10 +25,10 @@ import { eventIsOwnedBy } from "@/lib/runner-v2/event-side-effects";
 
 const CODE_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const LIB = join(CODE_ROOT, "lib");
-const EVENT_TRIGGER = join(LIB, "event-trigger.sh");
 const AGENT_FUNCTIONS = join(LIB, "agent-functions.sh");
-const COMPLETE = join(LIB, "chain-runner-complete.sh");
+const RUN_LIB = join(LIB, "run-lib.sh");
 const EMITTER = join(LIB, "runner-event-emitter.js");
+const LIFECYCLE = join(LIB, "runner-event-lifecycle.js");
 const MENTIKO = join(CODE_ROOT, "bin", "mentiko");
 const AI_GATEWAY_SMOKE_AGENT = join(CODE_ROOT, "bin", "ai-gateway-smoke-agent.mjs");
 
@@ -95,10 +95,10 @@ eval "$(extract_function)"
 }
 
 describe("typed runner-event producer contract", () => {
-  it("event-trigger emit-event delegates canonical bytes to the typed writer", () => {
+  it("the run-lib shell boundary delegates canonical bytes to the typed writer", () => {
     const eventsDir = runBash(
-      `source ${q(EVENT_TRIGGER)} >/dev/null
-       emit-event "agent-complete" "writer" "url=https://example.com:8443/report" >/dev/null`,
+      `source ${q(RUN_LIB)} >/dev/null
+       emit-runner-event "agent-complete" "writer" "url=https://example.com:8443/report" >/dev/null`,
       { MENTIKO_RUN_ID: "run-emit-1", RUN_ID: "run-emit-1" },
     );
     const result = emittedEvent(eventsDir);
@@ -259,30 +259,6 @@ describe("typed runner-event producer contract", () => {
     expect(eventIsOwnedBy(owner, result.event)).toBe(true);
   });
 
-  it("completion diagnostics emit the same strict shape through their real entrypoint", () => {
-    const eventsDir = runBash(
-      `${shellFunction("emit_completion_diagnostic_event", COMPLETE)}
-       emit_completion_diagnostic_event "agent-error" "writer" "missing completion event" >/dev/null`,
-      { RUN_ID: "run-complete-1" },
-    );
-    const result = emittedEvent(eventsDir);
-
-    expect(result.filename).toMatch(/^\d{8}T\d{6}-run-complete-1-writer-agent-error\.event$/);
-    expect(result.event).toMatchObject({
-      event: "agent-error",
-      source: "chain-runner-complete",
-      runId: "run-complete-1",
-    });
-    expect(JSON.parse(result.event.data)).toEqual({
-      agent: "writer",
-      reason: "missing completion event",
-    });
-    expect(result.event.fields).toMatchObject({
-      agent: "writer",
-      reason: "missing completion event",
-    });
-  });
-
   it("fails closed when a run-scoped diagnostic has no run id", () => {
     const eventsDir = makeEventsDir();
     const result = spawnSync(
@@ -362,11 +338,12 @@ describe("typed runner-event producer contract", () => {
   it("archives a real typed diagnostic by its top-level agent ownership field", () => {
     const eventsDir = runBash(
       `${shellFunction("_monitor_emit_diagnostic_event", AGENT_FUNCTIONS)}
-       source ${q(EVENT_TRIGGER)} >/dev/null
        _monitor_emit_diagnostic_event "agent-timeout" "researcher" "no progress" "5" >/dev/null
        _monitor_emit_diagnostic_event "agent-timeout" "reviewer" "no progress" "5" >/dev/null
-       emit-event "research-complete" "researcher" "done" >/dev/null
-       archive-run-events "run-archive-1" "researcher" >/dev/null`,
+       node ${q(EMITTER)} emit --scope run --event research-complete --source researcher --run-id run-archive-1 --data done >/dev/null
+       node ${q(LIFECYCLE)} consume --events-dir "$EVENTS_DIR" --run-id run-archive-1 --source researcher \
+         --triggered "$EVENTS_DIR/run-archive-1-researcher-research-complete.event" \
+         --all-agent-id researcher --all-agent-id reviewer --output json >/dev/null`,
       { MENTIKO_RUN_ID: "run-archive-1", RUN_ID: "run-archive-1" },
     );
     const archived = readdirSync(join(eventsDir, "archive"));
@@ -375,14 +352,17 @@ describe("typed runner-event producer contract", () => {
     expect(archived.some((file) => file.includes("researcher-agent-timeout"))).toBe(true);
     expect(archived).toContain("run-archive-1-researcher-research-complete.event");
     expect(remaining.some((file) => file.includes("reviewer-agent-timeout"))).toBe(true);
+    expect(parseRunnerEvent(readFileSync(
+      join(eventsDir, "archive", "run-archive-1-researcher-research-complete.event"),
+      "utf8",
+    )).processed).toBe(true);
   });
 
   it("keeps shell producers as invocation-only entrypoints", () => {
-    const eventTrigger = sourceFunction("emit-event", EVENT_TRIGGER);
+    const runLibEmitter = sourceFunction("emit-runner-event", RUN_LIB);
     const monitorDiagnostic = sourceFunction("_monitor_emit_diagnostic_event", AGENT_FUNCTIONS);
-    const completionDiagnostic = sourceFunction("emit_completion_diagnostic_event", COMPLETE);
 
-    for (const producer of [eventTrigger, monitorDiagnostic, completionDiagnostic]) {
+    for (const producer of [runLibEmitter, monitorDiagnostic]) {
       expect(producer).toContain("runner-event-emitter.js");
       expect(producer).not.toMatch(/printf ['\"]event:/);
       expect(producer).not.toMatch(/cat\s*>[^\n]*\.event/);
@@ -393,6 +373,16 @@ describe("typed runner-event producer contract", () => {
     const smokeProducer = sourceFunction("writeEvent", AI_GATEWAY_SMOKE_AGENT);
     expect(smokeProducer).toContain("runner-event-emitter.js");
     expect(smokeProducer).not.toMatch(/writeFileSync|event:|source:|run_id:|processed:|data:/);
+  });
+
+  it("binds every shell monitor completion to the typed entrypoint", () => {
+    const source = readFileSync(AGENT_FUNCTIONS, "utf8");
+    expect(source).toContain("runner-v2-completion-launch.js");
+    expect(source).toContain("runner-v2-completion-launch.cjs");
+    expect(source).toContain("no shell completion fallback exists");
+    expect(source).not.toContain("chain-runner-complete.sh");
+    expect(source).not.toContain("complete-agent.sh");
+    expect(source).not.toContain("nohup bash");
   });
 
   it("compiles the typed emitter into the tenant runtime image", () => {

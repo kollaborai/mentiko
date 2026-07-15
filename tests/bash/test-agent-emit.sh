@@ -1,14 +1,14 @@
 #!/bin/bash
-# test-agent-emit.sh - regression coverage for `mentiko emit` and emit-event()
+# test-agent-emit.sh - regression coverage for `mentiko emit` and the typed writer
 #
-# Guards the canonical event format that chain-runner-complete.sh's matcher relies on.
+# Guards the canonical event format that typed completion matching relies on.
 # Background: agents used to hand-write event files and got the name/source wrong, so
 # the completion handler couldn't recognize the event and chains stalled. Agents now run
 # `mentiko emit <event>`, which must produce:
 #   filename: $EVENTS_DIR/${RUN_ID}-${SOURCE}-${EVENT}.event for normal run scope
 #   body:     event: / source: ${MENTIKO_AGENT_ID} / run_id: / timestamp: / processed: false
 # Empty-run ingress is exceptional and must be requested explicitly. `mentiko emit`
-# and emit-event() must produce byte-identical naming + content.
+# invokes the compiled TypeScript writer directly.
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ assert_contains "$(cat "$F1")" "run_id: run-emit-1" "writes run_id: field (requi
 assert_contains "$(cat "$F1")" "processed: false" "writes processed: false"
 
 # matcher sanity: source value contains the agent id (CURRENT_AGENT_ID), so
-# chain-runner-complete.sh's grep -qi "$SESSION_PREFIX\|$CURRENT_AGENT_ID" matches.
+# completion ownership must match exact guarded agent/session identity.
 src1="$(grep '^source:' "$F1" | sed 's/^source:[[:space:]]*//')"
 assert_eq "smoke-runner-3" "$src1" "source is the agent id (matcher-recognized)"
 
@@ -150,26 +150,24 @@ assert_contains "$(cat "$F6")" "source: bad/source" "body preserves raw source"
 assert_contains "$(cat "$F6")" "event: event/with/slash" "body preserves raw event name"
 
 # -------------------------------------------------------------------
-# case 7: `mentiko emit` and emit-event() produce identical name + body
+# case 7: `mentiko emit` and the compiled typed writer produce identical bytes
 #         (acceptance: one implementation, proven identical)
 # -------------------------------------------------------------------
 DA="$(mktemp -d)"; DB="$(mktemp -d)"
 run_emit "$DA" "run-parity" "parity-agent" "done"
-(
-  set +u
-  EVENTS_DIR="$DB"; RUN_ID="run-parity"; MENTIKO_RUN_ID="run-parity"
-  source "$PROJECT_ROOT/lib/event-trigger.sh" >/dev/null 2>&1
-  emit-event "done" "parity-agent" "" >/dev/null 2>&1
-)
+EVENTS_DIR="$DB" MENTIKO_CODE_ROOT="$PROJECT_ROOT" \
+  node "$PROJECT_ROOT/lib/runner-event-emitter.js" emit \
+  --scope run --event done --source parity-agent --run-id run-parity --data "" \
+  >/dev/null 2>&1
 FA="$(find "$DA" -name '*.event' | head -1)"
 FB="$(find "$DB" -name '*.event' | head -1)"
 assert_eq "$(basename "$FA")" "$(basename "$FB")" \
-  "mentiko emit and emit-event produce identical filename"
+  "mentiko emit and typed writer produce identical filename"
 # bodies differ only on the volatile timestamp: line
 if diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") >/dev/null; then
-  pass "mentiko emit and emit-event produce identical body (minus timestamp)"
+  pass "mentiko emit and typed writer produce identical body (minus timestamp)"
 else
-  fail "mentiko emit and emit-event bodies diverge"
+  fail "mentiko emit and typed writer bodies diverge"
   diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") || true
 fi
 

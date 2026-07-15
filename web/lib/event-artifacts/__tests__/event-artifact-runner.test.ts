@@ -84,7 +84,7 @@ describe("event artifact runner", () => {
       runId: "run-1",
       runArtifactsDir: artifactsDir,
       payload: {
-        event: { name: "quality_gate.failed", source: "chain-runner-complete", timestamp: "2026-06-26T00:00:00.000Z" },
+        event: { name: "quality_gate.failed", source: "runner-v2", timestamp: "2026-06-26T00:00:00.000Z" },
         namespace: { id: "default" },
         org: { id: "default" },
         run: { id: "run-1", status: "failed", artifactsDir },

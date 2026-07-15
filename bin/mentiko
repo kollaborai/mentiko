@@ -191,9 +191,13 @@ case "$CMD" in
         ;;
 
     events)
-        UNPROCESSED_ONLY=""
-        if [[ "${1:-}" == "--unprocessed" ]]; then
-            UNPROCESSED_ONLY="true"
+        EVENT_LIST_ARGS=(list --events-dir "$EVENTS_DIR" --output text)
+        if [[ -n "${1:-}" ]]; then
+            if [[ "$1" != "--unprocessed" || -n "${2:-}" ]]; then
+                echo "usage: mentiko events [--unprocessed]" >&2
+                exit 1
+            fi
+            EVENT_LIST_ARGS+=(--unprocessed)
         fi
 
         if [[ ! -d "$EVENTS_DIR" ]]; then
@@ -201,20 +205,8 @@ case "$CMD" in
             exit 1
         fi
 
-        for event_file in "$EVENTS_DIR"/*.event; do
-            if [[ -f "$event_file" ]]; then
-                processed=$(grep "^processed:" "$event_file" 2>/dev/null | cut -d: -f2 | tr -d ' ')
-                if [[ "$UNPROCESSED_ONLY" == "true" ]]; then
-                    if [[ "$processed" != "true" ]]; then
-                        echo "  $(basename "$event_file")"
-                    fi
-                else
-                    status=""
-                    [[ "$processed" == "true" ]] && status=" (processed)"
-                    echo "  $(basename "$event_file")$status"
-                fi
-            fi
-        done
+        node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-lifecycle.js" \
+            "${EVENT_LIST_ARGS[@]}"
         ;;
 
     emit)
@@ -256,14 +248,18 @@ case "$CMD" in
             exit 1
         fi
 
-        # The shell helper delegates bytes, filenames, validation, and atomic persistence
-        # to the typed emitter. Run scope is the normal agent path. Empty-run ingress is
-        # exceptional and must be declared explicitly; it is never inferred as a fallback.
-        # >/dev/null on the source suppresses the "event functions loaded" banner only;
-        # emit-event's own output still prints. emit-event ignores optional _sys_log
-        # failures internally, so a non-zero return here means the event was not written.
-        source "$LIB_DIR/event-trigger.sh" >/dev/null 2>&1
-        if ! emit-event "$EVENT_NAME" "$SOURCE" "$DATA" "$EVENT_SCOPE"; then
+        # Invoke the typed writer directly. Run scope is the normal agent path.
+        # Empty-run ingress is exceptional and must be declared explicitly; it is never
+        # inferred as a compatibility path.
+        RUNNER_EVENT_EMITTER="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js"
+        if ! node "$RUNNER_EVENT_EMITTER" emit \
+            --scope "$EVENT_SCOPE" \
+            --event "$EVENT_NAME" \
+            --source "$SOURCE" \
+            --run-id "${MENTIKO_RUN_ID:-${RUN_ID:-}}" \
+            --data "$DATA"
+        then
+            echo "  error: typed runner event emission failed" >&2
             exit 1
         fi
 
