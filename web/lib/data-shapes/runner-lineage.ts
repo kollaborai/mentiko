@@ -151,10 +151,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
   },
   "run-record": {
-    usage: "shared",
+    usage: "runner-v2",
     fieldRules: [
-      // runnerV2 is an intentionally isolated typed namespace. The surrounding
-      // run envelope remains shared while both engines are active.
+      // runnerV2 is an intentionally isolated typed namespace within the
+      // canonical TypeScript-owned envelope.
       { path: "runnerV2", usage: "runner-v2" },
     ],
     surfaces: [
@@ -181,10 +181,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
       },
     ],
-    legacyEquivalent: {
-      summary: "The typed Run Record boundary owns parsing, validation, queries, and mutation. Shell command clients pass named operations only and do not parse or mutate run.json.",
-      paths: ["lib/run-lib.sh", "lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
-    },
   },
   "runner-v2-attempt": {
     usage: "runner-v2",
