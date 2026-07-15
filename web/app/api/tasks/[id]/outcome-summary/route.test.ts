@@ -183,6 +183,36 @@ describe("POST /api/tasks/[id]/outcome-summary", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  it("rejects an outcome summary while the execution run is still active", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Summarize me",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-source", execution_retries: 0 },
+    });
+    mockExistsSync.mockImplementation((path: string) => path.includes("/tmp/mentiko-runs/run-source"));
+    mockReadFileSync.mockImplementation((path: string) => {
+      if (path.endsWith("run.json")) {
+        return JSON.stringify({
+          id: "run-source",
+          taskId: "TASK-1",
+          status: "running",
+          chainId: "execution-chain",
+        });
+      }
+      return JSON.stringify({ ok: true });
+    });
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "TASK-1" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockCreateJob).not.toHaveBeenCalled();
+    expect(mockStartGenerationChainRun).not.toHaveBeenCalled();
+  });
+
   it("starts a new audit when the same run has a different terminal fingerprint and includes disk artifacts", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",

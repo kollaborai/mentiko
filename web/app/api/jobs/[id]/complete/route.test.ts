@@ -95,6 +95,27 @@ jest.mock("@/lib/tasks/completion-audit-delivery-gate", () => ({
   enforceDeliveryGate: (...args: unknown[]) => mockEnforceDeliveryGate(...args),
 }));
 
+const mockOutcomeSummarySourceEligibility = jest.fn(
+  (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string): {
+    eligible: boolean;
+    status: string;
+    fingerprint: string;
+    reason?: string;
+  } => ({
+    eligible: true,
+    status: "completed",
+    fingerprint: expectedFingerprint || "completed:current",
+  }),
+);
+jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
+  outcomeSummarySourceEligibility: (
+    namespaceId: string,
+    orgId: string,
+    runId: string,
+    expectedFingerprint?: string,
+  ) => mockOutcomeSummarySourceEligibility(namespaceId, orgId, runId, expectedFingerprint),
+}));
+
 let linkRunDir = "";
 jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunPaths: jest.fn(() => ({ runDir: linkRunDir })),
@@ -144,6 +165,13 @@ describe("POST /api/jobs/[id]/complete", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockOutcomeSummarySourceEligibility.mockImplementation(
+      (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string) => ({
+        eligible: true,
+        status: "completed",
+        fingerprint: expectedFingerprint || "completed:current",
+      }),
+    );
 
     let currentJob = {
       id: "job-task",
@@ -533,6 +561,48 @@ describe("POST /api/jobs/[id]/complete", () => {
         task_outcome_summary: result,
       }),
     }, "default");
+  });
+
+  test("supersedes a summary whose execution source was non-terminal or changed before delivery", async () => {
+    let currentJob = {
+      id: "job-stale-summary",
+      type: "task_run_summary",
+      status: "running",
+      taskId: "TASK-070",
+      input: { sourceRunId: "run-execution", runFingerprint: "running:no-terminal-time" },
+      result: undefined,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({ id: "TASK-070", title: "Fix ingestion", issue_type: "bug", metadata: {} });
+    mockOutcomeSummarySourceEligibility.mockReturnValue({
+      eligible: false,
+      status: "stopped",
+      fingerprint: "stopped:terminal-time",
+      reason: "execution source changed before summary delivery",
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { audit: { verdict: "decision", reason: "wait" } },
+    }), { params: Promise.resolve({ id: "job-stale-summary" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "TASK-070", {
+      metadata: expect.objectContaining({
+        task_outcome_summary_status: "superseded",
+        task_outcome_summary: undefined,
+        task_outcome_summary_completed_at: undefined,
+        task_outcome_summary_error: "execution source changed before summary delivery",
+      }),
+    }, "default");
+    expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
   });
 
   test("task run summary completion applies audit verdict embedded in output string", async () => {

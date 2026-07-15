@@ -3,9 +3,9 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
-import { taskList, taskUpdate } from "@/lib/tasks/task-store";
+import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
-import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
+import { applyCompletionAudit, supersedeStaleCompletionAuditDecision } from "@/lib/tasks/completion-audit-apply";
 import { hasDurableAuditedClose } from "@/lib/runs/auto-run";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
@@ -37,7 +37,8 @@ import {
   type StartOutcomeSummaryInput,
 } from "@/lib/orchestration/task-lifecycle-service";
 import type { TaskLifecycleEffect, TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
-import { currentRunTerminalFingerprint } from "@/lib/tasks/run-outcome-evidence";
+import { currentRunTerminalFingerprint, outcomeSummarySourceEligibility } from "@/lib/tasks/run-outcome-evidence";
+import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 
 export const dynamic = "force-dynamic";
 
@@ -166,13 +167,60 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     );
   });
 
+  const staleCompletionAuditDecisions = issues.filter((issue) => {
+    if (issue.issue_type !== "decision" || DONE_TASK_STATUSES.has(issue.status)) return false;
+    const decisionMeta = parseMetadata(issue.metadata);
+    if (decisionMeta?.decision_source !== "completion-audit" || !issue.parent_id) return false;
+    const parent = issueById.get(issue.parent_id);
+    if (!parent || DONE_TASK_STATUSES.has(parent.status)) return false;
+    const parentMeta = parseMetadata(parent.metadata) || {};
+    const sourceRunId = typeof decisionMeta.completion_audit_source_run_id === "string"
+      ? decisionMeta.completion_audit_source_run_id
+      : "";
+    const sourceFingerprint = typeof decisionMeta.completion_audit_run_fingerprint === "string"
+      ? decisionMeta.completion_audit_run_fingerprint
+      : undefined;
+    const conflictsWithRetry = ["retrying", "executing", "resuming"].includes(String(parentMeta.lifecycle_phase))
+      && parentMeta.last_run_decision_required !== true;
+    return conflictsWithRetry || !sourceRunId || !outcomeSummarySourceEligibility(
+      namespaceId,
+      orgId,
+      sourceRunId,
+      sourceFingerprint,
+    ).eligible;
+  });
+
+  for (const decisionTask of staleCompletionAuditDecisions) {
+    const parentTask = decisionTask.parent_id ? issueById.get(decisionTask.parent_id) : undefined;
+    if (!parentTask) continue;
+    try {
+      await supersedeStaleCompletionAuditDecision({
+        namespaceId,
+        orgId,
+        parentTask,
+        decisionTask,
+        reason: "Superseded because the completion audit source is no longer the current terminal execution state.",
+        workspacePath: parentTask.workspace_id || undefined,
+      });
+      results.push({
+        taskId: parentTask.id,
+        runId: String((parseMetadata(decisionTask.metadata) || {}).completion_audit_source_run_id || "unknown"),
+        previousStatus: "decision_blocked",
+        newStatus: "stale_decision_superseded",
+        reason: `removed stale decision gate ${decisionTask.id}`,
+      });
+    } catch (error) {
+      failed.push({ taskId: parentTask.id, error: (error as Error).message });
+    }
+  }
+
   if (
     runningTasks.length === 0 &&
     terminalAutoRunTasks.length === 0 &&
     followupBlockedTasks.length === 0 &&
     reopenedAuditedCloseTasks.length === 0
   ) {
-    return apiSuccess({ reconciled: 0, results: [] });
+    return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
   }
 
   const liveSessions = await getLiveSessions();
@@ -235,8 +283,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
             (a: { status: string; session?: string }) =>
               a.status === "running" && a.session && liveSessions.has(a.session)
           );
+          const handoffAlive = hasLivePendingHandoff(run);
 
-          if (!newStatus && !anyAlive) {
+          if (!newStatus && !anyAlive && !handoffAlive) {
             const anyRunning = agents.some((a: { status: string }) => a.status === "running");
             const anyPending = agents.some((a: { status: string }) => a.status === "pending");
             if (anyRunning || anyPending) {
@@ -249,6 +298,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
               if (ageMs >= RUN_STARTUP_GRACE_MS && !inHandoffWindow) {
                 newStatus = "stopped";
                 reason = "no live sessions found";
+                // Persist the exact terminal state before lifecycle reduction.
+                // Fingerprints must never observe this logically stopped run as
+                // `running:no-terminal-time` and consume retry/audit twice.
+                run.status = "stopped";
+                run.completed = run.completed || new Date().toISOString();
+                writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
               }
             }
           }
@@ -569,10 +624,18 @@ async function applyExecutionLifecycle(input: {
   runStatus: string;
   reason: string;
 }): Promise<{ effects: TaskLifecycleEffect[]; auditStatus?: string }> {
+  // Reconcile requests can overlap. Re-read the durable task claim immediately
+  // before reducing so a stale request cannot consume the same terminal run a
+  // second time after another request already cleared last_run_id for retry.
+  const currentTask = taskGet(input.orgId, input.taskId, input.namespaceId);
+  const currentMetadata = parseMetadata(currentTask?.metadata) ?? input.metadata;
+  if (currentMetadata.last_run_id !== input.runId) {
+    return { effects: [] };
+  }
   const runFingerprint = currentRunTerminalFingerprint(input.namespaceId, input.orgId, input.runId);
   let auditStatus: string | undefined;
   const transition = await applyLifecycleEvent({
-    state: hydrateLifecycleState(input.taskId, input.metadata),
+    state: hydrateLifecycleState(input.taskId, currentMetadata),
     event:
       input.runStatus === "completed" || input.runStatus === "complete"
         ? { type: "execution.completed", taskId: input.taskId, runId: input.runId, fingerprint: runFingerprint }
@@ -594,7 +657,7 @@ async function applyExecutionLifecycle(input: {
       orgId: input.orgId,
       workspaceId: input.workspaceId,
       taskId: input.taskId,
-      metadata: input.metadata,
+      metadata: currentMetadata,
       runId: input.runId,
       runStatus: input.runStatus,
       reason: input.reason,

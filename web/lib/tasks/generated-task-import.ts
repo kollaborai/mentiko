@@ -290,7 +290,19 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
     };
   });
 
-  return createTree();
+  try {
+    return createTree();
+  } catch (error) {
+    // A concurrent completion callback may win the unique generation-job root
+    // claim after our optimistic read but before this transaction inserts.
+    // Rediscover that exact tree and return it; never turn a harmless replay
+    // race into a failed job or a duplicate import.
+    if (input.generationJobId) {
+      const existing = findExistingImportedTree(input.namespaceId, input.orgId, input.generationJobId);
+      if (existing) return existing;
+    }
+    throw error;
+  }
 }
 
 // ---------- agent-as-gate: honor the generation agent's route decision --------
@@ -352,6 +364,7 @@ export async function processTaskGenerationResult(
       source: "task-generate",
       workspacePath: input.workspacePath,
       parentTaskId: input.parentId,
+      generationJobId: input.generationJobId,
     });
     return { kind: "decision", decisionId: decision.id, taskId: task.id, reason };
   }

@@ -41,6 +41,9 @@ jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   currentRunSummary: (...args: unknown[]) => currentRunSummary(...args),
   currentRunStatus: (...args: unknown[]) => currentRunStatus(...args),
   currentRunTerminalFingerprint: (...args: unknown[]) => currentRunTerminalFingerprint(...args),
+  isOutcomeSummaryTerminalStatus: (status: string) => [
+    "completed", "complete", "failed", "stopped", "deleted", "unknown", "cancelled",
+  ].includes(status),
   isOutcomeSummaryExecutionSource: (...args: unknown[]) => isOutcomeSummaryExecutionSource(...args),
   metadataRecord: (metadata: unknown) => (
     metadata && typeof metadata === "object" && !Array.isArray(metadata)
@@ -69,6 +72,28 @@ beforeEach(() => {
 });
 
 describe("startTaskOutcomeAudit", () => {
+  it("does not start an audit while the execution run is still active", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-093",
+      title: "Lead capture API",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-active" },
+    });
+    currentRunStatus.mockReturnValue("running");
+
+    const result = await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-093",
+    });
+
+    expect(result).toEqual({ status: "not_terminal", sourceRunId: "run-active" });
+    expect(createJob).not.toHaveBeenCalled();
+    expect(startGenerationChainRun).not.toHaveBeenCalled();
+  });
+
   it("uses explicit sourceRunId and runFingerprint instead of stale task metadata", async () => {
     taskGet.mockReturnValue({
       id: "TASK-093",

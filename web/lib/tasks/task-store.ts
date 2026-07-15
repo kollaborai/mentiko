@@ -170,6 +170,17 @@ function runMigrations(db: Database.Database): void {
     WHERE status NOT IN (${terminalPlaceholders})
       AND closed_at IS NOT NULL
   `).run(...TERMINAL_TASK_STATUSES);
+
+  // One generation job owns exactly one root side effect. Subtasks share the
+  // job id but use role=subtask, so they are intentionally excluded. This
+  // database boundary closes the concurrent callback/recovery race that a
+  // read-before-write scan alone cannot prevent.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_generation_job_root
+    ON tasks(org_id, json_extract(metadata, '$.task_generation_job_id'))
+    WHERE json_extract(metadata, '$.task_generation_job_id') IS NOT NULL
+      AND json_extract(metadata, '$.task_generation_role') IN ('parent', 'decision')
+  `);
 }
 
 // ---------- ID generation ----------

@@ -271,6 +271,31 @@ function renderMarkdownBlock(text: string) {
   return <Markdown content={text} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />;
 }
 
+function TaskObjectSchema({ block }: { block: string }) {
+  const match = block.match(/^(TASK OBJECT SCHEMA(?:\s*\([^)]*\))?):\s*([\s\S]+)$/);
+  if (!match) return null;
+
+  let formattedSchema = match[2].trim();
+  try {
+    formattedSchema = JSON.stringify(JSON.parse(formattedSchema), null, 2);
+  } catch {
+    // Keep the source text visible if a future schema is not strict JSON.
+  }
+
+  return (
+    <details className="group rounded-md bg-muted/60">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-foreground/80 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary">
+        <span>Task object schema</span>
+        <span className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:hidden">View JSON</span>
+        <span className="hidden text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:inline">Hide JSON</span>
+      </summary>
+      <pre className="max-h-[28rem] overflow-auto border-t border-foreground/10 px-3 py-3 text-[11px] leading-relaxed text-foreground/70">
+        <code>{formattedSchema}</code>
+      </pre>
+    </details>
+  );
+}
+
 function GoalContent({ goal }: { goal: string }) {
   const lines = goal.split("\n");
   const metaFields: { key: string; value: string }[] = [];
@@ -313,6 +338,10 @@ function GoalContent({ goal }: { goal: string }) {
       {body && (
         <div className="text-sm text-foreground/75 leading-relaxed space-y-4">
           {body.split(/\n{2,}/).map((block, i) => {
+            const taskObjectSchema = <TaskObjectSchema block={block} />;
+            if (/^TASK OBJECT SCHEMA(?:\s*\([^)]*\))?:/.test(block)) {
+              return <div key={i}>{taskObjectSchema}</div>;
+            }
             const sectionMatch = block.match(/^([A-Z][A-Za-z ]+):\s*\n([\s\S]*)$/);
             if (sectionMatch) {
               return (
@@ -1177,6 +1206,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const runHeaderTitleLineClassName = "flex min-w-0 flex-wrap items-center gap-2";
   const runHeaderTitleClassName = "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere]";
   const runHeaderMetaClassName = "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1";
+  const runHeaderActionsClassName = embedded
+    ? "flex flex-col items-stretch gap-2"
+    : "flex flex-wrap items-center justify-end gap-3";
   const runHeaderMetricsClassName = "flex shrink-0 items-center gap-3";
   const runHeaderControlsClassName = "flex shrink-0 items-center gap-1.5";
   const tabsChromeClassName = embedded
@@ -1427,7 +1459,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </>
         }
         actions={
-          <>
+          <div className={runHeaderActionsClassName}>
             <div className={runHeaderMetricsClassName}>
               <div className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
                 <Clock className="h-3 w-3 text-foreground/40" />
@@ -1516,7 +1548,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-          </>
+          </div>
         }
       />
 

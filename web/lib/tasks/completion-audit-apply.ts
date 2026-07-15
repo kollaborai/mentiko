@@ -4,7 +4,7 @@
 // retry. All actions are idempotent on the audited run id and bounded by a
 // retry cap so audit-driven retries can't loop forever.
 
-import { taskAddDep, taskClose, taskGet, taskUpdate, taskMergeMeta, taskAddComment, taskList } from "@/lib/tasks/task-store";
+import { taskAddDep, taskClose, taskGet, taskUpdate, taskMergeMeta, taskAddComment, taskList, taskRemoveDep } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { updateDecision } from "@/lib/decisions/decision-storage";
@@ -52,6 +52,64 @@ interface ApplyCompletionAuditInput {
 interface DecisionGateResult extends ApplyCompletionAuditResult {
   decision?: Awaited<ReturnType<typeof createTaskDecision>>["decision"];
   prompt?: string;
+}
+
+export async function supersedeStaleCompletionAuditDecision(input: {
+  namespaceId: string;
+  orgId: string;
+  parentTask: TaskRecord;
+  decisionTask: TaskRecord;
+  reason: string;
+  workspacePath?: string;
+}): Promise<void> {
+  const { namespaceId, orgId, parentTask, decisionTask, reason, workspacePath } = input;
+  const decisionMetadata = decisionMeta(decisionTask);
+  const parentMetadata = decisionMeta(parentTask);
+  const decisionId = typeof decisionMetadata.decision_id === "string"
+    ? decisionMetadata.decision_id
+    : undefined;
+
+  taskClose(orgId, decisionTask.id, reason, namespaceId);
+  taskMergeMeta(orgId, decisionTask.id, {
+    decision_status: "superseded",
+    superseded_reason: reason,
+    superseded_at: new Date().toISOString(),
+  }, namespaceId);
+  taskRemoveDep(orgId, parentTask.id, decisionTask.id, namespaceId);
+
+  const nextMetadata = { ...parentMetadata };
+  if (nextMetadata.decision_subtask_id === decisionTask.id) delete nextMetadata.decision_subtask_id;
+  if (nextMetadata.last_decision_subtask_id === decisionTask.id) delete nextMetadata.last_decision_subtask_id;
+  if (decisionId && nextMetadata.decision_id === decisionId) delete nextMetadata.decision_id;
+  if (decisionId && nextMetadata.last_decision_id === decisionId) delete nextMetadata.last_decision_id;
+  nextMetadata.last_run_decision_required = false;
+  nextMetadata.completion_audit_apply_status = "superseded";
+  nextMetadata.task_outcome_summary_status = "superseded";
+  nextMetadata.last_audit_verdict = "superseded";
+  nextMetadata.stale_audit_superseded_reason = reason;
+  Object.assign(nextMetadata, lifecycleMetadata(hydrateLifecycleState(parentTask.id, nextMetadata)));
+  nextMetadata.gated_run_fingerprints = [];
+  nextMetadata.superseded_decision_subtask_ids = Array.from(new Set([
+    ...(Array.isArray(nextMetadata.superseded_decision_subtask_ids)
+      ? nextMetadata.superseded_decision_subtask_ids.filter((id): id is string => typeof id === "string")
+      : []),
+    decisionTask.id,
+  ]));
+  if (nextMetadata.lifecycle_phase === "decision_blocked") {
+    nextMetadata.lifecycle_phase = nextMetadata.last_run_status === "retry_requested" ? "retrying" : "idle";
+  }
+  taskUpdate(orgId, parentTask.id, {
+    status: parentTask.status === "blocked" ? "open" : parentTask.status,
+    metadata: nextMetadata,
+  }, namespaceId);
+
+  if (decisionId) {
+    try {
+      await updateDecision(namespaceId, orgId, decisionId, { status: "superseded" }, workspacePath);
+    } catch (error) {
+      console.error(`completion-auditor: failed to supersede stale decision ${decisionId}:`, error);
+    }
+  }
 }
 
 function buildDecisionPrompt(task: TaskRecord, audit: CompletionAudit): string {

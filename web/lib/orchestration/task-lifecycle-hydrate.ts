@@ -72,13 +72,24 @@ function unique(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function isLiveFingerprint(value: string): boolean {
+  const fingerprint = value.includes(TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR)
+    ? value.split(TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR).slice(1).join(TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR)
+    : value;
+  return fingerprint.startsWith("running:") || fingerprint.startsWith("pending:");
+}
+
 function toRunScopedFingerprint(value: string, currentRunId: string | undefined): string {
   if (value.includes(TASK_LIFECYCLE_RUN_FINGERPRINT_SEPARATOR) || !currentRunId) return value;
   return taskLifecycleRunFingerprintKey(currentRunId, value);
 }
 
 function runScopedFingerprintArray(value: unknown, currentRunId: string | undefined): string[] {
-  return unique(stringArray(value).map((fingerprint) => toRunScopedFingerprint(fingerprint, currentRunId)));
+  return unique(stringArray(value)
+    // These are terminal-consumption keys. Historical buggy writers persisted
+    // live snapshots; never let those suppress a later real terminal state.
+    .filter((fingerprint) => !isLiveFingerprint(fingerprint))
+    .map((fingerprint) => toRunScopedFingerprint(fingerprint, currentRunId)));
 }
 
 /** Narrow a raw run status string onto the state's typed union (else undefined). */
@@ -134,13 +145,17 @@ export function hydrateLifecycleState(taskId: string, metadata: unknown): TaskLi
 
   // summarized_run_fingerprints + legacy single-field compatibility fallback.
   // New persisted shape is `${runId}::${fingerprint}`. Old bare fingerprints are
-  // normalized only when last_run_id exists; otherwise they remain as legacy
-  // compatibility values but cannot suppress a different run in the reducer.
+  // normalized against their own source-run identity. They must never be
+  // projected onto a newer current run merely because last_run_id changed.
   const summarizedFingerprints = runScopedFingerprintArray(m.summarized_run_fingerprints, currentRunId);
-  for (const legacyKey of ["completion_audit_run_fingerprint", "task_outcome_summary_run_fingerprint"]) {
+  for (const [legacyKey, sourceRunKey] of [
+    ["completion_audit_run_fingerprint", "completion_audit_run_id"],
+    ["task_outcome_summary_run_fingerprint", "task_outcome_summary_source_run_id"],
+  ] as const) {
     const legacy = stringOrUndefined(m[legacyKey]);
-    if (legacy) {
-      const scoped = toRunScopedFingerprint(legacy, currentRunId);
+    if (legacy && !isLiveFingerprint(legacy)) {
+      const sourceRunId = stringOrUndefined(m[sourceRunKey]) || currentRunId;
+      const scoped = toRunScopedFingerprint(legacy, sourceRunId);
       if (!summarizedFingerprints.includes(scoped)) summarizedFingerprints.push(scoped);
     }
   }

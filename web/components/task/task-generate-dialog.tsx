@@ -42,6 +42,7 @@ interface TaskGenerateDialogProps {
   parentEpics?: { id: string; title: string }[];
   workspacePath?: string;
   initialMode?: "task" | "decision" | "manual";
+  initialPrompt?: string;
   presentation?: "modal" | "panel";
 }
 
@@ -81,6 +82,7 @@ export function TaskGenerateDialog({
   parentEpics = [],
   workspacePath,
   initialMode = "task",
+  initialPrompt = "",
   presentation = "modal",
 }: TaskGenerateDialogProps) {
   const router = useRouter();
@@ -106,7 +108,8 @@ export function TaskGenerateDialog({
     if (!open) return;
     setTaskEntryMode(initialMode === "manual" ? "manual" : "generate");
     setCreateDecisionTask(initialMode === "decision");
-  }, [initialMode, open]);
+    setPrompt(initialPrompt);
+  }, [initialMode, initialPrompt, open]);
 
   if (!open) return null;
 

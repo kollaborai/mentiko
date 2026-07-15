@@ -7,6 +7,7 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import { taskGet, validateTaskId } from "@/lib/tasks/task-store";
 import {
   currentRunStatus,
+  isOutcomeSummaryTerminalStatus,
   isOutcomeSummaryExecutionSource,
   metadataRecord,
 } from "@/lib/tasks/run-outcome-evidence";
@@ -39,6 +40,9 @@ export const POST = requirePermission("manage_tasks")(
       throw new BadRequest("Task outcome summary source must be an execution run");
     }
     const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId);
+    if (!isOutcomeSummaryTerminalStatus(runStatus)) {
+      throw new BadRequest(`Execution run ${sourceRunId} is ${runStatus}; outcome summary requires a terminal run`);
+    }
     const lifecycleState = hydrateLifecycleState(taskId, {
       ...metadata,
       last_run_status: runStatus,

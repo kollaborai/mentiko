@@ -131,6 +131,40 @@ describe("createTaskDecision prompt framing", () => {
     expect(taskFields.title).toContain("Decide the implementation approach for:");
   });
 
+  it("replays one task-generation decision by generation job identity", async () => {
+    let decision = { id: "dec-generation", status: "intake" } as Record<string, unknown>;
+    createDecision.mockReturnValue(decision);
+    getDecision.mockImplementation(() => createdTasks.size > 0 ? decision : null);
+    updateDecision.mockImplementation(async (_ns, _org, _id, patch) => {
+      decision = { ...decision, ...patch };
+      return decision;
+    });
+    taskCreate.mockImplementation((_orgId: unknown, fields: Record<string, unknown>) => {
+      const task = { id: "DEC-GENERATION-1", ...fields };
+      createdTasks.set(task.id, task);
+      return task;
+    });
+    const input = {
+      namespaceId: "default",
+      orgId: "default",
+      prompt: "Choose the storage architecture",
+      source: "task-generate",
+      generationJobId: "job-generation-1",
+    };
+
+    const first = await createTaskDecision(input);
+    const replay = await createTaskDecision(input);
+
+    expect(createDecision).toHaveBeenCalledTimes(1);
+    expect(taskCreate).toHaveBeenCalledTimes(1);
+    expect(first.task.id).toBe("DEC-GENERATION-1");
+    expect(replay.task.id).toBe("DEC-GENERATION-1");
+    expect(taskCreate.mock.calls[0][1].metadata).toEqual(expect.objectContaining({
+      task_generation_job_id: "job-generation-1",
+      task_generation_role: "decision",
+    }));
+  });
+
   it("creates one completion-audit gate for concurrent calls with the same stable fingerprint", async () => {
     let decision = { id: "dec-stable", status: "intake" } as Record<string, unknown>;
     createDecision.mockReturnValue(decision);

@@ -21,10 +21,12 @@ jest.mock("fs", () => ({
 jest.mock("path", () => jest.requireActual("path"));
 
 const mockTaskList = jest.fn();
+const mockTaskGet = jest.fn();
 const mockTaskUpdate = jest.fn();
 const mockTaskClose = jest.fn();
 jest.mock("@/lib/tasks/task-store", () => ({
   taskList: (...args: unknown[]) => mockTaskList(...args),
+  taskGet: (...args: unknown[]) => mockTaskGet(...args),
   taskUpdate: (...args: unknown[]) => mockTaskUpdate(...args),
   taskClose: (...args: unknown[]) => mockTaskClose(...args),
   validateTaskId: (id: string) => id,
@@ -36,13 +38,16 @@ jest.mock("@/lib/tasks/task-outcome-audit", () => ({
 }));
 
 const mockApplyCompletionAudit = jest.fn().mockResolvedValue({ action: "closed" });
+const mockSupersedeStaleCompletionAuditDecision = jest.fn().mockResolvedValue(undefined);
 jest.mock("@/lib/tasks/completion-audit-apply", () => ({
   applyCompletionAudit: (...args: unknown[]) => mockApplyCompletionAudit(...args),
+  supersedeStaleCompletionAuditDecision: (...args: unknown[]) => mockSupersedeStaleCompletionAuditDecision(...args),
 }));
 
 const mockCurrentRunTerminalFingerprint = jest.fn();
 jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   currentRunTerminalFingerprint: (...args: unknown[]) => mockCurrentRunTerminalFingerprint(...args),
+  outcomeSummarySourceEligibility: jest.fn(() => ({ eligible: true, status: "completed", fingerprint: "completed:now" })),
 }));
 
 const mockResolveTaskAutoRunDefault = jest.fn();
@@ -139,6 +144,9 @@ describe("GET /api/tasks/reconcile", () => {
     mockReleaseLateCompletionDelivery.mockReturnValue(true);
     mockBuildTypedExecutorPlan.mockReturnValue({ action: "route", effects: [], launches: [] });
     mockApplyTypedExecutorPlan.mockReturnValue({ effectsApplied: [], operations: [], launchesStarted: [] });
+    mockTaskGet.mockImplementation((_orgId: string, taskId: string) => (
+      (mockTaskList() as Array<{ id: string }>).find((task) => task.id === taskId)
+    ));
     mockTaskList.mockReturnValue([
       {
         id: "TASK-044",
@@ -745,6 +753,74 @@ describe("GET /api/tasks/reconcile", () => {
     );
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
     expect(mockTaskClose).not.toHaveBeenCalled();
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      "/tmp/mentiko-test/runs/run-exec/run.json",
+      expect.stringContaining('"status": "stopped"'),
+    );
+  });
+
+  it("does not stop a run while a durable handoff process is launching its next agent", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "running",
+      started: new Date(Date.now() - 900_000).toISOString(),
+      agents: [
+        { id: "diagnostician", status: "complete", completed: new Date(Date.now() - 600_000).toISOString() },
+        { id: "fixer", status: "pending" },
+      ],
+      runnerV2: {
+        pendingHandoffs: [{ pid: process.pid, targetAgentIds: ["fixer"], startedAt: new Date().toISOString() }],
+      },
+    }));
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([]);
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
+  it("supersedes a completion-audit decision that conflicts with an active retry", async () => {
+    const parent = {
+      id: "BUG-002",
+      title: "Fix ingestion",
+      status: "open",
+      workspace_id: "/repo/synthyo",
+      metadata: {
+        lifecycle_phase: "retrying",
+        last_run_status: "retry_requested",
+        last_run_decision_required: false,
+        decision_subtask_id: "DEC-001",
+      },
+    };
+    const decision = {
+      id: "DEC-001",
+      title: "Choose a recovery path",
+      status: "open",
+      issue_type: "decision",
+      parent_id: "BUG-002",
+      metadata: {
+        decision_source: "completion-audit",
+        completion_audit_source_run_id: "run-stale",
+        completion_audit_run_fingerprint: "running:no-terminal-time",
+      },
+    };
+    mockTaskList.mockReturnValue([parent, decision]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockSupersedeStaleCompletionAuditDecision).toHaveBeenCalledWith(expect.objectContaining({
+      parentTask: parent,
+      decisionTask: decision,
+    }));
+    expect(body.data.results).toEqual([
+      expect.objectContaining({ newStatus: "stale_decision_superseded" }),
+    ]);
   });
 
   it("audits a failed execution run after the retry budget is exhausted", async () => {
@@ -1417,5 +1493,52 @@ describe("GET /api/tasks/reconcile", () => {
         }),
       ],
     });
+  });
+
+  it("does not consume a terminal run after another reconcile already cleared its task claim for retry", async () => {
+    mockResolveTaskAutoRunDefault.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-stopped",
+      taskId: "BUG-002",
+      status: "stopped",
+      chainId: "bug-fix-chain",
+      completed: "2026-07-12T04:03:37.733Z",
+    }));
+    const staleSnapshot = {
+      id: "BUG-002",
+      title: "Fix ingestion",
+      status: "open",
+      workspace_id: "/repo/synthyo",
+      metadata: {
+        auto_run: true,
+        chain_id: "bug-fix-chain",
+        last_run_id: "run-stopped",
+        last_run_status: "stopped",
+        execution_retries: 0,
+      },
+    };
+    mockTaskList.mockReturnValue([staleSnapshot]);
+    mockTaskGet.mockReturnValue({
+      ...staleSnapshot,
+      metadata: {
+        ...staleSnapshot.metadata,
+        last_run_id: undefined,
+        last_run_status: "retry_requested",
+        execution_retries: 1,
+      },
+    });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "BUG-002",
+        runId: "run-stopped",
+        newStatus: "lifecycle_noop",
+      }),
+    ]);
   });
 });

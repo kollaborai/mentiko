@@ -25,6 +25,34 @@ describe("TaskGenerateDialog", () => {
     jest.clearAllMocks();
   });
 
+  it("prefills a starter prompt without submitting it", () => {
+    const initialPrompt = "Review this workspace and generate concrete repair tasks.";
+    render(
+      <TaskGenerateDialog
+        open
+        initialPrompt={initialPrompt}
+        onClose={jest.fn()}
+        onCreate={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText(/describe what needs/i)).toHaveValue(initialPrompt);
+    expect(mockFetchWithNamespace).not.toHaveBeenCalled();
+  });
+
+  it("clears a starter prompt when a later open has no starter", () => {
+    const props = { onClose: jest.fn(), onCreate: jest.fn() };
+    const { rerender } = render(
+      <TaskGenerateDialog open initialPrompt="Review this workspace." {...props} />,
+    );
+
+    expect(screen.getByPlaceholderText(/describe what needs/i)).toHaveValue("Review this workspace.");
+    rerender(<TaskGenerateDialog open={false} initialPrompt="Review this workspace." {...props} />);
+    rerender(<TaskGenerateDialog open initialPrompt="" {...props} />);
+
+    expect(screen.getByPlaceholderText(/describe what needs/i)).toHaveValue("");
+  });
+
   it("sends decision routing by default and opens the created decision", async () => {
     mockFetchWithNamespace.mockResolvedValue({
       ok: true,

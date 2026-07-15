@@ -14,18 +14,13 @@ jest.mock("@/lib/middleware", () => ({
   enforceGuestWrites: (...args: unknown[]) => mockEnforceGuestWrites(...args),
 }));
 
-const mockCreateJob = jest.fn().mockReturnValue({ id: "job-task", status: "pending" });
-jest.mock("@/lib/runs/job-store", () => ({
-  createJob: (...args: unknown[]) => mockCreateJob(...args),
-}));
-
-const mockStartGenerationChainRun = jest.fn().mockResolvedValue({
+const mockStartGenerationJob = jest.fn().mockResolvedValue({
+  jobId: "job-task",
   runId: "run-task",
-  chainId: "task-generation",
-  status: "started",
+  status: "pending",
 });
 jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
-  startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
+  startGenerationJob: (...args: unknown[]) => mockStartGenerationJob(...args),
 }));
 
 jest.mock("@/lib/schema-loader", () => ({
@@ -93,25 +88,14 @@ describe("POST /api/tasks/generate", () => {
       runId: "run-task",
       status: "pending",
     });
-    expect(mockCreateJob).toHaveBeenCalledWith(
-      "task",
-      expect.objectContaining({
-        prompt: expect.stringContaining("make a UI proof task"),
-        workspacePath: "/repo/app",
-      }),
-      undefined,
-      undefined,
-      "user-1",
-      "default",
-    );
-    expect(mockStartGenerationChainRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockStartGenerationJob).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.anything(),
       namespaceId: "default",
       orgId: "default",
       kind: "task",
-      job: expect.objectContaining({ id: "job-task" }),
       workspacePath: "/repo/app",
       prompt: expect.stringContaining("make a UI proof task"),
+      userId: "user-1",
     }));
   });
 
@@ -126,16 +110,11 @@ describe("POST /api/tasks/generate", () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(mockCreateJob).toHaveBeenCalledWith(
-      "task",
-      expect.objectContaining({
+    expect(mockStartGenerationJob).toHaveBeenCalledWith(expect.objectContaining({
+      jobInput: expect.objectContaining({
         parentId: "EPIC-001",
         autoRun: true,
       }),
-      undefined,
-      undefined,
-      "user-1",
-      "default",
-    );
+    }));
   });
 });

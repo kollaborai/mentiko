@@ -26,6 +26,7 @@ interface CreateTaskDecisionInput {
   parentTaskId?: string;
   sourceRunId?: string;
   runFingerprint?: string;
+  generationJobId?: string;
 }
 
 interface CreateTaskDecisionResult {
@@ -63,6 +64,26 @@ function stableGateClaimKey(input: CreateTaskDecisionInput): string | undefined 
 async function findExistingStableDecisionGate(
   input: CreateTaskDecisionInput,
 ): Promise<CreateTaskDecisionResult | null> {
+  if (input.generationJobId) {
+    const task = taskList(input.orgId, { status: "all" }, undefined, input.namespaceId).find((candidate) => {
+      if (candidate.issue_type !== "decision") return false;
+      const metadata = metadataRecord(candidate.metadata);
+      return metadata.task_generation_job_id === input.generationJobId
+        && metadata.task_generation_role === "decision";
+    });
+    if (task) {
+      const decisionId = metadataRecord(task.metadata).decision_id;
+      if (typeof decisionId === "string") {
+        const decision = getDecision(input.namespaceId, input.orgId, decisionId, input.workspacePath);
+        if (decision) {
+          const repaired = decision.taskId === task.id
+            ? decision
+            : await updateDecision(input.namespaceId, input.orgId, decision.id, { taskId: task.id }, input.workspacePath);
+          return { decision: repaired, task };
+        }
+      }
+    }
+  }
   if (!input.parentTaskId || !input.sourceRunId || !input.runFingerprint) return null;
 
   const task = taskList(input.orgId, { status: "all" }, undefined, input.namespaceId).find((candidate) => {
@@ -162,6 +183,7 @@ export async function createTaskDecision({
   parentTaskId,
   sourceRunId,
   runFingerprint,
+  generationJobId,
 }: CreateTaskDecisionInput): Promise<CreateTaskDecisionResult> {
   const input = {
     namespaceId,
@@ -172,6 +194,7 @@ export async function createTaskDecision({
     parentTaskId,
     sourceRunId,
     runFingerprint,
+    generationJobId,
   };
   const existing = await findExistingStableDecisionGate(input);
   if (existing) return existing;
@@ -206,6 +229,9 @@ export async function createTaskDecision({
       ...(source === "completion-audit" && runFingerprint
         ? { completion_audit_run_fingerprint: runFingerprint }
         : {}),
+      ...(generationJobId
+        ? { task_generation_job_id: generationJobId, task_generation_role: "decision" }
+        : {}),
     },
   });
 
@@ -213,8 +239,18 @@ export async function createTaskDecision({
   // retry to a prior side effect. Preserve the original one-shot behavior for those
   // interactive/manual callers.
   if (!claimKey || !parentTaskId) {
-    const decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source }, workspacePath);
-    const task = taskCreate(orgId, taskFields(decision), namespaceId);
+    const deterministicId = generationJobId
+      ? deterministicGenerationDecisionId(namespaceId, orgId, generationJobId)
+      : undefined;
+    const decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source, id: deterministicId }, workspacePath);
+    let task: TaskRecord;
+    try {
+      task = taskCreate(orgId, taskFields(decision), namespaceId);
+    } catch (error) {
+      const concurrent = await findExistingStableDecisionGate(input);
+      if (concurrent) return concurrent;
+      throw error;
+    }
     const updatedDecision = await updateDecision(
       namespaceId,
       orgId,
@@ -357,4 +393,12 @@ export async function createTaskDecision({
     });
     throw error;
   }
+}
+
+function deterministicGenerationDecisionId(namespaceId: string, orgId: string, generationJobId: string): string {
+  const hex = createHash("sha256")
+    .update(["task-generation-decision", namespaceId, orgId, generationJobId].join("\u0000"))
+    .digest("hex")
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
 }

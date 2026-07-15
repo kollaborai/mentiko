@@ -14,6 +14,7 @@ const taskMergeMeta = jest.fn();
 const taskAddComment = jest.fn();
 const taskList = jest.fn();
 const taskAddDep = jest.fn();
+const taskRemoveDep = jest.fn();
 const taskGet = jest.fn();
 const createTaskDecision = jest.fn();
 const createNotification = jest.fn();
@@ -27,6 +28,7 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskAddComment: (...a: unknown[]) => taskAddComment(...a),
   taskList: (...a: unknown[]) => taskList(...a),
   taskAddDep: (...a: unknown[]) => taskAddDep(...a),
+  taskRemoveDep: (...a: unknown[]) => taskRemoveDep(...a),
   taskGet: (...a: unknown[]) => taskGet(...a),
 }));
 
@@ -57,7 +59,7 @@ jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: (...a: unknown[]) => triggerAutoRunScan(...a),
 }));
 
-import { applyCompletionAudit } from "./completion-audit-apply";
+import { applyCompletionAudit, supersedeStaleCompletionAuditDecision } from "./completion-audit-apply";
 import type { CompletionAudit } from "./completion-audit-schema";
 import type { TaskRecord } from "./task-store-types";
 
@@ -667,6 +669,67 @@ describe("applyCompletionAudit", () => {
         completion_audit_run_fingerprint: "completed:t2",
       }),
       "default",
+    );
+  });
+
+  it("supersedes a stale decision gate without leaving the parent blocked", async () => {
+    const parent = makeTask({
+      id: "BUG-002",
+      status: "blocked",
+      metadata: {
+        lifecycle_phase: "retrying",
+        last_run_status: "retry_requested",
+        last_run_decision_required: false,
+        decision_subtask_id: "DEC-001",
+        gated_run_fingerprints: ["run-old::running:no-terminal-time"],
+      },
+    });
+    const decision = makeTask({
+      id: "DEC-001",
+      parent_id: "BUG-002",
+      issue_type: "decision",
+      metadata: {
+        decision_source: "completion-audit",
+        decision_id: "decision-001",
+      },
+    });
+
+    await supersedeStaleCompletionAuditDecision({
+      namespaceId: "default",
+      orgId: "default",
+      parentTask: parent,
+      decisionTask: decision,
+      reason: "source fingerprint changed",
+      workspacePath: "/repo",
+    });
+
+    expect(taskClose).toHaveBeenCalledWith("default", "DEC-001", "source fingerprint changed", "default");
+    expect(taskRemoveDep).toHaveBeenCalledWith("default", "BUG-002", "DEC-001", "default");
+    expect(taskUpdate).toHaveBeenCalledWith(
+      "default",
+      "BUG-002",
+      {
+        status: "open",
+        metadata: expect.objectContaining({
+          lifecycle_phase: "retrying",
+          last_run_decision_required: false,
+          gated_run_fingerprints: [],
+          completion_audit_apply_status: "superseded",
+          task_outcome_summary_status: "superseded",
+          last_audit_verdict: "superseded",
+          superseded_decision_subtask_ids: ["DEC-001"],
+        }),
+      },
+      "default",
+    );
+    const parentUpdate = taskUpdate.mock.calls.find((call) => call[1] === "BUG-002")?.[2];
+    expect(parentUpdate.metadata.decision_subtask_id).toBeUndefined();
+    expect(updateDecision).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "decision-001",
+      { status: "superseded" },
+      "/repo",
     );
   });
 });

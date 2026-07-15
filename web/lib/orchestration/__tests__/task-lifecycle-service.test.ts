@@ -56,6 +56,27 @@ describe("hydrateLifecycleState", () => {
     expect(b.summarizedFingerprints).toContain("run-legacy::legacy:b");
   });
 
+  test("keeps legacy audit fingerprints scoped to their source run and drops live fingerprints", () => {
+    const state = hydrateLifecycleState("TASK-1", {
+      last_run_id: "run-current",
+      last_run_status: "running",
+      completion_audit_run_id: "run-old",
+      completion_audit_run_fingerprint: "stopped:t1",
+      task_outcome_summary_source_run_id: "run-old",
+      task_outcome_summary_run_fingerprint: "running:no-terminal-time",
+      summarized_run_fingerprints: [
+        "run-current::running:no-terminal-time",
+        "run-older::failed:t0",
+      ],
+    });
+
+    expect(state.summarizedFingerprints).toEqual([
+      "run-older::failed:t0",
+      "run-old::stopped:t1",
+    ]);
+    expect(state.summarizedFingerprints).not.toContain("run-current::running:no-terminal-time");
+  });
+
   test("legacy single fingerprint without a run id remains compatible but cannot suppress another run", () => {
     const state = hydrateLifecycleState("TASK-1", { completion_audit_run_fingerprint: "legacy:a" });
     expect(state.summarizedFingerprints).toContain("legacy:a");

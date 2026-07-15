@@ -13,6 +13,7 @@ import {
   currentRunSummary,
   currentRunStatus,
   currentRunTerminalFingerprint,
+  isOutcomeSummaryTerminalStatus,
   isOutcomeSummaryExecutionSource,
   metadataRecord,
 } from "@/lib/tasks/run-outcome-evidence";
@@ -33,7 +34,7 @@ export interface StartTaskOutcomeAuditInput {
 }
 
 export interface StartTaskOutcomeAuditResult {
-  status: "no_run" | "retry_pending" | "already_exists" | "running" | "started";
+  status: "no_run" | "not_terminal" | "retry_pending" | "already_exists" | "running" | "started";
   jobId?: string;
   runId?: string;
   sourceRunId?: string;
@@ -64,6 +65,9 @@ export async function startTaskOutcomeAudit(
   if (!sourceRunId) return { status: "no_run" };
   if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) return { status: "no_run" };
   const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId);
+  if (!isOutcomeSummaryTerminalStatus(runStatus)) {
+    return { status: "not_terminal", sourceRunId };
+  }
   if (hasExecutionRetriesRemaining(metadata, runStatus)) {
     return { status: "retry_pending", sourceRunId };
   }

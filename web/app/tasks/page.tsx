@@ -13,12 +13,12 @@ import { TaskGenerateDialog } from "@/components/task/task-generate-dialog";
 import { TaskEditDialog } from "@/components/task/task-edit-dialog";
 import { TaskOverview } from "@/components/task/task-overview";
 import { TaskTreeView } from "@/components/task/task-tree-view";
+import { TaskWelcome } from "@/components/task/task-welcome";
 import { toTask, groupByEpic, priorityOrder } from "@/lib/tasks/task-transforms";
 import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
 import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
 import { normalizeEmbeddedTaskSelectionSearch } from "@/lib/tasks/task-routes";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
-import { EmptyState } from "@/components/common/empty-state";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import {
@@ -63,11 +63,13 @@ function TasksPageContent() {
   const [collapsedEpics, setCollapsedEpics] = useState<Set<string>>(new Set());
   const [showGenerate, setShowGenerate] = useState(false);
   const [generateMode, setGenerateMode] = useState<"task" | "decision" | "manual">("task");
+  const [generatePrompt, setGeneratePrompt] = useState("");
   const [showEdit, setShowEdit] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "tree" | "overview">(
     (searchParams.get("view") as "list" | "tree" | "overview") || "list"
   );
   const [depInfo, setDepInfo] = useState<Map<string, { blockedBy: string[]; blocks: string[] }>>(new Map());
+  const [taskInventoryCount, setTaskInventoryCount] = useState<number | null>(null);
   const [treeRefreshSignal, setTreeRefreshSignal] = useState(0);
 
   // bulk select mode
@@ -216,6 +218,7 @@ function TasksPageContent() {
       const res = await fetchWithNamespace(`/api/tasks/graph?${params}`);
       const raw = await res.json();
       const data = unwrapApiData<{ deps?: Array<{ from: string; to: string }>; nodes?: Array<{ id: string }> }>(raw);
+      setTaskInventoryCount((data.nodes || []).length);
 
       // build dep maps from graph data
       const blockedBy = new Map<string, string[]>();
@@ -243,8 +246,13 @@ function TasksPageContent() {
       setDepInfo(info);
     } catch {
       setDepInfo(new Map());
+      setTaskInventoryCount(null);
     }
   }, [workspacePath, fetchWithNamespace]);
+
+  useEffect(() => {
+    setTaskInventoryCount(null);
+  }, [workspacePath]);
 
   useEffect(() => {
     if (!workspaceReady) return;
@@ -966,8 +974,9 @@ function TasksPageContent() {
 
   const isRunning = selected?.chainBinding?.last_run_status === "running";
 
-  const handleOpenGenerate = useCallback((mode: "task" | "decision" | "manual") => {
+  const handleOpenGenerate = useCallback((mode: "task" | "decision" | "manual", prompt = "") => {
     setGenerateMode(mode);
+    setGeneratePrompt(prompt);
     setShowGenerate(true);
     setSelected(null);
     setChildren([]);
@@ -984,7 +993,18 @@ function TasksPageContent() {
       parentEpics={epics.map((e) => ({ id: e.id, title: e.title }))}
       workspacePath={workspacePath}
       initialMode={generateMode}
+      initialPrompt={generatePrompt}
       presentation="panel"
+    />
+  );
+
+  const hasNoTasks = !loading && taskInventoryCount === 0;
+  const reviewCodebasePrompt = "Review the current workspace codebase. Identify concrete, actionable findings, then generate an ordered set of tasks to fix them.";
+  const welcomePanel = (
+    <TaskWelcome
+      onCreateTask={() => handleOpenGenerate("manual")}
+      onGenerateTasks={() => handleOpenGenerate("task")}
+      onReviewCodebase={() => handleOpenGenerate("task", reviewCodebasePrompt)}
     />
   );
 
@@ -1136,6 +1156,8 @@ function TasksPageContent() {
           {!selected ? (
             showGenerate ? (
               generatePanel
+            ) : hasNoTasks ? (
+              welcomePanel
             ) : (
             <div className="flex items-center justify-center h-full text-xs text-foreground/30">
               Select a task
@@ -1214,20 +1236,18 @@ function TasksPageContent() {
                   No tasks match filters
                 </div>
               ) : (
-                <EmptyState
-                  icon={<TaskSquareFilled className="h-8 w-8" />}
-                  title="No tasks yet"
-                  description="Tasks track your work and can be linked to chains for automated execution."
-                  action={{
-                    label: "Create task",
-                    onClick: () => handleOpenGenerate("manual"),
-                  }}
-                  secondaryAction={{
-                    label: "Generate with AI",
-                    onClick: () => handleOpenGenerate("task"),
-                    variant: "outline",
-                  }}
-                />
+                hasNoTasks ? (
+                  <TaskWelcome
+                    compact
+                    onCreateTask={() => handleOpenGenerate("manual")}
+                    onGenerateTasks={() => handleOpenGenerate("task")}
+                    onReviewCodebase={() => handleOpenGenerate("task", reviewCodebasePrompt)}
+                  />
+                ) : (
+                  <div className="px-4 py-12 text-center text-xs text-foreground/30">
+                    No tasks available
+                  </div>
+                )
               )
             ) : (
               <div className="px-2 py-2">
@@ -1289,6 +1309,8 @@ function TasksPageContent() {
           {!selected ? (
             showGenerate ? (
               generatePanel
+            ) : hasNoTasks ? (
+              welcomePanel
             ) : (
             <div className="flex items-center justify-center h-full text-xs text-foreground/30">
               Select a task

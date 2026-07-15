@@ -15,7 +15,9 @@ import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { extractCompletionAudit } from "@/lib/tasks/completion-audit-schema";
 import { applyCompletionAudit } from "@/lib/tasks/completion-audit-apply";
 import { enforceDeliveryGate } from "@/lib/tasks/completion-audit-delivery-gate";
-import { currentRunTerminalFingerprint } from "@/lib/tasks/run-outcome-evidence";
+import {
+  outcomeSummarySourceEligibility,
+} from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 
 export const dynamic = "force-dynamic";
@@ -437,21 +439,24 @@ export const POST = withErrorHandling(async (
         const sourceRunId = typeof updatedJob.input?.sourceRunId === "string"
           ? updatedJob.input.sourceRunId
           : undefined;
-        const runFingerprint = typeof updatedJob.input?.runFingerprint === "string"
+        const expectedFingerprint = typeof updatedJob.input?.runFingerprint === "string"
           ? updatedJob.input.runFingerprint
-          : sourceRunId
-            ? currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId)
-            : undefined;
+          : undefined;
+        const sourceEligibility = sourceRunId
+          ? outcomeSummarySourceEligibility(namespaceId, orgId, sourceRunId, expectedFingerprint)
+          : undefined;
+        const runFingerprint = expectedFingerprint || sourceEligibility?.fingerprint;
+        const summaryAccepted = sourceEligibility?.eligible === true;
         taskUpdate(orgId, updatedJob.taskId, {
           metadata: {
             ...existing,
-            task_outcome_summary_status: updatedJob.status,
+            task_outcome_summary_status: summaryAccepted ? updatedJob.status : "superseded",
             task_outcome_summary_job_id: updatedJob.id,
             task_outcome_summary_run_id: updatedJob.runId,
             task_outcome_summary_chain_id: updatedJob.chainId,
             ...(sourceRunId ? { task_outcome_summary_source_run_id: sourceRunId } : {}),
             ...(runFingerprint ? { task_outcome_summary_run_fingerprint: runFingerprint } : {}),
-            ...(updatedJob.status === "complete" && updatedJob.result
+            ...(summaryAccepted && updatedJob.status === "complete" && updatedJob.result
               ? {
                   // Store the auditor's canonical payload (headline, narrative,
                   // audit, ...), NOT the raw { output: "<json string>" } job
@@ -463,7 +468,11 @@ export const POST = withErrorHandling(async (
                   task_outcome_summary_error: undefined,
                 }
               : {
-                  task_outcome_summary_error: updatedJob.error || "Task outcome summary failed",
+                  task_outcome_summary: undefined,
+                  task_outcome_summary_completed_at: undefined,
+                  task_outcome_summary_error: sourceEligibility?.reason
+                    || updatedJob.error
+                    || "Task outcome summary failed",
                 }),
           },
         }, namespaceId);
@@ -490,6 +499,21 @@ export const POST = withErrorHandling(async (
         : undefined;
       const auditTask = taskGet(orgId, updatedJob.taskId, namespaceId);
       if (rawAudit && sourceRunId && auditTask) {
+        const expectedFingerprint = typeof updatedJob.input?.runFingerprint === "string"
+          ? updatedJob.input.runFingerprint
+          : undefined;
+        const sourceEligibility = outcomeSummarySourceEligibility(
+          namespaceId,
+          orgId,
+          sourceRunId,
+          expectedFingerprint,
+        );
+        if (!sourceEligibility.eligible) {
+          console.log(
+            `[completion-audit] task ${updatedJob.taskId} run ${sourceRunId}: skipped superseded audit (${sourceEligibility.reason})`,
+          );
+          return apiSuccess({ success: true, job: updatedJob });
+        }
         // Deterministic backstop: the auditor is an LLM judgment call and can
         // be talked into "close" by a chain that never wrote anything (see
         // completion-audit-delivery-gate.ts — this is the exact bug that let
@@ -504,9 +528,7 @@ export const POST = withErrorHandling(async (
           task: auditTask,
           audit,
           runId: sourceRunId,
-          runFingerprint: typeof updatedJob.input?.runFingerprint === "string"
-            ? updatedJob.input.runFingerprint
-            : currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId),
+          runFingerprint: sourceEligibility.fingerprint,
           workspacePath: workspacePathFromJobInput(updatedJob.input || {}),
           metadata: metadataRecord(auditTask.metadata),
         });

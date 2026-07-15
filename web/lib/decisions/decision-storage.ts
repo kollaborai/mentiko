@@ -157,15 +157,21 @@ export function getDecision(nsId: string, orgId: string, id: string, workspacePa
 export function createDecision(
   nsId: string,
   orgId: string,
-  input: { prompt: string; source?: string },
+  input: { prompt: string; source?: string; id?: string },
   workspacePath?: string
 ): Decision {
   const dir = getDecisionsDir(nsId, orgId, workspacePath);
   mkdirSync(dir, { recursive: true });
 
+  const id = input.id || crypto.randomUUID();
+  const filePath = path.join(dir, `${id}.json`);
+  if (input.id && existsSync(filePath)) {
+    return JSON.parse(readFileSync(filePath, "utf8")) as Decision;
+  }
+
   const now = new Date().toISOString();
   const decision: Decision = {
-    id: crypto.randomUUID(),
+    id,
     status: "intake",
     prompt: input.prompt,
     title: input.prompt,
@@ -176,10 +182,14 @@ export function createDecision(
     ...(workspacePath ? { workspacePath } : {}),
   };
 
-  writeFileSync(
-    path.join(dir, `${decision.id}.json`),
-    JSON.stringify(decision, null, 2)
-  );
+  try {
+    writeFileSync(filePath, JSON.stringify(decision, null, 2), input.id ? { flag: "wx" } : undefined);
+  } catch (error) {
+    if (input.id && existsSync(filePath)) {
+      return JSON.parse(readFileSync(filePath, "utf8")) as Decision;
+    }
+    throw error;
+  }
   return decision;
 }
 

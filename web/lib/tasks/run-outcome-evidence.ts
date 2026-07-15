@@ -61,6 +61,55 @@ export function currentRunStatus(
   return typeof run.status === "string" ? run.status : "unknown";
 }
 
+export const OUTCOME_SUMMARY_TERMINAL_STATUSES = new Set([
+  "completed",
+  "complete",
+  "failed",
+  "stopped",
+  "deleted",
+  "unknown",
+  "cancelled",
+]);
+
+export function isOutcomeSummaryTerminalStatus(status: string): boolean {
+  return OUTCOME_SUMMARY_TERMINAL_STATUSES.has(status);
+}
+
+export interface OutcomeSummarySourceEligibility {
+  eligible: boolean;
+  status: string;
+  fingerprint: string;
+  reason?: string;
+}
+
+/** Revalidate the execution source at delivery time; summary jobs may finish after their source changes. */
+export function outcomeSummarySourceEligibility(
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+  expectedFingerprint?: string,
+): OutcomeSummarySourceEligibility {
+  const status = currentRunStatus(namespaceId, orgId, runId);
+  const fingerprint = currentRunTerminalFingerprint(namespaceId, orgId, runId);
+  if (!isOutcomeSummaryTerminalStatus(status)) {
+    return {
+      eligible: false,
+      status,
+      fingerprint,
+      reason: `execution run ${runId} is ${status}; outcome summary requires a terminal run`,
+    };
+  }
+  if (expectedFingerprint && expectedFingerprint !== fingerprint) {
+    return {
+      eligible: false,
+      status,
+      fingerprint,
+      reason: `execution run ${runId} changed from ${expectedFingerprint} to ${fingerprint}`,
+    };
+  }
+  return { eligible: true, status, fingerprint };
+}
+
 const NON_EXECUTION_CHAIN_IDS = new Set([
   "run-summary-generation",
   "chain-recommendation",
