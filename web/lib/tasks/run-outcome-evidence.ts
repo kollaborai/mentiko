@@ -64,6 +64,10 @@ export function currentRunStatus(
 export const OUTCOME_SUMMARY_TERMINAL_STATUSES = new Set([
   "completed",
   "complete",
+  // A blocked run is terminal even though its PTY may be deliberately retained
+  // for recovery. The outcome auditor must receive the cause; treating it as
+  // in-flight leaves the task without its terminal summary indefinitely.
+  "blocked",
   "failed",
   "stopped",
   "deleted",

@@ -47,6 +47,32 @@ describe("typed Run Record operations", () => {
     });
   });
 
+  it("records a terminal timestamp for a blocked run without completing the blocked agent", () => {
+    const { runsDir, runJsonPath } = fixture({
+      agents: [{ id: "verifier", name: "Verifier", session: "verifier-1", status: "running" }],
+    });
+
+    markRunAgentBlocked(
+      runJsonPath,
+      "verifier",
+      "startup_recovery:unknown: CLI readiness unresolved after 90s",
+      new Date("2026-07-15T00:01:00Z"),
+    );
+
+    const run = readRunRecordAt(runsDir, "run-1");
+    expect(run).toMatchObject({
+      status: "blocked",
+      completed: "2026-07-15T00:01:00.000Z",
+      blockedReason: "startup_recovery:unknown: CLI readiness unresolved after 90s",
+      agents: [{
+        id: "verifier",
+        status: "blocked",
+        lastMessage: "startup_recovery:unknown: CLI readiness unresolved after 90s",
+      }],
+    });
+    expect(run.agents[0].completed).toBeUndefined();
+  });
+
   it("owns peer lifecycle updates as named operations", () => {
     const { runsDir, runJsonPath } = fixture({
       status: "pending",

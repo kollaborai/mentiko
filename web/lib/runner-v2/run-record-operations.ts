@@ -82,6 +82,10 @@ export function markRunAgentBlocked(
     return {
       ...current,
       status: "blocked",
+      // Terminal status is distinct from PTY cleanup. Preserve the blocked
+      // session for recovery, but give the terminal record a durable time so
+      // task reconciliation and outcome-summary fingerprinting can progress.
+      completed: current.completed || timestamp,
       blockedAt: current.blockedAt || timestamp,
       blockedReason: reason,
       agents: upsertAgent(current.agents, agentId, (agent) => ({

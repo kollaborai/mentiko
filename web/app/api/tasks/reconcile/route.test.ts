@@ -332,6 +332,63 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockTaskClose).not.toHaveBeenCalled();
   });
 
+  it("audits a blocked execution and preserves its exact reason for the task UI", async () => {
+    const reason = "startup_recovery:unknown: CLI readiness unresolved after 90s";
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-blocked",
+      taskId: "TASK-020",
+      status: "blocked",
+      completed: "2026-07-15T17:47:37.889Z",
+      blockedReason: reason,
+      chainId: "log-function-inspection-and-testing",
+      metadata: {},
+    }));
+    mockCurrentRunTerminalFingerprint.mockReturnValue("blocked:2026-07-15T17:47:37.889Z");
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-020",
+        title: "Investigate log routing",
+        status: "in_progress",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-blocked",
+          last_run_status: "blocked",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([
+      expect.objectContaining({
+        taskId: "TASK-020",
+        runId: "run-blocked",
+        newStatus: "audit_started",
+        reason: "completion audit triggered",
+      }),
+    ]);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-020",
+      {
+        metadata: expect.objectContaining({
+          last_run_blocked_reason: reason,
+          last_run_error: reason,
+        }),
+      },
+      "default",
+    );
+    expect(mockStartTaskOutcomeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "TASK-020",
+        sourceRunId: "run-blocked",
+        runFingerprint: "blocked:2026-07-15T17:47:37.889Z",
+      }),
+    );
+  });
+
   it("does not close a completed auto-run task until completion proof metadata exists", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",

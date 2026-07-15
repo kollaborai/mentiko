@@ -5,7 +5,7 @@ import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
-import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
   type AgentAttemptTerminalReason,
@@ -442,6 +442,9 @@ function markRunAgentBlocked(runJsonPath: string, agentId: string, reason: strin
     return {
       ...current,
       status: "blocked",
+      // A blocked startup is terminal for the run even though the PTY remains
+      // available for recovery. Do not claim the blocked agent completed.
+      completed: current.completed || now,
       blockedAt: typeof current.blockedAt === "string" ? current.blockedAt : now,
       blockedReason: reason,
       agents: hasAgent

@@ -182,6 +182,7 @@ describe("TaskRunStoryPanels", () => {
     render(<TaskRunStoryPanels task={blockedTask} />);
 
     expect(screen.getByText("Run blocked")).toBeInTheDocument();
+    expect(screen.getByText("Blocked reason: startup_recovery:blocked: authentication required")).toBeInTheDocument();
     expect(screen.getAllByText(/startup_recovery:blocked: authentication required/).length).toBeGreaterThan(0);
     await waitFor(() => expect(mockFetchWithNamespace).toHaveBeenCalledWith(
       "/api/tasks/TASK-1/outcome-summary",

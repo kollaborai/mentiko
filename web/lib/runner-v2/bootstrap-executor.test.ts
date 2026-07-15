@@ -650,9 +650,11 @@ describe("runner-v2 bootstrap executor", () => {
     const run = JSON.parse(readFileSync(join(root, "run.json"), "utf8"));
     expect(run).toMatchObject({
       status: "blocked",
+      completed: expect.any(String),
       blockedReason: expect.stringContaining("startup_recovery:unknown"),
       agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
     });
+    expect(run.agents[0].completed).toBeUndefined();
     expect(readFileSync(join(root, "state", "writer-run-1.state"), "utf8")).toContain("status: blocked");
     expect(readFileSync(join(root, "artifacts", "writer-startup-capture.txt"), "utf8")).toBe("plain zsh shell");
     expect(JSON.parse(readFileSync(join(root, "artifacts", "writer-startup-readiness.json"), "utf8"))).toMatchObject({

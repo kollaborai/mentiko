@@ -42,7 +42,7 @@ jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   currentRunStatus: (...args: unknown[]) => currentRunStatus(...args),
   currentRunTerminalFingerprint: (...args: unknown[]) => currentRunTerminalFingerprint(...args),
   isOutcomeSummaryTerminalStatus: (status: string) => [
-    "completed", "complete", "failed", "stopped", "deleted", "unknown", "cancelled",
+    "completed", "complete", "blocked", "failed", "stopped", "deleted", "unknown", "cancelled",
   ].includes(status),
   isOutcomeSummaryExecutionSource: (...args: unknown[]) => isOutcomeSummaryExecutionSource(...args),
   metadataRecord: (metadata: unknown) => (
@@ -92,6 +92,55 @@ describe("startTaskOutcomeAudit", () => {
     expect(result).toEqual({ status: "not_terminal", sourceRunId: "run-active" });
     expect(createJob).not.toHaveBeenCalled();
     expect(startGenerationChainRun).not.toHaveBeenCalled();
+  });
+
+  it("starts exactly one outcome summary for a blocked execution source", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-020",
+      title: "Investigate routing",
+      description: "Inspect the log function",
+      status: "in_progress",
+      priority: 0,
+      issue_type: "task",
+      parent_id: null,
+      acceptance_criteria: null,
+      design: null,
+      notes: null,
+      workspace_id: "/repo/synthyo",
+      metadata: {
+        last_run_id: "run-blocked",
+        last_run_status: "blocked",
+        last_run_blocked_reason: "startup_recovery:unknown: CLI readiness unresolved after 90s",
+      },
+    });
+    currentRunStatus.mockReturnValue("blocked");
+    currentRunTerminalFingerprint.mockReturnValue("blocked:2026-07-15T17:47:37.889Z");
+
+    const result = await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-020",
+    });
+
+    expect(result).toMatchObject({
+      status: "started",
+      sourceRunId: "run-blocked",
+      jobId: "job-audit",
+    });
+    expect(createJob).toHaveBeenCalledWith(
+      "task_run_summary",
+      expect.objectContaining({
+        taskId: "TASK-020",
+        sourceRunId: "run-blocked",
+        runFingerprint: "blocked:2026-07-15T17:47:37.889Z",
+      }),
+      "TASK-020",
+      undefined,
+      undefined,
+      "default",
+    );
+    expect(startGenerationChainRun).toHaveBeenCalledTimes(1);
   });
 
   it("uses explicit sourceRunId and runFingerprint instead of stale task metadata", async () => {
