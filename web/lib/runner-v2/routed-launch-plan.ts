@@ -15,12 +15,17 @@ export interface RoutedLaunchContext {
 
 export interface RoutedLaunchPlan {
   kind: "single" | "parallel" | "fan-out";
-  /** Agents this detached process is responsible for starting. */
+  /** Agents this synchronous acceptance call is responsible for starting. */
   agentIds?: string[];
   command: string;
+  /** Direct typed launcher invocation used for synchronous acceptance. */
+  cli?: {
+    compiledPath: string;
+    developmentPath: string;
+    args: string[];
+  };
   env: Record<string, string | undefined>;
   logPath?: string;
-  detached: boolean;
 }
 
 export function buildRoutedLaunchPlans(decision: RoutingDecision, context: RoutedLaunchContext): RoutedLaunchPlan[] {
@@ -29,40 +34,44 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   }
 
   if (decision.fanIn || decision.waitFor || decision.quorum || decision.onError) {
-    return decision.agentIds.map((agentId) => ({
-      kind: "fan-out",
-      agentIds: [agentId],
-      command: runnerCommand(context, [agentId]),
-      env: {
-        ...context.env,
-        ...typedLaunchEnv(context),
-        AGENT_FAN_GROUP_AGENT_ID: agentId,
-        ...(decision.fanIn ? { AGENT_FAN_GROUP_ID: context.fanGroupId || decision.fanIn } : {}),
-      },
-      logPath: join(context.runDir, `fanout-${agentId}.log`),
-      detached: true,
-    }));
+    return decision.agentIds.map((agentId) => {
+      const invocation = runnerInvocation(context, [agentId]);
+      return {
+        kind: "fan-out",
+        agentIds: [agentId],
+        command: runnerCommand(invocation),
+        cli: invocation,
+        env: {
+          ...context.env,
+          ...typedLaunchEnv(context),
+          AGENT_FAN_GROUP_AGENT_ID: agentId,
+          ...(decision.fanIn ? { AGENT_FAN_GROUP_ID: context.fanGroupId || decision.fanIn } : {}),
+        },
+        logPath: join(context.runDir, `fanout-${agentId}.log`),
+      };
+    });
   }
 
-  // always detached: the typed completion bridge exits as soon as launches
-  // are fired, and a non-detached child dies with the completion PTY before
-  // chain-runner can start the next agent.
+  // The adapter waits for this CLI to exit and then verifies durable
+  // run/session/attempt state before the completion trigger can be consumed.
   if (decision.agentIds.length > 1) {
+    const invocation = runnerInvocation(context, decision.agentIds);
     return [{
       kind: "parallel",
       agentIds: [...decision.agentIds],
-      command: runnerCommand(context, decision.agentIds),
+      command: runnerCommand(invocation),
+      cli: invocation,
       env: { ...context.env, ...typedLaunchEnv(context) },
-      detached: true,
     }];
   }
 
+  const invocation = runnerInvocation(context, [decision.agentIds[0]]);
   return [{
     kind: "single",
     agentIds: [decision.agentIds[0]],
-    command: runnerCommand(context, [decision.agentIds[0]]),
+    command: runnerCommand(invocation),
+    cli: invocation,
     env: { ...context.env, ...typedLaunchEnv(context) },
-    detached: true,
   }];
 }
 
@@ -77,9 +86,17 @@ function typedLaunchEnv(context: RoutedLaunchContext): Record<string, string> {
   };
 }
 
-function runnerCommand(context: RoutedLaunchContext, agentIds: string[]): string {
+function runnerInvocation(context: RoutedLaunchContext, agentIds: string[]): NonNullable<RoutedLaunchPlan["cli"]> {
   const compiled = join(config.codeRoot, "lib", "runner-v2-launch-agent.js");
   const development = join(config.codeRoot, "web", "scripts", "runner-v2-launch-agent.cjs");
-  const args = [shellEscape(context.chainPath), ...agentIds.map(shellEscape)].join(" ");
-  return `if [ -f ${shellEscape(compiled)} ]; then node ${shellEscape(compiled)} ${args}; else node ${shellEscape(development)} ${args}; fi`;
+  return {
+    compiledPath: compiled,
+    developmentPath: development,
+    args: [context.chainPath, ...agentIds],
+  };
+}
+
+function runnerCommand(invocation: NonNullable<RoutedLaunchPlan["cli"]>): string {
+  const args = invocation.args.map(shellEscape).join(" ");
+  return `if [ -f ${shellEscape(invocation.compiledPath)} ]; then node ${shellEscape(invocation.compiledPath)} ${args}; else node ${shellEscape(invocation.developmentPath)} ${args}; fi`;
 }

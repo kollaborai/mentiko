@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { parseRunnerEvent } from "@/lib/runner-v2/events";
@@ -6,6 +6,7 @@ import {
   assessRunForWatchdog,
   dispatchExecutableWatchdogHooks,
   runTypedWatchdogScan,
+  watchdogEventId,
   watchdogExternalEffectId,
   watchdogHookDispatchKey,
   type WatchdogHookInput,
@@ -230,9 +231,10 @@ describe("typed runner watchdog", () => {
     expect(transport.removed).toContain("writer-dead");
 
     const eventFiles = readdirSync(join(root, "events"));
-    expect(eventFiles).toHaveLength(1);
+    expect(eventFiles).toEqual([`${run.id}-watchdog-run-stalled.event`]);
     const event = parseRunnerEvent(readFileSync(join(root, "events", eventFiles[0]), "utf8"));
     expect(event).toMatchObject({ event: "run-stalled", source: "watchdog", runId: run.id, processed: false });
+    expect(event.fields.idempotency_key).toBe(watchdogEventId(run.id, now.toISOString()));
     expect(JSON.parse(event.data)).toMatchObject({
       last_agent: "writer",
       last_agent_status: "running",
@@ -344,7 +346,7 @@ describe("typed runner watchdog", () => {
     }));
     writeRun(root, runRecord(now, {
       id: "run-future",
-      status: "paused",
+      status: "pending",
       agents: [{ id: "active", name: "Active", status: "running", session: "active-agent" }],
     }));
     writeRun(root, runRecord(now, {
@@ -354,6 +356,9 @@ describe("typed runner watchdog", () => {
     }));
     const transport = new FakeTransport([
       { name: "done-agent", alive: false },
+      { name: "complete-done-agent-1784102007", alive: false },
+      { name: "complete-done-agent-review-1784102007", alive: false },
+      { name: "complete-unreferenced-agent-1784102007", alive: false },
       { name: "monitor-done-agent", alive: true },
       { name: "active-agent", alive: true },
       { name: "unreferenced-agent", alive: true },
@@ -366,13 +371,71 @@ describe("typed runner watchdog", () => {
       dependencies: { transport },
     });
 
-    expect(result.orphanSessionsRemoved).toEqual(["done-agent"]);
+    expect(result.orphanSessionsRemoved).toEqual([
+      "done-agent",
+      "complete-done-agent-1784102007",
+    ]);
     expect(result.sessionRemovalFailures).toContain("monitor-done-agent");
     expect(transport.removed).toContain("done-agent");
     expect(transport.removed).not.toContain("monitor-done-agent");
     expect(transport.removed).not.toContain("active-agent");
     expect(transport.removed).not.toContain("unreferenced-agent");
     expect(transport.removed).not.toContain("term-user-owned");
+    expect(transport.removed).not.toContain("complete-done-agent-review-1784102007");
+    expect(transport.removed).not.toContain("complete-unreferenced-agent-1784102007");
+  });
+
+  it("reaps a dead prior-agent completion PTY while a mid-chain run stays live", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, {
+      id: "run-mid-chain",
+      agents: [
+        { id: "writer", name: "Writer", status: "complete", session: "writer-run" },
+        { id: "reviewer", name: "Reviewer", status: "running", session: "reviewer-run" },
+      ],
+    });
+    const runPath = writeRun(root, run);
+    const transport = new FakeTransport([
+      { name: "complete-writer-run-1784102007", alive: false },
+      { name: "reviewer-run", alive: true },
+    ]);
+
+    const result = await runTypedWatchdogScan({
+      runsDir: join(root, "runs"),
+      now,
+      dependencies: { transport },
+    });
+
+    expect(result.stalled).toEqual([]);
+    expect(result.orphanSessionsRemoved).toEqual(["complete-writer-run-1784102007"]);
+    expect(transport.removed).toEqual(["complete-writer-run-1784102007"]);
+    expect(JSON.parse(readFileSync(runPath, "utf8"))).toEqual(run);
+  });
+
+  it("preserves a scoped completion PTY that becomes live on the removal recheck", async () => {
+    const root = tempRoot();
+    writeRun(root, runRecord(now, {
+      id: "run-completion-race",
+      status: "completed",
+      agents: [{ id: "writer", name: "Writer", status: "complete", session: "writer-race" }],
+    }));
+    const completion = { name: "complete-writer-race-1784102007", alive: false };
+    const transport = new FakeTransport([completion]);
+    transport.listSequence = [
+      [completion],
+      [completion],
+      [{ ...completion, alive: true }],
+    ];
+
+    const result = await runTypedWatchdogScan({
+      runsDir: join(root, "runs"),
+      now,
+      dependencies: { transport },
+    });
+
+    expect(result.orphanSessionsRemoved).toEqual([]);
+    expect(result.sessionRemovalFailures).toEqual([completion.name]);
+    expect(transport.removed).not.toContain(completion.name);
   });
 
   it("preserves a session that becomes alive on the destructive-action recheck", async () => {
@@ -527,6 +590,92 @@ describe("typed runner watchdog", () => {
     expect(second.stalled).toEqual([]);
     expect(readdirSync(join(root, "events"))).toHaveLength(1);
     expect(readFileSync(join(root, "state", "external-effects.jsonl"), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("recovers an archived stall occurrence after emit-before-marker crash without duplicating it", async () => {
+    const root = tempRoot();
+    const run = runRecord(now, {
+      id: "run-event-replay",
+      status: "stopped",
+      completed: now.toISOString(),
+      runnerV2: {
+        watchdog: {
+          status: "stalled",
+          detectedAt: now.toISOString(),
+          runId: "run-event-replay",
+          reason: "no live session",
+          lastAgent: "writer",
+          lastAgentStatus: "running",
+          pendingAgents: [],
+          externalEffectsQueuedAt: now.toISOString(),
+          hooksDispatchedAt: now.toISOString(),
+        },
+      },
+      agents: [{ id: "writer", name: "Writer", status: "stopped", session: "" }],
+    });
+    const runPath = writeRun(root, run);
+    const eventsDir = join(root, "events");
+    mkdirSync(eventsDir, { recursive: true });
+    const canonicalPath = join(eventsDir, `${run.id}-watchdog-run-stalled.event`);
+    const existingBytes = [
+      "event: unrelated-event",
+      "source: existing-producer",
+      `run_id: ${run.id}`,
+      `timestamp: ${now.toISOString()}`,
+      "processed: false",
+      "data: existing bytes",
+      "",
+    ].join("\n");
+    writeFileSync(canonicalPath, existingBytes);
+
+    const options = {
+      runsDir: join(root, "runs"),
+      eventsDir,
+      stateDir: join(root, "state"),
+      now: new Date(now.getTime() + 60_000),
+      dependencies: { transport: new FakeTransport(), dispatchHooks: () => undefined },
+    };
+    const first = await runTypedWatchdogScan(options);
+    const archiveDir = join(eventsDir, "archive");
+    mkdirSync(archiveDir);
+    const archivedPath = join(archiveDir, first.events[0].split("/").at(-1)!);
+    renameSync(first.events[0], archivedPath);
+    const storedAfterFirst = JSON.parse(readFileSync(runPath, "utf8"));
+    delete storedAfterFirst.runnerV2.watchdog.eventEmittedAt;
+    writeFileSync(runPath, JSON.stringify(storedAfterFirst));
+    const replay = await runTypedWatchdogScan({ ...options, now: new Date(now.getTime() + 120_000) });
+
+    expect(readFileSync(canonicalPath, "utf8")).toBe(existingBytes);
+    expect(first.events).toHaveLength(1);
+    expect(replay.events).toEqual([archivedPath]);
+    expect(readdirSync(eventsDir).filter((name) => name.endsWith(".event"))).toEqual([
+      `${run.id}-watchdog-run-stalled.event`,
+    ]);
+    expect(readdirSync(archiveDir).filter((name) => name.endsWith(".event"))).toHaveLength(1);
+    const emitted = parseRunnerEvent(readFileSync(archivedPath, "utf8"));
+    expect(emitted).toMatchObject({
+      event: "run-stalled",
+      source: "watchdog",
+      runId: run.id,
+      processed: false,
+    });
+    expect(emitted.fields.idempotency_key).toBe(watchdogEventId(run.id, now.toISOString()));
+
+    const laterDetectedAt = new Date(now.getTime() + 180_000).toISOString();
+    const storedForLaterOccurrence = JSON.parse(readFileSync(runPath, "utf8"));
+    storedForLaterOccurrence.runnerV2.watchdog.detectedAt = laterDetectedAt;
+    delete storedForLaterOccurrence.runnerV2.watchdog.eventEmittedAt;
+    writeFileSync(runPath, JSON.stringify(storedForLaterOccurrence));
+    const later = await runTypedWatchdogScan({
+      ...options,
+      now: new Date(now.getTime() + 240_000),
+    });
+
+    expect(later.events).toHaveLength(1);
+    expect(later.events[0]).not.toBe(archivedPath);
+    expect(readdirSync(eventsDir).filter((name) => name.endsWith(".event"))).toHaveLength(2);
+    expect(parseRunnerEvent(readFileSync(later.events[0], "utf8")).fields.idempotency_key)
+      .toBe(watchdogEventId(run.id, laterDetectedAt));
   });
 
   it("recovers event, outbox, and hooks after a post-terminalization worker crash", async () => {

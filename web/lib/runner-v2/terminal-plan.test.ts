@@ -97,7 +97,7 @@ describe("runner-v2 terminal completion plan", () => {
     expect(plan.reason).toBe("no-completion-event");
     expect(plan.steps).toEqual([
       { type: "task-status", status: "failed", taskId: "task-1", runId: "run-1" },
-      { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300 },
+      { type: "circuit-breaker", action: "record-failure", chainName: "Build Chain", agentId: "writer", threshold: 5, timeout: 300, failureId: "terminal-failure:run-1:writer:no-completion-event" },
       { type: "notification", event: "agent-failed", chainName: "Build Chain", runId: "run-1", agentId: "writer", reason: "no matching completion event" },
       { type: "metadata-webhooks", event: "failed", chainId: "build-chain", chainPath: "/chains/build/chain.json", chainName: "Build Chain", runId: "run-1" },
     ]);

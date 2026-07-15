@@ -147,6 +147,18 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     });
   });
 
+  it("allocates a fresh sequence after a released bootstrap attempt", () => {
+    const path = runPath();
+    const first = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    releaseAgentAttempt({ runJsonPath: path, attemptId: first.id });
+
+    const retry = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+
+    expect(first.id).toBe("run-1:writer:1");
+    expect(retry).toMatchObject({ id: "run-1:writer:2", phase: "created" });
+    expect(readRun(path).runnerV2.attempts).toHaveLength(2);
+  });
+
   it("fails a submitted attempt with a typed completion reason and preserves it on release", () => {
     const path = runPath();
     const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });

@@ -47,7 +47,7 @@ export interface RunnerV2Contract {
   completion_flag?: {
     name: "MENTIKO_RUNNER_V2_COMPLETION";
     enabled_values: string[];
-    default: "off";
+    default: "on";
     scope: string;
   };
   entrypoints?: {

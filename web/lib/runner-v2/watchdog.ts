@@ -4,16 +4,15 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   statSync,
-  writeFileSync,
 } from "fs";
 import { join } from "path";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import config from "@/lib/config";
 import { hasLivePendingHandoff, processIsAlive } from "@/lib/runner-v2/handoff-liveness";
-import { serializeRunnerEvent } from "@/lib/runner-v2/events";
+import { emitRunnerEvent } from "@/lib/runner-v2/event-emitter";
+import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 import { pty, type SessionInfo } from "@/lib/pty/pty-client";
 import { readRunJson, updateRunJson, type RunAgentRecord, type RunRecord } from "@/lib/runner-v2/run-state";
 import type { AdapterOperation } from "@/lib/runner-v2/adapters";
@@ -618,23 +617,38 @@ function writeRunStalledEvent(
   now: Date,
 ): string {
   mkdirSync(eventsDir, { recursive: true });
-  const filename = `${fileTimestamp(now)}-${safeFilePart(assessment.runId)}-run-stalled.event`;
-  const path = join(eventsDir, filename);
-  const content = serializeRunnerEvent({
+  const idempotencyKey = watchdogEventId(assessment.runId, now.toISOString());
+  const persisted = findWatchdogEventOccurrence(eventsDir, idempotencyKey);
+  if (persisted) return persisted;
+  return emitRunnerEvent({
     event: "run-stalled",
     source: "watchdog",
     runId: assessment.runId,
+    scope: "run",
+    filenameMode: "canonical",
+    eventsDir,
     timestamp: now.toISOString(),
-    processed: false,
+    idempotencyKey,
     data: JSON.stringify({
       reason: assessment.reason,
       last_agent: assessment.lastAgent,
       last_agent_status: assessment.lastAgentStatus,
       pending_agents: assessment.pendingAgents,
     }),
-  });
-  writeFileAtomic(path, content);
-  return path;
+  }).path;
+}
+
+function findWatchdogEventOccurrence(eventsDir: string, idempotencyKey: string): string | undefined {
+  for (const root of [eventsDir, join(eventsDir, "archive")]) {
+    if (!existsSync(root)) continue;
+    const match = scanRunnerEventFiles(root).valid.find(({ event }) => (
+      event.event === "run-stalled"
+      && event.source === "watchdog"
+      && event.fields.idempotency_key === idempotencyKey
+    ));
+    if (match) return match.path;
+  }
+  return undefined;
 }
 
 function queueStallExternalEffects(input: {
@@ -687,6 +701,10 @@ export function watchdogExternalEffectId(
   return `watchdog:${runId}:run-stalled:${effect}:v1`;
 }
 
+export function watchdogEventId(runId: string, detectedAt: string): string {
+  return `watchdog:${runId}:run-stalled:event:${detectedAt}:v1`;
+}
+
 export function watchdogHookDispatchKey(runId: string): string {
   return `watchdog:${runId}:run-stalled:hooks:v1`;
 }
@@ -703,6 +721,11 @@ async function removeRunSessions(
     if (sessionName) {
       names.add(sessionName);
       names.add(`monitor-${sessionName}`);
+      for (const session of sessions.values()) {
+        if (!session.alive && isCompletionSessionForAgent(session.name, sessionName)) {
+          names.add(session.name);
+        }
+      }
     }
     if (agentId) names.add(`monitor-${run.id}-${agentId}`);
   }
@@ -722,7 +745,7 @@ function hasLiveRunSession(run: RunRecord, sessions: WatchdogSession[]): boolean
       names.add(sessionName);
       names.add(`monitor-${sessionName}`);
       for (const session of sessions) {
-        if (session.name.startsWith(`complete-${sessionName}-`)) names.add(session.name);
+        if (isCompletionSessionForAgent(session.name, sessionName)) names.add(session.name);
       }
     }
     if (agentId) names.add(`monitor-${run.id}-${agentId}`);
@@ -738,11 +761,13 @@ async function reapProvableScopedOrphans(
 ): Promise<{ removed: string[]; failed: string[] }> {
   const activeReferences = new Set<string>();
   const terminalReferences = new Set<string>();
+  const agentSessionReferences = new Set<string>();
   for (const { run } of runs) {
     const target = TERMINAL_RUN_STATUSES.has(String(run.status)) ? terminalReferences : activeReferences;
     for (const agent of run.agents || []) {
       const name = stringValue(agent.session);
       if (!name) continue;
+      agentSessionReferences.add(name);
       target.add(name);
       target.add(`monitor-${name}`);
       const agentId = stringValue(agent.id);
@@ -752,12 +777,24 @@ async function reapProvableScopedOrphans(
   }
 
   const existing = new Set(sessions.map((session) => session.name));
-  const candidates = [...terminalReferences].filter((name) => (
+  const terminalCandidates = [...terminalReferences].filter((name) => (
     existing.has(name)
     && !activeReferences.has(name)
     && !isProtectedStandaloneSession(name, terminalReferences)
   ));
-  return removeVerifiedSessions(candidates, transport);
+  const completionCandidates = sessions
+    .filter((session) => !session.alive)
+    .map((session) => session.name)
+    .filter((name) => (
+      !activeReferences.has(name)
+      && [...agentSessionReferences].some((agentSession) => (
+        isCompletionSessionForAgent(name, agentSession)
+      ))
+    ));
+  return removeVerifiedSessions(
+    [...terminalCandidates, ...completionCandidates],
+    transport,
+  );
 }
 
 async function removeVerifiedSessions(
@@ -811,11 +848,21 @@ function hasLiveCompletionHandler(
   sessions: ReadonlyMap<string, WatchdogSession>,
   agentSession: string,
 ): boolean {
-  const prefix = `complete-${agentSession}-`;
   for (const session of sessions.values()) {
-    if (session.alive && session.name.startsWith(prefix)) return true;
+    if (session.alive && isCompletionSessionForAgent(session.name, agentSession)) return true;
   }
   return false;
+}
+
+/**
+ * Completion PTYs are minted as `complete-<agent session>-<epoch seconds>`.
+ * Requiring the numeric generated suffix prevents a short agent session such as
+ * `writer` from claiming an unrelated `complete-writer-review-...` PTY.
+ */
+function isCompletionSessionForAgent(name: string, agentSession: string): boolean {
+  const prefix = `complete-${agentSession}-`;
+  if (!name.startsWith(prefix)) return false;
+  return /^\d{10,}$/.test(name.slice(prefix.length));
 }
 
 function latestAgentCompletionMs(agents: RunAgentRecord[]): number | undefined {
@@ -842,15 +889,6 @@ function timestampMs(value: unknown): number | undefined {
 
 function ageMs(nowMs: number, startedMs: number | undefined): number | undefined {
   return startedMs === undefined ? undefined : Math.max(0, nowMs - startedMs);
-}
-
-function fileTimestamp(now: Date): string {
-  return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "");
-}
-
-function safeFilePart(value: string): string {
-  const safe = value.replace(/[^A-Za-z0-9._-]/g, "_");
-  return safe && safe !== "." && safe !== ".." ? safe : "_";
 }
 
 function stringValue(value: unknown): string {
@@ -1033,12 +1071,6 @@ function signalHookProcess(
 
 function stableFileKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function writeFileAtomic(path: string, content: string): void {
-  const tmp = `${path}.tmp.${process.pid}`;
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
 }
 
 function errorMessage(error: unknown): string {

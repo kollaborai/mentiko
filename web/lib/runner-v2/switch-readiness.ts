@@ -41,11 +41,13 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     });
     checks.push({
       id: "completion-flag-contract",
-      status: contract.completion_flag?.name === "MENTIKO_RUNNER_V2_COMPLETION" ? "pass" : "fail",
-      evidence: `completion_flag=${contract.completion_flag?.name || "unknown"}`,
+      status: contract.completion_flag?.name === "MENTIKO_RUNNER_V2_COMPLETION"
+        && contract.completion_flag.default === "on" ? "pass" : "fail",
+      evidence: `completion_flag=${contract.completion_flag?.name || "unknown"}; default=${contract.completion_flag?.default || "unknown"}`,
       blocker: contract.completion_flag?.name === "MENTIKO_RUNNER_V2_COMPLETION"
+        && contract.completion_flag.default === "on"
         ? undefined
-        : "completion flag contract missing",
+        : "completion compatibility marker must be documented as forced on",
     });
     checks.push({
       id: "generation-completion-contract",
@@ -93,15 +95,15 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   checks.push(fileCheck("agent-bootstrap-planner", join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts")));
   checks.push(fileCheck("typed-bootstrap-executor", join(config.codeRoot, "web/lib/runner-v2/bootstrap-executor.ts")));
   checks.push(sourceContainsCheck(
-    "completion-shell-flag-gate",
+    "completion-typed-launcher",
     join(config.codeRoot, "lib/agent-functions.sh"),
-    "runner-v2-complete.js",
-    "shell completion handoff does not gate typed completion behind MENTIKO_RUNNER_V2_COMPLETION",
+    "runner-v2-completion-launch.js",
+    "shell monitor handoff does not invoke the unconditional typed completion launcher",
   ));
   checks.push(sourceContainsCheck(
     "routed-monitor-flag-carry",
     join(config.codeRoot, "lib/chain-runner.sh"),
-    'export MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"',
+    'export MENTIKO_RUNNER_V2_COMPLETION="1"',
     "shell chain-runner monitors do not carry runner-v2 completion flags, so routed/relaunched agents always complete through the v1 handler",
   ));
   checks.push(sourceContainsCheck(
@@ -127,6 +129,12 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     join(config.codeRoot, "Dockerfile"),
     "runner-v2-complete.js",
     "tenant image does not compile the runner-v2 completion bridge",
+  ));
+  checks.push(sourceContainsCheck(
+    "completion-launcher-runtime-compile",
+    join(config.codeRoot, "Dockerfile"),
+    "runner-v2-completion-launch.js",
+    "tenant image does not compile the typed completion PTY launcher",
   ));
   checks.push(sourceContainsCheck(
     "monitor-runtime-compile",

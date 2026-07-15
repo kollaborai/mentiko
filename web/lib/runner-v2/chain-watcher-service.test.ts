@@ -117,6 +117,8 @@ describe("typed chain watcher", () => {
   });
 
   it("evaluates a narrow condition grammar without executing authored code", () => {
+    const probeRoot = makeRoot();
+    const injectionProbe = join(probeRoot, "executed");
     expect(evaluateChainWatcherCondition(undefined, "success")).toBe(true);
     expect(evaluateChainWatcherCondition('$data == "success"', "success")).toBe(true);
     expect(evaluateChainWatcherCondition('"$data" != "failed"', "success")).toBe(true);
@@ -127,11 +129,17 @@ describe("typed chain watcher", () => {
     expect(evaluateChainWatcherCondition("-z $data", "")).toBe(true);
 
     expect(evaluateChainWatcherCondition('$data == "success"; touch /tmp/nope', "success")).toBe(false);
-    expect(evaluateChainWatcherCondition("$(touch /tmp/nope)", "success")).toBe(false);
+    expect(evaluateChainWatcherCondition(`$(touch ${injectionProbe})`, "success")).toBe(false);
+    expect(evaluateChainWatcherCondition(`x ]] || touch ${injectionProbe} || [[ y`, "success")).toBe(false);
+    expect(evaluateChainWatcherCondition(`\`touch ${injectionProbe}\``, "success")).toBe(false);
     expect(evaluateChainWatcherCondition("$data | grep success", "success")).toBe(false);
+    expect(evaluateChainWatcherCondition(`$data & touch ${injectionProbe}`, "success")).toBe(false);
+    expect(evaluateChainWatcherCondition(`cat <(touch ${injectionProbe})`, "success")).toBe(false);
     expect(evaluateChainWatcherCondition("[[ $data == success ]]", "success")).toBe(false);
+    expect(evaluateChainWatcherCondition("$data == success\ntouch /tmp/nope", "success")).toBe(false);
     expect(evaluateChainWatcherCondition("$data =~ (a+)+$", "aaaaaaaaaaaaaaaaaaaaa!")).toBe(false);
     expect(evaluateChainWatcherCondition("not a supported expression", "success")).toBe(false);
+    expect(existsSync(injectionProbe)).toBe(false);
   });
 
   it("strictly parses events, matches source and condition, and handles each event once", async () => {

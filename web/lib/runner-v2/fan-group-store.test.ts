@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { completeFanGroupMemberLocked, createFanGroup, fanGroupPath, readFanGroup } from "@/lib/runner-v2/fan-group-store";
@@ -75,5 +75,36 @@ describe("runner-v2 fan group store", () => {
       groupId: "missing",
       agentId: "a",
     })).toBeNull();
+  });
+
+  it("retires a crashed owner claim and lets replay commit the member", () => {
+    const dir = stateDir();
+    createFanGroup(dir, {
+      id: "group-crash",
+      event: "draft-ready",
+      fanOutAgents: ["a"],
+      fanInAgent: "merge",
+      runId: "run-123",
+    });
+    const claimDir = `${fanGroupPath(dir, "group-crash")}.lock`;
+    mkdirSync(claimDir);
+    writeFileSync(join(claimDir, "owner.json"), `${JSON.stringify({ pid: 2_147_483_647, token: "crashed-owner" })}\n`);
+
+    let accepted = false;
+    const replay = completeFanGroupMemberLocked(dir, {
+      groupId: "group-crash",
+      agentId: "a",
+      status: "complete",
+    }, () => {
+      accepted = true;
+    });
+
+    expect(accepted).toBe(true);
+    expect(replay).toMatchObject({ claimed: true, group: { status: "complete", completed: 1 } });
+    expect(readFanGroup(dir, "group-crash")).toMatchObject({
+      status: "complete",
+      members: { a: "complete" },
+    });
+    expect(existsSync(claimDir)).toBe(false);
   });
 });

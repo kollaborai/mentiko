@@ -1,4 +1,5 @@
 import type { CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
+import { createHash } from "node:crypto";
 import type { RunQualityGateEventArtifactInput } from "@/lib/event-artifacts/event-artifact-runner";
 import { shellEscape } from "@/lib/api/audit-exec";
 import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
@@ -23,6 +24,8 @@ export type TypedExecutorEffect =
 
 export interface TypedExecutorPlan {
   action: "already-completed" | "await-liveness" | "fail" | "retry" | "exhausted" | "generation-terminal" | "route" | "terminal" | "loop-complete" | "max-rounds-stop" | "fan-group-member";
+  /** Stable identity for every replayable operation in this completion. */
+  occurrenceId?: string;
   launches: RoutedLaunchPlan[];
   effects: TypedExecutorEffect[];
 }
@@ -48,20 +51,54 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
   const { decision } = input.pipeline;
   const effects: TypedExecutorEffect[] = [];
   const launches: RoutedLaunchPlan[] = [];
+  let eventSideEffects: EventSideEffectPlan | undefined;
 
   if ("event" in decision) {
+    eventSideEffects = planCompletionEventSideEffects(
+      decision.event,
+      input.allEvents || [decision.event],
+      input.allAgentIds,
+      {
+        agentId: input.agentCompletion?.agentId,
+        sessionName: input.agentCompletion?.sessionName,
+      },
+    );
     effects.push({
       type: "event-side-effects",
-      plan: planCompletionEventSideEffects(decision.event, input.allEvents || [decision.event], input.allAgentIds),
+      plan: eventSideEffects,
     });
   }
+
+  const acceptedOccurrenceId = eventSideEffects?.acceptedTrigger
+    ? bindAcceptedEventOccurrence(
+      input.agentCompletion?.occurrenceId
+        || input.routeContext.env?.MENTIKO_COMPLETION_OCCURRENCE_ID,
+      eventSideEffects.acceptedTrigger.occurrenceToken,
+    )
+    : input.agentCompletion?.occurrenceId
+      || input.routeContext.env?.MENTIKO_COMPLETION_OCCURRENCE_ID;
+  const routeContext: RoutedLaunchContext = acceptedOccurrenceId
+    ? {
+      ...input.routeContext,
+      env: {
+        ...input.routeContext.env,
+        MENTIKO_COMPLETION_OCCURRENCE_ID: acceptedOccurrenceId,
+      },
+    }
+    : input.routeContext;
 
   // per-agent side effects (agent-completed plugin/notification + chain-config
   // agent_complete webhook) mirror the shell handler for every completion that
   // marks the agent complete. fail/retry/exhausted verdicts do not fire these;
   // the failure paths carry their own agent-failed effects.
   if (input.agentCompletion && AGENT_COMPLETE_ACTIONS.has(decision.action)) {
-    effects.push({ type: "agent-completion", plan: planAgentCompletion(input.agentCompletion) });
+    effects.push({
+      type: "agent-completion",
+      plan: planAgentCompletion({
+        ...input.agentCompletion,
+        ...(acceptedOccurrenceId ? { occurrenceId: acceptedOccurrenceId } : {}),
+      }),
+    });
   }
 
   if ("fanGroup" in decision && decision.fanGroup) {
@@ -82,7 +119,7 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
     } else if (decision.route.action === "wait") {
       if (decision.route.pending) {
         // downstream targets are already running or blocked on other
-        // prerequisites: shell parity is a quiet exit (chain-runner-complete.sh
+        // prerequisites: predecessor parity is a quiet exit (the retired handler
         // "downstream already active" / "waiting for prerequisites"). The run
         // stays running; the in-flight sibling's completion finalizes it.
       } else {
@@ -97,7 +134,11 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
         });
       }
     } else if (decision.route.action === "launch" && isFanOutRoute(decision.route)) {
-      const fanGroupId = input.routeContext.fanGroupId || `${decision.event.event}-${Date.now()}`;
+      const fanGroupId = routeContext.fanGroupId || stableFanGroupId({
+        runId: routeContext.env?.MENTIKO_RUN_ID,
+        event: decision.event.event,
+        occurrenceId: acceptedOccurrenceId,
+      });
       effects.push({
         type: "fan-group-create",
         group: createFanGroupState({
@@ -108,28 +149,27 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
           waitFor: decision.route.waitFor,
           quorum: decision.route.quorum,
           onError: decision.route.onError,
-          chainPath: input.routeContext.chainPath,
-          runId: input.routeContext.env?.MENTIKO_RUN_ID,
+          chainPath: routeContext.chainPath,
+          runId: routeContext.env?.MENTIKO_RUN_ID,
         }),
       });
       launches.push(...buildRoutedLaunchPlans(decision.route, {
-        ...input.routeContext,
+        ...routeContext,
         fanGroupId,
       }));
     } else {
-      launches.push(...buildRoutedLaunchPlans(decision.route, input.routeContext));
+      launches.push(...buildRoutedLaunchPlans(decision.route, routeContext));
     }
   } else if (decision.action === "retry") {
     effects.push({ type: "retry", plan: decision.retry });
     launches.push({
       kind: "single",
-      command: buildRetryLaunchCommand(input.routeContext, decision.retry.launch.agentId, decision.retry.delaySeconds),
+      command: buildRetryLaunchCommand(routeContext, decision.retry.launch.agentId, decision.retry.delaySeconds),
       env: {
-        ...input.routeContext.env,
+        ...routeContext.env,
         MENTIKO_RETRY_ATTEMPT: String(decision.retry.nextAttempt),
         RETRY_ATTEMPT: String(decision.retry.nextAttempt),
       },
-      detached: true,
     });
   } else if (decision.action === "exhausted") {
     effects.push({ type: "retry", plan: decision.retry });
@@ -157,15 +197,39 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
         taskId: input.terminal ? input.terminal.taskId : input.routeContext.taskId,
         agentId: input.terminal?.lastAgentId,
         reason: decision.reason,
+        occurrenceId: acceptedOccurrenceId,
       }),
     });
   }
 
   return {
     action: decision.action,
+    ...(acceptedOccurrenceId ? { occurrenceId: acceptedOccurrenceId } : {}),
     launches,
     effects,
   };
+}
+
+function bindAcceptedEventOccurrence(base: string | undefined, occurrenceToken: string): string {
+  const digest = createHash("sha256")
+    .update(base || "runner-v2-completion")
+    .update("\0")
+    .update(occurrenceToken)
+    .digest("hex")
+    .slice(0, 32);
+  return `runner-v2-event-occurrence:${digest}:v1`;
+}
+
+function stableFanGroupId(input: { runId?: string; event: string; occurrenceId?: string }): string {
+  const digest = createHash("sha256")
+    .update(input.runId || "unknown-run")
+    .update("\0")
+    .update(input.event)
+    .update("\0")
+    .update(input.occurrenceId || "unknown-occurrence")
+    .digest("hex")
+    .slice(0, 32);
+  return `fan-group-${digest}`;
 }
 
 function isFanOutRoute(route: { action: string; fanIn?: string; waitFor?: string; quorum?: number; onError?: string }): boolean {

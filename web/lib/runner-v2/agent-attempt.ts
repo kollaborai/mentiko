@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
-import { updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
+import { updateRunJson, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
 
 export type AgentAttemptPhase =
   | "created"
@@ -158,8 +158,17 @@ export function createAgentAttempt(input: {
   now?: Date;
 }): AgentAttemptRecord {
   const at = iso(input.now);
-  const attemptId = input.attemptId || `${input.runId}:${input.agentId}:1`;
-  const existing = readRunnerV2AttemptState(input.runJsonPath).attempts.find((item) => item.id === attemptId);
+  const state = readRunnerV2AttemptState(input.runJsonPath);
+  const matching = state.attempts.filter(
+    (attempt) => attempt.runId === input.runId && attempt.agentId === input.agentId,
+  );
+  const latest = matching[matching.length - 1];
+  const attemptId = input.attemptId || (
+    latest && TERMINAL_PHASES.has(latest.phase)
+      ? `${input.runId}:${input.agentId}:${matching.length + 1}`
+      : latest?.id || `${input.runId}:${input.agentId}:1`
+  );
+  const existing = state.attempts.find((item) => item.id === attemptId);
   if (existing) return existing;
   const attempt: AgentAttemptRecord = {
     id: attemptId,
@@ -199,6 +208,7 @@ export function adoptAgentAttemptForCompletion(input: {
   agentId: string;
   sessionName?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord {
   const existing = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   // a completed latest attempt stays authoritative (duplicate completion events
@@ -235,7 +245,7 @@ export function adoptAgentAttemptForCompletion(input: {
     transitions: [{ from: "created", to: "instructions_submitted", at, detail }],
     origin: "routed-completion-adoption",
   };
-  writeAttempt(input.runJsonPath, attempt);
+  writeAttempt(input.runJsonPath, attempt, input.onMutation);
   return attempt;
 }
 
@@ -246,6 +256,7 @@ export function transitionAgentAttempt(input: {
   reason?: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord {
   const at = iso(input.now);
   return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => {
@@ -270,7 +281,7 @@ export function transitionAgentAttempt(input: {
         { from: attempt.phase, to: input.to, at, reason: input.reason, detail: input.detail },
       ],
     };
-  });
+  }, input.onMutation);
 }
 
 export function recordAgentAttemptRecoveryDecision(input: {
@@ -342,6 +353,7 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   agentId: string;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptCompleted({
     ...input,
@@ -355,6 +367,7 @@ export function markAgentAttemptCompletedFromEvent(input: {
   agentId: string;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptCompleted({
     ...input,
@@ -368,6 +381,7 @@ export function markAgentAttemptCompletedFromEmptyEmits(input: {
   agentId: string;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptCompleted({
     ...input,
@@ -381,6 +395,7 @@ export function markAgentAttemptFailedNoCompletion(input: {
   agentId: string;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptFailed({
     ...input,
@@ -394,6 +409,7 @@ export function markAgentAttemptRetriesExhausted(input: {
   agentId: string;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptFailed({
     ...input,
@@ -531,6 +547,7 @@ function markLatestAttemptCompleted(input: {
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
@@ -546,6 +563,7 @@ function markLatestAttemptCompleted(input: {
     reason: input.reason,
     detail: input.detail,
     now: input.now,
+    onMutation: input.onMutation,
   });
 }
 
@@ -556,6 +574,7 @@ function markLatestAttemptFailed(input: {
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
+  onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
   const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   if (!attempt) return undefined;
@@ -571,10 +590,15 @@ function markLatestAttemptFailed(input: {
     reason: input.reason,
     detail: input.detail,
     now: input.now,
+    onMutation: input.onMutation,
   });
 }
 
-function writeAttempt(runJsonPath: string, attempt: AgentAttemptRecord): void {
+function writeAttempt(
+  runJsonPath: string,
+  attempt: AgentAttemptRecord,
+  onMutation?: RunMutationObserver,
+): void {
   updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
     const runnerV2 = current.runnerV2 as RunnerV2AttemptState | undefined;
@@ -590,13 +614,14 @@ function writeAttempt(runJsonPath: string, attempt: AgentAttemptRecord): void {
         attempts: nextAttempts,
       },
     };
-  });
+  }, undefined, onMutation);
 }
 
 function updateAttempt(
   runJsonPath: string,
   attemptId: string,
   update: (attempt: AgentAttemptRecord) => AgentAttemptRecord,
+  onMutation?: RunMutationObserver,
 ): AgentAttemptRecord {
   let updated: AgentAttemptRecord | undefined;
   updateRunJson(runJsonPath, (current) => {
@@ -615,7 +640,7 @@ function updateAttempt(
         attempts: nextAttempts,
       },
     };
-  });
+  }, undefined, onMutation);
   if (!updated) throw new Error(`AgentAttempt not updated: ${attemptId}`);
   return updated;
 }

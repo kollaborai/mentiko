@@ -1,4 +1,4 @@
-import { mkdtempSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
@@ -11,6 +11,7 @@ jest.mock("@/lib/config", () => ({
   __esModule: true,
   default: {
     codeRoot: "/repo",
+    libDir: `${process.cwd()}/../lib`,
   },
 }));
 
@@ -424,11 +425,24 @@ describe("runner-v2 typed executor plan", () => {
       : true).toBe(false);
   });
 
-  it("uses all events for owned archive side effects", () => {
+  it("carries the verified physical trigger and full identities into event lifecycle side effects", () => {
     const dir = runDir();
-    const owner = parseRunnerEvent(eventContent("draft-ready", "writer-run-123", "run-123"));
-    const owned = parseRunnerEvent(eventContent("extra", "writer-run-123", "run-123"));
-    const otherRun = parseRunnerEvent(eventContent("extra", "writer-run-999", "run-999"));
+    const eventsDir = join(dir, "events");
+    mkdirSync(eventsDir);
+    const ownerContent = eventContent("draft-ready", "writer-run-123", "run-123");
+    writeFileSync(join(eventsDir, "owner.event"), ownerContent);
+    const owner = {
+      ...parseRunnerEvent(ownerContent),
+      path: join(eventsDir, "owner.event"),
+    };
+    const owned = {
+      ...parseRunnerEvent(eventContent("extra", "writer-run-123", "run-123")),
+      path: join(dir, "events", "owned.event"),
+    };
+    const otherRun = {
+      ...parseRunnerEvent(eventContent("extra", "writer-run-999", "run-999")),
+      path: join(dir, "events", "other-run.event"),
+    };
     const pipeline = runCompletionPipeline({
       runDir: dir,
       runJsonPath: seedRun(dir),
@@ -447,15 +461,25 @@ describe("runner-v2 typed executor plan", () => {
       pipeline,
       routeContext: routeContext(dir),
       allEvents: [owner, owned, otherRun],
+      allAgentIds: ["writer", "reviewer"],
     });
 
     expect(plan.effects[0]).toMatchObject({
       type: "event-side-effects",
       plan: {
         markProcessed: owner,
-        archiveOwned: [owner, owned],
+        triggeredPath: owner.path,
+        allAgentIds: ["writer", "reviewer"],
+        acceptedTrigger: expect.objectContaining({
+          sourceFilename: "owner.event",
+          occurrenceToken: expect.stringMatching(/^[a-f0-9]{64}$/),
+          rawContentSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          normalizedRecordSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
       },
     });
+    expect(plan.launches[0].env.MENTIKO_COMPLETION_OCCURRENCE_ID)
+      .toMatch(/^runner-v2-event-occurrence:[a-f0-9]{32}:v1$/);
   });
 
   it("creates fan-group state before fan-out child launch plans", () => {

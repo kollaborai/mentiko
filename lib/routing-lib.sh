@@ -220,7 +220,7 @@ fan-group-agent-complete() {
 # truth for the exactly-once guarantee.
 #
 # NOTE on the claimed value: we flip to "complete" (not a new "triggered" state)
-# so the existing consumer in chain-runner-complete.sh — which reads the group
+# so the typed completion consumer — which reads the group
 # status and treats "complete" as "fan-in was launched" — stays correct without
 # touching that out-of-scope file. The latch below treats both "triggered" and
 # "complete" as already-claimed, so an external caller using either value is safe.

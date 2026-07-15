@@ -4,7 +4,7 @@ import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
-import { updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
+import { addRunSession, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
   type AgentAttemptTerminalReason,
@@ -231,24 +231,11 @@ function buildInitialState(plan: AgentBootstrapPlan): string {
 function registerRunSession(context: RunnerV2LaunchContext, plan: AgentBootstrapPlan): void {
   const runJsonPath = join(context.runDir, "run.json");
   if (!existsSync(runJsonPath)) return;
-  updateRunJson(runJsonPath, (current) => {
-    if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
-    const agents = Array.isArray(current.agents)
-      ? current.agents.map((agent) => {
-        if (agent.id !== plan.agentId) return agent;
-        return {
-          ...agent,
-          session: plan.sessionName,
-          status: !agent.status || agent.status === "pending" ? "running" : agent.status,
-        };
-      })
-      : [];
-    return {
-      ...current,
-      sessions: Array.from(new Set([...(Array.isArray(current.sessions) ? current.sessions : []), plan.sessionName])),
-      agents,
-    };
-  });
+  // Shell-created runs only contain agents that have already launched. Routed
+  // typed targets therefore need the same append-if-absent registration used by
+  // the canonical run-state API; mapping the existing array silently omitted a
+  // new target and made durable launch acceptance reject a live PTY.
+  addRunSession(runJsonPath, plan.sessionName, plan.agentId, plan.agentName);
 }
 
 async function waitForBootstrapReadiness(

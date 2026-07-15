@@ -14,7 +14,7 @@ const baseContract: RunnerV2Contract = {
   completion_flag: {
     name: "MENTIKO_RUNNER_V2_COMPLETION",
     enabled_values: ["1", "true", "yes", "on"],
-    default: "off",
+    default: "on",
     scope: "test",
   },
   invariants: ["default shell behavior remains unchanged"],

@@ -1,39 +1,32 @@
 import { existsSync, readFileSync } from "fs";
 import { randomBytes } from "crypto";
-import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import {
+  withRunJsonLock,
+  writeRunJsonAtomic,
+  writeRunJsonExclusive,
+} from "@/lib/runs/run-json-lock";
+import {
+  assertRunRecord,
+  parseRunRecord,
+  requireRunId,
+  type AgentStatus,
+  type RunAgentRecord,
+  type RunRecord,
+  type RunStatus,
+} from "@/lib/runs/run-record";
 import { clearPendingHandoffAgent } from "@/lib/runner-v2/handoff-liveness";
 
-export type RunStatus = "pending" | "running" | "blocked" | "failed" | "stopped" | "completed";
-export type AgentStatus = "pending" | "running" | "blocked" | "failed" | "stopped" | "cancelled" | "complete" | "error";
+export type { AgentStatus, RunAgentRecord, RunRecord, RunStatus } from "@/lib/runs/run-record";
 
-export interface RunAgentRecord {
-  id: string;
-  name: string;
-  session: string;
-  status: AgentStatus | string;
-  started?: string;
-  completed?: string;
-  [key: string]: unknown;
+export interface RunJsonMutation {
+  before: RunRecord | undefined;
+  after: RunRecord;
 }
 
-export interface RunRecord {
-  id: string;
-  chain: string;
-  chainId?: string;
-  goal: string;
-  started: string;
-  status: RunStatus | string;
-  sessions: string[];
-  agents: RunAgentRecord[];
-  parent_run_id?: string;
-  workspacePath?: string;
-  taskId?: string;
-  completed?: string;
-  status_message?: string;
-  [key: string]: unknown;
-}
+export type RunMutationObserver = (mutation: RunJsonMutation) => void;
 
 export interface CreateRunRecordInput {
+  runId?: string;
   chainName: string;
   goal: string;
   parentRunId?: string;
@@ -42,7 +35,7 @@ export interface CreateRunRecordInput {
   now?: Date;
 }
 
-const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "completed"]);
+const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "completed", "cancelled"]);
 const TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancelled", "error"]);
 
 function nowIso(now = new Date()): string {
@@ -55,7 +48,7 @@ function newRunId(): string {
 
 export function createRunRecord(input: CreateRunRecordInput): RunRecord {
   return {
-    id: newRunId(),
+    id: input.runId === undefined ? newRunId() : requireRunId(input.runId),
     chain: input.chainName,
     ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
     ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
@@ -69,18 +62,28 @@ export function createRunRecord(input: CreateRunRecordInput): RunRecord {
 }
 
 export function readRunJson(runJsonPath: string): RunRecord {
-  return JSON.parse(readFileSync(runJsonPath, "utf-8")) as RunRecord;
+  return parseRunRecord(readFileSync(runJsonPath, "utf-8"));
 }
 
 export function updateRunJson(
   runJsonPath: string,
   update: (run: RunRecord | undefined) => RunRecord,
-  onLockTimeout?: (lockDir: string) => void
+  onLockTimeout?: (lockDir: string) => void,
+  onMutation?: RunMutationObserver,
 ): RunRecord {
   return withRunJsonLock(runJsonPath, () => {
     const current = existsSync(runJsonPath) ? readRunJson(runJsonPath) : undefined;
     const next = update(current);
-    writeRunJsonAtomic(runJsonPath, next);
+    assertRunRecord(next);
+    if (current && next.id !== current.id) {
+      throw new Error(`run.json mutation cannot change id from ${current.id} to ${next.id}`);
+    }
+    if (current) writeRunJsonAtomic(runJsonPath, next);
+    else writeRunJsonExclusive(runJsonPath, next);
+    // Journal the persisted representation, not the in-memory object. JSON
+    // serialization drops explicit `undefined` properties; rollback compares
+    // against what another reader can actually observe on disk.
+    onMutation?.({ before: current, after: readRunJson(runJsonPath) });
     return next;
   }, onLockTimeout);
 }
@@ -89,7 +92,8 @@ export function updateRunStatus(
   runJsonPath: string,
   status: RunStatus,
   statusMessage?: string,
-  now = new Date()
+  now = new Date(),
+  onMutation?: RunMutationObserver,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
@@ -104,7 +108,7 @@ export function updateRunStatus(
         ? { completed: nowIso(now) }
         : {}),
     };
-  });
+  }, undefined, onMutation);
 }
 
 export function addRunSession(
@@ -118,7 +122,7 @@ export function addRunSession(
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
     const agents = [...(current.agents || [])];
     const existing = agents.findIndex((agent) => agent.id === agentId);
-    const nextAgent = {
+    const nextAgent: RunAgentRecord = {
       ...(existing >= 0 ? agents[existing] : {}),
       id: agentId,
       name: agentName,
@@ -145,7 +149,8 @@ export function updateRunAgent(
   runJsonPath: string,
   agentId: string,
   status: AgentStatus,
-  now = new Date()
+  now = new Date(),
+  onMutation?: RunMutationObserver,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
@@ -160,5 +165,5 @@ export function updateRunAgent(
         };
       }),
     };
-  });
+  }, undefined, onMutation);
 }

@@ -89,7 +89,7 @@ jest.mock("fs", () => ({
       });
     }
     if (path.endsWith("agent-functions.sh")) {
-      return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-complete.js";
+      return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-completion-launch.js";
     }
     if (path.endsWith("agent-profile.sh")) {
       return "jq select((.value | test(\"^\\\\{secret:[^}]+\\\\}$\")) | not)";
@@ -98,10 +98,10 @@ jest.mock("fs", () => ({
       return "console.error('# unresolved secret reference skipped')";
     }
     if (path.endsWith("chain-runner.sh")) {
-      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="${MENTIKO_RUNNER_V2_COMPLETION:-}"\nexport MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"';
+      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="1"\nexport MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"';
     }
     if (path.endsWith("Dockerfile")) {
-      return "runner-v2-complete.js monitor-v2.js";
+      return "runner-v2-complete.js runner-v2-completion-launch.js monitor-v2.js";
     }
     if (path.endsWith("launch-plan.ts")) {
       return 'const CHAIN_RUNNER = "chain-runner.sh"; MENTIKO_RUNNER_V2_MODE: "typed-plan"; args.push("--start")';
@@ -154,7 +154,7 @@ jest.mock("fs", () => ({
     if (path.endsWith("chain-runner.contract.json")) {
       return JSON.stringify({ owns: ["mock chain-runner own"], invariants: ["mock chain-runner invariant"] });
     }
-    if (path.endsWith("chain-runner-complete.contract.json")) {
+    if (path.endsWith("completion-entrypoint.contract.json")) {
       return JSON.stringify({ invariants: ["mock complete invariant"] });
     }
     if (path.endsWith("monitor.contract.json")) {
@@ -177,7 +177,7 @@ jest.mock("fs", () => ({
       migration_mode: "side-by-side",
       default_runner: "shell",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
-      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "off", scope: "completion" },
+      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       generation_completion_contract: {
         no_emit_salvage: "typed completion imports generation payload before failing no-emit generation completion",
         import_effect: "typed executor includes generation-import",
@@ -197,7 +197,7 @@ jest.mock("fs", () => ({
           "owns:mock chain-runner own": { status: "covered", evidence: "mock" },
           "invariant:mock chain-runner invariant": { status: "covered", evidence: "mock" },
         },
-        "chain-runner-complete.contract.json": {
+        "completion-entrypoint.contract.json": {
           "invariant:mock complete invariant": { status: "covered", evidence: "mock" },
         },
         "monitor.contract.json": {
@@ -229,7 +229,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "typed-executor-supported", status: "pass" }),
       expect.objectContaining({ id: "external-dispatcher", status: "pass" }),
       expect.objectContaining({ id: "completion-typed-bridge", status: "pass" }),
-      expect.objectContaining({ id: "completion-shell-flag-gate", status: "pass" }),
+      expect.objectContaining({ id: "completion-typed-launcher", status: "pass" }),
       expect.objectContaining({ id: "routed-monitor-flag-carry", status: "pass" }),
       expect.objectContaining({ id: "generation-completion-contract", status: "pass" }),
       expect.objectContaining({ id: "generation-import-entrypoint", status: "pass" }),
@@ -240,6 +240,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "agent-bootstrap-planner", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-executor", status: "pass" }),
       expect.objectContaining({ id: "completion-runtime-compile", status: "pass" }),
+      expect.objectContaining({ id: "completion-launcher-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "monitor-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-monitor-gate", status: "pass" }),
       expect.objectContaining({ id: "routed-monitor-v2-default-on", status: "pass" }),
@@ -264,7 +265,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "external-dispatch-task-status", status: "pass" }),
       expect.objectContaining({ id: "external-dispatch-plugins", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-chain-runner", status: "pass" }),
-      expect.objectContaining({ id: "contract-binding-chain-runner-complete", status: "pass" }),
+      expect.objectContaining({ id: "contract-binding-completion-entrypoint", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-monitor", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-monitor-v2", status: "pass" }),
       expect.objectContaining({ id: "contract-binding-run-event", status: "pass" }),
@@ -279,7 +280,7 @@ describe("runner-v2 switch readiness", () => {
       migration_mode: "side-by-side",
       default_runner: "shell",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
-      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "off", scope: "completion" },
+      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       invariants: ["x"],
       implementation_coverage: {},
     } as unknown as RunnerV2Contract;
@@ -298,7 +299,7 @@ describe("runner-v2 switch readiness", () => {
       migration_mode: "side-by-side",
       default_runner: "shell",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
-      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "off", scope: "completion" },
+      completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       invariants: ["x"],
       implementation_coverage: {
         "monitor.contract.json": {

@@ -74,6 +74,26 @@ describe("runner-v2 routing decision", () => {
     });
   });
 
+  it("relaunches a completed loop target only for an event newer than its latest attempt", () => {
+    const chain = {
+      agents: [{
+        id: "writer",
+        triggers: ["revision-ready"],
+        status: "complete",
+        lastAttemptCreatedAt: "2026-07-15T12:00:00.000Z",
+      }],
+    };
+
+    expect(decideNextRoute(chain, "revision-ready", "2026-07-15T12:01:00.000Z")).toMatchObject({
+      action: "launch",
+      agentIds: ["writer"],
+    });
+    expect(decideNextRoute(chain, "revision-ready", "2026-07-15T11:59:00.000Z")).toMatchObject({
+      action: "wait",
+      pending: true,
+    });
+  });
+
   it("does not hang forever when a branch target names an agent id that doesn't exist", () => {
     expect(decideNextRoute({
       branches: { done: "ghost-agent" },

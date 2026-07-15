@@ -27,6 +27,7 @@ export interface RetryPlanInput {
   onError?: string;
   startSha?: string;
   debug?: boolean;
+  occurrenceId?: string;
 }
 
 export type RetryStateStep =
@@ -35,7 +36,7 @@ export type RetryStateStep =
 
 export type RetryFailureStep =
   | RetryStateStep
-  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number };
+  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number; failureId: string };
 
 export type RetryExhaustedStep =
   | RetryFailureStep
@@ -88,7 +89,7 @@ export function planNoEventRetry(input: RetryPlanInput): RetryNoEventPlan {
       strategy: policy.strategy,
       circuitBreaker,
       steps: [
-        circuitFailureStep(input, circuitBreaker),
+        circuitFailureStep(input, circuitBreaker, currentAttempt),
         { type: "retry-state", action: "set", agentId: input.agentId, attempt: nextAttempt },
       ],
       launch: {
@@ -104,7 +105,7 @@ export function planNoEventRetry(input: RetryPlanInput): RetryNoEventPlan {
     currentAttempt,
     circuitBreaker,
     onError: input.onError || "stop",
-    steps: buildRetryExhaustedSteps(input),
+    steps: buildRetryExhaustedSteps(input, currentAttempt),
   };
 }
 
@@ -165,12 +166,12 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
     : fallback;
 }
 
-function buildRetryExhaustedSteps(input: RetryPlanInput): RetryExhaustedStep[] {
+function buildRetryExhaustedSteps(input: RetryPlanInput, currentAttempt: number): RetryExhaustedStep[] {
   const chainName = input.chainName || "unknown";
   const agentName = input.agentName || input.agentId;
   const reason = "agent error, retries exhausted";
   const steps: RetryExhaustedStep[] = [
-    circuitFailureStep(input, normalizeCircuitBreaker(input.retry?.circuit_breaker)),
+    circuitFailureStep(input, normalizeCircuitBreaker(input.retry?.circuit_breaker), currentAttempt),
     { type: "retry-state", action: "clear", agentId: input.agentId },
   ];
 
@@ -238,6 +239,7 @@ function buildRetryExhaustedSteps(input: RetryPlanInput): RetryExhaustedStep[] {
 function circuitFailureStep(
   input: RetryPlanInput,
   circuitBreaker: Required<RetryCircuitBreakerPolicy>,
+  failedAttempt: number,
 ): Extract<RetryExhaustedStep, { type: "circuit-breaker" }> {
   return {
     type: "circuit-breaker",
@@ -246,5 +248,8 @@ function circuitFailureStep(
     agentId: input.agentId,
     threshold: circuitBreaker.threshold,
     timeout: circuitBreaker.timeout,
+    failureId: input.occurrenceId
+      ? `retry-failure:${input.occurrenceId}:${Math.max(0, Math.floor(failedAttempt))}`
+      : `retry-failure:${input.runId}:${input.agentId}:${Math.max(0, Math.floor(failedAttempt))}`,
   };
 }

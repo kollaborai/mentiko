@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pty } from "@/lib/pty/pty-client";
-import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
 import {
   classifyContextExhaustion,
@@ -32,8 +31,9 @@ import {
 import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { launchRunnerV2CompletionPty } from "@/lib/runner-v2/completion-launch";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
-import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 
 export interface LiveMonitorContext {
   sessionName: string;
@@ -602,10 +602,12 @@ async function launchCompletionSession(
   options: CompletionLaunchOptions = {},
 ): Promise<void> {
   const completionSession = `complete-${sessionName}-${Math.floor(Date.now() / 1000)}`;
-  const shellCommand = buildCompletionCommand(sessionName, context, options);
-  await pty.spawn(completionSession, "bash", ["-lc", shellCommand], {
+  await launchRunnerV2CompletionPty({
+    completionSession,
+    sessionName,
+    chainPath: context.chainPath,
     env: {
-      ...stringEnv(context.env),
+      ...context.env,
       MENTIKO_RUN_ID: context.runId,
       RUN_ID: context.runId,
       NAMESPACE_ID: context.namespaceId,
@@ -615,71 +617,11 @@ async function launchCompletionSession(
       MENTIKO_CODE_ROOT: config.codeRoot,
       EVENTS_DIR: context.eventsDir,
       STATE_DIR: context.stateDir,
-      MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
-      MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1",
       MENTIKO_MONITOR_COMPLETION_LATCH: monitorCompletionLatch(options) ? "1" : "",
     },
   });
-}
-
-// Mirrors bash `[[ "$VALUE" =~ ^(1|true|yes|on)$ ]]` (case-sensitive, same as
-// lib/agent-functions.sh:702-703 launch-chain-runner-complete).
-const RUNNER_V2_TRUTHY = /^(1|true|yes|on)$/;
-
-function isFlagTruthy(value: string | undefined): boolean {
-  return typeof value === "string" && RUNNER_V2_TRUTHY.test(value);
-}
-
-function buildCompletionCommand(
-  sessionName: string,
-  context: LiveMonitorContext,
-  options: CompletionLaunchOptions = {},
-): string {
-  const completeShell = join(config.codeRoot, "lib", "chain-runner-complete.sh");
-  const compiled = join(config.codeRoot, "lib", "runner-v2-complete.js");
-  const devScript = join(config.codeRoot, "web", "scripts", "runner-v2-complete.cjs");
-  const session = shellEscape(sessionName);
-  const chain = shellEscape(context.chainPath);
-  const shell = `exec ${shellEscape(completeShell)} ${session} ${chain}`;
-
-  // Mirrors lib/agent-functions.sh launch-chain-runner-complete (:694-706), the
-  // shell equivalent of this function: typed completion only engages when BOTH
-  // MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are truthy. When disabled,
-  // run ONLY the shell completion path -- no node invocation at all. When
-  // enabled, run whichever typed script exists and exit with EXACTLY its exit
-  // code (including 64) -- fail CLOSED, never fall through to
-  // chain-runner-complete.sh. The old "_s=$?; if -ne 64" chain let a
-  // declining/unsupported typed script (64, RunnerV2CompletionUnsupportedError)
-  // cascade all the way into the shell path even with the flag on, mixing typed
-  // + shell ownership for the same completion (see b34fd72).
-  const typedCompletionEnabled = isFlagTruthy(context.env.MENTIKO_RUNNER_V2)
-    && isFlagTruthy(context.env.MENTIKO_RUNNER_V2_COMPLETION);
-  const completion = typedCompletionEnabled
-    ? [
-        "if ! command -v node >/dev/null 2>&1; then",
-        "echo 'runner-v2 completion failed closed: node unavailable' >&2; exit 64;",
-        "fi;",
-        `if [[ -f ${shellEscape(compiled)} ]]; then node ${shellEscape(compiled)} ${session} ${chain}; exit "$?"; fi;`,
-        `if [[ -f ${shellEscape(devScript)} ]]; then node ${shellEscape(devScript)} ${session} ${chain}; exit "$?"; fi;`,
-        "echo 'runner-v2 completion failed closed: typed completion entrypoint missing' >&2; exit 64;",
-      ].join(" ")
-    : shell;
-  const env = {
-    MENTIKO_RUN_ID: context.runId,
-    RUN_ID: context.runId,
-    NAMESPACE_ID: context.namespaceId,
-    ORG_ID: context.orgId,
-    WORKSPACE_TYPE: context.workspaceType,
-    MENTIKO_RUN_DIR: context.runDir,
-    MENTIKO_CODE_ROOT: config.codeRoot,
-    EVENTS_DIR: context.eventsDir,
-    STATE_DIR: context.stateDir,
-    MENTIKO_RUNNER_V2: context.env.MENTIKO_RUNNER_V2 || "",
-    MENTIKO_RUNNER_V2_COMPLETION: context.env.MENTIKO_RUNNER_V2_COMPLETION || "",
-    MENTIKO_MONITOR_COMPLETION_LATCH: monitorCompletionLatch(options) ? "1" : "",
-  };
-  const envArgs = Object.entries(env).map(([key, value]) => `${key}=${shellEscape(String(value))}`).join(" ");
-  return `env ${envArgs} bash -lc ${shellEscape(completion)}`;
 }
 
 function monitorCompletionLatch(options: CompletionLaunchOptions): boolean {
@@ -756,8 +698,4 @@ function sleepMs(ms: number): Promise<void> {
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
-}
-
-function stringEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): Record<string, string> {
-  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }

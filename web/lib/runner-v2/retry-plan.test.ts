@@ -79,6 +79,27 @@ describe("runner-v2 retry planner", () => {
     expect(plan.steps.some((step) => step.type === "task-status")).toBe(false);
   });
 
+  it("keeps one failure id stable on replay and separates a later completion occurrence", () => {
+    const failureId = (occurrenceId: string) => {
+      const plan = planNoEventRetry({
+        runId: "run-123",
+        chainName: "Build Chain",
+        agentId: "writer",
+        currentAttempt: 0,
+        occurrenceId,
+        retry: { max_retries: 1 },
+      });
+      for (const step of plan.steps) {
+        if (step.type === "circuit-breaker") return step.failureId;
+      }
+      return undefined;
+    };
+
+    expect(failureId("completion-occurrence-a")).toBe("retry-failure:completion-occurrence-a:0");
+    expect(failureId("completion-occurrence-a")).toBe("retry-failure:completion-occurrence-a:0");
+    expect(failureId("completion-occurrence-b")).toBe("retry-failure:completion-occurrence-b:0");
+  });
+
   it("models rollback as plan-only on exhausted on_error=rollback", () => {
     const plan = planNoEventRetry({
       runId: "run-123",

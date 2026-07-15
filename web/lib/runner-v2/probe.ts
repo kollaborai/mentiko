@@ -117,6 +117,7 @@ export async function runSyntheticRunnerV2ProbeWithDispatch(input: RunnerV2Probe
 
   applyTypedExecutorPlan({
     action: "terminal",
+    occurrenceId: result.plan.occurrenceId,
     launches: [],
     effects: [{
       type: "terminal",

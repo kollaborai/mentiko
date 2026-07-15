@@ -32,7 +32,6 @@ describe("runner-v2 routed launch plans", () => {
       agentIds: ["reviewer"],
       command: expect.stringContaining("runner-v2-launch-agent"),
       env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", MENTIKO_RUN_DIR: "/runs/run-1", MENTIKO_WORKSPACE_PATH: "/workspace" }),
-      detached: true,
     })]);
     expect(buildRoutedLaunchPlans({ action: "launch", agentIds: ["reviewer"], reason: "trigger match" }, context)[0].command)
       .not.toContain("chain-runner.sh");
@@ -69,11 +68,10 @@ describe("runner-v2 routed launch plans", () => {
       kind: "parallel",
       agentIds: ["a", "b"],
       command: expect.stringMatching(/runner-v2-launch-agent.*'a' 'b'/),
-      detached: true,
     });
   });
 
-  it("builds detached fan-out plans with per-agent logs and fan metadata", () => {
+  it("builds synchronous-acceptance fan-out plans with per-agent logs and fan metadata", () => {
     expect(buildRoutedLaunchPlans({
       action: "launch",
       agentIds: ["a", "b"],
@@ -87,7 +85,6 @@ describe("runner-v2 routed launch plans", () => {
         command: expect.stringMatching(/runner-v2-launch-agent.*'a'/),
         env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "a", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
         logPath: "/runs/run-1/fanout-a.log",
-        detached: true,
       }),
       expect.objectContaining({
         kind: "fan-out",
@@ -95,7 +92,6 @@ describe("runner-v2 routed launch plans", () => {
         command: expect.stringMatching(/runner-v2-launch-agent.*'b'/),
         env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "b", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
         logPath: "/runs/run-1/fanout-b.log",
-        detached: true,
       }),
     ]);
   });

@@ -152,6 +152,7 @@ export function findCompletionEventFile(input: {
   return "";
 }
 
+// The retired source label remains read-only compatibility for pre-cutover diagnostics.
 const DIAGNOSTIC_SOURCES = new Set(["monitor", "watchdog", "chain-runner-complete"]);
 
 /**

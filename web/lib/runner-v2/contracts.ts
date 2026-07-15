@@ -8,7 +8,7 @@ const CONTRACT_PATH = join(config.codeRoot, "docs", "orchestration", "contracts"
 /** the per-implementation migration source-of-truth contracts (docs/orchestration/contracts/README.md) */
 export const IMPLEMENTATION_CONTRACT_FILES = [
   "chain-runner.contract.json",
-  "chain-runner-complete.contract.json",
+  "completion-entrypoint.contract.json",
   "monitor.contract.json",
   "monitor-v2.contract.json",
   "run-event.contract.json",
@@ -65,6 +65,9 @@ export function validateRunnerV2Contract(contract: RunnerV2Contract): void {
   }
   if (contract.completion_flag?.name !== "MENTIKO_RUNNER_V2_COMPLETION") {
     throw new Error("runner-v2 completion flag mismatch");
+  }
+  if (contract.completion_flag.default !== "on") {
+    throw new Error("runner-v2 completion marker must remain forced on after typed cutover");
   }
   if (!Array.isArray(contract.invariants) || contract.invariants.length === 0) {
     throw new Error("runner-v2 contract must define invariants");

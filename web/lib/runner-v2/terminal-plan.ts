@@ -141,11 +141,12 @@ export interface TerminalFailureInput {
   taskId?: string;
   agentId?: string;
   reason?: string;
+  occurrenceId?: string;
 }
 
 export type TerminalFailureStep =
   | { type: "task-status"; status: "failed"; taskId?: string; runId?: string }
-  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number }
+  | { type: "circuit-breaker"; action: "record-failure"; chainName: string; agentId: string; threshold: number; timeout: number; failureId: string }
   | { type: "notification"; event: "agent-failed"; chainName: string; runId: string; agentId?: string; reason?: string }
   | { type: "metadata-webhooks"; event: "failed"; chainId?: string; chainPath?: string; chainName: string; runId: string };
 
@@ -157,7 +158,7 @@ export interface TerminalFailurePlan {
 /**
  * Failure counterpart of planTerminalCompletion for plain fail decisions
  * (agent completed without its declared event and no retry policy applies).
- * Mirrors the shell no-event failure path in chain-runner-complete.sh:
+ * Preserves the retired shell completion path's no-event failure invariant:
  * task propagation, circuit breaker, agent-failed notification, failed
  * webhooks. The shell fires no plugins on this path, so neither do we.
  */
@@ -175,6 +176,7 @@ export function planTerminalFailure(input: TerminalFailureInput): TerminalFailur
       agentId: input.agentId,
       threshold: 5,
       timeout: 300,
+      failureId: `terminal-failure:${input.runId}:${input.agentId}:${input.occurrenceId || "no-completion-event"}`,
     });
   }
 
@@ -230,7 +232,7 @@ export interface AgentCompletionPlan {
 
 /**
  * Per-agent completion side effects mirroring the top of
- * chain-runner-complete.sh (agent_complete webhook, agent-completed plugins,
+ * the predecessor shell completion handler (agent_complete webhook, agent-completed plugins,
  * agent-completed notification). Unlike the shell — which fires these before
  * the completion verdict, even for agents that then fail — the typed runner
  * only plans them for completions that actually mark the agent complete.

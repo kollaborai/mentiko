@@ -35,16 +35,16 @@ export function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
-export function hasLivePendingHandoff(
+export function livePendingHandoffAgentIds(
   run: Record<string, unknown>,
   isAlive: ProcessAlive = processIsAlive,
   now = Date.now(),
-): boolean {
+): Set<string> {
   const agents = Array.isArray(run.agents) ? run.agents : [];
   const statusByAgent = new Map<string, string>();
   for (const value of agents) {
@@ -54,15 +54,28 @@ export function hasLivePendingHandoff(
     }
   }
 
-  return pendingHandoffs(run).some((handoff) => {
+  const targets = new Set<string>();
+  for (const handoff of pendingHandoffs(run)) {
     const startedAt = new Date(handoff.startedAt).getTime();
-    if (!Number.isFinite(startedAt) || now - startedAt > MAX_PENDING_HANDOFF_AGE_MS) return false;
-    const stillWaiting = handoff.targetAgentIds.some((agentId) => {
+    if (!Number.isFinite(startedAt) || now - startedAt > MAX_PENDING_HANDOFF_AGE_MS || !isAlive(handoff.pid)) {
+      continue;
+    }
+    for (const agentId of handoff.targetAgentIds) {
       const status = statusByAgent.get(agentId);
-      return status === undefined || ["pending", "cancelled", "stopped"].includes(status);
-    });
-    return stillWaiting && isAlive(handoff.pid);
-  });
+      if (status === undefined || ["pending", "cancelled", "stopped"].includes(status)) {
+        targets.add(agentId);
+      }
+    }
+  }
+  return targets;
+}
+
+export function hasLivePendingHandoff(
+  run: Record<string, unknown>,
+  isAlive: ProcessAlive = processIsAlive,
+  now = Date.now(),
+): boolean {
+  return livePendingHandoffAgentIds(run, isAlive, now).size > 0;
 }
 
 export function clearPendingHandoffAgent(

@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import {
   completeFanGroupMember,
   createFanGroupState,
@@ -39,9 +40,39 @@ export function createFanGroup(stateDir: string, input: FanGroupCreateInput): Fa
   return group;
 }
 
+export function createFanGroupIfAbsent(stateDir: string, group: FanGroupState): FanGroupState {
+  const path = existsSync(fanGroupStatePath(stateDir, group.id)) && !existsSync(fanGroupPath(stateDir, group.id))
+    ? fanGroupStatePath(stateDir, group.id)
+    : fanGroupPath(stateDir, group.id);
+  return withFanGroupLock(path, () => {
+    const existing = readFanGroup(stateDir, group.id);
+    if (existing) {
+      assertSameFanGroupDefinition(existing, group);
+      return existing;
+    }
+    writeFanGroup(stateDir, group);
+    return group;
+  });
+}
+
+function assertSameFanGroupDefinition(existing: FanGroupState, expected: FanGroupState): void {
+  const same = existing.event === expected.event
+    && existing.runId === expected.runId
+    && existing.fanInAgent === expected.fanInAgent
+    && existing.waitFor === expected.waitFor
+    && existing.quorum === expected.quorum
+    && existing.onError === expected.onError
+    // Replay routing may omit a child that already reached durable active or
+    // terminal state. The original occurrence owns the full immutable member
+    // set; a replay proposal may only be an ordered subset of that set.
+    && expected.fanOutAgents.every((agentId) => existing.fanOutAgents.includes(agentId));
+  if (!same) throw new Error(`fan-group occurrence collision for ${expected.id}`);
+}
+
 export function completeFanGroupMemberLocked(
   stateDir: string,
   input: Omit<FanGroupCompletionInput, "group"> & { groupId: string },
+  acceptLaunch?: (plan: FanGroupCompletionPlan) => void,
 ): FanGroupCompletionPlan | null {
   const path = existsSync(fanGroupStatePath(stateDir, input.groupId)) && !existsSync(fanGroupPath(stateDir, input.groupId))
     ? fanGroupStatePath(stateDir, input.groupId)
@@ -55,6 +86,10 @@ export function completeFanGroupMemberLocked(
       agentId: input.agentId,
       status: input.status,
     });
+    // A fan-in claim is only committed after its launch is durably accepted.
+    // If acceptance fails, leave both the claim and completing member replayable
+    // under the still-active completion event.
+    if (plan.launch) acceptLaunch?.(plan);
     writeFanGroup(stateDir, plan.group);
     return plan;
   });
@@ -62,15 +97,7 @@ export function completeFanGroupMemberLocked(
 
 function withFanGroupLock<T>(statePath: string, fn: () => T): T {
   const lockDir = `${statePath}.lock`;
-  mkdirSync(dirname(statePath), { recursive: true });
-  mkdirSync(lockDir);
-  try {
-    writeFileSync(join(lockDir, "pid"), String(process.pid));
-    return fn();
-  } finally {
-    try { rmSync(join(lockDir, "pid"), { force: true }); } catch { /* ignore */ }
-    try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* ignore */ }
-  }
+  return withExclusiveFileClaim(lockDir, fn, { waitTimeoutMs: 5_000 });
 }
 
 function writeJsonAtomic(path: string, data: unknown): void {

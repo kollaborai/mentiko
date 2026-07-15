@@ -81,7 +81,7 @@ check_pty_manager() {
     return 0
 }
 
-# shared hook runner (also used by chain-runner-complete.sh)
+# shared hook runner (typed completion dispatches equivalent hook effects)
 _HOOKS_PROJECT_ROOT="$PROJECT_ROOT" source "$SCRIPT_DIR/hooks.sh"
 HOOKS_DIR="$_HOOKS_DIR"
 
@@ -152,7 +152,7 @@ check_run() {
                 continue  # session alive → skip all other checks
             fi
             # also check if monitor is alive (monitor outlives agent session
-            # during chain-runner-complete handoff)
+            # during the typed completion handoff)
             if transport_has_session "monitor-$asess" 2>/dev/null; then
                 any_alive=true
                 [[ "$ast" == "running" ]] && any_running=true
@@ -223,7 +223,7 @@ check_run() {
                     any_alive=true
                 fi
             fi
-            # grace period: if any agent completed recently, chain-runner-complete
+            # grace period: if any agent completed recently, typed completion
             # is doing handoff (artifact capture + next agent launch)
             if ! $any_alive; then
                 local latest_completion
@@ -274,7 +274,7 @@ check_run() {
                 transport_kill_session "$asess" 2>/dev/null || true
             fi
             # kill per-agent monitor (monitor-{runId}-{agentId}) only if dead
-            # never kill live monitors - they may be owned by chain-runner-complete
+            # never kill live monitors - they may be owned by typed completion
             if [[ -n "$aid" && "$aid" != "null" ]]; then
                 local monitor_sess="monitor-${run_id}-${aid}"
                 if ! transport_has_session "$monitor_sess" 2>/dev/null; then
@@ -283,7 +283,7 @@ check_run() {
             fi
         done < <(echo "$agents_json" | jq -c '.[]' 2>/dev/null)
         # kill run-level monitor session only if dead
-        # never kill live monitors - chain-runner-complete uses them for artifact capture
+        # never kill live monitors - typed completion may still need their evidence
         local run_monitor="monitor-${run_id}"
         if ! transport_has_session "$run_monitor" 2>/dev/null; then
             transport_kill_session "$run_monitor" 2>/dev/null || true
@@ -296,30 +296,22 @@ check_run() {
         # route). This rewrite now goes through run-lib's shared mkdir-lock so it
         # cannot lost-update a concurrent agent-status or heartbeat write. The jq
         # filter is unchanged — it lives in run-lib's watchdog-stop-run helper
-        # (which watchdog.sh sources at the top). Fallback keeps the watchdog robust
-        # if run-lib failed to source: an unlocked terminal write is still better
-        # than leaving a stalled run stuck "running" forever.
+        # (which watchdog.sh sources at the top). If that shared writer is missing,
+        # fail closed: reconciliation can retry, but an unlocked rewrite can silently
+        # erase a concurrent completion or heartbeat.
         if declare -f watchdog-stop-run >/dev/null 2>&1; then
             watchdog-stop-run "$run_id" || true
         else
-            jq '
-                .status = "stopped" |
-                .completed = (now | todate) |
-                .agents |= map(
-                    if .status == "running" and (.session == "" or .session == null) then .status = "cancelled"
-                    elif .status == "running" then .status = "stopped"
-                    elif .status == "pending" then .status = "cancelled"
-                    else .
-                    end
-                )
-            ' "$run_file" > "$run_file.tmp" && mv "$run_file.tmp" "$run_file"
+            _sys_log "error" "watchdog" "run.json mutation skipped: shared writer unavailable" \
+                "run: $run_id, file: $run_file"
+            echo "     error: shared run.json writer unavailable; stalled-state mutation skipped" >&2
         fi
 
         # emit run-stalled event
         # NOTE: this is a SYSTEM event (observed by hooks/notifications), not an agent
         # handoff event, so it intentionally keeps its own ${ts}-run-stalled.event naming
         # rather than the canonical ${run_id}-${source}-${event}.event used for agent
-        # completion handoffs (see lib/event-trigger.sh emit-event). Do not "unify" it.
+        # completion handoffs (see the typed runner-event emitter). Do not "unify" it.
         local ts=$(date -u +"%Y%m%dT%H%M%S")
         local event_file="$EVENTS_DIR/${ts}-run-stalled.event"
         cat > "$event_file" <<EOF

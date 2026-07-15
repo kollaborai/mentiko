@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { createLiveMonitorIO, hasAuthoritativeGenerationArtifact, selectTranscriptFromCapture, transcriptRootFromProfile } from "@/lib/runner-v2/monitor-live-io";
 import { runChainMonitor } from "@/lib/runner-v2/monitor";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
+import { consumeCompletionLaunchContext } from "@/lib/runner-v2/completion-launch-context";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
@@ -15,6 +16,7 @@ jest.mock("@/lib/pty/pty-client", () => ({
     pid: jest.fn(),
     sendRaw: jest.fn(),
     spawn: jest.fn(),
+    remove: jest.fn(),
   },
 }));
 
@@ -28,13 +30,13 @@ jest.mock("@/lib/config", () => ({
   derivePtyDaemonName: (root: string, namespace: string, org: string) =>
     `mentiko-${root.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "root"}-${namespace}-${org}`,
   default: {
-    codeRoot: "/repo",
+    codeRoot: process.cwd().replace(/\/web$/, ""),
     globalRoot: "/data",
     namespaceId: "default",
     orgId: "default",
   },
   config: {
-    codeRoot: "/repo",
+    codeRoot: process.cwd().replace(/\/web$/, ""),
     globalRoot: "/data",
     namespaceId: "default",
     orgId: "default",
@@ -47,7 +49,10 @@ const ptyMock = jest.requireMock("@/lib/pty/pty-client").pty as {
   pid: jest.Mock;
   sendRaw: jest.Mock;
   spawn: jest.Mock;
+  remove: jest.Mock;
 };
+
+let lastCompletionContext: Record<string, string> = {};
 
 function tempRoot() {
   return mkdtempSync(join(tmpdir(), "runner-v2-monitor-live-"));
@@ -109,6 +114,12 @@ function liveIo(f: ReturnType<typeof fixture>, extraEnv: Record<string, string> 
 
 beforeEach(() => {
   jest.clearAllMocks();
+  lastCompletionContext = {};
+  ptyMock.spawn.mockImplementation(async (name: string, _cmd: string, args: string[]) => {
+    lastCompletionContext = consumeCompletionLaunchContext(args[3], {});
+    return { name, pid: 4242 };
+  });
+  ptyMock.remove.mockResolvedValue(undefined);
   (spawnSync as jest.Mock).mockReturnValue({ status: 1 });
 });
 
@@ -184,25 +195,27 @@ describe("monitor-v2 live IO", () => {
       "",
     ].join("\n"));
     await liveIo(f, { MENTIKO_TRANSCRIPT_JSONL: transcript }).onComplete("writer-run-123");
-    expect(ptyMock.spawn).toHaveBeenCalledWith(
-      expect.stringMatching(/^complete-writer-run-123-/),
-      "bash",
-      ["-lc", expect.stringContaining("runner-v2-complete.js")],
-      expect.objectContaining({
-        env: expect.objectContaining({
-          MENTIKO_RUN_ID: "run-123",
-          MENTIKO_RUN_DIR: f.runDir,
-          MENTIKO_CODE_ROOT: "/repo",
-          EVENTS_DIR: f.eventsDir,
-          STATE_DIR: f.stateDir,
-          MENTIKO_RUNNER_V2: "1",
-          MENTIKO_RUNNER_V2_COMPLETION: "1",
-          MENTIKO_MONITOR_COMPLETION_LATCH: "1",
-        }),
-      }),
-    );
-    const command = ptyMock.spawn.mock.calls[0][2][1];
-    expect(command).toContain("MENTIKO_MONITOR_COMPLETION_LATCH='1'");
+    const codeRoot = process.cwd().replace(/\/web$/, "");
+    const call = ptyMock.spawn.mock.calls[0];
+    expect(call[0]).toEqual(expect.stringMatching(/^complete-writer-run-123-/));
+    expect(call[1]).toBe(process.execPath);
+    expect(call[2]).toEqual([
+      join(codeRoot, "web", "scripts", "runner-v2-complete.cjs"),
+      "writer-run-123",
+      f.chainPath,
+      expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),
+    ]);
+    expect(call[3]).toBeUndefined();
+    expect(lastCompletionContext).toMatchObject({
+      MENTIKO_RUN_ID: "run-123",
+      MENTIKO_RUN_DIR: f.runDir,
+      MENTIKO_CODE_ROOT: codeRoot,
+      EVENTS_DIR: f.eventsDir,
+      STATE_DIR: f.stateDir,
+      MENTIKO_RUNNER_V2: "1",
+      MENTIKO_RUNNER_V2_COMPLETION: "1",
+      MENTIKO_MONITOR_COMPLETION_LATCH: "1",
+    });
   });
 
   it("dead without event marks run and agent failed with monitor diagnostic event", async () => {
@@ -218,7 +231,7 @@ describe("monitor-v2 live IO", () => {
     expect(eventFiles).toContain("agent: writer");
   });
 
-  describe("completion command flag gate (A1 -- fail closed on 64, no shell fallthrough)", () => {
+  describe("typed-only completion command (A1 -- fail closed, no shell fallthrough)", () => {
     // No MENTIKO_TRANSCRIPT_JSONL override in these tests, so onComplete's
     // agentCompleteMarker lookup falls through to pty.capture -- pin it to a
     // UUID-free string so resolveTranscriptJsonl short-circuits instead of
@@ -228,30 +241,36 @@ describe("monitor-v2 live IO", () => {
       ptyMock.capture.mockResolvedValue("");
     });
 
-    it("runs ONLY the shell completion script when MENTIKO_RUNNER_V2_COMPLETION is not enabled", async () => {
+    it("runs typed completion when the old completion flag is off", async () => {
       const f = fixture();
       await liveIo(f, { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "" }).onComplete("writer-run-123");
-      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
-      expect(command).toContain("chain-runner-complete.sh");
-      expect(command).not.toContain("runner-v2-complete.js");
-      expect(command).not.toContain("runner-v2-complete.cjs");
+      expect(ptyMock.spawn.mock.calls[0][1]).toBe(process.execPath);
+      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.cjs");
+      expect(lastCompletionContext).toMatchObject({
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+      });
     });
 
-    it("runs ONLY the shell completion script when MENTIKO_RUNNER_V2 is off, even if the completion flag is on", async () => {
+    it("runs typed completion when initial runner-v2 is off", async () => {
       const f = fixture();
       await liveIo(f, { MENTIKO_RUNNER_V2: "", MENTIKO_RUNNER_V2_COMPLETION: "1" }).onComplete("writer-run-123");
-      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
-      expect(command).toContain("chain-runner-complete.sh");
-      expect(command).not.toContain("runner-v2-complete.js");
+      expect(ptyMock.spawn.mock.calls[0][1]).toBe(process.execPath);
+      expect(ptyMock.spawn.mock.calls[0][2][0]).toContain("runner-v2-complete.cjs");
     });
 
-    it("runs the typed path and fails CLOSED on 64 -- no shell fallthrough -- when both flags are enabled", async () => {
+    it("passes completion argv directly without a shell process", async () => {
       const f = fixture();
       await liveIo(f, { MENTIKO_RUNNER_V2: "1", MENTIKO_RUNNER_V2_COMPLETION: "1" }).onComplete("writer-run-123");
-      const command = ptyMock.spawn.mock.calls[0][2][1] as string;
-      expect(command).toContain("runner-v2-complete.js");
-      expect(command).toContain("exit 64");
-      expect(command).not.toContain("chain-runner-complete.sh");
+      expect(ptyMock.spawn.mock.calls[0].slice(1, 3)).toEqual([
+        process.execPath,
+        [
+          expect.stringContaining("runner-v2-complete.cjs"),
+          "writer-run-123",
+          f.chainPath,
+          expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),
+        ],
+      ]);
     });
   });
 
@@ -418,7 +437,7 @@ describe("monitor-v2 live IO", () => {
       expect(observed).toMatchObject({ completionEventPresent: true, latched: true });
       await io.onComplete("writer-run-123");
 
-      const completionEnv = ptyMock.spawn.mock.calls[0][3].env as Record<string, string>;
+      const completionEnv = lastCompletionContext;
       expect(completionEnv.MENTIKO_MONITOR_COMPLETION_LATCH).toBe("1");
 
       const result = runRunnerV2CompletionEntrypoint({
@@ -513,8 +532,6 @@ describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker 
     ptyMock.alive.mockResolvedValue(true);
     ptyMock.capture.mockResolvedValue(`${DECOY}\nstatus ${REAL}`);
     ptyMock.pid.mockResolvedValue(undefined);
-    ptyMock.spawn.mockResolvedValue(undefined);
-
     const io = liveIo(f, { MENTIKO_AGENT_PROFILE_PATH: profile });
     const result = await runChainMonitor("writer-run-123", io, {}, 0);
 

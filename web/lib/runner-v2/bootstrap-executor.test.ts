@@ -2,6 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
+import { startLaunch } from "@/lib/runner-v2/adapters";
+import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
+import { createRunRecordFile } from "@/lib/runs/run-record";
 import type { AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import type { RunnerV2LaunchContext } from "@/lib/runner-v2/types";
 
@@ -11,6 +14,16 @@ jest.mock("@/lib/api/audit-exec", () => ({
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), "runner-v2-bootstrap-exec-"));
+}
+
+function seedRunJson(root: string, status: RunStatus = "pending"): string {
+  const runJsonPath = join(root, "run.json");
+  updateRunJson(runJsonPath, () => ({
+    ...createRunRecord({ runId: "run-1", chainName: "Test Chain", goal: "bootstrap test" }),
+    status,
+    agents: [{ id: "writer", name: "Writer", session: "", status: "pending" }],
+  }));
+  return runJsonPath;
 }
 
 function plan(root: string): AgentBootstrapPlan {
@@ -53,6 +66,28 @@ function plan(root: string): AgentBootstrapPlan {
   };
 }
 
+function routedPlan(root: string, agentId: string, agentName: string, emits: string): AgentBootstrapPlan {
+  const base = plan(root);
+  const sessionName = `workspace-${agentId}-run-1`;
+  return {
+    ...base,
+    agentId,
+    agentName,
+    sessionPrefix: agentId,
+    sessionName,
+    monitorSessionName: `monitor-${sessionName}`,
+    statePath: join(root, "state", `${agentId}-run-1.state`),
+    instructionPath: join(root, "artifacts", `${agentId}-instructions.md`),
+    instructionPointer: `Read ${join(root, "artifacts", `${agentId}-instructions.md`)}`,
+    monitorCommand: `monitor-chain-agent ${sessionName}`,
+    runContextExports: {
+      ...base.runContextExports,
+      MENTIKO_AGENT_ID: agentId,
+      MENTIKO_AGENT_EMITS: emits,
+    },
+  };
+}
+
 describe("runner-v2 bootstrap executor", () => {
   beforeAll(() => {
     process.env.MENTIKO_RUNNER_V2_SUBMISSION_POLL_MS = "5";
@@ -77,12 +112,7 @@ describe("runner-v2 bootstrap executor", () => {
       sendKeys: jest.fn(async (...args: unknown[]) => { calls.push({ op: "sendKeys", args }); }),
       capture: jest.fn(async () => "claude ready >"),
     };
-    const runJsonPath = join(root, "run.json");
-    writeFileSync(runJsonPath, JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    const runJsonPath = seedRunJson(root);
 
     await executeLocalBootstrap(plan(root), {
       chainPath: join(root, "chain.json"),
@@ -152,11 +182,7 @@ describe("runner-v2 bootstrap executor", () => {
   it("leaves watcher and watchdog ownership with the background worker", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = {
       has: jest.fn(async () => false),
       remove: jest.fn(async () => {}),
@@ -186,22 +212,86 @@ describe("runner-v2 bootstrap executor", () => {
     });
   });
 
+  it("registers a routed target that is absent from a shell-created run", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = join(root, "run.json");
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({ runId: "run-1", chainName: "Test Chain", goal: "bootstrap test" }),
+      status: "running",
+      agents: [],
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(JSON.parse(readFileSync(runJsonPath, "utf8"))).toMatchObject({
+      status: "running",
+      sessions: ["workspace-writer-run-1"],
+      agents: [{
+        id: "writer",
+        name: "Writer",
+        status: "running",
+        session: "workspace-writer-run-1",
+        started: expect.any(String),
+      }],
+    });
+  });
+
+  it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {
+    const root = tempDir();
+    const runJsonPath = join(root, "run.json");
+    writeFileSync(join(root, "chain.json"), JSON.stringify({
+      agents: [{ id: "writer" }, { id: "designer" }, { id: "editor" }],
+    }));
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({ runId: "run-1", chainName: "Test Chain", goal: "bootstrap test" }),
+      status: "running",
+      agents: [{ id: "writer", name: "Writer", session: "writer-run-1", status: "complete" }],
+      sessions: ["writer-run-1"],
+    }));
+    const executor = executorWithCapture("claude ready >");
+    const designer = routedPlan(root, "designer", "Designer", "designer-done");
+    const editor = routedPlan(root, "editor", "Editor", "editor-done");
+
+    await executeLocalBootstrap(designer, context(root), executor);
+    await executeLocalBootstrap(editor, context(root), executor);
+
+    const adapterContext = { runJsonPath, stateDir: join(root, "state") };
+    expect(startLaunch({
+      kind: "fan-out",
+      agentIds: ["designer"],
+      command: "must not spawn: designer already accepted",
+      env: { MENTIKO_RUN_ID: "run-1" },
+    }, adapterContext)).toMatchObject({
+      targets: [expect.objectContaining({ agentId: "designer", session: "workspace-designer-run-1" })],
+    });
+    expect(startLaunch({
+      kind: "fan-out",
+      agentIds: ["editor"],
+      command: "must not spawn: editor already accepted",
+      env: { MENTIKO_RUN_ID: "run-1" },
+    }, adapterContext)).toMatchObject({
+      targets: [expect.objectContaining({ agentId: "editor", session: "workspace-editor-run-1" })],
+    });
+    expect(JSON.parse(readFileSync(runJsonPath, "utf8"))).toMatchObject({
+      agents: expect.arrayContaining([
+        expect.objectContaining({ id: "designer", status: "running", session: "workspace-designer-run-1" }),
+        expect.objectContaining({ id: "editor", status: "running", session: "workspace-editor-run-1" }),
+      ]),
+    });
+  });
+
   it("blocks before pty launch when chain concurrency cap is full", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      status: "running",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
-    mkdirSync(join(root, "run-existing"), { recursive: true });
-    writeFileSync(join(root, "run-existing", "run.json"), JSON.stringify({
-      id: "run-existing",
+    seedRunJson(root, "running");
+    createRunRecordFile(root, {
+      ...createRunRecord({ runId: "run-existing", chainName: "Existing Chain", goal: "hold capacity" }),
       status: "running",
       sessions: ["other-agent"],
-      agents: [{ id: "other", status: "running" }],
-    }));
+      agents: [{ id: "other", name: "Other", session: "other-agent", status: "running" }],
+    });
     const executor = executorWithCapture("claude ready >");
 
     await executeLocalBootstrap(plan(root), {
@@ -234,12 +324,7 @@ describe("runner-v2 bootstrap executor", () => {
     const root = tempDir();
     writeProfile(root, { enabled: true, ready_patterns: [{ name: "ready", value: "claude ready" }] });
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      status: "pending",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture("claude ready >");
 
     await executeLocalBootstrap(plan(root), {
@@ -272,12 +357,7 @@ describe("runner-v2 bootstrap executor", () => {
   it("retries bare enters until the composer accepts the pasted instructions", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    const runJsonPath = join(root, "run.json");
-    writeFileSync(runJsonPath, JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    const runJsonPath = seedRunJson(root);
     // readiness poll sees a booted CLI; the first two post-send captures show
     // the composer still holding the paste (enter swallowed during boot),
     // then it clears after a bare-enter retry.
@@ -315,12 +395,7 @@ describe("runner-v2 bootstrap executor", () => {
   it("marks the attempt stuck when the composer never accepts the paste", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    const runJsonPath = join(root, "run.json");
-    writeFileSync(runJsonPath, JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    const runJsonPath = seedRunJson(root);
     let sent = false;
     const executor = {
       remove: jest.fn(async () => {}),
@@ -364,13 +439,8 @@ describe("runner-v2 bootstrap executor", () => {
 
     try {
       const root = tempDir();
-      const runJsonPath = join(root, "run.json");
+      const runJsonPath = seedRunJson(root);
       writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-      writeFileSync(runJsonPath, JSON.stringify({
-        id: "run-1",
-        sessions: [],
-        agents: [{ id: "writer", status: "pending" }],
-      }));
       let captureCount = 0;
       const executor = {
         remove: jest.fn(async () => {}),
@@ -419,13 +489,8 @@ describe("runner-v2 bootstrap executor", () => {
 
     try {
       const root = tempDir();
-      const runJsonPath = join(root, "run.json");
+      const runJsonPath = seedRunJson(root);
       writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-      writeFileSync(runJsonPath, JSON.stringify({
-        id: "run-1",
-        sessions: [],
-        agents: [{ id: "writer", status: "pending" }],
-      }));
       const captures = ["claude ready >", "❯ Read instructions"];
       const executor = {
         remove: jest.fn(async () => {}),
@@ -464,11 +529,7 @@ describe("runner-v2 bootstrap executor", () => {
     delete process.env.MENTIKO_READINESS_FAIL_CLOSED;
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     // no readiness glyph, no known prompt token: the killed isLikelyAgentPrompt
     // heuristic would have polled to a timeout here; v1 treats a missing profile
     // as unknown -> legacy proceeds.
@@ -493,11 +554,7 @@ describe("runner-v2 bootstrap executor", () => {
     process.env.MENTIKO_READINESS_FAIL_CLOSED = "1";
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture("plain zsh shell");
 
     try {
@@ -542,11 +599,7 @@ describe("runner-v2 bootstrap executor", () => {
       ready_patterns: [{ name: "provider-ready", type: "text", value: "Provider boot complete" }],
     });
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture("Provider boot complete\nno prompt glyph yet");
 
     await executeLocalBootstrap(plan(root), context(root), executor);
@@ -582,11 +635,7 @@ describe("runner-v2 bootstrap executor", () => {
     const root = tempDir();
     writeProfile(root, readiness);
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture(output);
 
     await executeLocalBootstrap(plan(root), context(root), executor);
@@ -617,11 +666,7 @@ describe("runner-v2 bootstrap executor", () => {
     const root = tempDir();
     writeProfile(root, { enabled: true, blocked_patterns: [{ name: "blocked", value: "blocked" }] });
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture("claude ready >");
 
     try {
@@ -657,11 +702,7 @@ describe("runner-v2 bootstrap executor", () => {
     const root = tempDir();
     writeProfile(root, { enabled: false });
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
-    writeFileSync(join(root, "run.json"), JSON.stringify({
-      id: "run-1",
-      sessions: [],
-      agents: [{ id: "writer", status: "pending" }],
-    }));
+    seedRunJson(root);
     const executor = executorWithCapture("plain startup text with no generic prompt");
 
     try {
