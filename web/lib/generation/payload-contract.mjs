@@ -26,7 +26,15 @@
 export function isPayloadCompatibleWithKind(obj, kind) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
   if (kind === "task") {
-    return typeof obj.title === "string" || Array.isArray(obj.tasks) || Array.isArray(obj.subtasks);
+    // Current task generation is agent-as-gate: the artifact is either a
+    // routed task envelope or a decision hand-back. Keep accepting legacy bare
+    // task objects, but validate the envelope's actual payload rather than
+    // rejecting every modern generation-result.json during recovery.
+    if (obj.route === "decision") return typeof obj.reason === "string" && obj.reason.trim().length > 0;
+    const task = obj.route === "task" && obj.task && typeof obj.task === "object" && !Array.isArray(obj.task)
+      ? obj.task
+      : obj;
+    return typeof task.title === "string" || Array.isArray(task.tasks) || Array.isArray(task.subtasks);
   }
   if (kind === "chain_generation") {
     return typeof obj.output === "string" || Array.isArray(obj.agents);

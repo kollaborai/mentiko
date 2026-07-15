@@ -67,6 +67,19 @@ check("unrelated JSON rejected for chain_generation", () => {
   assert.equal(isPayloadCompatibleWithKind({ report: "x" }, "chain_generation"), false);
 });
 
+console.log("isPayloadCompatibleWithKind — task:");
+
+check("routed task envelope accepted", () => {
+  assert.equal(isPayloadCompatibleWithKind({ route: "task", task: { title: "Generated task", subtasks: [] } }, "task"), true);
+});
+check("decision hand-back with a reason accepted", () => {
+  assert.equal(isPayloadCompatibleWithKind({ route: "decision", reason: "Human choice required" }, "task"), true);
+});
+check("empty routed task and empty decision rejected", () => {
+  assert.equal(isPayloadCompatibleWithKind({ route: "task", task: {} }, "task"), false);
+  assert.equal(isPayloadCompatibleWithKind({ route: "decision", reason: "" }, "task"), false);
+});
+
 console.log("hydration-boundary decision (job.type -> kind -> predicate):");
 
 check("recommend job + unrelated artifact -> rejected (readCompletedRunResult returns undefined)", () => {
