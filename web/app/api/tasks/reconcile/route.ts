@@ -838,6 +838,7 @@ function recoverLateCompletionIfPossible(input: {
             MENTIKO_RUNNER_V2: "1",
             MENTIKO_RUNNER_V2_COMPLETION: "1",
             MENTIKO_RUNNER_V2_DELIVERY_ID: item.deliveryId,
+            MENTIKO_COMPLETION_OCCURRENCE_ID: `runner-v2-late-delivery:${item.deliveryId}:v1`,
           },
         },
         terminal: {

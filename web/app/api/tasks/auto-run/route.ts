@@ -45,7 +45,7 @@ import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
-import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { pruneInvalidChainBranches } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
