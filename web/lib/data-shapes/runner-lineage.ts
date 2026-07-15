@@ -847,6 +847,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/runner-v2/agent-profile-cli.ts", "web/lib/runner-v2/readiness-policy.ts", "web/lib/runner-v2/readiness-cli.ts", "web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
       },
+      {
+        id: "typed-transcript-provenance",
+        label: "Parse external transcript JSONL and bind durable completion evidence to the current run attempt",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+      },
     ],
   },
   "teammux-agent-spec": {

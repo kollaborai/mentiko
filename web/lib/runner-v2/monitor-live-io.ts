@@ -1,9 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pty } from "@/lib/pty/pty-client";
 import config from "@/lib/config";
+import {
+  agentCompleteMarkerDurable,
+  findTranscriptJsonl,
+  hasTranscriptIdentityBoundary,
+  scoreTranscriptIdentity,
+  selectTranscriptFromCapture,
+  transcriptRootFromProfile,
+  type TranscriptIdentityOptions,
+} from "@/lib/runner-v2/agent-transcript";
 import {
   classifyContextExhaustion,
   classifyDeath,
@@ -34,6 +42,13 @@ import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
 import { launchRunnerV2CompletionPty } from "@/lib/runner-v2/completion-launch";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
+
+// The transcript/provenance contract is owned by @/lib/runner-v2/agent-transcript
+// (pure + fs-only, so it stays usable from the compiled CLI bundle and from unit
+// tests without the pty). Re-exported here so this module's public surface --
+// and every existing importer of it -- is unchanged by that move.
+export { selectTranscriptFromCapture, transcriptRootFromProfile };
+export type { TranscriptIdentityOptions };
 
 export interface LiveMonitorContext {
   sessionName: string;
@@ -374,63 +389,7 @@ async function durableMarkerTranscript(
 ): Promise<string> {
   const transcript = await resolveTranscriptJsonl(sessionName, env, context);
   if (!transcript) return "";
-  let body = "";
-  try {
-    body = readFileSync(transcript, "utf8");
-  } catch {
-    return "";
-  }
-  for (const line of body.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const record = JSON.parse(line);
-      for (const text of assistantTexts(record)) {
-        if (text.split(/\r?\n/).some((part) => part.trim() === "AGENT_COMPLETE")) {
-          return transcript;
-        }
-      }
-    } catch {
-      continue;
-    }
-  }
-  return "";
-}
-
-const TRANSCRIPT_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-const TRANSCRIPT_ATTEMPT_CLOCK_SKEW_MS = 5_000;
-const TRANSCRIPT_FUTURE_TIMESTAMP_TOLERANCE_MS = 60_000;
-
-/**
- * Pick a session's transcript JSONL from its screen capture. A capture routinely
- * holds MORE than one UUID-shaped string: the CLI status bar carries the real
- * transcript/session UUID, but the agent's goal or prompt commonly echoes OTHER
- * UUIDs -- a decision_id, a task id -- that appear EARLIER in the scrollback.
- * Matching only the first hit resolves to a decoy UUID with no transcript file,
- * so the durable AGENT_COMPLETE marker is never read and the monitor nudges to a
- * false stall until it escalates the run to blocked (the decision-chain hang:
- * decision_id is always a UUID in the prompt, so it wins the first-match every
- * time). Try every distinct UUID in capture order and accept the first that
- * `resolve` maps to a real file -- decoys resolve to "" and are skipped, never
- * guessed. Pure + injected `resolve` so it is unit-tested without the fs/pty.
- */
-export function selectTranscriptFromCapture(
-  capture: string,
-  resolve: (uuid: string) => string,
-  identity: TranscriptIdentityOptions = {},
-): string {
-  const uuids = [...new Set((capture.match(TRANSCRIPT_UUID_RE) ?? []).map((u) => u.toLowerCase()))];
-  if (!hasTranscriptIdentityBoundary(identity)) return "";
-  const candidates = uuids.flatMap((uuid, position) => {
-    const path = resolve(uuid);
-    if (!path) return [];
-    const score = scoreTranscriptIdentity(path, uuid, identity);
-    return score === null ? [] : [{ path, position, score }];
-  }).sort((a, b) => b.score - a.score || b.position - a.position);
-  if (!candidates.length) return "";
-  if (candidates.length > 1 && candidates[0].score === candidates[1].score) {
-    return "";
-  }
-  return candidates[0].path;
+  return agentCompleteMarkerDurable(transcript) ? transcript : "";
 }
 
 async function resolveTranscriptJsonl(
@@ -450,81 +409,8 @@ async function resolveTranscriptJsonl(
   const root = transcriptRootFromProfile(env.MENTIKO_AGENT_PROFILE_PATH);
   if (!root) return "";
   return selectTranscriptFromCapture(capture, (uuid) => {
-    return findJsonl(root, uuid, 4);
+    return findTranscriptJsonl(root, uuid, 4);
   }, identity);
-}
-
-export interface TranscriptIdentityOptions {
-  workspacePath?: string;
-  attemptStartedAt?: string;
-  runId?: string;
-  instructionPath?: string;
-  now?: Date;
-}
-
-function scoreTranscriptIdentity(
-  path: string,
-  uuid: string | undefined,
-  identity: TranscriptIdentityOptions,
-): number | null {
-  let body = "";
-  try {
-    body = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-
-  const cwds = new Set<string>();
-  const sessionIds = new Set<string>();
-  const timestamps: number[] = [];
-  for (const line of body.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const record = JSON.parse(line) as Record<string, unknown>;
-      if (typeof record.cwd === "string") cwds.add(record.cwd);
-      for (const key of ["sessionId", "session_id"] as const) {
-        if (typeof record[key] === "string") sessionIds.add(record[key].toLowerCase());
-      }
-      if (typeof record.timestamp === "string") {
-        const value = Date.parse(record.timestamp);
-        if (Number.isFinite(value)) timestamps.push(value);
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  if (uuid && sessionIds.size > 0 && !sessionIds.has(uuid)) return null;
-
-  let score = uuid && sessionIds.has(uuid) ? 40 : 0;
-  if (identity.workspacePath) {
-    const workspace = resolve(identity.workspacePath);
-    const workspaceMatch = [...cwds].some((cwd) => isWithinWorkspace(workspace, cwd));
-    if (!workspaceMatch) return null;
-    score += 100;
-  }
-
-  if (identity.attemptStartedAt) {
-    const started = Date.parse(identity.attemptStartedAt);
-    const latest = timestamps.length ? Math.max(...timestamps) : Number.NaN;
-    const now = (identity.now ?? new Date()).getTime();
-    if (
-      !Number.isFinite(started)
-      || !Number.isFinite(latest)
-      || latest < started - TRANSCRIPT_ATTEMPT_CLOCK_SKEW_MS
-      || latest > now + TRANSCRIPT_FUTURE_TIMESTAMP_TOLERANCE_MS
-    ) {
-      return null;
-    }
-    score += 80;
-  }
-
-  const runMatch = Boolean(identity.runId && body.includes(identity.runId));
-  const instructionMatch = Boolean(identity.instructionPath && body.includes(identity.instructionPath));
-  if (runMatch) score += 20;
-  if (instructionMatch) score += 30;
-  if (!identity.workspacePath && !identity.attemptStartedAt && !runMatch && !instructionMatch) return null;
-  return score;
 }
 
 function transcriptIdentityFromContext(context?: LiveMonitorContext): TranscriptIdentityOptions {
@@ -538,57 +424,6 @@ function transcriptIdentityFromContext(context?: LiveMonitorContext): Transcript
     runId: context.runId,
     instructionPath: attempt?.instructionLedger.at(-1)?.instructionPath,
   };
-}
-
-function hasTranscriptIdentityBoundary(identity: TranscriptIdentityOptions): boolean {
-  return Boolean(identity.workspacePath || identity.attemptStartedAt || identity.runId || identity.instructionPath);
-}
-
-function isWithinWorkspace(workspace: string, cwd: string): boolean {
-  const rel = relative(workspace, resolve(cwd));
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(sep));
-}
-
-export function transcriptRootFromProfile(profilePath: string | undefined): string {
-  if (!profilePath || !existsSync(profilePath)) return "";
-  try {
-    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as { log_path?: unknown };
-    if (typeof profile.log_path !== "string" || !profile.log_path.trim()) return "";
-    return profile.log_path.trim().replace(/^~(?=\/|$)/, homedir()).replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function assistantTexts(record: unknown): string[] {
-  if (!record || typeof record !== "object") return [];
-  const r = record as Record<string, unknown>;
-  const out: string[] = [];
-  if (r.type === "assistant" && r.message && typeof r.message === "object") {
-    const content = (r.message as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        if (item && typeof item === "object" && (item as Record<string, unknown>).type === "text") {
-          const text = (item as Record<string, unknown>).text;
-          if (typeof text === "string") out.push(text);
-        }
-      }
-    }
-  }
-  if ((r.type === "message" || r.type === "response_item") && r.role === "assistant") {
-    const content = Array.isArray(r.content)
-      ? r.content
-      : r.payload && typeof r.payload === "object" && Array.isArray((r.payload as { content?: unknown }).content)
-        ? (r.payload as { content: unknown[] }).content
-        : [];
-    for (const item of content) {
-      if (item && typeof item === "object") {
-        const text = (item as Record<string, unknown>).text;
-        if (typeof text === "string") out.push(text);
-      }
-    }
-  }
-  return out;
 }
 
 interface CompletionLaunchOptions {
@@ -643,29 +478,6 @@ function writeDiagnosticEvent(eventsDir: string, event: MonitorDiagnosticEvent):
     data: JSON.stringify({ agent: event.agent, reason: event.reason, staleCount: event.staleCount }),
   });
   writeFileSync(join(eventsDir, event.filename), `${content}${extensionFields}\n`);
-}
-
-function findJsonl(root: string, uuid: string, depth: number): string {
-  if (depth < 0 || !existsSync(root)) return "";
-  let entries: string[] = [];
-  try {
-    entries = readdirSync(root);
-  } catch {
-    return "";
-  }
-  for (const entry of entries) {
-    const path = join(root, entry);
-    if (entry.includes(uuid) && entry.endsWith(".jsonl")) return path;
-    try {
-      if (statSync(path).isDirectory()) {
-        const nested = findJsonl(path, uuid, depth - 1);
-        if (nested) return nested;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return "";
 }
 
 function hasPgrep(): boolean {

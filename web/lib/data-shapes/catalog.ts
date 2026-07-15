@@ -1921,11 +1921,20 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "jsonl",
     storage: ["CLI-specific transcript roots such as ~/.claude/projects/{encodedCwd}/{conversationId}.jsonl"],
     assurance: "open",
-    typePaths: ["web/lib/runs/session-log-resolver.ts"],
+    typePaths: ["web/lib/runs/session-log-resolver.ts", "web/lib/runner-v2/agent-transcript.ts"],
     writers: ["web/app/api/conversations/[id]/route.ts"],
-    readers: ["web/app/api/conversations/[id]/route.ts", "web/lib/runs/session-log-resolver.ts"],
+    readers: ["web/app/api/conversations/[id]/route.ts", "web/lib/runs/session-log-resolver.ts", "web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
     sensitive: true,
-    notes: ["Ownership and schema belong to the external CLI; Mentiko does not scan transcript contents in this catalog."],
+    runnerLineage: {
+      usage: "runner-v2",
+      surfaces: [{
+        id: "typed-transcript-provenance-reader",
+        label: "Read external transcript JSONL only for identity-bound durable completion evidence",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+      }],
+    },
+    notes: ["Ownership and schema belong to the external CLI. Mentiko does not mutate the transcript; the typed runner-v2 owner reads assistant text and identity metadata only to establish durable, current-attempt completion evidence, failing closed on decoys or ambiguity."],
   }),
   shape({
     id: "teammux-agent-spec",

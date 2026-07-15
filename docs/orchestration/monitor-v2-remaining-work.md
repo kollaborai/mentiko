@@ -39,7 +39,7 @@ Committed this session:
 ### Remaining — the live-system layer (code is buildable; proof needs a live run)
 - [x] **1. PTY capture + hash wrapper** — `monitor-live-io.ts` uses `pty.capture(session, 20)` + `captureHash`.
 - [x] **2. Process-gone signal** — `monitor-live-io.ts` ports pane pid + `pgrep -P`, arming, never-armed grace, and 1s debounce.
-- [x] **3. Durable-transcript AGENT_COMPLETE marker (BUG-022)** — `monitor-live-io.ts` resolves transcript JSONL by UUID and only latches standalone assistant `AGENT_COMPLETE`; unresolved transcript fails closed to event-file latch.
+- [x] **3. Durable-transcript AGENT_COMPLETE marker (BUG-022)** — `agent-transcript.ts` owns JSONL parsing, identity scoring, and standalone assistant `AGENT_COMPLETE` detection; `monitor-live-io.ts` supplies the current run context and fails closed to event-file latch when the transcript is unresolved or ambiguous.
 - [x] **4. Nudge send wrapper** — `monitor-live-io.ts` uses raw PTY send + CR.
 - [x] **5. Completion handoff (`onComplete`)** — `monitor-live-io.ts` spawns a separate completion PTY; with `MENTIKO_RUNNER_V2_COMPLETION` enabled, typed completion is the only owner and exit-64/malformed context fails closed.
 - [x] **6. Death/stall effects (`onDied`/`onStalled`)** — `monitor-live-io.ts` writes monitor diagnostic events and updates run+agent status via `run-state`.
