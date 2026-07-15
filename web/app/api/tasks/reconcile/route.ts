@@ -6,7 +6,6 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { applyCompletionAudit, supersedeStaleCompletionAuditDecision } from "@/lib/tasks/completion-audit-apply";
-import { hasDurableAuditedClose } from "@/lib/runs/auto-run";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
 import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
@@ -132,10 +131,19 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     const lastRunStatus =
       typeof meta?.last_run_status === "string" ? meta.last_run_status : undefined;
+    const alreadyAppliedCurrentAudit =
+      !!meta &&
+      meta.completion_audit_apply_status === "applied" &&
+      (meta.last_audit_verdict === "close" || meta.last_audit_verdict === "decision") &&
+      meta.last_run_id === meta.completion_audit_run_id;
     return (
       !!meta &&
       !!lastRunStatus &&
       TERMINAL_RUN_STATUSES.has(lastRunStatus) &&
+      // Re-running lifecycle for an already-audited source is a no-op. Leave
+      // it to the metadata-repair sweep below, which preserves an audited
+      // decision gate while replacing stale blocked-run fields.
+      !alreadyAppliedCurrentAudit &&
       shouldAuditCompletedAutoRun(meta, autoRunEnabledFor(issue, meta))
     );
   });
@@ -145,24 +153,24 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     return meta?.lifecycle_phase === "followup_blocked" && stringArray(meta.followup_task_ids).length > 0;
   });
-  // Reopened after an audited close, with the last_run_* evidence wiped: the
-  // terminal filter above needs last_run_status, which the non-execution-run
-  // repair deletes (the reopen-clobbers-close race, ISSUE-007). The durable
-  // completion_audit_* evidence survives the wipe, so re-apply the close here
-  // -- applyCompletionAudit's closeVerdictNotYetClosed path re-closes, restores
-  // the execution metadata, and fires the dependents-only nudge. Tasks the
-  // running/terminal sweeps CAN process are excluded: a fresh terminal run
-  // deserves its own audit verdict, not a re-close on stale evidence.
+  // Reopened after an audited close, or held at a durable decision gate with
+  // stale last_run_* provenance. The terminal filter above needs current run
+  // metadata; a reopen or a superseded duplicate can leave an already-applied
+  // audit pointing at the wrong failed run. Re-apply the durable verdict only
+  // when this task has no fresh terminal execution to audit. The audit helper
+  // is idempotent: close re-closes a reopened task, while decision preserves
+  // its human gate and restores the completed source-run evidence.
   const activeSweepTaskIds = new Set(
     [...runningTasks, ...terminalAutoRunTasks].map((issue) => issue.id),
   );
-  const reopenedAuditedCloseTasks = issues.filter((issue) => {
+  const auditedExecutionMetadataRepairTasks = issues.filter((issue) => {
     if (DONE_TASK_STATUSES.has(issue.status)) return false;
     if (activeSweepTaskIds.has(issue.id)) return false;
     const meta = parseMetadata(issue.metadata);
     return (
       !!meta &&
-      hasDurableAuditedClose(meta) &&
+      (meta.last_audit_verdict === "close" || meta.last_audit_verdict === "decision") &&
+      meta.completion_audit_apply_status === "applied" &&
       typeof meta.completion_audit_run_id === "string"
     );
   });
@@ -218,7 +226,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     runningTasks.length === 0 &&
     terminalAutoRunTasks.length === 0 &&
     followupBlockedTasks.length === 0 &&
-    reopenedAuditedCloseTasks.length === 0
+    auditedExecutionMetadataRepairTasks.length === 0
   ) {
     return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
   }
@@ -570,9 +578,10 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
-  for (const issue of reopenedAuditedCloseTasks) {
+  for (const issue of auditedExecutionMetadataRepairTasks) {
     const meta = parseMetadata(issue.metadata)!;
     const runId = meta.completion_audit_run_id as string;
+    const verdict = meta.last_audit_verdict as "close" | "decision";
     try {
       const safeId = validateTaskId(issue.id);
       const outcome = await applyCompletionAudit({
@@ -580,10 +589,16 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         namespaceId,
         orgId,
         task: issue,
-        audit: {
-          verdict: "close",
-          reason: "Re-applied audited close verdict after a reopen wiped the run evidence (task-reconciler).",
-        },
+        audit: verdict === "decision"
+          ? {
+            verdict,
+            reason: "Re-applied audited decision verdict to repair stale execution provenance (task-reconciler).",
+            decision: { prompt: "A prior outcome audit already requires a human decision." },
+          }
+          : {
+            verdict,
+            reason: "Re-applied audited close verdict after a reopen wiped the run evidence (task-reconciler).",
+          },
         runId,
         runFingerprint: typeof meta.completion_audit_run_fingerprint === "string"
           ? meta.completion_audit_run_fingerprint
@@ -592,14 +607,18 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         metadata: meta,
       });
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
-        `task ${safeId} run ${runId}: reclose_${outcome.action}`,
-        "re-applied durable audited close after reopen");
+        `task ${safeId} run ${runId}: ${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`,
+        verdict === "close"
+          ? "re-applied durable audited close after reopen"
+          : "re-applied durable audited decision to repair execution provenance");
       results.push({
         taskId: issue.id,
         runId,
         previousStatus: issue.status,
-        newStatus: `reclose_${outcome.action}`,
-        reason: "audited close re-applied after reopen wiped run evidence",
+        newStatus: `${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`,
+        reason: verdict === "close"
+          ? "audited close re-applied after reopen wiped run evidence"
+          : "audited decision re-applied to repair stale execution provenance",
       });
     } catch (error) {
       failed.push({
@@ -612,7 +631,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return apiSuccess({
     reconciled: results.length,
     checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length
-      + reopenedAuditedCloseTasks.length,
+      + auditedExecutionMetadataRepairTasks.length,
     failed: failed.length,
     results,
     errors: failed,

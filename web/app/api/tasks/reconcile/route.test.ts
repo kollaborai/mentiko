@@ -1516,6 +1516,56 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
   });
 
+  it("repairs stale source-run provenance for an already-applied decision without creating another decision", async () => {
+    mockApplyCompletionAudit.mockResolvedValueOnce({
+      action: "skipped",
+      detail: "audit already applied for this run; repaired execution metadata",
+    });
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-020",
+        title: "Document log function behavior",
+        status: "blocked",
+        workspace_id: "/Users/example/synthyo",
+        metadata: {
+          chain_id: "task-020-execution",
+          last_audit_verdict: "decision",
+          completion_audit_run_id: "run-completed",
+          completion_audit_run_fingerprint: "completed:2026-07-15T23:11:54.313Z",
+          completion_audit_apply_status: "applied",
+          last_run_id: "run-completed",
+          last_run_status: "completed",
+          last_run_blocked_reason: "startup_recovery:unknown",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      reconciled: 1,
+      checked: 1,
+      results: [
+        expect.objectContaining({
+          taskId: "TASK-020",
+          runId: "run-completed",
+          newStatus: "repair_skipped",
+          reason: "audited decision re-applied to repair stale execution provenance",
+        }),
+      ],
+    });
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-completed",
+        runFingerprint: "completed:2026-07-15T23:11:54.313Z",
+        audit: expect.objectContaining({ verdict: "decision" }),
+        task: expect.objectContaining({ id: "TASK-020" }),
+      }),
+    );
+  });
+
   it("leaves a task with intact terminal run evidence to the terminal sweep instead of re-closing", async () => {
     // A fresh terminal run deserves its own audit verdict; re-closing on the
     // stale completion_audit_* evidence would clobber the new run's outcome.

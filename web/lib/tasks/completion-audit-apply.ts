@@ -164,6 +164,11 @@ function closeExecutionMetadata(runId: string, runFingerprint?: string): Record<
     last_run_started: undefined,
     last_run_completed: completionTimestampFromFingerprint(runFingerprint),
     last_run_error: undefined,
+    last_run_blocked_reason: undefined,
+    last_run_agents: undefined,
+    last_run_artifacts: undefined,
+    last_run_outcome: undefined,
+    last_run_summary: undefined,
     last_run_decision_required: false,
   };
 }
@@ -178,6 +183,11 @@ function closeExecutionMetadataNeedsRepair(
     || metadata.last_run_status !== "completed"
     || metadata.last_run_started !== undefined
     || metadata.last_run_error !== undefined
+    || metadata.last_run_blocked_reason !== undefined
+    || metadata.last_run_agents !== undefined
+    || metadata.last_run_artifacts !== undefined
+    || metadata.last_run_outcome !== undefined
+    || metadata.last_run_summary !== undefined
     || (completedAt ? metadata.last_run_completed !== completedAt : metadata.last_run_completed !== undefined);
 }
 
@@ -476,11 +486,13 @@ export async function applyCompletionAudit(
   const closeVerdictNotYetClosed =
     audit.verdict === "close" && !CLOSED_TASK_STATUSES.has(task.status);
   if (auditAlreadyApplied && !closeVerdictNotYetClosed) {
-    if (audit.verdict === "close" && closeExecutionMetadataNeedsRepair(metadata, runId, runFingerprint)) {
+    if ((audit.verdict === "close" || audit.verdict === "decision")
+      && closeExecutionMetadataNeedsRepair(metadata, runId, runFingerprint)) {
       taskMergeMeta(orgId, task.id, {
         ...lifecycleMetadata(hydrateLifecycleState(task.id, metadata)),
-        last_audit_verdict: "close",
+        last_audit_verdict: audit.verdict,
         ...closeExecutionMetadata(runId, runFingerprint),
+        ...(audit.verdict === "decision" ? { last_run_decision_required: true } : {}),
         completion_audit_run_id: runId,
         completion_audit_apply_status: "applied",
         ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
@@ -556,6 +568,7 @@ export async function applyCompletionAudit(
     taskMergeMeta(orgId, task.id, {
       ...lifecycleMetadata(state),
       last_audit_verdict: "decision",
+      ...closeExecutionMetadata(runId, runFingerprint),
       last_run_decision_required: true,
       decision_subtask_id: decisionResult.decisionTaskId,
       completion_audit_run_id: runId,

@@ -205,6 +205,8 @@ describe("applyCompletionAudit", () => {
         last_run_started: undefined,
         last_run_completed: "t1",
         last_run_error: undefined,
+        last_run_blocked_reason: undefined,
+        last_run_agents: undefined,
       }),
       "default",
     );
@@ -284,6 +286,11 @@ describe("applyCompletionAudit", () => {
         gated_run_fingerprints: ["run-abc::completed:t1"],
         lifecycle_phase: "decision_blocked",
         last_audit_verdict: "decision",
+        last_run_id: "run-abc",
+        last_run_status: "completed",
+        last_run_completed: "t1",
+        last_run_blocked_reason: undefined,
+        last_run_agents: undefined,
       }),
       "default",
     );
@@ -323,6 +330,49 @@ describe("applyCompletionAudit", () => {
     });
     expect(createTaskDecision).not.toHaveBeenCalled();
     expect(startDecisionResearch).not.toHaveBeenCalled();
+  });
+
+  it("decision: repairs stale execution provenance when the same applied audit is replayed", async () => {
+    const task = makeTask({ status: "blocked" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which path?" },
+    };
+
+    const result = await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        completion_audit_run_id: "run-abc",
+        completion_audit_run_fingerprint: "completed:t1",
+        completion_audit_apply_status: "applied",
+        last_audit_verdict: "decision",
+        last_run_id: "run-duplicate",
+        last_run_status: "blocked",
+        last_run_blocked_reason: "startup_recovery:unknown",
+        last_run_agents: "inspector|cancelled",
+      }),
+      runFingerprint: "completed:t1",
+    });
+
+    expect(result).toEqual({
+      action: "skipped",
+      detail: "audit already applied for this run; repaired execution metadata",
+    });
+    expect(createTaskDecision).not.toHaveBeenCalled();
+    expect(taskMergeMeta).toHaveBeenCalledWith(
+      "default",
+      "TASK-42",
+      expect.objectContaining({
+        last_audit_verdict: "decision",
+        last_run_id: "run-abc",
+        last_run_status: "completed",
+        last_run_completed: "t1",
+        last_run_blocked_reason: undefined,
+        last_run_agents: undefined,
+        last_run_decision_required: true,
+      }),
+      "default",
+    );
   });
 
   // 3. verdict "retry" under cap
