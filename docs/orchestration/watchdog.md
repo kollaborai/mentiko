@@ -21,9 +21,6 @@ At worker startup, `runTypedWatchdogScan()` runs once after the startup delay.
 The worker then runs it every 60 seconds with an in-flight guard so watchdog
 passes cannot overlap. Shutdown clears the interval as part of worker shutdown.
 
-`lib/watchdog.sh` remains only as a migration parity reference. No active
-launch surface starts it and there is no shell fallback.
-
 ## Scan contract
 
 Each pass:

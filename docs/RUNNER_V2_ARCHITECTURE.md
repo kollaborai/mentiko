@@ -681,11 +681,6 @@ Shell bridges:
 - `lib/agent-functions.sh`
 - `lib/scheduler.sh`
 
-Legacy watcher/watchdog parity references (not launched):
-
-- `lib/watchdog.sh`
-- `lib/chain-event-watcher.sh`
-
 Readiness and recovery:
 
 - `web/lib/runner-v2/switch-readiness.ts`

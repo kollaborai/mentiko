@@ -119,26 +119,6 @@ export function markRunAgentFailed(
   });
 }
 
-export function stopRunFromWatchdog(
-  runJsonPath: string,
-  now = new Date(),
-): RunRecord {
-  const timestamp = nowIso(now);
-  return updateRunJson(runJsonPath, (value) => {
-    const current = requireCurrent(value, runJsonPath);
-    return {
-      ...current,
-      status: "stopped",
-      completed: timestamp,
-      agents: current.agents.map((agent) => {
-        if (agent.status === "pending") return { ...agent, status: "cancelled" };
-        if (agent.status !== "running") return agent;
-        return { ...agent, status: agent.session ? "stopped" : "cancelled" };
-      }),
-    };
-  });
-}
-
 export function updateRunActivityManifest(
   runJsonPath: string,
   agentId: string,

@@ -5,7 +5,6 @@
     "web/lib/runner-v2/watchdog.ts",
     "web/server/background-worker.ts"
   ],
-  "legacy_reference_files": ["lib/watchdog.sh", "lib/chain-event-watcher.sh"],
   "role": "background-worker-owned event-triggered chain launch and stalled run recovery",
   "owns": [
     "background-worker lifecycle for typed chain-watcher start, status, and stop",

@@ -162,7 +162,11 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-run-mutation",
         label: "Locked typed run.json mutation",
         owner: "runner-v2",
-        paths: ["web/lib/runs/run-record.ts", "web/lib/runner-v2/run-state.ts"],
+        paths: [
+          "web/lib/runs/run-record.ts",
+          "web/lib/runner-v2/run-state.ts",
+          "web/lib/runner-v2/run-record-operations.ts",
+        ],
       },
       {
         id: "typed-run-recovery",
@@ -171,14 +175,14 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/completion-recovery.ts", "web/lib/runs/run-reconciler.ts"],
       },
       {
-        id: "shell-run-lifecycle",
-        label: "Shell run creation and lifecycle mutation",
-        owner: "legacy-shell",
+        id: "shell-run-command-boundary",
+        label: "Shell command clients invoke the typed Run Record CLI",
+        owner: "runner-v2",
         paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
       },
     ],
     legacyEquivalent: {
-      summary: "Runner v2 owns completion-time run.json mutation under the shared lock protocol; run-lib.sh and the initial shell runner remain active creation/bootstrap writers during migration.",
+      summary: "The typed Run Record boundary owns parsing, validation, queries, and mutation. Shell command clients pass named operations only and do not parse or mutate run.json.",
       paths: ["lib/run-lib.sh", "lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
     },
   },
@@ -579,10 +583,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/chain-watcher-service.ts"],
       },
     ],
-    legacyEquivalent: {
-      summary: "Replaces the shell PTY daemon and its implicit handled markers with a background-worker-owned typed service.",
-      paths: ["lib/chain-event-watcher.sh"],
-    },
   },
   "runner-retry-state": {
     usage: "runner-v2",

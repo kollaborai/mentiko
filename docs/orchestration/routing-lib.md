@@ -278,7 +278,6 @@ related files
 lib/routing-lib.sh              this file
 web/lib/runner-v2/completion-entrypoint.ts   owns completion routing
 lib/chain-runner.sh             uses timeout-check-agent
-lib/watchdog.sh                 retired parity reference; uses timeout-check-agent
 
 troubleshooting
 ===============

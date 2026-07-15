@@ -49,10 +49,6 @@ the chain watcher and watchdog instead of Kubernetes controllers.
 - Owns typed chain-watcher start, status, and stop
 - Runs typed watchdog scans at startup and every 60 seconds
 
-**watchdog.sh / chain-event-watcher.sh**
-- Retired parity references only
-- Not launched as services or PTY sessions
-
 **pty-manager**
 - Allocates PTY sessions for agents
 - Provides real terminal interface

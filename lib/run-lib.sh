@@ -301,18 +301,6 @@ update-task-from-run() {
         --status "$status"
 }
 
-# -------------------------------------------------------------------
-# watchdog-stop-run: mark a stalled run stopped + reconcile its agents
-# -------------------------------------------------------------------
-# args: <run-id>
-# Legacy parity helper for lib/watchdog.sh, which is no longer launched. It keeps
-# the old terminal rewrite on the shared lock protocol until that reference file
-# is deleted. Active watchdog mutations use web/lib/runner-v2/run-state.ts.
-watchdog-stop-run() {
-    local run_id="$1"
-    _run_record_cli watchdog-stop --runs-dir "$RUNS_DIR" --run-id "$run_id" >/dev/null
-}
-
 # export functions
 export -f _run_record_cli
 export -f create-run
@@ -327,4 +315,3 @@ export -f build-run-summary-json
 export -f write-run-summary-artifact
 export -f emit-runner-event
 export -f update-task-from-run
-export -f watchdog-stop-run

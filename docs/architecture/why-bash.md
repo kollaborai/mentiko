@@ -48,10 +48,6 @@ long-running watcher/watchdog lifecycle and their persisted contracts.
 - Starts and stops the typed chain-watcher service
 - Runs the typed watchdog scan at startup and every 60 seconds
 
-**watchdog.sh / chain-event-watcher.sh**
-- Retired parity references only
-- Not started by chain bootstrap or any active launch surface
-
 ## Implementation
 
 ### Chain Execution

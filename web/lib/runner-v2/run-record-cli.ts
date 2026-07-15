@@ -22,7 +22,6 @@ import {
   markRunAgentBlocked,
   markRunAgentFailed,
   startPeerRun,
-  stopRunFromWatchdog,
   updateRunActivityManifestFromArtifacts,
   writeRunSummaryArtifact,
 } from "@/lib/runner-v2/run-record-operations";
@@ -50,7 +49,6 @@ const COMMANDS = [
   "set-agent-status",
   "mark-agent-blocked",
   "mark-agent-failed",
-  "watchdog-stop",
   "activity-manifest",
   "peer-start",
   "peer-complete",
@@ -223,12 +221,6 @@ export async function runRunRecordCli(
       ? markRunAgentBlocked(runJsonPath, agentId, reason)
       : markRunAgentFailed(runJsonPath, agentId, reason);
     write(JSON.stringify(run));
-    return;
-  }
-
-  if (parsed.command === "watchdog-stop") {
-    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id"]));
-    write(JSON.stringify(stopRunFromWatchdog(runJsonPath)));
     return;
   }
 

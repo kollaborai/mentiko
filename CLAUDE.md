@@ -40,7 +40,7 @@ code root (this git checkout):
   docker-entrypoint entrypoint for tenant container
 
 /lib/               orchestration layer (bash + js)
-  *.sh              bash chain/agent boundaries; watchdog.sh and chain-event-watcher.sh are retired parity references, not launch surfaces
+  *.sh              bash chain/agent command boundaries; typed services own runtime data contracts and lifecycle state
   *.mjs             node orchestration (job-runner, chain-runner, pty-manager)
   config.sh         bash config resolver (mirrors web/lib/config.ts)
   schemas/          JSON schemas (agent, chain, event, run, schedule, task)

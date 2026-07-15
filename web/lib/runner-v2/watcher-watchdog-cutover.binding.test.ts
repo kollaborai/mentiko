@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
 
@@ -96,5 +96,10 @@ describe("watcher/watchdog TypeScript ownership binding", () => {
         });
       }
     }
+  });
+
+  it("removes the retired shell watcher and watchdog implementations", () => {
+    expect(existsSync(join(config.codeRoot, "lib", "watchdog.sh"))).toBe(false);
+    expect(existsSync(join(config.codeRoot, "lib", "chain-event-watcher.sh"))).toBe(false);
   });
 });

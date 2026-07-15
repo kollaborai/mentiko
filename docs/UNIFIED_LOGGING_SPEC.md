@@ -105,9 +105,8 @@ web/lib/runner-v2/chain-watcher-service.ts, and web/server/background-worker.ts:
   - trigger handled (which chain launched)
   - event ignored (handled marker exists, no matching trigger, or strict parse failed)
 
-`lib/watchdog.sh` and `lib/chain-event-watcher.sh` are retained only as retired
-parity references. No active launch surface starts them, and logging work must
-not add a shell fallback.
+The background worker is the only watcher/watchdog lifecycle owner. Logging
+work must not introduce a shell lifecycle path.
 
 ### 7. peer-manager logging
 

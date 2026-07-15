@@ -9,7 +9,6 @@ import {
   markRunAgentBlocked,
   markRunAgentFailed,
   startPeerRun,
-  stopRunFromWatchdog,
   updateRunActivityManifest,
   writeRunSummaryArtifact,
 } from "@/lib/runner-v2/run-record-operations";
@@ -46,24 +45,6 @@ describe("typed Run Record operations", () => {
         { id: "reviewer", status: "failed", lastMessage: "startup exited" },
       ],
     });
-  });
-
-  it("reconciles watchdog terminal agents with the canonical status vocabulary", () => {
-    const { runsDir, runJsonPath } = fixture({
-      agents: [
-        { id: "a", name: "A", session: "live-a", status: "running" },
-        { id: "b", name: "B", session: "", status: "running" },
-        { id: "c", name: "C", session: "", status: "pending" },
-        { id: "d", name: "D", session: "done", status: "complete" },
-      ],
-    });
-    stopRunFromWatchdog(runJsonPath, new Date("2026-07-15T00:03:00Z"));
-    expect(readRunRecordAt(runsDir, "run-1").agents.map(({ id, status }) => ({ id, status }))).toEqual([
-      { id: "a", status: "stopped" },
-      { id: "b", status: "cancelled" },
-      { id: "c", status: "cancelled" },
-      { id: "d", status: "complete" },
-    ]);
   });
 
   it("owns peer lifecycle updates as named operations", () => {

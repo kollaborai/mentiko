@@ -10,7 +10,6 @@ const runLib = join(repoRoot, "lib", "run-lib.sh");
 const chainRunner = join(repoRoot, "lib", "chain-runner.sh");
 const agentFunctions = join(repoRoot, "lib", "agent-functions.sh");
 const errorHandling = join(repoRoot, "lib", "error-handling.sh");
-const watchdog = join(repoRoot, "lib", "watchdog.sh");
 const tmp = mkdtempSync(join(tmpdir(), "mentiko-shell-state-"));
 
 const tests = [];
@@ -111,15 +110,6 @@ test("startup blocked and failed state use only the compiled typed Run Record bo
   assert(!blocked.includes("jq"), "blocked state must not parse or mutate run.json in shell");
   assert(!failed.includes("jq"), "failed state must not parse or mutate run.json in shell");
   assert(!source.includes("_rmw_mark_run_agent_"), "chain runner must not retain shell Run Record writers");
-});
-
-test("watchdog does not reap completion sessions as orphans", () => {
-  const source = readFileSync(watchdog, "utf8");
-
-  assert(
-    source.includes('[[ "$session" == complete-* ]] && continue'),
-    "watchdog should skip typed completion PTY sessions"
-  );
 });
 
 test("agent run context exposes the mentiko CLI on PATH", () => {

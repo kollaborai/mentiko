@@ -25,9 +25,6 @@ The process manager starts one background worker:
 shutdown. An unexpected watcher failure requests a non-zero worker shutdown;
 process-manager then restarts the worker and all of its background services.
 
-`lib/chain-event-watcher.sh` remains only as a migration parity reference. No
-active launch surface starts it and there is no shell fallback.
-
 ## Scope and singleton contract
 
 The default service resolves exactly one configured scope:
