@@ -654,13 +654,14 @@ MENTIKO_PROJECT_ROOT = $MENTIKO_ORG_ROOT (if default) or .../projects/$PROJECT_I
 
 ### internal script variables (known bugs)
 
-computed in chain-runner.sh and chain-runner-complete.sh.
-source of the workspace-writes-to-project-dir bug.
+the initial shell boundary computes these in chain-runner.sh. typed completion
+uses web/lib/runner-v2/completion-entrypoint.ts with the explicit run context.
+incorrect shell derivation remains the source of the workspace-writes-to-project-dir bug.
 
 CHAIN_PROJECT_ROOT where agents cd to. BUG: also derives data paths for non-local workspaces
 REMOTE_PROJECT_ROOT working dir on target. BUG: artifacts written here instead of $RUNS_DIR
 REMOTE_NAMESPACE_ROOT namespace paths for remote. BUG: creates dirs under project, not namespace
-RUNS_DIR_BASE where complete.sh looks for runs
+MENTIKO_RUN_DIR exact run directory passed into typed completion
 
 ### auth (critical for deployment)
 

@@ -32,8 +32,8 @@ runner-v2 component map and HTTP-to-next-agent lifecycle, see
 │                                  ▼                                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                      orchestration layer                             │    │
-│  │  lib/chain-runner.sh -> lib/chain-runner-complete.sh                 │    │
-│  │  event-trigger.sh | typed chain watcher | typed watchdog             │    │
+│  │  lib/chain-runner.sh -> typed completion entrypoint                  │    │
+│  │  typed event lifecycle | typed chain watcher | typed watchdog        │    │
 │  │  scheduler.sh | routing-lib.sh | run-lib.sh | agent-functions.sh     │    │
 │  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
@@ -159,24 +159,24 @@ do not start a second copy without checking the existing session.
 
 ## orchestration model
 
-Mentiko's current chain orchestration is bash-first and event-driven.
+Mentiko's current chain orchestration is hybrid TypeScript/shell and event-driven.
 
 The key point: `chain-runner.sh` is not a long loop over every agent. It
 launches one matching agent, starts the required companion monitor, writes
-state, and exits. When an agent completes, the monitor invokes
-`chain-runner-complete.sh`, which processes the handoff and starts the next
-agent or branch by re-entering `chain-runner.sh` with `--start` or `--parallel`.
+state, and exits. When an agent completes, the monitor invokes the typed
+completion launcher. The typed entrypoint processes the handoff and accepts the
+next agent or branch before it consumes the parent event.
 
 Core files:
 
 - `lib/chain-runner.sh`: chain validation, agent/profile resolution, run
   initialization, concurrency admission, PTY agent launch.
-- `lib/chain-runner-complete.sh`: completion capture, event matching,
-  artifact capture, retries, routing, fan-in/fan-out, run completion.
+- `web/lib/runner-v2/completion-entrypoint.ts`: completion capture, event
+  matching, artifacts, retries, routing, fan-in/fan-out, and run completion.
 - `lib/agent-functions.sh`: PTY session helpers and monitor wiring.
 - `lib/session-transport.sh`: transport abstraction over `pty-mgr`.
 - `web/lib/runner-v2/event-emitter.ts`: writes validated file-backed events.
-- `lib/event-trigger.sh`: invokes the typed writer and retains shell lifecycle reads/mutations pending migration.
+- `web/lib/runner-v2/event-lifecycle.ts`: strictly lists, finds, marks, and archives runner events behind one filesystem claim.
 - `web/lib/runner-v2/chain-watcher-service.ts`: watches event files and launches chains from the background worker.
 - `web/lib/runner-v2/watchdog.ts`: performs stalled-run recovery and scoped cleanup from the background worker.
 - `lib/run-lib.sh`: run object creation and locked `run.json` updates.
@@ -193,7 +193,7 @@ Flow:
 5. The runner admits the chain through the concurrency cap.
 6. The runner starts exactly the selected agent or agent set in PTY sessions.
 7. A companion monitor watches for `AGENT_COMPLETE` or declared event files.
-8. `chain-runner-complete.sh` captures output and artifacts.
+8. The typed completion entrypoint captures output and artifacts.
 9. Completion routing either starts the next agent, starts parallel agents,
    retries, blocks, fails, or marks the run completed.
 
@@ -206,15 +206,16 @@ Current contract:
 
 - `default_runner` is `shell`.
 - `MENTIKO_RUNNER_V2=1` enables the initial runner-v2 launch path.
-- `MENTIKO_RUNNER_V2_COMPLETION=1` enables typed completion re-entry.
+- completion is unconditionally typed; `MENTIKO_RUNNER_V2_COMPLETION=1` is a
+  forced compatibility marker, not a selector.
 - initial typed launch preserves shell fallback only for unsupported planning
   before typed side effects; after session or run-state mutation it fails
   closed.
-- typed completion is fail-closed when both flags are enabled; it does not
+- typed completion is always fail-closed; it does not
   fall through to shell completion after a typed error or unsupported result.
-- typed routing still launches the next agent through `chain-runner.sh --start`
-  or `chain-runner.sh --parallel`; the routed agent returns to typed monitoring
-  and typed completion because the runner-v2 flags are carried into its monitor.
+- typed routing starts exact same-run targets through
+  `runner-v2-launch-agent`, then verifies run agent, session, and `AgentAttempt`
+  state before consuming the parent event.
 
 Current web behavior:
 

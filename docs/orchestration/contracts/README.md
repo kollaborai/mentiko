@@ -51,16 +51,17 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     `implementation_coverage` binds the per-implementation contracts below.
   - chain-runner.contract.json: launch/admission/session/startup contract for
     lib/chain-runner.sh.
-  - chain-runner-complete.contract.json: completion/routing/artifact contract for
-    lib/chain-runner-complete.sh.
+  - completion-entrypoint.contract.json: typed completion, strict event
+    ownership, durable route acceptance, artifact, and terminal-state contract.
   - monitor.contract.json: v1 monitor latch, idle, advisor, and diagnostics
     contract for lib/agent-functions.sh and lib/monitor-completion.sh. the
     behavior of record the typed monitor port must preserve.
   - monitor-v2.contract.json: enforceable owns/invariants for the TYPED chain
     monitor (web/lib/runner-v2/monitor*.ts), porting monitor-chain-agent.
   - run-event.contract.json: run.json mutation plus runner-event contract. typed
-    code owns canonical emission; lib/event-trigger.sh remains the direct shell
-    reader/mutator for list, processed, and archive lifecycle operations.
+    code owns canonical emission, strict scans, completion lookup, processed
+    mutation, and scoped archive lifecycle. shell process boundaries invoke the
+    compiled typed CLIs and do not parse or mutate event files themselves.
   - watcher-watchdog.contract.json: active chain-watcher/watchdog ownership in
     web/lib/runner-v2/chain-watcher-service.ts, web/lib/runner-v2/watchdog.ts,
     and web/server/background-worker.ts. the retired shell files remain listed

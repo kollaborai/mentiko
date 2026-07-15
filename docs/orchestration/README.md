@@ -31,8 +31,8 @@ architecture philosophy
 =======================
 
 not a loop
-  chain-runner.sh launches ONE agent then exits. the next agent
-  is launched by chain-runner-complete.sh (called by the monitor).
+  chain-runner.sh launches ONE initial agent then exits. the next agent
+  is selected and durably accepted by the typed completion entrypoint.
   this prevents cascading failures and enables event-driven chaining.
 
 event-driven
@@ -67,22 +67,21 @@ execution layer
     4. run initialization (create run.json)
     5. agent launch (create PTY, send instructions)
     6. execution (agent runs, monitor watches)
-    7. agent completion (via chain-runner-complete.sh)
+    7. agent completion (via the typed completion entrypoint)
     8. cleanup (on_complete: stop/keep/archive)
 
   key point: NOT a loop. launches one agent, exits.
 
-[chain-runner-complete.md](./chain-runner-complete.md)
-  completion handler. 9-phase process when agent finishes:
+[completion-entrypoint.md](./completion-entrypoint.md)
+  typed completion owner. durable process when an agent finishes:
     1. derive agent identity from session name
     2. capture final output
     3. find and strictly match the declared runner event
-    4. kill monitor and agent sessions
-    5. capture artifacts (diff, files-changed, conversations)
-    6. update run.json with agent status
-    7. fail closed if the declared event is absent
-    8. find next agent (via branch mapping or triggers)
-    9. launch next agent or complete chain
+    4. capture artifacts and update run.json under the shared lock
+    5. queue idempotent external effects
+    6. durably accept route targets and fan-in claims
+    7. consume the trigger only after accepted effects and targets
+    8. clean up the completed agent and monitor sessions
 
   called by: monitor session when AGENT_COMPLETE detected.
 
@@ -134,7 +133,7 @@ background service layer
   enables:
     - agent chaining (event triggers next agent in chain)
     - cross-chain automation (one chain triggers another)
-    - manual triggers (emit-event from cli)
+    - manual triggers (`mentiko emit` from the CLI)
 
 supporting libraries
 ====================
@@ -177,14 +176,16 @@ supporting libraries
     - artifacts[] (agent outputs: diff, files-changed, etc)
 
 [event-trigger.md](./event-trigger.md)
-  file-based event system.
+  typed file-based event lifecycle. the path is retained for inbound links.
 
-  functions:
-    - emit-event           invoke the typed event emitter
-    - list-events          show all events (optionally unprocessed)
-    - mark-processed       mark event as processed
-    - archive-all-events   move events to archive/
-    - clean-events         delete old archived events
+  public commands:
+    - mentiko emit         atomically write one canonical event
+    - mentiko events       strictly list valid and invalid event files
+
+  typed lifecycle operations:
+    - find                 resolve one strict unprocessed completion event
+    - mark                 atomically set processed:true
+    - consume              process the explicit trigger and archive owned events
 
   event file format:
     event: agent-complete
@@ -195,8 +196,8 @@ supporting libraries
     data: {...}
 
   canonical serialization, validation, filename selection, and atomic writes
-  live in web/lib/runner-v2/event-emitter.ts. the shell helper still directly
-  reads and mutates event lifecycle state for list/mark/archive operations.
+  live in web/lib/runner-v2/event-emitter.ts. strict scan, lookup, processed
+  mutation, and scoped archival live in web/lib/runner-v2/event-lifecycle.ts.
 
 [routing-lib.md](./routing-lib.md)
   advanced routing patterns.
@@ -224,7 +225,8 @@ data flow
    input: chain.json path, optional --workspace, --task, --start
 
    chain-runner.sh:
-     -> sources libraries (config, agent-functions, event-trigger, etc)
+     -> sources shell boundary libraries (config, agent-functions, etc)
+     -> invokes compiled typed event emitter/lifecycle commands when needed
      -> validates chain.json (jq syntax, required fields)
      -> resolves executor (claude, codex, aider, kollabor)
      -> resolves agent profiles (env vars, cli args)
@@ -249,31 +251,31 @@ data flow
      -> performs work (writes code, runs commands, etc)
      -> writes AGENT_COMPLETE to output when done
 
-   monitor session (running monitor-chain-agent):
+   monitor session (typed monitor by default; shell monitor only when selected):
      -> watches agent output for "AGENT_COMPLETE"
      -> handles timeout (agent.timeout config)
      -> handles stall detection (no output for N intervals)
-     -> on detection: calls chain-runner-complete.sh
+     -> on detection: starts the typed completion launcher
 
 4. agent completion
-   chain-runner-complete.sh:
+   typed completion responsibilities:
      -> kills monitor and agent sessions
      -> captures final output (transport_capture)
      -> git diff (before..HEAD) -> artifacts/{agent-id}-diff.patch
      -> captures files changed -> artifacts/{agent-id}-files-changed.json
      -> captures conversations -> artifacts/{agent-id}-conversations.json
      -> updates run.json (agent status, artifacts manifest)
-     -> consumes the agent's matching declared event; absence fails closed
+     -> strictly resolves the agent's matching declared event; absence fails closed
      -> finds next agent (branch mapping or trigger matching)
-     -> relaunches chain-runner.sh with --start {next-agent-id}
+     -> synchronously accepts runner-v2-launch-agent and only then consumes the event
 
 5. next agent triggered
    two paths:
 
    a) same chain (next agent):
-      -> chain-runner-complete.sh re-invokes chain-runner.sh
-      -> RUN_ID preserved via env
-      -> next agent launched in same run
+      -> typed completion invokes the typed routed-agent launcher directly
+      -> RUN_ID and run directory are preserved via env
+      -> durable agent/session/attempt state is verified in the same run before event consumption
 
    b) cross-chain (chain-watcher):
       -> the background-worker-owned typed watcher detects a new event file
@@ -404,7 +406,7 @@ two "watchers", different purposes:
     - runs monitor-chain-agent function
     - watches ONE agent's output for AGENT_COMPLETE
     - handles timeout and stall detection for that agent
-    - calls chain-runner-complete.sh when agent done
+    - starts the typed completion launcher when the agent is done
     - lifecycle: tied to agent (dies with it)
 
   chain-watcher (background-worker service)
@@ -419,14 +421,14 @@ quick reference: file locations
 
 core orchestration:
   lib/chain-runner.sh              main orchestrator
-  lib/chain-runner-complete.sh     completion handler
+  web/lib/runner-v2/completion-entrypoint.ts typed completion owner
   lib/launch-agent.sh              legacy agent launcher
 
 libraries:
   lib/agent-functions.sh           PTY session functions
   lib/session-transport.sh         pty-manager abstraction
   lib/run-lib.sh                   run object management
-  lib/event-trigger.sh             typed-emitter entrypoint plus shell event lifecycle helpers
+  web/lib/runner-v2/event-lifecycle.ts strict scan, lookup, processed mutation, archive
   lib/routing-lib.sh               fan-out/fan-in, retry
   lib/agent-profile.sh             profile resolution
   lib/config.sh                    path resolution
@@ -435,6 +437,7 @@ libraries:
 background services:
   web/server/background-worker.ts                process owner
   web/lib/runner-v2/event-emitter.ts              canonical runner-event writer
+  web/lib/runner-v2/event-lifecycle-cli.ts        typed lifecycle CLI source
   web/lib/runner-v2/watchdog.ts                   stalled-run recovery
   web/lib/runner-v2/chain-watcher-service.ts      event-triggered chain launch
 
@@ -462,7 +465,7 @@ agent stuck, not completing?
 
 next agent not launching?
   - check event file written to EVENTS_DIR/
-  - list-events to see pending events
+  - run `mentiko events --unprocessed` to inspect pending and invalid events
   - verify event name matches next agent's triggers[]
   - check branches{} mapping in chain.json
 

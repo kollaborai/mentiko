@@ -1,0 +1,84 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": [
+    "web/lib/runner-v2/completion-entrypoint.ts",
+    "web/lib/runner-v2/completion-runner.ts",
+    "web/lib/runner-v2/executor.ts",
+    "web/lib/runner-v2/adapters.ts",
+    "web/lib/runner-v2/event-emitter.ts",
+    "web/lib/runner-v2/event-lifecycle.ts"
+  ],
+  "role": "typed agent completion, strict event ownership, artifact capture, durable downstream acceptance, and terminal routing",
+  "entrypoints": [
+    "lib/runner-v2-complete.js <session-name> <chain.json> <context.json>",
+    "web/scripts/runner-v2-complete.cjs <session-name> <chain.json> <context.json>"
+  ],
+  "callers": [
+    "web/lib/runner-v2/completion-launch.ts",
+    "web/lib/runner-v2/monitor-live-io.ts",
+    "lib/agent-functions.sh typed launcher boundary"
+  ],
+  "phase_order": [
+    "validate and merge the private one-shot launch context before loading config or completion modules",
+    "resolve the exact run, agent, attempt, event root, and strict declared event",
+    "capture completion evidence and reduce it to one typed verdict and executor plan",
+    "bind every replayable synchronous operation to the accepted completion occurrence and stable idempotency key",
+    "persist locked local state and queue idempotent external effects",
+    "start every routed or fan-out target and durably accept its run agent, session, and AgentAttempt state",
+    "commit any fan-in claim only after target acceptance",
+    "consume the explicit trigger and archive only owned events after effects and targets are accepted",
+    "remove the completed agent and monitor sessions or persist retryable cleanup evidence"
+  ],
+  "event_matching": {
+    "implementation": "web/lib/runner-v2/event-lifecycle.ts findRunnerCompletionEvent",
+    "format": "strict canonical .event file with event, source, run_id, timestamp, processed, and data exactly once plus validated lowercase extension fields",
+    "requires_nonempty_exact_run_id": true,
+    "ownership": "agent or session identity with the full chain agent-id set guarding prefix-sharing siblings",
+    "invalid_file_policy": "fail closed; JSON, aliases, noncanonical casing, missing or duplicate fields, and filename-derived ownership never satisfy completion",
+    "unexpected_same_agent_event": "ignored",
+    "declared_emits_missing": "fail the agent/run, emit only a diagnostic agent-error, and launch no downstream route; compatible core-generation artifacts are the sole typed no-emit completion exception",
+    "legacy_diagnostic_source": "the chain-runner-complete source label remains parser-only compatibility for pre-cutover diagnostic files"
+  },
+  "event_consumption": {
+    "implementation": "web/lib/runner-v2/event-lifecycle.ts consumeRunnerEvents under one filesystem claim",
+    "triggered_event": "must be a direct strict .event child of the configured EVENTS_DIR; planning captures its exact pre-launch file-generation token plus raw and normalized hashes, launches and synchronous effects must accept first, owned-sibling cleanup runs next, and processed trigger bytes plus its version-2 receipt are claimed before unchanged active source bytes are unlinked last",
+    "retry_proof": "completion discovery scans active files only; missing-source consume requires a receipt matching the exact pre-launch file-generation token and accepted raw/normalized hashes, then validates its strict processed archive destination, archived hash, run_id, owner, and event; an already-archived replay returns immediately without scanning later live same-run/owner files",
+    "owned_events": "archive only strict records with the same exact nonempty run_id and guarded agent/session ownership",
+    "survivors": "sibling-agent, other-run, runless-ingress, and invalid files remain active"
+  },
+  "routing": {
+    "priority": ["branches[event]", "agents[].triggers"],
+    "shapes": ["string", "array", "fan_out object", "conditional object"],
+    "dedupe": "the pre-launch file-generation token is folded into routed-launch and completion-effect occurrence identity; skip a target only for current durably accepted state from that exact occurrence, while a byte-identical recreated file is a new occurrence",
+    "loop_guard": "repeat current-agent:event pair completes the run",
+    "max_rounds": "exceeding config.max_rounds stops run/task"
+  },
+  "synchronous_operations": {
+    "identity": "the executor carries the accepted completion occurrence into the adapter context; event emission, schedule history, hook dispatch, session-policy audit, and rollback audit fail closed without it and derive a stable per-operation idempotency key",
+    "claims": "schedule state/history, hook dispatch, session-policy audit, rollback audit, and the completion-event emission receipt are serialized by owner-bearing typed file claims",
+    "event_emission": "canonical event-emitter writes never clobber different bytes; same occurrence dedupes by stable key, later occurrences use collision-safe distinct files, and completion-event-emissions.jsonl suppresses replay after the emitted event moves to archive",
+    "hook_delivery": "a dispatched receipt suppresses ordinary completion replay; executable hooks receive MENTIKO_IDEMPOTENCY_KEY and MENTIKO_COMPLETION_OCCURRENCE_ID plus the same values in details. A process crash after spawn but before the dispatched receipt is explicitly at-least-once and requires hook-side dedupe for exactly-once behavior",
+    "local_audits": "schedule, session-policy, and rollback ledgers store the stable operation key and append once per occurrence; schedule replay repairs state.json from the original receipt timestamp"
+  },
+  "artifacts": [
+    "<agent>-events.json",
+    "<agent>-output.txt",
+    "<agent>-diff.patch",
+    "<agent>-files-changed.json",
+    "<agent>-conversations.json",
+    "<agent>-summary.json",
+    "<agent>-summary.md",
+    "<agent>-quality-gate.json"
+  ],
+  "invariants": [
+    "never fabricate the declared emits event",
+    "diagnostic events never satisfy success handoff matching",
+    "a missing agent summary stubs as status unknown; an all-stub completed run resolves needs_review with decision_required, never complete (0c96b73)",
+    "archive only events owned by run id plus source or agent",
+    "quality gates run before generation import and downstream routing",
+    "fan-in claim commits only after the typed target launch is durably accepted; rejection leaves the claim retryable",
+    "typed routed and fan-out launches wait synchronously for bounded CLI exit plus durable run agent, session, and AgentAttempt proof before consuming the parent event",
+    "a later operation failure cannot duplicate already accepted synchronous work when the same completion occurrence replays",
+    "task status propagation happens on completed, failed, and stopped"
+  ]
+}

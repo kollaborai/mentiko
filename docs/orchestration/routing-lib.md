@@ -4,7 +4,7 @@ advanced routing patterns for agent chains. provides fan-out/fan-in,
 error handling, timeout detection, and retry logic.
 
 see also:
-  - [chain-runner-complete.md](./chain-runner-complete.md) - branch resolution
+  - [completion-entrypoint.md](./completion-entrypoint.md) - typed branch resolution
   - [watchdog.md](./watchdog.md) - stall detection
 
 overview
@@ -125,7 +125,7 @@ chain.json:
 
 flow:
   1. agent emits "data-ready" event
-  2. chain-runner-complete calls branch-parse
+  2. typed completion resolves the branch plan
   3. creates fan-group with 3 agents
   4. launches parser, analyzer, validator in parallel
   5. each agent calls fan-group-agent-complete on finish
@@ -256,7 +256,7 @@ chain.json:
   }
 
 note: routing-lib provides branch-parse detection but condition
-evaluation is handled by chain-runner-complete.sh with env
+evaluation is handled by the typed completion entrypoint with env
 var substitution.
 
 exported functions
@@ -276,7 +276,7 @@ related files
 =============
 
 lib/routing-lib.sh              this file
-lib/chain-runner-complete.sh   uses branch-parse, error-handler-resolve
+web/lib/runner-v2/completion-entrypoint.ts   owns completion routing
 lib/chain-runner.sh             uses timeout-check-agent
 lib/watchdog.sh                 retired parity reference; uses timeout-check-agent
 

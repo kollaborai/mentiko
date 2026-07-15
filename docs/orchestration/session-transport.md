@@ -202,7 +202,7 @@ lib/session-transport.sh    this file
 bin/p                        pty-manager daemon (node.js)
 lib/chain-runner.sh         uses transport for local agents
 lib/agent-functions.sh      uses transport for session mgmt
-lib/chain-runner-complete.sh uses transport for output capture
+typed completion uses the PTY client for output capture and cleanup
 
 troubleshooting
 ===============

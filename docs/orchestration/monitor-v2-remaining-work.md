@@ -14,8 +14,9 @@ Contracts: `docs/orchestration/contracts/monitor-v2.design.json` (design + plan)
 The typed monitor's **brain and first live bridge are built, tested, and proven
 on a live TASK-093-shaped run.** `buildMonitorCommand` and the shell routed-agent
 monitor script select `monitor-v2` by default via `MENTIKO_MONITOR_V2`, with
-explicit opt-out. The typed completion path is fail-closed: exit 64 and completion PTY spawn failures do not shell-fallback. The remaining risk is parity breadth, not the basic typed
-completion-handoff path.
+explicit opt-out. Completion is now unconditionally typed and fail-closed:
+missing context, exit 64, PTY spawn failure, or missing child acceptance has no
+shell fallback. The remaining risk is monitor parity breadth, not completion ownership.
 
 Committed this session:
 - `477ca11` runner-v2 contract: false-failure invariants recorded
@@ -91,7 +92,7 @@ Committed this session:
 ### Runner-v2 default switch — readiness re-run required
 - The monitor-v2 handoff proof, broader monitor e2e parity, typed fan-group accounting, and late-event recovery hookup have landed. `assessRunnerV2SwitchReadiness()` reports `ready`, and `MENTIKO_MONITOR_V2` now defaults on. Shell monitor deletion remains separate and must wait until after the default-on bake.
 
-### Shell completion fallback removal — done for typed completion flag-on path
+### Shell completion fallback removal — done unconditionally
 - Typed fan-group member accounting now exists: typed completion reads live fan-group membership, suppresses normal member routing, updates `.state`/`.json` fan groups under lock, and launches fan-in only from the claim winner.
 - Live proof: `MENTIKO_RUNNER_V2=1 MENTIKO_RUNNER_V2_COMPLETION=1 MENTIKO_MONITOR_V2=1 web/e2e/engine/engine-e2e-events.sh` produced run `run-1783437332756-3693ab01`; the legacy shell-oriented script failed two stale assertions, but the typed artifact verifier passed against `state/fan-groups/dispatch-done-1783437361464.json` (`completed: 2`, members `worker_a`/`worker_b`, collector completed exactly once).
 - Default-on proof: `env -u MENTIKO_MONITOR_V2 MENTIKO_RUNNER_V2=1 MENTIKO_RUNNER_V2_COMPLETION=1 web/e2e/engine/engine-e2e-events.sh` passed 24/24 and produced run `run-1783446649710-698fc703`; fan-group state `dispatch-done-1783446679178.json` completed both workers and launched the collector exactly once.

@@ -57,15 +57,15 @@ event lifecycle
 └─────────┘     └──────────────┘     └────────────────────┘
                      │
                      ├──────────────▶ completion routing
-                     └──────────────▶ shell lifecycle mark/archive
+                     └──────────────▶ typed lifecycle consume/archive
 
 state transitions:
   - created: typed emitter atomically writes a validated event
   - unprocessed: available to strict typed consumers
   - handled: chain-watcher records a durable marker per trigger without changing
     the event's processed field
-  - processed/archived: legacy `lib/event-trigger.sh` lifecycle helpers can mark
-    or move owned events; this read/mutate shell surface remains pending migration
+  - processed/archived: the typed lifecycle atomically marks the explicit trigger
+    processed and archives only strict records owned by the same run and agent
 
 event fields
 ------------------------------------------------------------

@@ -1,11 +1,11 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/agent-functions.sh", "lib/monitor-completion.sh"],
+  "source_files": ["lib/agent-functions.sh", "lib/monitor-completion.sh", "web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts"],
   "role": "monitor pty agent sessions, latch completion, classify stale/dead, and launch completion handler",
   "completion_latch": {
     "rule": "OR latch explicit terminal marker or declared emits event",
     "terminal_marker": "AGENT_COMPLETE on its own stripped terminal line",
-    "event_match": "expected emits event with source containing agent id and matching run id",
+    "event_match": "compiled typed lifecycle find requires one strict unprocessed expected-emits event with exact nonempty run_id and guarded agent/session ownership",
     "latch_file": "~/.mentiko_monitor/${session}_complete"
   },
   "stale_behavior": {
@@ -23,10 +23,10 @@
     "without_event": "failed diagnostic agent-error"
   },
   "launches": {
-    "completion": "chain-runner-complete in separate pty when chain.json exists",
-    "typed_bridge": "when MENTIKO_RUNNER_V2 and MENTIKO_RUNNER_V2_COMPLETION are enabled, the completion pty runs node runner-v2-complete.js as the only completion owner; exit 64/malformed typed context fails closed and does not exec shell completion",
-    "completion_env": "completion session carries MENTIKO_RUN_DIR ($RUNS_DIR/$run_id), EVENTS_DIR, STATE_DIR, both runner-v2 flags, and MENTIKO_CODE_ROOT anchored from the engine location (20ce3b1, 5e79030, 6504637)",
-    "legacy": "complete-agent.sh only when monitor has no chain.json"
+    "completion": "web/lib/runner-v2/completion-launch.ts starts the typed entrypoint in a separate PTY when chain.json exists",
+    "typed_bridge": "completion is unconditionally typed; missing chain context, exit 64, malformed launch context, PTY rejection, or missing child acceptance fails closed without a shell fallback",
+    "completion_env": "the launcher persists an allowlisted run context to a private one-shot 0600 file, passes only its random path in PTY argv, and requires deletion-after-validation as child acceptance before the monitor returns",
+    "chainless": "a monitor without chain.json fails closed and leaves completion active and unacknowledged"
   },
   "invariants": [
     "stale is not complete",

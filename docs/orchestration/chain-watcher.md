@@ -8,7 +8,7 @@ not a PTY session and chain startup does not launch it.
 See also:
 
 - [watchdog.md](./watchdog.md) - stalled run recovery
-- [event-trigger.md](./event-trigger.md) - runner event production
+- [event-trigger.md](./event-trigger.md) - typed runner event lifecycle
 - [../RUNNER_V2_ARCHITECTURE.md](../RUNNER_V2_ARCHITECTURE.md) - current runner ownership
 - [contracts/watcher-watchdog.contract.json](./contracts/watcher-watchdog.contract.json) - binding contract
 

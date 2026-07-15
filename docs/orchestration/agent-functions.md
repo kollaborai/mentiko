@@ -5,7 +5,7 @@ not a standalone script - sourced by chain-runner.sh and other tools.
 
 see also:
   - [chain-runner-flow.md](./chain-runner-flow.md) - main orchestration flow
-  - [chain-runner-complete.md](./chain-runner-complete.md) - completion handler
+  - [completion-entrypoint.md](./completion-entrypoint.md) - typed completion owner
 
 overview
 ========
@@ -113,7 +113,7 @@ monitor-with-ai <session_name> [check_interval] [agent_context] [max_stale_count
        - check session still exists
        - check process still alive (local only)
        - grep output for "AGENT_COMPLETE"
-       - if found: launch complete-agent.sh; do not fabricate an event
+       - if found without chain context: fail closed; do not fabricate an event
        - if output unchanged (stale):
          - increment stale counter
          - if max_stale_count reached: force completion
@@ -142,7 +142,7 @@ monitor-chain-agent <session_name> [check_interval] [agent_context] [chain_file]
        - grep output for "AGENT_COMPLETE"
        - if found:
          - call profiler-snapshot
-         - launch chain-runner-complete.sh (json mode)
+         - launch the typed completion PTY through its one-shot context handoff
        - if output unchanged (stale):
          - increment stale counter
          - if max_stale_count reached: force completion
@@ -172,14 +172,13 @@ monitor flow comparison
 ======================
 
 monitor-with-ai:
-  - legacy mode (grep-parsing spec files)
-  - calls complete-agent.sh on completion
+  - legacy spec-oriented monitor loop
+  - requires chain context for completion and otherwise fails closed
   - never fabricates a missing declared event
-  - for: legacy spec-based agents
 
 monitor-chain-agent:
   - json-driven mode (chain.json)
-  - calls chain-runner-complete.sh on completion
+  - calls the typed completion launcher on completion
   - missing declared event fails closed; chain.json only identifies what to match
   - for: chain-based agents
 
@@ -229,5 +228,5 @@ related files
 lib/agent-functions.sh        this file
 lib/session-transport.sh      pty-manager abstraction
 lib/chain-runner.sh          main orchestrator (sources this)
-lib/chain-runner-complete.sh  completion handler
+web/lib/runner-v2/completion-entrypoint.ts typed completion owner
 lib/mentiko-monitor.sh          profile-aware monitor script

@@ -1,5 +1,9 @@
 # runner v2 contract migration
 
+> Historical plan snapshot. The shell completion ownership described below was
+> the state when this plan was written; that handler has since been deleted and
+> `web/lib/runner-v2/completion-entrypoint.ts` is the active completion owner.
+
 goal:
   migrate chain orchestration from fragmented bash authority to a side-by-side
   typescript controller that can be enabled by flag after parity validation.

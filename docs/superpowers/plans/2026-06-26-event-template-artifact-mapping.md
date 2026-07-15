@@ -1,5 +1,9 @@
 # Event Template Artifact Mapping Implementation Plan
 
+> Historical plan snapshot. Shell completion paths and source labels below
+> describe the pre-cutover implementation; current completion and quality-gate
+> provenance is owned by `web/lib/runner-v2/completion-entrypoint.ts`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task.
 
 ## Goal

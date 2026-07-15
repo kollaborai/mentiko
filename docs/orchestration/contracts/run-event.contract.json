@@ -1,12 +1,12 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/run-lib.sh", "lib/event-trigger.sh", "web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-emitter.ts"],
-  "role": "run.json mutation and task propagation, typed runner-event emission, and remaining shell processed/archive lifecycle mutation",
+  "source_files": ["lib/run-lib.sh", "web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-emitter.ts", "web/lib/runner-v2/event-lifecycle.ts"],
+  "role": "run.json mutation and task propagation plus typed runner-event emission, validation, lookup, processed mutation, and archive lifecycle",
   "run_json": {
     "path": "$RUNS_DIR/<run_id>/run.json",
     "lock_dir": "<run.json>.lock/",
     "write_policy": "read-modify-write under lock, tmp file, rename",
-    "timeout_policy": "warn and proceed unlocked",
+    "timeout_policy": "fail closed without mutation; callers may retry or reconcile but never write unlocked",
     "read_policy": "lock-free",
     "statuses": ["pending", "running", "blocked", "failed", "stopped", "completed"]
   },
@@ -15,9 +15,9 @@
     "fields": ["event", "source", "run_id", "timestamp", "processed", "data"],
     "parser": "strict lowercase key-value lines split on first colon; six canonical fields are required exactly once before normalization, and optional extension fields must be lowercase, unique, and non-colliding",
     "writer": "web/lib/runner-v2/event-emitter.ts owns canonical bytes, validation, filenames, and atomic writes; shell-facing emit entrypoints only invoke it",
-    "shell_lifecycle": "lib/event-trigger.sh still directly lists, marks processed, and archives owned event files",
+    "lifecycle": "web/lib/runner-v2/event-lifecycle.ts strictly lists, matches, marks processed, and archives owned event files; shell command boundaries only invoke its compiled CLI",
     "filename": "canonical: ${run_id:+${run_id}-}${source}-${event}.event; diagnostic: <timestamp>-${run_id}-${agent}-${event}.event",
-    "source_of_truth": "body fields before filename fallback"
+    "source_of_truth": "validated body fields only; filenames are persistence identities, never ownership fallback"
   },
   "task_update": {
     "api_base": "http://localhost:${WEB_PORT:-3000}",
@@ -26,8 +26,10 @@
     "completion_behavior": "completed run reopens non-open task to open and writes summary comment"
   },
   "archive": {
-    "triggered_event": "always archived if explicit path is present",
-    "owned_events": "run_id plus source/agent exact or superstring match",
+    "triggered_event": "the exact raw and normalized active trigger plus its file-generation token are captured before launches; under the lifecycle claim owned siblings are archived first, then strict processed trigger bytes and the immutable receipt are claimed before unchanged trigger bytes are unlinked last",
+    "receipt": "$EVENTS_DIR/archive/.event-receipt-<sha256(sourceFilename + NUL + runId)>-<fileGenerationToken>-<sha256(acceptedRawBytes)>.json; version 2 with role, monotonic occurrence, sourceFilename, runId, destinationFilename, occurrenceToken, acceptedContentSha256, acceptedRecordSha256, and archivedContentSha256",
+    "retry_proof": "completion discovery is active-file-only; missing-source consume requires the exact pre-launch file-generation token plus accepted raw and normalized hashes to select one trigger receipt, then validates the direct archive destination, archived SHA-256, strict processed body, run_id, owner, and optional expected event; old same-path receipts and byte-identical recreations cannot authorize a different occurrence, and an already-archived replay returns without scanning or consuming later live same-run/owner files",
+    "owned_events": "run_id plus source/agent exact identity or guarded delimiter-token identity",
     "forbidden": "global archive sweep of sibling agents or other runs"
   },
   "invariants": [
@@ -36,6 +38,7 @@
     "add-run-session is canonical running promotion",
     "event body fields are authoritative",
     "archive scope is run plus source/agent",
+    "archive receipts prove exact lifecycle identity and never act as event triggers or ownership fallback",
     "schemas are not trusted over actual disk format",
     "exported functions avoid heredoc bodies (export -f serialization hazard); run/event JSON is built via printf or jq -n (0c96b73, ebda700)"
   ]

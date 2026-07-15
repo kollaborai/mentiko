@@ -49,7 +49,7 @@ Plugin manifests use legacy hyphen format: `chain-completed`, `agent-completed`.
 
 Resolution: support both. In `plugin-types.ts`, `PluginEventType` accepts both forms.
 When running `on-event.sh`, `$EVENT_TYPE` is passed in dot notation going forward.
-Legacy hyphen format is translated by `chain-runner-complete.sh`.
+Pre-cutover hyphenated event names are normalized by the typed completion/event adapters.
 
 Mapping:
   chain-completed   → chain.completed

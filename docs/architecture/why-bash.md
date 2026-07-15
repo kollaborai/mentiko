@@ -35,13 +35,14 @@ long-running watcher/watchdog lifecycle and their persisted contracts.
 - Sets up environment and workspace
 - Manages agent input/output
 
-**event-trigger.sh**
-- Delegates canonical event writes to the typed emitter
-- Retains shell event list/mark/archive lifecycle helpers pending migration
+**event-emitter.ts / event-lifecycle.ts**
+- Own canonical event writes and strict raw-file validation
+- Own list, completion lookup, processed mutation, and scoped archival
+- Expose compiled TypeScript CLIs to shell process boundaries
 
-**complete-agent.sh**
-- Legacy spec-agent completion reader
-- Never fabricates a missing declared success event
+**completion-entrypoint.ts**
+- Owns completion, routing, and strict event consumption in TypeScript
+- Never fabricates a missing declared success event and has no shell fallback
 
 **background-worker.ts**
 - Starts and stops the typed chain-watcher service

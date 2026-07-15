@@ -13,7 +13,7 @@ chain-runner.sh is the main orchestration engine that reads chain.json,
 resolves agents, creates PTY sessions, and manages execution flow.
 
 it is NOT a loop - it launches one agent, then exits.
-the next agent is launched by chain-runner-complete.sh (called by the monitor).
+the next agent is selected and durably accepted by the typed completion entrypoint.
 
 this pattern enables:
   - event-driven chaining (agents emit events, next agent waits for trigger)
@@ -28,7 +28,6 @@ phase 0: initialization
    sources orchestration libraries:
    - config.sh               namespace and path resolution
    - agent-functions.sh      agent utility functions (see [agent-functions.md](./agent-functions.md))
-   - event-trigger.sh        event system
    - webhook-sender.sh       webhook notifications
    - slack-integration.sh    slack notifications
    - run-lib.sh              run tracking (create-run, update-run-status, etc)
@@ -42,6 +41,10 @@ phase 0: initialization
    - approval-gate.sh        human approval gates
    - plugin-runner.sh        plugin system
    - budget-check.sh         spending limits
+
+   runner-event emission and lifecycle are not sourced shell libraries. process
+   boundaries invoke the compiled typed emitter and lifecycle CLIs under
+   `MENTIKO_CODE_ROOT/lib/`.
 
 2. background services
    -------------------
@@ -338,9 +341,9 @@ function: launch_chain_agent <agent-id> <round>
    - runs monitor-chain-agent from agent-functions.sh
    - watches agent output for AGENT_COMPLETE
    - handles timeouts and stalls
-   - calls chain-runner-complete.sh when agent done
+   - starts the typed completion launcher when the agent is done
 
-   see [chain-runner-complete.md](./chain-runner-complete.md) for
+   see [completion-entrypoint.md](./completion-entrypoint.md) for
    what happens after completion.
 
 12. metrics: agent started
@@ -374,7 +377,7 @@ lib/agent-functions.sh (see [agent-functions.md](./agent-functions.md)).
    - send nudge message
    - if max_stale_count exceeded:
    - mark as failed
-   - call chain-runner-complete.sh with failure
+   - call typed completion with failure evidence
 
 3. stall detection
    ---------------
@@ -383,12 +386,12 @@ lib/agent-functions.sh (see [agent-functions.md](./agent-functions.md)).
    - increment stale counter
    - if max_stale exceeded: mark as failed
 
-phase 7: agent completion (chain-runner-complete.sh)
+phase 7: agent completion (typed completion entrypoint)
 =====================================================
 
 called by monitor when AGENT_COMPLETE detected.
 
-full documentation: [chain-runner-complete.md](./chain-runner-complete.md)
+full documentation: [completion-entrypoint.md](./completion-entrypoint.md)
 
 summary:
 
@@ -473,9 +476,13 @@ summary:
 
 14. launch next agent
    ------------------
-   if next agent found:
-   - re-invokes chain-runner.sh with --start {next_agent_id}
-   - passes RUN_ID via env
+   if next agent found in typed completion:
+   - invokes runner-v2-launch-agent for exact targets
+   - waits for bounded CLI exit and verifies run agent/session/attempt state
+   - leaves the active parent event retryable until durable acceptance
+
+   there is no shell completion branch. typed launch rejection leaves the
+   parent event active for replay.
 
 15. chain completion
    ------------------
@@ -517,14 +524,15 @@ key files involved
 ==================
 
 lib/chain-runner.sh           main orchestrator (this file)
-lib/chain-runner-complete.sh  completion handler (see [chain-runner-complete.md](./chain-runner-complete.md))
+web/lib/runner-v2/completion-entrypoint.ts  completion owner (see [completion-entrypoint.md](./completion-entrypoint.md))
 lib/agent-functions.sh        function library (see [agent-functions.md](./agent-functions.md))
 lib/agent-profile.sh          profile resolution
 lib/launch-agent.sh           agent launcher (legacy)
 lib/config.sh                 namespace/path config
 lib/run-lib.sh                run tracking
 lib/session-transport.sh      pty-manager abstraction
-lib/event-trigger.sh          event system
+web/lib/runner-v2/event-lifecycle.ts strict event scan, lookup, processed mutation, archive
+web/lib/runner-v2/event-lifecycle-cli.ts compiled lifecycle command source
 lib/metrics.sh                performance metrics
 lib/performance.sh            performance tracking
 lib/profiler.sh               agent profiling
@@ -544,7 +552,7 @@ related daemons
 
 [watchdog.md](./watchdog.md)                - detects stalled runs
 [chain-watcher.md](./chain-watcher.md)       - event-driven chain triggers
-[chain-runner-complete.md](./chain-runner-complete.md) - agent completion handler
+[completion-entrypoint.md](./completion-entrypoint.md) - typed agent completion owner
 
 data paths (namespace-aware)
 ============================

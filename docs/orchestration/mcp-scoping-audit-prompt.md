@@ -18,7 +18,7 @@ Fix the root cause of (1), backfill remaining orphans, then perform a FULL audit
 
 ## Part 1 - Fix the root cause (stamp `workspace_id` at creation)
 Find where AI task generation persists task rows and ensure `workspace_id` is set from the run/workspace context at creation, never NULL when a workspace is known.
-- Trace: `web/app/api/tasks/generate/route.ts`, `web/app/api/mentiko-mcp/ops/tasks/generate/route.ts`, `web/lib/generation/**` (generation import/backstop), the generation completion path (`web/lib/runner-v2/completion-*`, and `lib/chain-runner-complete.sh` "generation import backstop"), and `web/lib/tasks/task-store.ts` (`taskCreate` - confirm it accepts and persists `workspace_id`).
+- Trace: `web/app/api/tasks/generate/route.ts`, `web/app/api/mentiko-mcp/ops/tasks/generate/route.ts`, `web/lib/generation/**`, the typed generation completion path in `web/lib/runner-v2/completion-*`, and `web/lib/tasks/task-store.ts` (`taskCreate` - confirm it accepts and persists `workspace_id`).
 - The generation run knows its workspace (run.json `workspaceId` / `workspacePath`). Propagate it into every generated task. If generation can legitimately run with no workspace, define the intended fallback (inherit parent/epic workspace, or the run's workspace) instead of NULL.
 - Check the other creators too: `create_task` MCP -> ops `/tasks` -> `/api/tasks/create`; decision->task and chain->task flows.
 

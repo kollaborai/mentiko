@@ -6,7 +6,7 @@ metadata, and run history tracking.
 
 see also:
   - [chain-runner-flow.md](./chain-runner-flow.md) - run creation in phase 4
-  - [chain-runner-complete.md](./chain-runner-complete.md) - run updates
+  - [completion-entrypoint.md](./completion-entrypoint.md) - typed completion run updates
 
 overview
 ========
@@ -227,7 +227,7 @@ update-task-from-run <run-id> <status>
     last_run_agents      (comma-separated id|status pairs)
     last_run_artifacts   (json array)
 
-  usage: called by chain-runner-complete.sh on chain completion
+  usage: called at shell launch boundaries; typed completion uses the shared locked writer
 
 path resolution
 ===============
@@ -250,7 +250,7 @@ related files
 lib/run-lib.sh                this file
 lib/config.sh                 path resolution (RUNS_DIR, DEBUG_DIR)
 lib/chain-runner.sh           creates run via create-run
-lib/chain-runner-complete.sh  updates via update-run-status, update-run-agent
+web/lib/runner-v2/completion-entrypoint.ts  updates through the typed shared-lock writer
 lib/agent-activity-capture.sh  writes artifacts to run directory
 web/app/api/runs/[id]/route.ts web api reads run.json
 

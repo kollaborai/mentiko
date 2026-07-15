@@ -1,17 +1,20 @@
 # unified logging spec
 
+This spec began as a shell-era incident note. The shell completion handler it
+mentions was subsequently deleted; current completion logging belongs in
+`web/lib/runner-v2/completion-entrypoint.ts` and its typed adapters.
+
 all orchestration scripts and API routes must log lifecycle events
 to the system logger (system.jsonl) so they show up in /settings/logs.
 
 ## current state
 
-we added `_sys_log` (bash) and `writeLog` (ts) to some stop/cancel
-paths and phase breadcrumbs in chain-runner-complete.sh. the ERR trap
-in chain-runner-complete.sh caught a crash at line 583 that had been
-silently killing chain handoffs for days.
+we added `_sys_log` (bash) and `writeLog` (ts) to some stop/cancel paths. A
+pre-cutover shell completion ERR trap historically exposed a crash that had
+been silently killing chain handoffs.
 
 what's covered now:
-  chain-runner-complete.sh  phase breadcrumbs (2b,3,4,5,5a,5b,6) + ERR trap
+  completion-entrypoint.ts  typed completion and adapter diagnostics
   chain-runner.sh           stop paths (budget, circuit breaker, approval)
   run-reconciler.ts         orphaned run cleanup, grace period skips
   /api/runs/[id]/stop       user stop
@@ -28,7 +31,8 @@ what's NOT covered:
   agent-activity-capture.sh no logging (artifact capture)
   session-log-resolver.sh   no logging (conversation file resolution)
   scheduler.sh              no logging (schedule checks)
-  event-trigger.sh          no logging (event file creation)
+  event-emitter.ts          no system.jsonl logging (event file creation)
+  event-lifecycle.ts        no system.jsonl logging (lookup/consume/archive)
   peer-manager (bin)        no logging (link/peer orchestration)
   job-runner.mjs            no logging (background job execution)
 
@@ -55,7 +59,7 @@ scripts that need this:
   lib/agent-activity-capture.sh
   lib/scheduler.sh
 
-chain-runner-complete.sh already has it.
+the typed completion owner must use structured TypeScript logging instead.
 
 ### 2. phase breadcrumbs in chain-runner.sh
 
@@ -92,9 +96,12 @@ runner to add logging to. Logging work belongs in chain-runner.sh (section 1).
 
 ### 6. event system logging
 
-event-trigger.sh, web/lib/runner-v2/chain-watcher-service.ts, and
-web/server/background-worker.ts:
+web/lib/runner-v2/event-emitter.ts,
+web/lib/runner-v2/event-lifecycle.ts,
+web/lib/runner-v2/chain-watcher-service.ts, and web/server/background-worker.ts:
   - event file written (event name, source agent)
+  - completion event consumed (run, source, trigger, archived count)
+  - invalid lifecycle file rejected (path, strict issue codes)
   - trigger handled (which chain launched)
   - event ignored (handled marker exists, no matching trigger, or strict parse failed)
 
@@ -142,8 +149,8 @@ all logs use the existing system-logger.ts format:
 ### source naming convention
 
 use the script/module name without extension:
-  chain-runner, chain-runner-complete, launch-agent, watchdog,
-  reconciler, task-reconciler, scheduler, event-trigger,
+  chain-runner, runner-v2-completion, launch-agent, watchdog,
+  reconciler, task-reconciler, scheduler, event-emitter, event-lifecycle,
   chain-watcher, peer-manager, job-runner, activity-capture,
   stop-api, stop-all, run-api
 
@@ -190,7 +197,7 @@ automatically.
 after implementation, run a chain and verify /settings/logs shows:
   - run created
   - agent 1 launched
-  - agent 1 phase breadcrumbs (if chain-runner-complete)
+  - agent 1 typed completion breadcrumbs
   - agent 1 completed
   - agent 2 launched
   - agent 2 completed
@@ -205,7 +212,8 @@ crash a script (e.g. bad jq) and verify the ERR trap fires.
   lib/launch-agent.sh              agent spawn logging
   lib/agent-activity-capture.sh    artifact capture logging
   lib/scheduler.sh                 schedule fire logging
-  lib/event-trigger.sh             event write logging
+  web/lib/runner-v2/event-emitter.ts event write logging
+  web/lib/runner-v2/event-lifecycle.ts event consume/archive logging
   web/lib/runner-v2/watchdog.ts    typed stalled-run lifecycle logging
   web/lib/runner-v2/chain-watcher-service.ts typed event processing logging
   web/server/background-worker.ts typed service lifecycle logging

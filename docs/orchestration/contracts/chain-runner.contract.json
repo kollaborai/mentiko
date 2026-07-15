@@ -63,7 +63,7 @@
   },
   "session_contract": {
     "agent_session": "remove existing session, transport_new_session, send start script",
-    "monitor_session": "monitor-<agent-session>; mon_script inline-exports the full completion context (runner-v2 flags, MENTIKO_RUN_DIR, RUNS_DIR, NAMESPACE_ID, ORG_ID, EVENTS_DIR, STATE_DIR, MENTIKO_CODE_ROOT) because the pty daemon whitelists spawn env (3c0b305)",
+    "monitor_session": "monitor-<agent-session>; mon_script exports the explicit run context used by the typed completion launcher, which transfers its allowlisted values through a private one-shot 0600 file because the PTY daemon intentionally filters spawn env",
     "instructions": "write artifact instructions file and send short pointer to TUI",
     "readiness": {
       "gate": "wait_for_profile_readiness (lib/chain-runner.sh) classifying via cli_readiness_check (lib/cli-readiness.sh); must pass before task instructions are sent",
@@ -85,6 +85,6 @@
     "readiness classification is profile-driven data, never hardcoded prompt heuristics (a7956d9, 20ce3b1)",
     "best-effort observability writers (perf/metrics/profiler) must never abort a live run under set -e + ERR trap (23bdfe7)",
     "diagnostic monitor events must not look like successful handoff events",
-    "completion/routing stays delegated to chain-runner-complete"
+    "completion/routing is delegated to the typed completion entrypoint"
   ]
 }
