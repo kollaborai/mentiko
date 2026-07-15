@@ -111,7 +111,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "runner-event": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-event-resolution",
@@ -132,16 +132,23 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/chain-watcher-service.ts", "web/lib/runner-v2/watchdog.ts", "web/server/background-worker.ts"],
       },
       {
-        id: "shell-event-lifecycle",
-        label: "Shell event listing, processed mutation, and archive lifecycle",
-        owner: "legacy-shell",
-        paths: ["lib/event-trigger.sh"],
+        id: "typed-event-lifecycle",
+        label: "Typed strict scan, completion lookup, processed mutation, and archive lifecycle",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts"],
       },
     ],
-    legacyEquivalent: {
-      summary: "Canonical event emission is typed. The remaining legacy shell ownership is event listing, processed mutation, and archive lifecycle in lib/event-trigger.sh.",
-      paths: ["lib/event-trigger.sh"],
-    },
+  },
+  "runner-event-archive-receipt": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-event-archive-receipt",
+        label: "Typed pre-launch file-generation identity, exact raw/normalized/archive hash proof, and consume-last crash retry",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle.test.ts"],
+      },
+    ],
   },
   "run-record": {
     usage: "shared",
@@ -155,7 +162,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-run-mutation",
         label: "Locked typed run.json mutation",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/run-state.ts"],
+        paths: ["web/lib/runs/run-record.ts", "web/lib/runner-v2/run-state.ts"],
       },
       {
         id: "typed-run-recovery",
@@ -167,12 +174,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "shell-run-lifecycle",
         label: "Shell run creation and lifecycle mutation",
         owner: "legacy-shell",
-        paths: ["lib/run-lib.sh", "lib/chain-runner.sh", "lib/chain-runner-complete.sh"],
+        paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
       },
     ],
     legacyEquivalent: {
-      summary: "Runner v2 writes the same run.json under the shared lock protocol; shell remains an active lifecycle writer during side-by-side migration.",
-      paths: ["lib/run-lib.sh", "lib/chain-runner.sh", "lib/chain-runner-complete.sh"],
+      summary: "Runner v2 owns completion-time run.json mutation under the shared lock protocol; run-lib.sh and the initial shell runner remain active creation/bootstrap writers during migration.",
+      paths: ["lib/run-lib.sh", "lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
     },
   },
   "runner-v2-attempt": {
@@ -192,41 +199,35 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-routed-adoption",
-        label: "Typed completion-time adoption for shell-routed agents",
+        label: "Typed completion-time reuse or pre-cutover routed adoption",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/completion-entrypoint.ts"],
       },
     ],
     legacyEquivalent: {
       summary: "No single persisted predecessor existed; attempt state was implicit across shell .state files, run.json agent fields, and PTY sessions.",
-      paths: ["lib/chain-runner.sh", "lib/chain-runner-complete.sh"],
+      paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
     },
   },
   "runner-v2-pending-handoff": {
     usage: "runner-v2",
     surfaces: [
       {
-        id: "typed-handoff-persistence",
-        label: "Persist launch PID and exact target agents",
+        id: "typed-handoff-cleanup",
+        label: "Read and clear pre-cutover pending handoff evidence",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/run-state.ts"],
+        paths: ["web/lib/runner-v2/handoff-liveness.ts", "web/lib/runner-v2/run-state.ts"],
       },
       {
         id: "typed-handoff-reconciliation",
-        label: "Reconcile pending handoff liveness",
+        label: "Reconcile and retire live legacy pending handoffs",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/handoff-liveness.ts", "web/lib/runs/run-reconciler.ts"],
       },
-      {
-        id: "shell-routed-launch",
-        label: "Launch routed downstream agents",
-        owner: "legacy-shell",
-        paths: ["web/lib/runner-v2/routed-launch-plan.ts", "lib/chain-runner.sh"],
-      },
     ],
     legacyEquivalent: {
-      summary: "There was no persisted predecessor. This closes the liveness gap around detached chain-runner.sh --start/--parallel launches; shell still performs the routed launch.",
-      paths: ["lib/chain-runner.sh"],
+      summary: "Previous typed completion code wrote these records around detached routed launches. Synchronous typed CLI acceptance now proves delivery through run agent, session, and AgentAttempt state, so no new pending handoff receipt is created.",
+      paths: ["web/lib/runner-v2/adapters.ts"],
     },
   },
   "runner-agent-state": {
@@ -242,16 +243,31 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "shell-agent-state",
         label: "Shell .state lifecycle ownership",
         owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh", "lib/chain-runner-complete.sh"],
+        paths: ["lib/chain-runner.sh"],
       },
     ],
     legacyEquivalent: {
       summary: "This is the legacy line-oriented state contract itself; runner v2 currently overlays it for interoperability.",
-      paths: ["lib/chain-runner.sh", "lib/chain-runner-complete.sh"],
+      paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-entrypoint.ts"],
     },
   },
+  "completion-launch-context": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-completion-context-handoff",
+        label: "Write, validate, accept, and clean the private one-shot completion context",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/completion-launch-context.ts",
+          "web/lib/runner-v2/completion-launch.ts",
+          "web/lib/runner-v2/complete-cli.ts",
+        ],
+      },
+    ],
+  },
   "chain-loop-state": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-loop-state",
@@ -260,15 +276,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/loop-state.ts", "web/lib/runner-v2/routing.ts"],
       },
       {
-        id: "shell-loop-tracker",
-        label: "Shell chain_loop_tracker.txt interoperability",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner-complete.sh"],
+        id: "typed-loop-tracker-compatibility",
+        label: "Typed chain_loop_tracker.txt compatibility",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/loop-state.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "chain-loop-state.json is the typed contract; runner v2 still mirrors the shell chain_loop_tracker.txt file during migration.",
-      paths: ["lib/chain-runner-complete.sh"],
+      summary: "chain-loop-state.json is authoritative; the typed owner still mirrors the line-oriented predecessor format while pre-cutover runs may exist.",
+      paths: ["web/lib/runner-v2/loop-state.ts"],
     },
   },
   "external-effects-ledger": {
@@ -295,7 +311,28 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
     legacyEquivalent: {
       summary: "External side effects previously ran inline during shell completion; runner v2 queues and audits them, while plugin execution still delegates to the shell plugin runner.",
-      paths: ["lib/chain-runner-complete.sh", "lib/plugin-runner.sh"],
+      paths: ["web/lib/runner-v2/adapters.ts", "lib/plugin-runner.sh"],
+    },
+  },
+  "completion-event-emission-ledger": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-completion-event-emission",
+        label: "Claim and emit canonical completion events once per occurrence",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/event-emitter.ts"],
+      },
+      {
+        id: "typed-completion-event-recovery",
+        label: "Recover emission proof from active or archived event bytes",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/event-lifecycle.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces overwrite-prone inline terminal event writes with canonical collision-safe emission and durable per-occurrence receipts.",
+      paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/event-emitter.ts"],
     },
   },
   "generation-import-ledger": {
@@ -316,7 +353,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
     legacyEquivalent: {
       summary: "Replaces the unstructured generation backstop embedded in shell completion with a typed plan and append-only outcome ledger.",
-      paths: ["lib/chain-runner-complete.sh"],
+      paths: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/adapters.ts"],
     },
   },
   "runspace-manifest": {
@@ -352,7 +389,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
     legacyEquivalent: {
       summary: "Replaces implicit shell completion session cleanup with an explicit typed decision ledger.",
-      paths: ["lib/chain-runner-complete.sh"],
+      paths: ["web/lib/runner-v2/terminal-plan.ts", "web/lib/runner-v2/adapters.ts"],
     },
   },
   "watchdog-hook-dispatch": {
@@ -379,7 +416,37 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
     legacyEquivalent: {
       summary: "Replaces unaudited inline shell hook dispatch with an append-only typed dispatch record.",
-      paths: ["lib/chain-runner-complete.sh", "lib/hooks.sh"],
+      paths: ["web/lib/runner-v2/adapters.ts", "lib/hooks.sh"],
+    },
+  },
+  "runner-schedule-completion-history": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-schedule-completion-receipt",
+        label: "Claim and record terminal schedule marks once per occurrence",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/adapters.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Typed completion records a stable JSONL receipt and repairs state from the receipt timestamp on replay.",
+      paths: ["web/lib/runner-v2/adapters.ts"],
+    },
+  },
+  "rollback-plan-ledger": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-rollback-plan-audit",
+        label: "Claim and audit plan-only rollback once per occurrence",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/retry-plan.ts", "web/lib/runner-v2/adapters.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Typed completion records operator-gated rollback intent without applying a repository mutation.",
+      paths: ["web/lib/runner-v2/retry-plan.ts", "web/lib/runner-v2/adapters.ts"],
     },
   },
   "fan-group-state": {
@@ -395,12 +462,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "shell-fan-group-state",
         label: "Legacy .state fan-out and fan-in tracking",
         owner: "legacy-shell",
-        paths: ["lib/routing-lib.sh", "lib/chain-runner-complete.sh"],
+        paths: ["lib/routing-lib.sh"],
       },
     ],
     legacyEquivalent: {
       summary: "The typed JSON store replaces the shell .state format, but runner v2 reads both while side-by-side runs remain possible.",
-      paths: ["lib/routing-lib.sh", "lib/chain-runner-complete.sh"],
+      paths: ["lib/routing-lib.sh", "web/lib/runner-v2/fan-group-store.ts"],
     },
   },
   "run-artifacts": {
@@ -421,7 +488,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
     legacyEquivalent: {
       summary: "The directory predates runner v2 and remains open to agents; runner v2 adds typed handoffs and completion-evidence semantics without closing the format.",
-      paths: ["lib/chain-runner-complete.sh"],
+      paths: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/adapters.ts"],
     },
   },
   "workspace-registry": {
@@ -518,7 +585,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "runner-retry-state": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-retry-plan-state",
@@ -527,15 +594,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/retry-plan.ts", "web/lib/runner-v2/adapters.ts"],
       },
       {
-        id: "shell-retry-state",
-        label: "Shell retry counters, backoff, and circuit handling",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner-complete.sh", "lib/retry-utils.sh", "lib/error-handling.sh"],
+        id: "typed-retry-storage",
+        label: "Run-and-agent-scoped JSON retry storage",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "Typed retry planning writes compatible counters while shell completion and retry utilities remain active owners.",
-      paths: ["lib/chain-runner-complete.sh", "lib/retry-utils.sh", "lib/error-handling.sh"],
+      summary: "Typed retry storage replaces unscoped numeric counters; retry_{agentId}.count is rejected as ambiguous and is not a compatibility fallback.",
+      paths: ["web/lib/runner-v2/adapters.ts"],
     },
   },
 };

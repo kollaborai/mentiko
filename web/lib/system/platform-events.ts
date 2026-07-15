@@ -93,7 +93,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "chain.completed",
     domain: "chain",
     description: "A chain finished successfully. All agents executed without error.",
-    emitters: ["chain-runner-complete.sh"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts"],
     consumers: ["plugins", "outbound webhooks", "notifications", "metrics", "task sync"],
     payload: [
       { name: "chainId", type: "string", description: "Chain identifier" },
@@ -109,7 +109,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "chain.failed",
     domain: "chain",
     description: "A chain stopped due to an unrecoverable error.",
-    emitters: ["chain-runner-complete.sh", "typed watchdog worker"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "typed watchdog worker"],
     consumers: ["plugins", "outbound webhooks", "notifications", "metrics", "PagerDuty"],
     payload: [
       { name: "chainId", type: "string", description: "Chain identifier" },
@@ -124,7 +124,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "chain.stopped",
     domain: "chain",
     description: "A chain was manually stopped or forcibly terminated.",
-    emitters: ["chain-runner-complete.sh", "runs API"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "runs API"],
     consumers: ["plugins", "outbound webhooks", "notifications"],
     payload: [
       { name: "chainId", type: "string", description: "Chain identifier" },
@@ -137,7 +137,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "quality_gate.failed",
     domain: "quality_gate",
     description: "A run quality gate failed and produced a triage artifact opportunity.",
-    emitters: ["chain-runner-complete.sh", "runner-v2"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts"],
     consumers: ["event artifact mapper", "plugins", "outbound webhooks", "notifications"],
     payload: [
       { name: "runId", type: "string", description: "Run that failed the quality gate" },
@@ -178,7 +178,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "agent.completed",
     domain: "agent",
     description: "An agent finished its task. May emit an event to trigger the next agent.",
-    emitters: ["chain-runner-complete.sh"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts"],
     consumers: ["plugins", "metrics", "event triggers", "run detail UI"],
     payload: [
       { name: "agentId", type: "string", description: "Agent identifier" },
@@ -193,7 +193,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "agent.failed",
     domain: "agent",
     description: "An agent terminated with an error or exceeded retry limits.",
-    emitters: ["chain-runner-complete.sh", "typed watchdog worker"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "typed watchdog worker"],
     consumers: ["plugins", "notifications", "metrics"],
     payload: [
       { name: "agentId", type: "string", description: "Agent identifier" },
@@ -237,7 +237,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "run.completed",
     domain: "run",
     description: "A run record has been marked as completed in the database.",
-    emitters: ["chain-runner-complete.sh", "run-lib.sh"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "run-lib.sh"],
     consumers: ["run list UI", "task sync", "metrics"],
     payload: [
       { name: "runId", type: "string", description: "Unique run identifier" },

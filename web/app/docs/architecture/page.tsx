@@ -22,7 +22,7 @@ const layers = [
     items: [
       { label: "chain-runner.sh", desc: "main orchestrator, reads chain.json, spawns agents" },
       { label: "launch-agent.sh", desc: "creates pty session, invokes ai cli" },
-      { label: "event-trigger.sh", desc: "invokes typed event writes; retains shell lifecycle helpers" },
+      { label: "event-lifecycle.ts", desc: "strict event lookup, processed mutation, and scoped archival" },
       { label: "background-worker.ts", desc: "owns typed chain watcher and watchdog lifecycle" },
       { label: ".mjs files", desc: "job-runner.mjs, pty-manager.mjs, chain-generator.mjs" },
     ],

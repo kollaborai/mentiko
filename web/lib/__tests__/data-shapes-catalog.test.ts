@@ -52,7 +52,7 @@ describe("data shape catalog", () => {
   });
 
   it("maps every direct runner source to explicit, internally consistent lineage", () => {
-    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|chain-runner-complete|config|error-handling|event-trigger|routing-lib|run-lib|retry-utils)\.sh$/;
+    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|config|error-handling|routing-lib|run-lib|retry-utils)\.sh$/;
 
     for (const shape of DATA_SHAPE_CATALOG) {
       const provenance = [
@@ -83,8 +83,10 @@ describe("data shape catalog", () => {
       const ids = lineage.surfaces.map((surface) => surface.id);
       expect(lineage.surfaces.length).toBeGreaterThan(0);
       expect(new Set(ids).size).toBe(ids.length);
-      expect(lineage.legacyEquivalent?.summary.length).toBeGreaterThan(0);
-      expect(lineage.legacyEquivalent?.paths.length).toBeGreaterThan(0);
+      if (lineage.legacyEquivalent) {
+        expect(lineage.legacyEquivalent.summary.length).toBeGreaterThan(0);
+        expect(lineage.legacyEquivalent.paths.length).toBeGreaterThan(0);
+      }
       for (const surface of lineage.surfaces) {
         expect(surface.label.length).toBeGreaterThan(0);
         expect(surface.paths.length).toBeGreaterThan(0);
@@ -106,11 +108,9 @@ describe("data shape catalog", () => {
     expect(queue.map((shape) => shape.id)).toEqual([
       "chain-definition",
       "agent-definition",
-      "runner-event",
       "run-record",
       "batch-run-record",
       "runner-agent-state",
-      "chain-loop-state",
       "runspace-manifest",
       "fan-group-state",
       "config-profile",
@@ -119,24 +119,56 @@ describe("data shape catalog", () => {
       "audit-index",
       "runtime-profiler",
       "performance-metrics",
-      "runner-retry-state",
     ]);
     expect(queue.every((shape) => shape.shell.every((path) => path.endsWith(".sh")))).toBe(true);
   });
 
-  it("documents pending handoff as runner-v2 data around a shared routed lifecycle", () => {
+  it("documents pending handoff as read-and-retire pre-cutover evidence", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-v2-pending-handoff");
-    expect(shape?.writers).toContain("web/lib/runner-v2/adapters.ts");
+    expect(shape?.writers).toEqual(["web/lib/runner-v2/run-state.ts"]);
     expect(shape?.writers).not.toContain("web/lib/runner-v2/routed-launch-plan.ts");
     expect(shape?.runnerLineage?.usage).toBe("runner-v2");
-    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/no persisted predecessor/i);
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/no new pending handoff receipt/i);
+    expect(shape?.notes?.join(" ")).toMatch(/verify run agent, session, and AgentAttempt state/i);
     expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
       typed: 2,
-      legacy: 1,
-      total: 3,
-      typedPercent: 67,
-      state: "shared",
+      legacy: 0,
+      total: 2,
+      typedPercent: 100,
+      state: "typed",
     });
+  });
+
+  it("documents the ephemeral private completion context instead of treating it as durable state", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "completion-launch-context");
+    expect(shape).toMatchObject({
+      scope: "external",
+      format: "json",
+      assurance: "enforced",
+      sensitive: true,
+      writers: ["web/lib/runner-v2/completion-launch-context.ts"],
+      readers: ["web/lib/runner-v2/completion-launch-context.ts"],
+    });
+    expect(shape?.storage).toEqual([
+      "{osTemp}/mentiko-completion-context-*/context.json (ephemeral one-shot)",
+    ]);
+    expect(shape?.notes?.join(" ")).toMatch(/0700.*0600.*acceptance receipt/i);
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
+  });
+
+  it("pins runner retry storage to run-and-agent-scoped typed JSON", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-retry-state");
+    expect(shape).toMatchObject({
+      scope: "run",
+      format: "json",
+      assurance: "typed",
+      writers: ["web/lib/runner-v2/adapters.ts"],
+      readers: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
+    });
+    expect(shape?.storage).toContain("{runRoot}/{runId}/state/retry/retry_{runId}_{agentId}.json");
+    expect(shape?.storage.join(" ")).not.toContain("retry_{agentId}.count");
+    expect(shape?.notes?.join(" ")).toMatch(/rejected as ambiguous/i);
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
   });
 
   it("pins Runner Event provenance to every active reader and writer", () => {
@@ -150,13 +182,14 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/agent-attempt.ts",
       "web/lib/runner-v2/completion-recovery.ts",
       "web/lib/runner-v2/event-emitter.ts",
+      "web/lib/runner-v2/event-lifecycle.ts",
       "web/lib/runner-v2/monitor-live-io.ts",
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
     ]);
     expect(shape?.readers).toEqual([
-      "lib/event-trigger.sh",
       "web/app/api/activity/route.ts",
+      "web/app/api/chains/[id]/debug/state/route.ts",
       "web/app/api/events/route.ts",
       "web/app/api/events/stream/route.ts",
       "web/app/api/mentiko-mcp/ops/runtime/route.ts",
@@ -164,17 +197,43 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/completion-entrypoint.ts",
       "web/lib/runner-v2/completion-recovery.ts",
       "web/lib/runner-v2/chain-watcher-service.ts",
+      "web/lib/runner-v2/event-lifecycle.ts",
       "web/lib/runner-v2/monitor-io.ts",
       "web/lib/runs/run-reconciler.ts",
     ]);
-    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
     expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
-      typed: 3,
-      legacy: 1,
-      typedPercent: 75,
-      state: "shared",
+      typed: 4,
+      legacy: 0,
+      typedPercent: 100,
+      state: "typed",
     });
-    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/listing, processed mutation, and archive lifecycle/i);
+    expect(shape?.runnerLineage?.legacyEquivalent).toBeUndefined();
+  });
+
+  it("catalogs the typed runner-event archive receipt and its consume boundary", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-event-archive-receipt");
+
+    expect(shape).toMatchObject({
+      scope: "project",
+      format: "json",
+      assurance: "enforced",
+      storage: ["{runtimeRoot}/events/archive/.event-receipt-{sourceAndRunSha256}-{fileGenerationToken}-{acceptedRawContentSha256}.json"],
+      writers: ["web/lib/runner-v2/event-lifecycle.ts"],
+      readers: ["web/lib/runner-v2/event-lifecycle.ts"],
+    });
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
+    expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
+      typed: 1,
+      legacy: 0,
+      typedPercent: 100,
+      state: "typed",
+    });
+    expect(shape?.runnerLineage?.legacyEquivalent).toBeUndefined();
+    expect(shape?.notes?.join(" ")).toMatch(/version 2.*occurrenceToken.*acceptedContentSha256.*acceptedRecordSha256.*archivedContentSha256/i);
+    expect(shape?.notes?.join(" ")).toMatch(/never completion discovery/i);
+    expect(shape?.notes?.join(" ")).toMatch(/byte-identical unlink\/recreation.*distinct occurrence/i);
+    expect(shape?.notes?.join(" ")).toMatch(/trigger is consumed last/i);
   });
 
   it("catalogs the actual project-level watchdog hook ledger and typed owner", () => {

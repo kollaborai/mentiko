@@ -7,7 +7,7 @@ import {
   parseRunnerEvent,
   validateRawRunnerEvent,
 } from "@/lib/runner-v2/events";
-import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_CATALOG_VERSION,
