@@ -18,6 +18,7 @@ const DOCS_ARTICLES: DocArticle[] = [
   { route: "/docs/agents", title: "Agents", description: "agent definition, profiles, providers", tags: ["workflows", "core"] },
   { route: "/docs/audit", title: "Audit", description: "audit trail and review workflows", tags: ["security", "monitoring"] },
   { route: "/docs/config-profiles", title: "Config Profiles", description: "execution profiles, models, retries, and workspace defaults", tags: ["configuration", "execution"] },
+  { route: "/docs/data-shapes", title: "Data Shapes", description: "persisted contracts, storage scopes, provenance, and live drift evidence", tags: ["advanced", "data", "architecture"] },
   { route: "/docs/conversations", title: "Conversations", description: "AI session history and conversation surfaces", tags: ["workflows", "sessions"] },
   { route: "/docs/runs", title: "Runs", description: "execution, output, artifacts, resume", tags: ["execution"] },
   { route: "/docs/schedules", title: "Schedules", description: "cron syntax, timezone, snooze", tags: ["automation", "timing"] },

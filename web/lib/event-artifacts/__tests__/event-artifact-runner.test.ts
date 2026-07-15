@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFile
 import { tmpdir } from "os";
 import { join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
+import { validateGeneratedTask } from "@/lib/tasks/generated-task-validation";
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
+  default: { root: join(process.cwd(), "..") },
   orgPath: (...parts: string[]) => join(globalThis.__EVENT_ARTIFACT_RUNNER_ROOT__, ...parts),
 }));
 
@@ -49,6 +51,12 @@ describe("event artifact runner", () => {
     expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(true);
     expect(existsSync(join(artifactsDir, "draft-child-tasks.json"))).toBe(true);
     expect(readFileSync(join(artifactsDir, "triage-result.json"), "utf8")).toContain("Fix stash api validator findings for FEAT-1 Fix stash API");
+    const draft = JSON.parse(readFileSync(join(artifactsDir, "draft-child-tasks.json"), "utf8"));
+    expect(validateGeneratedTask(draft)).toMatchObject({ valid: true, errors: [] });
+    expect(draft).toMatchObject({
+      type: "epic",
+      acceptance_criteria: expect.any(String),
+    });
   });
 
   it("uses validator summary details when the quality gate points at a summary artifact", () => {

@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { existsSync, readFileSync } from "fs";
-import { basename, join } from "path";
+import { basename } from "path";
 import {
   appendExecutionRecord,
   findExecutionByDedupeKey,
@@ -15,6 +15,8 @@ import {
   readEventTemplateMappings,
 } from "@/lib/event-artifacts/event-template-map";
 import type { GeneratedTask } from "@/lib/tasks/generated-task-import";
+// This boundary must reject drift before draft-child-tasks.json reaches disk.
+import { assertValidGeneratedTask } from "@/lib/tasks/generated-task-validation";
 
 export interface RunQualityGateEventArtifactInput {
   namespaceId: string;
@@ -63,8 +65,9 @@ export function runQualityGateEventArtifact(
   const artifactPath = resolveArtifactOutputPath(input.runArtifactsDir, mapping.outputArtifact);
   const draftTaskPath = resolveArtifactOutputPath(input.runArtifactsDir, "draft-child-tasks.json");
   const context = buildFailureContext(input.payload);
-  const triage = buildTriageArtifact(input.payload, mapping.maxChildren, context);
   const draft = buildDraftTask(input.payload, mapping.maxChildren, context);
+  assertValidGeneratedTask(draft);
+  const triage = buildTriageArtifact(input.payload, draft);
 
   appendExecutionRecord(input.runArtifactsDir, {
     id: executionId,
@@ -123,7 +126,7 @@ interface AgentSummaryArtifact {
   workCompleted?: string[];
 }
 
-function buildTriageArtifact(payload: QualityGateFailedPayload, maxChildren: number, context = buildFailureContext(payload)) {
+function buildTriageArtifact(payload: QualityGateFailedPayload, generated: GeneratedTask) {
   return {
     schema: "generated-tasks/v1",
     event: payload.event,
@@ -135,7 +138,7 @@ function buildTriageArtifact(payload: QualityGateFailedPayload, maxChildren: num
     task: payload.task,
     qualityGate: payload.qualityGate,
     evidence: payload.evidence,
-    generated: buildDraftTask(payload, maxChildren, context),
+    generated,
   };
 }
 
@@ -143,14 +146,14 @@ function buildDraftTask(payload: QualityGateFailedPayload, maxChildren: number, 
   return {
     title: context.title,
     description: context.descriptionLines.join("\n"),
-    type: "bug",
+    type: "epic",
     priority: payload.task?.priority ?? 1,
     labels: ["quality-gate", "triage"],
     acceptance_criteria: [
       "Quality gate evidence is reviewed.",
       "The validator summary findings are addressed or explicitly accepted.",
       `Run artifact ${basename(payload.run.artifactsDir)} remains auditable.`,
-    ],
+    ].join("\n"),
     subtasks: context.nextActions.slice(0, maxChildren).map((action, index) => ({
       title: action.length > 80 ? `${action.slice(0, 77)}...` : action,
       description: [

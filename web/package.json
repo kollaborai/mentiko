@@ -12,6 +12,7 @@
     "build:analyze": "ANALYZE=true next build --webpack",
     "start": "next start",
     "demo:gif": "node scripts/capture-readme-demo.mjs",
+    "repair:data-shape-drift": "node scripts/repair-data-shape-drift-2026-07-14.mjs",
     "lint": "eslint",
     "test": "jest",
     "test:watch": "jest --watch",

@@ -134,6 +134,33 @@ describe("run reconciler", () => {
     );
   });
 
+  it("keeps a run alive while its detached handoff process is starting the next agent", async () => {
+    const runDir = join(mockRunsDir, "run-1777000000000");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({
+      agents: [{ id: "diagnostician" }, { id: "fixer" }],
+    }));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: "run-1777000000000",
+      status: "running",
+      started: "2026-01-01T00:00:00.000Z",
+      agents: [
+        { id: "diagnostician", status: "complete", completed: "2026-01-01T00:01:00.000Z" },
+        { id: "fixer", status: "pending" },
+      ],
+      runnerV2: {
+        pendingHandoffs: [{ pid: process.pid, targetAgentIds: ["fixer"], startedAt: new Date().toISOString() }],
+      },
+    }));
+
+    const result = await reconcileOrphanedRuns();
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+
+    expect(result.orphaned).toBe(0);
+    expect(run.status).toBe("running");
+    expect(run.agents[1].status).toBe("pending");
+  });
+
   it("repairs misclassified recommendation runs using shared task metadata cleanup", async () => {
     const runId = "run-1777862548347";
     const runDir = join(mockRunsDir, runId);

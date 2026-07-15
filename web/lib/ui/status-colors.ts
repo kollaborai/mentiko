@@ -20,6 +20,14 @@ export const STATUS_BAR: Record<string, string> = {
   stopped: "bg-orange-400",
   cancelled: "bg-zinc-400",
   pending: "bg-foreground/20",
+  valid: "bg-emerald-400",
+  drift: "bg-amber-400",
+  observed: "bg-blue-400",
+  absent: "bg-foreground/15",
+  unavailable: "bg-foreground/10",
+  "runner-v2": "bg-blue-400",
+  shared: "bg-amber-400",
+  "legacy-shell": "bg-zinc-400",
 };
 
 /** Status pill styles (bg + text color) */
@@ -31,6 +39,14 @@ export const STATUS_PILL: Record<string, string> = {
   stopped: "bg-orange-500/15 text-orange-400",
   cancelled: "bg-zinc-500/15 text-zinc-400",
   pending: "bg-foreground/5 text-foreground/40",
+  valid: "bg-emerald-500/10 text-emerald-500",
+  drift: "bg-amber-500/10 text-amber-500",
+  observed: "bg-blue-500/10 text-blue-500",
+  absent: "bg-foreground/5 text-foreground/40",
+  unavailable: "bg-foreground/5 text-foreground/35",
+  "runner-v2": "bg-blue-500/10 text-blue-500",
+  shared: "bg-amber-500/10 text-amber-500",
+  "legacy-shell": "bg-zinc-500/10 text-zinc-400",
 };
 
 /** Display label for status (e.g. "complete" -> "done") */

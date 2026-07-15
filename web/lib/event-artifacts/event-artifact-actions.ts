@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import type { GeneratedTask } from "@/lib/tasks/generated-task-import";
+import { assertValidGeneratedTask } from "@/lib/tasks/generated-task-validation";
 import { _getDb, taskAddComment, taskAddDep, taskCreate, taskGet, taskMergeMeta } from "@/lib/tasks/task-store";
 
 export interface ApplyDraftChildTasksInput {
@@ -15,7 +16,8 @@ export interface ApplyDraftChildTasksInput {
 }
 
 export function applyDraftChildTasks(input: ApplyDraftChildTasksInput) {
-  const generated = JSON.parse(readFileSync(input.draftTaskPath, "utf8")) as GeneratedTask;
+  const generated: unknown = JSON.parse(readFileSync(input.draftTaskPath, "utf8"));
+  assertValidGeneratedTask(generated);
   const generationJobId = `event-artifact:${input.namespaceId}:${input.orgId}:${input.runId}:${input.executionId}`;
   const result = createFollowUpChildTask(input, generated, generationJobId);
 
@@ -68,13 +70,22 @@ function createFollowUpChildTask(
   const acceptance = Array.isArray(generated.acceptance_criteria)
     ? generated.acceptance_criteria.join("\n")
     : generated.acceptance_criteria;
+  const generatedIssueType = generated.type === "epic"
+    ? generated.subtasks?.[0]?.type
+    : generated.type;
+  const issueType = generatedIssueType === "feature"
+    || generatedIssueType === "bug"
+    || generatedIssueType === "chore"
+    || generatedIssueType === "task"
+    ? generatedIssueType
+    : "task";
 
   const created = taskCreate(
     input.orgId,
     {
       title: generated.title,
       description,
-      issue_type: generated.type === "bug" ? "bug" : "task",
+      issue_type: issueType,
       priority: generated.priority ?? 1,
       labels: generated.labels,
       acceptance_criteria: acceptance,

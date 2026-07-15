@@ -7,6 +7,9 @@ workflows.
 
 see: [../architecture.md](../architecture.md) for system-wide architecture.
 
+see: [../RUNNER_V2_ARCHITECTURE.md](../RUNNER_V2_ARCHITECTURE.md) for the
+current typed runner-v2 boundary and the complete HTTP-to-next-agent lifecycle.
+
 overview
 ========
 

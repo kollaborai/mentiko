@@ -9,7 +9,8 @@ import type { GenerationImportPlan } from "@/lib/runner-v2/completion-runner";
 import { serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { completeFanGroupMemberLocked, writeFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
-import { updateRunStatus } from "@/lib/runner-v2/run-state";
+import { updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
+import { pendingHandoffs } from "@/lib/runner-v2/handoff-liveness";
 
 export type AdapterOperation =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
@@ -94,6 +95,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
       const command = buildFanGroupLaunchCommand(context, plan.launch.agentId, plan.group.chainPath);
       const child = startLaunch({
         kind: "single",
+        agentIds: [plan.launch.agentId],
         command,
         env: {
           MENTIKO_RUN_ID: plan.group.runId,
@@ -191,6 +193,28 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     },
   });
   if (logFd !== undefined) closeSync(logFd);
+  if (Number.isInteger(child.pid) && child.pid! > 0 && launch.agentIds?.length) {
+    updateRunJson(context.runJsonPath, (current) => {
+      if (!current) throw new Error(`run.json not found: ${context.runJsonPath}`);
+      const runnerV2 = current.runnerV2 && typeof current.runnerV2 === "object" && !Array.isArray(current.runnerV2)
+        ? current.runnerV2 as Record<string, unknown>
+        : {};
+      const targets = Array.from(new Set(launch.agentIds!.filter(Boolean)));
+      const existing = pendingHandoffs(current).filter(
+        (handoff) => !handoff.targetAgentIds.some((id) => targets.includes(id)),
+      );
+      return {
+        ...current,
+        runnerV2: {
+          ...runnerV2,
+          pendingHandoffs: [
+            ...existing.slice(-19),
+            { pid: child.pid!, targetAgentIds: targets, startedAt: new Date().toISOString() },
+          ],
+        },
+      };
+    });
+  }
   child.unref();
   return child;
 }

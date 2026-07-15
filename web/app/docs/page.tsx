@@ -34,6 +34,7 @@ import {
   ShopFilled,
   Rocket,
   CloudConnectionFilled,
+  Data2Filled,
 } from "@aliimam/icons";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 import { PageBanner } from "@/components/ui/page-banner";
@@ -118,6 +119,7 @@ const categories: Category[] = [
     color: "#a0927b",
     items: [
       { label: "API Reference", href: "/docs/api", description: "rest api endpoints", icon: Code, color: "#5b9ef5" },
+      { label: "Data Shapes", href: "/docs/data-shapes", description: "persisted contracts and live drift evidence", icon: Data2Filled, color: "#f59e0b" },
       { label: "CLI Reference", href: "/docs/config-profiles", description: "command line interface", icon: TerminalIcon, color: "#5b9ef5" },
       { label: "Templates", href: "/docs/templates", description: "chain template library", icon: CategoryFilled, color: "#f59e0b" },
       { label: "UI Library", href: "/docs/ui-library", description: "component documentation", icon: Palette, color: "#b07ee8" },

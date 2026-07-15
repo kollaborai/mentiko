@@ -17,6 +17,7 @@ import { getLiveSessions } from "../pty/pty-client";
 import { taskGet, taskMergeMeta, taskUpdate } from "../tasks/task-store";
 import { normalizeRunId } from "../auth/run-acl";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
+import { hasLivePendingHandoff } from "../runner-v2/handoff-liveness";
 
 interface ReconcilerContext {
   namespaceId: string;
@@ -447,6 +448,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       );
 
       if (hasLiveSession) continue; // run is alive
+      if (hasLivePendingHandoff(run)) continue; // detached chain-runner is starting the next PTY
 
       if (allDeclaredAgentsComplete(run, runDir)) {
         run.status = "completed";

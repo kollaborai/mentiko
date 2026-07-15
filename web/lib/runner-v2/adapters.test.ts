@@ -170,6 +170,7 @@ describe("runner-v2 adapters", () => {
       effects: [],
       launches: [{
         kind: "single",
+        agentIds: ["writer"],
         command: "echo ok",
         env: { MENTIKO_RUN_ID: "run-123" },
         detached: false,
@@ -180,6 +181,14 @@ describe("runner-v2 adapters", () => {
     });
 
     expect(result.launchesStarted).toEqual([{ command: "echo ok", pid: 4242 }]);
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      runnerV2: {
+        pendingHandoffs: [expect.objectContaining({
+          pid: 4242,
+          targetAgentIds: ["writer"],
+        })],
+      },
+    });
   });
 
   it("dry run records planned work without mutating files or spawning", () => {

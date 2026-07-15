@@ -5,8 +5,10 @@ chains in JSON, and Mentiko runs each agent in an isolated PTY session with
 file-backed run state, event files, and web/API visibility.
 
 This document describes the current platform architecture. For the detailed
-chain runner flow, see `docs/orchestration/chain-runner-flow.md`. For the
-runner-v2 migration contract, see `docs/orchestration/contracts/runner-v2-contract.json`.
+chain runner flow, see `docs/orchestration/chain-runner-flow.md`. For the exact
+runner-v2 component map and HTTP-to-next-agent lifecycle, see
+`docs/RUNNER_V2_ARCHITECTURE.md`; the machine-readable migration contract is
+`docs/orchestration/contracts/runner-v2-contract.json`.
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -204,10 +206,14 @@ Current contract:
 - `default_runner` is `shell`.
 - `MENTIKO_RUNNER_V2=1` enables the initial runner-v2 launch path.
 - `MENTIKO_RUNNER_V2_COMPLETION=1` enables typed completion re-entry.
-- typed launch still preserves shell fallback until parity is proven.
-- completion must remain fallback-capable because branch routing, generation
-  salvage, retries, event archiving, and fan-in/fan-out still depend on the
-  shell-owned completion contract.
+- initial typed launch preserves shell fallback only for unsupported planning
+  before typed side effects; after session or run-state mutation it fails
+  closed.
+- typed completion is fail-closed when both flags are enabled; it does not
+  fall through to shell completion after a typed error or unsupported result.
+- typed routing still launches the next agent through `chain-runner.sh --start`
+  or `chain-runner.sh --parallel`; the routed agent returns to typed monitoring
+  and typed completion because the runner-v2 flags are carried into its monitor.
 
 Current web behavior:
 

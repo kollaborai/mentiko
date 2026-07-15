@@ -667,7 +667,7 @@ describe("FIXED #13: SSE stream chain-complete fast-path matches real producer o
 
 // ===========================================================================
 // FIXED (#14) — event.schema.json enum now matches the live producer. The
-// static JSON schema's `type` enum was stale: the producer emits `run-stalled`
+// static JSON schema's canonical-system vocabulary was stale: the producer emits `run-stalled`
 // (lib/watchdog.sh) and `task-status-updated` (lib/run-lib.sh), neither of which
 // was in the enum. Both names were added to lib/schemas/event.schema.json. The
 // live consumer parsers do NOT enforce the enum (they accept any event string),
@@ -678,8 +678,8 @@ describe("FIXED #13: SSE stream chain-complete fast-path matches real producer o
 describe("FIXED #14: event.schema.json enum covers run-stalled and task-status-updated", () => {
   const schema = JSON.parse(
     readFileSync(join(LIB, "schemas", "event.schema.json"), "utf8"),
-  ) as { properties: { type: { enum: string[] } } };
-  const schemaEnum = schema.properties.type.enum;
+  ) as { definitions: { canonicalSystemEventType: { enum: string[] } } };
+  const schemaEnum = schema.definitions.canonicalSystemEventType.enum;
 
   it("the schema enum now includes the system event types the producer emits", () => {
     // these ARE produced (proven behaviorally elsewhere in this file) and are

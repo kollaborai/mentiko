@@ -15,6 +15,8 @@ export interface RoutedLaunchContext {
 
 export interface RoutedLaunchPlan {
   kind: "single" | "parallel" | "fan-out";
+  /** Agents this detached process is responsible for starting. */
+  agentIds?: string[];
   command: string;
   env: Record<string, string | undefined>;
   logPath?: string;
@@ -29,6 +31,7 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   if (decision.fanIn || decision.waitFor || decision.quorum || decision.onError) {
     return decision.agentIds.map((agentId) => ({
       kind: "fan-out",
+      agentIds: [agentId],
       command: runnerCommand(context, ["--start", agentId]),
       env: {
         ...context.env,
@@ -46,6 +49,7 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   if (decision.agentIds.length > 1) {
     return [{
       kind: "parallel",
+      agentIds: [...decision.agentIds],
       command: runnerCommand(context, ["--parallel", ...decision.agentIds]),
       env: { ...context.env },
       detached: true,
@@ -54,6 +58,7 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
 
   return [{
     kind: "single",
+    agentIds: [decision.agentIds[0]],
     command: runnerCommand(context, ["--start", decision.agentIds[0]]),
     env: { ...context.env },
     detached: true,

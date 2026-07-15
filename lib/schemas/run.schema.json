@@ -1,152 +1,271 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mentiko.dev/schemas/run.schema.json",
   "title": "Chain Run",
-  "description": "Schema for chain execution runs",
+  "description": "Persisted runs/{runId}/run.json contract shared by the shell runner, web launcher, and runner-v2 state machine.",
   "type": "object",
-  "required": ["id", "chainId", "chainName", "goal", "started", "status"],
+  "required": ["id", "chain", "goal", "started", "status", "agents"],
+  "additionalProperties": true,
   "properties": {
     "id": {
       "type": "string",
-      "description": "Unique run identifier",
-      "format": "uuid"
+      "pattern": "^run-[A-Za-z0-9_-]{1,120}$",
+      "description": "Collision-resistant run identifier minted by lib/run-lib.sh or runner-v2/run-state.ts."
+    },
+    "chain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable chain name."
     },
     "chainId": {
       "type": "string",
-      "description": "Chain identifier being run"
-    },
-    "chainName": {
-      "type": "string",
-      "description": "Chain name"
-    },
-    "chainFile": {
-      "type": "string",
-      "description": "Path to chain configuration file"
+      "description": "Stable chain identifier when the launching surface has one."
     },
     "goal": {
-      "type": "string",
-      "description": "Goal or prompt for this run"
+      "type": "string"
     },
     "started": {
       "type": "string",
-      "description": "ISO 8601 timestamp when run started",
       "format": "date-time"
     },
     "completed": {
       "type": "string",
-      "description": "ISO 8601 timestamp when run completed",
       "format": "date-time"
+    },
+    "resumedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "blockedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "blockedReason": {
+      "type": "string"
     },
     "status": {
       "type": "string",
-      "description": "Current run status",
-      "enum": ["running", "complete", "failed", "cancelled"]
+      "description": "Current vocabulary is pending, running, blocked, failed, stopped, or completed. Readers retain string compatibility for legacy artifacts.",
+      "x-mentiko-known-values": ["pending", "running", "blocked", "failed", "stopped", "completed"]
     },
-    "duration": {
-      "type": "number",
-      "description": "Run duration in seconds"
+    "status_message": {
+      "type": "string"
     },
-    "round": {
-      "type": "integer",
-      "description": "Current iteration round",
-      "minimum": 1
-    },
-    "agentCount": {
-      "type": "integer",
-      "description": "Number of agents in the chain",
-      "minimum": 1
+    "debug": {
+      "type": "boolean"
     },
     "sessions": {
       "type": "array",
-      "description": "Tmux session names for this run",
-      "items": { "type": "string" }
+      "uniqueItems": true,
+      "items": { "type": "string" },
+      "description": "PTY session names. Optional during the web launcher's pre-session write."
     },
     "agents": {
       "type": "array",
-      "description": "Agent execution states",
-      "items": {
-        "type": "object",
-        "required": ["id", "agentId", "status"],
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Session identifier"
-          },
-          "agentId": {
-            "type": "string",
-            "description": "Agent identifier"
-          },
-          "agentName": {
-            "type": "string",
-            "description": "Agent name"
-          },
-          "status": {
-            "type": "string",
-            "description": "Agent execution status",
-            "enum": ["pending", "running", "complete", "failed"]
-          },
-          "started": {
-            "type": "string",
-            "description": "ISO 8601 timestamp",
-            "format": "date-time"
-          },
-          "completed": {
-            "type": "string",
-            "description": "ISO 8601 timestamp",
-            "format": "date-time"
-          },
-          "output": {
-            "type": "string",
-            "description": "Agent output"
-          },
-          "error": {
-            "type": "string",
-            "description": "Error message if failed"
-          }
-        }
-      }
+      "items": { "$ref": "#/definitions/runAgent" }
     },
-    "events": {
-      "type": "array",
-      "description": "Events logged during this run",
-      "items": {
-        "type": "object",
-        "required": ["event", "timestamp"],
-        "properties": {
-          "event": {
-            "type": "string"
-          },
-          "timestamp": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      }
+    "parent_run_id": {
+      "type": "string"
+    },
+    "workspaceId": {
+      "type": "string"
+    },
+    "workspacePath": {
+      "type": "string"
+    },
+    "taskId": {
+      "type": "string"
+    },
+    "agentProfileId": {
+      "type": "string"
     },
     "metadata": {
       "type": "object",
-      "description": "Additional run metadata",
+      "additionalProperties": true
+    },
+    "runnerV2": {
+      "$ref": "#/definitions/runnerV2State"
+    }
+  },
+  "definitions": {
+    "runAgent": {
+      "type": "object",
+      "required": ["id", "name", "session", "status"],
+      "additionalProperties": true,
       "properties": {
-        "triggeredBy": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "session": { "type": "string" },
+        "status": {
           "type": "string",
-          "description": "What triggered this run (manual, schedule, webhook)"
+          "description": "Current vocabulary is pending, running, blocked, failed, stopped, cancelled, complete, or error. Readers retain string compatibility for legacy artifacts.",
+          "x-mentiko-known-values": ["pending", "running", "blocked", "failed", "stopped", "cancelled", "complete", "error"]
         },
-        "triggerSource": {
-          "type": "string",
-          "description": "Source identifier (schedule id, webhook url, etc.)"
+        "started": { "type": "string", "format": "date-time" },
+        "completed": { "type": "string", "format": "date-time" },
+        "lastHeartbeat": { "type": "string", "format": "date-time" },
+        "lastMessage": { "type": "string" }
+      }
+    },
+    "runnerV2State": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "attempts": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/agentAttempt" }
         },
-        "userId": {
-          "type": "string",
-          "description": "User who initiated the run"
+        "stuckEvents": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/stuckEvent" }
         },
-        "workspace": {
-          "type": "string",
-          "description": "Workspace directory"
+        "pendingHandoffs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/pendingHandoff" }
         }
       }
+    },
+    "agentAttempt": {
+      "type": "object",
+      "required": [
+        "id",
+        "runId",
+        "agentId",
+        "phase",
+        "instructionLedger",
+        "recoveryDecisionCount",
+        "createdAt",
+        "updatedAt",
+        "transitions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "runId": { "type": "string" },
+        "agentId": { "type": "string" },
+        "phase": { "$ref": "#/definitions/attemptPhase" },
+        "desiredPhase": { "$ref": "#/definitions/attemptPhase" },
+        "observedPhase": { "$ref": "#/definitions/attemptPhase" },
+        "terminalReason": { "$ref": "#/definitions/attemptReason" },
+        "terminalDetail": { "type": "string" },
+        "releaseReason": { "$ref": "#/definitions/attemptReason" },
+        "leaseId": { "type": "string" },
+        "leaseAcquiredAt": { "type": "string", "format": "date-time" },
+        "leaseReleasedAt": { "type": "string", "format": "date-time" },
+        "processEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "processPid": { "type": "integer", "minimum": 1 },
+            "processSpawnedAt": { "type": "string", "format": "date-time" },
+            "ptySessionId": { "type": "string" }
+          }
+        },
+        "instructionLedger": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["idempotencyKey", "submittedAt", "instructionPath", "pointer"],
+            "additionalProperties": false,
+            "properties": {
+              "idempotencyKey": { "type": "string" },
+              "submittedAt": { "type": "string", "format": "date-time" },
+              "instructionPath": { "type": "string" },
+              "pointer": { "type": "string" }
+            }
+          }
+        },
+        "recoveryDecisionCount": { "type": "integer", "minimum": 0 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "at"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "$ref": "#/definitions/attemptPhase" },
+              "to": { "$ref": "#/definitions/attemptPhase" },
+              "at": { "type": "string", "format": "date-time" },
+              "reason": { "$ref": "#/definitions/attemptReason" },
+              "detail": { "type": "string" }
+            }
+          }
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["routed-completion-adoption"]
+        }
+      }
+    },
+    "pendingHandoff": {
+      "type": "object",
+      "required": ["pid", "targetAgentIds", "startedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "targetAgentIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "startedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "stuckEvent": {
+      "type": "object",
+      "required": ["attemptId", "runId", "agentId", "phase", "reason", "emittedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": { "type": "string" },
+        "runId": { "type": "string" },
+        "agentId": { "type": "string" },
+        "desiredPhase": { "$ref": "#/definitions/attemptPhase" },
+        "observedPhase": { "$ref": "#/definitions/attemptPhase" },
+        "phase": { "$ref": "#/definitions/attemptPhase" },
+        "reason": { "$ref": "#/definitions/attemptReason" },
+        "emittedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "attemptPhase": {
+      "type": "string",
+      "enum": [
+        "created",
+        "lease_acquired",
+        "pty_allocated",
+        "process_spawned",
+        "ready_for_instructions",
+        "instructions_submitted",
+        "completed",
+        "completion_failed",
+        "startup_failed",
+        "human_action_required",
+        "stuck",
+        "released"
+      ]
+    },
+    "attemptReason": {
+      "type": "string",
+      "enum": [
+        "completed_from_event",
+        "completed_from_generation_artifact",
+        "completed_empty_emits_last_agent",
+        "no_completion_event",
+        "retries_exhausted",
+        "readiness_deadline_expired",
+        "readiness_policy_blocked",
+        "readiness_policy_recoverable",
+        "readiness_policy_retry",
+        "readiness_no_ready_signal",
+        "concurrency_cap_blocked",
+        "auth_prompt_detected",
+        "instruction_submission_unconfirmed",
+        "invalid_transition",
+        "reconciliation_window_expired",
+        "released"
+      ]
     }
   }
 }

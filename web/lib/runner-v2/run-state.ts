@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { randomBytes } from "crypto";
 import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
+import { clearPendingHandoffAgent } from "@/lib/runner-v2/handoff-liveness";
 
 export type RunStatus = "pending" | "running" | "blocked" | "failed" | "stopped" | "completed";
 export type AgentStatus = "pending" | "running" | "blocked" | "failed" | "stopped" | "cancelled" | "complete" | "error";
@@ -123,10 +124,12 @@ export function addRunSession(
     if (existing >= 0) agents[existing] = nextAgent;
     else agents.push(nextAgent);
 
+    const runnerV2 = clearPendingHandoffAgent(current.runnerV2, agentId);
     return {
       ...current,
       status: "running",
       completed: undefined,
+      ...(runnerV2 ? { runnerV2 } : {}),
       sessions: Array.from(new Set([...(current.sessions || []), sessionName])),
       agents,
     };

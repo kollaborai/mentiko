@@ -1,18 +1,48 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Chain Event",
-  "description": "Schema for events generated during chain execution",
+  "$id": "https://mentiko.dev/schemas/event.schema.json",
+  "title": "Parsed Runner Event",
+  "description": "Normalized record returned by web/lib/runner-v2/events.ts after reading a physical key-value .event file. Event names are intentionally open because chains define their own handoff vocabulary.",
   "type": "object",
-  "required": ["id", "type", "source", "timestamp", "processed"],
+  "required": ["event", "source", "runId", "timestamp", "processed", "data", "fields"],
+  "additionalProperties": false,
   "properties": {
-    "id": {
+    "event": {
       "type": "string",
-      "description": "Unique event identifier",
-      "format": "uuid"
+      "minLength": 1,
+      "description": "System event name or chain-defined handoff event."
     },
-    "type": {
+    "source": {
       "type": "string",
-      "description": "Event type name",
+      "description": "Agent/session/system source. Diagnostic events may fall back to the physical agent field."
+    },
+    "runId": {
+      "type": "string",
+      "description": "Normalized from run_id or runId. Empty is retained for legacy/global events."
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "Timestamp as persisted. Legacy records may leave it empty."
+    },
+    "processed": {
+      "type": "boolean"
+    },
+    "data": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "All first-occurrence physical key-value fields, normalized to lowercase keys."
+    },
+    "path": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "canonicalSystemEventType": {
+      "type": "string",
+      "description": "Known platform lifecycle vocabulary. This is documentation, not a closed event-name gate.",
       "enum": [
         "manual-start",
         "chain-started",
@@ -29,63 +59,6 @@
         "run-stalled",
         "task-status-updated"
       ]
-    },
-    "source": {
-      "type": "string",
-      "description": "Source of the event (agent id or 'system')"
-    },
-    "timestamp": {
-      "type": "string",
-      "description": "ISO 8601 timestamp when event was created",
-      "format": "date-time"
-    },
-    "processed": {
-      "type": "boolean",
-      "description": "Whether this event has been handled",
-      "default": false
-    },
-    "data": {
-      "type": "object",
-      "description": "Event payload",
-      "properties": {
-        "chainId": {
-          "type": "string",
-          "description": "Chain identifier"
-        },
-        "chainName": {
-          "type": "string",
-          "description": "Chain name"
-        },
-        "runId": {
-          "type": "string",
-          "description": "Run identifier"
-        },
-        "agentId": {
-          "type": "string",
-          "description": "Agent identifier"
-        },
-        "agentName": {
-          "type": "string",
-          "description": "Agent name"
-        },
-        "sessionId": {
-          "type": "string",
-          "description": "Session identifier"
-        },
-        "error": {
-          "type": "string",
-          "description": "Error message"
-        },
-        "output": {
-          "type": "string",
-          "description": "Agent output"
-        },
-        "metadata": {
-          "type": "object",
-          "description": "Additional event metadata",
-          "additionalProperties": true
-        }
-      }
     }
   }
 }

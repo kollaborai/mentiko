@@ -34,8 +34,10 @@ import {
   ColorSwatchFilled,
   PeopleFilled,
   ShopFilled,
+  Data2Filled,
 } from "@aliimam/icons";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
+import { cn } from "@/lib/utils";
 
 type NavItem = {
   label: string;
@@ -99,6 +101,7 @@ const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { label: "API Reference", href: "/docs/api", icon: Code },
+      { label: "Data Shapes", href: "/docs/data-shapes", icon: Data2Filled },
       { label: "CLI Reference", href: "/docs/config-profiles", icon: TerminalIcon },
       { label: "MCP", href: "/docs/mcp", icon: CloudConnectionFilled },
       { label: "Templates", href: "/docs/templates", icon: CategoryFilled },
@@ -203,13 +206,45 @@ export default function DocsLayout({
 
   return (
     <div
-      className="flex h-full"
+      className="flex h-full flex-col md:flex-row"
       data-source="web/app/docs/layout.tsx"
     >
+      <details className="shrink-0 border-b border-border/60 bg-muted px-3 py-2 md:hidden">
+        <summary className="cursor-pointer text-xs font-medium text-foreground/65">
+          Documentation navigation
+        </summary>
+        <div className="max-h-[55vh] space-y-3 overflow-auto pb-2 pt-3">
+          {filteredGroups.map((group) => (
+            <div key={group.label}>
+              <div className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-widest text-foreground/30">
+                {group.label}
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={cn(
+                        "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground/55",
+                        pathname === item.href && "bg-accent text-foreground",
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </details>
       <aside
         data-testid="docs-sidebar"
         data-docs-sidebar=""
-        className="w-56 shrink-0 bg-muted overflow-y-auto"
+        className="hidden w-56 shrink-0 overflow-y-auto bg-muted md:block"
       >
         <div
           data-testid="docs-sidebar-header"
@@ -236,7 +271,7 @@ export default function DocsLayout({
         </div>
       </aside>
 
-      <main data-testid="docs-content" data-docs-content="" className="flex-1 overflow-auto">
+      <main data-testid="docs-content" data-docs-content="" className="min-h-0 min-w-0 flex-1 overflow-auto">
         {children}
       </main>
     </div>

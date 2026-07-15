@@ -7,6 +7,7 @@ import { closeAll, taskCreate, taskGet } from "@/lib/tasks/task-store";
 jest.mock("@/lib/config", () => ({
   __esModule: true,
   default: {
+    root: join(process.cwd(), ".."),
     get globalRoot() {
       return globalThis.__EVENT_ARTIFACT_TASK_ROOT__;
     },
@@ -41,10 +42,10 @@ describe("event artifact actions", () => {
     writeFileSync(draftPath, JSON.stringify({
       title: "Fix quality gate failure for Parent feature",
       description: "Generated from quality gate failure.",
-      type: "bug",
+      type: "epic",
       priority: 1,
       subtasks: [
-        { title: "Fix failing tests", description: "Repair regression", type: "bug" },
+        { title: "Fix failing tests", description: "Repair regression", type: "bug", priority: 1 },
       ],
     }), "utf8");
 
@@ -88,5 +89,37 @@ describe("event artifact actions", () => {
       event_artifact_execution_id: "exec-1",
     });
     expect(updatedParent?.dependencies?.map((dep) => dep.depends_on_id)).toContain(child?.id);
+  });
+
+  it("rejects a draft that does not match task.schema.json before importing it", () => {
+    const parent = taskCreate("default", {
+      title: "Parent feature",
+      issue_type: "feature",
+      created_by: "test",
+    }, "default");
+    const artifactsDir = mkdtempSync(join(tmpdir(), "event-artifact-actions-invalid-"));
+    const draftPath = join(artifactsDir, "draft-child-tasks.json");
+    writeFileSync(draftPath, JSON.stringify({
+      title: "Invalid follow-up tree",
+      description: "This parent has subtasks but is not an epic.",
+      type: "bug",
+      priority: 1,
+      subtasks: [
+        { title: "Repair it", description: "Repair the invalid tree", type: "bug", priority: 1 },
+      ],
+    }), "utf8");
+
+    expect(() => applyDraftChildTasks({
+      namespaceId: "default",
+      orgId: "default",
+      parentTaskId: parent.id,
+      draftTaskPath: draftPath,
+      executionId: "exec-invalid",
+      runId: "run-invalid",
+      artifactPath: join(artifactsDir, "triage-result.json"),
+      createdBy: "event-artifact",
+    })).toThrow("generated task does not match task.schema.json");
+
+    expect(taskGet("default", parent.id, "default")?.metadata).not.toHaveProperty("event_artifact_execution_id");
   });
 });

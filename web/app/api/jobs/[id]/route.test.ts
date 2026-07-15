@@ -37,13 +37,75 @@ jest.mock("@/lib/namespace-config", () => ({
   getOrgIdFromRequest: jest.fn().mockResolvedValue("default"),
 }));
 
+jest.mock("@/lib/config", () => {
+  const path = jest.requireActual("node:path");
+  const os = jest.requireActual("node:os");
+  const globalRoot = path.join(os.tmpdir(), `mentiko-jobs-route-test-${process.pid}`);
+  const namespaceRoot = path.join(globalRoot, "namespaces", "default");
+  const isolatedConfig = {
+    globalRoot,
+    codeRoot: path.join(process.cwd(), ".."),
+    namespaceRoot,
+    orgRoot: namespaceRoot,
+    projectRoot: namespaceRoot,
+    namespaceId: "default",
+    orgId: "default",
+    namespacesBase: path.join(globalRoot, "namespaces"),
+    authDbPath: path.join(globalRoot, "data", "auth.db"),
+    runsDir: path.join(namespaceRoot, "runs"),
+    jobsDir: path.join(namespaceRoot, "jobs"),
+    eventsDir: path.join(namespaceRoot, "events"),
+    stateDir: path.join(namespaceRoot, "state"),
+    decisionsDir: path.join(namespaceRoot, "decisions"),
+    schedulesDir: path.join(namespaceRoot, "schedules"),
+  };
+  const nsPath = (namespaceId = "default", ...segments: string[]) =>
+    path.join(globalRoot, "namespaces", namespaceId || "default", ...segments);
+  const orgPath = (namespaceId: string, orgId: string, ...segments: string[]) =>
+    orgId === "default"
+      ? nsPath(namespaceId, ...segments)
+      : nsPath(namespaceId, "orgs", orgId, ...segments);
+
+  return {
+    __esModule: true,
+    config: isolatedConfig,
+    default: isolatedConfig,
+    nsPath,
+    orgPath,
+    projectPath: (...segments: string[]) => path.join(namespaceRoot, ...segments),
+    globalPath: (...segments: string[]) => path.join(globalRoot, ...segments),
+  };
+});
+
 
 import { GET } from "./route";
 import { createJob, updateJob, getJob, listJobs, deleteJob } from "@/lib/runs/job-store";
-import { taskCreate, taskDelete, taskGet } from "@/lib/tasks/task-store";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeAll, taskCreate, taskDelete, taskGet } from "@/lib/tasks/task-store";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { nsPath } from "@/lib/config";
+import { createRunRecord, type RunRecord } from "@/lib/runner-v2/run-state";
+
+const TEST_GLOBAL_ROOT = join(tmpdir(), `mentiko-jobs-route-test-${process.pid}`);
+
+function runFixture(
+  runId: string,
+  status: RunRecord["status"],
+  overrides: Partial<RunRecord> = {},
+): RunRecord {
+  const started = typeof overrides.started === "string" ? new Date(overrides.started) : new Date();
+  return {
+    ...createRunRecord({
+      chainName: "Job Route Test Chain",
+      goal: "Exercise job-to-run status reconciliation",
+      now: started,
+    }),
+    id: runId,
+    status,
+    ...overrides,
+  };
+}
 
 function createMockRequest() {
   return {
@@ -70,8 +132,11 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       taskDelete("default", id);
     }
     for (const id of testRunIds) {
-      rmSync(nsPath("default", "runs", id), { recursive: true, force: true });
+      const runDir = nsPath("default", "runs", id);
+      if (existsSync(runDir)) rmSync(runDir, { recursive: true });
     }
+    closeAll();
+    if (existsSync(TEST_GLOBAL_ROOT)) rmSync(TEST_GLOBAL_ROOT, { recursive: true });
   });
 
   describe("Job State Retrieval", () => {
@@ -135,11 +200,9 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const runDir = nsPath("default", "runs", runId);
       const artifactsDir = join(runDir, "artifacts");
       mkdirSync(artifactsDir, { recursive: true });
-      writeFileSync(join(runDir, "run.json"), JSON.stringify({
-        id: runId,
-        status: "completed",
+      writeFileSync(join(runDir, "run.json"), JSON.stringify(runFixture(runId, "completed", {
         completed: new Date().toISOString(),
-      }, null, 2));
+      }), null, 2));
       writeFileSync(join(artifactsDir, "generation-result.json"), JSON.stringify({
         name: "Synced Chain",
         agents: [],
@@ -172,11 +235,9 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const runDir = nsPath("default", "runs", runId);
       const artifactsDir = join(runDir, "artifacts");
       mkdirSync(artifactsDir, { recursive: true });
-      writeFileSync(join(runDir, "run.json"), JSON.stringify({
-        id: runId,
-        status: "running",
+      writeFileSync(join(runDir, "run.json"), JSON.stringify(runFixture(runId, "running", {
         started: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
-      }, null, 2));
+      }), null, 2));
       writeFileSync(join(artifactsDir, "generation-result.json"), JSON.stringify({
         name: "Recovered Chain",
         agents: [{ id: "builder", triggers: ["manual-start"], emits: "built" }],
@@ -419,6 +480,7 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       testTaskIds.push(task.id);
 
       const runId = `run-blocked-${Date.now()}`;
+      testRunIds.push(runId);
       updateJob(job.id, {
         taskId: task.id,
         status: "running",
@@ -435,13 +497,11 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const { nsPath } = require("@/lib/config");
       const runDir = nsPath("default", "runs", runId);
       fs.mkdirSync(runDir, { recursive: true });
-      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({
-        id: runId,
-        status: "blocked",
+      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify(runFixture(runId, "blocked", {
         status_message: "concurrency cap: waited for a chain slot; blocked",
         chainId: "chain-recommendation",
         taskId: task.id,
-      }, null, 2));
+      }), null, 2));
 
       const request = createMockRequest();
       const response = await GET(request, {
@@ -467,6 +527,7 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       testJobIds.push(job.id);
 
       const runId = `run-stopped-list-${Date.now()}`;
+      testRunIds.push(runId);
       updateJob(job.id, {
         status: "running",
         startedAt: new Date().toISOString(),
@@ -482,11 +543,9 @@ describe("GET /api/jobs/[id] - Chain Generation Job State API", () => {
       const { nsPath } = require("@/lib/config");
       const runDir = nsPath("default", "runs", runId);
       fs.mkdirSync(runDir, { recursive: true });
-      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify({
-        id: runId,
-        status: "stopped",
+      fs.writeFileSync(path.join(runDir, "run.json"), JSON.stringify(runFixture(runId, "stopped", {
         chainId: "chain-recommendation",
-      }, null, 2));
+      }), null, 2));
 
       const runningJobs = listJobs({ taskId: "task-stopped-list", status: "running" });
       expect(runningJobs).toEqual([]);
