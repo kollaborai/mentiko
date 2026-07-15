@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { readdirSync, readFileSync, existsSync, rmdirSync } from "fs";
+import { readdirSync, existsSync, rmdirSync } from "fs";
 import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
@@ -10,29 +10,13 @@ import { checkRunAccess, normalizeRunId } from "@/lib/auth/run-acl";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import {
+  projectRunRecordForList,
+  readRunRecordAt,
+  type RunListRecord,
+} from "@/lib/runs/run-record";
 
 export const dynamic = "force-dynamic";
-
-interface RunAgent {
-  id: string;
-  name?: string;
-  status: string;
-  session: string;
-}
-
-interface Run {
-  id: string;
-  chain: string;
-  chainId?: string;
-  goal: string;
-  started: string;
-  completed?: string;
-  status: string;
-  agents: RunAgent[];
-  sessions: string[];
-  totalCostCents?: number;
-  totalCostDisplay?: string;
-}
 
 // GET /api/runs - list all runs
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -81,7 +65,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     return apiSuccess({ runs: [] });
   }
 
-  const runs: Run[] = [];
+  const runs: RunListRecord[] = [];
 
   const entries = readdirSync(runsDir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && normalizeRunId(d.name) !== null)
@@ -93,25 +77,15 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     // stop early if we have enough and no filters need full scan
     if (!hasFilters && runs.length >= limit) break;
 
-    const runFile = join(runsDir, entry.name, "run.json");
-    if (!existsSync(runFile)) continue;
-
     try {
-      const content = readFileSync(runFile, "utf-8");
-      const run: Run = JSON.parse(content);
-      // ensure id is always set before filtering (some old run.json files omit it)
-      if (!run.id) run.id = entry.name;
+      const run = readRunRecordAt(runsDir, entry.name);
 
       if (runIdFilter && run.id !== runIdFilter && entry.name !== runIdFilter) {
         continue;
       }
 
       // workspace ACL: silently skip runs the user can't see
-      const runAclInput = {
-        workspaceId: (run as unknown as Record<string, unknown>).workspaceId as string | undefined,
-        workspacePath: (run as unknown as Record<string, unknown>).workspacePath as string | undefined,
-      };
-      if (!canSeeRun(runAclInput)) continue;
+      if (!canSeeRun(run)) continue;
 
       // filter by chain if specified
       if (chainId) {
@@ -123,7 +97,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
       // filter by workspace if specified
       if (workspace && !runIdFilter) {
-        const runWs = (run as unknown as Record<string, unknown>).workspacePath as string | undefined;
+        const runWs = run.workspacePath;
         if (!runWs || runWs !== workspace) {
           continue;
         }
@@ -136,45 +110,44 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
       // filter by taskId if specified
       if (taskId) {
-        const runTaskId = (run as unknown as Record<string, unknown>).taskId as string | undefined;
-        if (runTaskId !== taskId) {
+        if (run.taskId !== taskId) {
           continue;
         }
       }
 
       // filter by type if specified ("link" or "chain")
       if (type) {
-        const runType = (run as unknown as Record<string, unknown>).type as string | undefined;
-        if (runType !== type) {
+        if (run.type !== type) {
           continue;
         }
       }
 
       // filter by linkId if specified
       if (linkId) {
-        const runLinkId = (run as unknown as Record<string, unknown>).linkId as string | undefined;
-        if (runLinkId !== linkId) {
+        if (run.linkId !== linkId) {
           continue;
         }
       }
 
-      // add cost data if available
+      let cost: { totalCostCents: number; totalCostDisplay: string } | undefined;
       try {
         const costSummary = getRunTokenUsage(namespaceId, run.id);
         if (costSummary) {
-          run.totalCostCents = costSummary.totalCostCents;
-          run.totalCostDisplay = `$${(costSummary.totalCostCents / 100).toFixed(2)}`;
+          cost = {
+            totalCostCents: costSummary.totalCostCents,
+            totalCostDisplay: `$${(costSummary.totalCostCents / 100).toFixed(2)}`,
+          };
         }
       } catch {
         // ignore cost lookup failures
       }
 
-      runs.push(run);
+      runs.push(projectRunRecordForList(run, cost));
 
       // apply limit after filtering
       if (runs.length >= limit) break;
     } catch {
-      // skip invalid json
+      // A list endpoint omits invalid/misidentified records; it never repairs them.
     }
   }
 

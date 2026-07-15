@@ -9,8 +9,7 @@
  * endpoints) or use filterRunsByAccess for list endpoints.
  */
 
-import { readFileSync, existsSync, readdirSync } from "fs";
-import { join } from "path";
+import { existsSync, readdirSync } from "fs";
 import config from "@/lib/config";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import {
@@ -18,6 +17,7 @@ import {
   getOrgIdFromRequest,
 } from "@/lib/namespace-config";
 import { getWorkspace, listWorkspaces, checkWorkspaceAccess, type Workspace } from "@/lib/workspaces/workspace-storage";
+import { readRunRecordAt, type RunRecord } from "@/lib/runs/run-record";
 
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
@@ -26,15 +26,6 @@ export interface RunAclResult {
   reason?: "not-authenticated" | "run-not-found" | "no-workspace" | "denied";
   userId?: string;
   workspaceId?: string;
-}
-
-// minimal run shape we care about — avoid importing the full type just for this.
-interface RunSummary {
-  id?: string;
-  workspaceId?: string;
-  // legacy runs: some code paths (web /api/chains/run) only persist workspacePath.
-  // resolve to a workspace record by path as a fallback.
-  workspacePath?: string;
 }
 
 export function normalizeRunId(value: unknown, { allowBare = false } = {}): string | null {
@@ -47,7 +38,7 @@ export function normalizeRunId(value: unknown, { allowBare = false } = {}): stri
 function resolveWorkspace(
   namespaceId: string,
   orgId: string,
-  run: RunSummary
+  run: Pick<RunRecord, "workspaceId" | "workspacePath">
 ): Workspace | null {
   if (run.workspaceId) return getWorkspace(namespaceId, orgId, run.workspaceId);
   if (run.workspacePath) {
@@ -58,14 +49,11 @@ function resolveWorkspace(
   return null;
 }
 
-function readRun(runId: string, runsDir = config.runsDir): RunSummary | null {
+function readRun(runId: string, runsDir = config.runsDir): RunRecord | null {
   const safeRunId = normalizeRunId(runId);
   if (!safeRunId) return null;
-
-  const runJsonPath = join(runsDir, safeRunId, "run.json");
-  if (!existsSync(runJsonPath)) return null;
   try {
-    return JSON.parse(readFileSync(runJsonPath, "utf-8"));
+    return readRunRecordAt(runsDir, safeRunId);
   } catch {
     return null;
   }

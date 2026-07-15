@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, rmSync } from "fs";
+import { writeFileSync, existsSync, rmSync } from "fs";
 import { join } from "path";
 import { taskMergeMeta } from "@/lib/tasks/task-store";
 import { writeLog } from "@/lib/system/system-logger";
@@ -10,28 +10,10 @@ import { Unauthorized, NotFound, BadRequest, Conflict } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import { readRunRecordAt } from "@/lib/runs/run-record";
 
 export const dynamic = "force-dynamic";
 
-
-interface RunObject {
-  id: string;
-  chain: string;
-  chainId: string;
-  goal: string;
-  started: string;
-  status: string;
-  completed?: string;
-  taskId?: string;
-  workspacePath?: string;
-  agents: Array<{
-    id: string;
-    name: string;
-    status: string;
-    session: string;
-  }>;
-  sessions?: string[];
-}
 
 export const GET = withErrorHandling(async (
   req: Request,
@@ -54,7 +36,7 @@ export const GET = withErrorHandling(async (
     throw new NotFound("Run", runId);
   }
 
-  const run: RunObject = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+  const run = readRunRecordAt(runsDir, runId);
 
   // Read state files and merge for real-time agent statuses
   // pass run.status so stale state files don't override terminal agent statuses
@@ -111,7 +93,7 @@ export const PATCH = withErrorHandling(async (
     throw new BadRequest("Unknown action", { validAction: "cancel" });
   }
 
-  const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+  const run = readRunRecordAt(runsDir, runId);
 
   if (run.status !== "running" && run.status !== "pending") {
     throw new Conflict("Run is not active");
@@ -173,7 +155,7 @@ export const DELETE = withErrorHandling(async (
   // kill any active sessions first
   const runJsonPath = join(runDir, "run.json");
   if (existsSync(runJsonPath)) {
-    const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+    const run = readRunRecordAt(runsDir, runId);
     for (const agent of run.agents || []) {
       if (agent.session) {
         await pty.remove(agent.session);
@@ -185,7 +167,7 @@ export const DELETE = withErrorHandling(async (
   // update linked task metadata before deleting run data
   if (existsSync(runJsonPath)) {
     try {
-      const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+      const run = readRunRecordAt(runsDir, runId);
       if (run.taskId && !isNonExecutionRun(run)) {
         taskMergeMeta(orgId, run.taskId, { last_run_status: "deleted", last_run_id: run.id }, namespaceId);
       }

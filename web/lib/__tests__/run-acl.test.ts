@@ -45,6 +45,9 @@ describe("run acl", () => {
       join(runDir, "run.json"),
       JSON.stringify({
         id: "run-123",
+        chain: "acl-test",
+        goal: "test request-scoped access",
+        started: "2026-07-15T12:00:00.000Z",
         status: "running",
         agents: [],
       })
@@ -74,6 +77,21 @@ describe("run acl", () => {
     expect(normalizeRunId("123", { allowBare: true })).toBe("run-123");
 
     await expect(checkRunAccess(new Request("http://test"), "run-../secret", runsDir)).resolves.toMatchObject({
+      ok: false,
+      reason: "run-not-found",
+    });
+  });
+
+  it("treats a malformed persisted record as missing instead of trusting a partial cast", async () => {
+    const malformedDir = join(runsDir, "run-malformed");
+    mkdirSync(malformedDir);
+    writeFileSync(join(malformedDir, "run.json"), JSON.stringify({
+      id: "run-malformed",
+      status: "running",
+      agents: [],
+    }));
+
+    await expect(checkRunAccess(new Request("http://test"), "run-malformed", runsDir)).resolves.toMatchObject({
       ok: false,
       reason: "run-not-found",
     });

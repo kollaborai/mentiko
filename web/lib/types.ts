@@ -1,3 +1,9 @@
+import type {
+  AgentStatus as PersistedRunAgentStatus,
+  RunListRecord,
+  RunStatus as PersistedRunStatus,
+} from "@/lib/runs/run-record";
+
 // ============================================================
 // utility types
 // ============================================================
@@ -39,14 +45,10 @@ export type UnionToIntersection<U> =
 // ============================================================
 
 export type AgentStatus =
+  | PersistedRunAgentStatus
   | "idle"
-  | "running"
   | "completed"
-  | "failed"
-  | "paused"
-  | "pending"
-  | "cancelled"
-  | "blocked";
+  | "paused";
 
 export type ChainStatus = "active" | "draft" | "archived";
 
@@ -126,7 +128,7 @@ export interface MergeResult {
   conflicts?: MergeConflict[];
 }
 
-export type RunStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "blocked";
+export type RunStatus = PersistedRunStatus;
 
 export type SessionStatus = "active" | "closed" | "running";
 
@@ -531,18 +533,8 @@ export interface RunAgent {
   tokens?: TokenUsage;
 }
 
-export interface Run {
-  id: string;
-  chain: string;
-  chainId?: string;
-  goal: string;
-  started: string;
-  completed?: string;
-  status: RunStatus;
-  agents: AgentSession[];
-  sessions: string[];
-  metadata?: RunMetadata;
-}
+/** Client-facing projection returned by GET /api/runs. */
+export type Run = RunListRecord;
 
 // ============================================================
 // session types

@@ -5,12 +5,12 @@ import config from "@/lib/config";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 
 export const dynamic = "force-dynamic";
 
 const STATE_DIR = config.stateDir;
 const RUNS_DIR = config.runsDir;
-const EVENTS_DIR = config.eventsDir;
 
 interface StateSnapshot {
   timestamp: string;
@@ -132,29 +132,28 @@ function readRunState(runId: string): { runData: unknown; chainData: unknown } |
   }
 }
 
-function getRecentOutput(_runId: string, limit = 20): OutputEntry[] {
-  try {
-    const eventFiles = readdirSync(EVENTS_DIR)
-      .filter((f) => f.endsWith(".json"))
-      .sort()
-      .reverse()
-      .slice(0, limit);
+function outputLevel(value: string | undefined): OutputEntry["level"] {
+  return value === "warn" || value === "error" || value === "debug" ? value : "info";
+}
 
-    return eventFiles
-      .map((file) => {
-        try {
-          const content = JSON.parse(readFileSync(join(EVENTS_DIR, file), "utf-8"));
-          return {
-            timestamp: content.timestamp || new Date(file.split("-")[0]).toISOString(),
-            source: content.source || "unknown",
-            level: content.level || "info",
-            message: content.message || content.event || JSON.stringify(content),
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter((e): e is OutputEntry => e !== null);
+/**
+ * Debug output follows the same physical event contract as the runner. Only
+ * strict canonical `.event` files from the configured root are visible;
+ * malformed files and obsolete JSON event artifacts fail closed.
+ */
+function getRecentOutput(runId: string, limit = 20): OutputEntry[] {
+  const eventsDir = config.eventsDir;
+  try {
+    return scanRunnerEventFiles(eventsDir).valid
+      .filter(({ event }) => event.runId === runId)
+      .map(({ event }) => ({
+        timestamp: event.timestamp,
+        source: event.source,
+        level: outputLevel(event.fields.level),
+        message: event.fields.message || event.event,
+      }))
+      .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+      .slice(0, limit);
   } catch {
     return [];
   }

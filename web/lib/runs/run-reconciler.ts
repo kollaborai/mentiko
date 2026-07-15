@@ -458,7 +458,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
         changed = true;
         reconcilerLog(context, `completed ${runId}: all declared agents are complete`, "warn");
       } else {
-        // grace period: if any agent completed recently, chain-runner-complete
+        // grace period: if any agent completed recently, typed completion
         // may be doing handoff (artifact capture + next agent launch).
         // don't mark as orphaned until 5 min after last agent completion.
         const lastCompletion = agents

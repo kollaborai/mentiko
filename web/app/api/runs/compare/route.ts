@@ -7,24 +7,14 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { BadRequest, NotFound, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import {
+  projectRunRecordForList,
+  readRunRecordAt,
+  type RunListRecord,
+  type RunRecord,
+} from "@/lib/runs/run-record";
 
 export const dynamic = "force-dynamic";
-
-interface RunObject {
-  id: string;
-  chain: string;
-  chainId: string;
-  goal: string;
-  started: string;
-  completed?: string;
-  status: string;
-  agents: Array<{
-    id: string;
-    name: string;
-    status: string;
-    session: string;
-  }>;
-}
 
 interface AgentPerf {
   id: string;
@@ -46,8 +36,8 @@ interface PerformanceData {
 }
 
 interface RunComparison {
-  runA: RunObject;
-  runB: RunObject;
+  runA: RunListRecord;
+  runB: RunListRecord;
   metricsDiff: {
     duration: number;
     durationPercent: number;
@@ -72,11 +62,9 @@ interface RunComparison {
   perfB?: PerformanceData;
 }
 
-function readRunFile(runsDir: string, runId: string): RunObject | null {
-  const runJsonPath = join(runsDir, runId, "run.json");
-  if (!existsSync(runJsonPath)) return null;
+function readRunFile(runsDir: string, runId: string): RunRecord | null {
   try {
-    return JSON.parse(readFileSync(runJsonPath, "utf-8"));
+    return readRunRecordAt(runsDir, runId);
   } catch {
     return null;
   }
@@ -195,8 +183,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   });
 
   const comparison: RunComparison = {
-    runA: runDataA,
-    runB: runDataB,
+    runA: projectRunRecordForList(runDataA),
+    runB: projectRunRecordForList(runDataB),
     metricsDiff,
     agentComparison,
     perfA: perfA || undefined,

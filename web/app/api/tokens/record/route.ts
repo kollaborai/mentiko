@@ -2,7 +2,7 @@
  * POST /api/tokens/record
  *
  * Internal endpoint — records token usage for a single agent invocation.
- * Called by chain-runner-complete.sh after each agent finishes.
+ * Called by the typed completion effects path after each agent finishes.
  *
  * Body:
  *   runId        string  required
