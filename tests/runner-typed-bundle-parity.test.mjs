@@ -19,6 +19,7 @@ const pairs = [
   ["git-integration-cli", "runner-git-integration"],
   ["audit-ship-cli", "runner-audit-ship"],
   ["notification-dispatcher-cli", "runner-notification-dispatcher"],
+  ["agent-transcript-cli", "runner-agent-transcript"],
   ["lib/system/audit-cli.ts", "runner-audit"],
 ];
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));

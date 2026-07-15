@@ -851,7 +851,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-transcript-provenance",
         label: "Parse external transcript JSONL and bind durable completion evidence to the current run attempt",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+        paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/agent-transcript-cli.ts", "web/lib/runner-v2/monitor-live-io.ts", "lib/agent-transcript-client.sh"],
       },
     ],
   },
