@@ -12,7 +12,9 @@ trap 'rm -r "$TEST_TMP_DIR"' EXIT
 
 EVENTS_DIR="$TEST_TMP_DIR/events"
 CHAIN_FILE="$TEST_TMP_DIR/chain.json"
-mkdir -p "$EVENTS_DIR"
+export AGENTS_DIR="$TEST_TMP_DIR/agents"
+export CONFIG_PROFILES_DIR="$TEST_TMP_DIR/config-profiles"
+mkdir -p "$EVENTS_DIR" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR"
 
 cat > "$CHAIN_FILE" <<'JSON'
 {

@@ -1,5 +1,4 @@
-// Typed port of the shell chain monitor (lib/agent-functions.sh monitor-chain-agent
-// :919 + helpers). Behind MENTIKO_MONITOR_V2. See
+// Typed monitor for runner-v2 launch and routed execution. See
 // docs/orchestration/contracts/monitor-v2.design.json.
 //
 // The decision logic lives here as a pure reducer so every invariant
@@ -19,7 +18,7 @@ export const MONITOR_DEFAULTS = {
   //                               error the CLI auto-compacts past must not terminate).
 } as const;
 
-// Nudge copy, verbatim from the shell fallbacks so behavior is identical.
+// Nudge copy retained for behavioral continuity with prior monitor wording.
 export const MONITOR_NUDGES = {
   eventExists:
     "Your completion event exists. Finish the final terminal response and make the final non-empty line exactly AGENT_COMPLETE. Do not redo the task.",

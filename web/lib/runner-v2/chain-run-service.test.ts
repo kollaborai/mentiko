@@ -3,10 +3,10 @@
  */
 
 import { EventEmitter } from "events";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
 
@@ -17,10 +17,15 @@ jest.mock("child_process", () => ({
     child.unref = jest.fn();
     return child;
   }),
+  spawnSync: jest.fn(),
 }));
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
+  config: {
+    root: "/repo",
+    globalRoot: "/tmp/mentiko-global",
+  },
   default: {
     binDir: "/repo/bin",
     codeRoot: "/repo",
@@ -120,6 +125,7 @@ jest.mock("@/lib/runs/run-provenance", () => ({
 }));
 
 const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
+const mockSpawnSync = spawnSync as jest.MockedFunction<typeof spawnSync>;
 const mockIsRunnerV2Enabled = isRunnerV2Enabled as jest.MockedFunction<typeof isRunnerV2Enabled>;
 const mockStartRunnerV2Launch = startRunnerV2Launch as jest.MockedFunction<typeof startRunnerV2Launch>;
 let currentRunsDir = "";
@@ -157,6 +163,41 @@ describe("chain-run-service runner-v2 guard", () => {
     globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__ = join(currentRunsDir, "events");
     const { resolveLinkRunsDir } = await import("@/lib/links/link-run-runtime");
     (resolveLinkRunsDir as jest.MockedFunction<typeof resolveLinkRunsDir>).mockReturnValue(currentRunsDir);
+    mockSpawnSync.mockImplementation((_command, args, options) => {
+      const runDir = options?.env?.MENTIKO_RUN_DIR;
+      const agentId = Array.isArray(args) ? args.at(-1) : undefined;
+      if (runDir && agentId) {
+        const runJsonPath = join(runDir, "run.json");
+        const current = JSON.parse(readFileSync(runJsonPath, "utf8"));
+        const session = `probe-${agentId}`;
+        const now = new Date().toISOString();
+        current.agents = [...(current.agents || []).filter((agent: { id?: string }) => agent.id !== agentId), {
+          id: agentId,
+          name: agentId,
+          session,
+          status: "running",
+        }];
+        current.sessions = [...new Set([...(current.sessions || []), session])];
+        current.runnerV2 = {
+          ...(current.runnerV2 || {}),
+          attempts: [...(current.runnerV2?.attempts || []), {
+            id: `attempt-${agentId}`,
+            runId: options?.env?.MENTIKO_RUN_ID || current.id,
+            agentId,
+            phase: "instructions_submitted",
+            leaseId: session,
+            processEvidence: { processPid: 4321, processSpawnedAt: now, ptySessionId: session },
+            instructionLedger: [],
+            recoveryDecisionCount: 0,
+            createdAt: now,
+            updatedAt: now,
+            transitions: [],
+          }],
+        };
+        writeFileSync(runJsonPath, JSON.stringify(current));
+      }
+      return { status: 0, pid: 4321, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>;
+    });
   });
 
   it("uses the normal shell path and never calls runner-v2 when the flag is off", async () => {
@@ -181,14 +222,14 @@ describe("chain-run-service runner-v2 guard", () => {
     );
   });
 
-  it("falls back to the normal shell path when runner-v2 reports unsupported", async () => {
+  it("fails closed when runner-v2 reports unsupported before any typed side effects", async () => {
     mockIsRunnerV2Enabled.mockReturnValue(true);
     mockStartRunnerV2Launch.mockResolvedValue({
       support: "unsupported",
       reason: "runner-v2 contract must define invariants",
     });
 
-    await startMinimalRun("run-v2-unsupported");
+    await expect(startMinimalRun("run-v2-unsupported")).rejects.toThrow("runner-v2 contract must define invariants");
 
     expect(mockStartRunnerV2Launch).toHaveBeenCalledWith(expect.objectContaining({
       chainName: "Test Chain",
@@ -198,12 +239,7 @@ describe("chain-run-service runner-v2 guard", () => {
         MENTIKO_RUN_ID: "run-v2-unsupported",
       }),
     }));
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "/bin/zsh",
-      ["-lc", expect.stringContaining("/repo/bin/mentiko run")],
-      expect.objectContaining({ cwd: "/repo", detached: true }),
-    );
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("uses runner-v2 and avoids fallback shell spawn when the flag is on and supported", async () => {
@@ -278,11 +314,11 @@ describe("chain-run-service runner-v2 guard", () => {
     });
 
     expect(mockStartRunnerV2Launch).not.toHaveBeenCalled();
-    expect(mockSpawn).toHaveBeenCalledTimes(1);
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "/bin/bash",
-      ["-lc", expect.stringMatching(/runner-v2-launch-agent.*reviewer/)],
-      expect.objectContaining({ detached: true }),
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      process.execPath,
+      [expect.stringMatching(/runner-v2-launch-agent/), expect.any(String), "reviewer"],
+      expect.objectContaining({ env: expect.objectContaining({ MENTIKO_RUNNER_V2: "1" }) }),
     );
 
     const { readFileSync } = await import("fs");
@@ -295,7 +331,7 @@ describe("chain-run-service runner-v2 guard", () => {
       },
     });
     expect(readFileSync(
-      join(globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__, "run-probe-writer-draft-ready.event"),
+      join(globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__, "archive", "run-probe-writer-draft-ready.event"),
       "utf8",
     )).toContain("processed: true");
     expect(JSON.parse(readFileSync(join(currentRunsDir, "run-v2-live-probe", "run.json"), "utf8"))).toMatchObject({

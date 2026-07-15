@@ -2,23 +2,18 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-07",
   "migration_mode": "side-by-side",
-  "replaces": "the shell CHAIN agent monitor: the monitor-chain-agent function and its remaining helpers in lib/agent-functions.sh (monitor-chain-agent, monitor-agent-died, monitor-agent-stalled, durable AGENT_COMPLETE detection) + lib/monitor-completion.sh. The old ensure-event-file success fallback has already been removed and is not a migration dependency. NOTE: lib/mentiko-monitor.sh is the SEPARATE standalone 'mentiko monitor' CLI for manual monitoring, NOT the chain path (its own header says the chain path uses monitor-chain-agent); it is out of scope here unless a later pass unifies them.",
+  "replaces": "the shell CHAIN agent monitor path for runner-v2 launches. The legacy helpers remain only as historical/reference surfaces outside the typed launch path; lib/mentiko-monitor.sh is the separate manual CLI and not a chain-launch fallback.",
   "preserves": "docs/orchestration/contracts/monitor.contract.json is the v1 behavior of record; every invariant and behavior there must survive the port unchanged unless explicitly superseded below",
-  "flag": {
-    "name": "MENTIKO_MONITOR_V2",
-    "default": "on",
-    "scope": "typed agent monitor loop; independent of MENTIKO_RUNNER_V2 (typed launch) and MENTIKO_RUNNER_V2_COMPLETION (typed completion verdict)"
-  },
   "why": {
     "problem": "the monitor — the loop that watches an agent over time and owns the patient 'wait, nudge, then latch' behavior — is still shell, while the completion verdict (a one-shot) is typed. The shell monitor is PATIENT: it nudges a stalled-but-alive agent and only latches completion on a real declared event or a standalone AGENT_COMPLETE. But the typed completion bridge it invokes runs its OWN blind retry/exhaust with no view of liveness. That split-brain — patient shell watcher, impatient typed verdict — is exactly what failed TASK-093: the typed bridge exhausted and declared the agent failed while the agent was still alive and emitted its declared event ~4.5 minutes later.",
     "fix": "unify the watch loop and completion verdict under one typed owner and one completion-evidence probe. Completion is invoked only for a declared event, a standalone AGENT_COMPLETE in the current-attempt durable transcript, or a compatible canonical generation-result.json owned by a core generation run. Every terminal path rechecks that evidence before mutation; an alive evidence-free agent is never speculatively completed.",
-    "deletion_gate": "the shell monitor scripts MUST NOT be deleted until this typed monitor reaches proven parity (every invariant below) and MENTIKO_MONITOR_V2 defaults on. Deleting them earlier removes agent monitoring entirely — nothing else watches sessions, latches completion, or re-triggers the verdict."
+    "deletion_gate": "Legacy monitor files may remain for unrelated/manual entrypoints, but runner-v2 launch and routing must invoke only the compiled typed monitor. A typed monitor failure fails closed rather than re-entering a shell monitor."
   },
   "entrypoints": {
     "spawn": {
-      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand (:326) builds the shell chain monitor command: monitor-chain-agent <session> <interval> <context> <chain.json> <maxStale> (defined in lib/agent-functions.sh:919, also invoked by lib/chain-runner.sh:2360). The typed bootstrap spawns it as the monitor PTY, so even a typed launch monitors via shell today.",
-      "v2": "buildMonitorCommand emits a typed monitor command (compiled node monitor-v2 entry, <session> <chain.json>) when MENTIKO_MONITOR_V2 is enabled; identical PTY-spawn contract, identical env carry, identical singleton semantics",
-      "fallback": "the existing monitor-chain-agent shell command (agent-functions.sh:919) when the monitor flag is explicitly set off, or when the typed monitor exits unsupported (64) before it has latched or handled anything. This is a monitor-only compatibility boundary; completion itself has no shell fallback. The standalone lib/mentiko-monitor.sh is NOT the fallback for the chain path."
+      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand and lib/chain-runner.sh routed scripts execute compiled lib/monitor-v2.js with the exact session argv and explicit run context.",
+      "v2": "Compiled monitor-v2 is the sole runner-v2 monitor command; PTY spawn, env carry, and singleton semantics remain explicit.",
+      "fallback": "none. Missing bundle, invalid context, unsupported input, or a non-zero typed monitor exit fails closed."
     },
     "env_carry": "the monitor command preserves the explicit run context. On completion, completion-launch.ts copies the allowlisted values into a private one-shot 0600 file because the PTY daemon filters spawn env; only the random path enters completion PTY argv, and validated deletion is the child-acceptance receipt."
   },
@@ -42,8 +37,7 @@
     "onDied_race_guard": "the driver probes once after classification and the live terminal callback probes the same evidence source again immediately before mutation; late valid events retain the reconciler backstop and generation artifacts retain explicit typed completion re-entry."
   },
   "command_contract": {
-    "current_shell": "monitor-chain-agent <session> <interval> <context> <chainPath> <maxStale> (agent-functions.sh:919; emitted by buildMonitorCommand agent-bootstrap-plan.ts:326 and lib/chain-runner.sh:2360)",
-    "typed_argv": "monitor-v2 <session> <interval> <context> <chainPath> <maxStale> — argv MUST match the shell positional order exactly, so buildMonitorCommand emits one or the other by flag with no other change",
+    "typed_argv": "monitor-v2 <session> <interval> <context> <chainPath> <maxStale> — argv is the sole runner-v2 monitor command for both initial and routed launches",
     "env": [
       "MENTIKO_RUN_DIR (or RUNS_DIR + run id)",
       "EVENTS_DIR",
@@ -60,7 +54,7 @@
       "MENTIKO_MONITOR_MARKER_TAIL",
       "MENTIKO_TRANSCRIPT_CAPTURE_LINES"
     ],
-    "exit_codes": "0 = the monitor ran to a terminal verdict (complete / died / stalled / session-gone) and handled it; 64 = unsupported, buildMonitorCommand falls back to the shell monitor-chain-agent; any other non-zero = the monitor crashed. The monitor OWNS its loop; there is no exit-64-per-poll semantics.",
+    "exit_codes": "0 = the monitor ran to a terminal verdict (complete / died / stalled / session-gone) and handled it; every non-zero exit is a typed operational failure that fails closed. The monitor owns its loop.",
     "state_files": [
       "~/.mentiko_monitor/${session}_state (md5 of last 20 lines)",
       "~/.mentiko_monitor/${session}_stale (per-cycle stale counter)",
@@ -68,7 +62,7 @@
       "~/.mentiko_monitor/${session}_complete (latch)",
       "~/.mentiko_monitor/${session}_armed + ${session}_armed_grace (process-gone arming/grace)"
     ],
-    "flag": "MENTIKO_MONITOR_V2 gates which command buildMonitorCommand emits: unset/default/on -> typed monitor-v2, explicit off -> shell monitor-chain-agent. Deleting the shell remains gated on default-on bake + proven parity."
+    "selection": "Runner-v2 launch and routing always invoke compiled monitor-v2; there is no monitor selection flag or shell compatibility branch."
   },
   "readiness_gate": {
     "blocks_until": "readiness MUST NOT pass on a typed monitor that does not also fix the TASK-093 failure mode. Proven before default switch: (1) the monitor invokes completion ONLY on a genuine latch, never while the agent is alive and eventless (monitor-reducer proves it: alive+producing -> active, never complete); (2) death is event-first (classifyDeath) and latch wins over death; (3) live TASK-093-shaped proof completes through monitor-v2 and typed completion with terminalReason completed_from_event; (4) late-event recovery is connected through the task reconciler for already-stuck legacy false failures.",
@@ -111,7 +105,7 @@
     "death is event-first: process gone WITH a completion event completes normally",
     "the monitor is the re-check loop: completion is invoked only on authoritative evidence, so no verdict makes a blind, liveness-unaware exhaustion decision (the TASK-093 fix)",
     "actionable blocked runs retain their owned agent PTY; handled terminal outcomes verify namespaced monitor-then-agent cleanup and persist retryable failures",
-    "do not delete the shell monitor until typed parity is proven and MENTIKO_MONITOR_V2 defaults on"
+    "runner-v2 monitor failures fail closed and never re-enter shell monitoring"
   ],
   "known_gaps": [
     "automatic periodic reconciliation of a core generation artifact that lands after both terminal probes remains separate from the explicit typed completion recovery path; the monitor closes both in-loop race windows before terminal mutation",
@@ -121,10 +115,10 @@
   ],
   "migration_plan": [
     "1. write this contract (done)",
-    "2. typed monitor loop behind MENTIKO_MONITOR_V2 (default on, explicit opt-out): watch + latch + stale + durable nudge + event-first death, at parity with the shell monitor, with typed completion handoff proven live",
-    "3. wire buildMonitorCommand to emit the typed monitor command when the flag is on; keep shell fallback and full env carry",
+    "2. typed monitor loop: watch + latch + stale + durable nudge + event-first death, at parity with the historical behavior, with typed completion handoff proven live",
+    "3. wire buildMonitorCommand and routed launch scripts to execute compiled monitor-v2 with full env carry and no shell fallback",
     "4. unify the completion handoff: the typed monitor invokes the typed completion verdict with a shared liveness view (or gates invocation on genuine-done); remove the blind exhaustion path",
     "5. parity tests cover every invariant; a runtime proof on a real stalled-but-alive agent (the TASK-093 shape) shows the agent is nudged/awaited and never falsely failed",
-    "6. default MENTIKO_MONITOR_V2 on; only THEN delete the chain-monitor surface — monitor-chain-agent and its helpers in lib/agent-functions.sh + lib/monitor-completion.sh (the standalone lib/mentiko-monitor.sh CLI is a separate concern, not deleted here)"
+    "6. retain legacy monitor files only for explicitly separate/manual behavior; runner-v2 launch must never select them"
   ]
 }

@@ -109,14 +109,14 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-chain-contract",
-        label: "Decode, expand references, validate, and resolve runtime chain fields",
+        label: "Decode, expand references, validate, resolve runtime fields, and read routing and monitor completion definitions",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts"],
+        paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/routing-contract-cli.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runner-v2/monitor-completion-cli.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "Replaces direct shell jq decoding and reference expansion; the shell remains only as a primitive-argument CLI invocation boundary.",
-      paths: ["lib/chain-runner.sh"],
+      summary: "Replaces direct shell jq decoding, reference expansion, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands.",
+      paths: ["lib/chain-runner.sh", "lib/routing-lib.sh", "lib/monitor-completion.sh"],
     },
   },
   "agent-definition": {
@@ -157,9 +157,9 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-event-lifecycle",
-        label: "Typed strict scan, completion lookup, processed mutation, and archive lifecycle",
+        label: "Typed strict scan, monitor completion resolution, processed mutation, and archive lifecycle",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts"],
+        paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runner-v2/monitor-completion-cli.ts"],
       },
     ],
   },
@@ -295,7 +295,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-loop-state",
         label: "Typed loop state and routing decisions",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/loop-state.ts", "web/lib/runner-v2/routing.ts"],
+        paths: ["web/lib/runner-v2/loop-state.ts", "web/lib/runner-v2/routing.ts", "web/lib/runner-v2/routing-contract.ts"],
       },
       {
         id: "typed-loop-tracker-compatibility",
@@ -461,6 +461,11 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
   },
+  "legacy-metrics-state": {
+    usage: "runner-v2",
+    surfaces: [{ id: "typed-legacy-metrics", label: "Validate and atomically mutate counters, gauges, timers, active timers, and webhook aggregates", owner: "runner-v2", paths: ["web/lib/runner-v2/legacy-metrics.ts", "web/lib/runner-v2/legacy-metrics-cli.ts", "web/app/api/metrics/route.ts"] }, { id: "shell-metric-command-boundary", label: "Shell forwards primitive metric operations only", owner: "runner-v2", paths: ["lib/metrics.sh"] }],
+    legacyEquivalent: { summary: "Replaces shell jq metric parsing, file initialization, lock ownership, and JSON mutation with a compiled typed metrics owner.", paths: ["lib/metrics.sh"] },
+  },
   "session-policy-ledger": {
     usage: "runner-v2",
     surfaces: [
@@ -581,15 +586,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/agent-bootstrap-plan.ts"],
       },
       {
-        id: "shell-remote-workspace",
-        label: "Launch SSH and Docker workspaces",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
+        id: "typed-external-workspace-dispatch",
+        label: "Dispatch SSH and Docker through the required direct product CLI",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/controller.ts", "web/lib/runner-v2/launch-plan.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "Local bootstrap is typed; SSH and Docker workspace launches still return to the shell runner.",
-      paths: ["lib/chain-runner.sh"],
+      summary: "Local bootstrap is typed and fail-closed. SSH and Docker retain only direct mentiko CLI transport dispatch; no shell bridge or fallback owns workspace selection.",
+      paths: ["web/lib/runner-v2/launch-plan.ts"],
     },
   },
   "config-profile": {
@@ -622,6 +627,62 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["lib/chain-runner.sh"],
     },
   },
+  "debug-run-state": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-debug-state-store",
+        label: "Validate raw and normalized debugger state, then atomically read and mutate run records",
+        owner: "runner-v2",
+        paths: ["web/lib/runs/debug-state-store.ts", "web/lib/runner-v2/debug-state-cli.ts"],
+      },
+      {
+        id: "typed-debug-api",
+        label: "Expose debugger state and actions through the typed API route",
+        owner: "runner-v2",
+        paths: ["web/app/api/chains/[id]/debug/route.ts"],
+      },
+    ],
+  },
+  "legacy-chain-webhook-config": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-legacy-webhook-plan",
+      label: "Validate embedded chain webhook configuration and serialize outbound payloads",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/integration-contract.ts", "web/lib/runner-v2/integration-contract-cli.ts"],
+    }],
+    legacyEquivalent: {
+      summary: "lib/webhook-sender.sh only invokes the typed delivery operation; TypeScript owns planning, retry, and external curl invocation.",
+      paths: ["lib/webhook-sender.sh", "lib/integration-contract-client.sh"],
+    },
+  },
+  "legacy-webhook-delivery-state": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-legacy-webhook-state",
+      label: "Validate, lock, atomically mutate, and query direct webhook delivery state",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/integration-contract.ts", "web/lib/runner-v2/integration-contract-cli.ts"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces shell jq writes and ~/.mentiko_webhooks path ownership; TypeScript owns mutation and delivery lifecycle.",
+      paths: ["lib/webhook-sender.sh", "lib/integration-contract-client.sh"],
+    },
+  },
+  "legacy-chain-email-config": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-legacy-email-plan",
+      label: "Resolve embedded email configuration, run report fields, report paths, and API JSON payloads",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/integration-contract.ts", "web/lib/runner-v2/integration-contract-cli.ts"],
+    }],
+    legacyEquivalent: {
+      summary: "lib/email-integration.sh invokes the typed report-send operation; TypeScript selects and invokes mail, sendmail, or curl.",
+      paths: ["lib/email-integration.sh", "lib/integration-contract-client.sh"],
+    },
+  },
   "agent-profile": {
     usage: "runner-v2",
     surfaces: [
@@ -629,7 +690,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-profile-resolution",
         label: "Typed profile validation, resolution, command compilation, readiness, and transcript resolution",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/runner-v2/agent-profile-cli.ts", "web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+        paths: ["web/lib/runner-v2/agent-profile.ts", "web/lib/runner-v2/agent-profile-cli.ts", "web/lib/runner-v2/readiness-policy.ts", "web/lib/runner-v2/readiness-cli.ts", "web/lib/runner-v2/agent-bootstrap-plan.ts", "web/lib/runner-v2/monitor-live-io.ts"],
       },
     ],
   },
@@ -649,13 +710,13 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-schedule-state",
-        label: "Read and update schedule runtime state",
+        label: "Read, validate, and atomically update schedule runtime state",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/schedules/scheduler-service.ts"],
+        paths: ["web/lib/runner-v2/adapters.ts", "web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/schedule-contract.ts", "web/lib/runner-v2/schedule-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
-      summary: "Runner v2 uses the typed scheduler state rather than introducing a second shell-specific schedule-state format.",
+      summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records.",
       paths: ["lib/scheduler.sh"],
     },
   },
@@ -695,6 +756,54 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     legacyEquivalent: {
       summary: "Typed retry storage replaces unscoped numeric counters; retry_{agentId}.count is rejected as ambiguous and is not a compatibility fallback.",
       paths: ["web/lib/runner-v2/adapters.ts"],
+    },
+  },
+  "runner-circuit-breaker-state": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-circuit-record-contract",
+        label: "Validate raw and normalized circuit JSON, contain its project path, and atomically mutate it under a typed claim",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/retry-circuit.ts", "web/lib/runner-v2/retry-circuit-cli.ts"],
+      },
+      {
+        id: "shell-circuit-command-boundary",
+        label: "Shell forwards retry policy and circuit operations as primitive TypeScript CLI arguments",
+        owner: "runner-v2",
+        paths: ["lib/retry-utils.sh", "lib/chain-runner.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces direct shell jq parsing, state-file writes, and deletion with a compiled typed circuit owner; no shell compatibility reader or fallback remains.",
+      paths: ["lib/retry-utils.sh"],
+    },
+  },
+  "runner-concurrency-admission-claim": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-concurrency-claim",
+        label: "Own owner-bearing cap claim publication, stale-owner retirement, and release fencing",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/file-claim.ts", "web/lib/runner-v2/concurrency-admission.ts"],
+      },
+      {
+        id: "typed-count-and-promote-admission",
+        label: "Atomically count validated running records and publish queued, admitted, or blocked run status",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/concurrency-admission.ts", "web/lib/runner-v2/concurrency-admission-cli.ts"],
+      },
+      {
+        id: "shell-pty-observation-boundary",
+        label: "Typed admission invokes the external PTY list CLI; shell only invokes the typed admission command",
+        owner: "runner-v2",
+        paths: ["lib/concurrency-cap.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces the shell mkdir/pid cap lock and shell count-and-promote decision with an owner-bearing typed claim; live PTY process listing remains an external command boundary.",
+      paths: ["lib/concurrency-cap.sh"],
     },
   },
 };

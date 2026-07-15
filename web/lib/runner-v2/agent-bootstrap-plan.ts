@@ -100,9 +100,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
     RUNS_DIR: input.env?.RUNS_DIR || dirname(input.runDir),
-    // completion resolves the run dir from env; without this a typed-spawned
-    // monitor hands the completion session an empty MENTIKO_RUN_DIR and the
-    // typed bridge exits unsupported (shell fallback) every time.
+    // Completion resolves the run dir from this explicit typed launch context.
     MENTIKO_RUN_DIR: input.runDir,
     STATE_DIR: stateDir,
     EVENTS_DIR: eventsDir,
@@ -115,12 +113,9 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
     MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
     MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
-    // the monitor inherits these exports and hands them to the completion
-    // session; without them a typed-launched run always falls back to shell
-    // completion because the pty daemon strips spawn env to its whitelist.
+    // The monitor inherits these exports and hands them to typed completion.
     MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
-    MENTIKO_MONITOR_V2: input.env?.MENTIKO_MONITOR_V2 || "1",
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
 
@@ -243,23 +238,9 @@ function buildMonitorCommand(input: {
   runId: string;
   env: Record<string, string>;
 }): string {
-  const agentFunctions = join(config.codeRoot, "lib", "agent-functions.sh");
   const compiledMonitor = join(config.codeRoot, "lib", "monitor-v2.js");
-  const webRoot = join(config.codeRoot, "web");
-  const sourceMonitor = join(webRoot, "lib", "runner-v2", "monitor-cli.ts");
   const context = `Agent: ${input.agentName} (${input.agentId}). Emits: ${input.emits}.`;
-  const shellCommand = `monitor-chain-agent ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}`;
-  const typedCommand = [
-    "if command -v node >/dev/null 2>&1; then",
-    `if [[ -f ${shellEscape(compiledMonitor)} ]]; then node ${shellEscape(compiledMonitor)} ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}; _monitor_v2_status=$?; if [[ "$_monitor_v2_status" -ne 64 ]]; then exit "$_monitor_v2_status"; fi; fi;`,
-    "fi;",
-    "if command -v npx >/dev/null 2>&1; then",
-    `if [[ -f ${shellEscape(sourceMonitor)} ]]; then (cd ${shellEscape(webRoot)} && npx tsx lib/runner-v2/monitor-cli.ts ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}); _monitor_v2_status=$?; if [[ "$_monitor_v2_status" -ne 64 ]]; then exit "$_monitor_v2_status"; fi; fi;`,
-    "fi;",
-    shellCommand,
-  ].join(" ");
   return [
-    `source ${shellEscape(agentFunctions)}`,
     ...Object.entries(input.env)
       .filter(([, value]) => value !== "")
       .map(([key, value]) => `export ${key}=${shellEscape(value)}`),
@@ -267,6 +248,6 @@ function buildMonitorCommand(input: {
     `export MENTIKO_RUN_ID=${shellEscape(input.runId)}`,
     `export RUN_ID=${shellEscape(input.runId)}`,
     `export MENTIKO_AGENT_ID=${shellEscape(input.agentId)}`,
-    `if [[ "\${MENTIKO_MONITOR_V2:-}" =~ ^(1|true|yes|on)$ ]]; then ${typedCommand}; else ${shellCommand}; fi`,
+    `exec node ${shellEscape(compiledMonitor)} ${shellEscape(input.sessionName)} ${shellEscape(input.interval)} ${shellEscape(context)} ${shellEscape(input.chainPath)} ${shellEscape(input.maxStale)}`,
   ].join("; ");
 }

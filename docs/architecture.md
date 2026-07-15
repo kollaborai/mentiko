@@ -208,9 +208,8 @@ Current contract:
 - `MENTIKO_RUNNER_V2=1` enables the initial runner-v2 launch path.
 - completion is unconditionally typed; `MENTIKO_RUNNER_V2_COMPLETION=1` is a
   forced compatibility marker, not a selector.
-- initial typed launch preserves shell fallback only for unsupported planning
-  before typed side effects; after session or run-state mutation it fails
-  closed.
+- local typed launch is fail-closed for every unsupported/planning failure;
+  SSH/Docker use the direct external `mentiko run` product command only.
 - typed completion is always fail-closed; it does not
   fall through to shell completion after a typed error or unsupported result.
 - typed routing starts exact same-run targets through

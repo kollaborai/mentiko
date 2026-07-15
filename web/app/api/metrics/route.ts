@@ -5,6 +5,8 @@ import config from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { legacyWebhookDeliveryCounts, resolveLegacyWebhookStateDir } from "@/lib/runner-v2/integration-contract";
+import { readLegacyMetrics } from "@/lib/runner-v2/legacy-metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -17,17 +19,6 @@ interface Run {
   completed?: string;
   status: string;
   agents: Array<{ id: string; name?: string; status: string; session: string }>;
-}
-
-interface WebhookDelivery {
-  event_id: string;
-  event_type: string;
-  url: string;
-  attempts: number;
-  status: "delivered" | "failed" | "pending";
-  created_at: string;
-  updated_at?: string;
-  http_code?: number;
 }
 
 interface TimerMetric {
@@ -84,34 +75,9 @@ interface Metrics {
   execution_times?: Record<string, TimerMetric>;
 }
 
-const METRICS_DIR = join(process.env.HOME || "", ".mentiko-metrics");
-
 function readMetricsFiles(): MetricsData | null {
-  if (!existsSync(METRICS_DIR)) return null;
-
   try {
-    const countersFile = join(METRICS_DIR, "counters.json");
-    const gaugesFile = join(METRICS_DIR, "gauges.json");
-    const timersFile = join(METRICS_DIR, "timers.json");
-    const webhooksFile = join(METRICS_DIR, "webhooks.json");
-
-    const counters = existsSync(countersFile) ? JSON.parse(readFileSync(countersFile, "utf-8")) : {};
-    const gauges = existsSync(gaugesFile) ? JSON.parse(readFileSync(gaugesFile, "utf-8")) : {};
-    const timers = existsSync(timersFile) ? JSON.parse(readFileSync(timersFile, "utf-8")) : {};
-    const webhooks = existsSync(webhooksFile) ? JSON.parse(readFileSync(webhooksFile, "utf-8")) : {
-      total: 0,
-      delivered: 0,
-      failed: 0,
-      by_event: {},
-    };
-
-    return {
-      generated: new Date().toISOString(),
-      counters,
-      gauges,
-      timers,
-      webhooks,
-    };
+    return readLegacyMetrics(config.metricsDir);
   } catch {
     return null;
   }
@@ -284,33 +250,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   }
 
   // webhook metrics from state files
-  const webhookStateDir = `${process.env.HOME || process.env.USERPROFILE || "."}/.mentiko_webhooks`;
-  let webhooksTotal = 0;
-  let webhooksDelivered = 0;
-  let webhooksFailed = 0;
-  let webhooksPending = 0;
-
-  if (existsSync(webhookStateDir)) {
-    try {
-      const files = readdirSync(webhookStateDir).filter((f) => f.endsWith(".json"));
-
-      for (const file of files) {
-        try {
-          const content = readFileSync(join(webhookStateDir, file), "utf-8");
-          const delivery: WebhookDelivery = JSON.parse(content);
-          webhooksTotal++;
-
-          if (delivery.status === "delivered") webhooksDelivered++;
-          else if (delivery.status === "failed") webhooksFailed++;
-          else if (delivery.status === "pending") webhooksPending++;
-        } catch {
-          // skip invalid json
-        }
-      }
-    } catch {
-      // ignore errors
-    }
-  }
+  const { total: webhooksTotal, delivered: webhooksDelivered, failed: webhooksFailed, pending: webhooksPending } = legacyWebhookDeliveryCounts(resolveLegacyWebhookStateDir());
 
   const webhookSuccessRate = webhooksTotal > 0 ? (webhooksDelivered / webhooksTotal) * 100 : 0;
 

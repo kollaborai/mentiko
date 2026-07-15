@@ -5,6 +5,7 @@ import config from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling } from "@/lib/api-response";
+import { legacyWebhookDeliveryCounts, resolveLegacyWebhookStateDir } from "@/lib/runner-v2/integration-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +17,6 @@ interface Run {
   completed?: string;
   status: string;
   agents: Array<{ id: string; status: string }>;
-}
-
-interface WebhookDelivery {
-  status: "delivered" | "failed" | "pending";
-  created_at: string;
 }
 
 function toPrometheusMetric(
@@ -132,33 +128,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   lines.push("");
 
   // webhook metrics
-  const webhookDir = `${process.env.HOME || process.env.USERPROFILE || "."}/.mentiko_webhooks`;
-  let webhooksTotal = 0;
-  let webhooksDelivered = 0;
-  let webhooksFailed = 0;
-  let webhooksPending = 0;
-
-  if (existsSync(webhookDir)) {
-    try {
-      const files = readdirSync(webhookDir).filter((f) => f.endsWith(".json"));
-
-      for (const file of files) {
-        try {
-          const content = readFileSync(join(webhookDir, file), "utf-8");
-          const delivery: WebhookDelivery = JSON.parse(content);
-          webhooksTotal++;
-
-          if (delivery.status === "delivered") webhooksDelivered++;
-          else if (delivery.status === "failed") webhooksFailed++;
-          else if (delivery.status === "pending") webhooksPending++;
-        } catch {
-          // skip
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
+  const { total: webhooksTotal, delivered: webhooksDelivered, failed: webhooksFailed, pending: webhooksPending } = legacyWebhookDeliveryCounts(resolveLegacyWebhookStateDir());
 
   lines.push(toPrometheusMetric("mentiko_webhooks_total", webhooksTotal, "gauge", "Total webhooks sent"));
   lines.push(toPrometheusMetric("mentiko_webhooks_delivered", webhooksDelivered, "gauge", "Webhooks successfully delivered"));

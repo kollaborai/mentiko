@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadRunnerV2Contract } from "@/lib/runner-v2/contracts";
-import { buildRunnerV2LaunchPlan } from "@/lib/runner-v2/launch-plan";
+import { buildRunnerV2ExternalLaunchPlan } from "@/lib/runner-v2/launch-plan";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 
 export interface RunnerV2TypedExecutorSupport {
@@ -30,18 +30,24 @@ export async function startRunnerV2Launch(context: RunnerV2LaunchContext): Promi
   const bootstrap = await startRunnerV2Bootstrap(context);
   if (bootstrap.support === "supported") return bootstrap;
 
-  if (!bootstrap.fallbackAllowed) return bootstrap;
+  // Local runner-v2 is typed-only. An unsupported local plan is a real parity
+  // failure, never an invitation to start a second shell owner. SSH/Docker
+  // remain product-CLI launches because their transport is the external behavior.
+  if (!isExternalWorkspace(context)) {
+    return { ...bootstrap, fallbackAllowed: false };
+  }
 
   let plan;
   try {
-    plan = buildRunnerV2LaunchPlan(context);
+    plan = buildRunnerV2ExternalLaunchPlan(context);
   } catch (error) {
     return {
       support: "unsupported",
-      reason: error instanceof Error ? error.message : "runner-v2 shell fallback planning failed",
+      reason: error instanceof Error ? error.message : "runner-v2 external launch planning failed",
+      fallbackAllowed: false,
     };
   }
-  const child = spawn(plan.shell, plan.args, {
+  const child = spawn(plan.command, plan.args, {
     cwd: plan.cwd,
     detached: plan.detached,
     stdio: ["ignore", context.logFd, context.logFd],
@@ -55,6 +61,10 @@ export async function startRunnerV2Launch(context: RunnerV2LaunchContext): Promi
     mode: plan.mode,
     child,
   };
+}
+
+function isExternalWorkspace(context: RunnerV2LaunchContext): boolean {
+  return Boolean(context.env.WORKSPACE_TYPE && context.env.WORKSPACE_TYPE !== "local");
 }
 
 export function getRunnerV2TypedExecutorSupport(): RunnerV2TypedExecutorSupport {

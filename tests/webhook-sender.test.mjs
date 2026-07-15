@@ -45,6 +45,9 @@ async function runTests() {
 const MOCK_BIN = join(TMP, "mock-bin");
 const CHAINS_DIR = join(TMP, "chains");
 const STATE_DIR = join(TMP, "webhook-state");
+const CONTRACT_ROOT = `/tmp/test-webhook-contract-${process.pid}`;
+const CONTRACT_BIN = join(CONTRACT_ROOT, "lib", "runner-integration-contract.js");
+const NODE_BIN = dirname(process.execPath);
 
 function resetTmp() {
   rmSync(TMP, { recursive: true, force: true });
@@ -55,6 +58,11 @@ function setupDirs() {
   mkdirSync(MOCK_BIN, { recursive: true });
   mkdirSync(CHAINS_DIR, { recursive: true });
   mkdirSync(STATE_DIR, { recursive: true });
+}
+
+function buildTypedContract() {
+  mkdirSync(dirname(CONTRACT_BIN), { recursive: true });
+  execFileSync("npx", ["--yes", "esbuild", join(REPO_ROOT, "web", "lib", "runner-v2", "integration-contract-cli.ts"), "--bundle", "--platform=node", "--target=node20", `--outfile=${CONTRACT_BIN}`], { stdio: "pipe" });
 }
 
 function writeMockCurl() {
@@ -102,7 +110,8 @@ function runBash(body, extraEnv = {}) {
     `MOCK_CURL_LOG="${join(TMP, "curl-log.txt")}"`,
     `export MOCK_CURL_LOG`,
     `export WEBHOOK_STATE_DIR="${STATE_DIR}"`,
-    `export PATH="${MOCK_BIN}:/usr/bin:/bin:/usr/local/bin"`,
+    `export MENTIKO_CODE_ROOT="${CONTRACT_ROOT}"`,
+    `export PATH="${MOCK_BIN}:${NODE_BIN}:/usr/bin:/bin:/usr/local/bin"`,
     `export HOME="${process.env.HOME || "/tmp"}"`,
     // mock metric-webhook before source
     "metric-webhook() { :; }",
@@ -120,8 +129,9 @@ function runBash(body, extraEnv = {}) {
       timeout: 10000,
       env: {
         ...process.env,
-        PATH: `${MOCK_BIN}:/usr/bin:/bin:/usr/local/bin`,
+        PATH: `${MOCK_BIN}:${NODE_BIN}:/usr/bin:/bin:/usr/local/bin`,
         WEBHOOK_STATE_DIR: STATE_DIR,
+        MENTIKO_CODE_ROOT: CONTRACT_ROOT,
         HOME: process.env.HOME || "/tmp",
         ...extraEnv,
       },
@@ -146,6 +156,7 @@ function readLines(path) {
 }
 
 mkdirSync(TMP, { recursive: true });
+buildTypedContract();
 
 // ── Tests ──
 
@@ -361,10 +372,7 @@ test("fire-chain-webhooks skips when no webhooks in metadata", () => {
   assert(log.length === 0, `should not call curl: ${log.length}`);
 });
 
-test("fire-chain-webhooks enabled check uses jq // (false treated as null)", () => {
-  // NOTE: jq -r '.enabled // true' treats false as falsy and returns "true"
-  // This is a known bug: webhooks with enabled:false are NOT actually skipped
-  // The test documents this actual behavior
+test("fire-chain-webhooks honors enabled:false", () => {
   resetTmp();
   setupDirs();
   writeMockCurl();
@@ -378,9 +386,8 @@ test("fire-chain-webhooks enabled check uses jq // (false treated as null)", () 
     },
   });
   const r = runBash(`fire-chain-webhooks "started" "${chainFile}"`);
-  // Due to jq // bug, enabled:false webhooks ARE dispatched
-  assert(r.stdout.includes("webhook[started]"),
-    `bug: disabled webhook should not dispatch but does: ${r.stdout.slice(0, 200)}`);
+  assert(!r.stdout.includes("webhook[started]"),
+    `disabled webhook must not dispatch: ${r.stdout.slice(0, 200)}`);
 });
 
 test("fire-chain-webhooks skips when event not in list", () => {
@@ -453,5 +460,6 @@ test("send-webhook with custom headers passes them to curl", () => {
 
 await runTests();
 rmSync(TMP, { recursive: true, force: true });
+rmSync(CONTRACT_ROOT, { recursive: true, force: true });
 console.log(`\nresults: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

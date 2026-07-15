@@ -177,6 +177,33 @@ RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
         --outfile=/context/lib/runner-run-record.js; \
     fi
 
+# compile typed counters, gauges, timers, active timers, and webhook metric records.
+RUN if [ -f /build/web/lib/runner-v2/legacy-metrics-cli.ts ]; then \
+      echo "=== compiling typed legacy metrics boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/legacy-metrics-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-legacy-metrics.js; \
+    fi
+
+# compile typed retry/circuit state ownership; shell only forwards operation arguments.
+RUN if [ -f /build/web/lib/runner-v2/retry-circuit-cli.ts ]; then \
+      echo "=== compiling typed retry circuit boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/retry-circuit-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-retry-circuit.js; \
+    fi
+
+# compile the typed cap claim and count/promote admission boundary.
+RUN if [ -f /build/web/lib/runner-v2/concurrency-admission-cli.ts ]; then \
+      echo "=== compiling typed concurrency admission boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/concurrency-admission-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-concurrency-admission.js; \
+    fi
+
 # compile the typed batch record worker; the API never shells through bash to orchestrate batches.
 RUN if [ -f /build/web/lib/runner-v2/batch-runner-cli.ts ]; then \
       echo "=== compiling typed runner batch worker ===" && \
@@ -226,6 +253,14 @@ RUN if [ -f /build/web/lib/runner-v2/agent-profile-cli.ts ]; then \
       --outfile=/context/lib/runner-agent-profile.js; \
     fi
 
+RUN if [ -f /build/web/lib/runner-v2/readiness-cli.ts ]; then \
+      echo "=== compiling typed runner readiness boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/readiness-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-readiness.js; \
+    fi
+
 # compile the typed chain/agent/config-profile decoder used by the remaining
 # shell invocation boundary. Shell must never own definition parsing or mutation.
 RUN if [ -f /build/web/lib/runner-v2/chain-contract-cli.ts ]; then \
@@ -234,6 +269,54 @@ RUN if [ -f /build/web/lib/runner-v2/chain-contract-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/chain-contract-cli.ts \
         --bundle --platform=node --target=node20 \
       --outfile=/context/lib/runner-chain-contract.js; \
+    fi
+
+# Compile typed monitor completion resolution. Shell monitors only supply
+# primitive session, run, and directory inputs; TypeScript owns all chain/event matching.
+RUN if [ -f /build/web/lib/runner-v2/monitor-completion-cli.ts ]; then \
+      echo "=== compiling typed runner monitor completion boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/monitor-completion-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-monitor-completion.js; \
+    fi
+
+# compile typed routing and schedule contracts; shell compatibility boundaries
+# may invoke these processes but never parse or mutate their JSON records.
+RUN if [ -f /build/web/lib/runner-v2/routing-contract-cli.ts ]; then \
+      echo "=== compiling typed runner routing contract boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/routing-contract-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-routing-contract.js; \
+    fi
+
+RUN if [ -f /build/web/lib/runner-v2/schedule-contract-cli.ts ]; then \
+      echo "=== compiling typed runner schedule contract boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/schedule-contract-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-schedule-contract.js; \
+    fi
+
+# compile typed legacy webhook/email contract access; shell only invokes the
+# external delivery commands and never owns persisted JSON or path resolution.
+RUN if [ -f /build/web/lib/runner-v2/integration-contract-cli.ts ]; then \
+      echo "=== compiling typed runner integration contract boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/integration-contract-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-integration-contract.js; \
+    fi
+
+# compile typed debugger state access; shell invocation boundaries never parse
+# or mutate debug JSON directly.
+RUN if [ -f /build/web/lib/runner-v2/debug-state-cli.ts ]; then \
+      echo "=== compiling typed runner debug-state boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/debug-state-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-debug-state.js; \
     fi
 
 # compile typed breakpoint record access; shell orchestration may only invoke

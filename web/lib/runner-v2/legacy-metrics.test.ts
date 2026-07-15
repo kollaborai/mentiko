@@ -1,0 +1,8 @@
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { incrementCounter, metricPaths, readLegacyMetrics, startMetricTimer, endMetricTimer, validateRawLegacyMetric } from "@/lib/runner-v2/legacy-metrics";
+const root=join("/tmp",`mentiko-metrics-${process.pid}`); beforeEach(()=>mkdirSync(root,{recursive:true}));afterEach(()=>rmSync(root,{recursive:true,force:true}));
+it("separates raw and normalized metrics validation and preserves millisecond timers",()=>{expect(validateRawLegacyMetric("{").issue).toBe("invalid-json");const p=metricPaths(root);writeFileSync(p.counters,JSON.stringify({bad:"x"}));expect(()=>readLegacyMetrics(root)).toThrow("Metric value must be finite");writeFileSync(p.counters,"{}");incrementCounter(root,"ok",2);startMetricTimer(root,"t",100);expect(endMetricTimer(root,"t","run",151)).toBe(51);expect(readLegacyMetrics(root).timers.run_t.avg_ms).toBe(51);});
+it("rejects symlinked metric records",()=>{const p=metricPaths(root);writeFileSync(join(root,"outside"),"{}");symlinkSync(join(root,"outside"),p.counters);expect(()=>incrementCounter(root,"x")).toThrow("symbolic link");});
+it("rejects a configured symlink root before creating through it",()=>{const target=join(root,"target");mkdirSync(target);const link=join(root,"link");symlinkSync(target,link);expect(()=>metricPaths(link)).toThrow("Configured metrics directory must not be a symbolic link");});
+it("does not create a missing metrics directory while reading",()=>{const missing=join(root,"missing");expect(readLegacyMetrics(missing).webhooks.total).toBe(0);expect(existsSync(missing)).toBe(false);});

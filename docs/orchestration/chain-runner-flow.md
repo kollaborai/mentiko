@@ -35,7 +35,7 @@ phase 0: initialization
    - performance.sh          OS/PTY sample boundary for typed performance tracking
    - profiler.sh             OS/PTY sample boundary for typed agent profiling
    - error-handling.sh       error handling
-   - scheduler.sh            cron scheduling
+   - scheduler.sh            invocation-only typed schedule boundary
    - runner-audit.js         typed audit CLI boundary
    - retry-utils.sh          retry logic
    - approval-gate.sh        human approval gates
@@ -540,7 +540,8 @@ lib/approval-gate.sh          human approval gates
 lib/budget-check.sh           spending limits
 web/lib/runner-v2/chain-watcher-service.ts  file-event chain launches (see [chain-watcher.md](./chain-watcher.md))
 web/lib/runner-v2/watchdog.ts               stalled run detection (see [watchdog.md](./watchdog.md))
-lib/scheduler.sh              cron scheduling
+web/lib/runner-v2/schedule-contract.ts      embedded-schedule/state validation and atomic mutation
+lib/scheduler.sh              invocation-only typed schedule boundary
 web/lib/system/audit-log.ts   typed audit logging and index ownership
 web/lib/system/audit-cli.ts   compiled audit command source
 lib/retry-utils.sh            retry logic

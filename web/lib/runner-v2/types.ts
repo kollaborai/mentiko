@@ -1,6 +1,6 @@
 import type { ChildProcess } from "child_process";
 
-export type RunnerV2LaunchMode = "shell-compat" | "typed-plan";
+export type RunnerV2LaunchMode = "external-cli" | "typed-plan";
 export type RunnerV2Support = "supported" | "unsupported";
 
 export interface RunnerV2LaunchContext {

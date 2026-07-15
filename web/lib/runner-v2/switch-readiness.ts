@@ -143,16 +143,16 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "tenant image does not compile the runner-v2 monitor bridge",
   ));
   checks.push(sourceContainsCheck(
-    "typed-bootstrap-monitor-gate",
+    "typed-bootstrap-monitor-command",
     join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts"),
-    "MENTIKO_MONITOR_V2",
-    "typed bootstrap monitor command does not gate monitor-v2 behind MENTIKO_MONITOR_V2",
+    "exec node",
+    "typed bootstrap monitor command does not invoke compiled monitor-v2",
   ));
   checks.push(sourceContainsCheck(
-    "routed-monitor-v2-default-on",
+    "routed-monitor-v2-typed-only",
     join(config.codeRoot, "lib/chain-runner.sh"),
-    'export MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"',
-    "shell chain-runner monitors do not default MENTIKO_MONITOR_V2 on for routed/relaunched agents",
+    "exec node \"\\$_monitor_v2_script\"",
+    "shell chain-runner routed monitors do not invoke compiled monitor-v2 directly",
   ));
   checks.push(sourceContainsCheck(
     "typed-profile-secret-filter",
@@ -161,10 +161,10 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "typed agent profile command compiler can export raw {secret:NAME} placeholders",
   ));
   checks.push(sourceContainsCheck(
-    "initial-launch-typed",
-    join(config.codeRoot, "web/lib/runner-v2/launch-plan.ts"),
-    'MENTIKO_RUNNER_V2_MODE: "typed-plan"',
-    "initial runner-v2 launch is still shell-compat",
+    "local-launch-no-shell-bridge",
+    join(config.codeRoot, "web/lib/runner-v2/controller.ts"),
+    "isExternalWorkspace(context)",
+    "local runner-v2 launch no longer fails closed before an external workspace dispatch",
   ));
   checks.push(sourceContainsCheck(
     "generation-import-entrypoint",

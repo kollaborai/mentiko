@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export MENTIKO_CODE_ROOT="$PROJECT_ROOT"
 source "$PROJECT_ROOT/lib/cli-readiness.sh"
 
 TMP_DIR="$(mktemp -d)"
@@ -16,7 +17,8 @@ CAPTURE="$TMP_DIR/capture.txt"
 
 cat > "$PROFILE" <<'JSON'
 {
-  "id": "codex-default",
+  "id": "profile",
+  "name": "Codex Default",
   "cli": "codex",
   "readiness": {
     "enabled": true,

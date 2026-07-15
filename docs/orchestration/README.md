@@ -224,7 +224,7 @@ data flow
    chain-runner.sh:
      -> sources shell boundary libraries (config, agent-functions, etc)
      -> invokes compiled typed event emitter/lifecycle commands when needed
-     -> validates chain.json (jq syntax, required fields)
+     -> invokes typed chain/routing/schedule contracts for definition validation
      -> resolves executor (claude, codex, aider, kollabor)
      -> resolves agent profiles (env vars, cli args)
      -> creates run object (run-{timestamp}/run.json)
@@ -378,7 +378,7 @@ cross-chain triggers
 fan-out / fan-in
   single event can trigger multiple agents in parallel (fan-out).
   wait for all/any/quorum to complete before continuing (fan-in).
-  implemented via routing-lib.sh fan-group functions.
+  implemented by typed routing and fan-group contracts; routing-lib.sh only invokes typed primitives.
 
 artifact capture
   on agent completion, capture:
@@ -426,7 +426,8 @@ libraries:
   lib/session-transport.sh         pty-manager abstraction
   lib/run-lib.sh                   run object management
   web/lib/runner-v2/event-lifecycle.ts strict scan, lookup, processed mutation, archive
-  lib/routing-lib.sh               fan-out/fan-in, retry
+  web/lib/runner-v2/routing-contract.ts typed branch/fan/error/timeout contract
+  lib/routing-lib.sh               invocation-only routing compatibility boundary
   web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
   lib/config.sh                    path resolution
   lib/agent-activity-capture.sh    artifact capture
@@ -497,3 +498,6 @@ related docs
 [../tutorial/chain-anatomy.md](../tutorial/chain-anatomy.md)   - chain.json schema
 [../tutorial/event-system.md](../tutorial/event-system.md)     - event system guide
 [../architecture.md](../architecture.md)       - system-wide architecture
+# Typed readiness boundary
+
+`lib/cli-readiness-enhanced.sh` is an invocation-only adapter. `web/lib/runner-v2/readiness-cli.ts` owns PTY readiness polling, capture classification, fail-closed behavior, and terminal outcome codes; it invokes the configured PTY command as the required external product boundary.

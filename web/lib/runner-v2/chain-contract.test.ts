@@ -5,6 +5,7 @@ import {
   loadNormalizedChainDefinition,
   resolveChainRuntimeConfig,
 } from "@/lib/runner-v2/chain-contract";
+import { runRunnerChainContractCli } from "@/lib/runner-v2/chain-contract-cli";
 
 function fixture(): { root: string; chainPath: string; agentsDir: string; profilesDir: string } {
   const root = mkdtempSync(join(tmpdir(), "mentiko-chain-contract-"));
@@ -34,5 +35,26 @@ describe("runner chain contract", () => {
       branches: { written: { fan_out: ["writer"], fan_in: "writer", wait_for: "all" } },
     }));
     expect(() => loadNormalizedChainDefinition(chainPath, agentsDir)).toThrow("branches.written: fan_in must not also appear in fan_out");
+  });
+
+  it("exposes monitor completion fields as typed primitives", () => {
+    const { chainPath, agentsDir, profilesDir } = fixture();
+    writeFileSync(chainPath, JSON.stringify({
+      config: { session_prefix: "project" },
+      agents: [
+        { id: "writer", emits: "written" },
+        { id: "reviewer", emits: "reviewed" },
+      ],
+    }));
+    const invoke = (args: string[]) => {
+      const lines: string[] = [];
+      runRunnerChainContractCli(args, (line) => lines.push(line));
+      return lines;
+    };
+    const roots = ["--chain-path", chainPath, "--agents-dir", agentsDir, "--config-profiles-dir", profilesDir];
+
+    expect(invoke(["chain-field", ...roots, "--field", "session_prefix"])).toEqual(["project"]);
+    expect(invoke(["agent-ids", ...roots])).toEqual(["writer", "reviewer"]);
+    expect(invoke(["agent-field", ...roots, "--agent-id", "writer", "--field", "emits"])).toEqual(["written"]);
   });
 });

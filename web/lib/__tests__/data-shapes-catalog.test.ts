@@ -156,6 +156,42 @@ describe("data shape catalog", () => {
     expect(shape?.runnerLineage?.usage).toBe("runner-v2");
   });
 
+  it("separates organization and run retry stores from the typed project circuit and admission claim", () => {
+    const organization = DATA_SHAPE_CATALOG.find((item) => item.id === "retry-state");
+    const run = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-retry-state");
+    const circuit = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-circuit-breaker-state");
+    const admission = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-concurrency-admission-claim");
+
+    expect(organization?.scope).toBe("organization");
+    expect(run?.scope).toBe("run");
+    expect(circuit).toMatchObject({
+      scope: "project",
+      format: "json",
+      assurance: "typed",
+      typePaths: ["web/lib/runner-v2/retry-circuit.ts"],
+      validatorPaths: ["web/lib/runner-v2/retry-circuit.ts"],
+      writers: ["web/lib/runner-v2/retry-circuit.ts"],
+    });
+    expect(circuit?.storage).toEqual(["{projectRoot}/state/retry/circuit_{chainId}_{safeAgent}.json"]);
+    expect(circuit?.readers).not.toContain("lib/retry-utils.sh");
+    expect(circuit?.runnerLineage?.usage).toBe("runner-v2");
+    expect(admission).toMatchObject({
+      scope: "project",
+      format: "json",
+      assurance: "typed",
+      writers: ["web/lib/runner-v2/concurrency-admission.ts", "web/lib/runner-v2/file-claim.ts"],
+    });
+    expect(admission?.storage).toEqual(["{projectRoot}/runs/.cap.lock/owner.json (ephemeral lock claim)"]);
+    expect(admission?.readers).not.toContain("lib/concurrency-cap.sh");
+    expect(admission?.runnerLineage?.usage).toBe("runner-v2");
+  });
+
+  it("keeps PTY observation inside the typed concurrency admission boundary", () => {
+    const source = readFileSync(resolve(repoRoot, "lib/concurrency-cap.sh"), "utf8");
+    expect(source).toContain("runner-concurrency-admission.js");
+    expect(source).not.toMatch(/\b(?:while|sleep|awk|date|grep)\b/);
+  });
+
   it("pins Runner Event provenance to every active reader and writer", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-event");
 
@@ -183,6 +219,7 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/completion-recovery.ts",
       "web/lib/runner-v2/chain-watcher-service.ts",
       "web/lib/runner-v2/event-lifecycle.ts",
+      "web/lib/runner-v2/monitor-completion-contract.ts",
       "web/lib/runner-v2/monitor-io.ts",
       "web/lib/runs/run-reconciler.ts",
     ]);

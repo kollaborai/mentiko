@@ -62,16 +62,15 @@ flowchart TD
     PTY --> READY["readiness gate"]
     READY --> SUBMIT["idempotent instruction submission"]
 
-    CONTROLLER -->|unsupported before typed side effects| BRIDGE0["launch-plan.ts bridge<br/>chain-runner.sh --start, then bin/mentiko fallback"]
+    CONTROLLER -->|local unsupported| CLOSE0["fail closed; no second owner"]
+    CONTROLLER -->|SSH/Docker transport| EXTERNAL0["bin/mentiko run<br/>direct external CLI"]
     SHELL0 --> SHELLAGENT["chain-runner.sh launches agent PTY"]
-    BRIDGE0 --> SHELLAGENT
+    EXTERNAL0 --> SHELLAGENT
 
     SUBMIT --> MONITOR["monitor-v2<br/>typed reducer and live PTY/event adapter"]
     SHELLAGENT --> MONITOR
-    MONITOR -->|exit 64 or unavailable| SHELLMONITOR["monitor-chain-agent shell fallback"]
 
     MONITOR --> EVIDENCE["authoritative completion evidence"]
-    SHELLMONITOR --> EVIDENCE
     EVIDENCE --> CONTEXT["private one-shot completion context"]
     CONTEXT -->|validated child acceptance| ENTRY["completion-entrypoint.ts"]
     CONTEXT -->|missing or invalid| CLOSE["fail closed; event remains active"]
@@ -116,35 +115,17 @@ When `MENTIKO_RUNNER_V2` is true, it calls
 `web/lib/runner-v2/controller.ts:startRunnerV2Launch`.
 
 The controller first calls `startRunnerV2Bootstrap`, which directly allocates
-and drives the first agent PTY for local workspaces. If planning is unsupported
-before typed side effects, fallback is allowed. The controller then uses
-`buildRunnerV2LaunchPlan`, whose current implementation builds a detached shell
-bridge:
-
-```text
-bash lib/chain-runner.sh <chain.json> --start <first-agent>
-  || exec bin/mentiko run <chain.json>
-```
-
-`buildRunnerV2ShellCompatLaunchPlan` exists but is not the plan selected by
-`buildRunnerV2LaunchPlan`.
-
-Once the typed bootstrap has allocated sessions or mutated run state, failures
-return `fallbackAllowed: false`. `startChainRun` then throws instead of starting
-a second shell owner against the partially-started attempt.
-
-The bridge's own `chain-runner.sh ... || exec bin/mentiko run ...` fallback is
-still command-level. If `chain-runner.sh` exits nonzero after making partial
-shell-side effects, the `bin/mentiko` leg can run; the controller's
-`fallbackAllowed` guard only knows about typed-bootstrap side effects.
+and drives the first agent PTY for local workspaces. Local runner-v2 is
+typed-only: unsupported planning or launch fails closed and `startChainRun`
+does not create a second shell owner.
 
 ### Workspace boundary
 
 The direct typed bootstrap currently supports only local workspaces.
-`WORKSPACE_TYPE=ssh` or `docker` returns unsupported before side effects and
-the initial controller may use the shell bridge. Routed launch has no shell
-fallback: the typed launcher returns nonzero, the completion adapter leaves the
-strict parent event active, and retry/reconciliation can attempt delivery again.
+`WORKSPACE_TYPE=ssh` or `docker` is delegated directly to `bin/mentiko run`,
+the required external product CLI that owns remote transport. It is not wrapped
+in `zsh`, `chain-runner.sh`, or a command-level fallback. Routed launch remains
+typed and fail-closed.
 
 ### Background service selection
 
@@ -164,16 +145,9 @@ sessions and there is no shell fallback for these services.
 
 ### Monitor selection
 
-Monitor v2 is default-on inside both launch paths:
-
-- `agent-bootstrap-plan.ts` sets `MENTIKO_MONITOR_V2` to `1` when unset.
-- `chain-runner.sh` exports `MENTIKO_MONITOR_V2=${MENTIKO_MONITOR_V2:-1}` for
-  shell initial/fallback agents.
-
-The monitor command tries the compiled `lib/monitor-v2.js`, then the TypeScript
-source through `tsx` in development. Exit code `64` means unsupported and
-delegates to `lib/agent-functions.sh:monitor-chain-agent`. Other exit codes are
-treated as handled outcomes.
+Local typed bootstrap always starts compiled `lib/monitor-v2.js`. A missing
+bundle or non-zero monitor exit fails closed; it never retries through `tsx` or
+delegates to `lib/agent-functions.sh:monitor-chain-agent`.
 
 ### Completion selection
 

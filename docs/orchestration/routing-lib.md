@@ -1,4 +1,4 @@
-# routing-lib.sh - Advanced routing patterns
+# Typed routing contract
 
 advanced routing patterns for agent chains. provides fan-out/fan-in,
 error handling, timeout detection, and retry logic.
@@ -23,7 +23,10 @@ agent-level routing:
   - on_timeout: agent-id | "stop" | "skip"
   - retry: {max_retries, strategy, delay}
 
-this library provides the backing functions for these patterns.
+`web/lib/runner-v2/routing-contract.ts` owns branch/fan-out decoding, routing
+field validation, error-handler lookup, timeout configuration, and retry-delay
+calculation. `lib/routing-lib.sh` is an invocation-only compatibility boundary
+over `lib/runner-routing-contract.js`; it does not parse chain JSON.
 
 fan-out / fan-in
 ================
@@ -93,7 +96,7 @@ branch parsing
 
 branch-parse <branch-json> <event-name>
   ---------------------------------------
-  parse branch config from chain.json.
+  invoke the typed branch parser for an already-selected branch value.
 
   returns format: "TYPE:DATA"
 
@@ -149,11 +152,9 @@ timeout-check-agent <agent-id> <chain-file>
   check if agent has exceeded its timeout.
 
   flow:
-    1. get agent.timeout from chain.json
-    2. if -1 or null, check routing.default_timeout
-    3. read agent start time from state file
-    4. calculate elapsed seconds
-    5. return 0 (timeout) if elapsed > timeout
+    1. typed contract resolves agent.timeout and routing.default_timeout
+    2. shell obtains the typed agent-state timestamp
+    3. typed contract compares elapsed time and returns the scalar result
 
   returns:
     0 - timeout exceeded (prints "timeout")
@@ -196,7 +197,9 @@ after sourcing:
 related files
 =============
 
-lib/routing-lib.sh              this file
+web/lib/runner-v2/routing-contract.ts       typed routing contract owner
+web/lib/runner-v2/routing-contract-cli.ts   typed command boundary source
+lib/routing-lib.sh              invocation-only compatibility wrapper
 web/lib/runner-v2/completion-entrypoint.ts   owns completion routing
 lib/chain-runner.sh             uses timeout-check-agent
 

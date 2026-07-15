@@ -92,20 +92,18 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.localStartCommand).not.toContain("STUB_MODE");
     expect(plan.localStartCommand).toContain("runner-agent-profile.js' command");
     expect(plan.localStartCommand).toContain(join(profilesDir, "stub-default.json"));
-    expect(plan.monitorCommand).toContain("monitor-chain-agent 'workspace-build-writer-run-123'");
-    // the monitor must hand the runner-v2 flags to the completion session or
-    // typed-launched runs silently fall back to shell completion.
+    // The monitor receives the typed completion launch context.
     expect(plan.runContextExports).toMatchObject({
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",
-      MENTIKO_MONITOR_V2: "1",
     });
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2='1'");
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2_COMPLETION='1'");
-    expect(plan.monitorCommand).toContain("export MENTIKO_MONITOR_V2='1'");
+    expect(plan.monitorCommand).toContain("exec node '/repo/lib/monitor-v2.js'");
+    expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
   });
 
-  it("emits typed monitor command by default with shell fallback", () => {
+  it("emits the compiled typed monitor command without a shell compatibility route", () => {
     const root = tempDir();
     const runDir = join(root, "runs", "run-monitor");
     mkdirSync(runDir, { recursive: true });
@@ -129,42 +127,10 @@ describe("runner-v2 agent bootstrap plan", () => {
       },
     });
 
-    expect(plan.runContextExports).toMatchObject({ MENTIKO_MONITOR_V2: "1" });
-    expect(plan.monitorCommand).toContain("export MENTIKO_MONITOR_V2='1'");
     expect(plan.monitorCommand).toContain("node '/repo/lib/monitor-v2.js'");
     expect(plan.monitorCommand).toContain("'workspace-writer-run-monitor' '2'");
-    expect(plan.monitorCommand).toContain("monitor-chain-agent 'workspace-writer-run-monitor' '2'");
-    expect(plan.monitorCommand).toContain("_monitor_v2_status");
-  });
-
-  it("keeps explicit MENTIKO_MONITOR_V2 opt-out on shell monitor fallback", () => {
-    const root = tempDir();
-    const runDir = join(root, "runs", "run-monitor-off");
-    mkdirSync(runDir, { recursive: true });
-    const chainPath = join(runDir, "chain.json");
-    writeJson(chainPath, {
-      id: "chain",
-      config: { project_root: join(root, "workspace"), monitor_interval: 2 },
-      agents: [
-        { id: "writer", name: "Writer", emits: "draft-ready", triggers: ["manual-start"] },
-      ],
-    });
-
-    const plan = buildAgentBootstrapPlan({
-      chainPath,
-      runDir,
-      runId: "run-monitor-off",
-      env: {
-        PATH: "/bin",
-        MENTIKO_PROJECT_ROOT: join(root, "workspace"),
-        MENTIKO_MONITOR_V2: "0",
-      },
-    });
-
-    expect(plan.runContextExports).toMatchObject({ MENTIKO_MONITOR_V2: "0" });
-    expect(plan.monitorCommand).toContain("export MENTIKO_MONITOR_V2='0'");
-    expect(plan.monitorCommand).toContain('if [[ "${MENTIKO_MONITOR_V2:-}" =~ ^(1|true|yes|on)$ ]]');
-    expect(plan.monitorCommand).toContain("monitor-chain-agent 'workspace-writer-run-monitor-off' '2'");
+    expect(plan.monitorCommand).not.toContain("npx tsx");
+    expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
   });
 
   it("does not inline profile secrets into the terminal command", () => {

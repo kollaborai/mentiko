@@ -94,16 +94,16 @@ jest.mock("fs", () => ({
       return "const SECRET_REFERENCE = /^\\{secret:([^}]+)\\}$/;";
     }
     if (path.endsWith("chain-runner.sh")) {
-      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="1"\nexport MENTIKO_MONITOR_V2="${MENTIKO_MONITOR_V2:-1}"';
+      return 'export MENTIKO_RUNNER_V2="${MENTIKO_RUNNER_V2:-}"\nexport MENTIKO_RUNNER_V2_COMPLETION="1"\nexec node "\\$_monitor_v2_script"';
     }
     if (path.endsWith("Dockerfile")) {
       return "runner-v2-complete.js runner-v2-completion-launch.js monitor-v2.js";
     }
     if (path.endsWith("launch-plan.ts")) {
-      return 'const CHAIN_RUNNER = "chain-runner.sh"; MENTIKO_RUNNER_V2_MODE: "typed-plan"; args.push("--start")';
+      return 'mode: "external-cli"; command: "mentiko"';
     }
     if (path.endsWith("controller.ts")) {
-      return "import { startRunnerV2Bootstrap } from '@/lib/runner-v2/bootstrap-executor'; startRunnerV2Bootstrap(context);";
+      return "import { startRunnerV2Bootstrap } from '@/lib/runner-v2/bootstrap-executor'; startRunnerV2Bootstrap(context); isExternalWorkspace(context);";
     }
     if (path.endsWith("completion-entrypoint.ts")) {
       return "const generation = generationImportPlan(run, runDir, env); shellLoopStatePath(runDir); return { decision: 'already-completed' };";
@@ -133,7 +133,7 @@ jest.mock("fs", () => ({
       return 'return { action: "generation-terminal" };';
     }
     if (path.endsWith("agent-bootstrap-plan.ts")) {
-      return "Core generation handoff uses generation-result.json. MENTIKO_MONITOR_V2";
+      return "Core generation handoff uses generation-result.json. exec node";
     }
     if (path.endsWith("bootstrap-executor.ts")) {
       return "import { classifyCliReadiness } from '@/lib/runner-v2/readiness-policy'; export async function executeLocalBootstrap() { await executor.spawn('name'); classifyCliReadiness({ output: '' }); await waitForBootstrapReadiness(); await startMonitorSession(); }";
@@ -238,8 +238,8 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "completion-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "completion-launcher-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "monitor-runtime-compile", status: "pass" }),
-      expect.objectContaining({ id: "typed-bootstrap-monitor-gate", status: "pass" }),
-      expect.objectContaining({ id: "routed-monitor-v2-default-on", status: "pass" }),
+      expect.objectContaining({ id: "typed-bootstrap-monitor-command", status: "pass" }),
+      expect.objectContaining({ id: "routed-monitor-v2-typed-only", status: "pass" }),
       expect.objectContaining({ id: "typed-profile-secret-filter", status: "pass" }),
       expect.objectContaining({ id: "loop-state-shell-typed-interop", status: "pass" }),
       expect.objectContaining({ id: "completion-dry-run-shell-loop-restore", status: "pass" }),
@@ -253,7 +253,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "retry-state-adapter", status: "pass" }),
       expect.objectContaining({ id: "watched-runtime-proof", status: "pass" }),
       expect.objectContaining({ id: "watched-pty-proof", status: "pass" }),
-      expect.objectContaining({ id: "initial-launch-typed", status: "pass" }),
+      expect.objectContaining({ id: "local-launch-no-shell-bridge", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-execution", status: "pass" }),
       expect.objectContaining({ id: "external-effects-contract", status: "pass" }),
       expect.objectContaining({ id: "external-drain-wired", status: "pass" }),

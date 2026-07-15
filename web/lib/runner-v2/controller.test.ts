@@ -137,7 +137,7 @@ describe("runner-v2 controller", () => {
     });
   });
 
-  it("keeps shell fallback only for non-local transports while parity is incomplete", async () => {
+  it("uses the direct product CLI only for a non-local workspace", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
       migration_mode: "side-by-side",
@@ -156,22 +156,17 @@ describe("runner-v2 controller", () => {
       fallbackAllowed: true,
     });
 
-    const result = await startRunnerV2Launch(launchContext());
+    const result = await startRunnerV2Launch({ ...launchContext(), env: { NODE_ENV: "test", PATH: "/bin", WORKSPACE_TYPE: "ssh" } });
 
     expect(result.support).toBe("supported");
     expect(mockSpawn).toHaveBeenCalledWith(
-      "/bin/zsh",
-      ["-lc", expect.stringContaining(" --start 'writer'")],
+      expect.stringMatching(/\/bin\/mentiko$/),
+      ["run", "/tmp/run/chain.json"],
       expect.objectContaining({ cwd: "/repo", detached: true }),
     );
   });
 
-  it("falls back on fallbackAllowed:true even when the reason text does not mention workspaces", async () => {
-    // Regression for a bug where the fallback decision keyed off a substring
-    // of the human-readable reason instead of the structured fallbackAllowed
-    // flag. bootstrap-executor's planning-failure case sets fallbackAllowed:
-    // true with a reason that never mentions "local workspaces" -- a
-    // substring check would incorrectly skip the fallback here.
+  it("fails closed for local unsupported planning even when bootstrap permits an old fallback", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
       migration_mode: "side-by-side",
@@ -190,14 +185,12 @@ describe("runner-v2 controller", () => {
       fallbackAllowed: true,
     });
 
-    const result = await startRunnerV2Launch(launchContext());
-
-    expect(result.support).toBe("supported");
-    expect(mockSpawn).toHaveBeenCalledWith(
-      "/bin/zsh",
-      ["-lc", expect.stringContaining(" --start 'writer'")],
-      expect.objectContaining({ cwd: "/repo", detached: true }),
-    );
+    await expect(startRunnerV2Launch(launchContext())).resolves.toEqual({
+      support: "unsupported",
+      reason: "runner-v2 bootstrap planning failed: missing agent id",
+      fallbackAllowed: false,
+    });
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("does not shell fallback when typed bootstrap reports a partial mutation failure", async () => {

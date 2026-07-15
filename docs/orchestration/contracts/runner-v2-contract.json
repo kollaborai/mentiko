@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-05",
   "revised_at": "2026-07-15",
-  "revision_note": "cut completion ownership over to the typed entrypoint and launcher, removed shell completion fallbacks, bound the active completion contract in the switch gate, and moved agent-profile parsing, validation, resolution, and command compilation into runner-v2",
+  "revision_note": "cut local launch, monitor, and completion ownership over to typed runner-v2 entrypoints; local failures fail closed, while SSH/Docker retain only the direct external mentiko CLI required for transport",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
   "flag": {
@@ -30,8 +30,8 @@
   "entrypoints": {
     "web_initial_launch": {
       "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>'",
-      "v2": "web/lib/runner-v2/controller.ts -> startRunnerV2Bootstrap: agent-bootstrap-plan resolves first-agent/profile context and bootstrap-executor spawns the agent PTY directly, gates readiness, and submits instructions (typed-plan; no shell chain-runner --start — enforced by the typed-bootstrap-no-shell-start runtime proof)",
-      "fallback": "shell launch when v2 is disabled or when v2 returns unsupported before typed bootstrap side effects; do not shell-fallback after v2 allocates sessions or mutates run state"
+      "v2": "web/lib/runner-v2/controller.ts -> startRunnerV2Bootstrap: agent-bootstrap-plan resolves first-agent/profile context and bootstrap-executor spawns the agent PTY directly, gates readiness, submits instructions, and starts compiled monitor-v2 (typed-plan; no shell chain-runner --start)",
+      "fallback": "none for local runner-v2. Unsupported local planning or launch fails closed. SSH/Docker invoke bin/mentiko run directly because that external product CLI owns transport; no zsh or chain-runner bridge is added."
     },
     "completion_reentry": {
       "current": "lib/agent-functions.sh and monitor-live-io.ts call web/lib/runner-v2/completion-launch.ts, which starts compiled /opt/mentiko/lib/runner-v2-complete.js through a private one-shot context handoff",

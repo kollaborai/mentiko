@@ -545,7 +545,7 @@ export async function startChainRun({
     })
     : null;
 
-  if (runnerV2Launch?.support === "unsupported" && runnerV2Launch.fallbackAllowed === false) {
+  if (runnerV2Launch?.support === "unsupported") {
     closeSync(logFd);
     throw new Error(runnerV2Launch.reason);
   }
