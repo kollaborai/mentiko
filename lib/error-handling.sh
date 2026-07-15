@@ -1,229 +1,62 @@
 #!/bin/bash
-# error-handling.sh - Error detection and routing for agent chains
+# error-handling.sh - invocation-only boundary for typed error lifecycle.
 #
-# provides functions to:
-# - detect errors in agent output
-# - calculate retry delays with backoff
-# - route to error handler agents
-# - track retry counts in state
-# - send slack notifications on error
+# TypeScript owns report parsing, chain retry/error policy, state reads and
+# mutations, delay scheduling, handler dispatch, and notification payloads.
+# The shell functions below preserve the legacy source API and forward only
+# primitive values to the compiled runner-error-handling bundle.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# load slack integration for error notifications
-source "$SCRIPT_DIR/slack-integration.sh" 2>/dev/null || true
-source "$SCRIPT_DIR/agent-state-client.sh"
-
-# -------------------------------------------------------------------
-# detect-agent-error: check if agent output contains errors
-# -------------------------------------------------------------------
-# args: <report_file>
-# returns: 0=no error, 1=error detected, 2=timeout detected
-detect-agent-error() {
-    local report_file="$1"
-
-    if [[ ! -f "$report_file" ]]; then
-        return 0
-    fi
-
-    # check for timeout markers
-    if grep -qi "timeout\|timed out\|time limit exceeded\|deadline exceeded" "$report_file"; then
-        return 2
-    fi
-
-    # check for error markers (excluding false positives)
-    if grep -qi "error\|failed\|exception\|traceback\|fatal" "$report_file" | grep -vqi "no error\|zero errors\|0 errors"; then
+_error_handling_cli() {
+    local cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-error-handling.js"
+    if [[ ! -f "$cli" ]]; then
+        echo "  mentiko: typed runner error-handling bundle missing: $cli" >&2
         return 1
     fi
-
-    return 0
+    node "$cli" "$@"
 }
 
-# -------------------------------------------------------------------
-# get-agent-retry-count: read current retry count from state
-# -------------------------------------------------------------------
-# args: <session-prefix>
-# outputs: current retry count
-# NOTE: uses STATE_DIR from caller (set by chain-runner)
+detect-agent-error() {
+    _error_handling_cli detect --report-file "$1"
+}
+
 get-agent-retry-count() {
-    local session_prefix="$1"
-    _agent_state_cli retry-attempt --state-dir "$STATE_DIR" --session-prefix "$session_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}"
+    _error_handling_cli retry-count \
+        --state-dir "${STATE_DIR:?STATE_DIR must be configured}" \
+        --run-id "${RUN_ID:?RUN_ID is required for runner agent state}" \
+        --session-prefix "$1"
 }
 
-# -------------------------------------------------------------------
-# increment-retry-count: update state with new retry count
-# -------------------------------------------------------------------
-# args: <session-prefix>
-# outputs: new retry count
 increment-retry-count() {
-    local session_prefix="$1"
-    _agent_state_cli increment-retry --state-dir "$STATE_DIR" --session-prefix "$session_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}"
+    _error_handling_cli increment-retry \
+        --state-dir "${STATE_DIR:?STATE_DIR must be configured}" \
+        --run-id "${RUN_ID:?RUN_ID is required for runner agent state}" \
+        --session-prefix "$1"
 }
 
-# -------------------------------------------------------------------
-# calculate-retry-delay: compute delay based on backoff strategy
-# -------------------------------------------------------------------
-# args: <attempt> <backoff> <initial_delay> <max_delay> <multiplier>
-# outputs: delay in seconds
 calculate-retry-delay() {
-    local attempt="$1"
-    local backoff="${2:-exponential}"
-    local initial_delay="${3:-5}"
-    local max_delay="${4:-300}"
-    local multiplier="${5:-2.0}"
-
-    local delay="$initial_delay"
-
-    case "$backoff" in
-        fixed)
-            delay="$initial_delay"
-            ;;
-        linear)
-            delay=$((initial_delay * (attempt + 1)))
-            ;;
-        exponential)
-            # use awk for portable float math
-            delay=$(awk "BEGIN {printf \"%.0f\", $initial_delay * ($multiplier ^ $attempt)}")
-            ;;
-    esac
-
-    # cap at max_delay
-    if [[ $delay -gt $max_delay ]]; then
-        delay="$max_delay"
-    fi
-
-    echo "$delay"
+    local args=(delay --attempt "$1")
+    [[ -n "${2:-}" ]] && args+=(--backoff "$2")
+    [[ -n "${3:-}" ]] && args+=(--initial-delay "$3")
+    [[ -n "${4:-}" ]] && args+=(--max-delay "$4")
+    [[ -n "${5:-}" ]] && args+=(--multiplier "$5")
+    _error_handling_cli "${args[@]}"
 }
 
-# -------------------------------------------------------------------
-# handle-agent-error: route to error handler or retry
-# -------------------------------------------------------------------
-# args: <agent_id> <error_type> <report_file> <chain_file> <chain_runner>
-# error_type: "error" or "timeout"
-# returns: 0 if handled (retry/routed), 1 if chain should stop
 handle-agent-error() {
-    local agent_id="$1"
-    local error_type="$2"
-    local report_file="$3"
-    local chain_file="$4"
-    local chain_runner="$5"
-
-    # get agent config
-    local agent_retry_max=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.max_retries // 0' "$chain_file" 2>/dev/null || echo "0")
-    local agent_backoff=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.backoff // "exponential"' "$chain_file" 2>/dev/null || echo "exponential")
-    local agent_delay=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.initial_delay // 5' "$chain_file" 2>/dev/null || echo "5")
-    local agent_max_delay=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.max_delay // 300' "$chain_file" 2>/dev/null || echo "300")
-    local agent_multiplier=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .retry.backoff_multiplier // 2.0' "$chain_file" 2>/dev/null || echo "2.0")
-
-    local on_error=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .on_error // ""' "$chain_file" 2>/dev/null || echo "")
-    local on_timeout=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .on_timeout // ""' "$chain_file" 2>/dev/null || echo "")
-
-    # chain-level defaults
-    local default_error_handler=$(jq -r '.routing.error_handler // ""' "$chain_file" 2>/dev/null || echo "")
-    local default_timeout_agent=$(jq -r '.routing.timeout_agent // ""' "$chain_file" 2>/dev/null || echo "")
-
-    # determine the canonical typed state prefix
-    local s_prefix
-    s_prefix=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .session_prefix // ""' "$chain_file" 2>/dev/null || echo "")
-    if [[ -z "$s_prefix" ]]; then
-        local chain_session_prefix
-        chain_session_prefix=$(jq -r '.config.session_prefix // ""' "$chain_file" 2>/dev/null || echo "")
-        if [[ -n "$chain_session_prefix" ]]; then
-            s_prefix="${chain_session_prefix}-${agent_id}"
-        else
-            s_prefix="$agent_id"
-        fi
-    fi
-    local retry_count=$(get-agent-retry-count "$s_prefix")
-
-    echo ""
-    echo "  *** $error_type detected in agent $agent_id"
-    echo "      retry: $retry_count / $agent_retry_max"
-
-    # get agent name for slack notification
-    local agent_name=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .name // $id' "$chain_file" 2>/dev/null || echo "$agent_id")
-
-    # extract error details from report file if available
-    local error_details="Agent $error_type"
-    if [[ -f "$report_file" ]]; then
-        # get last few lines that might contain error info
-        local error_snippet=$(grep -i "error\|failed\|exception" "$report_file" 2>/dev/null | head -1 | sed 's/^[[:space:]]*//' || true)
-        [[ -n "$error_snippet" ]] && error_details="$error_snippet"
-    fi
-
-    # send slack notification for agent error (non-retry or final failure)
-    if [[ $retry_count -ge $agent_retry_max ]]; then
-        send-slack-agent-error "$chain_file" "$agent_name" "$agent_id" "$error_details" 2>/dev/null || true
-    fi
-
-    # determine which handler to use
-    local handler_agent=""
-    if [[ "$error_type" == "timeout" ]]; then
-        handler_agent="${on_timeout:-${default_timeout_agent:-$on_error}}"
-    else
-        handler_agent="${on_error:-$default_error_handler}"
-    fi
-
-    # check if we should retry
-    if [[ $retry_count -lt $agent_retry_max ]]; then
-        local next_count=$((retry_count + 1))
-        local delay=$(calculate-retry-delay "$retry_count" "$agent_backoff" "$agent_delay" "$agent_max_delay" "$agent_multiplier")
-
-        echo "      scheduling retry $next_count in ${delay}s..."
-        increment-retry-count "$s_prefix"
-
-        # schedule retry
-        (
-            sleep "$delay"
-            echo "      *** retrying $agent_id (attempt $next_count)..."
-            bash "$chain_runner" "$chain_file" --start "$agent_id"
-        ) &
-        disown $!
-
-        return 0
-    fi
-
-    # no more retries, route to error handler
-    if [[ -n "$handler_agent" ]]; then
-        echo "      max retries reached. routing to error handler: $handler_agent"
-        # update state to failed before routing
-        _agent_state_cli fail --state-dir "$STATE_DIR" --session-prefix "$s_prefix" --run-id "${RUN_ID:?RUN_ID is required for runner agent state}" --reason "$error_type" >/dev/null
-
-        # launch error handler
-        (
-            sleep 2
-            bash "$chain_runner" "$chain_file" --start "$handler_agent"
-        ) &
-        disown $!
-
-        return 0
-    fi
-
-    # no handler configured, chain stops
-    echo "      no error handler configured. chain stops."
-
-    # send slack notification for chain error
-    local agent_name=$(jq -r --arg id "$agent_id" \
-        '.agents[] | select(.id == $id) | .name // $id' "$chain_file" 2>/dev/null || echo "$agent_id")
-    send-slack "chain_error" "$chain_file" \
-        "agent_name=$agent_name" \
-        "agent_id=$agent_id" \
-        "error=$error_type (no handler configured)" 2>/dev/null || true
-
-    return 1
+    local args=(
+        handle
+        --state-dir "${STATE_DIR:?STATE_DIR must be configured}"
+        --run-id "${RUN_ID:?RUN_ID is required for runner agent state}"
+        --agent-id "$1"
+        --error-type "$2"
+        --report-file "$3"
+        --chain-file "$4"
+        --chain-runner "$5"
+    )
+    [[ -n "${AGENTS_DIR:-}" ]] && args+=(--agents-dir "$AGENTS_DIR")
+    _error_handling_cli "${args[@]}"
 }
 
-# exports
-export -f detect-agent-error
-export -f get-agent-retry-count
-export -f increment-retry-count
-export -f calculate-retry-delay
-export -f handle-agent-error
+export -f detect-agent-error get-agent-retry-count increment-retry-count calculate-retry-delay handle-agent-error

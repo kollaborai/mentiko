@@ -150,10 +150,7 @@ test("detect-agent-error returns 2 for 'deadline exceeded'", () => {
   assert(lines[lines.length - 1] === "2", `expected "2", got "${lines[lines.length - 1]}"`);
 });
 
-test("detect-agent-error returns 0 for 'error' marker (BUG: pipe with -q suppresses stdout, breaking error detection)", () => {
-  // BUG in source: line 34 uses `grep -qi ... | grep -vqi ...`
-  // -q suppresses output from first grep, so second grep gets empty stdin
-  // and always exits 1 (no lines to process). the if branch is never taken.
+test("detect-agent-error returns 1 for 'error' marker", () => {
   const file = join(TMP, "error-report.txt");
   resetTmp();
   writeFileSync(file, "error: something went wrong\n");
@@ -163,11 +160,10 @@ test("detect-agent-error returns 0 for 'error' marker (BUG: pipe with -q suppres
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  // documents the actual (broken) behavior -- should be 1 when fixed
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
-test("detect-agent-error returns 0 for 'failed' marker (BUG: same pipe issue)", () => {
+test("detect-agent-error returns 1 for 'failed' marker", () => {
   const file = join(TMP, "failed-report.txt");
   resetTmp();
   writeFileSync(file, "task failed to complete\n");
@@ -177,10 +173,10 @@ test("detect-agent-error returns 0 for 'failed' marker (BUG: same pipe issue)", 
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
-test("detect-agent-error returns 0 for 'exception' marker (BUG: same pipe issue)", () => {
+test("detect-agent-error returns 1 for 'exception' marker", () => {
   const file = join(TMP, "exception-report.txt");
   resetTmp();
   writeFileSync(file, "unhandled exception in module\n");
@@ -190,10 +186,10 @@ test("detect-agent-error returns 0 for 'exception' marker (BUG: same pipe issue)
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
-test("detect-agent-error returns 0 for 'traceback' marker (BUG: same pipe issue)", () => {
+test("detect-agent-error returns 1 for 'traceback' marker", () => {
   const file = join(TMP, "traceback-report.txt");
   resetTmp();
   writeFileSync(file, "traceback (most recent call last)\n");
@@ -203,10 +199,10 @@ test("detect-agent-error returns 0 for 'traceback' marker (BUG: same pipe issue)
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
-test("detect-agent-error returns 0 for 'fatal' marker (BUG: same pipe issue)", () => {
+test("detect-agent-error returns 1 for 'fatal' marker", () => {
   const file = join(TMP, "fatal-report.txt");
   resetTmp();
   writeFileSync(file, "fatal: cannot continue\n");
@@ -216,7 +212,7 @@ test("detect-agent-error returns 0 for 'fatal' marker (BUG: same pipe issue)", (
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
 test("detect-agent-error prioritizes timeout (2) over error (1)", () => {
@@ -743,8 +739,7 @@ test("handle-agent-error defaults to 0 max retries when retry config missing", (
 // edge cases
 // ============================================================
 
-test("detect-agent-error returns 0 for file with mixed error/no-error lines (BUG: pipe issue)", () => {
-  // same pipe bug as other error marker tests
+test("detect-agent-error returns 1 for file with mixed error/no-error lines", () => {
   resetTmp();
   const file = join(TMP, "mixed-report.txt");
   writeFileSync(file, "task started\ncompleted step 1\nerror on step 2\nmoving on\n");
@@ -754,7 +749,7 @@ test("detect-agent-error returns 0 for file with mixed error/no-error lines (BUG
     echo $?
   `);
   const lines = result.stdout.split("\n");
-  assert(lines[lines.length - 1] === "0", `expected "0" (bug: error detection broken), got "${lines[lines.length - 1]}"`);
+  assert(lines[lines.length - 1] === "1", `expected "1", got "${lines[lines.length - 1]}"`);
 });
 
 test("calculate-retry-delay linear capped by max_delay", () => {

@@ -52,6 +52,17 @@ namespace-aware
   all paths resolve through the 3-tier hierarchy:
   namespace > organization > project.
 
+typed chain generation
+----------------------
+
+`lib/chain-generator.sh` is an invocation-only legacy command boundary. The
+compiled `web/lib/runner-v2/chain-generation-cli.ts` owns the generation
+prompt, external model output decoding, normalized chain validation, atomic
+`chain.json` materialization, and agent-spec materialization. The model CLI is the only
+child-process product boundary; there is no shell parser or alternate CLI
+fallback. The production image compiles this contract to
+`lib/runner-chain-generation.js`.
+
 core components
 ===============
 
@@ -384,9 +395,15 @@ artifact capture
   on agent completion, capture:
     - git diff (before..HEAD) as patch
     - files changed (name-status list)
-    - conversations (claude .jsonl files)
-    - output (head + tail of session)
+    - conversations (configured profile .jsonl files)
+    - output (captured terminal report)
   stored in runs/{runId}/artifacts/
+
+  `web/lib/runner-v2/activity-capture.ts` owns raw-file checks, typed
+  name-status parsing, transcript path resolution, symlink rejection, atomic
+  artifact writes, and the `run.json` activity manifest mutation. Git remains
+  an external probe. `lib/agent-activity-capture.sh` is only the invocation
+  boundary and does not parse or serialize activity data.
 
 task integration
   chains can be linked to tasks via --task flag.
@@ -430,7 +447,8 @@ libraries:
   lib/routing-lib.sh               invocation-only routing compatibility boundary
   web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
   lib/config.sh                    path resolution
-  lib/agent-activity-capture.sh    artifact capture
+  web/lib/runner-v2/activity-capture.ts typed artifact/provenance capture
+  lib/agent-activity-capture.sh         invocation-only activity boundary
 
 background services:
   web/server/background-worker.ts                process owner
@@ -440,9 +458,11 @@ background services:
   web/lib/runner-v2/chain-watcher-service.ts      event-triggered chain launch
 
 supporting:
-  lib/error-handling.sh            circuit breaker
+  web/lib/runner-v2/error-handling.ts typed report/error/retry lifecycle owner
+  lib/error-handling.sh            invocation-only error boundary
   lib/retry-utils.sh               retry logic
-  lib/approval-gate.sh             human approval
+  web/lib/runner-v2/approval-gate.ts typed approval request/polling owner
+  lib/approval-gate.sh             invocation-only approval boundary
   lib/budget-check.sh              spending limits
   lib/webhook-sender.sh            webhook notifications
   lib/slack-integration.sh         slack notifications
@@ -479,7 +499,8 @@ artifacts not captured?
   - check RUN_ID is set in environment
   - check artifacts dir exists: runs/{runId}/artifacts/
   - verify git-before.txt exists (for diff capture)
-  - check agent-activity-capture.sh sourced
+  - check the typed activity bundle exists: lib/runner-activity-capture.js
+  - check the configured profile has a valid log_path when conversations are expected
 
 pty-manager issues?
   - check daemon running: ./bin/p status

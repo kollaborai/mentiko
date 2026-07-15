@@ -113,10 +113,16 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/chain-contract-cli.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/routing-contract-cli.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runner-v2/monitor-completion-cli.ts"],
       },
+      {
+        id: "typed-chain-generation",
+        label: "Decode external model output, validate generated chain records, and materialize chain/spec artifacts",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/chain-generation-cli.ts", "lib/runner-chain-generation.js"],
+      },
     ],
     legacyEquivalent: {
-      summary: "Replaces direct shell jq decoding, reference expansion, validation, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands.",
-      paths: ["lib/chain-runner.sh", "lib/validate.sh", "lib/routing-lib.sh", "lib/monitor-completion.sh"],
+      summary: "Replaces direct shell jq decoding, generation, reference expansion, validation, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands or the required external model process.",
+      paths: ["lib/chain-generator.sh", "lib/chain-runner.sh", "lib/validate.sh", "lib/routing-lib.sh", "lib/monitor-completion.sh"],
     },
   },
   "agent-definition": {
@@ -267,9 +273,21 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/bootstrap-executor.ts",
         ],
       },
+      {
+        id: "typed-error-lifecycle-owner",
+        label: "Detect report failures, resolve retry policy, mutate retry state, and schedule typed handler/retry launches",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts"],
+      },
+      {
+        id: "shell-error-invocation-boundary",
+        label: "Forward legacy error helper arguments to the compiled typed owner",
+        owner: "runner-v2",
+        paths: ["lib/error-handling.sh"],
+      },
     ],
     legacyEquivalent: {
-      summary: "The persisted key-value format remains readable, but shell callers now invoke the compiled TypeScript boundary and do not parse or mutate state records.",
+      summary: "The persisted key-value format remains readable, but shell callers now invoke the compiled TypeScript boundary and do not parse or mutate state records; legacy error handling is now an invocation-only adapter.",
       paths: ["lib/agent-state-client.sh", "web/lib/runner-v2/agent-state-cli.ts"],
     },
   },
@@ -393,6 +411,48 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     legacyEquivalent: {
       summary: "The manifest is now created and validated by the typed boundary; shell launch only invokes its named ensure operation.",
       paths: ["web/lib/runner-v2/runspace-manifest.ts", "lib/runspace-manifest-client.sh"],
+    },
+  },
+  "agent-activity-artifacts": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-agent-activity-capture",
+        label: "Capture, validate, normalize, and atomically publish per-agent activity artifacts",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/activity-capture.ts", "web/lib/runner-v2/activity-capture-cli.ts"],
+      },
+      {
+        id: "typed-agent-activity-provenance",
+        label: "Mutate the run activity manifest from validated artifacts under the typed Run Record lock",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/run-record-operations.ts", "web/lib/runner-v2/run-record-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces shell jq/awk/date/find/cp artifact capture and hand-built conversation JSON; the shell entrypoint now only forwards arguments to the compiled typed owner.",
+      paths: ["lib/agent-activity-capture.sh"],
+    },
+  },
+  "approval-request": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-approval-request-lifecycle",
+        label: "Decode, validate, persist, poll, and timeout approval requests",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/approval-gate.ts", "web/lib/runner-v2/approval-gate-cli.ts"],
+      },
+      {
+        id: "shell-approval-command-boundary",
+        label: "Forward primitive approval arguments to the typed gate",
+        owner: "runner-v2",
+        paths: ["lib/approval-gate.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces shell jq request construction, validation, polling, and timeout mutation; the shell file is now an invocation-only boundary.",
+      paths: ["lib/approval-gate.sh"],
     },
   },
   "batch-run-record": {

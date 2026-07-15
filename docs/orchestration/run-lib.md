@@ -253,7 +253,8 @@ lib/run-lib.sh                this file
 lib/config.sh                 path resolution (RUNS_DIR, DEBUG_DIR)
 lib/chain-runner.sh           creates run via create-run
 web/lib/runner-v2/completion-entrypoint.ts  updates through the typed shared-lock writer
-lib/agent-activity-capture.sh  writes artifacts to run directory
+lib/agent-activity-capture.sh  invokes the typed activity capture owner;
+web/lib/runner-v2/activity-capture.ts writes and validates artifacts in the run directory
 web/app/api/runs/[id]/route.ts web api reads run.json
 
 troubleshooting
@@ -272,7 +273,7 @@ agent not in agents[]?
 artifacts not showing?
   - check artifacts dir exists in run directory
   - verify run.json artifacts[] array updated
-  - agent-activity-capture.sh must be sourced
+  - the compiled lib/runner-activity-capture.js bundle must exist
 
 task not updating?
   - check taskId in run.json

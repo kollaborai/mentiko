@@ -6,14 +6,12 @@
  * returns preset JSON. Covers --json, --template, validation,
  * error handling, and structure checks.
  *
- * The script expects lib/schema.json to exist (for validation) and
- * sources lib/config.sh. We copy both into a temp lib dir so the
- * script runs in isolation without modifying the repo.
+ * The typed contract reads lib/schemas/chain.schema.json for prompt context.
+ * We copy the entrypoint, bundle, config, and fixture schema into a temp lib
+ * dir so the legacy command runs in isolation without modifying the repo.
  *
- * Known script bugs tested here:
- *   - fallback JSON extraction crashes on no-match (set -euo pipefail)
- *   - empty string passes jq empty validation
- *   - cleaning pipeline splits on nested } breaking pretty-printed JSON
+ * Contract regressions covered here include empty model output, nested JSON
+ * braces, markdown-wrapped responses, and deterministic materialization.
  */
 
 import { execFileSync } from "child_process";
@@ -34,7 +32,7 @@ const TEMPLATES_DIR = join(TMP, "templates");
 // the script we're testing
 const SCRIPT = join(TEST_LIB, "chain-generator.sh");
 
-// minimal schema.json with `required` field so validation runs
+// minimal chain.schema.json with `required` fields for prompt context
 const MIN_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   required: ["name", "agents"],
@@ -153,21 +151,26 @@ async function runTests() {
 
 /**
  * Reset TMP and recreate the test lib dir with the script,
- * config.sh, and schema.json.
+ * config.sh, and schemas/chain.schema.json.
  */
 function resetTmp() {
   rmSync(TMP, { recursive: true, force: true });
   mkdirSync(TEST_LIB, { recursive: true });
+  mkdirSync(join(TEST_LIB, "schemas"), { recursive: true });
   mkdirSync(MOCK_BIN, { recursive: true });
   mkdirSync(OUTPUT_DIR, { recursive: true });
   mkdirSync(TEMPLATES_DIR, { recursive: true });
 
   // copy the script and config.sh into TEST_LIB
   copyFileSync(join(REAL_LIB, "chain-generator.sh"), join(TEST_LIB, "chain-generator.sh"));
+  // The shell is an invocation-only boundary; keep the compiled contract
+  // beside it so this isolated legacy-entrypoint test exercises the same
+  // production path.
+  copyFileSync(join(REAL_LIB, "runner-chain-generation.js"), join(TEST_LIB, "runner-chain-generation.js"));
   copyFileSync(join(REAL_LIB, "config.sh"), join(TEST_LIB, "config.sh"));
 
-  // create schema.json so the validation block runs
-  writeFileSync(join(TEST_LIB, "schema.json"), JSON.stringify(MIN_SCHEMA, null, 2));
+  // create chain.schema.json so the typed prompt has a schema reference
+  writeFileSync(join(TEST_LIB, "schemas", "chain.schema.json"), JSON.stringify(MIN_SCHEMA, null, 2));
 }
 
 /**

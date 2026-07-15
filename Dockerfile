@@ -182,6 +182,15 @@ RUN if [ -f /build/web/lib/runner-v2/parallel-contract-cli.ts ]; then \
         --bundle --platform=node --target=node20 --outfile=/context/lib/runner-parallel-contract.js; \
     fi
 
+# compile the typed agent activity/provenance capture boundary.
+RUN if [ -f /build/web/lib/runner-v2/activity-capture-cli.ts ]; then \
+      echo "=== compiling typed agent activity capture boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/activity-capture-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-activity-capture.js; \
+    fi
+
 # compile typed counters, gauges, timers, active timers, and webhook metric records.
 RUN if [ -f /build/web/lib/runner-v2/legacy-metrics-cli.ts ]; then \
       echo "=== compiling typed legacy metrics boundary ===" && \
@@ -198,6 +207,25 @@ RUN if [ -f /build/web/lib/runner-v2/retry-circuit-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/retry-circuit-cli.ts \
         --bundle --platform=node --target=node20 \
         --outfile=/context/lib/runner-retry-circuit.js; \
+    fi
+
+# compile typed approval and error lifecycle boundaries. Legacy shell callers
+# only forward primitive arguments; request/retry/error JSON and mutations stay
+# in the compiled TypeScript owners.
+RUN if [ -f /build/web/lib/runner-v2/approval-gate-cli.ts ]; then \
+      echo "=== compiling typed runner approval gate boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/approval-gate-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-approval-gate.js; \
+    fi
+
+RUN if [ -f /build/web/lib/runner-v2/error-handling-cli.ts ]; then \
+      echo "=== compiling typed runner error handling boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/error-handling-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-error-handling.js; \
     fi
 
 # compile the typed cap claim and count/promote admission boundary.
@@ -284,6 +312,16 @@ RUN if [ -f /build/web/lib/runner-v2/chain-validation-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/chain-validation-cli.ts \
         --bundle --platform=node --target=node20 \
       --outfile=/context/lib/runner-chain-validation.js; \
+    fi
+
+# compile the typed chain generation contract; the legacy shell command only
+# forwards arguments to the external model process.
+RUN if [ -f /build/web/lib/runner-v2/chain-generation-cli.ts ]; then \
+      echo "=== compiling typed runner chain generation boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/chain-generation-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-chain-generation.js; \
     fi
 
 # Compile typed monitor completion resolution. Shell monitors only supply

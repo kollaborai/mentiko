@@ -409,14 +409,15 @@ summary:
 
 4. capture agent activity
    -----------------------
-   sources agent-activity-capture.sh
-   calls capture-agent-activity:
+   invokes the typed activity-capture boundary (the shell file is an adapter)
+   calls capture-agent-activity, which delegates to `runner-activity-capture.js`:
    - diff.patch          git diff
    - files-changed.json  git diff --name-status
-   - conversations.json  from xterm.js logs or conversation artifacts
-   - output.txt          head + tail of agent output
+   - conversations.json  from the configured profile transcript path
+   - output.txt          captured agent output
 
-   updates run.json artifacts[] manifest
+   TypeScript validates and atomically writes the artifacts, then updates the
+   run.json artifacts[] manifest under the typed Run Record lock.
 
 5. update state file
    -------------------
@@ -535,8 +536,10 @@ web/lib/runner-v2/event-lifecycle-cli.ts compiled lifecycle command source
 lib/metrics.sh                performance metrics
 lib/performance.sh            performance tracking
 lib/profiler.sh               agent profiling
-lib/error-handling.sh         error handling + circuit breaker
-lib/approval-gate.sh          human approval gates
+web/lib/runner-v2/error-handling.ts typed error/retry lifecycle owner
+lib/error-handling.sh         invocation-only error boundary
+web/lib/runner-v2/approval-gate.ts typed approval request/polling owner
+lib/approval-gate.sh          invocation-only approval boundary
 lib/budget-check.sh           spending limits
 web/lib/runner-v2/chain-watcher-service.ts  file-event chain launches (see [chain-watcher.md](./chain-watcher.md))
 web/lib/runner-v2/watchdog.ts               stalled run detection (see [watchdog.md](./watchdog.md))
