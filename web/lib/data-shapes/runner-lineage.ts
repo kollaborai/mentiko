@@ -20,6 +20,25 @@ export interface RunnerContractLineage {
   surfaces: RunnerMigrationSurface[];
   /** The shell-era behavior or contract that preceded the typed shape. */
   legacyEquivalent?: RunnerLegacyEquivalent;
+  /** Most-specific field-path ownership overrides. Unmatched fields inherit usage. */
+  fieldRules?: RunnerFieldRule[];
+}
+
+export interface RunnerFieldRule {
+  /** Exact path or object/array prefix, using catalog paths such as runnerV2.attempts[].phase. */
+  path: string;
+  usage: RunnerContractUsage;
+}
+
+export function runnerFieldUsage(
+  lineage: RunnerContractLineage | undefined,
+  fieldPath: string,
+): RunnerContractUsage | undefined {
+  if (!lineage) return undefined;
+  const matching = (lineage.fieldRules || [])
+    .filter((rule) => fieldPath === rule.path || fieldPath.startsWith(`${rule.path}.`) || fieldPath.startsWith(`${rule.path}[]`))
+    .sort((left, right) => right.path.length - left.path.length)[0];
+  return matching?.usage || lineage.usage;
 }
 
 export interface RunnerMigrationCoverage {
@@ -126,6 +145,11 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
   },
   "run-record": {
     usage: "shared",
+    fieldRules: [
+      // runnerV2 is an intentionally isolated typed namespace. The surrounding
+      // run envelope remains shared while both engines are active.
+      { path: "runnerV2", usage: "runner-v2" },
+    ],
     surfaces: [
       {
         id: "typed-run-mutation",

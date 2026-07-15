@@ -29,6 +29,12 @@ export interface DataShapeEvidence {
   status: RuntimeShapeStatus;
   artifactCount: number;
   recordCount: number;
+  /**
+   * Whether a canonical schema was available and actually run against the
+   * inspected records. When false, validCount can only ever be 0 and carries no
+   * information — surfaces must not present it as a measurement.
+   */
+  schemaValidated: boolean;
   validCount: number;
   invalidCount: number;
   parseErrorCount: number;
@@ -417,6 +423,7 @@ function inspectShape(
       status,
       artifactCount: files.size,
       recordCount,
+      schemaValidated: Boolean(validate),
       validCount,
       invalidCount,
       parseErrorCount,

@@ -1,5 +1,6 @@
 import type { RuntimeDataShape } from "./runtime-catalog";
-import { runnerMigrationCoverage } from "./runner-lineage";
+import { runnerFieldUsage, runnerMigrationCoverage } from "./runner-lineage";
+import { ASSURANCE_MEANING, statusMeaning } from "./semantics";
 
 export const DATA_SHAPE_COPY_FORMAT_VERSION = 2;
 
@@ -27,6 +28,7 @@ export function buildDataShapeClipboardPayload(shape: RuntimeDataShape) {
       format: shape.format,
       storage: shape.storage,
       assurance: shape.assurance,
+      assuranceMeaning: ASSURANCE_MEANING[shape.assurance],
       schemaPath: shape.schemaPath,
       typePaths: shape.typePaths,
       validatorPaths: shape.validatorPaths,
@@ -43,8 +45,10 @@ export function buildDataShapeClipboardPayload(shape: RuntimeDataShape) {
         : undefined,
       evidence: {
         status: evidence.status,
+        statusMeaning: statusMeaning(evidence.status),
         artifactCount: evidence.artifactCount,
         recordCount: evidence.recordCount,
+        schemaValidated: evidence.schemaValidated,
         validCount: evidence.validCount,
         invalidCount: evidence.invalidCount,
         parseErrorCount: evidence.parseErrorCount,
@@ -54,6 +58,7 @@ export function buildDataShapeClipboardPayload(shape: RuntimeDataShape) {
           types: field.types,
           occurrences: field.occurrences,
           source: field.source,
+          runnerUsage: runnerFieldUsage(shape.runnerLineage, field.path),
         })),
         issues: evidence.issues.map((issue) => ({
           path: issue.path,

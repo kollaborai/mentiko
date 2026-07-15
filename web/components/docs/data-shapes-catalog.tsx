@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CopyFilled, Data2Filled, Refresh2Filled, TickCircleFilled, Warning2Filled } from "@aliimam/icons";
-import { Button } from "@/components/ui/button";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDown2Filled, CopyFilled, Data2Filled, Refresh2Filled, TickCircleFilled, Warning2Filled } from "@aliimam/icons";
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarItem,
@@ -11,12 +10,14 @@ import {
   WorkflowSidebarSectionHeader,
 } from "@/components/ui/workflow-sidebar";
 import { serializeDataShapeForLlm } from "@/lib/data-shapes/clipboard";
+import { ASSURANCE_MEANING, STATUS_LEGEND } from "@/lib/data-shapes/semantics";
 import {
+  runnerFieldUsage,
   runnerMigrationCoverage,
   type RunnerContractLineage,
   type RunnerContractUsage,
 } from "@/lib/data-shapes/runner-lineage";
-import type { RuntimeDataShape, RuntimeDataShapeCatalog, RuntimeShapeStatus } from "@/lib/data-shapes/runtime-catalog";
+import type { RuntimeDataShape, RuntimeDataShapeCatalog } from "@/lib/data-shapes/runtime-catalog";
 import { copyToClipboardWithResult } from "@/lib/ui/copy-to-clipboard";
 import { statusBar, statusPill } from "@/lib/ui/status-colors";
 import { cn } from "@/lib/utils";
@@ -37,49 +38,11 @@ const CATEGORY_LABELS: Record<RuntimeDataShape["category"], string> = {
   system: "System",
 };
 
-const STATUS_LEGEND: Array<{
-  status: RuntimeShapeStatus;
-  label: string;
-  description: string;
-}> = [
-  {
-    status: "valid",
-    label: "Valid",
-    description: "Artifacts exist and every inspected record passed the canonical schema.",
-  },
-  {
-    status: "observed",
-    label: "Observed",
-    description: "Artifacts were inspected, but no canonical schema was available to validate them.",
-  },
-  {
-    status: "absent",
-    label: "Absent",
-    description: "No matching artifact or inspectable record exists in the current scope.",
-  },
-  {
-    status: "drift",
-    label: "Drift",
-    description: "At least one artifact failed validation, parsing, or inspection.",
-  },
-  {
-    status: "unavailable",
-    label: "Unavailable",
-    description: "No safe runtime sample is configured for this shape.",
-  },
-];
-
-const ASSURANCE_COPY: Record<RuntimeDataShape["assurance"], string> = {
-  enforced: "A writer, validator, or database schema actively constrains this shape.",
-  "drift-checked": "A JSON Schema is checked against current persisted artifacts on every catalog load.",
-  typed: "The producer and reader have a code-level type, but persisted artifacts are not schema-gated.",
-  observed: "Fields come from current artifacts; no canonical contract is enforced.",
-  open: "The format intentionally accepts arbitrary producer output.",
-};
+const ASSURANCE_COPY = ASSURANCE_MEANING;
 
 const RUNNER_USAGE_LABEL: Record<RunnerContractUsage, string> = {
   "runner-v2": "Runner v2",
-  shared: "Shared",
+  shared: "Both",
   "legacy-shell": "Legacy shell",
 };
 
@@ -91,61 +54,83 @@ const RUNNER_USAGE_COPY: Record<RunnerContractUsage, string> = {
 
 function Badge({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium", className)}>
+    <span
+      className={cn(
+        // shrink-0/nowrap: as a flex child next to description text the badge
+        // would otherwise compress and break its own label ("Legacy shell").
+        "inline-flex shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-[10px] font-medium",
+        className,
+      )}
+    >
       {children}
     </span>
   );
 }
 
+/**
+ * Collapsible legend block. The title is a full-width header row rather than a
+ * side column: at narrow widths a fixed label column stranded the title beside
+ * dead space, and a disclosure control has to own the row it toggles.
+ */
+function LegendSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <section aria-labelledby={id} className="mx-4 mb-3 rounded-md bg-muted px-3 py-2.5">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-controls={`${id}-items`}
+        className="flex w-full items-center gap-1.5 text-left text-foreground/60 hover:text-foreground/80"
+      >
+        <ArrowDown2Filled className={cn("h-3 w-3 shrink-0 transition-transform", !open && "-rotate-90")} />
+        <h2 id={id} className="text-[10px] font-bold uppercase tracking-widest">
+          {title}
+        </h2>
+      </button>
+      {open ? (
+        <div id={`${id}-items`} className="mt-2.5">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function DataShapeStatusLegend() {
   return (
-    <section aria-labelledby="data-shape-status-legend" className="mx-4 mb-3 rounded-md bg-muted px-3 py-2.5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-        <h2
-          id="data-shape-status-legend"
-          className="shrink-0 pt-1 text-[10px] font-semibold uppercase tracking-widest text-foreground/35 sm:w-24"
-        >
-          Status Legend
-        </h2>
-        <ul className="grid min-w-0 flex-1 gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-          {STATUS_LEGEND.map((item) => (
-            <li key={item.status} className="flex min-w-0 items-start gap-2">
-              <Badge className={statusPill(item.status)}>{item.label}</Badge>
-              <span className="text-[10px] leading-4 text-foreground/45">{item.description}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </section>
+    <LegendSection id="data-shape-status-legend" title="Status Legend">
+      <ul className="grid min-w-0 gap-x-4 gap-y-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        {STATUS_LEGEND.map((item) => (
+          <li key={item.status} className="flex min-w-0 items-start gap-2">
+            <Badge className={statusPill(item.status)}>{item.label}</Badge>
+            <span className="text-[10px] leading-4 text-foreground/45">{item.description}</span>
+          </li>
+        ))}
+      </ul>
+    </LegendSection>
   );
 }
 
 export function RunnerLineageLegend() {
   return (
-    <section aria-labelledby="runner-lineage-legend" className="mx-4 mb-3 rounded-md bg-muted px-3 py-2.5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-        <h2
-          id="runner-lineage-legend"
-          className="shrink-0 pt-1 text-[10px] font-semibold uppercase tracking-widest text-foreground/35 sm:w-24"
-        >
-          Runner Lineage
-        </h2>
-        <ul className="grid min-w-0 flex-1 gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-4">
-          {(["runner-v2", "shared", "legacy-shell"] as const).map((usage) => (
-            <li key={usage} className="flex min-w-0 items-start gap-2">
-              <Badge className={statusPill(usage)}>{RUNNER_USAGE_LABEL[usage]}</Badge>
-              <span className="text-[10px] leading-4 text-foreground/45">{RUNNER_USAGE_COPY[usage]}</span>
-            </li>
-          ))}
-          <li className="flex min-w-0 items-start gap-2">
-            <Badge className="bg-foreground/5 text-foreground/55">Typed %</Badge>
-            <span className="text-[10px] leading-4 text-foreground/45">
-              Named lifecycle surfaces owned by runner v2 divided by all mapped surfaces. It does not count files, lines, or artifacts.
-            </span>
+    <LegendSection id="runner-lineage-legend" title="Runner Lineage">
+      <ul className="grid min-w-0 gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-4">
+        {(["runner-v2", "shared", "legacy-shell"] as const).map((usage) => (
+          <li key={usage} className="flex min-w-0 items-start gap-2">
+            <Badge className={statusPill(usage)}>{RUNNER_USAGE_LABEL[usage]}</Badge>
+            <span className="text-[10px] leading-4 text-foreground/45">{RUNNER_USAGE_COPY[usage]}</span>
           </li>
-        </ul>
-      </div>
-    </section>
+        ))}
+        <li className="flex min-w-0 items-start gap-2">
+          <Badge className="bg-foreground/5 text-foreground/55">Typed %</Badge>
+          <span className="text-[10px] leading-4 text-foreground/45">
+            Named lifecycle surfaces owned by runner v2 divided by all mapped surfaces. It does not count files, lines, or artifacts.
+          </span>
+        </li>
+      </ul>
+    </LegendSection>
   );
 }
 
@@ -223,8 +208,12 @@ function RunnerLineageDetail({ lineage }: { lineage: RunnerContractLineage }) {
   );
 }
 
-function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
-  const evidence = shape.evidence;
+/**
+ * Copies the shape's redacted LLM payload. Used both beside the detail title and
+ * inside each sidebar row; the row is a role=button div, so the click must not
+ * bubble into row selection.
+ */
+function ShapeCopyButton({ shape, className }: { shape: RuntimeDataShape; className?: string }) {
   const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "failed">("idle");
 
   useEffect(() => {
@@ -238,6 +227,39 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
     const copied = await copyToClipboardWithResult(serializeDataShapeForLlm(shape));
     setCopyState(copied ? "copied" : "failed");
   };
+
+  const Icon = copyState === "copied" ? TickCircleFilled : copyState === "failed" ? Warning2Filled : CopyFilled;
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleCopy();
+      }}
+      disabled={copyState === "copying"}
+      aria-label={`Copy ${shape.name} as LLM-ready JSON`}
+      title={
+        copyState === "copied"
+          ? "Copied"
+          : copyState === "failed"
+            ? "Copy failed"
+            : "Copy this redacted shape as LLM-ready JSON"
+      }
+      className={cn(
+        "shrink-0 rounded p-0.5 text-foreground/25 transition-colors hover:bg-accent hover:text-foreground/70",
+        copyState === "copied" && "text-emerald-500",
+        copyState === "failed" && "text-amber-500",
+        className,
+      )}
+    >
+      <Icon className="h-3 w-3" />
+    </button>
+  );
+}
+
+function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
+  const evidence = shape.evidence;
 
   return (
     <article className="min-w-0 flex-1 overflow-auto rounded-xl border border-border/60 bg-card">
@@ -256,41 +278,29 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
               ) : null}
               {shape.sensitive ? <Badge className="bg-amber-500/10 text-amber-500">values hidden</Badge> : null}
             </div>
-            <h2 className="text-xl font-semibold tracking-tight text-foreground">{shape.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">{shape.name}</h2>
+              <ShapeCopyButton shape={shape} />
+            </div>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-foreground/55">{shape.description}</p>
           </div>
           <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:items-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCopy()}
-              disabled={copyState === "copying"}
-              className="w-full text-xs sm:w-auto"
-              title="Copy this redacted shape as LLM-ready JSON"
-            >
-              {copyState === "copied" ? (
-                <TickCircleFilled className="text-emerald-500" />
-              ) : copyState === "failed" ? (
-                <Warning2Filled className="text-amber-500" />
-              ) : (
-                <CopyFilled />
-              )}
-              {copyState === "copying"
-                ? "Copying…"
-                : copyState === "copied"
-                  ? "Copied"
-                  : copyState === "failed"
-                    ? "Copy Failed"
-                    : "Copy Shape"}
-            </Button>
             <div className="grid w-full grid-cols-3 gap-2 text-center sm:w-auto">
               <div className="rounded-lg bg-muted px-3 py-2">
                 <div className="text-sm font-semibold">{evidence.artifactCount}</div>
                 <div className="text-[9px] uppercase tracking-wide text-foreground/35">artifacts</div>
               </div>
-              <div className="rounded-lg bg-muted px-3 py-2">
-                <div className="text-sm font-semibold">{evidence.validCount}</div>
+              <div
+                className="rounded-lg bg-muted px-3 py-2"
+                title={
+                  evidence.schemaValidated
+                    ? undefined
+                    : "No canonical schema was available to validate these records."
+                }
+              >
+                <div className={cn("text-sm font-semibold", !evidence.schemaValidated && "text-foreground/25")}>
+                  {evidence.schemaValidated ? evidence.validCount : "—"}
+                </div>
                 <div className="text-[9px] uppercase tracking-wide text-foreground/35">valid</div>
               </div>
               <div className="rounded-lg bg-muted px-3 py-2">
@@ -347,9 +357,16 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
                   className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-border/40 px-3 py-2 last:border-b-0"
                 >
                   <code className="min-w-0 break-all text-[11px] text-foreground/65">{field.path}</code>
-                  <span className="text-right text-[10px] text-foreground/35">
-                    {field.types.join(" | ")} · {field.source}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-end gap-1.5 text-right">
+                    <span className="text-[10px] text-foreground/35">
+                      {field.types.join(" | ")} · {field.source}
+                    </span>
+                    {runnerFieldUsage(shape.runnerLineage, field.path) ? (
+                      <Badge className={statusPill(runnerFieldUsage(shape.runnerLineage, field.path)!)}>
+                        {RUNNER_USAGE_LABEL[runnerFieldUsage(shape.runnerLineage, field.path)!]}
+                      </Badge>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -376,8 +393,11 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
         ) : null}
 
         {shape.schema ? (
-          <details className="rounded-xl border border-border/60 bg-muted">
-            <summary className="cursor-pointer px-4 py-3 text-xs font-medium text-foreground/65">Canonical JSON Schema</summary>
+          <details className="group rounded-xl border border-border/60 bg-muted">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-3 text-xs font-medium text-foreground/65 [&::-webkit-details-marker]:hidden">
+              <ArrowDown2Filled className="h-3 w-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" />
+              Canonical JSON Schema
+            </summary>
             <pre className="max-h-[560px] overflow-auto border-t border-border/60 p-4 text-[10px] leading-relaxed text-foreground/55">
               {JSON.stringify(shape.schema, null, 2)}
             </pre>
@@ -391,6 +411,20 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
 export function DataShapesCatalog() {
   const [catalog, setCatalog] = useState<RuntimeDataShapeCatalog | null>(null);
   const [selectedId, setSelectedId] = useState<string>("");
+  const detailRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Below lg the detail panel stacks under a fixed-height list, so selecting a
+   * shape would otherwise re-render it off-screen with no visible feedback.
+   * Only user selections scroll — the initial auto-select must not yank the page.
+   */
+  const selectShape = useCallback((id: string) => {
+    setSelectedId(id);
+    if (typeof window === "undefined" || window.matchMedia("(min-width: 1024px)").matches) return;
+    // The wrapper is always mounted and its position does not depend on which
+    // shape is selected, so this needs no wait for the new content to render.
+    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -507,13 +541,16 @@ export function DataShapesCatalog() {
                   <WorkflowSidebarItem
                     key={shape.id}
                     selected={shape.id === selected?.id}
-                    onClick={() => setSelectedId(shape.id)}
+                    onClick={() => selectShape(shape.id)}
                     accentClassName={statusBar(shape.evidence.status)}
                     className="px-3 py-2.5"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-medium text-foreground/75">{shape.name}</div>
+                        <div className="flex min-w-0 items-center gap-1">
+                          <span className="truncate text-xs font-medium text-foreground/75">{shape.name}</span>
+                          <ShapeCopyButton shape={shape} />
+                        </div>
                         <div className="mt-1 text-[10px] text-foreground/35">
                           {shape.scope} · {shape.format}
                           {shape.runnerLineage ? ` · ${runnerMigrationCoverage(shape.runnerLineage).typedPercent}% typed` : ""}
@@ -554,11 +591,13 @@ export function DataShapesCatalog() {
         </div>
       </WorkflowSidebarPane>
 
-      {selected ? <ShapeDetail key={selected.id} shape={selected} /> : (
-        <div className="flex min-h-[260px] flex-1 items-center justify-center rounded-xl border border-border/60 bg-card text-xs text-foreground/35">
-          Select a data shape.
-        </div>
-      )}
+      <div ref={detailRef} className="flex min-w-0 flex-1 scroll-mt-4">
+        {selected ? <ShapeDetail key={selected.id} shape={selected} /> : (
+          <div className="flex min-h-[260px] flex-1 items-center justify-center rounded-xl border border-border/60 bg-card text-xs text-foreground/35">
+            Select a data shape.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -21,6 +21,7 @@ function runtimeShape(): RuntimeDataShape {
     readers: ["web/lib/runner-v2/bootstrap.ts"],
     runnerLineage: {
       usage: "runner-v2",
+      fieldRules: [{ path: "runnerV2", usage: "runner-v2" }],
       surfaces: [
         {
           id: "typed-run-metadata",
@@ -40,6 +41,7 @@ function runtimeShape(): RuntimeDataShape {
       status: "valid",
       artifactCount: 2,
       recordCount: 2,
+      schemaValidated: true,
       validCount: 2,
       invalidCount: 0,
       parseErrorCount: 0,
@@ -78,6 +80,44 @@ describe("data shape clipboard payload", () => {
         schema: shape.schema,
       },
     });
+  });
+
+  it("explains why an unvalidated shape reports zero valid records", () => {
+    const shape = runtimeShape();
+    shape.assurance = "typed";
+    shape.schemaPath = undefined;
+    shape.evidence = {
+      ...shape.evidence,
+      status: "observed",
+      schemaValidated: false,
+      validCount: 0,
+      invalidCount: 0,
+    };
+
+    const payload = buildDataShapeClipboardPayload(shape);
+
+    // validCount 0 is otherwise indistinguishable from "checked and all failed".
+    expect(payload.shape.evidence.schemaValidated).toBe(false);
+    expect(payload.shape.assuranceMeaning).toMatch(/not schema-gated/);
+    expect(payload.shape.evidence.statusMeaning).toMatch(/no canonical schema was available/);
+  });
+
+  it("includes field-level runner ownership without copying runtime values", () => {
+    const shape = runtimeShape();
+    shape.runnerLineage = {
+      ...shape.runnerLineage!,
+      usage: "shared",
+      fieldRules: [{ path: "runnerV2", usage: "runner-v2" }],
+    };
+    shape.evidence.fields = [
+      { path: "status", types: ["string"], occurrences: 2, source: "observed" },
+      { path: "runnerV2.attempts[].phase", types: ["string"], occurrences: 1, source: "observed" },
+    ];
+
+    expect(buildDataShapeClipboardPayload(shape).shape.evidence.fields).toEqual([
+      expect.objectContaining({ path: "status", runnerUsage: "shared" }),
+      expect.objectContaining({ path: "runnerV2.attempts[].phase", runnerUsage: "runner-v2" }),
+    ]);
   });
 
   it("allow-lists fields so undeclared runtime values cannot leak into copied JSON", () => {
