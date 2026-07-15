@@ -128,12 +128,42 @@ function routeConditionMatches(condition: string, eventName: string): boolean {
   }
 }
 
+// NOTE (2026-07-12): multi-trigger MERGE semantics are only half-solved here.
+// `.every()` treats multiple triggers as AND (all upstream must complete) — correct
+// for a parallel fan-in, but it deadlocks an OR-merge of MUTUALLY-EXCLUSIVE branches
+// (e.g. a "diamond": investigator routes to remover OR repointer, then a verifier
+// joins on either fix's event — only one sibling ever runs, so AND can never be
+// satisfied). Fixing that correctly needs the set of events that ACTUALLY fired
+// (a brancher's static `emits` is one of several conditional runtime events, so
+// static-emits reachability guesses wrong on the untaken branch), which is not
+// available at this call site — `chain.agents` here carry no status and no fired
+// events. See the full-fix plan (thread run status + fired events from run.json /
+// the events dir into decideNextRoute at completion-runner/recovery/reconcile).
 function prerequisitesComplete(target: RoutingAgent, agents: RoutingAgent[]): boolean {
   const triggers = target.triggers || [];
   if (triggers.length <= 1) return true;
   return triggers.every((trigger) => {
     const emitters = agents.filter((agent) => normalizeRouteEvent(agent.emits || "") === normalizeRouteEvent(trigger));
     return emitters.length === 0 || emitters.some((agent) => agent.status === "complete" || agent.status === "completed");
+  });
+}
+
+// Does this agent have a trigger already produced by a COMPLETED in-chain emitter?
+// Used by run resume to pick the true frontier (a trigger-eligible agent) instead of
+// the first pending agent by array order. The caller MUST hydrate agent statuses from
+// run.json (the resume route does). Correct for merge triggers whose direct emitter
+// has a single unambiguous `emits`; a chain whose upstream emits a *conditional*
+// (branch-key) event differing from its static `emits` needs the actually-fired event
+// set instead — same gap as prerequisitesComplete above.
+export function hasCompletedTrigger(target: RoutingAgent, agents: RoutingAgent[]): boolean {
+  const triggers = target.triggers || [];
+  return triggers.some((trigger) => {
+    const normalized = normalizeRouteEvent(trigger);
+    return agents.some((agent) =>
+      !!agent.emits
+      && normalizeRouteEvent(agent.emits) === normalized
+      && (agent.status === "complete" || agent.status === "completed"),
+    );
   });
 }
 

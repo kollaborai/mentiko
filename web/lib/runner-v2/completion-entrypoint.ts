@@ -1,11 +1,9 @@
 import { spawnSync } from "child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join } from "path";
-import { derivePtyDaemonName } from "@/lib/config";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
@@ -17,6 +15,7 @@ import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-
 import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
 import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
+import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -76,8 +75,15 @@ export function runRunnerV2CompletionEntrypoint(
   // directory, so an EVENTS_DIR that already equals the project dir is a no-op.
   const projectEventsDir = join(dirname(input.chainPath), "events");
   const events = readEventsFromDirs([eventsDir, projectEventsDir, join(runDir, "events")]);
-  const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId });
+  const generationDuplicate = alreadyCompletedGeneration(run, runJsonPath, stateDir, agent.id);
+  const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId })
+    || generationDuplicate;
   if (duplicate) {
+    if (!input.dryRun && generationDuplicate) {
+      killAgentSessions(input.sessionName, { stateDir, runId, env });
+      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
+      updateRunStatus(runJsonPath, "completed", undefined, input.now);
+    }
     return {
       status: "handled",
       runId,
@@ -145,7 +151,7 @@ export function runRunnerV2CompletionEntrypoint(
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
-      killAgentSessions(input.sessionName);
+      killAgentSessions(input.sessionName, { stateDir, runId, env });
     }
     return {
       status: "handled",
@@ -273,7 +279,7 @@ export function runRunnerV2CompletionEntrypoint(
       // verdict, so the bridge tears down the agent + monitor sessions itself.
       // Runs for every handled verdict — v1 kills sessions unconditionally in
       // phase 4 before its routing decisions; relaunches use fresh sessions.
-      killAgentSessions(input.sessionName);
+      killAgentSessions(input.sessionName, { stateDir, runId, env });
     }
 
     return {
@@ -289,6 +295,30 @@ export function runRunnerV2CompletionEntrypoint(
   } catch (error) {
     restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
     throw error;
+  }
+}
+
+function alreadyCompletedGeneration(
+  run: RunRecord,
+  runJsonPath: string,
+  stateDir: string,
+  agentId: string,
+): boolean {
+  if (run.status !== "completed") return false;
+  const attempt = [...readRunnerV2AttemptState(runJsonPath).attempts]
+    .reverse()
+    .find((candidate) => candidate.agentId === agentId);
+  if (attempt?.phase !== "completed" || attempt.terminalReason !== "completed_from_generation_artifact") return false;
+  const ledgerPath = join(stateDir, "generation-import.jsonl");
+  if (!existsSync(ledgerPath)) return false;
+  try {
+    return readFileSync(ledgerPath, "utf8").split("\n").some((line) => {
+      if (!line.trim()) return false;
+      const entry = JSON.parse(line) as { runId?: unknown; status?: unknown };
+      return entry.runId === run.id && entry.status === "complete";
+    });
+  } catch {
+    return false;
   }
 }
 
@@ -552,23 +582,11 @@ function runPtyMgr(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   args: string[],
 ): { status: number | null; stdout: string; stderr: string } | undefined {
-  const daemonName = derivePtyDaemonName(
-    env.MENTIKO_GLOBAL_ROOT || env.MENTIKO_ROOT || join(homedir(), ".mentiko"),
-    env.NAMESPACE_ID || "default",
-    env.ORG_ID || "default",
-  );
+  const scopedEnv = runnerV2PtyEnv(env);
   const result = spawnSync(resolvePtyMgrBin(env), args, {
     encoding: "utf8",
     timeout: positiveIntValue(env.MENTIKO_RUNNER_V2_PTY_PROBE_TIMEOUT_MS, 2_000),
-    env: stringEnv({
-      ...process.env,
-      ...env,
-      // Completion may be invoked by a monitor whose inherited env was
-      // stripped or stale. Always probe the daemon derived from this run's
-      // namespace/org; otherwise pty-mgr silently falls back to `default` and
-      // reports the live agent session as missing.
-      PTY_DAEMON: daemonName,
-    }),
+    env: stringEnv(scopedEnv),
   });
   if (result.error) return undefined;
   return {

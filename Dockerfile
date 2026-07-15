@@ -122,6 +122,15 @@ RUN if [ -f /build/web/lib/runner-v2/complete-cli.ts ]; then \
         --outfile=/context/lib/runner-v2-complete.js; \
     fi
 
+# compile typed routed-agent launcher; routed completion must not re-enter chain-runner.sh.
+RUN if [ -f /build/web/lib/runner-v2/launch-agent-cli.ts ]; then \
+      echo "=== compiling runner-v2 routed-agent launcher ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/launch-agent-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-launch-agent.js; \
+    fi
+
 # compile monitor-v2 bridge so tenant runtime does not need tsx.
 RUN if [ -f /build/web/lib/runner-v2/monitor-cli.ts ]; then \
       echo "=== compiling runner-v2 monitor bridge ===" && \

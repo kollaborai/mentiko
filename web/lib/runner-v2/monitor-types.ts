@@ -1,6 +1,6 @@
 // Typed port of the shell chain monitor (lib/agent-functions.sh monitor-chain-agent
 // :919 + helpers). Behind MENTIKO_MONITOR_V2. See
-// docs/orchestration/contracts/monitor-v2-contract.json.
+// docs/orchestration/contracts/monitor-v2.design.json.
 //
 // The decision logic lives here as a pure reducer so every invariant
 // (stale != complete, sticky latch, durable nudge budget, echo grace,
@@ -60,8 +60,8 @@ export interface MonitorObservation {
   captureHash: string;
   // monitor_completion_event_file found a declared emits event for this run.
   completionEventPresent: boolean;
-  // agent-completion-latched: sticky AGENT_COMPLETE marker (durable transcript)
-  // OR emitted event. Authoritative "done" signal.
+  // agent-completion-latched: declared event, durable AGENT_COMPLETE marker,
+  // or a run/attempt-scoped compatible core-generation artifact.
   latched: boolean;
   // detectContextExhaustion: the capture shows an API-level context-window-limit
   // error this tick. Debounced in the reducer before it terminalizes the run.

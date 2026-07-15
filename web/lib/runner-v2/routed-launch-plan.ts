@@ -32,9 +32,10 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
     return decision.agentIds.map((agentId) => ({
       kind: "fan-out",
       agentIds: [agentId],
-      command: runnerCommand(context, ["--start", agentId]),
+      command: runnerCommand(context, [agentId]),
       env: {
         ...context.env,
+        ...typedLaunchEnv(context),
         AGENT_FAN_GROUP_AGENT_ID: agentId,
         ...(decision.fanIn ? { AGENT_FAN_GROUP_ID: context.fanGroupId || decision.fanIn } : {}),
       },
@@ -50,8 +51,8 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
     return [{
       kind: "parallel",
       agentIds: [...decision.agentIds],
-      command: runnerCommand(context, ["--parallel", ...decision.agentIds]),
-      env: { ...context.env },
+      command: runnerCommand(context, decision.agentIds),
+      env: { ...context.env, ...typedLaunchEnv(context) },
       detached: true,
     }];
   }
@@ -59,28 +60,26 @@ export function buildRoutedLaunchPlans(decision: RoutingDecision, context: Route
   return [{
     kind: "single",
     agentIds: [decision.agentIds[0]],
-    command: runnerCommand(context, ["--start", decision.agentIds[0]]),
-    env: { ...context.env },
+    command: runnerCommand(context, [decision.agentIds[0]]),
+    env: { ...context.env, ...typedLaunchEnv(context) },
     detached: true,
   }];
 }
 
-// The only flags this file ever emits into tailArgs, and only ever as the
-// leading element (see the three call sites above: ["--start", agentId],
-// ["--parallel", ...agentIds], ["--start", agentIds[0]]). Matching by value
-// alone would let an agent id that happens to equal one of these strings
-// slip through unescaped too, so KNOWN_FLAGS only exempts index 0.
-const KNOWN_FLAGS = new Set(["--start", "--parallel", "--debug"]);
+function typedLaunchEnv(context: RoutedLaunchContext): Record<string, string> {
+  return {
+    MENTIKO_RUN_DIR: context.runDir,
+    ...(context.workspacePath ? { MENTIKO_WORKSPACE_PATH: context.workspacePath } : {}),
+    ...(context.taskId ? { MENTIKO_TASK_ID: context.taskId } : {}),
+    ...(context.debug ? { MENTIKO_DEBUG: "1" } : {}),
+    MENTIKO_RUNNER_V2: "1",
+    MENTIKO_RUNNER_V2_COMPLETION: "1",
+  };
+}
 
-function runnerCommand(context: RoutedLaunchContext, tailArgs: string[]): string {
-  const runner = join(config.codeRoot, "lib", "chain-runner.sh");
-  const args = [
-    shellEscape(runner),
-    shellEscape(context.chainPath),
-    ...(context.workspacePath ? ["--workspace", shellEscape(context.workspacePath)] : []),
-    ...(context.taskId ? ["--task", shellEscape(context.taskId)] : []),
-    ...(context.debug ? ["--debug"] : []),
-    ...tailArgs.map((arg, index) => (index === 0 && KNOWN_FLAGS.has(arg) ? arg : shellEscape(arg))),
-  ];
-  return `bash ${args.join(" ")}`;
+function runnerCommand(context: RoutedLaunchContext, agentIds: string[]): string {
+  const compiled = join(config.codeRoot, "lib", "runner-v2-launch-agent.js");
+  const development = join(config.codeRoot, "web", "scripts", "runner-v2-launch-agent.cjs");
+  const args = [shellEscape(context.chainPath), ...agentIds.map(shellEscape)].join(" ");
+  return `if [ -f ${shellEscape(compiled)} ]; then node ${shellEscape(compiled)} ${args}; else node ${shellEscape(development)} ${args}; fi`;
 }

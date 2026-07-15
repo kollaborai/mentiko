@@ -93,11 +93,16 @@ export function updateRunStatus(
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    const successfulTerminal = status === "completed";
     return {
       ...current,
       status,
-      ...(statusMessage ? { status_message: statusMessage } : {}),
-      ...(TERMINAL_RUN_STATUSES.has(status) && !current.completed ? { completed: nowIso(now) } : {}),
+      ...(statusMessage
+        ? { status_message: statusMessage }
+        : successfulTerminal ? { status_message: undefined } : {}),
+      ...(TERMINAL_RUN_STATUSES.has(status) && (!current.completed || (successfulTerminal && current.status !== "completed"))
+        ? { completed: nowIso(now) }
+        : {}),
     };
   });
 }

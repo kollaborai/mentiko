@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { createLiveMonitorIO, selectTranscriptFromCapture, transcriptRootFromProfile } from "@/lib/runner-v2/monitor-live-io";
+import { createLiveMonitorIO, hasAuthoritativeGenerationArtifact, selectTranscriptFromCapture, transcriptRootFromProfile } from "@/lib/runner-v2/monitor-live-io";
+import { runChainMonitor } from "@/lib/runner-v2/monitor";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 
@@ -27,9 +28,15 @@ jest.mock("@/lib/config", () => ({
     `mentiko-${root.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "root"}-${namespace}-${org}`,
   default: {
     codeRoot: "/repo",
+    globalRoot: "/data",
+    namespaceId: "default",
+    orgId: "default",
   },
   config: {
     codeRoot: "/repo",
+    globalRoot: "/data",
+    namespaceId: "default",
+    orgId: "default",
   },
 }));
 
@@ -48,11 +55,13 @@ function tempRoot() {
 function fixture() {
   const root = tempRoot();
   const runDir = join(root, "runs", "run-123");
+  const workspace = join(root, "workspace");
   const eventsDir = join(root, "events");
   const stateDir = join(root, "state");
   mkdirSync(runDir, { recursive: true });
   mkdirSync(eventsDir, { recursive: true });
   mkdirSync(stateDir, { recursive: true });
+  mkdirSync(workspace, { recursive: true });
   const runJsonPath = join(runDir, "run.json");
   const run = createRunRecord({ chainName: "chain", goal: "goal" });
   updateRunJson(runJsonPath, () => ({
@@ -61,10 +70,19 @@ function fixture() {
     status: "running",
     agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "running" }],
     sessions: ["writer-run-123"],
+    workspacePath: workspace,
+    runnerV2: {
+      attempts: [{
+        id: "run-123:writer:1", runId: "run-123", agentId: "writer",
+        phase: "instructions_submitted", instructionLedger: [], recoveryDecisionCount: 0,
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+        updatedAt: new Date().toISOString(), transitions: [],
+      }],
+    },
   }));
   const chainPath = join(root, "chain.json");
   writeFileSync(chainPath, "{}\n");
-  return { root, runDir, eventsDir, stateDir, runJsonPath, chainPath };
+  return { root, runDir, workspace, eventsDir, stateDir, runJsonPath, chainPath };
 }
 
 function liveIo(f: ReturnType<typeof fixture>, extraEnv: Record<string, string> = {}) {
@@ -94,13 +112,48 @@ beforeEach(() => {
 });
 
 describe("monitor-v2 live IO", () => {
+  it("accepts only a current, contract-compatible core generation artifact", () => {
+    const f = fixture();
+    mkdirSync(join(f.runDir, "artifacts"), { recursive: true });
+    mkdirSync(join(f.runDir, ".internal"), { recursive: true });
+    writeFileSync(join(f.runDir, ".internal", "generation-import-token"), "token\n");
+    writeFileSync(f.chainPath, JSON.stringify({ metadata: { coreGenerationChain: true } }));
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      metadata: { generationJobId: "job-1", generationKind: "task" },
+      runnerV2: {
+        attempts: [{
+          id: "run-123:writer:1", runId: "run-123", agentId: "writer",
+          phase: "instructions_submitted", instructionLedger: [], recoveryDecisionCount: 0,
+          createdAt: new Date(Date.now() - 10_000).toISOString(),
+          updatedAt: new Date().toISOString(), transitions: [],
+        }],
+      },
+    }));
+    writeFileSync(join(f.runDir, "artifacts", "generation-result.json"), JSON.stringify({
+      route: "task",
+      task: { title: "Generated task", type: "task", priority: 2 },
+    }));
+    const context = {
+      sessionName: "writer-run-123", chainPath: f.chainPath, runId: "run-123",
+      runDir: f.runDir, runJsonPath: f.runJsonPath, agentId: "writer",
+      workspaceType: "local", eventsDir: f.eventsDir, stateDir: f.stateDir,
+      namespaceId: "default", orgId: "default", env: {},
+    };
+    expect(hasAuthoritativeGenerationArtifact(context)).toBe(true);
+    writeFileSync(join(f.runDir, "artifacts", "generation-result.json"), JSON.stringify({ unrelated: true }));
+    expect(hasAuthoritativeGenerationArtifact(context)).toBe(false);
+  });
+
   it("latches only from durable assistant transcript marker or event file", async () => {
     const f = fixture();
     const transcript = join(f.root, "transcript.jsonl");
     writeFileSync(transcript, [
       JSON.stringify({
         type: "assistant",
-        message: { content: [{ type: "text", text: "work\nAGENT_COMPLETE\n" }] },
+        cwd: f.workspace,
+        timestamp: new Date().toISOString(),
+        message: { content: [{ type: "text", text: "run-123\nwork\nAGENT_COMPLETE\n" }] },
       }),
       "",
     ].join("\n"));
@@ -123,7 +176,9 @@ describe("monitor-v2 live IO", () => {
     writeFileSync(transcript, [
       JSON.stringify({
         type: "assistant",
-        message: { content: [{ type: "text", text: "work\nAGENT_COMPLETE\n" }] },
+        cwd: f.workspace,
+        timestamp: new Date().toISOString(),
+        message: { content: [{ type: "text", text: "run-123\nwork\nAGENT_COMPLETE\n" }] },
       }),
       "",
     ].join("\n"));
@@ -387,36 +442,144 @@ function readDirOne(dir: string): string {
 describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker resolution)", () => {
   const REAL = "9c775526-1481-48dd-99cb-bc8da80d47bc";
   const DECOY = "c11fb05f-fdf5-43ba-b76c-dd4f28c4d7a0";
-  // Only the real session UUID has a transcript file on disk.
-  const resolve = (uuid: string) => (uuid === REAL ? `/transcripts/${uuid}.jsonl` : "");
 
-  it("skips a decoy UUID that appears FIRST in the capture and resolves the real one", () => {
-    // Reproduces the monitor completion hang: the agent's goal echoes a decision_id
-    // (a UUID) into the scrollback, so it precedes the CLI status-bar session UUID.
-    // First-match resolution picked the decoy (no file) and never found the marker.
-    const capture = [
-      `DECISION_ID: ${DECOY}`,
-      "...agent transcript scroll...",
-      "AGENT_COMPLETE",
-      `bypass permissions on  ${REAL}   104416 tokens`,
-    ].join("\n");
-    expect(selectTranscriptFromCapture(capture, resolve)).toBe(`/transcripts/${REAL}.jsonl`);
-  });
-
-  it("returns '' when no UUID in the capture resolves to a transcript file", () => {
-    expect(selectTranscriptFromCapture(`only ${DECOY} here`, resolve)).toBe("");
+  it("fails closed when no run or attempt identity boundary is provided", () => {
+    expect(selectTranscriptFromCapture(`${DECOY}\n${REAL}`, () => "/transcript.jsonl")).toBe("");
   });
 
   it("returns '' when the capture has no UUID at all", () => {
-    expect(selectTranscriptFromCapture("no uuids on this screen", resolve)).toBe("");
+    expect(selectTranscriptFromCapture("no uuids on this screen", () => "/transcript.jsonl", {
+      workspacePath: "/workspace/current",
+    })).toBe("");
   });
 
   it("is case-insensitive and de-duplicates repeated UUIDs before resolving", () => {
+    const root = tempRoot();
+    const realPath = join(root, `${REAL}.jsonl`);
+    writeFileSync(realPath, JSON.stringify({
+      type: "assistant", sessionId: REAL, cwd: "/workspace/current",
+      timestamp: "2026-07-11T20:01:00.000Z",
+    }));
     const capture = `${REAL.toUpperCase()} ... ${REAL} ... ${REAL}`;
     const seen: string[] = [];
-    const spy = (uuid: string) => { seen.push(uuid); return `/transcripts/${uuid}.jsonl`; };
-    expect(selectTranscriptFromCapture(capture, spy)).toBe(`/transcripts/${REAL}.jsonl`);
+    const spy = (uuid: string) => { seen.push(uuid); return realPath; };
+    expect(selectTranscriptFromCapture(capture, spy, {
+      workspacePath: "/workspace/current",
+      attemptStartedAt: "2026-07-11T20:00:00.000Z",
+      now: new Date("2026-07-11T20:02:00.000Z"),
+    })).toBe(realPath);
     expect(seen).toEqual([REAL]); // lowercased + deduped to a single resolve attempt
+  });
+
+  it("selects the later real transcript and latches on the first tick when both UUID files exist", async () => {
+    const f = fixture();
+    const transcriptRoot = join(f.root, "transcripts");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const decoyPath = join(transcriptRoot, `${DECOY}.jsonl`);
+    const realPath = join(transcriptRoot, `${REAL}.jsonl`);
+    const attemptAt = new Date(Date.now() - 30_000).toISOString();
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      workspacePath: f.workspace,
+      runnerV2: {
+        attempts: [{
+          id: `${run!.id}:writer:1`, runId: run!.id, agentId: "writer",
+          phase: "instructions_submitted", instructionLedger: [], recoveryDecisionCount: 0,
+          createdAt: attemptAt, updatedAt: attemptAt, transitions: [],
+        }],
+      },
+    }));
+    writeFileSync(decoyPath, `${JSON.stringify({
+      type: "assistant", sessionId: DECOY, cwd: join(f.root, "other-workspace"),
+      timestamp: new Date().toISOString(),
+      message: { content: [{ type: "text", text: "unrelated work" }] },
+    })}\n`);
+    writeFileSync(realPath, `${JSON.stringify({
+      type: "assistant", sessionId: REAL, cwd: f.workspace,
+      timestamp: new Date().toISOString(),
+      message: { content: [{ type: "text", text: "done\nAGENT_COMPLETE\n" }] },
+    })}\n`);
+    const profile = join(f.root, "profile.json");
+    writeFileSync(profile, JSON.stringify({ log_path: transcriptRoot }));
+    ptyMock.alive.mockResolvedValue(true);
+    ptyMock.capture.mockResolvedValue(`${DECOY}\nstatus ${REAL}`);
+    ptyMock.pid.mockResolvedValue(undefined);
+    ptyMock.spawn.mockResolvedValue(undefined);
+
+    const io = liveIo(f, { MENTIKO_AGENT_PROFILE_PATH: profile });
+    const result = await runChainMonitor("writer-run-123", io, {}, 0);
+
+    expect(result.reason).toBe("complete");
+    expect(result.ticks).toBe(1);
+    expect(ptyMock.sendRaw).not.toHaveBeenCalled();
+    expect(ptyMock.spawn).toHaveBeenCalledTimes(1);
+    expect(selectTranscriptFromCapture(`${DECOY}\n${REAL}`, (uuid) => (
+      uuid === DECOY ? decoyPath : uuid === REAL ? realPath : ""
+    ), {
+      workspacePath: f.workspace,
+      attemptStartedAt: attemptAt,
+    })).toBe(realPath);
+  });
+
+  it("rejects an existing unrelated transcript even when it contains an old AGENT_COMPLETE", () => {
+    const root = tempRoot();
+    const decoyPath = join(root, `${DECOY}.jsonl`);
+    const realPath = join(root, `${REAL}.jsonl`);
+    writeFileSync(decoyPath, JSON.stringify({
+      type: "assistant", sessionId: DECOY, cwd: "/workspace/unrelated",
+      timestamp: "2026-07-11T19:59:00.000Z",
+      message: { content: [{ type: "text", text: "AGENT_COMPLETE" }] },
+    }));
+    writeFileSync(realPath, JSON.stringify({
+      type: "assistant", sessionId: REAL, cwd: "/workspace/current/subdir",
+      timestamp: "2026-07-11T20:01:00.000Z",
+      message: { content: [{ type: "text", text: "still working" }] },
+    }));
+    const paths: Record<string, string> = { [DECOY]: decoyPath, [REAL]: realPath };
+    expect(selectTranscriptFromCapture(`${DECOY}\n${REAL}`, (uuid) => paths[uuid] || "", {
+      workspacePath: "/workspace/current",
+      attemptStartedAt: "2026-07-11T20:00:00.000Z",
+      now: new Date("2026-07-11T20:02:00.000Z"),
+    })).toBe(realPath);
+  });
+
+  it("rejects a same-workspace transcript whose timestamps predate the current attempt", () => {
+    const root = tempRoot();
+    const stalePath = join(root, `${DECOY}.jsonl`);
+    const realPath = join(root, `${REAL}.jsonl`);
+    writeFileSync(stalePath, JSON.stringify({
+      type: "assistant", sessionId: DECOY, cwd: "/workspace/current",
+      timestamp: "2026-07-11T18:00:00.000Z",
+      message: { content: [{ type: "text", text: "AGENT_COMPLETE" }] },
+    }));
+    writeFileSync(realPath, JSON.stringify({
+      type: "assistant", sessionId: REAL, cwd: "/workspace/current",
+      timestamp: "2026-07-11T20:01:00.000Z",
+      message: { content: [{ type: "text", text: "working" }] },
+    }));
+    const paths: Record<string, string> = { [DECOY]: stalePath, [REAL]: realPath };
+    expect(selectTranscriptFromCapture(`${DECOY}\n${REAL}`, (uuid) => paths[uuid] || "", {
+      workspacePath: "/workspace/current",
+      attemptStartedAt: "2026-07-11T20:00:00.000Z",
+      now: new Date("2026-07-11T20:02:00.000Z"),
+    })).toBe(realPath);
+  });
+
+  it("fails closed when two transcripts satisfy the same workspace and attempt identity", () => {
+    const root = tempRoot();
+    const paths = Object.fromEntries([DECOY, REAL].map((uuid) => {
+      const path = join(root, `${uuid}.jsonl`);
+      writeFileSync(path, JSON.stringify({
+        type: "assistant", sessionId: uuid, cwd: "/workspace/current",
+        timestamp: "2026-07-11T20:01:00.000Z",
+      }));
+      return [uuid, path];
+    }));
+    expect(selectTranscriptFromCapture(`${DECOY}\n${REAL}`, (uuid) => paths[uuid] || "", {
+      workspacePath: "/workspace/current",
+      attemptStartedAt: "2026-07-11T20:00:00.000Z",
+      now: new Date("2026-07-11T20:02:00.000Z"),
+    })).toBe("");
   });
 });
 

@@ -22,17 +22,20 @@ describe("runner-v2 routed launch plans", () => {
     env: { MENTIKO_RUN_ID: "run-1" },
   };
 
-  it("builds a single --start launch plan", () => {
+  it("builds a single typed routed launch plan", () => {
     expect(buildRoutedLaunchPlans({
       action: "launch",
       agentIds: ["reviewer"],
       reason: "trigger match",
-    }, context)).toEqual([{
+    }, context)).toEqual([expect.objectContaining({
       kind: "single",
-      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start 'reviewer'",
-      env: { MENTIKO_RUN_ID: "run-1" },
+      agentIds: ["reviewer"],
+      command: expect.stringContaining("runner-v2-launch-agent"),
+      env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", MENTIKO_RUN_DIR: "/runs/run-1", MENTIKO_WORKSPACE_PATH: "/workspace" }),
       detached: true,
-    }]);
+    })]);
+    expect(buildRoutedLaunchPlans({ action: "launch", agentIds: ["reviewer"], reason: "trigger match" }, context)[0].command)
+      .not.toContain("chain-runner.sh");
   });
 
   it("shell-escapes a '--'-prefixed agent id instead of treating it as a bare flag", () => {
@@ -42,7 +45,7 @@ describe("runner-v2 routed launch plans", () => {
       reason: "trigger match",
     }, context)[0]).toMatchObject({
       kind: "single",
-      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start '--evil; rm -rf'",
+      command: expect.stringContaining("'--evil; rm -rf'"),
     });
   });
 
@@ -53,18 +56,19 @@ describe("runner-v2 routed launch plans", () => {
       reason: "trigger match",
     }, context)[0]).toMatchObject({
       kind: "single",
-      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start '--start'",
+      command: expect.stringContaining("'--start'"),
     });
   });
 
-  it("builds one --parallel launch plan for multiple agents", () => {
+  it("builds one typed parallel launch plan for multiple agents", () => {
     expect(buildRoutedLaunchPlans({
       action: "launch",
       agentIds: ["a", "b"],
       reason: "trigger match",
     }, context)[0]).toMatchObject({
       kind: "parallel",
-      command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --parallel 'a' 'b'",
+      agentIds: ["a", "b"],
+      command: expect.stringMatching(/runner-v2-launch-agent.*'a' 'b'/),
       detached: true,
     });
   });
@@ -77,20 +81,22 @@ describe("runner-v2 routed launch plans", () => {
       fanIn: "merge",
       waitFor: "all",
     }, context)).toEqual([
-      {
+      expect.objectContaining({
         kind: "fan-out",
-        command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start 'a'",
-        env: { MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "a", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" },
+        agentIds: ["a"],
+        command: expect.stringMatching(/runner-v2-launch-agent.*'a'/),
+        env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "a", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
         logPath: "/runs/run-1/fanout-a.log",
         detached: true,
-      },
-      {
+      }),
+      expect.objectContaining({
         kind: "fan-out",
-        command: "bash '/repo/lib/chain-runner.sh' '/runs/run-1/chain.json' --workspace '/workspace' --task 'task-1' --debug --start 'b'",
-        env: { MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "b", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" },
+        agentIds: ["b"],
+        command: expect.stringMatching(/runner-v2-launch-agent.*'b'/),
+        env: expect.objectContaining({ MENTIKO_RUN_ID: "run-1", AGENT_FAN_GROUP_AGENT_ID: "b", AGENT_FAN_GROUP_ID: "draft-ready-20260626-1234" }),
         logPath: "/runs/run-1/fanout-b.log",
         detached: true,
-      },
+      }),
     ]);
   });
 });

@@ -9,7 +9,7 @@ import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 // pure function or a plain filesystem operation, so it is unit-tested against a
 // temp dir. The LIVE-SYSTEM wrappers (PTY capture, pgrep process-gone arming,
 // completion-session spawn) are assembled on top of this in monitor-io-live.ts
-// and can only be proven by a real chain run — see monitor-v2-contract.json
+// and can only be proven by a real chain run — see monitor-v2.design.json
 // readiness_gate. Ports the state-file + event-scan + latch pieces of
 // lib/agent-functions.sh monitor-chain-agent / agent-completion-latched.
 

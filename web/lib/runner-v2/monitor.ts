@@ -24,20 +24,24 @@ export interface MonitorDriverIO {
   hasSession(session: string): Promise<boolean>;
   // everything observable about a live session this tick: local process death,
   // md5 of the last 20 captured lines, whether a declared completion event is on
-  // disk, and the sticky AGENT_COMPLETE/event latch.
+  // disk, and the sticky event/marker/core-generation-artifact latch.
   observe(session: string): Promise<Omit<MonitorObservation, "sessionAlive">>;
   // type a nudge into the session (send-keys + CR)
   sendNudge(session: string, message: string): Promise<void>;
   // launch the completion handler (typed completion bridge) in a separate pty
   onComplete(session: string): Promise<void>;
+  // One authoritative, side-effect-free completion probe. The driver calls it
+  // immediately before every terminal non-success mutation to close the race
+  // between the last observation and failure/blocking classification.
+  recheckCompletion(session: string): Promise<boolean>;
   // dead != succeeded: monitor-agent-died (event-first) — completes only if a real
   // event exists, else records failure; never fabricates success.
-  onDied(session: string): Promise<void>;
+  onDied(session: string): Promise<"complete" | "terminal">;
   // stale != complete: monitor-agent-stalled — surfaces BLOCKED, never emits success.
-  onStalled(session: string, kind: "blocked" | "escalate", count: number): Promise<void>;
+  onStalled(session: string, kind: "blocked" | "escalate", count: number): Promise<"complete" | "terminal">;
   // context-window-limit wedge (debounced) — FAILS the run with a clear reason AND
   // tears down the unresumable session (a context-full agent is pure dead weight).
-  onContextExhausted(session: string): Promise<void>;
+  onContextExhausted(session: string): Promise<"complete" | "terminal">;
   sleep(seconds: number): Promise<void>;
   loadState(session: string): MonitorState;
   saveState(session: string, state: MonitorState): void;
@@ -74,6 +78,11 @@ export async function runChainMonitor(
   let retries = 0;
   while (!(await io.hasSession(session))) {
     if (++retries >= SESSION_WAIT_RETRIES) {
+      if (await io.recheckCompletion(session)) {
+        await io.onComplete(session);
+        io.clearState(session);
+        return { reason: "complete", ticks: 0, finalState: io.loadState(session) };
+      }
       log(`monitor: session '${session}' not found after ${SESSION_WAIT_RETRIES * 3}s`);
       return { reason: "session-gone", ticks: 0, finalState: io.loadState(session) };
     }
@@ -97,10 +106,23 @@ export async function runChainMonitor(
 
     switch (tick.action.type) {
       case "session-gone":
+        if (await io.recheckCompletion(session)) {
+          await io.onComplete(session);
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
         return { reason: "session-gone", ticks, finalState: state };
       case "died":
-        await io.onDied(session);
+        if (await io.recheckCompletion(session)) {
+          await io.onComplete(session);
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
+        if (await io.onDied(session) === "complete") {
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
         return { reason: "died", ticks, finalState: state };
       case "complete":
@@ -108,15 +130,39 @@ export async function runChainMonitor(
         io.clearState(session);
         return { reason: "complete", ticks, finalState: state };
       case "stalled-blocked":
-        await io.onStalled(session, "blocked", state.staleCount);
+        if (await io.recheckCompletion(session)) {
+          await io.onComplete(session);
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
+        if (await io.onStalled(session, "blocked", state.staleCount) === "complete") {
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
         return { reason: "stalled-blocked", ticks, finalState: state };
       case "stalled-escalate":
-        await io.onStalled(session, "escalate", state.nudgeCount);
+        if (await io.recheckCompletion(session)) {
+          await io.onComplete(session);
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
+        if (await io.onStalled(session, "escalate", state.nudgeCount) === "complete") {
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
         return { reason: "stalled-escalate", ticks, finalState: state };
       case "context-exhausted":
-        await io.onContextExhausted(session);
+        if (await io.recheckCompletion(session)) {
+          await io.onComplete(session);
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
+        if (await io.onContextExhausted(session) === "complete") {
+          io.clearState(session);
+          return { reason: "complete", ticks, finalState: state };
+        }
         io.clearState(session);
         return { reason: "context-exhausted", ticks, finalState: state };
       case "nudge-finish":

@@ -69,6 +69,26 @@ describe("runner-v2 run-state", () => {
     expect(updated.completed).toBe("2026-06-25T00:00:00Z");
   });
 
+  it("replaces a failed completion timestamp once during successful recovery, then keeps it stable", () => {
+    const file = runPath();
+    const run = createRunRecord({ chainName: "chain", goal: "goal" });
+    updateRunJson(file, () => ({
+      ...run,
+      status: "failed",
+      status_message: "stale monitor failure",
+      completed: "2026-06-25T00:00:00Z",
+    }));
+
+    const recoveredAt = new Date("2026-07-11T20:00:00.000Z");
+    const replayedAt = new Date("2026-07-11T21:00:00.000Z");
+    const recovered = updateRunStatus(file, "completed", undefined, recoveredAt);
+    const replayed = updateRunStatus(file, "completed", undefined, replayedAt);
+
+    expect(recovered.completed).toBe(recoveredAt.toISOString());
+    expect(recovered.status_message).toBeUndefined();
+    expect(replayed.completed).toBe(recoveredAt.toISOString());
+  });
+
   it("promotes a launched agent via addRunSession and dedupes sessions", () => {
     const file = runPath();
     const run = createRunRecord({ chainName: "chain", goal: "goal" });

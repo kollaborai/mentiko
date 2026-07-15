@@ -24,6 +24,7 @@ import { getProfile } from "@/lib/agents/agent-profile-storage";
 import { checkRunAccess } from "@/lib/auth/run-acl";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
+import { hasCompletedTrigger, type RoutingAgent } from "@/lib/runner-v2/routing";
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -112,9 +113,40 @@ export const POST = withErrorHandling(async (
 
   await Promise.allSettled(staleSessions.map((s) => pty.kill(s)));
 
-  // find the first agent to resume from
-  // priority: first "running" (was interrupted), then first "pending"
+  // build a trigger-aware view so we resume the actual frontier — a pending agent
+  // whose trigger event was already produced — rather than the first pending agent
+  // by array order. That positional pick could select a sibling stranded on a
+  // branch that was never taken (regression: run-1783832264355-7d9c3cce resumed
+  // source-repointer after the remover had already resolved the bug, contradicting
+  // itself and failing the run). Falls back to positional order if the chain can't
+  // be parsed.
+  let frontierIds = new Set<string>();
+  try {
+    const chainForRouting = JSON.parse(readFileSync(chainPath, "utf-8"));
+    const routingAgents: RoutingAgent[] = (chainForRouting.agents || []).map(
+      (a: { id: string; triggers?: string[]; emits?: string }) => ({
+        id: a.id,
+        triggers: a.triggers,
+        emits: a.emits,
+        status: run.agents.find((ra) => ra.id === a.id)?.status,
+      }),
+    );
+    frontierIds = new Set(
+      routingAgents
+        .filter((a) => a.status !== "complete" && hasCompletedTrigger(a, routingAgents))
+        .map((a) => a.id),
+    );
+  } catch { /* fall back to positional selection */ }
+
+  // find the agent to resume from
+  // priority: interrupted (running/stopped) > trigger-eligible frontier > first pending
+  // NOTE: the frontier tier matches ANY incomplete frontier agent, not just pending —
+  // in a stopped/failed run the stranded agents are cancelled/stopped/failed, not
+  // pending (evidence run run-1783833704281-b9b585d6 had fix-verifier "cancelled").
+  // frontierIds already excludes completed agents, and the reset loop below flips
+  // whatever we pick back to pending before relaunch.
   const resumeAgent = incomplete.find((a) => a.status === "running" || a.status === "stopped")
+    || incomplete.find((a) => frontierIds.has(a.id))
     || incomplete.find((a) => a.status === "pending")
     || incomplete[0];
 

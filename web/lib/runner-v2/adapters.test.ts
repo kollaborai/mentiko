@@ -752,23 +752,53 @@ describe("runner-v2 adapters", () => {
   it("kills the monitor session before the agent session via the shell transport", async () => {
     const { killAgentSessions } = await import("@/lib/runner-v2/adapters");
     (spawnSync as jest.Mock).mockClear();
+    (spawnSync as jest.Mock).mockImplementation((_cmd: string, args: string[]) => (
+      args[0] === "alive"
+        ? { status: 1, stdout: "", stderr: "not found" }
+        : { status: 0, stdout: "removed", stderr: "" }
+    ));
 
-    const removed = killAgentSessions("workspace-writer-run-9");
+    const cleanup = killAgentSessions("workspace-writer-run-9", {
+      env: {
+        MENTIKO_GLOBAL_ROOT: "/tmp/runner-v2-cleanup-root",
+        NAMESPACE_ID: "tenant-a",
+        ORG_ID: "team-a",
+        PTY_DAEMON: "wrong-inherited-daemon",
+      },
+    });
 
-    expect(removed).toEqual(["monitor-workspace-writer-run-9", "workspace-writer-run-9"]);
+    expect(cleanup).toEqual({
+      daemonName: expect.stringMatching(/^mentiko-.*-tenant-a-team-a$/),
+      removed: ["monitor-workspace-writer-run-9", "workspace-writer-run-9"],
+      failed: [],
+    });
     const killCalls = (spawnSync as jest.Mock).mock.calls;
-    expect(killCalls).toHaveLength(2);
+    expect(killCalls).toHaveLength(4);
     expect(killCalls[0][0]).toMatch(/bin\/p$/);
-    expect(killCalls[0][1]).toEqual(["kill", "monitor-workspace-writer-run-9"]);
-    expect(killCalls[1][1]).toEqual(["kill", "workspace-writer-run-9"]);
+    expect(killCalls[0][1]).toEqual(["remove", "monitor-workspace-writer-run-9"]);
+    expect(killCalls[1][1]).toEqual(["alive", "monitor-workspace-writer-run-9"]);
+    expect(killCalls[2][1]).toEqual(["remove", "workspace-writer-run-9"]);
+    expect(killCalls[3][1]).toEqual(["alive", "workspace-writer-run-9"]);
+    expect(killCalls.every((call) => call[2].env.PTY_DAEMON === cleanup.daemonName)).toBe(true);
+    expect(killCalls.every((call) => call[2].env.PTY_DAEMON !== "wrong-inherited-daemon")).toBe(true);
   });
 
   it("reports no removals when the transport kill fails", async () => {
     const { killAgentSessions } = await import("@/lib/runner-v2/adapters");
     (spawnSync as jest.Mock).mockClear();
-    (spawnSync as jest.Mock).mockReturnValue({ status: 1, stdout: "", stderr: "not found" });
+    (spawnSync as jest.Mock).mockImplementation((_cmd: string, args: string[]) => (
+      args[0] === "alive"
+        ? { status: 0, stdout: "alive", stderr: "" }
+        : { status: 1, stdout: "", stderr: "remove failed" }
+    ));
 
-    expect(killAgentSessions("workspace-writer-run-9")).toEqual([]);
+    const stateDir = tempDir();
+    expect(killAgentSessions("workspace-writer-run-9", { stateDir, runId: "run-9" })).toEqual(expect.objectContaining({
+      removed: [],
+      failed: ["monitor-workspace-writer-run-9", "workspace-writer-run-9"],
+    }));
+    expect(readFileSync(join(stateDir, "pty-cleanup.jsonl"), "utf8")).toContain("pty-cleanup-failed");
+    expect(readFileSync(join(stateDir, "pty-cleanup.jsonl"), "utf8")).toContain('"retryable":true');
 
     (spawnSync as jest.Mock).mockReturnValue({ status: 0, stdout: "import ok", stderr: "" });
   });

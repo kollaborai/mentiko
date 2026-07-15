@@ -10,6 +10,7 @@ import { serializeRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/ev
 import { completeFanGroupMemberLocked, writeFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
 import { updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
+import { runnerV2PtyEnv, type RunnerV2Environment } from "@/lib/runner-v2/pty-scope";
 import { pendingHandoffs } from "@/lib/runner-v2/handoff-liveness";
 
 export type AdapterOperation =
@@ -403,24 +404,53 @@ function auditSessionPolicy(
  * never runs, so the bridge must tear down the agent session and its monitor
  * itself. Left alive, the completed agent looks "stale" to the watchdog,
  * which nudges it back awake — a zombie agent doing unrequested work.
- * Best-effort via the same transport v1 uses (bin/p kill); errors ignored.
+ * Uses remove (kill + delete) and verifies liveness. A failed cleanup is
+ * durable diagnostic evidence so reconcile can retry it; it must never vanish
+ * behind a swallowed best-effort error.
  */
-export function killAgentSessions(sessionName: string): string[] {
+export interface PtyCleanupResult {
+  daemonName: string;
+  removed: string[];
+  failed: string[];
+}
+
+export function killAgentSessions(
+  sessionName: string,
+  options: { stateDir?: string; runId?: string; env?: RunnerV2Environment } = {},
+): PtyCleanupResult {
   const removed: string[] = [];
+  const failed: string[] = [];
   const transport = join(config.codeRoot, "bin", "p");
+  const scopedEnv = runnerV2PtyEnv(options.env);
   for (const name of [`monitor-${sessionName}`, sessionName]) {
     try {
-      const result = spawnSync(transport, ["kill", name], {
+      spawnSync(transport, ["remove", name], {
         timeout: 5_000,
         stdio: "ignore",
-        env: process.env,
+        env: scopedEnv,
       });
-      if (result.status === 0) removed.push(name);
+      const alive = spawnSync(transport, ["alive", name], {
+        timeout: 5_000,
+        stdio: "ignore",
+        env: scopedEnv,
+      });
+      if (alive.status !== 0) removed.push(name);
+      else failed.push(name);
     } catch {
-      // best-effort, matches v1's `|| true`
+      failed.push(name);
     }
   }
-  return removed;
+  if (failed.length && options.stateDir) {
+    appendJsonl(join(options.stateDir, "pty-cleanup.jsonl"), {
+      event: "pty-cleanup-failed",
+      runId: options.runId,
+      sessionName,
+      failed,
+      retryable: true,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return { daemonName: scopedEnv.PTY_DAEMON || "", removed, failed };
 }
 
 function launchNextChain(

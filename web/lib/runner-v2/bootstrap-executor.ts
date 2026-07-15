@@ -43,6 +43,7 @@ export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Pr
       chainPath: context.chainPath,
       runDir: context.runDir,
       runId: context.runId,
+      agentId: context.agentId,
       workspacePath: context.workspacePath,
       env: context.env,
     });

@@ -38,6 +38,8 @@ export function resolvePtyMgrPath({
   const candidates = [
     env.PTY_MGR_BIN,
     env.MENTIKO_PTY_MGR_BIN,
+    join(codeRoot, "node_modules", ".bin", "pty-mgr"),
+    join(codeRoot, "web", "node_modules", ".bin", "pty-mgr"),
     "/usr/local/bin/pty-mgr",
     join(codeRoot, "bin", "pty-mgr"),
     libPath,

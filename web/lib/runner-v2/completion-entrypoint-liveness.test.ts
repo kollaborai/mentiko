@@ -150,4 +150,59 @@ describe("runner-v2 completion entrypoint liveness", () => {
       }),
     );
   });
+
+  it("automatically removes the completed agent and monitor PTYs", () => {
+    const root = tempRoot();
+    const { runDir, eventsDir, stateDir, chainPath, runJsonPath } = seedRun(root);
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [{ id: "writer", name: "Writer", emits: "draft-ready" }],
+    });
+    writeFileSync(join(eventsDir, "writer-draft-ready.event"), [
+      "event: draft-ready",
+      "source: writer",
+      "run_id: run-123",
+      "processed: false",
+    ].join("\n"));
+    mockSpawnSync.mockImplementation((_cmd, args) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv[0] === "remove") return { status: 0, stdout: "removed\n", stderr: "" } as ReturnType<typeof spawnSync>;
+      if (argv[0] === "alive") return { status: 1, stdout: "", stderr: "not found" } as ReturnType<typeof spawnSync>;
+      return { status: 0, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>;
+    });
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_CODE_ROOT: root,
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+      },
+    });
+
+    expect(result.status).toBe("handled");
+    expect(readRunJson(runJsonPath).agents[0].status).toBe("complete");
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      expect.any(String),
+      ["remove", "monitor-writer-run-123"],
+      expect.objectContaining({ env: expect.objectContaining({ PTY_DAEMON: expect.any(String) }) }),
+    );
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      expect.any(String),
+      ["remove", "writer-run-123"],
+      expect.objectContaining({ env: expect.objectContaining({ PTY_DAEMON: expect.any(String) }) }),
+    );
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      expect.any(String),
+      ["alive", "writer-run-123"],
+      expect.any(Object),
+    );
+  });
 });

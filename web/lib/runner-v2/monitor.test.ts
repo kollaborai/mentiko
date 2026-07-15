@@ -30,9 +30,10 @@ function scriptedIO(ticks: ScriptedTick[], initial?: Partial<MonitorState>) {
     observe: async () => ({ ...NO_OBS, ...(ticks[idx]?.obs ?? {}) }),
     sendNudge: async (_s, message) => { calls.nudges.push(message); },
     onComplete: async () => { calls.complete++; },
-    onDied: async () => { calls.died++; },
-    onStalled: async (_s, kind, count) => { calls.stalled.push({ kind, count }); },
-    onContextExhausted: async () => { calls.contextExhausted++; },
+    recheckCompletion: async () => false,
+    onDied: async () => { calls.died++; return "terminal" as const; },
+    onStalled: async (_s, kind, count) => { calls.stalled.push({ kind, count }); return "terminal" as const; },
+    onContextExhausted: async () => { calls.contextExhausted++; return "terminal" as const; },
     sleep: async () => { idx++; },
     loadState: () => state,
     saveState: (_s, st) => { state = st; },
@@ -58,6 +59,16 @@ describe("runChainMonitor — driver", () => {
     const { io } = scriptedIO([{ alive: false }]);
     const res = await runChainMonitor("s", io, {}, 0);
     expect(res.reason).toBe("session-gone");
+  });
+
+  it("completion evidence beats session-gone classification", async () => {
+    const { io, calls } = scriptedIO([{ alive: false }]);
+    io.recheckCompletion = async () => true;
+
+    const res = await runChainMonitor("s", io, {}, 0);
+
+    expect(res.reason).toBe("complete");
+    expect(calls.complete).toBe(1);
   });
 
   it("TASK-093: an agent that produces output for many cycles then latches completes — never died/stalled", async () => {
@@ -110,5 +121,34 @@ describe("runChainMonitor — driver", () => {
     expect(calls.complete).toBe(0);
     expect(calls.stalled[0].kind).toBe("blocked");
     expect(calls.nudges.length).toBeGreaterThan(0); // nudged before escalating
+  });
+
+  it("completion evidence arriving after observation wins the terminal stall race", async () => {
+    const { io, calls } = scriptedIO(
+      Array.from({ length: 5 }, () => ({ alive: true, obs: { captureHash: "same" } })),
+      { prevHash: "same" },
+    );
+    io.recheckCompletion = async () => true;
+
+    const res = await runChainMonitor("s", io, {}, 0);
+
+    expect(res.reason).toBe("complete");
+    expect(calls.complete).toBe(1);
+    expect(calls.stalled).toHaveLength(0);
+    expect(calls.contextExhausted).toBe(0);
+  });
+
+  it("a second evidence probe inside terminalization beats the remaining recheck race", async () => {
+    const { io, calls } = scriptedIO(
+      Array.from({ length: 5 }, () => ({ alive: true, obs: { captureHash: "same" } })),
+      { prevHash: "same" },
+    );
+    io.recheckCompletion = async () => false;
+    io.onStalled = async () => "complete";
+
+    const res = await runChainMonitor("s", io, {}, 0);
+
+    expect(res.reason).toBe("complete");
+    expect(calls.stalled).toHaveLength(0);
   });
 });

@@ -15,6 +15,8 @@ export interface RunnerV2LaunchContext {
   logFd: number;
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** Exact agent selected by typed routing. Omitted only for initial bootstrap. */
+  agentId?: string;
 }
 
 export interface RunnerV2LaunchUnsupported {

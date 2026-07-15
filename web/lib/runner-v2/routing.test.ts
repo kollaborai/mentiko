@@ -1,4 +1,4 @@
-import { decideNextRoute, normalizeRouteEvent } from "@/lib/runner-v2/routing";
+import { decideNextRoute, normalizeRouteEvent, hasCompletedTrigger } from "@/lib/runner-v2/routing";
 
 describe("runner-v2 routing decision", () => {
   it("uses branches before trigger lookup", () => {
@@ -141,6 +141,27 @@ describe("runner-v2 routing decision", () => {
       reason: "branch condition",
     });
   });
+
+  it("hasCompletedTrigger identifies the resume frontier, not array order", () => {
+    // Regression: run-1783832264355-7d9c3cce diamond mid-run. Resume must restart
+    // fix-verifier (its trigger dead-source-removed was produced by a completed
+    // emitter), never source-repointer (trigger never produced) even though it
+    // comes first in array order. Caller hydrates status from run.json.
+    const agents = [
+      { id: "dead-source-remover", triggers: ["claude-todos-confirmed-redundant"], emits: "dead-source-removed", status: "complete" },
+      { id: "source-repointer", triggers: ["claude-todos-real-path-found"], emits: "source-repointed", status: "pending" },
+      { id: "fix-verifier", triggers: ["dead-source-removed", "source-repointed"], emits: "todo-source-fix-verified", status: "pending" },
+    ];
+    expect(hasCompletedTrigger(agents[1], agents)).toBe(false); // source-repointer
+    expect(hasCompletedTrigger(agents[2], agents)).toBe(true);  // fix-verifier
+  });
+
+  // Known gap: an OR-merge of mutually-exclusive branches (the diamond above)
+  // still deadlocks in decideNextRoute because the live call site passes a
+  // status-less chain and no fired-event set. Fixing it needs run status + the
+  // actually-fired events threaded into routing (completion-runner/recovery/
+  // reconcile). Enable this once that lands.
+  it.todo("launches an OR-merge diamond once run status + fired events are threaded into routing");
 
   it("waits for multi-trigger prerequisites when emitters are incomplete", () => {
     const chain = {

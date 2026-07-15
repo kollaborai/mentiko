@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
@@ -31,6 +31,8 @@ import {
 } from "@/lib/runner-v2/monitor-io";
 import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
+import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
 
 export interface LiveMonitorContext {
   sessionName: string;
@@ -47,13 +49,28 @@ export interface LiveMonitorContext {
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }
 
+export type CompletionEvidence =
+  | { kind: "declared-event"; path: string }
+  | { kind: "durable-marker"; transcriptPath: string }
+  | { kind: "core-generation-artifact"; artifactPath: string; jobId: string; generationKind: string };
+
 export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverIO {
-  let completionMarkerLatched = false;
+  let completionEvidence: CompletionEvidence | null = null;
   // A cross-run event is usable only after crossRunAdoptionAllowed accepts its
   // task/predecessor or freshness+chain proof. Preserve that accepted evidence
   // into the typed completion entrypoint; otherwise it re-reads only this run's
   // events and falsely fails the completion it just allowed the monitor to take.
   let acceptedCrossRunCompletionEvent = false;
+  const completeFromFreshEvidence = async (session: string): Promise<boolean> => {
+    completionEvidence = await probeCompletionEvidence(session, context) || completionEvidence;
+    if (!completionEvidence) return false;
+    writeLatch(session);
+    await launchCompletionSession(session, context, {
+      agentCompleteMarker: completionEvidence.kind === "durable-marker",
+      acceptedCompletionEvent: acceptedCrossRunCompletionEvent,
+    });
+    return true;
+  };
   return {
     hasSession: (session) => pty.alive(session),
     observe: async (session) => {
@@ -137,12 +154,13 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         }
       }
 
-      const markerDurable = await agentCompleteMarkerDurable(session, context.env);
-      if (markerDurable) completionMarkerLatched = true;
+      completionEvidence = await probeCompletionEvidence(session, context, eventFile || undefined)
+        || completionEvidence;
       const latched = computeLatch({
         alreadyLatched: latchExists(session),
-        markerDurable,
-        completionEventPresent: Boolean(eventFile),
+        markerDurable: completionEvidence?.kind === "durable-marker",
+        completionEventPresent: completionEvidence?.kind === "declared-event"
+          || completionEvidence?.kind === "core-generation-artifact",
       });
       if (latched) writeLatch(session);
       return {
@@ -166,26 +184,20 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       await sleepMs(500);
     },
     onComplete: async (session) => {
+      completionEvidence = completionEvidence || await probeCompletionEvidence(session, context);
       await launchCompletionSession(session, context, {
-        agentCompleteMarker: completionMarkerLatched || await agentCompleteMarkerDurable(session, context.env),
+        agentCompleteMarker: completionEvidence?.kind === "durable-marker",
         acceptedCompletionEvent: acceptedCrossRunCompletionEvent,
       });
     },
+    recheckCompletion: async (session) => {
+      completionEvidence = await probeCompletionEvidence(session, context) || completionEvidence;
+      if (completionEvidence) writeLatch(session);
+      return Boolean(completionEvidence);
+    },
     onDied: async (session) => {
-      const expectedEvent = readDeclaredEmits(context.chainPath, context.agentId);
-      const hasCompletionEvent = Boolean(findCompletionEventFile({
-        eventsDir: context.eventsDir,
-        runId: context.runId,
-        agentId: context.agentId,
-        expectedEvent,
-        sessionName: context.sessionName,
-      }) || findCompletionEventFile({
-        eventsDir: join(dirname(context.chainPath), "events"),
-        runId: context.runId,
-        agentId: context.agentId,
-        expectedEvent,
-        sessionName: context.sessionName,
-      }));
+      if (await completeFromFreshEvidence(session)) return "complete";
+      const hasCompletionEvent = Boolean(currentCompletionEventPath(context));
       const verdict = classifyDeath({
         hasCompletionEvent,
         runId: context.runId,
@@ -195,13 +207,15 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       });
       if (verdict.outcome === "complete-normally") {
         await launchCompletionSession(session, context, { agentCompleteMarker: false });
-        return;
+        return "complete";
       }
       updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
       updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
+      return "terminal";
     },
-    onStalled: async (_session, kind, count) => {
+    onStalled: async (session, kind, count) => {
+      if (await completeFromFreshEvidence(session)) return "complete";
       const reason = kind === "escalate"
         ? `monitor: no real progress after ${count} nudges; escalating instead of nudging an unresponsive session indefinitely`
         : `monitor: agent output quiescent for ${count} stale cycles; no AGENT_COMPLETE and no completion event`;
@@ -215,8 +229,10 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
       updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
+      return "terminal";
     },
     onContextExhausted: async (session) => {
+      if (await completeFromFreshEvidence(session)) return "complete";
       const verdict = classifyContextExhaustion({
         runId: context.runId,
         agentId: context.agentId,
@@ -234,6 +250,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       // context-exhausted session can never make progress and only holds dead weight.
       await pty.remove(session).catch(() => {});
       console.log(`monitor: torn down context-exhausted session ${session} (run ${context.runId} failed)`);
+      return "terminal";
     },
     sleep: (seconds) => sleepMs(seconds * 1000),
     loadState: loadMonitorState,
@@ -250,6 +267,90 @@ function safeReadRunJson(path: string): RunRecord | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Core generation has a durable, run-scoped handoff artifact. It is completion
+ * evidence only when every identity boundary agrees: core chain metadata,
+ * current job/kind metadata, post-attempt mtime, valid JSON, and the existing
+ * generation payload contract. A filename alone is never authoritative.
+ */
+export function hasAuthoritativeGenerationArtifact(context: LiveMonitorContext): boolean {
+  return Boolean(authoritativeGenerationArtifact(context));
+}
+
+function authoritativeGenerationArtifact(
+  context: LiveMonitorContext,
+): Extract<CompletionEvidence, { kind: "core-generation-artifact" }> | null {
+  const run = safeReadRunJson(context.runJsonPath);
+  if (!run) return null;
+  let chain: Record<string, unknown>;
+  try {
+    chain = JSON.parse(readFileSync(context.chainPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const chainMetadata = chain.metadata && typeof chain.metadata === "object" && !Array.isArray(chain.metadata)
+    ? chain.metadata as Record<string, unknown>
+    : null;
+  if (chainMetadata?.coreGenerationChain !== true) return null;
+
+  const metadata = run.metadata && typeof run.metadata === "object" && !Array.isArray(run.metadata)
+    ? run.metadata as Record<string, unknown>
+    : null;
+  const jobId = typeof metadata?.generationJobId === "string"
+    ? metadata.generationJobId
+    : typeof metadata?.jobId === "string" ? metadata.jobId : "";
+  const kind = typeof metadata?.generationKind === "string" ? metadata.generationKind : "";
+  if (!jobId || !kind) return null;
+  if (!existsSync(join(context.runDir, ".internal", "generation-import-token"))) return null;
+
+  const artifactPath = join(context.runDir, "artifacts", "generation-result.json");
+  if (!existsSync(artifactPath)) return null;
+  const attempts = readRunnerV2AttemptState(context.runJsonPath).attempts;
+  const attempt = [...attempts].reverse().find((candidate) => candidate.agentId === context.agentId);
+  if (!attempt) return null;
+  const started = Date.parse(attempt.createdAt);
+  try {
+    if (!Number.isFinite(started) || statSync(artifactPath).mtimeMs < started) return null;
+    const payload = JSON.parse(readFileSync(artifactPath, "utf8"));
+    return isPayloadCompatibleWithKind(payload, kind)
+      ? { kind: "core-generation-artifact", artifactPath, jobId, generationKind: kind }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function probeCompletionEvidence(
+  sessionName: string,
+  context: LiveMonitorContext,
+  knownEventPath?: string,
+): Promise<CompletionEvidence | null> {
+  const eventPath = knownEventPath || currentCompletionEventPath(context);
+  if (eventPath) return { kind: "declared-event", path: eventPath };
+
+  const transcriptPath = await durableMarkerTranscript(sessionName, context.env, context);
+  if (transcriptPath) return { kind: "durable-marker", transcriptPath };
+
+  return authoritativeGenerationArtifact(context);
+}
+
+function currentCompletionEventPath(context: LiveMonitorContext): string {
+  const expectedEvent = readDeclaredEmits(context.chainPath, context.agentId);
+  return findCompletionEventFile({
+    eventsDir: context.eventsDir,
+    runId: context.runId,
+    agentId: context.agentId,
+    expectedEvent,
+    sessionName: context.sessionName,
+  }) || findCompletionEventFile({
+    eventsDir: join(dirname(context.chainPath), "events"),
+    runId: context.runId,
+    agentId: context.agentId,
+    expectedEvent,
+    sessionName: context.sessionName,
+  });
 }
 
 async function monitorAgentProcessGone(
@@ -288,17 +389,18 @@ async function monitorAgentProcessGone(
   return spawnSync("ps", ["-p", String(panePid)], { stdio: "ignore" }).status !== 0;
 }
 
-async function agentCompleteMarkerDurable(
+async function durableMarkerTranscript(
   sessionName: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-): Promise<boolean> {
-  const transcript = await resolveTranscriptJsonl(sessionName, env);
-  if (!transcript) return false;
+  context?: LiveMonitorContext,
+): Promise<string> {
+  const transcript = await resolveTranscriptJsonl(sessionName, env, context);
+  if (!transcript) return "";
   let body = "";
   try {
     body = readFileSync(transcript, "utf8");
   } catch {
-    return false;
+    return "";
   }
   for (const line of body.split("\n")) {
     if (!line.trim()) continue;
@@ -306,17 +408,19 @@ async function agentCompleteMarkerDurable(
       const record = JSON.parse(line);
       for (const text of assistantTexts(record)) {
         if (text.split(/\r?\n/).some((part) => part.trim() === "AGENT_COMPLETE")) {
-          return true;
+          return transcript;
         }
       }
     } catch {
       continue;
     }
   }
-  return false;
+  return "";
 }
 
 const TRANSCRIPT_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const TRANSCRIPT_ATTEMPT_CLOCK_SKEW_MS = 5_000;
+const TRANSCRIPT_FUTURE_TIMESTAMP_TOLERANCE_MS = 60_000;
 
 /**
  * Pick a session's transcript JSONL from its screen capture. A capture routinely
@@ -334,28 +438,137 @@ const TRANSCRIPT_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export function selectTranscriptFromCapture(
   capture: string,
   resolve: (uuid: string) => string,
+  identity: TranscriptIdentityOptions = {},
 ): string {
   const uuids = [...new Set((capture.match(TRANSCRIPT_UUID_RE) ?? []).map((u) => u.toLowerCase()))];
-  for (const uuid of uuids) {
-    const hit = resolve(uuid);
-    if (hit) return hit;
+  if (!hasTranscriptIdentityBoundary(identity)) return "";
+  const candidates = uuids.flatMap((uuid, position) => {
+    const path = resolve(uuid);
+    if (!path) return [];
+    const score = scoreTranscriptIdentity(path, uuid, identity);
+    return score === null ? [] : [{ path, position, score }];
+  }).sort((a, b) => b.score - a.score || b.position - a.position);
+  if (!candidates.length) return "";
+  if (candidates.length > 1 && candidates[0].score === candidates[1].score) {
+    return "";
   }
-  return "";
+  return candidates[0].path;
 }
 
 async function resolveTranscriptJsonl(
   sessionName: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  context?: LiveMonitorContext,
 ): Promise<string> {
   const explicit = env.MENTIKO_TRANSCRIPT_JSONL;
-  if (explicit && existsSync(explicit)) return explicit;
+  const identity = transcriptIdentityFromContext(context);
+  if (explicit && existsSync(explicit)) {
+    if (!context) return explicit;
+    return scoreTranscriptIdentity(explicit, undefined, identity) === null ? "" : explicit;
+  }
 
+  if (!hasTranscriptIdentityBoundary(identity)) return "";
   const capture = await pty.capture(sessionName, positiveInt(env.MENTIKO_TRANSCRIPT_CAPTURE_LINES, 2000)).catch(() => "");
   const root = transcriptRootFromProfile(env.MENTIKO_AGENT_PROFILE_PATH);
   if (!root) return "";
   return selectTranscriptFromCapture(capture, (uuid) => {
     return findJsonl(root, uuid, 4);
-  });
+  }, identity);
+}
+
+export interface TranscriptIdentityOptions {
+  workspacePath?: string;
+  attemptStartedAt?: string;
+  runId?: string;
+  instructionPath?: string;
+  now?: Date;
+}
+
+function scoreTranscriptIdentity(
+  path: string,
+  uuid: string | undefined,
+  identity: TranscriptIdentityOptions,
+): number | null {
+  let body = "";
+  try {
+    body = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+
+  const cwds = new Set<string>();
+  const sessionIds = new Set<string>();
+  const timestamps: number[] = [];
+  for (const line of body.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      if (typeof record.cwd === "string") cwds.add(record.cwd);
+      for (const key of ["sessionId", "session_id"] as const) {
+        if (typeof record[key] === "string") sessionIds.add(record[key].toLowerCase());
+      }
+      if (typeof record.timestamp === "string") {
+        const value = Date.parse(record.timestamp);
+        if (Number.isFinite(value)) timestamps.push(value);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (uuid && sessionIds.size > 0 && !sessionIds.has(uuid)) return null;
+
+  let score = uuid && sessionIds.has(uuid) ? 40 : 0;
+  if (identity.workspacePath) {
+    const workspace = resolve(identity.workspacePath);
+    const workspaceMatch = [...cwds].some((cwd) => isWithinWorkspace(workspace, cwd));
+    if (!workspaceMatch) return null;
+    score += 100;
+  }
+
+  if (identity.attemptStartedAt) {
+    const started = Date.parse(identity.attemptStartedAt);
+    const latest = timestamps.length ? Math.max(...timestamps) : Number.NaN;
+    const now = (identity.now ?? new Date()).getTime();
+    if (
+      !Number.isFinite(started)
+      || !Number.isFinite(latest)
+      || latest < started - TRANSCRIPT_ATTEMPT_CLOCK_SKEW_MS
+      || latest > now + TRANSCRIPT_FUTURE_TIMESTAMP_TOLERANCE_MS
+    ) {
+      return null;
+    }
+    score += 80;
+  }
+
+  const runMatch = Boolean(identity.runId && body.includes(identity.runId));
+  const instructionMatch = Boolean(identity.instructionPath && body.includes(identity.instructionPath));
+  if (runMatch) score += 20;
+  if (instructionMatch) score += 30;
+  if (!identity.workspacePath && !identity.attemptStartedAt && !runMatch && !instructionMatch) return null;
+  return score;
+}
+
+function transcriptIdentityFromContext(context?: LiveMonitorContext): TranscriptIdentityOptions {
+  if (!context) return {};
+  const run = safeReadRunJson(context.runJsonPath);
+  const attempts = readRunnerV2AttemptState(context.runJsonPath).attempts;
+  const attempt = [...attempts].reverse().find((candidate) => candidate.agentId === context.agentId);
+  return {
+    workspacePath: typeof run?.workspacePath === "string" ? run.workspacePath : undefined,
+    attemptStartedAt: attempt?.createdAt,
+    runId: context.runId,
+    instructionPath: attempt?.instructionLedger.at(-1)?.instructionPath,
+  };
+}
+
+function hasTranscriptIdentityBoundary(identity: TranscriptIdentityOptions): boolean {
+  return Boolean(identity.workspacePath || identity.attemptStartedAt || identity.runId || identity.instructionPath);
+}
+
+function isWithinWorkspace(workspace: string, cwd: string): boolean {
+  const rel = relative(workspace, resolve(cwd));
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(sep));
 }
 
 export function transcriptRootFromProfile(profilePath: string | undefined): string {

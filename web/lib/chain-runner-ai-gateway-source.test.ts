@@ -237,7 +237,7 @@ describe("chain runner next launch flag contract", () => {
 
   it("falls back to the shell runner when runner-next is disabled or unsupported", () => {
     expect(source).toContain('runnerV2Launch?.support === "supported"');
-    expect(source).toContain('spawn(\n      "/bin/zsh"');
+    expect(source).toMatch(/spawn\(\s*"\/bin\/zsh"/);
     expect(source).toContain('["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}');
   });
 });
