@@ -10,7 +10,7 @@
 // own capture artifacts. Run: node tests/node/generation-salvage.test.mjs
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -165,20 +165,42 @@ check("11. transcript ignores JSON in non-result tool_use strings", () => {
   assert.equal(r, null);
 });
 
+check("12. artifact discovery rejects symlink result aliases", () => {
+  const d = tmp();
+  const outside = tmp();
+  writeFileSync(join(outside, "payload.json"), JSON.stringify({ title: "outside", type: "task" }));
+  symlinkSync(join(outside, "payload.json"), join(d, "task-generator-output.json"));
+  process.env.MENTIKO_COMPLETION_EVENT_DATA = JSON.stringify({ title: "from-event", type: "task" });
+  const r = resolveGenerationPayload("", d, "task");
+  assert.equal(r.source, "event-data");
+  assert.throws(() => resolveGenerationPayload(join(d, "task-generator-output.json"), d, "task"), /must not be a symbolic link/);
+});
+
+check("13. artifact discovery rejects symlink output and transcript manifests", () => {
+  const d = tmp();
+  const outside = tmp();
+  writeFileSync(join(outside, "payload.txt"), "```json\n{\"title\":\"outside-output\",\"type\":\"task\"}\n```");
+  writeFileSync(join(outside, "session.jsonl"), JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "```json\\n{\\\"title\\\":\\\"outside-transcript\\\",\\\"type\\\":\\\"task\\\"}\\n```" }] } }) + "\n");
+  writeFileSync(join(outside, "manifest.json"), JSON.stringify([{ path: join(outside, "session.jsonl") }]));
+  symlinkSync(join(outside, "payload.txt"), join(d, "task-generator-output.txt"));
+  symlinkSync(join(outside, "manifest.json"), join(d, "task-generator-conversations.json"));
+  assert.equal(resolveGenerationPayload("", d, "task"), null);
+});
+
 console.log("normalizeResultForKind:");
 
-check("12. chain_generation wraps a raw chain object as { output }", () => {
+check("14. chain_generation wraps a raw chain object as { output }", () => {
   const out = normalizeResultForKind({ name: "c", agents: [{ id: "a" }] }, "chain_generation");
   assert.ok(typeof out.output === "string");
   assert.deepEqual(JSON.parse(out.output).agents[0].id, "a");
 });
 
-check("13. chain_generation leaves an existing { output } untouched", () => {
+check("15. chain_generation leaves an existing { output } untouched", () => {
   const out = normalizeResultForKind({ output: "already-a-string" }, "chain_generation");
   assert.equal(out.output, "already-a-string");
 });
 
-check("14. task kind passes through unchanged", () => {
+check("16. task kind passes through unchanged", () => {
   const payload = { title: "t", type: "task", priority: 2 };
   assert.deepEqual(normalizeResultForKind(payload, "task"), payload);
 });

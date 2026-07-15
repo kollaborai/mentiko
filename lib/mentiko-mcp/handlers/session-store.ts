@@ -71,6 +71,15 @@ export function readSidecar(): SidecarSession | null {
   return readTyped(resolveMcpSessionPaths().session, parseSidecar, "MCP session sidecar");
 }
 
+/** Invalid on-disk credentials are never trusted; callers may safely continue with another auth source. */
+export function readSidecarForAuth(): SidecarSession | null {
+  try {
+    return readSidecar();
+  } catch {
+    return null;
+  }
+}
+
 /** Preserve an existing refresh token when a caller only rotates session_token. */
 export function writeSidecar(update: SidecarSession): SidecarSession {
   const paths = resolveMcpSessionPaths();

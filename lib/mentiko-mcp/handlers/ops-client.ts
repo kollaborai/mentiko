@@ -13,7 +13,7 @@
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { readSidecar, writeSidecar, readPending, clearPending } from "./session-store.js";
+import { readSidecarForAuth, writeSidecar, readPending, clearPending } from "./session-store.js";
 
 const WEB_URL     = process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${process.env.WEB_PORT || process.env.PORT || 3000}`;
 const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
@@ -22,7 +22,7 @@ const FETCH_TIMEOUT_MS = 15000;
 
 // In-memory token. Precedence: sidecar (written by the device-flow reconnect)
 // takes priority over the static env seed; then it's refreshed on 401.
-let currentToken: string = readSidecar()?.session_token || process.env.MENTIKO_SESSION_TOKEN || "";
+let currentToken: string = readSidecarForAuth()?.session_token || process.env.MENTIKO_SESSION_TOKEN || "";
 
 function getEngineToken(): string {
   try {
@@ -35,7 +35,7 @@ function getEngineToken(): string {
 // Standalone client: exchange the sidecar refresh token for a fresh 24h access
 // token. This makes daily expiry invisible after a one-time device-flow reconnect.
 async function exchangeSidecarRefresh(): Promise<boolean> {
-  const sc = readSidecar();
+  const sc = readSidecarForAuth();
   if (!sc?.refresh_token) return false;
   try {
     const res = await fetch(`${WEB_URL}/api/mentiko-mcp/auth/token`, {

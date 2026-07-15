@@ -27,13 +27,14 @@ export function resolveGenerationPayload(
   eventData = process.env.MENTIKO_COMPLETION_EVENT_DATA ?? "",
 ): ResolvedGenerationPayload | null {
   const root = canonicalArtifactRoot(artifactsDir);
-  const canonical = explicitPath ? artifactPath(root, explicitPath) : join(root, "generation-result.json");
-  const direct = readJsonRecord(canonical);
-  if (direct && isPayloadCompatibleWithKind(direct, kind)) return { result: direct, source: canonical };
+  const canonical = explicitPath ? artifactPath(root, explicitPath) : ownedArtifactFile(root, "generation-result.json");
+  const direct = canonical ? readJsonRecord(canonical) : null;
+  if (canonical && direct && isPayloadCompatibleWithKind(direct, kind)) return { result: direct, source: canonical };
 
   for (const name of readdirSafe(root)) {
     if (!name.endsWith(".json") || name === "generation-result.json" || CAPTURE_ARTIFACT_RE.test(name) || !isGenerationPayloadAlias(name)) continue;
-    const source = join(root, name);
+    const source = ownedArtifactFile(root, name);
+    if (!source) continue;
     const candidate = readJsonRecord(source);
     if (candidate && isPayloadCompatibleWithKind(candidate, kind)) return { result: candidate, source };
   }
@@ -48,7 +49,8 @@ export function resolveGenerationPayload(
 
   for (const name of readdirSafe(root)) {
     if (!name.endsWith("-output.txt")) continue;
-    const source = join(root, name);
+    const source = ownedArtifactFile(root, name);
+    if (!source) continue;
     const candidate = parseAiJsonOutput(readFileSafe(source));
     if (isPayloadCompatibleWithKind(candidate, kind)) return { result: candidate, source };
   }
@@ -58,7 +60,9 @@ export function resolveGenerationPayload(
 function resolveFromTranscript(artifactsDir: string, kind: string): ResolvedGenerationPayload | null {
   for (const name of readdirSafe(artifactsDir)) {
     if (!name.endsWith("-conversations.json")) continue;
-    const entries = parseJsonValue(readFileSafe(join(artifactsDir, name)));
+    const manifest = ownedArtifactFile(artifactsDir, name);
+    if (!manifest) continue;
+    const entries = parseJsonValue(readFileSafe(manifest));
     if (!Array.isArray(entries)) continue;
     for (const entry of entries) {
       const path = isRecord(entry) && typeof entry.path === "string" ? entry.path : "";
@@ -99,10 +103,20 @@ function canonicalArtifactRoot(artifactsDir: string): string {
 
 function artifactPath(root: string, path: string): string {
   if (!isAbsolute(path)) throw new Error("Generation artifact path must be absolute.");
+  if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error("Generation artifact path must not be a symbolic link.");
   const resolved = existsSync(path) ? realpathSync(path) : resolve(path);
   const rel = relative(root, resolved);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Generation artifact path must resolve beneath ARTIFACTS_DIR.");
   return resolved;
+}
+
+function ownedArtifactFile(root: string, name: string): string | null {
+  if (basename(name) !== name) return null;
+  const path = join(root, name);
+  if (!existsSync(path) || lstatSync(path).isSymbolicLink() || !lstatSync(path).isFile()) return null;
+  const resolved = realpathSync(path);
+  const rel = relative(root, resolved);
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? resolved : null;
 }
 
 function readdirSafe(path: string): string[] { try { return readdirSync(path); } catch { return []; } }
