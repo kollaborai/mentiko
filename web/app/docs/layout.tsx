@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Search,
+  ArrowDown2Filled,
   ChevronDown,
   ChevronRight,
   Rocket,
@@ -209,8 +210,9 @@ export default function DocsLayout({
       className="flex h-full flex-col md:flex-row"
       data-source="web/app/docs/layout.tsx"
     >
-      <details className="shrink-0 border-b border-border/60 bg-muted px-3 py-2 md:hidden">
-        <summary className="cursor-pointer text-xs font-medium text-foreground/65">
+      <details className="group shrink-0 border-b border-border/60 bg-muted px-3 py-2 md:hidden">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-foreground/65 [&::-webkit-details-marker]:hidden">
+          <ArrowDown2Filled className="h-3 w-3 shrink-0 -rotate-90 transition-transform group-open:rotate-0" />
           Documentation navigation
         </summary>
         <div className="max-h-[55vh] space-y-3 overflow-auto pb-2 pt-3">
