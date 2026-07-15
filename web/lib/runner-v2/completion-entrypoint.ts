@@ -1,11 +1,12 @@
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { createHash } from "crypto";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { join } from "path";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
-import { applyTypedExecutorPlan, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, type AdapterResult } from "@/lib/runner-v2/adapters";
+import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
-import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
+import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
 import { eventMatchesRunId, parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
@@ -16,6 +17,9 @@ import { loopStatePath, shellLoopStatePath } from "@/lib/runner-v2/loop-state";
 import { readFanGroup } from "@/lib/runner-v2/fan-group-store";
 import type { RoutingChain } from "@/lib/runner-v2/routing";
 import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
+import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import config from "@/lib/config";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -53,6 +57,7 @@ export function runRunnerV2CompletionEntrypoint(
   }
 
   const run = readRunJson(runJsonPath);
+  const executionTaskId = shouldRecordTaskExecutionMetadata(run.metadata) ? run.taskId : undefined;
   const agent = resolveAgent(input.sessionName, chain, run);
   const stateDir = resolveStateDir(env, runDir);
 
@@ -63,18 +68,8 @@ export function runRunnerV2CompletionEntrypoint(
   const fanGroupId = findLiveFanGroupMembership(stateDir, agent.id, runId);
   const fanGroup = fanGroupId ? readFanGroup(stateDir, fanGroupId) || undefined : undefined;
 
-  const eventsDir = resolveEventsDir(env, input.chainPath);
-  // env EVENTS_DIR and the per-run events dir can disagree across the
-  // shell/typed topology; the completion verdict must see events wherever the
-  // agent actually emitted them. Always include the project/namespace events
-  // dir (dirname(chainPath)/events) — not only when EVENTS_DIR is unset — so a
-  // slow agent whose event lands there is still matched. TASK-093 regressed
-  // exactly here: the valid event lived only in the project dir while
-  // EVENTS_DIR pointed elsewhere and runDir/events did not exist, so completion
-  // depended entirely on EVENTS_DIR being correct. readEventsFromDirs dedups by
-  // directory, so an EVENTS_DIR that already equals the project dir is a no-op.
-  const projectEventsDir = join(dirname(input.chainPath), "events");
-  const events = readEventsFromDirs([eventsDir, projectEventsDir, join(runDir, "events")]);
+  const eventsDir = resolveEventsDir(env);
+  const events = readEvents(eventsDir);
   const generationDuplicate = alreadyCompletedGeneration(run, runJsonPath, stateDir, agent.id);
   const duplicate = alreadyCompletedVerdict({ run, agent, sessionName: input.sessionName, events, runId })
     || generationDuplicate;
@@ -116,7 +111,7 @@ export function runRunnerV2CompletionEntrypoint(
   // produces the same typed lifecycle evidence as bootstrap-launched agents.
   // Placed after the snapshot: a dry run or an unsupported/failed pipeline
   // restores the snapshot, so the shell fallback never sees a half-typed record.
-  adoptAgentAttemptForCompletion({
+  const completionAttempt = adoptAgentAttemptForCompletion({
     runJsonPath,
     runId,
     agentId: agent.id,
@@ -194,10 +189,10 @@ export function runRunnerV2CompletionEntrypoint(
         chainId: completionChainId,
         chainName: completionChainName,
         chainPath: input.chainPath,
-        taskId: run.taskId,
+        taskId: executionTaskId,
         lastAgentId: agent.id,
       },
-      generation: generationImportPlan(run, runDir, env),
+      generation: generationImportPlan(run, runDir, agent.id, env),
       agentCompleteMarker: monitorCompletionLatchAccepted(env),
       fanGroup,
       liveness,
@@ -207,7 +202,7 @@ export function runRunnerV2CompletionEntrypoint(
         chainId: completionChainId,
         chainPath: input.chainPath,
         workspacePath,
-        taskId: run.taskId,
+        taskId: executionTaskId,
         startSha: stringValue(run.startSha),
         debug: env.DEBUG === "1" || env.MENTIKO_DEBUG === "1",
       },
@@ -234,13 +229,19 @@ export function runRunnerV2CompletionEntrypoint(
         chainId: completionChainId,
         chainName: completionChainName,
         chainPath: input.chainPath,
-        taskId: run.taskId,
+        taskId: executionTaskId,
         lastAgentId: agent.id,
       },
       agentCompletion: {
         runId,
         chainName: completionChainName,
         agentId: agent.id,
+        occurrenceId: completionOccurrenceId({
+          runId,
+          agentId: agent.id,
+          attemptId: completionAttempt.id,
+          pipeline,
+        }),
         agentName: agent.name,
         sessionName: input.sessionName,
         chainWebhooks: parseChainWebhooks(chain.config?.webhooks),
@@ -294,6 +295,31 @@ export function runRunnerV2CompletionEntrypoint(
     };
   } catch (error) {
     restoreSnapshots(runJsonPath, runJsonSnapshot, eventSnapshots, loopStateSnapshots);
+    if (!input.dryRun && error instanceof GenerationImportError) {
+      // The generation agent did finish and produced an accepted artifact; the
+      // system failed while importing that artifact. Do not restore the run to
+      // a live-looking state: terminalize it as an orchestration failure and
+      // tear down the PTYs so the watchdog cannot mistake a zombie session for
+      // active work. A later completion replay can still retry the idempotent
+      // job import and move the run from failed to completed.
+      adoptAgentAttemptForCompletion({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        sessionName: input.sessionName,
+        now: input.now,
+      });
+      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
+      markAgentAttemptCompletedFromGeneration({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        detail: "generation artifact accepted; import failed after agent completion",
+        now: input.now,
+      });
+      updateRunStatus(runJsonPath, "failed", error.message, input.now);
+      killAgentSessions(input.sessionName, { stateDir, runId, env });
+    }
     throw error;
   }
 }
@@ -425,6 +451,7 @@ function maybeHandleQualityGateFailure(input: {
 function generationImportPlan(
   run: RunRecord,
   runDir: string,
+  agentId: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ) {
   const metadata = objectValue(run.metadata);
@@ -440,21 +467,109 @@ function generationImportPlan(
     namespaceId: env.NAMESPACE_ID,
     orgId: env.ORG_ID,
     webUrl: env.MENTIKO_WEB_URL,
-    importablePayload: hasImportableGenerationPayload(artifactsDir),
+    importablePayload: hasImportableGenerationPayload({
+      artifactsDir,
+      generationKind,
+      notBeforeMs: generationArtifactNotBeforeMs(run, agentId),
+    }),
   };
 }
 
-function hasImportableGenerationPayload(artifactsDir: string): boolean {
-  if (!existsSync(artifactsDir)) return false;
-  const canonical = join(artifactsDir, "generation-result.json");
-  if (existsSync(canonical)) return true;
-  return readdirSync(artifactsDir).some((file) =>
-    file.endsWith("-generation-result.json") ||
-    file.endsWith("-output.json") ||
-    file.endsWith("-result.json") ||
-    file.endsWith("-output.txt") ||
-    file.endsWith("-conversations.json")
-  );
+function hasImportableGenerationPayload(input: {
+  artifactsDir: string;
+  generationKind: string;
+  notBeforeMs?: number;
+}): boolean {
+  if (!existsSync(input.artifactsDir)) return false;
+  let aliases: string[];
+  try {
+    aliases = readdirSync(input.artifactsDir).filter((file) => (
+      file !== "generation-result.json"
+      && (file.endsWith("-generation-result.json")
+        || file.endsWith("-output.json")
+        || file.endsWith("-result.json"))
+    ));
+  } catch {
+    return false;
+  }
+
+  const candidates = [
+    join(input.artifactsDir, "generation-result.json"),
+    ...aliases.map((file) => join(input.artifactsDir, file)),
+  ];
+  for (const path of candidates) {
+    try {
+      if (!existsSync(path)) continue;
+      const payload = JSON.parse(readFileSync(path, "utf8"));
+      if (!isPayloadCompatibleWithKind(payload, input.generationKind)) continue;
+      // The import CLI selects the first contract-compatible candidate in this
+      // same order. If that candidate predates this attempt, fail closed rather
+      // than letting a later alias make the plan import the stale earlier file.
+      if (input.notBeforeMs !== undefined && statSync(path).mtimeMs < input.notBeforeMs) return false;
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+function generationArtifactNotBeforeMs(run: RunRecord, agentId: string): number | undefined {
+  const runnerV2 = objectValue(run.runnerV2);
+  const attempts = Array.isArray(runnerV2?.attempts) ? runnerV2.attempts : [];
+  const attemptStarts = attempts.flatMap((value) => {
+    const attempt = objectValue(value);
+    if (attempt?.runId !== run.id || attempt.agentId !== agentId) return [];
+    const started = timestampValue(attempt.createdAt);
+    return started === undefined ? [] : [started];
+  });
+  if (attemptStarts.length > 0) return Math.max(...attemptStarts);
+
+  const agent = (run.agents || []).find((candidate) => candidate.id === agentId);
+  return timestampValue(agent?.started) ?? timestampValue(run.started);
+}
+
+function timestampValue(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Identity of one accepted completion handoff. The matched event path and raw
+ * field content anchor replay to the same durable artifact, while attempt and
+ * loop round distinguish legitimate later visits with the same agent payload.
+ */
+export function completionOccurrenceId(input: {
+  runId: string;
+  agentId: string;
+  attemptId: string;
+  pipeline: CompletionPipelineResult;
+}): string {
+  const event = "event" in input.pipeline.decision ? input.pipeline.decision.event : undefined;
+  const identity = {
+    runId: input.runId,
+    agentId: input.agentId,
+    attemptId: input.attemptId,
+    loopRound: input.pipeline.loopStateBefore.round,
+    event: event ? {
+      path: event.path || "",
+      fields: event.fields,
+    } : undefined,
+  };
+  const digest = createHash("sha256").update(stableSerialize(identity)).digest("hex").slice(0, 32);
+  return `runner-v2-completion:${digest}:v1`;
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableSerialize(record[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export class RunnerV2CompletionUnsupportedError extends Error {
@@ -503,8 +618,8 @@ function resolveRunDir(env: NodeJS.ProcessEnv | Record<string, string | undefine
   throw unsupported("missing MENTIKO_RUN_DIR/RUN_DIR/RUNS_DIR");
 }
 
-function resolveEventsDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>, chainPath: string): string {
-  return env.EVENTS_DIR || join(dirname(chainPath), "events");
+function resolveEventsDir(env: NodeJS.ProcessEnv | Record<string, string | undefined>): string {
+  return env.EVENTS_DIR || config.eventsDir;
 }
 
 function resolveCompletionLiveness(input: {
@@ -767,21 +882,14 @@ function readEvents(eventsDir: string): RunnerEventRecord[] {
   if (!existsSync(eventsDir)) return [];
   return readdirSync(eventsDir)
     .filter((file) => file.endsWith(".event"))
-    .map((file) => {
+    .flatMap((file) => {
       const path = join(eventsDir, file);
-      return { ...parseRunnerEvent(readFileSync(path, "utf8")), path };
+      try {
+        return [{ ...parseRunnerEvent(readFileSync(path, "utf8")), path }];
+      } catch {
+        return [];
+      }
     });
-}
-
-function readEventsFromDirs(eventsDirs: string[]): RunnerEventRecord[] {
-  const seen = new Set<string>();
-  const events: RunnerEventRecord[] = [];
-  for (const dir of eventsDirs) {
-    if (!dir || seen.has(dir)) continue;
-    seen.add(dir);
-    events.push(...readEvents(dir));
-  }
-  return events;
 }
 
 function resolveAgent(sessionName: string, chain: ChainFile, run: RunRecord): ChainAgent {

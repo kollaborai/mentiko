@@ -249,7 +249,6 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - preview/[port]/[[...path]]/route.ts
 - profiles/route.ts
 - prometheus/route.ts
-- pty/sessions/[name]/restart/route.ts
 - pty/sessions/[name]/route.ts
 - pty/sessions/[name]/send/route.ts
 - pty/sessions/route.ts

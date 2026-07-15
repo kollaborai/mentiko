@@ -6,6 +6,9 @@
  * chain-triggering receive must carry a valid signature for its source.
  */
 import { createHmac } from "crypto";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { validateRawRunnerEvent } from "@/lib/runner-v2/events";
 
 const mockGetWebhookById = jest.fn();
 jest.mock("@/lib/webhooks/webhook-storage", () => ({
@@ -13,10 +16,20 @@ jest.mock("@/lib/webhooks/webhook-storage", () => ({
   logWebhookEvent: jest.fn(),
 }));
 
-// keep emitEventFile from writing into the real ~/.mentiko data root
+// keep emitEventFile from writing into the real project event root
 jest.mock("@/lib/config", () => {
   const actual = jest.requireActual("@/lib/config");
-  return { ...actual, nsPath: () => "/tmp/mentiko-webhook-test-events" };
+  const config = {
+    ...actual.config,
+    namespaceId: "default",
+    orgId: "default",
+    eventsDir: "/tmp/mentiko-webhook-test-events",
+  };
+  return {
+    ...actual,
+    config,
+    default: config,
+  };
 });
 
 import { POST } from "@/app/api/webhooks/[id]/receive/route";
@@ -33,7 +46,10 @@ function receive(body: string, headers: Record<string, string>) {
   );
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  rmSync("/tmp/mentiko-webhook-test-events", { recursive: true, force: true });
+});
 
 describe("webhook receive auth (regression: finding #6)", () => {
   const sub = { id: "wh1", enabled: true, chainId: "c1", eventFilter: {} };
@@ -69,5 +85,29 @@ describe("webhook receive auth (regression: finding #6)", () => {
       "x-hub-signature-256": sig,
     });
     expect(res.status).not.toBe(401);
+    const files = readdirSync("/tmp/mentiko-webhook-test-events");
+    expect(files).toHaveLength(1);
+    expect(validateRawRunnerEvent(readFileSync(join("/tmp/mentiko-webhook-test-events", files[0]), "utf8"))).toMatchObject({
+      valid: true,
+    });
+  });
+
+  test("rejects a namespace outside the current project event root", async () => {
+    const secret = "s3cr3t";
+    const body = "{}";
+    const sig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+    mockGetWebhookById.mockResolvedValue({ ...sub, secret });
+
+    const res = await POST(
+      new Request("https://tenant.example.com/api/webhooks/wh1/receive?ns=other", {
+        method: "POST",
+        body,
+        headers: { "x-github-event": "push", "x-hub-signature-256": sig },
+      }) as never,
+      ctx as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(readdirSync("/tmp", { withFileTypes: true }).some((entry) => entry.name === "mentiko-webhook-test-events")).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import { config } from "@/lib/config";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
 
@@ -73,12 +74,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (perm) return perm;
 
   const body = await request.json();
-  const eventName = body.event as string;
-  const source = (body.source as string) || "manual";
-  const data = (body.data as string) || "";
+  const eventName = body.event;
+  const source = body.source === undefined ? "manual" : body.source;
+  const data = body.data === undefined ? "" : body.data;
 
   if (!eventName || typeof eventName !== "string") {
     throw new BadRequest("event name required");
+  }
+  if (typeof source !== "string") {
+    throw new BadRequest("source must be a string");
+  }
+  if (typeof data !== "string") {
+    throw new BadRequest("data must be a string");
   }
 
   const eventsDir = config.eventsDir;
@@ -88,13 +95,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const filename = `${timestamp}-${eventName}.event`;
   const filePath = join(eventsDir, filename);
 
-  const content = [
-    `event: ${eventName}`,
-    `source: ${source}`,
-    `timestamp: ${new Date().toISOString()}`,
-    `processed: false`,
-    `data: ${data}`,
-  ].join("\n") + "\n";
+  let content: string;
+  try {
+    content = serializeRunnerEvent({
+      event: eventName,
+      source,
+      runId: typeof body.runId === "string" ? body.runId : "",
+      timestamp: new Date().toISOString(),
+      data,
+    });
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : "Invalid runner event");
+  }
 
   writeFileSync(filePath, content, "utf-8");
 

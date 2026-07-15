@@ -2,15 +2,17 @@ import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { applyTypedExecutorPlan, type AdapterResult } from "@/lib/runner-v2/adapters";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
-import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import { parseRunnerEvent, serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { dispatchExternalEffects, type ExternalEffectsDispatchResult } from "@/lib/runner-v2/external-effects";
 import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { createRunRecord, type RunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 import { planTerminalCompletion } from "@/lib/runner-v2/terminal-plan";
+import config from "@/lib/config";
 
 export interface RunnerV2ProbeInput {
   runDir: string;
+  eventsDir?: string;
   env?: Record<string, string | undefined>;
   dryRun?: boolean;
   dispatchExternalEffects?: boolean;
@@ -36,16 +38,18 @@ export function runSyntheticRunnerV2Probe(input: RunnerV2ProbeInput): RunnerV2Pr
   }
 
   const runJsonPath = join(input.runDir, "run.json");
-  const eventPath = join(input.runDir, "events", "run-probe-writer-draft-ready.event");
-  const eventContent = [
-    "event: draft-ready",
-    "source: writer-run-probe",
-    "run_id: run-probe",
-    "processed: false",
-    "",
-  ].join("\n");
+  const eventsDir = input.eventsDir || input.env?.EVENTS_DIR || config.eventsDir;
+  const eventPath = join(eventsDir, "run-probe-writer-draft-ready.event");
+  const eventContent = serializeRunnerEvent({
+    event: "draft-ready",
+    source: "writer-run-probe",
+    runId: "run-probe",
+    timestamp: new Date().toISOString(),
+    data: "",
+  });
   const event = { ...parseRunnerEvent(eventContent), path: eventPath };
-  mkdirSync(join(input.runDir, "events"), { recursive: true });
+  mkdirSync(input.runDir, { recursive: true });
+  mkdirSync(eventsDir, { recursive: true });
   if (!existsSync(eventPath)) {
     writeFileSync(eventPath, eventContent);
   }
@@ -88,6 +92,7 @@ export function runSyntheticRunnerV2Probe(input: RunnerV2ProbeInput): RunnerV2Pr
   const adapter = applyTypedExecutorPlan(plan, {
     runJsonPath,
     stateDir: input.runDir,
+    eventsDir,
     dryRun: input.dryRun !== false,
   });
 
@@ -127,6 +132,7 @@ export async function runSyntheticRunnerV2ProbeWithDispatch(input: RunnerV2Probe
   }, {
     runJsonPath: result.runJsonPath,
     stateDir: input.runDir,
+    eventsDir: input.eventsDir || input.env?.EVENTS_DIR || config.eventsDir,
   });
 
   return {

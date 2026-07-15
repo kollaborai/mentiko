@@ -14,15 +14,17 @@
     },
     "source": {
       "type": "string",
-      "description": "Agent/session/system source. Diagnostic events may fall back to the physical agent field."
+      "minLength": 1,
+      "description": "Agent, session, or system source copied from the required physical source field."
     },
     "runId": {
       "type": "string",
-      "description": "Normalized from run_id or runId. Empty is retained for legacy/global events."
+      "description": "Normalized from the required physical run_id field; the value may be empty for an unscoped event."
     },
     "timestamp": {
       "type": "string",
-      "description": "Timestamp as persisted. Legacy records may leave it empty."
+      "minLength": 1,
+      "description": "Parseable timestamp copied from the required physical timestamp field."
     },
     "processed": {
       "type": "boolean"

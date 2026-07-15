@@ -556,8 +556,8 @@ function markExactEventProcessed(event: RunnerEventRecord): RunnerEventRecord {
   }
 
   if (!current.processed) {
-    const consumed = original.match(/^processed:\s*.*$/im)
-      ? original.replace(/^processed:\s*.*$/im, "processed: true")
+    const consumed = original.match(/^processed:\s*.*$/m)
+      ? original.replace(/^processed:\s*.*$/m, "processed: true")
       : `${original.replace(/\n?$/, "\n")}processed: true\n`;
     writeAtomically(event.path, consumed);
   }

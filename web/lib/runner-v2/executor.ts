@@ -151,7 +151,10 @@ export function buildTypedExecutorPlan(input: TypedExecutorInput): TypedExecutor
         chainId: input.terminal?.chainId || input.routeContext.env?.MENTIKO_CHAIN_ID,
         chainName: input.terminal?.chainName || "unknown",
         chainPath: input.terminal?.chainPath || input.routeContext.chainPath,
-        taskId: input.terminal?.taskId ?? input.routeContext.taskId,
+        // A supplied terminal context intentionally owns task provenance. Its
+        // undefined taskId means this is a non-execution system run; falling
+        // through to routeContext.taskId would reintroduce task mutation.
+        taskId: input.terminal ? input.terminal.taskId : input.routeContext.taskId,
         agentId: input.terminal?.lastAgentId,
         reason: decision.reason,
       }),

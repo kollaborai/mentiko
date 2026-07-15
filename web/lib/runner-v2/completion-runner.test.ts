@@ -5,6 +5,7 @@ import { completeAgent } from "@/lib/runner-v2/completion-runner";
 import { createFanGroupState } from "@/lib/runner-v2/fan-group";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function runPath() {
   return join(mkdtempSync(join(tmpdir(), "runner-v2-completion-runner-")), "run.json");
@@ -316,7 +317,7 @@ describe("runner-v2 completion runner", () => {
       runId: "run-123",
       agent: { id: "writer", emits: "draft-ready" },
       chain: { agents: [{ id: "reviewer", triggers: ["draft-ready"] }] },
-      events: ["event: draft-ready\nsource: chain-runner-complete\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "chain-runner-complete", runId: "run-123" })],
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
 
@@ -408,7 +409,7 @@ describe("runner-v2 completion runner", () => {
           { id: "already", triggers: ["draft-ready"], status: "running" },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
 
@@ -437,7 +438,7 @@ describe("runner-v2 completion runner", () => {
       runId: "run-123",
       agent: { id: "writer", emits: "draft-ready" },
       chain: { agents: [{ id: "reviewer", triggers: ["draft-ready"] }] },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       loopGuard: {
         visited: ["writer:draft-ready"],
         currentRound: 1,
@@ -471,7 +472,7 @@ describe("runner-v2 completion runner", () => {
           { id: "writer", triggers: ["revise"] },
         ],
       },
-      events: ["event: revise\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "revise", source: "writer-run-123", runId: "run-123" })],
       loopGuard: {
         currentRound: 3,
         maxRounds: 3,

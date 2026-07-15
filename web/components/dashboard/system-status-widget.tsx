@@ -33,6 +33,19 @@ interface DaemonStatus {
   uptime?: number;
   lastCheck?: string;
   note?: string;
+  chainWatcher?: {
+    status: "running" | "stopped";
+    lastCheck?: string | null;
+    checkCount?: number;
+    lastError?: string | null;
+  };
+  watchdog?: {
+    status: "running" | "stopped";
+    lastCheck?: string;
+    checkCount?: number;
+    transportAvailable?: boolean;
+    lastError?: string;
+  };
 }
 
 interface ServiceState {
@@ -104,6 +117,28 @@ function buildServices(
         daemon.status === "running" && daemon.uptime
           ? `up ${dot} ${formatUptime(daemon.uptime)}`
           : daemon.note || "stopped",
+      icon: ClockFilled,
+    });
+    services.push({
+      label: "chain watcher",
+      status: daemon.chainWatcher?.status === "running"
+        ? daemon.chainWatcher.lastError ? "warn" : "pass"
+        : "warn",
+      detail: daemon.chainWatcher?.lastError
+        || (daemon.chainWatcher?.status === "running"
+          ? `${daemon.chainWatcher.checkCount || 0} checks`
+          : "stopped"),
+      icon: ClockFilled,
+    });
+    services.push({
+      label: "watchdog",
+      status: daemon.watchdog?.status === "running"
+        ? daemon.watchdog.transportAvailable === false || daemon.watchdog.lastError ? "warn" : "pass"
+        : "warn",
+      detail: daemon.watchdog?.lastError
+        || (daemon.watchdog?.lastCheck
+          ? `${daemon.watchdog.checkCount || 0} checks`
+          : daemon.watchdog?.status || "not checked"),
       icon: ClockFilled,
     });
   }

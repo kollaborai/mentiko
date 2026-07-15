@@ -4,7 +4,7 @@ these files are the migration source of truth for runner-v2.
 
 rules:
   - contracts describe actual runtime behavior, not aspirational schemas.
-  - each shell function copied into typescript needs a matching contract entry.
+  - each ownership migration from shell to typescript needs a matching contract entry and binding evidence.
   - runner-v2 may only become default after parity tests cover the contract.
   - every contract change should name the shell file and function it came from.
 
@@ -58,10 +58,13 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     behavior of record the typed monitor port must preserve.
   - monitor-v2.contract.json: enforceable owns/invariants for the TYPED chain
     monitor (web/lib/runner-v2/monitor*.ts), porting monitor-chain-agent.
-  - run-event.contract.json: run.json and event-file mutation contract for
-    lib/run-lib.sh and lib/event-trigger.sh.
-  - watcher-watchdog.contract.json: daemon, watcher, watchdog, and scheduler
-    polling contracts for lib/chain-event-watcher.sh and lib/watchdog.sh.
+  - run-event.contract.json: run.json mutation plus runner-event contract. typed
+    code owns canonical emission; lib/event-trigger.sh remains the direct shell
+    reader/mutator for list, processed, and archive lifecycle operations.
+  - watcher-watchdog.contract.json: active chain-watcher/watchdog ownership in
+    web/lib/runner-v2/chain-watcher-service.ts, web/lib/runner-v2/watchdog.ts,
+    and web/server/background-worker.ts. the retired shell files remain listed
+    only as parity references; the scheduler invariant remains independently bound.
 
 design docs (rationale + migration plan, not enforced):
   - monitor-v2.design.json: why the shell monitor is being ported to typescript

@@ -278,7 +278,7 @@ related files
 lib/routing-lib.sh              this file
 lib/chain-runner-complete.sh   uses branch-parse, error-handler-resolve
 lib/chain-runner.sh             uses timeout-check-agent
-lib/watchdog.sh                 uses timeout-check-agent
+lib/watchdog.sh                 retired parity reference; uses timeout-check-agent
 
 troubleshooting
 ===============

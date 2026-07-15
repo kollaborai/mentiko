@@ -33,7 +33,6 @@ usage
 
 called by:
   - monitor-chain-agent function (see [agent-functions.md](./agent-functions.md))
-  - watchdog (when forcing completion on stalled runs)
   - manual invocation (for recovery)
 
 phase 1: derive agent identity
@@ -79,21 +78,34 @@ phase 2: capture final output
 phase 3: find event file
 ========================
 
-agent writes event file when complete:
+canonical runner events contain all six fields:
 
   event: {emits}
   source: {session_prefix}
+  run_id: {run_id}
   timestamp: {ISO}
-  data: {...}
   processed: false
+  data: {...}
+
+the typed producer, web readers, reconciler, chain watcher, and watchdog validate
+that strict shape. this shell completion reader is the remaining migration
+exception: until its lifecycle scanner moves to TypeScript, it still accepts
+legacy case-insensitive fields, `agent:` as a source alias, `AGENT EVENT:`
+headers, JSON field extraction, and filename-derived source. those compatibility
+paths are not authoritative and are scheduled for removal with
+`lib/event-trigger.sh`.
 
 this script searches EVENTS_DIR/ for:
 1. source matching SESSION_PREFIX or CURRENT_AGENT_ID
-2. processed != true
-3. extracts event name from file
+2. run_id matching the active run
+3. processed != true
+4. event matching the agent's declared emits value
 
-fallback: if no event file found, uses expected event from chain.json
-and writes a fallback event file.
+there is no success fallback. if the declared event is missing, the handler
+fails the agent/run, requests a diagnostic agent-error through the typed event
+emitter, and launches no downstream agent. the core-generation import backstop
+is the narrow exception: a compatible run/attempt-scoped generation payload can
+provide completion evidence without fabricating the declared event.
 
 phase 4: kill sessions
 ======================
@@ -236,7 +248,8 @@ when no next agent found (or max_rounds reached):
 3. send notifications
    -------------------
    - send-webhook "chain_complete"
-   - emit-event "chain-complete" (for chain-watcher to pick up)
+   - request a typed chain-complete event through the emit-event shell wrapper
+     (for chain-watcher to pick up)
    - run-plugins "chain-completed"
    - dispatch to /api/notifications/dispatch
    - fire watchdog hooks "run-completed"
@@ -254,45 +267,24 @@ when no next agent found (or max_rounds reached):
    if on_complete = "webhook" and webhook_url set:
    - POST {chain, status, last_event} to webhook_url
 
-phase 9: error handling
-======================
+phase 9: missing declared event
+================================
 
-if no event found (agent failed to emit):
+if no matching declared event is found:
 
-1. retry policy
-   ------------
-   check agent.retry config:
-   - max_retries
-   - strategy (exponential, linear, constant)
-   - base_delay_ms
-   - circuit_breaker (threshold, timeout)
+1. fail_completion_no_event records the agent as failed
+2. the run is marked failed and task status is propagated
+3. a diagnostic agent-error is requested through the typed emitter
+4. no declared event is synthesized and no downstream route is launched
 
-   if retries remaining:
-   - calculate backoff delay
-   - sleep
-   - relaunch chain-runner.sh --start {current_agent_id}
-
-2. circuit breaker
-   ----------------
-   record_failure in error-handling.sh
-   if threshold exceeded -> agent marked as "open"
-   - future launches skip this agent
-
-3. on_error handler
-   -----------------
-   stop -> mark run as stopped
-   skip -> mark run as stopped, try to find next agent
-   rollback -> git revert agent changes
-
-rollback:
-  - reads agent start_sha from run.json or state file
-  - git revert --no-commit {start_sha}..HEAD
-  - git commit "rollback: revert failed agent X changes"
+diagnostic events are failure evidence only. their event name and source cannot
+satisfy the success handoff matcher.
 
 related files
 =============
 
 lib/chain-runner-complete.sh   this file
+web/lib/runner-v2/event-emitter.ts canonical runner-event serializer and writer
 lib/chain-runner.sh             main orchestrator
 lib/agent-functions.sh          monitor-chain-agent function (see [agent-functions.md](./agent-functions.md))
 lib/agent-activity-capture.sh   artifact capture

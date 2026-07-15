@@ -4,7 +4,9 @@ Deployment model for isolated tenant instances without container orchestration.
 
 ## Overview
 
-Each tenant instance runs on a dedicated VPS. Orchestration uses bash scripts and PTY sessions instead of Kubernetes.
+Each tenant instance runs on a dedicated host. Agent execution uses shell
+boundaries and PTY sessions; the supervised TypeScript background worker owns
+the chain watcher and watchdog instead of Kubernetes controllers.
 
 ## Design
 
@@ -35,19 +37,20 @@ Each tenant instance runs on a dedicated VPS. Orchestration uses bash scripts an
 - Manages agent input/output
 
 **event-trigger.sh**
-- Watches events directory
-- Triggers dependent agents
-- Manages event processing
+- Delegates canonical event writes to the typed emitter
+- Retains shell event lifecycle helpers pending migration
 
 **complete-agent.sh**
-- Captures agent output
-- Writes event file
-- Signals downstream agents
+- Legacy spec-agent completion reader
+- Never fabricates a missing declared success event
 
-**watchdog.sh**
-- Monitors PTY session activity
-- Detects stalled runs
-- Implements retry and escalation
+**background-worker.ts**
+- Owns typed chain-watcher start, status, and stop
+- Runs typed watchdog scans at startup and every 60 seconds
+
+**watchdog.sh / chain-event-watcher.sh**
+- Retired parity references only
+- Not launched as services or PTY sessions
 
 **pty-manager**
 - Allocates PTY sessions for agents
@@ -90,11 +93,11 @@ Agents communicate via event files.
 ```
 
 **Processing:**
-```bash
-# event-trigger.sh watches for new events
-inotifywait -m -e create --format '%f' .events/ | while read event; do
-  process_event "$event"
-done
+```text
+process-manager
+  -> web/server/background-worker.ts
+       -> chain-watcher-service.ts watches the configured event root
+       -> bin/mentiko run launches each matched chain
 ```
 
 **Characteristics:**
@@ -134,7 +137,7 @@ done
 
 **Single Point of Failure:**
 - VPS down = agents stop
-- Mitigated by systemd auto-restart
+- Mitigated by process-manager restart policies
 - Chains resumable from last event
 
 **Testing Complexity:**
@@ -154,29 +157,26 @@ done
 
 ## Deployment
 
-**Services:**
-```bash
-# systemd services
-mentiko-chain-runner.service
-mentiko-pty-manager.service
-mentiko-watchdog.service
+**Supervised processes:**
+```text
+process-manager
+  -> pty-mgr daemon
+  -> ws-terminal
+  -> platform
+  -> background worker (typed chain watcher + watchdog)
 ```
 
 **Commands:**
 ```bash
-# Deploy platform
-scp bin/* lib/* user@vps:/opt/mentiko/
-ssh user@vps "systemctl restart mentiko-*"
-
-# Check status
-ssh user@vps "systemctl status mentiko-*"
+# Container/runtime entrypoint
+node /opt/mentiko/lib/process-manager.js
 ```
 
 **Monitoring:**
-- systemd service status
+- process-manager and `/api/schedules/daemon` background-worker status
 - PTY session activity
 - Event file processing
-- Watchdog alerts
+- Typed watchdog alerts
 
 ## Related
 

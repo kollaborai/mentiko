@@ -15,6 +15,15 @@ interface SessionStatusData {
   [key: string]: unknown;
 }
 
+export function streamEventMatchesRun(event: unknown, runId: string): boolean {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+  const data = (event as { data?: unknown }).data;
+  return !!data
+    && typeof data === "object"
+    && !Array.isArray(data)
+    && (data as { runId?: unknown }).runId === runId;
+}
+
 export function useEventStream(runId: string | null) {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -74,6 +83,7 @@ export function useEventStream(runId: string | null) {
       eventSource.addEventListener("event", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          if (!streamEventMatchesRun(data, runId)) return;
           setEvents((prev) => [...prev, data]);
           if (data.data) {
             setNewEvents((prev) => [...prev, data.data]);
@@ -103,6 +113,7 @@ export function useEventStream(runId: string | null) {
       eventSource.addEventListener("chain_complete", (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
+          if (!streamEventMatchesRun(data, runId)) return;
           setEvents((prev) => [...prev, data]);
           setChainComplete(true);
           notifyAgentEvent({

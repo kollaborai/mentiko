@@ -124,12 +124,13 @@ async function main() {
   const stateText = readFileSync(bootstrapPlan.statePath, "utf8");
   const sessionSpawn = calls.find((call) => call.op === "spawn" && call.name === bootstrapPlan.sessionName);
   const monitorSpawn = calls.find((call) => call.op === "spawn" && call.name === bootstrapPlan.monitorSessionName);
-  const watchdogSpawn = calls.find((call) => call.op === "spawn" && call.name === "mentiko-watchdog");
-  const watcherSpawn = calls.find((call) => call.op === "spawn" && call.name === "mentiko-chain-watcher");
+  const daemonSpawns = calls.filter((call) => (
+    call.op === "spawn"
+    && (call.name === "mentiko-watchdog" || call.name === "mentiko-chain-watcher")
+  ));
   const pointerSend = calls.find((call) => call.op === "sendKeys" && String(call.text).includes(bootstrapPlan.instructionPath));
   const startSend = calls.find((call) => call.op === "sendKeys" && String(call.text).includes(startScriptPath));
   const sessionEnv = sessionSpawn && sessionSpawn.opts ? sessionSpawn.opts.env || {} : {};
-  const singletonOps = calls.slice(0, 6).map((call) => `${call.op}:${call.name}`);
   const flattenedCalls = JSON.stringify(calls);
   const admittedRun = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
   writeFileSync(join(runDir, "typed-bootstrap-calls.json"), JSON.stringify(calls, null, 2));
@@ -311,15 +312,7 @@ async function main() {
     check("typed-bootstrap-state-written", stateText.includes("status: running") && stateText.includes("agent_id: manual"), bootstrapPlan.statePath),
     check("typed-bootstrap-monitor-started", !!monitorSpawn && String(monitorSpawn.args || "").includes("-lc"), bootstrapPlan.monitorSessionName),
     check("typed-bootstrap-start-before-pointer", calls.indexOf(startSend) >= 0 && calls.indexOf(pointerSend) > calls.indexOf(startSend), join(runDir, "typed-bootstrap-calls.json")),
-    check("typed-bootstrap-daemon-singletons", JSON.stringify(singletonOps) === JSON.stringify([
-      "has:mentiko-watchdog",
-      "remove:mentiko-watchdog",
-      "spawn:mentiko-watchdog",
-      "has:mentiko-chain-watcher",
-      "remove:mentiko-chain-watcher",
-      "spawn:mentiko-chain-watcher",
-    ]), join(runDir, "typed-bootstrap-calls.json")),
-    check("typed-bootstrap-daemon-commands", !!watchdogSpawn && watchdogSpawn.cmd === "bash" && String(watchdogSpawn.args || "").includes("watchdog.sh") && !!watcherSpawn && watcherSpawn.cmd === "bash" && String(watcherSpawn.args || "").includes("chain-event-watcher.sh") && String(watcherSpawn.args || "").includes("--namespace"), join(runDir, "typed-bootstrap-calls.json")),
+    check("typed-bootstrap-no-daemon-launch", daemonSpawns.length === 0, join(runDir, "typed-bootstrap-calls.json")),
     check("typed-cap-admitted-running", admittedRun.status === "running" && (admittedRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "running"), join(runDir, "run.json")),
     check("typed-cap-blocked-no-spawn", capRun.status === "blocked" && capCalls.length === 0 && (capRun.agents || []).some((agent) => agent.id === "manual" && agent.status === "blocked"), join(capRunDir, "run.json")),
     check("typed-cap-attempt-human-action", capAttempt.phase === "human_action_required" && capAttempt.terminalReason === "concurrency_cap_blocked", capAttempt.phase || null),

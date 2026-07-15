@@ -1,74 +1,28 @@
 import { NextRequest } from "next/server";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { nsPath } from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest } from "@/lib/namespace-config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import {
+  addNotification,
+  mutateNotifications,
+  type NotificationMetadata,
+  type PersistedNotification,
+} from "@/lib/notifications/notification-persistence";
 
 export const dynamic = "force-dynamic";
 
-export interface Notification {
-  id: string;
-  type: "agent_complete" | "agent_error" | "chain_complete" | "chain_failed" |
-        "webhook_failed" | "webhook_delivered" | "chain_started" |
-        "job_started" | "job_complete" | "job_failed" | "info" | "warning" | "error";
-  title: string;
-  message: string;
-  timestamp: string;
-  read: boolean;
-  metadata?: {
-    agentId?: string;
-    chainId?: string;
-    runId?: string;
-    webhookUrl?: string;
-    httpCode?: number;
-    jobId?: string;
-    jobType?: string;
-    error?: string;
-    taskId?: string;
-    actionUrl?: string;
-    actionLabel?: string;
-  };
-}
-
-const MAX_NOTIFICATIONS = 200;
-
-function getNotificationsFile(namespaceId: string): string {
-  const notifDir = nsPath(namespaceId, "notifications");
-  if (!existsSync(notifDir)) {
-    mkdirSync(notifDir, { recursive: true });
-  }
-  return join(notifDir, "notifications.json");
-}
-
-function loadNotifications(namespaceId: string): Notification[] {
-  const file = getNotificationsFile(namespaceId);
-  if (!existsSync(file)) return [];
-  try {
-    const content = readFileSync(file, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return [];
-  }
-}
-
-function saveNotifications(namespaceId: string, notifications: Notification[]): void {
-  const file = getNotificationsFile(namespaceId);
-  const dir = join(file, "..");
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(file, JSON.stringify(notifications, null, 2));
-}
+export type Notification = PersistedNotification;
 
 /**
  * Derive actionUrl from notification type and metadata if not already set.
  */
 function resolveActionUrl(
-  type: Notification["type"],
-  metadata?: Notification["metadata"],
+  type: string,
+  metadata?: NotificationMetadata,
 ): { actionUrl?: string; actionLabel?: string } {
   if (metadata?.actionUrl) {
     return { actionUrl: metadata.actionUrl, actionLabel: metadata.actionLabel };
@@ -234,56 +188,64 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const filter = searchParams.get("filter"); // all, unread, runs, system
 
-  let notifications = loadNotifications(namespaceId);
+  const snapshot = mutateNotifications(namespaceId, (stored) => {
+    let notifications = stored;
+    let write = false;
 
-  // sanitize any notifications with non-string message/title/error fields
-  let sanitized = false;
-  for (const n of notifications) {
-    if (typeof n.message !== "string") {
-      n.message = typeof n.message === "object" && n.message !== null
-        ? (n.message as Record<string, unknown>).message as string || JSON.stringify(n.message)
-        : String(n.message);
-      sanitized = true;
-    }
-    if (typeof n.title !== "string") {
-      n.title = typeof n.title === "object" ? JSON.stringify(n.title) : String(n.title);
-      sanitized = true;
-    }
-    if (n.metadata?.error && typeof n.metadata.error !== "string") {
-      n.metadata.error = typeof n.metadata.error === "object"
-        ? (n.metadata.error as Record<string, unknown>).message as string || JSON.stringify(n.metadata.error)
-        : String(n.metadata.error);
-      sanitized = true;
-    }
-  }
-  if (sanitized) {
-    saveNotifications(namespaceId, notifications);
-  }
-
-  // If no stored notifications, generate from runs
-  if (notifications.length === 0) {
-    const generated = generateNotificationsFromRuns(namespaceId);
-    // Save generated notifications so they persist
-    saveNotifications(namespaceId, generated);
-    notifications = generated;
-  }
-
-  // Backfill actionUrl for any notifications missing it
-  let patched = false;
-  for (const n of notifications) {
-    if (!n.metadata?.actionUrl) {
-      const resolved = resolveActionUrl(n.type, n.metadata);
-      if (resolved.actionUrl) {
-        if (!n.metadata) n.metadata = {};
-        n.metadata.actionUrl = resolved.actionUrl;
-        if (!n.metadata.actionLabel) n.metadata.actionLabel = resolved.actionLabel;
-        patched = true;
+    // Sanitize historical records with non-string display fields.
+    for (const notification of notifications) {
+      if (typeof notification.message !== "string") {
+        notification.message = typeof notification.message === "object" && notification.message !== null
+          ? (notification.message as Record<string, unknown>).message as string
+            || JSON.stringify(notification.message)
+          : String(notification.message);
+        write = true;
+      }
+      if (typeof notification.title !== "string") {
+        notification.title = typeof notification.title === "object"
+          ? JSON.stringify(notification.title)
+          : String(notification.title);
+        write = true;
+      }
+      if (notification.metadata?.error && typeof notification.metadata.error !== "string") {
+        notification.metadata.error = typeof notification.metadata.error === "object"
+          ? (notification.metadata.error as Record<string, unknown>).message as string
+            || JSON.stringify(notification.metadata.error)
+          : String(notification.metadata.error);
+        write = true;
       }
     }
-  }
-  if (patched) {
-    saveNotifications(namespaceId, notifications);
-  }
+
+    if (notifications.length === 0) {
+      notifications = generateNotificationsFromRuns(namespaceId);
+      write = true;
+    }
+
+    for (const notification of notifications) {
+      if (!notification.metadata?.actionUrl) {
+        const resolved = resolveActionUrl(notification.type, notification.metadata);
+        if (resolved.actionUrl) {
+          if (!notification.metadata) notification.metadata = {};
+          notification.metadata.actionUrl = resolved.actionUrl;
+          if (!notification.metadata.actionLabel) {
+            notification.metadata.actionLabel = resolved.actionLabel;
+          }
+          write = true;
+        }
+      }
+    }
+
+    return {
+      notifications,
+      result: {
+        notifications,
+        unreadCount: notifications.filter((notification) => !notification.read).length,
+      },
+      write,
+    };
+  });
+
+  let notifications = [...snapshot.notifications];
 
   // Apply filters
   if (filter === "unread") {
@@ -306,7 +268,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
   return apiSuccess({
     notifications,
-    unreadCount: loadNotifications(namespaceId).filter((n) => !n.read).length,
+    unreadCount: snapshot.unreadCount,
   });
 });
 
@@ -341,8 +303,6 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!enrichedMetadata.actionUrl) delete enrichedMetadata.actionUrl;
   if (!enrichedMetadata.actionLabel) delete enrichedMetadata.actionLabel;
 
-  const notifications = loadNotifications(namespaceId);
-
   // coerce metadata.error to string as well
   if (enrichedMetadata.error && typeof enrichedMetadata.error !== "string") {
     enrichedMetadata.error = typeof enrichedMetadata.error === "object"
@@ -360,16 +320,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     metadata: Object.keys(enrichedMetadata).length > 0 ? enrichedMetadata : undefined,
   };
 
-  notifications.unshift(newNotification);
+  const notification = addNotification(namespaceId, newNotification);
 
-  // Keep only most recent
-  if (notifications.length > MAX_NOTIFICATIONS) {
-    notifications.splice(MAX_NOTIFICATIONS);
-  }
-
-  saveNotifications(namespaceId, notifications);
-
-  return apiSuccess({ notification: newNotification });
+  return apiSuccess({ notification });
 });
 
 // PATCH /api/notifications - bulk operations (mark all read, clear all)
@@ -382,16 +335,20 @@ export const PATCH = withErrorHandling(async (request: NextRequest) => {
   const body = await request.json();
   const { action } = body;
 
-  const notifications = loadNotifications(namespaceId);
-
   if (action === "markAllRead") {
-    notifications.forEach((n) => (n.read = true));
-    saveNotifications(namespaceId, notifications);
+    mutateNotifications(namespaceId, (notifications) => {
+      notifications.forEach((notification) => (notification.read = true));
+      return { notifications, result: undefined, write: true };
+    });
     return apiSuccess({ success: true });
   }
 
   if (action === "clearAll") {
-    saveNotifications(namespaceId, []);
+    mutateNotifications(namespaceId, () => ({
+      notifications: [],
+      result: undefined,
+      write: true,
+    }));
     return apiSuccess({ success: true });
   }
 
@@ -412,10 +369,11 @@ export const DELETE = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("id required");
   }
 
-  const notifications = loadNotifications(namespaceId);
-  const filtered = notifications.filter((n) => n.id !== id);
-
-  saveNotifications(namespaceId, filtered);
+  mutateNotifications(namespaceId, (notifications) => ({
+    notifications: notifications.filter((notification) => notification.id !== id),
+    result: undefined,
+    write: true,
+  }));
 
   return apiSuccess({ success: true });
 });

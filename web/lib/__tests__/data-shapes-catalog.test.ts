@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_SOURCE_EXCLUSIONS,
+  dataShapeShellSources,
 } from "@/lib/data-shapes/catalog";
 import {
   RUNNER_LINEAGE_BY_SHAPE_ID,
@@ -51,7 +52,7 @@ describe("data shape catalog", () => {
   });
 
   it("maps every direct runner source to explicit, internally consistent lineage", () => {
-    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|chain-runner-complete|config|error-handling|routing-lib|run-lib|retry-utils)\.sh$/;
+    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|chain-runner-complete|config|error-handling|event-trigger|routing-lib|run-lib|retry-utils)\.sh$/;
 
     for (const shape of DATA_SHAPE_CATALOG) {
       const provenance = [
@@ -97,6 +98,32 @@ describe("data shape catalog", () => {
     }
   });
 
+  it("indexes every data shape with a direct shell contract owner", () => {
+    const queue = DATA_SHAPE_CATALOG
+      .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
+      .filter((shape) => shape.shell.length > 0);
+
+    expect(queue.map((shape) => shape.id)).toEqual([
+      "chain-definition",
+      "agent-definition",
+      "runner-event",
+      "run-record",
+      "batch-run-record",
+      "runner-agent-state",
+      "chain-loop-state",
+      "runspace-manifest",
+      "fan-group-state",
+      "config-profile",
+      "agent-profile",
+      "plugin-registry",
+      "audit-index",
+      "runtime-profiler",
+      "performance-metrics",
+      "runner-retry-state",
+    ]);
+    expect(queue.every((shape) => shape.shell.every((path) => path.endsWith(".sh")))).toBe(true);
+  });
+
   it("documents pending handoff as runner-v2 data around a shared routed lifecycle", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-v2-pending-handoff");
     expect(shape?.writers).toContain("web/lib/runner-v2/adapters.ts");
@@ -110,6 +137,102 @@ describe("data shape catalog", () => {
       typedPercent: 67,
       state: "shared",
     });
+  });
+
+  it("pins Runner Event provenance to every active reader and writer", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-event");
+
+    expect(shape?.writers).toEqual([
+      "web/app/api/chain-triggers/route.ts",
+      "web/app/api/events/emit/route.ts",
+      "web/app/api/webhooks/[id]/receive/route.ts",
+      "web/lib/runner-v2/adapters.ts",
+      "web/lib/runner-v2/agent-attempt.ts",
+      "web/lib/runner-v2/completion-recovery.ts",
+      "web/lib/runner-v2/event-emitter.ts",
+      "web/lib/runner-v2/monitor-live-io.ts",
+      "web/lib/runner-v2/probe.ts",
+      "web/lib/runner-v2/watchdog.ts",
+    ]);
+    expect(shape?.readers).toEqual([
+      "lib/event-trigger.sh",
+      "web/app/api/activity/route.ts",
+      "web/app/api/events/route.ts",
+      "web/app/api/events/stream/route.ts",
+      "web/app/api/mentiko-mcp/ops/runtime/route.ts",
+      "web/app/api/tasks/reconcile/route.ts",
+      "web/lib/runner-v2/completion-entrypoint.ts",
+      "web/lib/runner-v2/completion-recovery.ts",
+      "web/lib/runner-v2/chain-watcher-service.ts",
+      "web/lib/runner-v2/monitor-io.ts",
+      "web/lib/runs/run-reconciler.ts",
+    ]);
+    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
+      typed: 3,
+      legacy: 1,
+      typedPercent: 75,
+      state: "shared",
+    });
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/listing, processed mutation, and archive lifecycle/i);
+  });
+
+  it("catalogs the actual project-level watchdog hook ledger and typed owner", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "watchdog-hook-dispatch");
+
+    expect(shape?.scope).toBe("project");
+    expect(shape?.storage).toContain("{runtimeRoot}/watchdog-hooks/dispatch.jsonl");
+    expect(shape?.samples?.patterns).toContainEqual(["watchdog-hooks", "dispatch.jsonl"]);
+    expect(shape?.writers).toContain("web/lib/runner-v2/watchdog.ts");
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "typed-watchdog-hook-delivery",
+        paths: expect.arrayContaining(["web/lib/runner-v2/watchdog.ts"]),
+      }),
+    ]));
+  });
+
+  it("pins notification persistence to the centralized atomic store", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "notifications");
+
+    expect(shape?.typePaths).toContain("web/lib/notifications/notification-persistence.ts");
+    expect(shape?.writers).toEqual(["web/lib/notifications/notification-persistence.ts"]);
+    expect(shape?.writers).not.toEqual(expect.arrayContaining([
+      "web/lib/notifications/notification-server.ts",
+      "web/app/api/notifications/route.ts",
+      "web/app/api/notifications/[id]/route.ts",
+      "web/lib/schedules/scheduler-service.ts",
+    ]));
+  });
+
+  it("catalogs the background worker process-identity owner sidecar", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "background-worker-state");
+
+    expect(shape?.storage).toContain("{runtimeRoot}/state/background-worker.owner.json");
+    expect(shape?.samples?.patterns).toContainEqual(["state", "background-worker.owner.json"]);
+    expect(shape?.notes).toEqual(expect.arrayContaining([
+      expect.stringMatching(/owner\.json is authoritative/i),
+    ]));
+  });
+
+  it("pins chain watcher singleton storage to owner.json with legacy-only pid", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "chain-watcher-runtime");
+
+    expect(shape?.storage[0]).toBe(
+      "{runtimeRoot}/runtime/chain-watcher/running-{namespaceId}-{orgId}/owner.json",
+    );
+    expect(shape?.storage).toContain(
+      "{runtimeRoot}/runtime/chain-watcher/running-{namespaceId}-{orgId}/pid (legacy-only)",
+    );
+    expect(shape?.samples?.patterns).toContainEqual([
+      "runtime",
+      "chain-watcher",
+      "running-*",
+      "owner.json",
+    ]);
+    expect(shape?.notes).toEqual(expect.arrayContaining([
+      expect.stringMatching(/owner\.json is authoritative.*pid.*legacy/i),
+    ]));
   });
 
   it("registers every canonical JSON schema", () => {

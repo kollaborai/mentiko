@@ -11,7 +11,7 @@ the memory system (see MEMORY.md topic files).
 
 4 layers:
 1. ui: cli (bin/mentiko), web ui (next.js 16), rest api (/web/app/api/)
-2. orchestration: chain-runner.sh, launch-agent.sh, complete-agent.sh, event-trigger.sh, scheduler.sh, watchdog.sh
+2. orchestration: shell chain/agent launch boundaries plus the TypeScript background worker, scheduler, chain watcher, watchdog, and runner-v2 completion services
 3. execution: agents in PTY sessions via pty-manager daemon (bin/p, claude code, codex, kollabor, aider)
 4. data: 3-tier (global > tenant > org > project), file-based + sqlite (better-auth). see "data hierarchy" section.
 
@@ -33,7 +33,7 @@ code root (this git checkout):
   docker-entrypoint entrypoint for tenant container
 
 /lib/               orchestration layer (bash + js)
-  *.sh              bash orchestration scripts (chain-runner, launch-agent, watchdog, etc.)
+  *.sh              bash chain/agent boundaries; watchdog.sh and chain-event-watcher.sh are retired parity references, not launch surfaces
   *.mjs             node orchestration (job-runner, chain-runner, pty-manager)
   process-manager.ts standalone process supervisor (compiled for container)
   config.sh         bash config resolver (mirrors web/lib/config.ts)
@@ -47,7 +47,7 @@ code root (this git checkout):
   components/       react components (organized by feature)
   lib/              shared utilities, stores, types, config
   hooks/            react hooks (agents, chains, events, websocket, etc.)
-  server/           standalone processes (ws-terminal.ts, background-worker.cjs)
+  server/           standalone processes (ws-terminal.ts, background-worker.ts)
   public/           static assets (favicons, manifest, sw.js)
   scripts/          seed data, list utilities
   e2e/              playwright end-to-end tests

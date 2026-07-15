@@ -11,7 +11,7 @@ import type { RuntimeDataShape, RuntimeShapeStatus } from "./runtime-catalog";
  */
 export const ASSURANCE_MEANING: Record<RuntimeDataShape["assurance"], string> = {
   enforced: "A writer, validator, or database schema actively constrains this shape.",
-  "drift-checked": "A JSON Schema is checked against current persisted artifacts on every catalog load.",
+  "drift-checked": "Canonical physical and/or normalized contracts are checked against current persisted artifacts on every catalog load.",
   typed: "The producer and reader have a code-level type, but persisted artifacts are not schema-gated.",
   observed: "Fields come from current artifacts; no canonical contract is enforced.",
   open: "The format intentionally accepts arbitrary producer output.",
@@ -25,7 +25,7 @@ export const STATUS_LEGEND: Array<{
   {
     status: "valid",
     label: "Valid",
-    description: "Artifacts exist and every inspected record passed the canonical schema.",
+    description: "Artifacts exist and every inspected artifact passed its configured physical and normalized contracts.",
   },
   {
     status: "observed",

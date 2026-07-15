@@ -12,7 +12,6 @@ const staleDecisionLinkFiles = [
   "app/docs/decisions/page.tsx",
   "app/api/notifications/route.ts",
   "app/api/notifications/dispatch/route.ts",
-  "app/api/mentiko-mcp/ops/meta/nav/route.ts",
 ];
 
 describe("decision navigation", () => {
@@ -26,6 +25,15 @@ describe("decision navigation", () => {
       expect(source).toContain("/tasks?type=decision");
     },
   );
+
+  it("keeps MCP nav metadata aligned with the single Tasks workspace entry", () => {
+    const source = readFileSync("app/api/mentiko-mcp/ops/meta/nav/route.ts", "utf8");
+
+    expect(source).toContain('{ href: "/tasks", label: "Tasks" }');
+    expect(source).not.toContain('label: "Decisions"');
+    expect(source).not.toContain('href: "/decisions"');
+    expect(source).not.toContain("/tasks?type=decision");
+  });
 
   it("keeps task creation behind one sidebar entry and modal flags", () => {
     const filters = readFileSync("components/task/task-filters.tsx", "utf8");

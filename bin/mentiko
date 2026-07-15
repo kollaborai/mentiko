@@ -15,7 +15,7 @@
 #   mentiko kill-all
 #   mentiko list
 #   mentiko events [--unprocessed]
-#   mentiko emit <event-name> [source] [data]  (source defaults to $MENTIKO_AGENT_ID)
+#   mentiko emit [--scope run|ingress] <event-name> [source] [data]
 #   mentiko init [directory]
 #   mentiko monitor <session-name> "end state" [profile] [interval]
 #   mentiko audit [summary|export-json|export-csv|query|archive|clear]
@@ -218,6 +218,21 @@ case "$CMD" in
         ;;
 
     emit)
+        EVENT_SCOPE="run"
+        if [[ "${1:-}" == "--scope" ]]; then
+            if [[ -z "${2:-}" ]]; then
+                echo "  error: --scope requires run or ingress"
+                echo "  usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
+                exit 1
+            fi
+            EVENT_SCOPE="${2:-}"
+            shift 2
+        fi
+        if [[ "$EVENT_SCOPE" != "run" && "$EVENT_SCOPE" != "ingress" ]]; then
+            echo "  error: event scope must be run or ingress"
+            echo "  usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
+            exit 1
+        fi
         EVENT_NAME="${1:-}"
         SOURCE="${2:-${MENTIKO_AGENT_ID:-}}"
         DATA="${3:-}"
@@ -225,28 +240,30 @@ case "$CMD" in
         # `mentiko emit --help` must print usage, NOT emit an event literally named "--help"
         # (agents probe the command this way and were polluting the event stream).
         if [[ "$EVENT_NAME" == "--help" || "$EVENT_NAME" == "-h" || "$EVENT_NAME" == "help" ]]; then
-            echo "usage: mentiko emit <event-name> [source] [data]  (source defaults to \$MENTIKO_AGENT_ID)"
+            echo "usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
+            echo "  run is the default and requires MENTIKO_RUN_ID or RUN_ID"
+            echo "  ingress must be requested explicitly and must not carry a run id"
+            echo "  source defaults to \$MENTIKO_AGENT_ID"
             exit 0
         fi
         if [[ -z "$EVENT_NAME" ]]; then
-            echo "usage: mentiko emit <event-name> [source] [data]  (source defaults to \$MENTIKO_AGENT_ID)"
+            echo "usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
             exit 1
         fi
         if [[ -z "$SOURCE" ]]; then
             echo "  error: no source given and MENTIKO_AGENT_ID is not set"
-            echo "  usage: mentiko emit <event-name> [source] [data]"
+            echo "  usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
             exit 1
         fi
 
-        # Route through the single canonical writer (event-trigger.sh emit-event) so the
-        # CLI, the helper, and the chain-runner fallback all produce byte-identical event
-        # files. event-trigger.sh honors the already-set EVENTS_DIR (config.sh sourced at
-        # the top) and reads MENTIKO_RUN_ID/RUN_ID for the run-id filename prefix.
+        # The shell helper delegates bytes, filenames, validation, and atomic persistence
+        # to the typed emitter. Run scope is the normal agent path. Empty-run ingress is
+        # exceptional and must be declared explicitly; it is never inferred as a fallback.
         # >/dev/null on the source suppresses the "event functions loaded" banner only;
         # emit-event's own output still prints. emit-event ignores optional _sys_log
         # failures internally, so a non-zero return here means the event was not written.
         source "$LIB_DIR/event-trigger.sh" >/dev/null 2>&1
-        if ! emit-event "$EVENT_NAME" "$SOURCE" "$DATA"; then
+        if ! emit-event "$EVENT_NAME" "$SOURCE" "$DATA" "$EVENT_SCOPE"; then
             exit 1
         fi
 
@@ -405,7 +422,7 @@ usage:
   mentiko kill-all
   mentiko list
   mentiko events [--unprocessed]
-  mentiko emit <event-name> [source] [data]  (source defaults to $MENTIKO_AGENT_ID)
+  mentiko emit [--scope run|ingress] <event-name> [source] [data]
   mentiko init [directory]
   mentiko monitor <session> "end state" [profile] [interval]
   mentiko audit [summary|export-json|export-csv|query|archive|clear]

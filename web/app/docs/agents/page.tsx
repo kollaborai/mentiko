@@ -219,8 +219,8 @@ export default function AgentsDocPage() {
             <div><code className="text-foreground/70">tools</code> - tool list override</div>
             <div><code className="text-foreground/70">agent_profile</code> - profile ID defining LLM model and tools config</div>
             <div><code className="text-foreground/70">session_prefix</code> - prefix for the PTY session name</div>
-            <div><code className="text-foreground/70">monitor</code> - watchdog monitor session (boolean, but watchdog runs globally regardless of per-agent flag - field is read but not controlling)</div>
-            <div><code className="text-foreground/70">monitor_interval</code> - watchdog check interval in seconds</div>
+            <div><code className="text-foreground/70">monitor</code> - enables the per-agent completion monitor; separate from the global typed watchdog</div>
+            <div><code className="text-foreground/70">monitor_interval</code> - per-agent completion monitor polling interval in seconds</div>
             <div><code className="text-foreground/70">timeout</code> - max execution time in seconds (0 = no timeout)</div>
             <div><code className="text-foreground/70">retry</code> - retry config (max_retries, backoff: fixed|exponential|linear, initial_delay, max_delay, backoff_multiplier)</div>
             <div><code className="text-foreground/70">on_error</code> - agent ID to route to on failure</div>

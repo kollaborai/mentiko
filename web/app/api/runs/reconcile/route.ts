@@ -3,7 +3,7 @@ import { reconcileOrphanedRuns } from "@/lib/runs/run-reconciler";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { orgPath } from "@/lib/config";
+import config from "@/lib/config";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
@@ -27,7 +27,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
     namespaceId,
     orgId,
     runsDir: resolveLinkRunsDir(namespaceId, orgId),
-    eventsDir: orgPath(namespaceId, orgId, "events"),
+    eventsDir: config.eventsDir,
   });
   return apiSuccess(result);
 });

@@ -9,14 +9,14 @@
     "concurrency admission",
     "agent pty launch",
     "monitor pty launch",
-    "watchdog and chain event watcher singleton startup",
     "startup readiness before instruction submission"
   ],
   "does_not_own": [
     "full chain completion",
     "branch routing after an agent emits",
     "fan-in/fan-out resolution after completion",
-    "terminal artifact summary"
+    "terminal artifact summary",
+    "watchdog or chain-watcher lifecycle; web/server/background-worker.ts owns both typed services"
   ],
   "env_read": [
     "MENTIKO_RUN_ID",
@@ -85,7 +85,6 @@
     "readiness classification is profile-driven data, never hardcoded prompt heuristics (a7956d9, 20ce3b1)",
     "best-effort observability writers (perf/metrics/profiler) must never abort a live run under set -e + ERR trap (23bdfe7)",
     "diagnostic monitor events must not look like successful handoff events",
-    "watchdog and chain event watcher startup remains early side effect",
     "completion/routing stays delegated to chain-runner-complete"
   ]
 }

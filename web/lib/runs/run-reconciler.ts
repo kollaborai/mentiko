@@ -18,6 +18,7 @@ import { taskGet, taskMergeMeta, taskUpdate } from "../tasks/task-store";
 import { normalizeRunId } from "../auth/run-acl";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
 import { hasLivePendingHandoff } from "../runner-v2/handoff-liveness";
+import { parseRunnerEvent } from "../runner-v2/events";
 
 interface ReconcilerContext {
   namespaceId: string;
@@ -85,6 +86,7 @@ interface EventRecord {
   file: string;
   event?: string;
   source?: string;
+  runId: string;
   mtimeMs: number;
 }
 
@@ -122,19 +124,13 @@ function parseEventRecord(eventsDir: string, file: string): EventRecord | null {
   if (!existsSync(eventFile)) return null;
 
   try {
-    const fields: Record<string, string> = {};
-    for (const line of readFileSync(eventFile, "utf-8").split("\n")) {
-      const separator = line.indexOf(":");
-      if (separator === -1) continue;
-      const key = line.slice(0, separator).trim().toLowerCase();
-      const value = line.slice(separator + 1).trim();
-      if (key) fields[key] = value;
-    }
+    const event = parseRunnerEvent(readFileSync(eventFile, "utf-8"));
 
     return {
       file,
-      event: fields.event,
-      source: fields.source,
+      event: event.event,
+      source: event.source,
+      runId: event.runId,
       mtimeMs: statSync(eventFile).mtimeMs,
     };
   } catch {
@@ -155,7 +151,12 @@ function readEventRecords(eventsDir: string): EventRecord[] {
   }
 }
 
-function recoverCompletedAgentsFromEvents(context: ReconcilerContext, run: RunJson, runDir: string): boolean {
+function recoverCompletedAgentsFromEvents(
+  context: ReconcilerContext,
+  run: RunJson,
+  runDir: string,
+  runId: string,
+): boolean {
   const agents = run.agents || [];
   if (agents.length === 0) return false;
 
@@ -177,6 +178,7 @@ function recoverCompletedAgentsFromEvents(context: ReconcilerContext, run: RunJs
     const notAfter = asTimeMs(run.completed);
     const sourceNeedle = agent.id.toLowerCase();
     const event = events.find((candidate) => {
+      if (candidate.runId !== runId) return false;
       const eventName = candidate.event?.trim().toLowerCase();
       const source = candidate.source?.trim().toLowerCase() || "";
       if (!eventName || !expectedEvents.includes(eventName)) return false;
@@ -419,7 +421,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
       changed = true;
     }
 
-    if (recoverCompletedAgentsFromEvents(context, run, runDir)) {
+    if (recoverCompletedAgentsFromEvents(context, run, runDir, runId)) {
       changed = true;
     }
 

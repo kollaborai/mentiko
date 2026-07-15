@@ -41,7 +41,7 @@ _sys_log() {
 #
 # THE PROBLEM (bug #7): three independent processes read-modify-write the same
 # run.json — the bash completion/monitor handlers (via the helpers below), the
-# watchdog (watchdog.sh), and the web heartbeat route (TS). Each write is atomic
+# typed watchdog, and the web heartbeat route. Each write is atomic
 # in isolation (jq -> tmp -> mv, so a READER never sees a half-written file), but
 # there is no mutual exclusion ACROSS writers. That is a classic lost-update: an
 # agent-status write can be silently clobbered by a concurrent watchdog rewrite or
@@ -52,8 +52,8 @@ _sys_log() {
 #
 # THE FIX: serialize the FULL read-modify-write of run.json behind one lock taken
 # adjacent to the file (${run_file}.lock/ with a pid file). Every mutation helper
-# in this file routes its RMW through _with_run_lock. watchdog.sh sources this file
-# and calls watchdog_locked_terminal_rewrite (same lock). The TS heartbeat route
+# in this file routes its RMW through _with_run_lock. The typed watchdog and heartbeat
+# route use the shared TypeScript lock implementation
 # replicates this exact protocol (web/lib/runs/run-json-lock.ts) so a node writer
 # and a bash writer mutually exclude on the same lock dir.
 #
@@ -918,11 +918,9 @@ Artifacts: $artifacts_count files"
 # watchdog-stop-run: mark a stalled run stopped + reconcile its agents
 # -------------------------------------------------------------------
 # args: <run-id>
-# The watchdog (watchdog.sh) is the THIRD independent run.json writer. It sources
-# this file, so it calls this helper to perform its terminal rewrite under the SAME
-# lock the bash completion helpers use — closing the watchdog-vs-completion lost
-# update. The jq filter is identical to watchdog.sh's previous inline rewrite; the
-# only change is that it now runs inside _with_run_lock. Reads stay lock-free.
+# Legacy parity helper for lib/watchdog.sh, which is no longer launched. It keeps
+# the old terminal rewrite on the shared lock protocol until that reference file
+# is deleted. Active watchdog mutations use web/lib/runner-v2/run-state.ts.
 watchdog-stop-run() {
     local run_id="$1"
     local run_file="$RUNS_DIR/$run_id/run.json"

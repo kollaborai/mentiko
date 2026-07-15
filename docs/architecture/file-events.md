@@ -10,24 +10,20 @@ Agents communicate via event files written to the filesystem. When an agent comp
 
 ### Event Format
 
-Events are JSON files:
+Runner events are canonical lowercase `key: value` files:
 
-```json
-{
-  "event": "agent:complete",
-  "source": "research-agent",
-  "timestamp": "2026-07-02T20:15:00Z",
-  "processed": false,
-  "data": {
-    "status": "success",
-    "output": "/workspace/research.md"
-  }
-}
+```text
+event: research-complete
+source: research-agent
+run_id: run-1784102007562-bb990ff5
+timestamp: 2026-07-02T20:15:00.000Z
+processed: false
+data: output=/workspace/research.md status=success
 ```
 
 ### Processing Flow
 
-1. Agent writes `.event` file to `namespaces/{id}/events/`
+1. Producer invokes `mentiko emit`; agents use the ambient run scope
 2. Filesystem watcher detects new file
 3. Event name matched against agent triggers
 4. Matching agents launched with event data
@@ -35,19 +31,11 @@ Events are JSON files:
 
 ### Implementation
 
-**Watcher (lib/event-trigger.sh):**
-```bash
-inotifywait -m -e create --format '%f' events/ | while read file; do
-  process_event "$file"
-done
-```
-
-**Parser (lib/event-parser.mjs):**
-```javascript
-const event = JSON.parse(fs.readFileSync(path, 'utf8'));
-const eventName = event.event;
-const timestamp = new Date(event.timestamp);
-```
+The typed emitter in `web/lib/runner-v2/event-emitter.ts` owns serialization,
+filename selection, and atomic no-clobber persistence. The parser in
+`web/lib/runner-v2/events.ts` validates the physical file before normalization.
+The typed watcher in `web/lib/runner-v2/chain-watcher-service.ts` consumes only
+validated records from the configured event root.
 
 ## Characteristics
 
@@ -63,7 +51,9 @@ git diff events/
 
 **Zero Infrastructure:** No separate services to deploy or monitor.
 
-**Format Tolerance:** Parser accepts JSON, YAML, or markdown frontmatter. Filename fallback when parsing fails.
+**Strict Contract:** Six canonical lowercase fields are required exactly once.
+Malformed, duplicate, missing, JSON, YAML, frontmatter, and noncanonical files
+are rejected rather than partially normalized.
 
 ### Limitations
 
@@ -80,14 +70,13 @@ git diff events/
 **Required fields:**
 - `event` (string) - Event name for trigger matching
 - `source` (string) - Emitting agent ID
+- `run_id` (string) - Owning run ID; empty only for explicit pre-run ingress
 - `timestamp` (ISO8601) - When event was emitted
 - `processed` (boolean) - Whether event has been handled
+- `data` (string) - Additional context; may be empty
 
 **Optional fields:**
-- `data.status` (string) - Agent execution status
-- `data.output` (string) - Path to agent output
-- `data.error` (string) - Error message if failed
-- `data.metrics` (object) - Performance metrics
+- lowercase extension fields used by typed diagnostic producers
 
 ## Location
 
@@ -122,7 +111,7 @@ find events/ -mmin +5 -name "*.event"
 
 **Missing required fields:** Log error, skip event.
 
-**Invalid timestamp:** Log error, use current time.
+**Invalid timestamp:** Reject the event; consumers do not substitute file time or current time.
 
 ## Related
 

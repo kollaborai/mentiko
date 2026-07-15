@@ -1,7 +1,7 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/run-lib.sh", "lib/event-trigger.sh"],
-  "role": "run.json mutation, task propagation, event file emission, processed markers, and archive scoping",
+  "source_files": ["lib/run-lib.sh", "lib/event-trigger.sh", "web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-emitter.ts"],
+  "role": "run.json mutation and task propagation, typed runner-event emission, and remaining shell processed/archive lifecycle mutation",
   "run_json": {
     "path": "$RUNS_DIR/<run_id>/run.json",
     "lock_dir": "<run.json>.lock/",
@@ -13,8 +13,10 @@
   "event_file": {
     "format": "key-value text",
     "fields": ["event", "source", "run_id", "timestamp", "processed", "data"],
-    "parser": "split on first colon",
-    "filename": "${run_id-optional}<source>-<event>.event",
+    "parser": "strict lowercase key-value lines split on first colon; six canonical fields are required exactly once before normalization, and optional extension fields must be lowercase, unique, and non-colliding",
+    "writer": "web/lib/runner-v2/event-emitter.ts owns canonical bytes, validation, filenames, and atomic writes; shell-facing emit entrypoints only invoke it",
+    "shell_lifecycle": "lib/event-trigger.sh still directly lists, marks processed, and archives owned event files",
+    "filename": "canonical: ${run_id:+${run_id}-}${source}-${event}.event; diagnostic: <timestamp>-${run_id}-${agent}-${event}.event",
     "source_of_truth": "body fields before filename fallback"
   },
   "task_update": {

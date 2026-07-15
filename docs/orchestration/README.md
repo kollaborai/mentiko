@@ -13,7 +13,7 @@ current typed runner-v2 boundary and the complete HTTP-to-next-agent lifecycle.
 overview
 ========
 
-the orchestration layer is a bash-based event-driven system that:
+the orchestration layer is a hybrid typescript/shell event-driven system that:
 
   - reads chain.json definitions
   - spawns AI agents in isolated PTY sessions
@@ -23,6 +23,9 @@ the orchestration layer is a bash-based event-driven system that:
   - tracks execution state in run.json objects
   - detects and handles stalled runs
   - supports retry, fan-out/fan-in, and error routing
+
+the long-running chain watcher and watchdog are typescript services owned by
+`web/server/background-worker.ts`. they are not shell or pty daemons.
 
 architecture philosophy
 =======================
@@ -57,7 +60,7 @@ execution layer
 
 [chain-runner-flow.md](./chain-runner-flow.md)
   main orchestrator. 8-phase execution flow:
-    0. initialization (source libs, start daemons)
+    0. initialization (source libraries; long-running services are already worker-owned)
     1. argument parsing
     2. chain.json validation
     3. agent resolution (profiles, configs)
@@ -73,11 +76,11 @@ execution layer
   completion handler. 9-phase process when agent finishes:
     1. derive agent identity from session name
     2. capture final output
-    3. find event file written by agent
+    3. find and strictly match the declared runner event
     4. kill monitor and agent sessions
     5. capture artifacts (diff, files-changed, conversations)
     6. update run.json with agent status
-    7. emit event to EVENTS_DIR/
+    7. fail closed if the declared event is absent
     8. find next agent (via branch mapping or triggers)
     9. launch next agent or complete chain
 
@@ -91,38 +94,42 @@ execution layer
     - new-agent-session        create PTY + launch agent
     - monitor-chain-agent      watch for AGENT_COMPLETE
     - monitor-with-ai          legacy monitor (grep-based)
-    - ensure-event-file        fallback event writer
     - send-message             interactive agent communication
     - peek-session             view session output
 
-daemon layer
-------------
+  monitor diagnostics delegate canonical runner-event bytes and filenames to
+  the typed event emitter. they never manufacture a missing success handoff.
+
+background service layer
+------------------------
 
 [watchdog.md](./watchdog.md)
-  stalled run detection daemon. runs every 60 seconds.
+  typed stalled-run recovery. the background worker runs one pass at startup
+  and every 60 seconds.
 
   flow:
     1. list all runs with status "running"
     2. for each run, check agent session exists
-    3. check process alive (local workspaces only)
-    4. if no session for >10 min starting or >5 min running
-    5. mark run as "stopped"
-    6. emit run-stalled event
+    3. honor live process, handoff, completion, and grace evidence
+    4. recheck pty and run state immediately before mutation
+    5. mark a still-proven stall as "stopped"
+    6. emit run-stalled and queue durable recovery effects
 
   grace periods:
-    - <10 seconds: starting (session may not exist yet)
-    - <5 minutes: monitor initializing (companion session spinning up)
+    - 10 seconds: newly missing session
+    - 2 minutes: resume, sessionless agent, or pending run
+    - 5 minutes: exited-session or recent-completion handoff
 
 [chain-watcher.md](./chain-watcher.md)
-  event-driven chain trigger daemon. watches EVENTS_DIR/ for
-  new event files.
+  typed event-driven chain trigger service. the background worker watches the
+  configured event root for new event files.
 
   flow:
     1. scan EVENTS_DIR/ for unprocessed events
     2. read event: name, source, timestamp, data
     3. search chains for matching triggers
-    4. launch matching chains via chain-runner.sh
-    5. mark event as processed
+    4. launch matching chains via detached `bin/mentiko run`
+    5. record per-trigger handled markers without mutating the event
 
   enables:
     - agent chaining (event triggers next agent in chain)
@@ -173,7 +180,7 @@ supporting libraries
   file-based event system.
 
   functions:
-    - emit-event           write event file to EVENTS_DIR/
+    - emit-event           invoke the typed event emitter
     - list-events          show all events (optionally unprocessed)
     - mark-processed       mark event as processed
     - archive-all-events   move events to archive/
@@ -182,9 +189,14 @@ supporting libraries
   event file format:
     event: agent-complete
     source: agent-id
+    run_id: run-1784102007562-bb990ff5
     timestamp: 2026-03-12T10:00:00-07:00
     processed: false
     data: {...}
+
+  canonical serialization, validation, filename selection, and atomic writes
+  live in web/lib/runner-v2/event-emitter.ts. the shell helper still directly
+  reads and mutates event lifecycle state for list/mark/archive operations.
 
 [routing-lib.md](./routing-lib.md)
   advanced routing patterns.
@@ -213,8 +225,6 @@ data flow
 
    chain-runner.sh:
      -> sources libraries (config, agent-functions, event-trigger, etc)
-     -> ensures watchdog daemon running
-     -> ensures chain-watcher daemon running
      -> validates chain.json (jq syntax, required fields)
      -> resolves executor (claude, codex, aider, kollabor)
      -> resolves agent profiles (env vars, cli args)
@@ -253,7 +263,7 @@ data flow
      -> captures files changed -> artifacts/{agent-id}-files-changed.json
      -> captures conversations -> artifacts/{agent-id}-conversations.json
      -> updates run.json (agent status, artifacts manifest)
-     -> emits event file to EVENTS_DIR/
+     -> consumes the agent's matching declared event; absence fails closed
      -> finds next agent (branch mapping or trigger matching)
      -> relaunches chain-runner.sh with --start {next-agent-id}
 
@@ -266,10 +276,10 @@ data flow
       -> next agent launched in same run
 
    b) cross-chain (chain-watcher):
-      -> chain-watcher detects new event file
-      -> matches against chain event_triggers
-      -> launches new chain-runner.sh instance
-      -> MENTIKO_PARENT_RUN_ID set for tracking
+      -> the background-worker-owned typed watcher detects a new event file
+      -> strictly parses it and matches chain config.event_triggers
+      -> launches detached bin/mentiko run with scoped trigger environment
+      -> records handled state without changing the event's processed field
 
 6. chain completion
    when no next agent found:
@@ -358,13 +368,13 @@ resumability
   any agent with --start <id>. run id preserved across restarts.
 
 stall detection
-  watchdog checks running runs every 60s. if agent session dead
-  for >5 min (or >10s if starting), marks run as "stopped".
-  prevents infinite hangs.
+  the background worker runs the typed watchdog every 60s. live pty/process,
+  handoff, completion, and grace evidence wins. only a twice-checked stall is
+  marked "stopped"; pty observation failure leaves the run unchanged.
 
 cross-chain triggers
-  chain-watcher watches EVENTS_DIR/. one chain's completion
-  can trigger another chain's start. enables multi-chain workflows.
+  the typed chain watcher watches the configured event root. one chain's
+  completion can trigger another chain's start. enables multi-chain workflows.
 
 fan-out / fan-in
   single event can trigger multiple agents in parallel (fan-out).
@@ -397,12 +407,12 @@ two "watchers", different purposes:
     - calls chain-runner-complete.sh when agent done
     - lifecycle: tied to agent (dies with it)
 
-  chain-watcher (global daemon)
-    - mentiko-chain-watcher singleton session
-    - watches EVENTS_DIR/ for new event files
+  chain-watcher (background-worker service)
+    - one in-process service plus a per-namespace/org pid lock
+    - watches the configured event root for new event files
     - matches events against ALL chains' triggers
-    - launches new chains (entire chain-runner.sh instances)
-    - lifecycle: persists indefinitely
+    - launches new chains through detached bin/mentiko run children
+    - lifecycle: starts and stops with the background worker
 
 quick reference: file locations
 ================================
@@ -416,16 +426,17 @@ libraries:
   lib/agent-functions.sh           PTY session functions
   lib/session-transport.sh         pty-manager abstraction
   lib/run-lib.sh                   run object management
-  lib/event-trigger.sh             event system
+  lib/event-trigger.sh             typed-emitter entrypoint plus shell event lifecycle helpers
   lib/routing-lib.sh               fan-out/fan-in, retry
   lib/agent-profile.sh             profile resolution
   lib/config.sh                    path resolution
   lib/agent-activity-capture.sh    artifact capture
 
-daemons:
-  lib/watchdog.sh                  stall detection
-  lib/scheduler.sh                 cron schedules
-  lib/chain-watcher.sh             event watcher (via chain-event-watcher)
+background services:
+  web/server/background-worker.ts                process owner
+  web/lib/runner-v2/event-emitter.ts              canonical runner-event writer
+  web/lib/runner-v2/watchdog.ts                   stalled-run recovery
+  web/lib/runner-v2/chain-watcher-service.ts      event-triggered chain launch
 
 supporting:
   lib/error-handling.sh            circuit breaker
@@ -456,10 +467,10 @@ next agent not launching?
   - check branches{} mapping in chain.json
 
 run marked "stopped" prematurely?
-  - watchdog timing race (<10s grace period for starting)
-  - monitor session killed as "orphan"
-  - check watchdog logs for stall detection
-  - adjust watchdog grace periods if needed
+  - inspect watchdog status in state/background-worker.json
+  - confirm the configured pty transport reported the session accurately
+  - inspect runnerV2.watchdog in the run.json for the durable assessment
+  - verify the run was outside resume, startup, handoff, and completion grace
 
 artifacts not captured?
   - check RUN_ID is set in environment

@@ -86,30 +86,17 @@ new-agent-from-spec <spec_file> [--monitor]
 
   usage: new-agent-from-spec "agents/researcher.md" --monitor
 
-event functions
-===============
+event diagnostics
+=================
 
-ensure-event-file <session_name> <agent_context> <project_root>
-  -------------------------------------------------------------
+  monitor failure and stall paths can request diagnostic runner events through
+  _monitor_emit_diagnostic_event. this shell helper is invocation-only: the
+  typed runner-event emitter owns canonical bytes, strict six-field validation,
+  filenames, and atomic writes.
 
-  fallback event writer. if agent says AGENT_COMPLETE but forgot
-  to write an event file, this reads the spec and writes a clean
-  event on behalf of the agent.
-
-  flow:
-    1. checks if any event file from this agent already exists
-    2. finds spec file from agent_context
-    3. extracts emit event name from spec
-    4. writes fallback event file to EVENTS_DIR/
-
-  event format:
-    event: {emit_event}
-    source: {session_prefix}
-    timestamp: {ISO}
-    data: fallback event (agent completed but did not write event file)
-    processed: false
-
-  usage: ensure-event-file "my-session" "Spec: spec.md" "/path/to/project"
+  diagnostic events require an explicit run id and never substitute for an
+  agent's declared success event. if the declared event is missing, completion
+  fails closed instead of manufacturing a successful handoff.
 
 monitor functions
 =================
@@ -126,7 +113,7 @@ monitor-with-ai <session_name> [check_interval] [agent_context] [max_stale_count
        - check session still exists
        - check process still alive (local only)
        - grep output for "AGENT_COMPLETE"
-       - if found: call ensure-event-file, launch complete-agent.sh
+       - if found: launch complete-agent.sh; do not fabricate an event
        - if output unchanged (stale):
          - increment stale counter
          - if max_stale_count reached: force completion
@@ -187,13 +174,13 @@ monitor flow comparison
 monitor-with-ai:
   - legacy mode (grep-parsing spec files)
   - calls complete-agent.sh on completion
-  - uses ensure-event-file fallback
+  - never fabricates a missing declared event
   - for: legacy spec-based agents
 
 monitor-chain-agent:
   - json-driven mode (chain.json)
   - calls chain-runner-complete.sh on completion
-  - no event file fallback (chain.json has expected event)
+  - missing declared event fails closed; chain.json only identifies what to match
   - for: chain-based agents
 
 both handle:
@@ -222,7 +209,6 @@ after sourcing, these functions are available:
   - new-agent-session
   - new-agent-from-spec
   - peek-session
-  - ensure-event-file
   - monitor-with-ai
   - monitor-chain-agent
   - mentiko-monitor

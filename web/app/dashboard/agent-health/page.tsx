@@ -55,9 +55,9 @@ function getSessionDisplayName(session: AgentSession): string {
 
   switch (type) {
     case "watchdog":
-      return "Watchdog";
+      return "Legacy Watchdog PTY";
     case "chain-watcher":
-      return "Chain Watcher";
+      return "Legacy Chain Watcher PTY";
     case "agent":
       if (session.chain) {
         return `${session.chain}`;
@@ -149,7 +149,7 @@ export default function AgentHealthPage() {
     <div>
       <PageBanner
         title="Agent Health"
-        subtitle="Live view of active PTY sessions, agent processes, and system watchdogs."
+        subtitle="Live view of agent and utility PTY sessions. Background services run in the supervised TypeScript worker."
         icon={Activity}
         sectionColor="#a0927b"
         actions={[
@@ -201,7 +201,7 @@ export default function AgentHealthPage() {
             <div className="bg-card rounded-md p-4">
               <div className="flex items-center gap-2 mb-1">
                 <Workflow className="h-4 w-4 text-foreground/60" />
-                <span className="text-xs text-foreground/60">System</span>
+                <span className="text-xs text-foreground/60">Utility</span>
               </div>
               <div className="text-2xl font-semibold">{systemSessions.length}</div>
             </div>
@@ -231,15 +231,15 @@ export default function AgentHealthPage() {
             )}
           </div>
 
-          {/* system sessions */}
+          {/* utility sessions */}
           <div className="bg-card rounded-md p-4">
             <div className="flex items-center gap-2 mb-3">
               <Workflow className="h-4 w-4 text-foreground/60" />
-              <span className="text-sm font-medium">System Sessions</span>
+              <span className="text-sm font-medium">Utility Sessions</span>
               <span className="text-xs text-foreground/40 ml-auto">{systemSessions.length}</span>
             </div>
             {systemSessions.length === 0 ? (
-              <p className="text-xs text-foreground/40 py-4">No system sessions</p>
+              <p className="text-xs text-foreground/40 py-4">No utility sessions</p>
             ) : (
               <div className="space-y-2">
                 {systemSessions.map((session) => (
@@ -320,7 +320,7 @@ function SessionRow({ session, killing, onKill, now }: SessionRowProps) {
           )}
           {type !== "agent" && (
             <span className="text-foreground/30">
-              {type === "watchdog" ? "watchdog" : type === "chain-watcher" ? "chain-watcher" : "system"}
+              {type === "watchdog" || type === "chain-watcher" ? "legacy runtime" : "utility"}
             </span>
           )}
         </div>

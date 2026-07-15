@@ -4,6 +4,8 @@ import { getNamespaceConfig } from "@/lib/namespace-config";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import config from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -202,40 +204,29 @@ export const GET = withErrorHandling(async (request: Request) => {
   }
 
   // 3. Read event files
-  if (existsSync(namespaceConfig.eventsDir)) {
+  const eventsDir = config.eventsDir;
+  if (existsSync(eventsDir)) {
     try {
-      const eventEntries = readdirSync(namespaceConfig.eventsDir, { withFileTypes: true })
-        .filter((f) => f.isFile() && (f.name.endsWith(".event") || f.name.endsWith(".md")))
+      const eventEntries = readdirSync(eventsDir, { withFileTypes: true })
+        .filter((f) => f.isFile() && f.name.endsWith(".event"))
         .slice(0, limit);
 
       for (const entry of eventEntries) {
-        const eventFile = join(namespaceConfig.eventsDir, entry.name);
+        const eventFile = join(eventsDir, entry.name);
         try {
-          const content = readFileSync(eventFile, "utf-8");
-          const lines = content.split("\n");
-          let eventType = "system";
-          let eventTimestamp = new Date().toISOString();
-          let eventData = "";
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith("event:")) {
-              eventType = trimmed.slice(6).trim();
-            } else if (trimmed.startsWith("timestamp:")) {
-              eventTimestamp = trimmed.slice(10).trim();
-            } else if (trimmed.startsWith("data:")) {
-              eventData = trimmed.slice(5).trim();
-            }
-          }
+          const event = parseRunnerEvent(readFileSync(eventFile, "utf-8"));
+          const eventType = event.event;
+          const eventTimestamp = event.timestamp;
+          const eventData = event.data;
 
           let mappedType: ActivityEvent["type"] = "system";
           if (eventType.includes("schedule") || eventType.includes("cron")) {
             mappedType = "schedule_triggered";
           } else if (eventType.includes("error")) {
             mappedType = "error";
-          } else if (eventType.includes("chain_complete")) {
+          } else if (eventType.includes("chain-complete")) {
             mappedType = "chain_completed";
-          } else if (eventType.includes("agent_complete")) {
+          } else if (eventType.includes("agent-complete")) {
             mappedType = "agent_completed";
           }
 

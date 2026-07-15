@@ -43,21 +43,14 @@ phase 0: initialization
    - plugin-runner.sh        plugin system
    - budget-check.sh         spending limits
 
-2. ensure watchdog
-   ----------------
-   checks if mentiko-watchdog session is running.
-   if not, kills any dead session with that name and starts a new one.
+2. background services
+   -------------------
+   chain startup does not create watchdog or chain-watcher sessions. the
+   process-manager-owned typescript background worker already owns stalled-run
+   scans and file-event chain launches. a watcher failure exits the worker so
+   process-manager supervision restarts the complete service.
 
-   purpose: detect stalled runs and update status.
-   see: [watchdog.md](./watchdog.md)
-
-3. ensure chain-watcher
-   ----------------------
-   checks if mentiko-chain-watcher session is running.
-   if not, kills any dead session with starts a new one.
-
-   purpose: watch for file-based events in EVENTS_DIR/ to trigger agents.
-   see: [chain-watcher.md](./chain-watcher.md)
+   see: [watchdog.md](./watchdog.md) and [chain-watcher.md](./chain-watcher.md)
 
 phase 1: argument parsing
 =========================
@@ -434,15 +427,19 @@ summary:
    calls update-run-status from run-lib.sh
    updates run.json agents[] with agent status
 
-7. emit event
-   -----------
-   writes event file to EVENTS_DIR/:
+7. verify declared event
+   ----------------------
+   matches the strict event already written through the typed emitter:
    event: {agent_emits}
    source: {session_prefix}
+   run_id: {run_id}
    timestamp: {ISO timestamp}
    processed: false
+   data: {...}
 
-   chain-event-watcher picks this up and triggers next agent.
+   a missing declared event fails the agent/run; completion does not fabricate
+   a success event. chain-event-watcher can independently pick up the event for
+   cross-chain triggers.
    see: [chain-watcher.md](./chain-watcher.md)
 
 8. metrics: agent completed
@@ -534,7 +531,8 @@ lib/profiler.sh               agent profiling
 lib/error-handling.sh         error handling + circuit breaker
 lib/approval-gate.sh          human approval gates
 lib/budget-check.sh           spending limits
-lib/watchdog.sh               stalled run detection (see [watchdog.md](./watchdog.md))
+web/lib/runner-v2/chain-watcher-service.ts  file-event chain launches (see [chain-watcher.md](./chain-watcher.md))
+web/lib/runner-v2/watchdog.ts               stalled run detection (see [watchdog.md](./watchdog.md))
 lib/scheduler.sh              cron scheduling
 lib/audit-log.sh              audit logging
 lib/retry-utils.sh            retry logic

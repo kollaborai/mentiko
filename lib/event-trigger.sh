@@ -3,7 +3,7 @@
 #
 # usage:
 #   source event-trigger.sh
-#   emit-event <event-name> <source-agent> [data]
+#   emit-event <event-name> <source-agent> [data] [scope]
 #   list-events [--unprocessed]
 #   mark-processed <event-file>
 #   archive-all-events
@@ -11,61 +11,50 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/run-lib.sh" 2>/dev/null || true
 
-# use EVENTS_DIR from config.sh if already set, otherwise resolve
+# Event readers below require the configured project-scoped root. Event writes
+# resolve that same root inside the typed emitter via web/lib/config.ts.
 if [[ -z "${EVENTS_DIR:-}" ]]; then
-    EVENTS_DIR="${MENTIKO_PROJECT_ROOT:-${MENTIKO_NAMESPACE_ROOT:-$HOME/.mentiko/namespaces/${NAMESPACE_ID:-default}}}/events"
+    echo "error: EVENTS_DIR must be configured before sourcing event-trigger.sh" >&2
+    return 1 2>/dev/null || exit 1
 fi
-mkdir -p "$EVENTS_DIR"
 
 # -------------------------------------------------------------------
 # emit-event: write an event file
 # -------------------------------------------------------------------
-event-filename-component() {
-    local value="${1:-}"
-    value="$(printf '%s' "$value" | LC_ALL=C sed 's#[/[:cntrl:]]#_#g; s#[^A-Za-z0-9._-]#_#g')"
-    case "$value" in
-        ""|"."|"..") value="_" ;;
-    esac
-    printf '%s' "$value"
-}
-
 emit-event() {
     local event_name="$1"
     local source_agent="$2"
     local data="${3:-}"
+    local requested_scope="${4:-}"
 
     if [[ -z "$event_name" || -z "$source_agent" ]]; then
-        echo "usage: emit-event <event-name> <source-agent> [data]"
+        echo "usage: emit-event <event-name> <source-agent> [data] [scope]"
         return 1
     fi
 
     local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
-    # canonical event naming: ${run_id}-${source}-${event}.event (run_id prefix dropped
-    # when empty for manual CLI use). the completion matcher keys off the source: field,
-    # not the filename, but a stable predictable name lets it infer source from the
-    # filename as a fallback. the OLD timestamp scheme (${timestamp}-${event}.event) was
-    # the bug source: LLM agents couldn't reproduce it, so emitted events went unmatched.
-    local source_file_part
-    local event_file_part
-    source_file_part="$(event-filename-component "$source_agent")"
-    event_file_part="$(event-filename-component "$event_name")"
-    local event_file="$EVENTS_DIR/${run_id:+${run_id}-}${source_file_part}-${event_file_part}.event"
-
-    mkdir -p "$EVENTS_DIR"
-    # NOTE: no heredoc here. emit-event is `export -f`'d and inherited by nearly every
-    # engine subshell; a heredoc body can fail to serialize through export -f on some bash
-    # builds (the _perf_ensure_file incident), breaking child-shell startup. printf is safe
-    # and byte-identical to the old heredoc (test-agent-emit asserts the body).
-    if ! printf 'event: %s\nsource: %s\nrun_id: %s\ntimestamp: %s\nprocessed: false\ndata: %s\n' \
-        "$event_name" "$source_agent" "$run_id" "$(date -Iseconds)" "$data" > "$event_file"
+    if [[ -z "$requested_scope" ]]; then
+        if [[ -n "$run_id" ]]; then
+            requested_scope="run"
+        elif [[ -n "${MENTIKO_AGENT_ID:-}" ]]; then
+            echo "error: agent event context is missing MENTIKO_RUN_ID/RUN_ID" >&2
+            return 1
+        else
+            echo "error: empty-run emission requires explicit ingress scope" >&2
+            return 1
+        fi
+    fi
+    if ! node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js" emit \
+        --scope "$requested_scope" \
+        --event "$event_name" \
+        --source "$source_agent" \
+        --run-id "$run_id" \
+        --data "$data"
     then
-        echo "error: failed to write event file: $event_file" >&2
+        echo "error: typed runner event emission failed" >&2
         return 1
     fi
-
-    echo "  event emitted: $event_name"
-    echo "  file: $event_file"
-    _sys_log "info" "event-trigger" "event written: $event_name" "source: $source_agent, file: $(basename "$event_file")" || true
+    _sys_log "info" "event-trigger" "event written: $event_name" "source: $source_agent" || true
 }
 
 # -------------------------------------------------------------------
@@ -176,8 +165,8 @@ _event-field() {
 # OWNERSHIP RULE (scoped to THIS completion, never a sibling):
 #   1. run_id must match. A file whose run_id field differs belongs to another
 #      run and MUST survive (cross-run isolation). A file with NO run_id is
-#      treated as run-agnostic and judged on source alone (covers manual/CLI
-#      events and the run-less fallback name).
+#      treated as run-agnostic and judged on source alone (covers explicitly
+#      scoped ingress events and their runless canonical filename).
 #   2. source must be THIS agent. We accept an exact match OR the superstring
 #      relationship the completion matcher itself uses
 #      (run-reconciler source.includes(agentId)): the file's source contains
@@ -308,7 +297,6 @@ clean-events() {
 
 # exports
 export -f emit-event
-export -f event-filename-component
 export -f list-events
 export -f mark-processed
 export -f _event-field

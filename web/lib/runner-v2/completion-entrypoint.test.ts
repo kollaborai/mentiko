@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
   RunnerV2CompletionUnsupportedError,
   runRunnerV2CompletionEntrypoint,
 } from "@/lib/runner-v2/completion-entrypoint";
-import { shellLoopStatePath } from "@/lib/runner-v2/loop-state";
+import { shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function tempRoot() {
   return mkdtempSync(join(tmpdir(), "runner-v2-completion-entrypoint-"));
@@ -14,6 +15,97 @@ function tempRoot() {
 
 function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function seedGenerationArtifactFixture(input: {
+  generationKind: string;
+  payload?: unknown;
+  rawPayload?: string;
+  artifactMtime?: Date;
+  attemptStartedAt?: string;
+}) {
+  const root = tempRoot();
+  const runDir = join(root, "runs", "run-123");
+  const eventsDir = join(root, "events");
+  const stateDir = join(root, "state");
+  const artifactsDir = join(runDir, "artifacts");
+  mkdirSync(artifactsDir, { recursive: true });
+  mkdirSync(eventsDir, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
+
+  const chainPath = join(root, "chain.json");
+  writeJson(chainPath, {
+    id: "task-generation",
+    name: "Task Generation",
+    metadata: { coreGenerationChain: true, generationKind: input.generationKind },
+    agents: [{ id: "task-generator", name: "Task Generator", emits: "task-generation-complete" }],
+  });
+
+  const runJsonPath = join(runDir, "run.json");
+  const started = "2026-07-15T11:00:00.000Z";
+  const run = createRunRecord({ chainName: "Task Generation", goal: "generate", now: new Date(started) });
+  updateRunJson(runJsonPath, () => ({
+    ...run,
+    id: "run-123",
+    status: "running",
+    metadata: { generationJobId: "job-1", generationKind: input.generationKind },
+    agents: [{
+      id: "task-generator",
+      name: "Task Generator",
+      session: "task-generator-run-123",
+      status: "running",
+      started: "2026-07-15T11:30:00.000Z",
+    }],
+    sessions: ["task-generator-run-123"],
+    ...(input.attemptStartedAt ? {
+      runnerV2: {
+        attempts: [{
+          id: "run-123:task-generator:1",
+          runId: "run-123",
+          agentId: "task-generator",
+          phase: "instructions_submitted",
+          desiredPhase: "completed",
+          observedPhase: "instructions_submitted",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: input.attemptStartedAt,
+          updatedAt: input.attemptStartedAt,
+          transitions: [],
+        }],
+      },
+    } : {}),
+  }));
+
+  const artifactPath = join(artifactsDir, "generation-result.json");
+  if (input.rawPayload !== undefined) writeFileSync(artifactPath, input.rawPayload);
+  else writeJson(artifactPath, input.payload);
+  if (input.artifactMtime) utimesSync(artifactPath, input.artifactMtime, input.artifactMtime);
+
+  return { chainPath, runDir, eventsDir, stateDir };
+}
+
+function completeGenerationFixture(fixture: ReturnType<typeof seedGenerationArtifactFixture>) {
+  return runRunnerV2CompletionEntrypoint({
+    sessionName: "task-generator-run-123",
+    chainPath: fixture.chainPath,
+    env: {
+      MENTIKO_RUN_ID: "run-123",
+      MENTIKO_RUN_DIR: fixture.runDir,
+      EVENTS_DIR: fixture.eventsDir,
+      STATE_DIR: fixture.stateDir,
+      NAMESPACE_ID: "default",
+      ORG_ID: "default",
+    },
+    dryRun: true,
+    now: new Date("2026-07-15T12:00:00.000Z"),
+  });
+}
+
+function expectNoGenerationImport(result: ReturnType<typeof completeGenerationFixture>) {
+  expect(result.decision).not.toBe("generation-terminal");
+  expect(result.plan.effects).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: "generation-import" }),
+  ]));
 }
 
 describe("runner-v2 completion entrypoint", () => {
@@ -47,15 +139,13 @@ describe("runner-v2 completion entrypoint", () => {
       sessions: ["writer-run-123"],
     }));
     const eventPath = join(eventsDir, "run-123-writer-draft-ready.event");
-    writeFileSync(eventPath, [
-      "event: draft-ready",
-      "source: writer-run-123",
-      "run_id: run-123",
-      "timestamp: 2026-06-26T00:00:00.000Z",
-      "processed: false",
-      "data: ready",
-      "",
-    ].join("\n"));
+    writeFileSync(eventPath, runnerEventFixture({
+      event: "draft-ready",
+      source: "writer-run-123",
+      runId: "run-123",
+      timestamp: "2026-06-26T00:00:00.000Z",
+      data: "ready",
+    }));
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "writer-run-123",
@@ -145,7 +235,7 @@ describe("runner-v2 completion entrypoint", () => {
     });
   });
 
-  it("matches an event emitted into the run-dir events dir when env EVENTS_DIR points elsewhere", () => {
+  it("ignores a run-local event outside the configured EVENTS_DIR", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");
     const orgEventsDir = join(root, "events");
@@ -174,14 +264,12 @@ describe("runner-v2 completion entrypoint", () => {
       agents: [{ id: "writer", name: "Writer", session: "writer-run-123", status: "running" }],
       sessions: ["writer-run-123"],
     }));
-    writeFileSync(join(runEventsDir, "run-123-writer-draft-ready.event"), [
-      "event: draft-ready",
-      "source: writer-run-123",
-      "run_id: run-123",
-      "processed: false",
-      "data: ready",
-      "",
-    ].join("\n"));
+    writeFileSync(join(runEventsDir, "run-123-writer-draft-ready.event"), runnerEventFixture({
+      event: "draft-ready",
+      source: "writer-run-123",
+      runId: "run-123",
+      data: "ready",
+    }));
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "writer-run-123",
@@ -200,7 +288,8 @@ describe("runner-v2 completion entrypoint", () => {
     expect(result).toMatchObject({
       status: "handled",
       agentId: "writer",
-      decision: "route",
+      decision: "exhausted",
+      eventsDir: orgEventsDir,
     });
   });
 
@@ -277,14 +366,12 @@ describe("runner-v2 completion entrypoint", () => {
       risks: ["regression"],
       nextActions: ["repair tests"],
     });
-    writeFileSync(join(eventsDir, "run-123-validator-validated.event"), [
-      "event: validated",
-      "source: validator-run-123",
-      "run_id: run-123",
-      "timestamp: 2026-06-26T00:00:00.000Z",
-      "processed: false",
-      "",
-    ].join("\n"));
+    writeFileSync(join(eventsDir, "run-123-validator-validated.event"), runnerEventFixture({
+      event: "validated",
+      source: "validator-run-123",
+      runId: "run-123",
+      timestamp: "2026-06-26T00:00:00.000Z",
+    }));
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "validator-run-123",
@@ -380,6 +467,41 @@ describe("runner-v2 completion entrypoint", () => {
     });
   });
 
+  it("does not terminalize or import a literal not-json generation artifact", () => {
+    const fixture = seedGenerationArtifactFixture({
+      generationKind: "task",
+      rawPayload: "not-json",
+    });
+
+    expectNoGenerationImport(completeGenerationFixture(fixture));
+  });
+
+  it("does not terminalize or import a payload for the wrong generation kind", () => {
+    const fixture = seedGenerationArtifactFixture({
+      generationKind: "chain_recommendation",
+      payload: { route: "task", task: { title: "Wrong shape" } },
+    });
+
+    expectNoGenerationImport(completeGenerationFixture(fixture));
+  });
+
+  it("does not terminalize or import an artifact older than the current attempt", () => {
+    const fixture = seedGenerationArtifactFixture({
+      generationKind: "task",
+      payload: { route: "task", task: { title: "Stale task" } },
+      attemptStartedAt: "2026-07-15T11:59:00.000Z",
+      artifactMtime: new Date("2026-07-15T11:58:00.000Z"),
+    });
+    // A fresh lower-priority alias must not bypass the stale canonical file:
+    // the import CLI would select the canonical contract-compatible payload.
+    writeJson(join(fixture.runDir, "artifacts", "task-generator-output.json"), {
+      route: "task",
+      task: { title: "Fresh alias" },
+    });
+
+    expectNoGenerationImport(completeGenerationFixture(fixture));
+  });
+
   it("returns an unsupported error before mutation when run context is incomplete", () => {
     const root = tempRoot();
     const chainPath = join(root, "chain.json");
@@ -402,7 +524,13 @@ describe("runner-v2 completion entrypoint", () => {
   // bootstrap-created AgentAttempt record.
   // ---------------------------------------------------------------
 
-  function seedRoutedRun(root: string, options?: { downstream?: boolean; downstreamStatus?: string; omitChainId?: boolean; runChainId?: string }) {
+  function seedRoutedRun(root: string, options?: {
+    downstream?: boolean;
+    downstreamStatus?: string;
+    omitChainId?: boolean;
+    runChainId?: string;
+    runMetadata?: Record<string, unknown>;
+  }) {
     const runDir = join(root, "runs", "run-123");
     const eventsDir = join(root, "events");
     const stateDir = join(root, "state");
@@ -436,6 +564,7 @@ describe("runner-v2 completion entrypoint", () => {
       ...(options?.runChainId ? { chainId: options.runChainId } : {}),
       status: "running",
       taskId: "TASK-173",
+      ...(options?.runMetadata ? { metadata: options.runMetadata } : {}),
       agents: [
         { id: "verifier", name: "Verifier", session: "verifier-run-123", status: "running" },
         ...(options?.downstream
@@ -448,14 +577,12 @@ describe("runner-v2 completion entrypoint", () => {
   }
 
   function emitVerifierEvent(eventsDir: string) {
-    writeFileSync(join(eventsDir, "run-123-verifier-verification-complete.event"), [
-      "event: verification-complete",
-      "source: verifier-run-123",
-      "run_id: run-123",
-      "processed: false",
-      "data: ok",
-      "",
-    ].join("\n"));
+    writeFileSync(join(eventsDir, "run-123-verifier-verification-complete.event"), runnerEventFixture({
+      event: "verification-complete",
+      source: "verifier-run-123",
+      runId: "run-123",
+      data: "ok",
+    }));
   }
 
   function routedEnv(fixture: { runDir: string; eventsDir: string; stateDir: string }) {
@@ -542,6 +669,53 @@ describe("runner-v2 completion entrypoint", () => {
       .toBe("e2e-fixture-execution-stream");
   });
 
+  it("does not queue task status for a run-summary generation completion", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, {
+      runMetadata: {
+        generationKind: "run_summary",
+        generationJobId: "job-summary-1",
+        taskOutcomeSummary: true,
+      },
+    });
+    emitVerifierEvent(fixture.eventsDir);
+
+    runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(outbox.some((record) => record.type === "task-status")).toBe(false);
+    expect(outbox.some((record) => record.type === "notification")).toBe(true);
+  });
+
+  it("does not queue task status when a decision-system run exhausts retries", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, {
+      runMetadata: { decisionId: "decision-1", decisionPhase: "research" },
+    });
+
+    runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    const outbox = readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string; operation?: { event?: string } });
+    expect(outbox.some((record) => record.type === "task-status")).toBe(false);
+    expect(outbox.some((record) => record.operation?.event === "agent-failed")).toBe(true);
+  });
+
   it("adopts and fails the typed attempt when a routed agent completes without its event", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root);
@@ -618,6 +792,49 @@ describe("runner-v2 completion entrypoint", () => {
     expect(existsSync(shellLoopStatePath(fixture.runDir))).toBe(false);
   });
 
+  it("keeps one occurrence stable on replay and separates event content and loop rounds", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, { downstream: true });
+    const eventPath = join(fixture.eventsDir, "run-123-verifier-verification-complete.event");
+    const complete = () => runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      dryRun: true,
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+    const occurrence = (result: ReturnType<typeof complete>) => {
+      const ids = result.adapter.operations
+        .filter((operation) => operation.type === "plugin" && operation.event === "agent-completed")
+        .map((operation) => operation.occurrenceId);
+      expect(ids).toHaveLength(1);
+      return ids[0];
+    };
+    writeFileSync(eventPath, runnerEventFixture({
+      event: "verification-complete",
+      source: "verifier-run-123",
+      runId: "run-123",
+      timestamp: "2026-07-04T00:00:00.000Z",
+      data: "first",
+    }));
+
+    const first = occurrence(complete());
+    expect(occurrence(complete())).toBe(first);
+
+    writeFileSync(eventPath, runnerEventFixture({
+      event: "verification-complete",
+      source: "verifier-run-123",
+      runId: "run-123",
+      timestamp: "2026-07-04T00:01:00.000Z",
+      data: "second",
+    }));
+    const changedEvent = occurrence(complete());
+    expect(changedEvent).not.toBe(first);
+
+    writeLoopState(fixture.runDir, { visited: ["verifier:verification-complete"], round: 2 });
+    expect(occurrence(complete())).not.toBe(changedEvent);
+  });
+
   it("treats duplicate processed completions as idempotent no-ops", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root, { downstream: true, downstreamStatus: "running" });
@@ -630,14 +847,13 @@ describe("runner-v2 completion entrypoint", () => {
       ],
       sessions: ["verifier-run-123", "publisher-run-123"],
     }));
-    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), [
-      "event: verification-complete",
-      "source: verifier-run-123",
-      "run_id: run-123",
-      "processed: true",
-      "data: ok",
-      "",
-    ].join("\n"));
+    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), runnerEventFixture({
+      event: "verification-complete",
+      source: "verifier-run-123",
+      runId: "run-123",
+      processed: true,
+      data: "ok",
+    }));
 
     const before = readFileSync(fixture.runJsonPath, "utf8");
     const result = runRunnerV2CompletionEntrypoint({
@@ -673,14 +889,13 @@ describe("runner-v2 completion entrypoint", () => {
       agents: [{ id: "verifier", name: "Verifier", session: "verifier-run-123", status: "complete" }],
       sessions: ["verifier-run-123"],
     }));
-    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), [
-      "event: verification-complete",
-      "source: verifier",
-      "run_id: run-123",
-      "processed: true",
-      "data: ok",
-      "",
-    ].join("\n"));
+    writeFileSync(join(fixture.eventsDir, "run-123-verifier-verification-complete.event"), runnerEventFixture({
+      event: "verification-complete",
+      source: "verifier",
+      runId: "run-123",
+      processed: true,
+      data: "ok",
+    }));
 
     const before = readFileSync(fixture.runJsonPath, "utf8");
     const result = runRunnerV2CompletionEntrypoint({

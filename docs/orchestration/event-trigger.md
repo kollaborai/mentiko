@@ -1,72 +1,79 @@
 # event-trigger.sh - File-based event system
 
-file-based event system for mentiko. agents emit events to files,
-chain-watcher daemon watches for events and triggers matching chains.
+file-based event system for mentiko. producers request canonical event writes
+through the typed emitter; the typed chain-watcher service watches the configured
+event root and triggers matching chains.
 
 see also:
-  - [chain-watcher.md](./chain-watcher.md) - daemon that watches these events
-  - [chain-runner-complete.md](./chain-runner-complete.md) - event emission on completion
+  - [chain-watcher.md](./chain-watcher.md) - typed service that watches these events
+  - [chain-runner-complete.md](./chain-runner-complete.md) - event matching on completion
 
 overview
 ========
 
 event-driven chaining:
-  1. agent completes, emits event (writes file to EVENTS_DIR/)
-  2. chain-watcher daemon detects new file
+  1. producer invokes the typed event emitter
+  2. chain-watcher service detects the validated file
   3. chain-watcher matches event against chain triggers
   4. matching chain launched with event context
 
 event file format:
   event: agent-complete
   source: agent-id
+  run_id: run-1784102007562-bb990ff5
   timestamp: 2026-03-12T10:00:00-07:00
   processed: false
   data: {...}
 
 event flow:
-  agent complete -> emit-event -> EVENTS_DIR/{timestamp}-{name}.event
-    -> chain-watcher detects -> matches triggers -> chain-runner.sh
+  agent complete -> mentiko emit -> typed emitter -> configured EVENTS_DIR
+    -> typed chain-watcher detects -> matches triggers -> bin/mentiko run
 
 init
 ====
 
 when sourced:
-  - resolves EVENTS_DIR to {projectRoot}/namespaces/{ns}/events/
-  - creates EVENTS_DIR if not exists
+  - requires EVENTS_DIR to have already been resolved by configuration
   - exports functions for subshells
 
 path resolution
 ==============
 
-namespace-aware:
-  default:     ~/.mentiko/namespaces/default/events/
-  non-default: ~/.mentiko/namespaces/{ns}/events/
-
-finds project root via git rev-parse --show-toplevel or pwd.
+the authoritative path is the configured `{runtimeRoot}/events` for the active
+namespace, organization, and project. the typed emitter resolves that same root
+through `web/lib/config.ts`; the shell helper does not guess a fallback path.
 
 functions
 =========
 
-emit-event <event-name> <source-agent> [data]
+emit-event <event-name> <source-agent> [data] [scope]
   --------------------------------------------
-  write an event file to EVENTS_DIR/.
+  invocation-only shell entrypoint for the typed runner-event emitter.
 
   args:
     event-name    - name of the event (e.g. "agent-complete")
     source-agent  - agent id or session name that emitted
-    data          - optional json payload
+    data          - optional text payload
+    scope         - run or ingress; defaults to run only when a run id exists
 
   flow:
-    1. generate timestamp: YYYYMMDD-HHMMSS
-    2. create file: {timestamp}-{event-name}.event
-    3. write event format with processed: false
-    4. echo confirmation
+    1. forward event, source, active run id, and data to the compiled typed CLI
+    2. typed code selects timestamp and filename
+    3. typed code serializes and validates the canonical fields
+    4. typed code claims the final filename with an atomic hard link and never clobbers
 
   usage:
     emit-event "build-complete" "builder" "status=success"
     emit-event "agent-complete" "researcher"
 
-  filename: 20260312-100000-agent-complete.event
+  for user and agent prompts, prefer:
+    mentiko emit "build-complete" "builder" "status=success"
+
+  runless external ingress is exceptional and must be explicit:
+    mentiko emit --scope ingress "custom-event" "operator"
+
+  no missing-run compatibility path exists: default run scope fails closed
+  when MENTIKO_RUN_ID and RUN_ID are absent.
 
 list-events [--unprocessed]
   ---------------------------
@@ -89,11 +96,8 @@ list-events [--unprocessed]
 
 mark-processed <event-file>
   --------------------------
-  mark an event as processed.
-
-  handles any format - agents write events unpredictably:
-    - if file has "processed: false", flips to true
-    - if file has no processed field, appends "processed: true"
+  shell lifecycle helper that marks an event as processed. this direct mutation
+  remains pending typed migration; it is not an event producer.
 
   args:
     event-file  - basename or full path to event file
@@ -102,19 +106,16 @@ mark-processed <event-file>
     mark-processed "20260312-100000-agent-complete.event"
     mark-processed "$EVENTS_DIR/20260312-100000-agent-complete.event"
 
-archive-all-events
-  -----------------
-  move all events to archive dir.
+archive-run-events <run-id> <source> [triggered-event-file]
+  ----------------------------------------------------------
+  archive only the explicitly owned event and other events belonging to the
+  same run/source. sibling agents and other runs remain untouched.
 
-  called between chain steps to prevent stale event pickup.
-  prevents old events from triggering new chains.
-
-  flow:
-    1. create EVENTS_DIR/archive/ if not exists
-    2. move all event files to archive/
-    3. count archived files
-
-  usage: typically called by chain-watcher after processing
+archive-all-events [run-id source triggered-event-file]
+  ------------------------------------------------------
+  compatibility entrypoint that delegates to the same scoped archive behavior.
+  with no arguments it uses ambient run/source identity; it is never a global
+  sweep.
 
 clean-events [days]
   ------------------
@@ -133,36 +134,30 @@ event processing flow
 
 1. agent completes
    agent writes AGENT_COMPLETE to output
-   monitor detects completion
-   chain-runner-complete.sh calls emit-event
+   the declared event must already have been requested through `mentiko emit`
 
 2. event written
-   file: EVENTS_DIR/{timestamp}-{event-name}.event
+   typed emitter validates and atomically writes under configured EVENTS_DIR
    processed: false
 
 3. chain-watcher detects
-   daemon wakes (fsnotify or poll)
-   finds unprocessed event files
-   reads event: name, source, timestamp, data
+   typed service polls the configured event root
+   strictly parses required canonical fields and optional extension fields
 
 4. trigger matching
-   chain-watcher searches chain.json files for:
-   - agents with triggers[] matching event name
-   - branches[event-name] mappings
-   - event_triggers at chain level
+   chain-watcher searches chain.json files for matching config.event_triggers
 
 5. chain launched
-   chain-runner.sh invoked with matching chain
+   detached `bin/mentiko run` child starts with the matching chain
    event data available via EVENT_* env vars
    agent runs with event context
 
-6. event marked processed
-   mark-processed called after chain launch
-   prevents re-trigger on same event
+6. trigger marked handled
+   chain-watcher records one durable handled marker per trigger
+   the event's processed field is not changed by the watcher
 
-7. archive (optional)
-   archive-all-events moves processed events
-   keeps EVENTS_DIR/ clean for new events
+7. lifecycle mutation (separate legacy surface)
+   shell list/mark/archive helpers can still mutate owned event lifecycle state
 
 event-driven chaining example
 ==============================
@@ -186,11 +181,11 @@ chain.json:
 
 flow:
   1. user starts chain -> test agent runs
-  2. test completes -> emit-event "tests-passed" "test"
+  2. test completes -> mentiko emit "tests-passed" "test"
   3. chain-watcher detects event
   4. finds deploy agent with trigger "tests-passed"
   5. launches deploy agent
-  6. deploy completes -> emit-event "deployed" "deploy"
+  6. deploy completes -> mentiko emit "deployed" "deploy"
   7. chain-watcher detects, finds no matching triggers
   8. chain complete
 
@@ -202,6 +197,7 @@ after sourcing, these functions are available in subshells:
   - emit-event
   - list-events
   - mark-processed
+  - archive-run-events
   - archive-all-events
   - clean-events
 
@@ -209,8 +205,9 @@ related files
 =============
 
 lib/event-trigger.sh         this file
-lib/chain-watcher.sh         daemon that watches events (see chain-watcher.md)
-lib/chain-runner-complete.sh  emits events on agent completion
+web/lib/runner-v2/event-emitter.ts canonical serializer and writer
+web/lib/runner-v2/chain-watcher-service.ts typed watcher service
+lib/chain-runner-complete.sh  matches declared events on agent completion
 lib/chain-runner.sh           sources this for event functions
 docs/tutorial/event-system.md user-facing event system guide
 
@@ -220,21 +217,20 @@ troubleshooting
 event not triggering chain?
   - check event file exists in EVENTS_DIR/
   - verify event name matches agent trigger
-  - check chain-watcher daemon running
-  - verify event not already marked processed
+  - check `/api/schedules/daemon` reports the background worker and chain watcher running
+  - inspect the event's per-trigger handled marker and last watcher error
 
 chain-watcher not seeing events?
   - check EVENTS_DIR path (namespace-aware)
-  - verify daemon has read permissions
-  - check daemon logs for errors
+  - verify the background worker process can read the configured event root
+  - check background-worker and chain-watcher logs for errors
 
 old events triggering chains?
-  - run archive-all-events to cleanup
-  - chain-watcher should mark events processed
-  - check processed field in event file
+  - inspect per-trigger handled markers and watcher status
+  - archive only with run/source ownership; do not sweep sibling events
 
 event file format issues?
-  - agents can write any format
-  - only required fields: event, source, timestamp
-  - processed field added if missing
-  - data field optional (any text)
+  - do not hand-write event files; use `mentiko emit`
+  - required exactly once: event, source, run_id, timestamp, processed, data
+  - optional extension fields must be lowercase, unique, and non-colliding
+  - malformed, duplicate, missing, or noncanonical fields are rejected

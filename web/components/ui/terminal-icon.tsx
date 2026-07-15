@@ -1,8 +1,8 @@
 import type { ComponentProps } from "react";
-import { Code1Filled } from "@aliimam/icons";
+import { CommandSquareFilled } from "@aliimam/icons";
 
-export type TerminalIconProps = ComponentProps<typeof Code1Filled>;
+export type TerminalIconProps = ComponentProps<typeof CommandSquareFilled>;
 
 export function TerminalIcon(props: TerminalIconProps) {
-  return <Code1Filled {...props} />;
+  return <CommandSquareFilled {...props} />;
 }

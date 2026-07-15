@@ -74,38 +74,6 @@ RUN_ID="${MENTIKO_RUN_ID:-${AGENT_CHAIN_RUN_ID:-${RUN_ID:-}}}"
 PARENT_RUN_ID="${MENTIKO_PARENT_RUN_ID:-}"
 
 # -------------------------------------------------------------------
-# auto-start watchdog if not running
-# -------------------------------------------------------------------
-ensure-watchdog() {
-    if transport_has_session "mentiko-watchdog" 2>/dev/null; then
-        return 0  # already running
-    fi
-    echo "  starting watchdog daemon..."
-    # remove (not kill) any dead session before respawning: pty-manager rejects
-    # duplicate names, and `p kill` leaves the registry entry behind, so a later
-    # spawn would throw on the still-registered name. `p remove` frees the name.
-    "$PTY_CMD" remove "mentiko-watchdog" >/dev/null 2>&1 || true
-    transport_new_session "mentiko-watchdog" bash "$SCRIPT_DIR/watchdog.sh" || true
-}
-ensure-watchdog
-
-# auto-start chain event watcher if not running
-# -------------------------------------------------------------------
-ensure-chain-watcher() {
-    if transport_has_session "mentiko-chain-watcher" 2>/dev/null; then
-        return 0  # already running
-    fi
-    echo "  starting chain event watcher..."
-    # remove (not kill) any dead session before respawning: `p kill` leaves the
-    # registry entry behind, so a later spawn would throw on the registered name.
-    "$PTY_CMD" remove "mentiko-chain-watcher" >/dev/null 2>&1 || true
-    transport_new_session "mentiko-chain-watcher" \
-        bash "$SCRIPT_DIR/chain-event-watcher.sh" \
-        --namespace "${NAMESPACE_ID:-default}" || true
-}
-ensure-chain-watcher
-
-# -------------------------------------------------------------------
 # config
 # -------------------------------------------------------------------
 

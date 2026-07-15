@@ -13,7 +13,6 @@ silently killing chain handoffs for days.
 what's covered now:
   chain-runner-complete.sh  phase breadcrumbs (2b,3,4,5,5a,5b,6) + ERR trap
   chain-runner.sh           stop paths (budget, circuit breaker, approval)
-  watchdog.sh               stall detection, orphan session kills
   run-reconciler.ts         orphaned run cleanup, grace period skips
   /api/runs/[id]/stop       user stop
   /api/runs/[id] DELETE     user cancel
@@ -22,14 +21,14 @@ what's covered now:
 
 what's NOT covered:
   chain-runner.sh           no ERR trap, no phase breadcrumbs, no agent launch/complete logs
-  watchdog.sh               no ERR trap
+  runner-v2/watchdog.ts     no system.jsonl lifecycle logging
+  chain-watcher-service.ts  no system.jsonl lifecycle logging
   chain-runner.mjs          no logging at all (node version of chain-runner)
   launch-agent.sh           no logging (agent spawn)
   agent-activity-capture.sh no logging (artifact capture)
   session-log-resolver.sh   no logging (conversation file resolution)
   scheduler.sh              no logging (schedule checks)
   event-trigger.sh          no logging (event file creation)
-  chain-event-watcher.sh    no logging (event-driven chain triggers)
   peer-manager (bin)        no logging (link/peer orchestration)
   job-runner.mjs            no logging (background job execution)
 
@@ -52,10 +51,8 @@ trap '_sys_log "error" "<script-name>" "CRASHED at line $LINENO (exit $?)" \
 
 scripts that need this:
   lib/chain-runner.sh
-  lib/watchdog.sh
   lib/launch-agent.sh
   lib/agent-activity-capture.sh
-  lib/chain-event-watcher.sh
   lib/scheduler.sh
 
 chain-runner-complete.sh already has it.
@@ -95,10 +92,15 @@ runner to add logging to. Logging work belongs in chain-runner.sh (section 1).
 
 ### 6. event system logging
 
-event-trigger.sh and chain-event-watcher.sh:
+event-trigger.sh, web/lib/runner-v2/chain-watcher-service.ts, and
+web/server/background-worker.ts:
   - event file written (event name, source agent)
-  - event processed (which chain/agent triggered)
-  - event ignored (already processed, no matching trigger)
+  - trigger handled (which chain launched)
+  - event ignored (handled marker exists, no matching trigger, or strict parse failed)
+
+`lib/watchdog.sh` and `lib/chain-event-watcher.sh` are retained only as retired
+parity references. No active launch surface starts them, and logging work must
+not add a shell fallback.
 
 ### 7. peer-manager logging
 
@@ -200,13 +202,13 @@ crash a script (e.g. bad jq) and verify the ERR trap fires.
 ## files to modify
 
   lib/chain-runner.sh              ERR trap + phase breadcrumbs
-  lib/watchdog.sh                  ERR trap
   lib/launch-agent.sh              agent spawn logging
   lib/agent-activity-capture.sh    artifact capture logging
-  lib/chain-event-watcher.sh       event processing logging
   lib/scheduler.sh                 schedule fire logging
   lib/event-trigger.sh             event write logging
-  lib/chain-runner.mjs             full lifecycle logging (node version)
+  web/lib/runner-v2/watchdog.ts    typed stalled-run lifecycle logging
+  web/lib/runner-v2/chain-watcher-service.ts typed event processing logging
+  web/server/background-worker.ts typed service lifecycle logging
   lib/job-runner.mjs               job lifecycle logging
   bin/peer-manager                 link run lifecycle logging
   web/lib/scheduler-service.ts     schedule fire logging (ts version)

@@ -116,7 +116,7 @@ const taskWithActions: Task = {
 };
 
 describe("TaskDetailHeader", () => {
-  it("moves task actions onto their own wrapping row below xl widths", () => {
+  it("keeps task actions in one content-width wrapping group", () => {
     render(
       <TaskDetailHeader
         task={taskWithActions}
@@ -132,11 +132,10 @@ describe("TaskDetailHeader", () => {
     const editButton = screen.getByRole("button", { name: /edit/i });
     const actionRow = editButton.parentElement;
 
-    expect(actionRow).toHaveClass("w-full");
+    expect(actionRow).toHaveClass("min-w-0");
     expect(actionRow).toHaveClass("flex-wrap");
-    expect(actionRow).toHaveClass("pt-1");
-    expect(actionRow).toHaveClass("xl:w-auto");
-    expect(actionRow).toHaveClass("xl:pt-0");
+    expect(actionRow).toHaveClass("justify-end");
+    expect(actionRow).toHaveClass("gap-y-2");
     expect(screen.getByRole("link", { name: /decision/i }).parentElement).toBe(actionRow);
     expect(screen.getByRole("button", { name: /run/i }).parentElement).toBe(actionRow);
     expect(screen.getByRole("button", { name: /close/i }).parentElement).toBe(actionRow);

@@ -185,7 +185,9 @@ function buildRetryExhaustedSteps(input: RetryPlanInput): RetryExhaustedStep[] {
 
   steps.push(
     { type: "run-status", status: "stopped", reason },
-    { type: "task-status", status: "stopped", taskId: input.taskId, runId: input.runId },
+    ...(input.taskId
+      ? [{ type: "task-status", status: "stopped", taskId: input.taskId, runId: input.runId } as const]
+      : []),
     {
       type: "hook",
       event: "run-error",

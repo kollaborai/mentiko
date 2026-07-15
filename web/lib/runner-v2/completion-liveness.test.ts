@@ -4,6 +4,7 @@ import { join } from "path";
 import { completeAgent, evaluateAgentLiveness } from "@/lib/runner-v2/completion-runner";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function runPath() {
   return join(mkdtempSync(join(tmpdir(), "runner-v2-completion-liveness-")), "run.json");
@@ -244,7 +245,7 @@ describe("runner-v2 completion runner: liveness-aware exhaustion", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       retry: EXHAUSTED_RETRY,
       liveness: { sessionAlive: true, outputChanged: true },
       now: new Date("2026-06-25T10:00:00.000Z"),

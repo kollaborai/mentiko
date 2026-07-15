@@ -71,10 +71,9 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const agent = resolveAgent(chain, input.agentId);
   const projectRoot = input.workspacePath || chain.config?.project_root || input.env?.MENTIKO_PROJECT_ROOT || input.runDir;
   const artifactsDir = join(input.runDir, "artifacts");
-  // events are org-scoped by convention (lib/config.sh EVENTS_DIR); a run-dir
-  // default strands emitted events where the chain watcher and shell
-  // completion never look.
-  const eventsDir = input.env?.EVENTS_DIR || config.eventsDir || join(input.runDir, "events");
+  // One configured project event root. Runner children may receive the same
+  // root through EVENTS_DIR; there is no run-local compatibility directory.
+  const eventsDir = input.env?.EVENTS_DIR || config.eventsDir;
   const stateDir = input.env?.STATE_DIR || join(input.runDir, "state");
   const sessionPrefix = resolveSessionPrefix(chain, agent);
   const projectName = basename(projectRoot) || "workspace";

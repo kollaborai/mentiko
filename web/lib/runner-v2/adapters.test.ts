@@ -8,6 +8,7 @@ import { createFanGroupState } from "@/lib/runner-v2/fan-group";
 import { fanGroupPath } from "@/lib/runner-v2/fan-group-store";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { planTerminalCompletion } from "@/lib/runner-v2/terminal-plan";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
@@ -44,9 +45,9 @@ describe("runner-v2 adapters", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);
     const eventsDir = join(dir, "events");
-    const triggeredPath = eventFile(eventsDir, "trigger.event", "event: done\nsource: writer\nrun_id: run-123\nprocessed: false\n");
-    const siblingPath = eventFile(eventsDir, "sibling.event", "event: note\nsource: writer-helper\nrun_id: run-123\nprocessed: false\n");
-    const otherPath = eventFile(eventsDir, "other.event", "event: note\nsource: writer\nrun_id: run-999\nprocessed: false\n");
+    const triggeredPath = eventFile(eventsDir, "trigger.event", runnerEventFixture({ event: "done", source: "writer", runId: "run-123" }));
+    const siblingPath = eventFile(eventsDir, "sibling.event", runnerEventFixture({ event: "note", source: "writer-helper", runId: "run-123" }));
+    const otherPath = eventFile(eventsDir, "other.event", runnerEventFixture({ event: "note", source: "writer", runId: "run-999" }));
     const triggered = { ...parseRunnerEvent(readFileSync(triggeredPath, "utf8")), path: triggeredPath };
     const sibling = { ...parseRunnerEvent(readFileSync(siblingPath, "utf8")), path: siblingPath };
     const other = { ...parseRunnerEvent(readFileSync(otherPath, "utf8")), path: otherPath };
@@ -61,6 +62,7 @@ describe("runner-v2 adapters", () => {
     }, {
       runJsonPath,
       stateDir: dir,
+      eventsDir: join(dir, "events"),
     });
 
     expect(readFileSync(triggeredPath, "utf8")).toContain("processed: true");
@@ -320,6 +322,7 @@ describe("runner-v2 adapters", () => {
     }, {
       runJsonPath,
       stateDir: dir,
+      eventsDir: join(dir, "events"),
     });
 
     expect(readRunJson(runJsonPath).status).toBe("completed");
@@ -675,6 +678,10 @@ describe("runner-v2 adapters", () => {
       expect.objectContaining({ type: "metadata-webhooks", status: "queued", operation: expect.objectContaining({ event: "completed", chainId: "build-chain" }) }),
       expect.objectContaining({ type: "legacy-webhook", status: "queued", operation: expect.objectContaining({ url: "https://hooks.example.test/chain" }) }),
     ]));
+    expect(records.every((record) => (
+      typeof record.idempotencyKey === "string"
+      && record.operation.idempotencyKey === record.idempotencyKey
+    ))).toBe(true);
   });
 
   it("writes rollback as plan-only audit instead of mutating git state", () => {
@@ -747,6 +754,39 @@ describe("runner-v2 adapters", () => {
     expect(outbox).toHaveLength(3);
     expect(outbox.map((record) => record.type)).toEqual(["plugin", "notification", "legacy-webhook"]);
     expect(outbox.every((record) => record.status === "queued" && record.namespaceId === "ns-1" && record.orgId === "org-1")).toBe(true);
+  });
+
+  it("dedupes replay of one completion occurrence without collapsing a later occurrence", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const planFor = (occurrenceId: string) => ({
+      action: "route" as const,
+      effects: [{
+        type: "agent-completion" as const,
+        plan: {
+          reason: "agent-complete" as const,
+          steps: [
+            { type: "plugin" as const, event: "agent-completed" as const, chainName: "chain", runId: "run-123", agentId: "writer", occurrenceId },
+            { type: "notification" as const, event: "agent-completed" as const, chainName: "chain", runId: "run-123", agentId: "writer", occurrenceId },
+          ],
+        },
+      }],
+      launches: [],
+    });
+    const context = { runJsonPath, stateDir: dir, namespaceId: "ns-1", orgId: "org-1" };
+
+    applyTypedExecutorPlan(planFor("event-a:attempt-1:round-1"), context);
+    applyTypedExecutorPlan(planFor("event-a:attempt-1:round-1"), context);
+    applyTypedExecutorPlan(planFor("event-b:attempt-1:round-2"), context);
+
+    const outbox = readFileSync(join(dir, "external-effects.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { idempotencyKey: string; operation: { occurrenceId: string } });
+    expect(outbox).toHaveLength(4);
+    expect(new Set(outbox.map((record) => record.idempotencyKey)).size).toBe(4);
+    expect(outbox.filter((record) => record.operation.occurrenceId === "event-a:attempt-1:round-1")).toHaveLength(2);
+    expect(outbox.filter((record) => record.operation.occurrenceId === "event-b:attempt-1:round-2")).toHaveLength(2);
   });
 
   it("kills the monitor session before the agent session via the shell transport", async () => {

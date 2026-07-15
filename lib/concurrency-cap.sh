@@ -23,9 +23,10 @@
 #     a crashed run that never reached terminal still shows running until the watchdog
 #     reaps it, which is exactly the conservative behavior we want; a reaped run drops
 #     out of the count for free).
-#   - active agents   = ALIVE pty-manager sessions, excluding the fixed daemons
-#     (mentiko-watchdog / mentiko-chain-watcher) and the per-agent monitor sessions
-#     (monitor-*). A dead/exited session is not counted — again self-healing.
+#   - active agents   = ALIVE pty-manager sessions, excluding reserved mentiko
+#     utility/retired-daemon names and the per-agent completion monitor sessions
+#     (monitor-*). The active typed watcher/watchdog are not PTY sessions. A
+#     dead/exited session is not counted — again self-healing.
 #
 # LOCK BOUNDARY: the lock is held ONLY around the count-and-decide step (and, for the
 # agent cap, through the spawn so the next counter sees the new session). The bounded
@@ -120,9 +121,10 @@ _cap_count_running_chains() {
 }
 
 # _cap_count_active_agents
-# Counts ALIVE pty-manager sessions that are agent sessions: excludes the fixed
-# daemons (mentiko-*) and per-agent monitor sessions (monitor-*). Relies on
-# transport_list_sessions / PTY_CMD already being in scope (session-transport.sh).
+# Counts ALIVE pty-manager sessions that are agent sessions: excludes reserved
+# mentiko utility/retired-daemon names and per-agent completion monitors.
+# Relies on transport_list_sessions / PTY_CMD already being in scope
+# (session-transport.sh).
 # The pty list line format is: "<name>  pid=<pid>  <WxH>  <alive|exited(N)>  <cmd>".
 _cap_count_active_agents() {
     local list
@@ -133,12 +135,13 @@ _cap_count_active_agents() {
     fi
     [[ -z "$list" || "$list" == "no sessions" ]] && { echo 0; return 0; }
     # field 1 = name, field 4 = status word (alive | exited(N)). Keep alive, drop
-    # daemons + monitors. awk avoids spawning a process per line.
+    # reserved mentiko utilities/retired daemon names + completion monitors.
+    # awk avoids spawning a process per line.
     echo "$list" | awk '
         $4 == "alive" {
             name = $1
-            if (name ~ /^mentiko-/)  next   # watchdog, chain-watcher, other daemons
-            if (name ~ /^monitor-/)  next   # per-agent monitor sessions
+            if (name ~ /^mentiko-/)  next   # reserved utility/retired daemon names
+            if (name ~ /^monitor-/)  next   # per-agent completion monitors
             c++
         }
         END { print c+0 }

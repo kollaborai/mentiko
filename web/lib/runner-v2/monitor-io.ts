@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { agentOwnsEvent, sourceMatchesAgent } from "@/lib/runner-v2/completion";
+import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 
 // The verifiable core of the typed monitor's I/O adapter. Everything here is a
@@ -134,89 +135,24 @@ export function findCompletionEventFile(input: {
   }
   const expectedEvent = input.expectedEvent.toLowerCase();
   for (const file of files) {
-    let body: string;
+    let event: RunnerEventRecord;
     try {
-      body = readFileSync(join(input.eventsDir, file), "utf8");
+      event = parseRunnerEvent(readFileSync(join(input.eventsDir, file), "utf8"));
     } catch {
       continue;
     }
-    const fields = parseEventFields(body);
-    if (fields.processed === "true") continue;
-    if (input.runId && fields.run_id && fields.run_id !== input.runId) continue;
-    if ((fields.event ?? "").toLowerCase() !== expectedEvent) continue;
-    const source = (fields.source ?? "").toLowerCase();
+    if (event.processed) continue;
+    if (input.runId && event.runId !== input.runId) continue;
+    if (event.event.toLowerCase() !== expectedEvent) continue;
+    const source = event.source.toLowerCase();
     if (DIAGNOSTIC_SOURCES.has(source)) continue;
-    if (!agentOwnsEvent(toOwnershipCandidate(fields), { id: input.agentId }, input.sessionName)) continue;
+    if (!agentOwnsEvent(event, { id: input.agentId }, input.sessionName)) continue;
     return file;
   }
   return "";
 }
 
 const DIAGNOSTIC_SOURCES = new Set(["monitor", "watchdog", "chain-runner-complete"]);
-
-/** Shapes a parsed field map into the RunnerEventRecord agentOwnsEvent expects. */
-function toOwnershipCandidate(fields: Record<string, string>) {
-  return {
-    event: fields.event ?? "",
-    source: fields.source ?? "",
-    runId: fields.run_id ?? "",
-    timestamp: fields.timestamp ?? "",
-    processed: fields.processed === "true",
-    data: fields.data ?? "",
-    fields,
-  };
-}
-
-function parseEventFields(body: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of body.split("\n")) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-    if (key && !(key in out)) out[key] = value;
-  }
-
-  // Shell falls back to whole-body JSON parsing for whichever plain
-  // key:value lines are missing (monitor-completion.sh:55-58 for
-  // event/source, :66-68 for run_id -- independently guarded): a valid JSON
-  // event body (e.g. from `mentiko emit --json`) the shell accepts must not
-  // be invisible to the typed monitor, producing a false stall/nudge.
-  if ((!out.event && !out.source) || !out.run_id) {
-    const json = tryParseJsonObject(body);
-    if (json) {
-      if (!out.event && !out.source) {
-        const event = firstString(json.event, json.event_name);
-        const source = firstString(json.source, json.source_agent, json.agent);
-        if (event) out.event = event;
-        if (source) out.source = source;
-      }
-      if (!out.run_id) {
-        const runId = firstString(json.run_id, json.runId);
-        if (runId) out.run_id = runId;
-      }
-    }
-  }
-  return out;
-}
-
-function tryParseJsonObject(body: string): Record<string, unknown> | null {
-  const trimmed = body.trim();
-  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === "string" && value) return value;
-  }
-  return "";
-}
 
 /**
  * Cross-run completion recovery finder. Like findCompletionEventFile but WITHOUT
@@ -246,18 +182,17 @@ export function findAgentCompletionEventAnyRun(input: {
   const agent = input.agentId.toLowerCase();
   const emits = input.emitsEvent.toLowerCase();
   for (const file of files) {
-    let body: string;
+    let event: RunnerEventRecord;
     try {
-      body = readFileSync(join(input.eventsDir, file), "utf8");
+      event = parseRunnerEvent(readFileSync(join(input.eventsDir, file), "utf8"));
     } catch {
       continue;
     }
-    const fields = parseEventFields(body);
-    if (fields.processed === "true") continue;
+    if (event.processed) continue;
     // Must be the agent's DECLARED completion event -- tighter than agentId alone,
     // so an unrelated event for the same agent under another run cannot false-latch.
-    if ((fields.event ?? "").toLowerCase() !== emits) continue;
-    const source = (fields.source ?? "").toLowerCase();
+    if (event.event.toLowerCase() !== emits) continue;
+    const source = event.source.toLowerCase();
     if (DIAGNOSTIC_SOURCES.has(source)) continue;
     // Cross-run scan: the event is from a DIFFERENT session, so its source is
     // session-shaped ("<agent>-run-<other>"), never the current session name.
@@ -265,7 +200,7 @@ export function findAgentCompletionEventAnyRun(input: {
     // sibling agent's event ("api-reviewer" or "api-reviewer-run-123") when
     // the chain gives us the complete identity set. Legitimate session suffixes
     // for the actual agent still match.
-    const fieldAgent = (fields.agent ?? "").toLowerCase();
+    const fieldAgent = (event.fields.agent ?? "").toLowerCase();
     const ownsEvent = sourceMatchesAgent(source, { id: agent }, input.allAgentIds)
       || sourceMatchesAgent(fieldAgent, { id: agent }, input.allAgentIds);
     if (agent && !ownsEvent) continue;
@@ -359,8 +294,8 @@ export function latchExists(session: string, dir: string = MONITOR_STATE_DIR): b
  */
 export function readEventRunAndTimestamp(eventsDir: string, file: string): { runId: string; timestamp: string } {
   try {
-    const fields = parseEventFields(readFileSync(join(eventsDir, file), "utf8"));
-    return { runId: fields.run_id ?? "", timestamp: fields.timestamp ?? "" };
+    const event = parseRunnerEvent(readFileSync(join(eventsDir, file), "utf8"));
+    return { runId: event.runId, timestamp: event.timestamp };
   } catch {
     return { runId: "", timestamp: "" };
   }

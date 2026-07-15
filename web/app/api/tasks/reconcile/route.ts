@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "path";
+import { join } from "path";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
@@ -781,11 +781,7 @@ function recoverLateCompletionIfPossible(input: {
   const chain = readRoutingChain(chainPath);
   if (!chain) return { recovered: false };
 
-  const events = readEventsFromDirs([
-    config.eventsDir,
-    join(input.runDir, "events"),
-    join(dirname(chainPath), "events"),
-  ]);
+  const events = readEvents(config.eventsDir);
   const recovery = recoverLateCompletionEvents({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
@@ -932,25 +928,22 @@ function readRoutingChain(chainPath: string): RoutingChain | undefined {
   }
 }
 
-function readEventsFromDirs(eventsDirs: string[]): RunnerEventRecord[] {
-  const seenDirs = new Set<string>();
-  const seenFiles = new Set<string>();
+function readEvents(eventsDir: string): RunnerEventRecord[] {
   const events: RunnerEventRecord[] = [];
-  for (const dir of eventsDirs) {
-    if (!dir || seenDirs.has(dir) || !existsSync(dir)) continue;
-    seenDirs.add(dir);
-    let files: string[] = [];
+  if (!existsSync(eventsDir)) return events;
+  let files: string[] = [];
+  try {
+    files = readdirSync(eventsDir);
+  } catch {
+    return events;
+  }
+  for (const file of files) {
+    if (!file.endsWith(".event")) continue;
+    const path = join(eventsDir, file);
     try {
-      files = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith(".event")) continue;
-      const path = join(dir, file);
-      if (seenFiles.has(path)) continue;
-      seenFiles.add(path);
       events.push({ ...parseRunnerEvent(readFileSync(path, "utf-8")), path });
+    } catch {
+      // Invalid raw event files cannot participate in reconciliation.
     }
   }
   return events;

@@ -47,8 +47,10 @@ export function planTerminalCompletion(
   const onComplete = input.onComplete || "stop";
   const steps: TerminalCompletionStep[] = [
     { type: "run-status", status: "completed" },
-    { type: "task-status", status: "completed", taskId: input.taskId, runId: input.runId },
   ];
+  if (input.taskId) {
+    steps.push({ type: "task-status", status: "completed", taskId: input.taskId, runId: input.runId });
+  }
 
   if (input.schedule) {
     steps.push({ type: "schedule-mark", status: "success", chainPath: input.chainPath });
@@ -160,9 +162,10 @@ export interface TerminalFailurePlan {
  * webhooks. The shell fires no plugins on this path, so neither do we.
  */
 export function planTerminalFailure(input: TerminalFailureInput): TerminalFailurePlan {
-  const steps: TerminalFailureStep[] = [
-    { type: "task-status", status: "failed", taskId: input.taskId, runId: input.runId },
-  ];
+  const steps: TerminalFailureStep[] = [];
+  if (input.taskId) {
+    steps.push({ type: "task-status", status: "failed", taskId: input.taskId, runId: input.runId });
+  }
 
   if (input.agentId) {
     steps.push({
@@ -201,6 +204,8 @@ export interface AgentCompletionInput {
   runId: string;
   chainName: string;
   agentId: string;
+  /** Stable for one completion handoff; distinct for later loop/attempt visits. */
+  occurrenceId?: string;
   agentName?: string;
   sessionName?: string;
   // chain config.webhooks (v1 send-webhook source): direct-URL webhooks with a
@@ -214,9 +219,9 @@ export interface AgentCompletionInput {
 }
 
 export type AgentCompletionStep =
-  | { type: "plugin"; event: "agent-completed"; chainName: string; runId: string; agentId: string }
-  | { type: "notification"; event: "agent-completed"; chainName: string; runId: string; agentId: string }
-  | { type: "legacy-webhook"; url: string; payload: Record<string, string> };
+  | { type: "plugin"; event: "agent-completed"; chainName: string; runId: string; agentId: string; occurrenceId?: string }
+  | { type: "notification"; event: "agent-completed"; chainName: string; runId: string; agentId: string; occurrenceId?: string }
+  | { type: "legacy-webhook"; url: string; payload: Record<string, string>; occurrenceId?: string };
 
 export interface AgentCompletionPlan {
   reason: "agent-complete";
@@ -238,6 +243,7 @@ export function planAgentCompletion(input: AgentCompletionInput): AgentCompletio
       chainName: input.chainName,
       runId: input.runId,
       agentId: input.agentId,
+      ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     },
     {
       type: "notification",
@@ -245,6 +251,7 @@ export function planAgentCompletion(input: AgentCompletionInput): AgentCompletio
       chainName: input.chainName,
       runId: input.runId,
       agentId: input.agentId,
+      ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
     },
   ];
 
@@ -254,6 +261,7 @@ export function planAgentCompletion(input: AgentCompletionInput): AgentCompletio
       steps.push({
         type: "legacy-webhook",
         url,
+        ...(input.occurrenceId ? { occurrenceId: input.occurrenceId } : {}),
         payload: {
           event: "agent_complete",
           chain: input.chainName,

@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { TerminalIcon } from "../terminal-icon";
 
 jest.mock("@aliimam/icons", () => ({
-  Code1Filled: ({ className }: { className?: string }) => (
+  CommandSquareFilled: ({ className }: { className?: string }) => (
     <svg data-testid="terminal-icon" className={className} />
   ),
 }));

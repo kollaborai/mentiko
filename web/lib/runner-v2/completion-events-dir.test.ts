@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function tempRoot() {
   return mkdtempSync(join(tmpdir(), "runner-v2-completion-events-dir-"));
@@ -12,21 +13,16 @@ function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-describe("runner-v2 completion entrypoint: events-dir hardening", () => {
-  // TASK-093 root cause: the valid completion event landed only in the
-  // project/namespace events dir (dirname(chainPath)/events), while env
-  // EVENTS_DIR pointed at a dir that did not contain it and runDir/events did
-  // not exist. The matcher must always read the project events dir, not depend
-  // solely on EVENTS_DIR being correct.
-  it("matches an event present only in the project events dir when env EVENTS_DIR points elsewhere", () => {
+describe("runner-v2 completion entrypoint: configured event root", () => {
+  it("fails closed when an event exists only outside EVENTS_DIR", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");
-    const projectEventsDir = join(root, "events"); // dirname(chainPath)/events
-    const orgEventsDir = join(root, "org-events"); // env EVENTS_DIR — empty
+    const projectEventsDir = join(root, "events");
+    const configuredEventsDir = join(root, "configured-events");
     const stateDir = join(root, "state");
     mkdirSync(runDir, { recursive: true });
     mkdirSync(projectEventsDir, { recursive: true });
-    mkdirSync(orgEventsDir, { recursive: true });
+    mkdirSync(configuredEventsDir, { recursive: true });
     mkdirSync(stateDir, { recursive: true });
 
     const chainPath = join(root, "chain.json");
@@ -50,15 +46,14 @@ describe("runner-v2 completion entrypoint: events-dir hardening", () => {
       sessions: ["writer-run-123"],
     }));
 
-    // event only in the project events dir
-    writeFileSync(join(projectEventsDir, "run-123-writer-draft-ready.event"), [
-      "event: draft-ready",
-      "source: writer-run-123",
-      "run_id: run-123",
-      "processed: false",
-      "data: ready",
-      "",
-    ].join("\n"));
+    // This artifact is deliberately outside the configured root and must not
+    // influence completion.
+    writeFileSync(join(projectEventsDir, "run-123-writer-draft-ready.event"), runnerEventFixture({
+      event: "draft-ready",
+      source: "writer-run-123",
+      runId: "run-123",
+      data: "ready",
+    }));
 
     const result = runRunnerV2CompletionEntrypoint({
       sessionName: "writer-run-123",
@@ -66,7 +61,7 @@ describe("runner-v2 completion entrypoint: events-dir hardening", () => {
       env: {
         MENTIKO_RUN_ID: "run-123",
         MENTIKO_RUN_DIR: runDir,
-        EVENTS_DIR: orgEventsDir, // points at the empty org dir, NOT the project dir
+        EVENTS_DIR: configuredEventsDir,
         STATE_DIR: stateDir,
         MENTIKO_RUNNER_V2: "1",
         MENTIKO_RUNNER_V2_COMPLETION: "1",
@@ -78,7 +73,8 @@ describe("runner-v2 completion entrypoint: events-dir hardening", () => {
     expect(result).toMatchObject({
       status: "handled",
       agentId: "writer",
-      decision: "route",
+      decision: "exhausted",
+      eventsDir: configuredEventsDir,
     });
   });
 });

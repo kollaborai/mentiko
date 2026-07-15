@@ -32,6 +32,7 @@ import {
 import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
 
 export interface LiveMonitorContext {
@@ -82,12 +83,6 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         agentId: context.agentId,
         expectedEvent,
         sessionName: context.sessionName,
-      }) || findCompletionEventFile({
-        eventsDir: join(dirname(context.chainPath), "events"),
-        runId: context.runId,
-        agentId: context.agentId,
-        expectedEvent,
-        sessionName: context.sessionName,
       });
 
       // Cross-run completion recovery: this run has NO completion event of its own,
@@ -104,25 +99,14 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       // the reconcile late-event recovery (recoverLateCompletionEvents) instead of
       // latching here.
       if (!eventFile && expectedEvent && captureAssertsAgentComplete(capture)) {
-        const primaryEventsDir = context.eventsDir;
-        const secondaryEventsDir = join(dirname(context.chainPath), "events");
         const allAgentIds = readDeclaredAgentIds(context.chainPath);
-        let candidateDir = primaryEventsDir;
-        let candidate = findAgentCompletionEventAnyRun({
-          eventsDir: primaryEventsDir,
+        const candidateDir = context.eventsDir;
+        const candidate = findAgentCompletionEventAnyRun({
+          eventsDir: candidateDir,
           agentId: context.agentId,
           emitsEvent: expectedEvent,
           allAgentIds,
         });
-        if (!candidate) {
-          candidate = findAgentCompletionEventAnyRun({
-            eventsDir: secondaryEventsDir,
-            agentId: context.agentId,
-            emitsEvent: expectedEvent,
-            allAgentIds,
-          });
-          candidateDir = secondaryEventsDir;
-        }
         if (candidate) {
           const { runId: candidateRunId, timestamp: candidateTimestamp } = readEventRunAndTimestamp(candidateDir, candidate);
           const currentRun = safeReadRunJson(context.runJsonPath);
@@ -340,12 +324,6 @@ function currentCompletionEventPath(context: LiveMonitorContext): string {
   const expectedEvent = readDeclaredEmits(context.chainPath, context.agentId);
   return findCompletionEventFile({
     eventsDir: context.eventsDir,
-    runId: context.runId,
-    agentId: context.agentId,
-    expectedEvent,
-    sessionName: context.sessionName,
-  }) || findCompletionEventFile({
-    eventsDir: join(dirname(context.chainPath), "events"),
     runId: context.runId,
     agentId: context.agentId,
     expectedEvent,
@@ -710,18 +688,19 @@ function monitorCompletionLatch(options: CompletionLaunchOptions): boolean {
 
 function writeDiagnosticEvent(eventsDir: string, event: MonitorDiagnosticEvent): void {
   mkdirSync(eventsDir, { recursive: true });
-  const lines = [
-    `event: ${event.event}`,
-    `source: ${event.source}`,
-    `run_id: ${event.runId}`,
+  const extensionFields = [
     `agent: ${event.agent}`,
-    `timestamp: ${new Date().toISOString()}`,
     `reason: ${event.reason}`,
     ...(typeof event.staleCount === "number" ? [`stale_count: ${event.staleCount}`] : []),
-    "processed: false",
-    "",
-  ];
-  writeFileSync(join(eventsDir, event.filename), lines.join("\n"));
+  ].join("\n");
+  const content = serializeRunnerEvent({
+    event: event.event,
+    source: event.source,
+    runId: event.runId,
+    timestamp: new Date().toISOString(),
+    data: JSON.stringify({ agent: event.agent, reason: event.reason, staleCount: event.staleCount }),
+  });
+  writeFileSync(join(eventsDir, event.filename), `${content}${extensionFields}\n`);
 }
 
 function findJsonl(root: string, uuid: string, depth: number): string {

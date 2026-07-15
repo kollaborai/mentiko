@@ -360,7 +360,7 @@ assert_not_contains "$chain_runner_source" \
   "chain monitor starts script directly instead of typing command into shell"
 
 # function-anchored (not line numbers) so these survive edits to agent-functions.sh.
-spec_monitor_launcher_source="$(sed -n '/^new-agent-from-spec() {/,/^ensure-event-file() {/p' "$PROJECT_ROOT/lib/agent-functions.sh")"
+spec_monitor_launcher_source="$(sed -n '/^new-agent-from-spec() {/,/^agent-complete-marker-seen() {/p' "$PROJECT_ROOT/lib/agent-functions.sh")"
 assert_not_contains "$spec_monitor_launcher_source" \
   'send-message "$monitor_session"' \
   "spec monitor starts script directly instead of typing command into shell"
@@ -378,9 +378,12 @@ assert_not_contains "$chain_monitor_source" \
   'exec $completion_script_q $session_name_q $chain_file_q' \
   "typed completion does not exec shell completion after runner-v2 exit 64"
 
-assert_not_contains "$chain_monitor_source" \
-  'nohup bash "$script_dir/chain-runner-complete.sh" "$session_name" "$chain_file"' \
-  "typed completion does not fall back to shell completion when completion pty spawn fails"
+assert_contains "$chain_monitor_source" \
+  'if [[ "$typed_completion_enabled" == "true" ]]; then' \
+  "typed completion has an explicit fail-closed guard before the legacy shell path"
+assert_contains "$chain_monitor_source" \
+  'runner-v2 completion failed closed; shell completion fallback disabled' \
+  "typed completion rejects shell completion when completion pty spawn fails"
 
 # the monitor loops delegate to launch-chain-runner-complete; they must not nohup
 # the completion script themselves.

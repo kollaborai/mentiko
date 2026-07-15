@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { spawn } from "child_process";
-import config, { nsPath, orgPath } from "../config";
+import config, { orgPath } from "../config";
 import type { Schedule } from "../types";
 import { getWorkspace } from "../workspaces/workspace-storage";
 import { writeLog } from "../system/system-logger";
@@ -24,6 +24,7 @@ import {
   type FileTriggerState,
 } from "./schedule-file-triggers";
 import { calculateCronNextRun } from "./cron-next-run";
+import { createNotification } from "../notifications/notification-server";
 
 // ---------------------------------------------------------------------------
 // state (on globalThis to survive module reloads within a long-running host)
@@ -459,49 +460,23 @@ function fireChain(
   });
 }
 
-async function createScheduleNotification(
+export async function createScheduleNotification(
   nsId: string,
   schedule: Schedule,
   errorMessage: string
 ) {
   try {
-    const notifDir = nsPath(nsId, "notifications");
-    if (!existsSync(notifDir)) {
-      mkdirSync(notifDir, { recursive: true });
-    }
-
-    const notifFile = join(notifDir, "notifications.json");
-    let notifications: Array<Record<string, unknown>> = [];
-
-    if (existsSync(notifFile)) {
-      try {
-        notifications = JSON.parse(readFileSync(notifFile, "utf-8"));
-      } catch {
-        notifications = [];
-      }
-    }
-
-    const notification = {
-      id: `notif_sched_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    const notification = createNotification(nsId, {
       type: "chain_failed",
       title: `Schedule failed: ${schedule.name}`,
       message: errorMessage,
-      timestamp: new Date().toISOString(),
-      read: false,
       metadata: {
         chainId: schedule.chainId,
         error: errorMessage,
         actionUrl: "/schedules",
         actionLabel: "View Schedules",
       },
-    };
-
-    notifications.unshift(notification);
-    if (notifications.length > 200) {
-      notifications.splice(200);
-    }
-
-    writeFileSync(notifFile, JSON.stringify(notifications, null, 2));
+    });
     console.log(`[scheduler] notification: ${notification.title}`);
   } catch (err) {
     console.warn("[scheduler] failed to create notification:", err);

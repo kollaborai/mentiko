@@ -33,7 +33,7 @@ runner-v2 component map and HTTP-to-next-agent lifecycle, see
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                      orchestration layer                             │    │
 │  │  lib/chain-runner.sh -> lib/chain-runner-complete.sh                 │    │
-│  │  event-trigger.sh | chain-event-watcher.sh | watchdog.sh             │    │
+│  │  event-trigger.sh | typed chain watcher | typed watchdog             │    │
 │  │  scheduler.sh | routing-lib.sh | run-lib.sh | agent-functions.sh     │    │
 │  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
@@ -175,9 +175,10 @@ Core files:
   artifact capture, retries, routing, fan-in/fan-out, run completion.
 - `lib/agent-functions.sh`: PTY session helpers and monitor wiring.
 - `lib/session-transport.sh`: transport abstraction over `pty-mgr`.
-- `lib/event-trigger.sh`: writes and reads file-backed events.
-- `lib/chain-event-watcher.sh`: watches event files and launches chains.
-- `lib/watchdog.sh`: detects stalled runs and foreign-scope-safe cleanup.
+- `web/lib/runner-v2/event-emitter.ts`: writes validated file-backed events.
+- `lib/event-trigger.sh`: invokes the typed writer and retains shell lifecycle reads/mutations pending migration.
+- `web/lib/runner-v2/chain-watcher-service.ts`: watches event files and launches chains from the background worker.
+- `web/lib/runner-v2/watchdog.ts`: performs stalled-run recovery and scoped cleanup from the background worker.
 - `lib/run-lib.sh`: run object creation and locked `run.json` updates.
 - `lib/concurrency-cap.sh`: shared chain concurrency gate.
 - `lib/scheduler.sh`: schedule evaluation and scheduled launch.
@@ -188,7 +189,7 @@ Flow:
 1. A user, API route, MCP tool, schedule, webhook, or event asks to run a chain.
 2. The launch path writes a run directory and chain snapshot.
 3. `chain-runner.sh` validates the chain and resolves agent refs/profiles.
-4. The runner ensures the watchdog and chain-event watcher sessions exist.
+4. The independently supervised typed background worker owns the watchdog and chain watcher; chain startup creates no watcher sessions.
 5. The runner admits the chain through the concurrency cap.
 6. The runner starts exactly the selected agent or agent set in PTY sessions.
 7. A companion monitor watches for `AGENT_COMPLETE` or declared event files.

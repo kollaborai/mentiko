@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "@/lib/runner-v2/entry-code-root-anchor";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import config from "@/lib/config";
 import { runChainMonitor } from "@/lib/runner-v2/monitor";
 import { createLiveMonitorIO } from "@/lib/runner-v2/monitor-live-io";
 import { readRunJson } from "@/lib/runner-v2/run-state";
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
     runJsonPath,
     agentId,
     workspaceType: process.env.WORKSPACE_TYPE || "local",
-    eventsDir: process.env.EVENTS_DIR || join(dirname(chainPath), "events"),
+    eventsDir: process.env.EVENTS_DIR || config.eventsDir,
     stateDir: process.env.STATE_DIR || join(runDir, "state"),
     namespaceId: process.env.NAMESPACE_ID || "default",
     orgId: process.env.ORG_ID || "default",

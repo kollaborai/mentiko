@@ -25,6 +25,9 @@ jest.mock("@/lib/config", () => ({
     binDir: "/repo/bin",
     codeRoot: "/repo",
     globalRoot: "/tmp/mentiko-global",
+    get eventsDir() {
+      return globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__;
+    },
   },
   nsPath: jest.fn((namespaceId: string) => `/tmp/ns/${namespaceId}`),
   orgPath: jest.fn((namespaceId: string, orgId: string) => `/tmp/ns/${namespaceId}/orgs/${orgId}`),
@@ -121,6 +124,10 @@ const mockIsRunnerV2Enabled = isRunnerV2Enabled as jest.MockedFunction<typeof is
 const mockStartRunnerV2Launch = startRunnerV2Launch as jest.MockedFunction<typeof startRunnerV2Launch>;
 let currentRunsDir = "";
 
+declare global {
+  var __MENTIKO_CHAIN_RUN_EVENTS_DIR__: string;
+}
+
 async function startMinimalRun(runId: string, metadata?: Record<string, unknown>) {
   const { startChainRun } = await import("@/lib/runs/chain-run-service");
   return startChainRun({
@@ -147,6 +154,7 @@ describe("chain-run-service runner-v2 guard", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     currentRunsDir = mkdtempSync(join(tmpdir(), "mentiko-runner-v2-runs-"));
+    globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__ = join(currentRunsDir, "events");
     const { resolveLinkRunsDir } = await import("@/lib/links/link-run-runtime");
     (resolveLinkRunsDir as jest.MockedFunction<typeof resolveLinkRunsDir>).mockReturnValue(currentRunsDir);
   });
@@ -273,7 +281,7 @@ describe("chain-run-service runner-v2 guard", () => {
     expect(mockSpawn).toHaveBeenCalledTimes(1);
     expect(mockSpawn).toHaveBeenCalledWith(
       "/bin/bash",
-      ["-lc", expect.stringContaining("--start reviewer")],
+      ["-lc", expect.stringMatching(/runner-v2-launch-agent.*reviewer/)],
       expect.objectContaining({ detached: true }),
     );
 
@@ -283,11 +291,11 @@ describe("chain-run-service runner-v2 guard", () => {
       status: "ok",
       mode: "live",
       adapter: {
-        launchesStarted: [{ command: expect.stringContaining("--start reviewer") }],
+        launchesStarted: [{ command: expect.stringMatching(/runner-v2-launch-agent.*reviewer/) }],
       },
     });
     expect(readFileSync(
-      join(currentRunsDir, "run-v2-live-probe", "runner-v2-probe", "events", "run-probe-writer-draft-ready.event"),
+      join(globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__, "run-probe-writer-draft-ready.event"),
       "utf8",
     )).toContain("processed: true");
     expect(JSON.parse(readFileSync(join(currentRunsDir, "run-v2-live-probe", "run.json"), "utf8"))).toMatchObject({

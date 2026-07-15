@@ -6,19 +6,19 @@ master events, master chains.
 
 overview
 ------------------------------------------------------------
-the event system is file-based, simple, and forgiving.
+the event system is file-based, strict, and inspectable.
 
 flow:
 ```
 agent A completes
   ↓
-writes event file to agents/events/
+invokes `mentiko emit` for its declared event
   ↓
-monitor detects new file
+typed emitter validates and atomically writes to the configured event root
   ↓
-complete-agent parses event
+typed consumers parse the strict event
   ↓
-finds agents with matching trigger
+completion routing and cross-chain triggers match the event
   ↓
 launches next agent(s)
 ```
@@ -31,66 +31,41 @@ why files?
 
 event file format
 ------------------------------------------------------------
-the parser is intentionally forgiving.
-ai agents write events in many formats.
+runner events use canonical lowercase `key: value` lines. every raw file must
+contain each of the six fields below exactly once. optional extension fields must
+be lowercase, unique, and non-colliding. json, markdown, duplicate fields,
+missing fields, and noncanonical key casing are rejected.
 
-all of these work:
-
-yaml style:
+canonical example:
 ```
 event: research-complete
 source: researcher
+run_id: run-1784102007562-bb990ff5
 timestamp: 2026-02-25T10:00:00Z
 processed: false
 data: findings written to workspace/research/findings.md
 ```
 
-json style:
-```json
-{
-  "event": "research-complete",
-  "source": "researcher",
-  "timestamp": "2026-02-25T10:00:00Z",
-  "processed": false,
-  "data": "findings written to workspace/research/findings.md"
-}
-```
-
-markdown style:
-```markdown
-### AGENT EVENT: research-complete
-
-**source:** researcher
-**timestamp:** 2026-02-25T10:00:00Z
-**data:** findings written to workspace/research/findings.md
-```
-
-minimal:
-```
-event: research-complete
-```
-
-the parser extracts:
-  - event name (required)
-  - source (optional, inferred from agent)
-  - timestamp (optional, defaults to file mtime)
-  - data (optional, any text)
-  - processed status (defaults to false)
+the typed emitter owns serialization, timestamp selection, filename selection,
+validation, and atomic no-clobber persistence. shell-facing emit commands only invoke
+that emitter; they do not construct event bytes themselves.
 
 event lifecycle
 ------------------------------------------------------------
-┌─────────┐     ┌──────────────┐     ┌───────────┐     ┌──────────┐
-│ created │ ──▶ │ unprocessed  │ ───▶ │ processed │ ───▶ │ archived │
-└─────────┘     └──────────────┘     └───────────┘     └──────────┘
+┌─────────┐     ┌──────────────┐     ┌────────────────────┐
+│ created │ ──▶ │ unprocessed  │ ───▶ │ per-trigger handled │
+└─────────┘     └──────────────┘     └────────────────────┘
                      │
-                     ▼
-                triggers next agent
+                     ├──────────────▶ completion routing
+                     └──────────────▶ shell lifecycle mark/archive
 
 state transitions:
-  - created: file written by agent
-  - unprocessed: detected by monitor, not yet handled
-  - processed: handled, next agent(s) launched
-  - archived: moved to agents/events/archive/ after chain complete
+  - created: typed emitter atomically writes a validated event
+  - unprocessed: available to strict typed consumers
+  - handled: chain-watcher records a durable marker per trigger without changing
+    the event's processed field
+  - processed/archived: legacy `lib/event-trigger.sh` lifecycle helpers can mark
+    or move owned events; this read/mutate shell surface remains pending migration
 
 event fields
 ------------------------------------------------------------
@@ -98,10 +73,11 @@ event fields
 field        type        required    description
 ────────────────────────────────────────────────────────────────────────────
 event        string      yes         name of the event
-source       string      no          agent id that emitted
-timestamp    string      no          iso timestamp when emitted
-processed    boolean     no          whether event was handled
-data         string      no          additional context
+source       string      yes         producer identity
+run_id       string      yes         owning run id; may be empty for pre-run ingress
+timestamp    string      yes         parseable date-time selected by the emitter
+processed    boolean     yes         literal true or false
+data         string      yes         additional context; may be empty
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 event
@@ -124,15 +100,21 @@ source
 
 who emitted this event.
 
-if not specified, inferred from:
-  - event filename pattern
-  - agent that was running when file created
+it is never inferred from the filename. provide it explicitly or set
+`MENTIKO_AGENT_ID` when using `mentiko emit`.
+
+run_id
+
+which run owns this event. the runner exports it for in-run emission. an empty
+value is permitted for intentional pre-run ingress; diagnostic events require a
+non-empty run id.
 
 timestamp
 
 when the event was emitted.
 
-if not specified, file modification time is used.
+the typed emitter supplies the timestamp. consumers do not fall back to file
+modification time.
 
 data
 
@@ -154,7 +136,7 @@ from agent prompt (chain.json):
 
 ```json
 {
-  "prompt": "When done:\n1. Write event file to agents/events/\n   event: research-complete\n   source: researcher\n   data: findings written to workspace/research/findings.md\n2. Output AGENT_COMPLETE"
+  "prompt": "When done:\n1. Run: mentiko emit research-complete researcher 'findings written to workspace/research/findings.md'\n2. Output AGENT_COMPLETE"
 }
 ```
 
@@ -163,20 +145,18 @@ from spec file (.agent.md):
 ```yaml
 playbooks:
   3-emit-event:
-    - write file to agents/events/researcher-complete.event
-    - contents:
-        event: research-complete
-        source: researcher
-        timestamp: (current time)
-        processed: false
+    - run: mentiko emit research-complete researcher "findings written to workspace/research/findings.md"
     - output AGENT_COMPLETE
 ```
 
 programmatic emission:
 
 ```bash
-mentiko emit research-complete researcher
+mentiko emit research-complete researcher "findings written to workspace/research/findings.md"
 ```
+
+do not hand-write `.event` files. the command routes through the canonical typed
+emitter and inherits the configured event root and active run id.
 
 triggers
 ------------------------------------------------------------
@@ -309,22 +289,18 @@ publisher emits: published → chain-complete
 
 monitor and events
 ---------------------------------------------------------------
-the monitor ensures events are written.
+the monitor observes completion evidence; it does not create successful handoff
+evidence on the agent's behalf.
 
 when agent completes:
-  1. monitor detects AGENT_COMPLETE in output
-  2. checks for event file in agents/events/
-  3. if missing, writes fallback event
-  4. processes event to trigger next agent
+  1. monitor detects authoritative completion evidence
+  2. completion matches the strict event by declared name, agent, and run id
+  3. if the declared event is missing, the agent/run fails closed
+  4. a diagnostic agent-error may be emitted, but it never satisfies the success
+     handoff matcher and no downstream route launches
 
-fallback event:
-```
-event: agent-complete
-source: {agent_id}
-data: (event file not found, auto-generated)
-```
-
-this ensures chains don't stall if agent forgets to emit.
+the narrow core-generation backstop may import a compatible run/attempt-scoped
+generation payload. it still does not fabricate the declared event.
 
 debugging events
 ---------------------------------------------------------------
@@ -338,33 +314,26 @@ list unprocessed:
 mentiko events --unprocessed
 ```
 
-view specific event:
-```bash
-cat agents/events/researcher-research-complete.event
-```
-
-watch events in real-time:
-```bash
-watch -n 1 'ls -la agents/events/'
-```
+the configured root is `{runtimeRoot}/events`. use the CLI to inspect it instead
+of assuming a workspace-relative `agents/events/` directory.
 
 manual event emission:
 ```bash
-mentiko emit custom-event my-agent
+mentiko emit --scope ingress custom-event operator
 ```
+
+Normal agent emission defaults to run scope and requires `MENTIKO_RUN_ID` or
+`RUN_ID`. Runless ingress is never inferred; request it explicitly as above.
 
 event not triggering?
 
 1. check spelling (triggers are case-insensitive but must match otherwise)
 2. verify agent has matching trigger
-3. check event file is in agents/events/ (not subdirectory)
-4. ensure processed: false (not already handled)
+3. verify all six canonical fields exist exactly once
+4. verify source and run_id match the intended owner
+5. check `processed: false` and the chain-watcher handled marker state
 
-event file permissions:
-```bash
-ls -la agents/events/
-# should be readable by the user running mentiko
-```
+malformed files are rejected rather than partially normalized.
 
 webhook notifications
 ---------------------------------------------------------------
@@ -454,9 +423,9 @@ events timeline:
    7b. needs-revision (reviewer agent) → research-started (round 2)
 ```
 
-event files created:
+event files created under `{runtimeRoot}/events/`:
 ```
-agents/events/
+events/
 ├── researcher-research-started.event
 ├── researcher-research-complete.event
 ├── writer-draft-started.event
@@ -492,9 +461,9 @@ best practices
    strings, not complex data structures
 
 9. archive old events
-   prevent agents/events/ from growing huge
+   use scoped lifecycle operations; never sweep another run's or sibling's events
 
 10. monitor event processing
-   check agents/events/ for stuck events
+   use `mentiko events --unprocessed` and inspect handled-marker state
 
 next: web-ui-guide.md

@@ -268,6 +268,36 @@ describe("POST /api/jobs/[id]/complete", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  test("unwraps the job runner output envelope before importing a generated task", async () => {
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          route: "task",
+          task: generatedTask(),
+        }),
+      },
+      runId: "run-task",
+      chainId: "task-generation",
+      generationKind: "task",
+    }), { params: Promise.resolve({ id: "job-task" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskCreate).toHaveBeenCalledTimes(3);
+    expect(mockTaskCreate.mock.calls[0][1]).toEqual(expect.objectContaining({
+      title: "Expand E2E test coverage for critical user workflows",
+      workspace_id: "/repo/mentiko",
+    }));
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-task", expect.objectContaining({
+      status: "complete",
+    }), "default");
+    expect(mockUpdateJob).not.toHaveBeenCalledWith("job-task", expect.objectContaining({
+      status: "failed",
+    }), "default");
+  });
+
   test("retries a complete task generation job when task import side effects are missing", async () => {
     let currentJob = {
       id: "job-task",

@@ -10,6 +10,7 @@ import {
 import { parseRunnerEvent } from "@/lib/runner-v2/events";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { createAgentAttempt, transitionAgentAttempt, type AgentAttemptPhase } from "@/lib/runner-v2/agent-attempt";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function runPath() {
   return join(mkdtempSync(join(tmpdir(), "runner-v2-late-event-")), "run.json");
@@ -65,7 +66,7 @@ const CHAIN_WITH_DOWNSTREAM = {
   ],
 };
 
-const LATE_EVENT = "event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n";
+const LATE_EVENT = runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" });
 
 function writeLateEvent(
   file: string,
@@ -603,7 +604,7 @@ describe("recoverLateCompletionEvents", () => {
     const writerEvent = writeLateEvent(file);
     const testerEvent = writeLateEvent(
       file,
-      "event: tests-ready\nsource: tester-run-123\nrun_id: run-123\nprocessed: false\n",
+      runnerEventFixture({ event: "tests-ready", source: "tester-run-123", runId: "run-123" }),
       "run-123-tester-tests-ready.event",
     );
     const chain = {
@@ -704,7 +705,7 @@ describe("recoverLateCompletionEvents", () => {
       runJsonPath: file,
       runId: "run-123",
       chain: CHAIN_WITH_DOWNSTREAM,
-      events: [writeLateEvent(file, "event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: true\n")],
+      events: [writeLateEvent(file, runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123", processed: true }))],
       now: new Date("2026-06-25T10:05:00.000Z"),
     });
 
@@ -721,7 +722,7 @@ describe("recoverLateCompletionEvents", () => {
       runJsonPath: file,
       runId: "run-123",
       chain: CHAIN_WITH_DOWNSTREAM,
-      events: [writeLateEvent(file, "event: draft-ready\nsource: writer-run-123\nrun_id: run-999\nprocessed: false\n")],
+      events: [writeLateEvent(file, runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-999" }))],
       now: new Date("2026-06-25T10:05:00.000Z"),
     });
 

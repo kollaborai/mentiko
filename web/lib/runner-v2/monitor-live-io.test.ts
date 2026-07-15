@@ -6,6 +6,7 @@ import { createLiveMonitorIO, hasAuthoritativeGenerationArtifact, selectTranscri
 import { runChainMonitor } from "@/lib/runner-v2/monitor";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 jest.mock("@/lib/pty/pty-client", () => ({
   pty: {
@@ -269,8 +270,16 @@ describe("monitor-v2 live IO", () => {
     }
 
     function seedCompletionEvent(eventsDir: string, name: string, fields: Record<string, string>) {
-      const body = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n");
-      writeFileSync(join(eventsDir, name), `${body}\n`);
+      const canonical = new Set(["event", "source", "run_id", "timestamp", "processed", "data"]);
+      writeFileSync(join(eventsDir, name), runnerEventFixture({
+        event: fields.event,
+        source: fields.source,
+        runId: fields.run_id,
+        timestamp: fields.timestamp,
+        processed: fields.processed === "true",
+        data: fields.data ?? "",
+        extensions: Object.fromEntries(Object.entries(fields).filter(([key]) => !canonical.has(key))),
+      }));
     }
 
     it("adopts a cross-run event when both runs share the same task id (proven attempt relation), even if stale", async () => {
@@ -428,7 +437,7 @@ describe("monitor-v2 live IO", () => {
       expect(result.plan.launches).toEqual(expect.arrayContaining([
         expect.objectContaining({
           kind: "single",
-          command: expect.stringContaining("--start 'reviewer'"),
+          command: expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/),
         }),
       ]));
     });

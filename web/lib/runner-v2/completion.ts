@@ -13,8 +13,6 @@ export interface CompletionMatchInput {
   events: Array<RunnerEventRecord | string>;
   // Full chain agent-id set, used only to disambiguate a source that exactly
   // names a DIFFERENT declared agent from a legitimate session-prefix match.
-  // Optional and additive: omitting it preserves the shell-parity prefix
-  // match unguarded (see sourceMatchesAgent).
   allAgentIds?: string[];
 }
 
@@ -33,7 +31,12 @@ export function findCompletionEvent(input: CompletionMatchInput): CompletionMatc
   }
 
   for (const candidate of input.events) {
-    const event = typeof candidate === "string" ? parseRunnerEvent(candidate) : candidate;
+    let event: RunnerEventRecord;
+    try {
+      event = typeof candidate === "string" ? parseRunnerEvent(candidate) : candidate;
+    } catch {
+      continue;
+    }
     const rejected = rejectCompletionEvent(event, input.agent, expectedEvent, input.runId, input.allAgentIds);
     if (!rejected) {
       return { matched: true, event };

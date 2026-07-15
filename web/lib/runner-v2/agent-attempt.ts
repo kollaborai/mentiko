@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
 
 export type AgentAttemptPhase =
@@ -641,15 +642,13 @@ function appendStuckEvent(runJsonPath: string, event: AgentAttemptStuckEvent): v
 function writeStuckEventFile(eventsDir: string, event: AgentAttemptStuckEvent): void {
   mkdirSync(eventsDir, { recursive: true });
   const path = join(eventsDir, `agent-attempt-stuck-${event.attemptId.replace(/[^a-zA-Z0-9_.-]/g, "-")}.event`);
-  writeFileSync(path, [
-    "event: agent_attempt_stuck",
-    `source: ${event.agentId}`,
-    `run_id: ${event.runId}`,
-    `timestamp: ${event.emittedAt}`,
-    "processed: false",
-    `data: ${JSON.stringify(event)}`,
-    "",
-  ].join("\n"));
+  writeFileSync(path, serializeRunnerEvent({
+    event: "agent_attempt_stuck",
+    source: event.agentId,
+    runId: event.runId,
+    timestamp: event.emittedAt,
+    data: JSON.stringify(event),
+  }));
 }
 
 function iso(now = new Date()): string {

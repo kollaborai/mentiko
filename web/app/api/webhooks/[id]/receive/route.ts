@@ -15,10 +15,11 @@ import { writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { getWebhookById, logWebhookEvent } from "@/lib/webhooks/webhook-storage";
 import type { WebhookEvent, WebhookEventType, WebhookSource } from "@/lib/webhooks/webhook-types";
-import { nsPath } from "@/lib/config";
+import { config } from "@/lib/config";
 import { timingSafeEqual } from "@/lib/auth/security";
-import { NotFound, Forbidden, Unauthorized } from "@/lib/api-errors";
+import { BadRequest, NotFound, Forbidden, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
 
@@ -141,21 +142,21 @@ function matchesFilter(
   return true;
 }
 
-function emitEventFile(namespaceId: string, eventName: string, source: string, data: string): string {
-  const eventsDir = nsPath(namespaceId, "events");
+function emitEventFile(eventName: string, source: string, data: string): string {
+  const eventsDir = config.eventsDir;
   mkdirSync(eventsDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const filename = `${timestamp}-${eventName}.event`;
   const filePath = join(eventsDir, filename);
 
-  const content = [
-    `event: ${eventName}`,
-    `source: ${source}`,
-    `timestamp: ${new Date().toISOString()}`,
-    `processed: false`,
-    `data: ${data}`,
-  ].join("\n") + "\n";
+  const content = serializeRunnerEvent({
+    event: eventName,
+    source,
+    runId: "",
+    timestamp: new Date().toISOString(),
+    data,
+  });
 
   writeFileSync(filePath, content, "utf-8");
   return filename;
@@ -174,10 +175,14 @@ export const POST = withErrorHandling(async (
   const { searchParams } = new URL(request.url);
   const namespaceId = searchParams.get("ns") ||
     request.headers.get("x-namespace-id") ||
-    "default";
+    config.namespaceId;
   const orgId = searchParams.get("org") ||
     request.headers.get("x-org-id") ||
-    "default";
+    config.orgId;
+
+  if (namespaceId !== config.namespaceId || orgId !== config.orgId) {
+    throw new BadRequest("Webhook scope does not match the current project event root");
+  }
 
   // load subscription
   const subscription = await getWebhookById(namespaceId, orgId, id);
@@ -250,7 +255,7 @@ export const POST = withErrorHandling(async (
 
   let emittedFile = "";
   try {
-    emittedFile = emitEventFile(namespaceId, mentikEventName, `webhook:${source}`, eventData);
+    emittedFile = emitEventFile(mentikEventName, `webhook:${source}`, eventData);
   } catch (err) {
     console.error("[webhook/receive] failed to emit event file:", err);
   }

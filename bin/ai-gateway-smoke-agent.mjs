@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isExpectedSmokeContent } from "./ai-gateway-smoke-match.mjs";
@@ -8,7 +9,7 @@ const baseUrl = process.env.OPENAI_BASE_URL || process.env.OPENAI_API_BASE;
 const apiKey = process.env.OPENAI_API_KEY;
 const model = process.env.MENTIKO_AI_GATEWAY_SMOKE_MODEL || "glm-5.1";
 const expectedContent = "gateway smoke ok";
-const runId = process.env.MENTIKO_RUN_ID || process.env.RUN_ID || "unknown";
+const runId = process.env.MENTIKO_RUN_ID || process.env.RUN_ID;
 const agentId = process.env.MENTIKO_AGENT_ID || "gateway-smoke";
 const eventName = process.env.MENTIKO_AGENT_EMITS || "gateway-smoke-complete";
 
@@ -22,24 +23,32 @@ function writeJsonArtifact(name, data) {
 }
 
 function writeEvent() {
-  const eventsDir = process.env.EVENTS_DIR;
-  if (!eventsDir) return null;
-
-  mkdirSync(eventsDir, { recursive: true });
-  const eventPath = join(eventsDir, `${agentId}-${eventName}.event`);
-  writeFileSync(
-    eventPath,
+  const emitterPath = join(process.env.MENTIKO_CODE_ROOT, "lib", "runner-event-emitter.js");
+  const result = spawnSync(
+    process.execPath,
     [
-      `event: ${eventName}`,
-      `source: ${agentId}`,
-      `timestamp: ${new Date().toISOString()}`,
-      "processed: false",
-      `run_id: ${runId}`,
-      "",
-    ].join("\n"),
-    "utf8",
+      emitterPath,
+      "emit",
+      "--scope", "run",
+      "--event", eventName,
+      "--source", agentId,
+      "--run-id", runId,
+      "--data", "",
+      "--output", "json",
+    ],
+    { env: process.env, encoding: "utf8" },
   );
-  return eventPath;
+  if (result.error || result.status !== 0) {
+    fail("typed runner event emission failed", {
+      error: result.error?.message,
+      stderr: result.stderr?.trim(),
+    });
+  }
+  try {
+    return JSON.parse(result.stdout).path;
+  } catch {
+    fail("typed runner event emitter returned an invalid result", { stdout: result.stdout });
+  }
 }
 
 function fail(message, details = {}) {
@@ -61,6 +70,18 @@ if (!baseUrl) {
 
 if (!apiKey) {
   fail("OPENAI_API_KEY is missing");
+}
+
+if (!runId) {
+  fail("MENTIKO_RUN_ID or RUN_ID is missing");
+}
+
+if (!process.env.EVENTS_DIR) {
+  fail("EVENTS_DIR is missing");
+}
+
+if (!process.env.MENTIKO_CODE_ROOT) {
+  fail("MENTIKO_CODE_ROOT is missing");
 }
 
 const endpoint = new URL(

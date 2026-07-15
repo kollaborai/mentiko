@@ -1,296 +1,128 @@
-# chain-event-watcher.sh - event-driven chain triggers
-
-daemon that watches EVENTS_DIR/ for new events and triggers chains
-based on their event_triggers config.
-
-see also:
-  - [chain-runner-flow.md](./chain-runner-flow.md) - main orchestration
-  - [watchdog.md](./watchdog.md) - stalled run detection
-
-overview
-========
-
-chain-event-watcher enables cross-chain automation:
-
-1. agents emit events (write .event files to EVENTS_DIR/)
-2. chain-event-watcher detects new events
-3. matches events against chain event_triggers configs
-4. launches matching chains automatically
-
-this enables:
-  - chain chaining (agent A finishes, chain B starts)
-  - notifications (event triggers alert chain)
-  - pipelines (each stage is a separate chain)
-
-usage
-=====
-
-  chain-event-watcher.sh              start daemon (default 10s interval)
-  chain-event-watcher.sh --interval 5  custom poll interval
-  chain-event-watcher.sh --namespace ns  specific namespace
-  chain-event-watcher.sh --oneshot      process events once and exit
-
-env vars:
-  CHAIN_WATCHER_INTERVAL=10   poll interval in seconds
-  NAMESPACE_ID=default        namespace to watch
-
-chain.json config
-=================
-
-chains define event_triggers in config:
-
-  {
-    "name": "notification-chain",
-    "config": {
-      "event_triggers": [
-        {
-          "event": "deployment-complete",
-          "source_chain": "deploy",
-          "condition": "",
-          "pass_data": true
-        },
-        {
-          "event": "run-stalled",
-          "source_chain": "watchdog",
-          "condition": "",
-          "pass_data": false
-        }
-      ],
-      "agents": [...]
-    }
-  }
-
-trigger fields:
-
-  event (required)       event name to match
-  source_chain (optional) only match if from this chain
-  condition (optional)   bash expression evaluated with event data in scope
-  pass_data (optional)   pass event data as CHAIN_INPUT env var
-
-startup
-=======
-
-1. source config.sh for paths (EVENTS_DIR, CHAINS_DIR, RUNTIME_DIR)
-2. parse args (--interval, --namespace, --oneshot)
-3. create watcher state dir: RUNTIME_DIR/chain-watcher/
-4. start main loop
-
-main loop
-=========
-
-every iteration (every POLL_INTERVAL seconds):
-
-1. reload triggers (every 6 iterations)
-   ------------------------------------
-   scan all chains in CHAINS_DIR/*/
-   extract event_triggers from each chain.json
-   build JSON array of triggers:
-   ```
-   [{
-     chain_name: "...",
-     chain_path: "...",
-     event: "...",
-     source_chain: "...",
-     condition: "...",
-     pass_data: true/false
-   }]
-   ```
-
-2. process new events
-   -------------------
-   for each .event file in EVENTS_DIR/:
-   - parse event fields (event, source, data, processed)
-   - skip if processed == true
-   - skip if already handled (check watcher state dir)
-   - match against all triggers
-   - fire matching triggers
-
-3. cleanup handled state
-   ----------------------
-   every 60 iterations:
-   - delete handled state files older than 24h
-
-4. sleep INTERVAL
-
-event file format
-=================
-
-events are simple text files (key: value format):
-
-  event: agent-complete
-  source: researcher
-  timestamp: 2026-03-12T10:00:00-07:00
-  data: {"output": "/path/to/report.md"}
-  processed: false
-
-fields:
-  event      event name (matched against trigger.event)
-  source     which agent/chain emitted it
-  data       optional JSON data
-  processed  set to true after handling (idempotency)
-
-match_trigger logic
-===================
-
-1. check event name matches
-   ------------------------
-   trigger.event == event_file.event
-   case-sensitive match required
-
-2. check source_chain filter
-   --------------------------
-   if trigger.source_chain set:
-   trigger.source_chain == event_file.source
-   optional filter to only match events from specific chain
-
-3. evaluate condition (optional)
-   ------------------------------
-   if trigger.condition set:
-   eval "[[ ${condition} ]]" with event data in scope
-   example conditions:
-   - '$data == "success"'
-   - '$data | grep -q "production"'
-
-4. return 0 (match) or 1 (no match)
-
-process_event flow
-==================
-
-for each matching trigger:
-
-1. verify chain exists
-   --------------------
-   check trigger.chain_path exists
-
-2. spawn the chain
-   ---------------
-   nohup bash chain-runner.sh {chain_path} > watcher.log 2>&1 &
-   disown (detach from parent, survives watcher restart)
-
-3. pass event data (if pass_data == true)
-   ---------------------------------------
-   set env vars for chain:
-   - CHAIN_INPUT={event_data}
-   - CHAIN_TRIGGER_EVENT={event_name}
-   - CHAIN_TRIGGER_SOURCE={event_source}
-
-   chain can use these in prompts via {CHAIN_INPUT} placeholder.
-
-4. record as handled
-   ------------------
-   create WATCHER_STATE_DIR/handled/{event_filename}
-   prevents double-firing on same event
-
-example workflow
-================
-
-1. chain "deploy" finishes, agent emits:
-   EVENTS_DIR/20260312-100000-agent-complete.event:
-     event: agent-complete
-     source: deploy
-     data: {"status": "success", "environment": "production"}
-
-2. chain-event-watcher detects event, matches against triggers
-
-3. chain "notify-slack" has trigger:
-   {
-     "event": "agent-complete",
-     "source_chain": "deploy",
-     "condition": "",
-     "pass_data": true
-   }
-
-4. chain-event-watcher launches notify-slack chain with:
-   CHAIN_INPUT='{"status":"success","environment":"production"}'
-   CHAIN_TRIGGER_EVENT='agent-complete'
-   CHAIN_TRIGGER_SOURCE='deploy'
-
-5. notify-slack agent reads CHAIN_INPUT, sends slack message
-
-integration with chain-runner
-==============================
-
-chain-runner.sh starts chain-watcher automatically:
-
-  ensure-chain-watcher() {
-      if transport_has_session "mentiko-chain-watcher"; then
-          return 0  # already running
-      fi
-      # kill dead session before respawning
-      transport_kill_session "mentiko-chain-watcher" 2>/dev/null || true
-      transport_new_session "mentiko-chain-watcher" \
-          bash "$SCRIPT_DIR/chain-event-watcher.sh" \
-          --namespace "${NAMESPACE_ID:-default}" || true
-  }
-
-this is called in chain-runner.sh phase 0 (initialization).
-
-agent emits event via chain-runner-complete.sh:
-
-1. agent completes, writes event file:
-   echo "event: {emits}" > EVENTS_DIR/{session}-{emits}.event
-   echo "source: {session_prefix}" >> EVENTS_DIR/{session}-{emits}.event
-   echo "timestamp: $(date -Iseconds)" >> EVENTS_DIR/{session}-{emits}.event
-   echo "processed: false" >> EVENTS_DIR/{session}-{emits}.event
-
-2. chain-event-watcher detects event on next poll
-
-3. chain-event-watcher matches triggers, launches next chain
-
-related files
-=============
-
-lib/chain-event-watcher.sh     this file
-lib/chain-runner.sh            starts watcher, emits events
-lib/chain-runner-complete.sh   completion handler (emits events)
-lib/config.sh                  path resolution
-lib/session-transport.sh       PTY abstraction
-
-state directory
-===============
-
-RUNTIME_DIR/chain-watcher/
-  watcher.log                    watcher output
-  handled/{event-filename}       state files for processed events
-  runs/{chain-name}-{timestamp}.log  individual chain run logs
-
-common triggers
-===============
-
-agent lifecycle:
-  - agent-complete    agent finished successfully
-  - agent-failed      agent failed
-  - agent-timeout     agent timed out
-
-chain lifecycle:
-  - chain-started     chain started
-  - chain-complete    all agents finished
-  - chain-failed      chain failed
-
-system events:
-  - run-stalled       watchdog detected stalled run
-  - deployment-*      custom deployment events
-  - alert-*           custom alert events
-
-troubleshooting
-===============
-
-chain not triggering on event?
-  - check chain.json event_triggers config matches event name
-  - check event file processed != false
-  - check watcher state dir (already handled?)
-  - check watcher.log for errors
-
-event not being written?
-  - check EVENTS_DIR/ exists
-  - check chain-runner-complete.sh is being called
-  - check agent emitted event (grep EVENTS_DIR/)
-
-watcher not running?
-  - check: transport_has_session "mentiko-chain-watcher"
-  - start: manually run chain-event-watcher.sh
-
-chain started but failing?
-  - check watcher runs/{chain-name}-*.log for output
-  - check chain.json is valid (jq empty chain.json)
-  - check chain.json agents have triggers matching event
+# TypeScript chain watcher - event-triggered chain launch
+
+The active chain watcher is
+`web/lib/runner-v2/chain-watcher-service.ts`. The TypeScript background worker
+starts it once, reports its status, and stops it during worker shutdown. It is
+not a PTY session and chain startup does not launch it.
+
+See also:
+
+- [watchdog.md](./watchdog.md) - stalled run recovery
+- [event-trigger.md](./event-trigger.md) - runner event production
+- [../RUNNER_V2_ARCHITECTURE.md](../RUNNER_V2_ARCHITECTURE.md) - current runner ownership
+- [contracts/watcher-watchdog.contract.json](./contracts/watcher-watchdog.contract.json) - binding contract
+
+## Process ownership
+
+The process manager starts one background worker:
+
+- development: `npx tsx server/background-worker.ts` from `web/processes.dev.json`
+- production: `node server/background-worker.js` from `web/processes.json`
+
+`startChainWatcherService()` starts the watcher during worker boot.
+`getChainWatcherServiceStatus()` feeds the worker status file, and
+`stopChainWatcherService()` aborts the filesystem wait and is awaited during
+shutdown. An unexpected watcher failure requests a non-zero worker shutdown;
+process-manager then restarts the worker and all of its background services.
+
+`lib/chain-event-watcher.sh` remains only as a migration parity reference. No
+active launch surface starts it and there is no shell fallback.
+
+## Scope and singleton contract
+
+The default service resolves exactly one configured scope:
+
+- events: `config.eventsDir`
+- chains: `config.chainsDir`
+- state: `<config.projectRoot>/runtime/chain-watcher`
+
+Another namespace or organization requires explicit paths. The service uses an
+in-process singleton guard plus a per-namespace/org directory lock containing
+the live worker PID. A live holder blocks a duplicate; a dead holder can be
+reclaimed. Shutdown releases the lock.
+
+## Event loop
+
+The watcher:
+
+1. Loads enabled `config.event_triggers[]` from valid chain definitions.
+2. Strictly parses `.event` files from the configured event root.
+3. Ignores malformed and already-processed events without poisoning them.
+4. Matches event name, optional source, and optional condition.
+5. Starts each matched chain once.
+6. Persists per-event, per-trigger handled state atomically.
+7. Waits on the filesystem and uses a 10-second timeout as the poll path.
+
+Triggers reload every six iterations. Handled-state cleanup runs every 60
+iterations with a 24-hour TTL, but a marker is retained while its unprocessed
+event still exists.
+
+The watcher never rewrites the event's `processed` field. Its own idempotency is
+the JSON marker under `runtime/chain-watcher/handled/`. If one of several
+matching launches fails, successful trigger keys remain durable and the next
+pass retries only the failed sibling.
+
+## Trigger contract
+
+Chains define triggers under `config.event_triggers`:
+
+```json
+{
+  "event": "deployment-complete",
+  "source_chain": "deploy",
+  "condition": "$data == \"success\"",
+  "pass_data": true,
+  "enabled": true
+}
+```
+
+- `event` is required and case-sensitive.
+- `source_chain` optionally matches the event source.
+- `condition` uses a narrow comparison grammar.
+- `pass_data` controls whether event data becomes `CHAIN_INPUT`.
+- `enabled: false` excludes the trigger.
+
+Condition evaluation is fail-closed. It supports simple string, glob, regex,
+numeric, and `-n`/`-z` comparisons. Command substitution, backticks, shell
+control metacharacters, bracket breakout, process substitution, newlines,
+unsafe regex forms, and malformed expressions do not match.
+
+## Launch contract
+
+A matched trigger starts a detached child:
+
+```text
+bin/mentiko run <chain-path>
+```
+
+The TypeScript launcher writes output under
+`runtime/chain-watcher/runs/`, strips inherited `BASH_FUNC_*` entries, and sets:
+
+- `NAMESPACE_ID`
+- `ORG_ID`
+- `CHAIN_TRIGGER_EVENT`
+- `CHAIN_TRIGGER_SOURCE`
+- `CHAIN_INPUT` only when `pass_data` is true
+- `MENTIKO_RUNNER_V2=1`
+- `MENTIKO_RUNNER_V2_COMPLETION=1`
+
+## Status and troubleshooting
+
+The worker publishes chain-watcher state in the configured
+`state/background-worker.json` file:
+
+- `chainWatcher.status`
+- `chainWatcher.startedAt`
+- `chainWatcher.lastCheck`
+- `chainWatcher.checkCount`
+- `chainWatcher.lastError`
+
+If events stop launching chains, inspect that status, validate the raw event,
+confirm the configured events/chains roots, and inspect the handled marker for
+that filename. Do not start a second watcher manually; a duplicate should lose
+the singleton lock.
+
+Focused coverage lives in:
+
+- `web/lib/runner-v2/chain-watcher-service.test.ts`
+- `web/lib/runner-v2/watcher-watchdog-cutover.binding.test.ts`

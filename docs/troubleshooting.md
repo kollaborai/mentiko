@@ -97,19 +97,22 @@ event not triggering next agent
     # check next agent's triggers in the active chain json
     jq '.agents[] | {id, triggers, emits}' <chain.json>
 
-    # manually trigger (inside an agent session, source defaults to $MENTIKO_AGENT_ID)
+    # manually trigger inside an agent session; its run id remains required
     mentiko emit <event-name> [source]
+
+    # runless external ingress must be declared explicitly
+    mentiko emit --scope ingress <event-name> <source>
 
 ---
 
 event file format not recognized
 
-  cause: parser doesn't recognize format
+  cause: the raw event file violates the strict canonical contract
 
-  solution: the universal parser handles most formats, but verify:
-    - file ends in .event, .md, or .json
-    - contains "event:" or "event" key
-    - event name doesn't have special chars
+  solution: use the canonical emitter and verify:
+    - file ends in .event
+    - all six fields exist exactly once: event, source, run_id, timestamp, processed, data
+    - keys are lowercase and processed is true or false
 
   if all else fails, verify the canonical emitter:
     EVENTS_DIR=agents/events MENTIKO_RUN_ID=<run-id> MENTIKO_AGENT_ID=<agent-id> mentiko emit my-event

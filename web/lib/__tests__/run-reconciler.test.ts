@@ -101,8 +101,10 @@ describe("run reconciler", () => {
       [
         "event: architecture-designed",
         "source: uam-middleware-architect",
+        "run_id: run-1777862548347",
         "timestamp: 2026-05-03T10:30:00.000Z",
         "processed: false",
+        "data: architecture complete",
       ].join("\n")
     );
     utimesSync(middlewareEvent, new Date("2026-05-04T02:45:44.687Z"), new Date("2026-05-04T02:45:44.687Z"));
@@ -112,8 +114,10 @@ describe("run reconciler", () => {
       [
         "event: guest-enforcement-implemented",
         "source: uam-rbac-guest-enforcer",
+        "run_id: run-1777862548347",
         "timestamp: 2026-05-03T10:45:00.000Z",
         "processed: false",
+        "data: enforcement complete",
       ].join("\n")
     );
 
@@ -132,6 +136,45 @@ describe("run reconciler", () => {
       }),
       "default"
     );
+  });
+
+  it("does not recover an agent from another run's matching event", async () => {
+    const runId = "run-1777862548347";
+    const runDir = join(mockRunsDir, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "chain.json"), JSON.stringify({
+      agents: [{ id: "middleware-architect", emits: "architecture-designed" }],
+    }));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({
+      id: runId,
+      status: "stopped",
+      completed: "2026-05-04T02:53:33.838Z",
+      agents: [{
+        id: "middleware-architect",
+        name: "Middleware Architect",
+        status: "stopped",
+        session: `middleware-architect-${runId}`,
+        started: "2026-05-04T02:42:31.000Z",
+      }],
+    }));
+
+    const eventPath = join(mockEventsDir, "architecture-designed-other-run.event");
+    writeFileSync(eventPath, [
+      "event: architecture-designed",
+      "source: middleware-architect",
+      "run_id: run-1777862549999",
+      "timestamp: 2026-05-04T02:45:44.687Z",
+      "processed: false",
+      "data: architecture complete",
+    ].join("\n"));
+    utimesSync(eventPath, new Date("2026-05-04T02:45:44.687Z"), new Date("2026-05-04T02:45:44.687Z"));
+
+    const result = await reconcileOrphanedRuns();
+    const stored = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+
+    expect(result.cleaned).not.toContain(runId);
+    expect(stored.agents[0]).toMatchObject({ status: "stopped" });
+    expect(stored.agents[0].completed).toBeUndefined();
   });
 
   it("keeps a run alive while its detached handoff process is starting the next agent", async () => {
@@ -243,8 +286,10 @@ describe("run reconciler", () => {
       [
         "event: architecture-designed",
         "source: uam-middleware-architect",
+        "run_id: run-1777857759654",
         "timestamp: 2026-05-03T10:30:00.000Z",
         "processed: false",
+        "data: architecture complete",
       ].join("\n")
     );
     utimesSync(eventPath, new Date("2026-05-04T02:45:44.687Z"), new Date("2026-05-04T02:45:44.687Z"));

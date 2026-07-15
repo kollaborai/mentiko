@@ -99,36 +99,20 @@ When `research:complete` event is emitted, analyst agent starts.
 
 ### Event Emission
 
-Agent writes event file on completion:
+Agent requests a canonical event through the CLI. The typed emitter owns the
+configured root, strict serialization, timestamp, filename, and atomic write:
 
 ```bash
-# complete-agent.sh
-cat > "events/$AGENT_ID.event" <<EOF
-{
-  "event": "agent:complete",
-  "source": "$AGENT_ID",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "processed": false,
-  "data": {
-    "status": "$STATUS",
-    "output": "$OUTPUT_FILE"
-  }
-}
-EOF
+mentiko emit agent-complete "$AGENT_ID" "status=$STATUS output=$OUTPUT_FILE"
 ```
 
 ### Event Triggering
 
-```bash
-# event-trigger.sh
-inotifywait -m -e create --format '%f' events/ | while read event; do
-  event_type=$(jq -r '.event' "$event")
-  matching_agents=$(jq -r '.agents[] | select(.triggers[] == "$event_type") | .id' chain.json)
-  
-  for agent_id in $matching_agents; do
-    launch-agent.sh "$agent_id" "$event"
-  done
-done
+```text
+web/server/background-worker.ts
+  -> startChainWatcherService()
+  -> strict event parse + per-trigger handled marker
+  -> detached bin/mentiko run for each matched chain
 ```
 
 ### Chain Configuration

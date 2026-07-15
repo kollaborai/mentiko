@@ -8,7 +8,7 @@ the whole thing is observable, resumable, and schedulable.
 
 architecture (4 layers):
   ui            web app (next.js), CLI (bin/mentiko)
-  orchestration chain-runner.sh, launch-agent.sh, scheduler.sh, watchdog.sh
+  orchestration shell chain/agent launch boundaries plus typed worker, scheduler, chain watcher, watchdog, and runner-v2 completion services
   execution     agents in PTY sessions via pty-manager (bin/p)
   data          filesystem (namespaces/) + sqlite (auth, tasks)
 

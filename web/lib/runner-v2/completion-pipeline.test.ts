@@ -4,6 +4,7 @@ import { join } from "path";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import { readLoopState, shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 function runDir() {
   return mkdtempSync(join(tmpdir(), "runner-v2-completion-pipeline-"));
@@ -38,7 +39,7 @@ describe("runner-v2 completion pipeline", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       maxRounds: 3,
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
@@ -70,7 +71,7 @@ describe("runner-v2 completion pipeline", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       maxRounds: 3,
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
@@ -102,7 +103,7 @@ describe("runner-v2 completion pipeline", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
       maxRounds: 3,
       now: new Date("2026-06-25T10:00:00.000Z"),
     });
@@ -134,7 +135,7 @@ describe("runner-v2 completion pipeline", () => {
           { id: "writer", triggers: ["revise"] },
         ],
       },
-      events: ["event: revise\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [runnerEventFixture({ event: "revise", source: "writer-run-123", runId: "run-123" })],
       maxRounds: 3,
       now: new Date("2026-06-25T10:00:00.000Z"),
     });

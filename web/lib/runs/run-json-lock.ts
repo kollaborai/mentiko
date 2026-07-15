@@ -3,7 +3,7 @@
  *
  * THE PROBLEM (engine bug #7): three independent processes read-modify-write the
  * same run.json — the bash completion/monitor handlers (lib/run-lib.sh), the
- * watchdog (lib/watchdog.sh), and THIS web heartbeat route. Each write is atomic in
+ * typed watchdog, and the web heartbeat route. Each write is atomic in
  * isolation (write to a temp file then rename, so a READER never sees a half-written
  * file), but there is no mutual exclusion ACROSS writers: a classic lost update. An
  * agent-status write can be silently clobbered when a concurrent writer reads the

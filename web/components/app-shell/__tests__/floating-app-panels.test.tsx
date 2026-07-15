@@ -66,9 +66,9 @@ describe("FloatingAppPanels", () => {
       backgroundImage:
         "radial-gradient(transparent, transparent, rgba(255,255,255,0.16), rgba(255,255,255,0.5), rgba(255,255,255,0.18), transparent, transparent)",
     });
-    expect(document.querySelector("[data-floating-app-desktop]")).toHaveStyle({
-      backgroundColor: "#010101",
-    });
+    expect(
+      (document.querySelector("[data-floating-app-desktop]") as HTMLElement).style.backgroundColor,
+    ).toBe("var(--background)");
     expect(document.querySelector('[data-floating-app-desktop-layer="0"]')).toHaveStyle({
       backgroundImage:
         "radial-gradient(circle at 1px 1px, #111113 0.5px, transparent 0)",

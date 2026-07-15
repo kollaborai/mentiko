@@ -4,6 +4,7 @@ import { watch, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "@/lib/config";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { parseRunnerEventStreamFile, runnerEventBelongsToStream } from "./runner-event-stream";
 
 export const dynamic = "force-dynamic";
 
@@ -90,7 +91,7 @@ function setupWatchers(streamId: string): () => void {
           lastRunStatus = run.status;
           sendEvent(current.controller, {
             type: run.status === "completed" || run.status === "failed" ? "chain_complete" : "run_status",
-            data: { status: run.status, completed: run.completed },
+            data: { status: run.status, completed: run.completed, runId: current.runId },
             timestamp: new Date().toISOString(),
           });
         }
@@ -132,7 +133,7 @@ function setupWatchers(streamId: string): () => void {
 
   const eventsWatcher = watch(eventsDir, { persistent: false }, (_eventType, filename) => {
     if (!filename) return;
-    if (!filename.endsWith(".event") && !filename.endsWith(".md")) return;
+    if (!filename.endsWith(".event")) return;
 
     setTimeout(() => {
       const current = activeStreams.get(streamId);
@@ -140,47 +141,25 @@ function setupWatchers(streamId: string): () => void {
 
       if (current.lastEvents.has(filename)) return;
 
-interface EventFile {
-  filename: string;
-  event?: string;
-  source?: string;
-  timestamp?: string;
-  processed?: boolean;
-  data?: string;
-}
-
       try {
         const filePath = join(eventsDir, filename);
         if (!existsSync(filePath)) return;
 
-        const content = readFileSync(filePath, "utf-8");
-        const lines = content.split("\n");
-
-        const event: EventFile = { filename };
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("event:")) {
-            event.event = trimmed.slice(6).trim();
-          } else if (trimmed.startsWith("source:")) {
-            event.source = trimmed.slice(7).trim();
-          } else if (trimmed.startsWith("timestamp:")) {
-            event.timestamp = trimmed.slice(10).trim();
-          } else if (trimmed.startsWith("processed:")) {
-            event.processed = trimmed.slice(10).trim().toLowerCase() === "true";
-          } else if (trimmed.startsWith("data:")) {
-            event.data = trimmed.slice(5).trim();
-          }
-        }
+        const { event, lifecycleType } = parseRunnerEventStreamFile(
+          filename,
+          readFileSync(filePath, "utf-8"),
+        );
 
         current.lastEvents.add(filename);
+        if (!runnerEventBelongsToStream(event, current.runId)) return;
 
         // The bash producer writes the canonical HYPHEN form (`chain-complete`)
         // into the .event file (see lib/event-trigger.sh emit-event). Match that.
         // The outbound SSE message `type` stays "chain_complete" (underscore)
         // because the client listens for that event name (web/hooks/use-event-stream.ts).
-        if (event.event === "chain-complete") {
+        if (lifecycleType) {
           sendEvent(current.controller, {
-            type: "chain_complete",
+            type: lifecycleType,
             data: event,
             timestamp: new Date().toISOString(),
           });

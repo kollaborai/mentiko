@@ -503,6 +503,7 @@ export async function startChainRun({
   if (isRunnerV2Enabled(childEnv) && runMetadata?.runnerV2Probe === true) {
     const probeInput = {
       runDir: join(runDir, "runner-v2-probe"),
+      eventsDir: config.eventsDir,
       env: childEnv,
       dryRun: runMetadata.runnerV2ProbeMode !== "live",
       dispatchExternalEffects: runMetadata.runnerV2DispatchExternalEffects === true,

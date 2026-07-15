@@ -12,7 +12,9 @@ describe("DataShapeStatusLegend", () => {
     expect(screen.getByText("Absent")).toBeInTheDocument();
     expect(screen.getByText("Drift")).toBeInTheDocument();
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
-    expect(screen.getByText(/every inspected record passed the canonical schema/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/every inspected artifact passed its configured physical and normalized contracts/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/no canonical schema was available/i)).toBeInTheDocument();
     expect(screen.getByText(/no matching artifact or inspectable record/i)).toBeInTheDocument();
     expect(screen.getByText(/failed validation, parsing, or inspection/i)).toBeInTheDocument();

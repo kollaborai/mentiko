@@ -172,13 +172,12 @@ Tasks with `auto_run=true` automatically execute when dependencies resolve.
 ### Flow
 
 ```
-background-worker.cjs (process-manager spawns)
-  ├─ starts auto-run-service.ts
-  ├─ waits for /api/health (platform ready)
-  ├─ every 60s: POST /api/tasks/auto-run
-  └─ for each ready task:
-      ├─ spawn chain (via chains/run API)
-      └─ create run record
+background-worker.ts (process-manager spawns)
+  ├─ starts scheduler + auto-run service
+  ├─ owns the typed chain watcher
+  ├─ runs startup + 60s reconciliation and watchdog scans
+  ├─ drains typed external effects every 15s
+  └─ auto-run launches ready task chains and records their runs
 ```
 
 ### Candidate Detection (web/lib/auto-run.ts)

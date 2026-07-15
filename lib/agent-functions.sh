@@ -167,99 +167,6 @@ peek-session() {
     fi
 }
 
-# -------------------------------------------------------------------
-# ensure-event-file: fallback event writer
-# if agent says AGENT_COMPLETE but forgot to write an event file,
-# this reads the spec and writes a clean event on behalf of the agent.
-# -------------------------------------------------------------------
-ensure-event-file() {
-    local session_name="$1"
-    local agent_context="$2"
-    local project_root="$3"
-
-    local events_dir="${EVENTS_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/events}"
-    local project_name=$(basename "$project_root")
-
-    # derive session prefix
-    local s_prefix=$(echo "$session_name" | sed "s/^${project_name}-//" | sed 's/-[0-9]\{8\}-[0-9]\{4\}$//')
-
-    local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
-
-    # check if ANY current-run event file from this agent already exists
-    for ef in "$events_dir"/*; do
-        [[ -f "$ef" ]] || continue
-        [[ -d "$ef" ]] && continue
-        if [[ -n "$run_id" ]]; then
-            if ! grep -qi "^run_id:[[:space:]]*${run_id}[[:space:]]*$" "$ef" 2>/dev/null; then
-                continue
-            fi
-        fi
-        if grep -qi "source.*${s_prefix}\|agent.*${s_prefix}" "$ef" 2>/dev/null; then
-            echo "  event file exists (content match)"
-            return 0
-        fi
-        if echo "$(basename "$ef")" | grep -qi "$s_prefix" 2>/dev/null; then
-            echo "  event file exists (filename match)"
-            return 0
-        fi
-    done
-
-    # BUG-022 guard: never synthesize a success event off a rendered marker. The
-    # fallback is only legitimate when the agent's DURABLE transcript shows it
-    # actually finished (standalone AGENT_COMPLETE in its recorded output). A
-    # pty-resize re-wrap can forge the marker on screen but not in the transcript,
-    # so an unresolvable transcript refuses fabrication rather than reporting a
-    # failure (missing handoff) as a success.
-    if ! agent-complete-marker-durable "$session_name"; then
-        echo "  no durable completion evidence for $session_name; refusing to fabricate ${EXPECTED_EVENT:-emits} event"
-        return 1
-    fi
-
-    echo "  no event file found. writing fallback from spec..."
-
-    # extract spec path from agent_context
-    local spec_rel=$(echo "$agent_context" | sed -n 's/.*Spec: \([^ ]*\.md\).*/\1/p')
-    local spec_path="${project_root}/${spec_rel}"
-
-    if [[ ! -f "$spec_path" ]]; then
-        echo "  spec not found at: $spec_path"
-        return 1
-    fi
-
-    local prefix=$(grep -m1 '^session-prefix:' "$spec_path" 2>/dev/null | sed 's/^session-prefix:[[:space:]]*//' | xargs)
-    if [[ -z "$prefix" ]]; then
-        prefix="$s_prefix"
-    fi
-
-    # find emit event name from spec (playbook emit, not trigger)
-    local emit_event=$(grep '[[:space:]]event:' "$spec_path" 2>/dev/null | grep -v '^[[:space:]]*-[[:space:]]*event:' | grep -v '^event:' | head -1 | sed 's/.*event:[[:space:]]*//' | xargs)
-
-    if [[ -z "$emit_event" ]]; then
-        echo "  could not determine event name from spec"
-        return 1
-    fi
-
-    # Safety net for when the agent fails to emit. Mirrors the canonical event naming
-    # (${run_id}-${source}-${event}.event) with a -fallback marker. source: ${prefix} is
-    # the session prefix, which chain-runner-complete.sh's matcher accepts (it matches
-    # SESSION_PREFIX or CURRENT_AGENT_ID). Once agents emit via `mentiko emit`, this
-    # should rarely fire. Do NOT revert this to a timestamp filename.
-    local fallback_file="$events_dir/${prefix}-${emit_event}-fallback.event"
-    if [[ -n "$run_id" ]]; then
-        fallback_file="$events_dir/${run_id}-${prefix}-${emit_event}-fallback.event"
-    fi
-    # NOTE: no heredoc here. ensure-event-file is `export -f`'d; bash cannot
-    # serialize a heredoc inside an exported function body — child shells fail to
-    # import the function with "syntax error near unexpected token". printf is safe.
-    printf 'event: %s\nsource: %s\nrun_id: %s\ntimestamp: %s\ndata: fallback event (agent completed but did not write event file)\nprocessed: false\n' \
-        "${emit_event}" "${prefix}" "${run_id}" "$(date -Iseconds)" \
-        > "$fallback_file"
-
-    echo "  fallback event written: $(basename "$fallback_file")"
-    echo "  event: ${emit_event}, source: ${prefix}"
-    return 0
-}
-
 agent-complete-marker-seen() {
     local session_name="$1"
     local tail_lines="${2:-${MENTIKO_MONITOR_MARKER_TAIL:-100}}"
@@ -426,7 +333,7 @@ agent-completion-latched() {
 #                              diagnostic event: agent-error
 #   alive but quiescent      -> run+agent status BLOCKED (cf. mark_run_agent_blocked, :1865)
 #                              diagnostic event: agent-timeout
-# and the watchdog's run-stalled surfacing pattern (lib/watchdog.sh:312-322):
+# and the typed watchdog's run-stalled surfacing pattern:
 # a system/diagnostic event with structured fields, NOT a faked handoff.
 #
 # DIAGNOSTIC EVENT SHAPE (consumed by hooks/notifications/log, never by the
@@ -435,23 +342,12 @@ agent-completion-latched() {
 #   event:   agent-timeout | agent-error   (both canonical, in the schema enum)
 #   source:  monitor
 #   run_id:  <run id>
-#   agent:   <agent id>
-#   reason:  <human-readable reason>
-#   [stale_count: N]   (agent-timeout only)
 #   processed: false
+#   data:     one-line JSON with agent, reason, and optional detail
 #   filename: ${ts}-${run_id}-${agent_id}-${event}.event   (own scheme, like
 #             watchdog's ${ts}-run-stalled.event — NOT the canonical
 #             ${run_id}-${source}-${event}.event handoff naming)
 #
-# >>> GROUP C ALIGNMENT NOTE <<<
-# chain-runner-complete.sh's fallback (currently fabricates the agent's SUCCESS
-# event on a dead process) should be brought into line with the above: on a
-# process that exited WITHOUT its declared emits event, write run+agent status
-# FAILED and an agent-error diagnostic (source: <its own>, NOT the agent's emits
-# name) instead of fabricating success. The monitor (this file) no longer hands a
-# dead-without-event agent to the completion handler at all (see
-# monitor-agent-died), so complete.sh's fabrication is now only reachable via its
-# own independent code paths.
 # -------------------------------------------------------------------
 
 # _monitor_agent_process_gone: reliable "the agent CLI is no longer running".
@@ -566,36 +462,17 @@ _monitor_resolve_agent_id() {
     fi
 }
 
-# write a diagnostic (non-handoff) event. Like the watchdog's run-stalled event,
-# this keeps its OWN timestamped filename and structured fields rather than the
-# canonical ${run_id}-${source}-${event}.event handoff naming, so it can never be
-# mistaken for an agent's declared completion event by the completion matcher.
+# write a diagnostic (non-handoff) event through the typed event owner.
 _monitor_emit_diagnostic_event() {
     local event_name="$1"   # agent-stalled | agent-error
     local agent_id="$2"
     local reason="$3"
-    local extra="${4:-}"    # optional extra "key: value" lines
+    local stale_count="${4:-}"
 
-    local events_dir="${EVENTS_DIR:-${MENTIKO_PROJECT_ROOT:-${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}}/events}"
-    mkdir -p "$events_dir" 2>/dev/null || true
     local run_id="${MENTIKO_RUN_ID:-${RUN_ID:-}}"
-    local ts
-    ts="$(date -u +"%Y%m%dT%H%M%S")"
-    local safe_agent="${agent_id//[^A-Za-z0-9._-]/_}"
-    [[ -z "$safe_agent" ]] && safe_agent="unknown"
-    local event_file="$events_dir/${ts}-${run_id:+${run_id}-}${safe_agent}-${event_name}.event"
-
-    {
-        printf 'event: %s\n' "$event_name"
-        printf 'source: monitor\n'
-        printf 'run_id: %s\n' "$run_id"
-        printf 'agent: %s\n' "$agent_id"
-        printf 'timestamp: %s\n' "$(date -Iseconds)"
-        printf 'reason: %s\n' "$reason"
-        [[ -n "$extra" ]] && printf '%s\n' "$extra"
-        printf 'processed: false\n'
-    } > "$event_file" 2>/dev/null || true
-    echo "  diagnostic event written: $(basename "$event_file")"
+    local args=(diagnostic --scope run --event "$event_name" --source "monitor" --run-id "$run_id" --agent "$agent_id" --reason "$reason")
+    [[ -n "$stale_count" ]] && args+=(--stale-count "$stale_count")
+    node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js" "${args[@]}"
 }
 
 # monitor-agent-stalled: an alive agent went quiescent past the stale budget.
@@ -630,7 +507,7 @@ monitor-agent-stalled() {
     # past max-stale is exactly that. source:monitor (not the agent id) guarantees
     # the completion matcher can never mistake this for a success handoff.
     _monitor_emit_diagnostic_event "agent-timeout" "${agent_id:-unknown}" "$reason" \
-        "stale_count: $stale_count"
+        "$stale_count"
 }
 
 # monitor-agent-died: the agent process is gone. If a genuine completion event
@@ -867,13 +744,6 @@ monitor-with-ai() {
             local project_root
             project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
 
-            # ensure event file exists before chain continues. This fallback is
-            # legitimate HERE: the agent SIGNALLED completion (marker/event), so
-            # writing its declared emits event is recording a real success, not
-            # fabricating one.
-            sleep 3
-            ensure-event-file "$session_name" "$agent_context" "$project_root"
-
             local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
             if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
                 nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
@@ -1090,7 +960,6 @@ monitor-chain-agent() {
                 echo "  no chain.json, falling back to complete-agent.sh"
                 local project_root
                 project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                ensure-event-file "$session_name" "$agent_context" "$project_root"
                 local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
                 if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
                     nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
@@ -1185,7 +1054,6 @@ monitor-chain-agent() {
                 echo "  no chain.json, falling back to complete-agent.sh"
                 local project_root
                 project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-                ensure-event-file "$session_name" "$agent_context" "$project_root"
                 local runtime_dir="${RUNTIME_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/runtime}"
                 if [[ -f "$runtime_dir/complete-agent.sh" ]]; then
                     nohup bash "$runtime_dir/complete-agent.sh" "$session_name" >> "/tmp/complete-agent-${session_name}.log" 2>&1 &
@@ -1280,7 +1148,6 @@ export -f send-message
 export -f new-agent-session
 export -f new-agent-from-spec
 export -f peek-session
-export -f ensure-event-file
 export -f agent-complete-marker-seen
 export -f _agent_transcript_jsonl
 export -f agent-complete-marker-durable

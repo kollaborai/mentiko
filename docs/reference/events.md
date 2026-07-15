@@ -4,30 +4,29 @@ Event system for agent coordination.
 
 ## Overview
 
-Events enable agent coordination. When an agent completes, it writes an event file. The orchestration layer watches for new files and launches agents triggered by those events.
+Events enable agent coordination. A producer requests a canonical event write
+through the typed emitter. The typed chain watcher observes validated files and
+launches chains triggered by those events.
 
 ## Design
 
 ### Event Format
 
-Events are JSON files written to the events directory:
+Runner events are canonical lowercase `key: value` files written to the
+configured events directory:
 
-```json
-{
-  "event": "agent:complete",
-  "source": "research-agent",
-  "timestamp": "2026-07-02T20:15:00Z",
-  "processed": false,
-  "data": {
-    "status": "success",
-    "output": "/workspace/findings.md"
-  }
-}
+```text
+event: research-complete
+source: research-agent
+run_id: run-1784102007562-bb990ff5
+timestamp: 2026-07-02T20:15:00.000Z
+processed: false
+data: output=/workspace/findings.md status=success
 ```
 
 ### Event Processing
 
-1. Agent writes `.event` file to `namespaces/{id}/events/`
+1. Producer invokes `mentiko emit`; agents use the ambient run scope
 2. Filesystem watcher detects new file
 3. Event name matched against agent triggers
 4. Matching agents launched with event data
@@ -35,23 +34,12 @@ Events are JSON files written to the events directory:
 
 ### Parser
 
-Tries formats in order: JSON, YAML, markdown frontmatter. Falls back to filename if all fail.
-
-**Implementation (lib/event-parser.mjs):**
-```javascript
-function parseEvent(filePath) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  
-  try {
-    return JSON.parse(content);
-  } catch {
-    // Try YAML, then frontmatter
-  }
-  
-  // Fallback to filename
-  return { event: path.basename(filePath, '.event') };
-}
-```
+`web/lib/runner-v2/events.ts` validates the physical file before normalizing it.
+All six canonical fields must exist exactly once. Keys must be lowercase;
+`processed` must be `true` or `false`; and malformed files are rejected. Unknown
+extension fields are allowed only when they are lowercase, unique, and do not
+replace a canonical field. There is no JSON, YAML, frontmatter, filename, or
+file-mtime fallback.
 
 ## Patterns
 
@@ -126,9 +114,10 @@ Multiple agents emit same event type. System waits for all before proceeding:
 
 **Parse Failure:** Logs error, skips event, continues processing.
 
-**Missing Required Fields:** Logs error, uses defaults where possible.
+**Missing Required Fields:** Rejects the event; consumers do not synthesize defaults.
 
-**Watchdog:** Detects stuck events (>5min unprocessed), alerts or retries.
+**Watchdog:** Recovers proven stalled runs. It does not retry unprocessed
+events; the typed chain watcher tracks per-trigger handled markers.
 
 ## Debugging
 
@@ -144,7 +133,7 @@ cat namespaces/default/events/agent-complete.event
 
 **Find failures:**
 ```bash
-grep '"status":"failed"' namespaces/default/events/*.event
+grep '^data: .*status=failed' namespaces/default/events/*.event
 ```
 
 **Compare runs:**
@@ -172,15 +161,13 @@ namespaces/{NAMESPACE_ID}/events/
 **Required fields:**
 - `event` (string) - Event name for trigger matching
 - `source` (string) - Emitting agent ID
+- `run_id` (string) - Owning run ID; empty only for explicit pre-run ingress
 - `timestamp` (ISO8601) - When event was emitted
 - `processed` (boolean) - Whether event has been handled
+- `data` (string) - Additional context; may be empty
 
 **Optional fields:**
-- `data.status` (string) - Execution status
-- `data.output` (string) - Path to output artifact
-- `data.error` (string) - Error message if failed
-- `data.metrics` (object) - Performance data
-- `data.branch` (string) - Routing condition
+- lowercase extension fields used by typed diagnostic producers
 
 ## Related
 

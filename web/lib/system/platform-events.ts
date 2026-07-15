@@ -109,7 +109,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "chain.failed",
     domain: "chain",
     description: "A chain stopped due to an unrecoverable error.",
-    emitters: ["chain-runner-complete.sh", "watchdog.sh"],
+    emitters: ["chain-runner-complete.sh", "typed watchdog worker"],
     consumers: ["plugins", "outbound webhooks", "notifications", "metrics", "PagerDuty"],
     payload: [
       { name: "chainId", type: "string", description: "Chain identifier" },
@@ -193,7 +193,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "agent.failed",
     domain: "agent",
     description: "An agent terminated with an error or exceeded retry limits.",
-    emitters: ["chain-runner-complete.sh", "watchdog.sh"],
+    emitters: ["chain-runner-complete.sh", "typed watchdog worker"],
     consumers: ["plugins", "notifications", "metrics"],
     payload: [
       { name: "agentId", type: "string", description: "Agent identifier" },
@@ -208,7 +208,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "agent.timed_out",
     domain: "agent",
     description: "An agent exceeded its configured timeout and was killed.",
-    emitters: ["watchdog.sh"],
+    emitters: ["monitor-v2"],
     consumers: ["plugins", "notifications", "metrics"],
     payload: [
       { name: "agentId", type: "string", description: "Agent identifier" },
@@ -382,7 +382,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
       { name: "error", type: "string", description: "Error message" },
       { name: "context", type: "object", description: "Additional context" },
     ],
-    example: { component: "watchdog.sh", error: "Failed to read run.json", context: { runId: "run_abc" } },
+    example: { component: "typed watchdog worker", error: "Failed to read run.json", context: { runId: "run_abc" } },
   },
 ];
 

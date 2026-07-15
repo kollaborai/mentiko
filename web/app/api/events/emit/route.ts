@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { getNamespaceConfig } from "@/lib/namespace-config";
+import config from "@/lib/config";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
 
   const body = await request.json();
-  const { event, source, data } = body;
+  const { event, source, data, runId } = body;
 
   if (!event || typeof event !== "string") {
     throw new BadRequest("event is required", { field: "event" });
@@ -24,8 +25,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("source is required", { field: "source" });
   }
 
-  const namespaceConfig = await getNamespaceConfig(request);
-  const eventsDir = namespaceConfig.eventsDir;
+  const eventsDir = config.eventsDir;
 
   if (!existsSync(eventsDir)) {
     mkdirSync(eventsDir, { recursive: true });
@@ -38,15 +38,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const filename = `${safeSource}-${safeEvent}.event`;
   const filePath = join(eventsDir, filename);
 
-  const content = [
-    `event: ${event}`,
-    `source: ${source}`,
-    `timestamp: ${timestamp}`,
-    `processed: false`,
-    data ? `data: ${typeof data === "string" ? data : JSON.stringify(data)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  let content: string;
+  try {
+    content = serializeRunnerEvent({
+      event,
+      source,
+      runId: typeof runId === "string" ? runId : "",
+      timestamp,
+      data: data === undefined ? "" : typeof data === "string" ? data : JSON.stringify(data),
+    });
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : "Invalid runner event");
+  }
 
   writeFileSync(filePath, content, "utf-8");
 

@@ -10,6 +10,7 @@ import {
   WorkflowSidebarSectionHeader,
 } from "@/components/ui/workflow-sidebar";
 import { serializeDataShapeForLlm } from "@/lib/data-shapes/clipboard";
+import { dataShapeShellSources } from "@/lib/data-shapes/catalog";
 import { ASSURANCE_MEANING, STATUS_LEGEND } from "@/lib/data-shapes/semantics";
 import {
   runnerFieldUsage,
@@ -116,7 +117,7 @@ export function DataShapeStatusLegend() {
 export function RunnerLineageLegend() {
   return (
     <LegendSection id="runner-lineage-legend" title="Runner Lineage">
-      <ul className="grid min-w-0 gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-4">
+      <ul className="grid min-w-0 gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-5">
         {(["runner-v2", "shared", "legacy-shell"] as const).map((usage) => (
           <li key={usage} className="flex min-w-0 items-start gap-2">
             <Badge className={statusPill(usage)}>{RUNNER_USAGE_LABEL[usage]}</Badge>
@@ -129,6 +130,12 @@ export function RunnerLineageLegend() {
             Named lifecycle surfaces owned by runner v2 divided by all mapped surfaces. It does not count files, lines, or artifacts.
           </span>
         </li>
+        <li className="flex min-w-0 items-start gap-2">
+          <Badge className="bg-amber-500/10 text-amber-500">Shell queue</Badge>
+          <span className="text-[10px] leading-4 text-foreground/45">
+            Shapes with a direct .sh reader, writer, type, or validator. A typed process invoking an external command does not count unless the shell file owns the shape.
+          </span>
+        </li>
       </ul>
     </LegendSection>
   );
@@ -137,7 +144,7 @@ export function RunnerLineageLegend() {
 function SourceList({ title, paths }: { title: string; paths: string[] }) {
   return (
     <section>
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-foreground/35">{title}</h3>
+      <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-foreground/60">{title}</h3>
       <div className="space-y-1.5">
         {paths.map((path) => (
           <code key={path} className="block break-all rounded-lg bg-muted px-3 py-2 text-[11px] text-foreground/65">
@@ -155,7 +162,7 @@ function RunnerLineageDetail({ lineage }: { lineage: RunnerContractLineage }) {
     <section className="rounded-xl border border-border/60 bg-muted p-4" aria-labelledby="runner-migration-heading">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h3 id="runner-migration-heading" className="text-xs font-medium text-foreground">Runner migration</h3>
+          <h3 id="runner-migration-heading" className="text-xs font-bold text-foreground">Runner migration</h3>
           <p className="mt-1 text-[11px] leading-relaxed text-foreground/50">{RUNNER_USAGE_COPY[lineage.usage]}</p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -179,7 +186,7 @@ function RunnerLineageDetail({ lineage }: { lineage: RunnerContractLineage }) {
 
       {lineage.legacyEquivalent ? (
         <div className="mt-4 rounded-lg bg-card px-3 py-2.5">
-          <div className="text-[9px] font-semibold uppercase tracking-widest text-foreground/30">Legacy equivalent</div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-foreground/60">Legacy equivalent</div>
           <p className="mt-1 text-[11px] leading-relaxed text-foreground/55">{lineage.legacyEquivalent.summary}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {lineage.legacyEquivalent.paths.map((path) => (
@@ -279,7 +286,7 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
               {shape.sensitive ? <Badge className="bg-amber-500/10 text-amber-500">values hidden</Badge> : null}
             </div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-semibold tracking-tight text-foreground">{shape.name}</h2>
+              <h2 className="text-xl font-bold tracking-tight text-foreground">{shape.name}</h2>
               <ShapeCopyButton shape={shape} />
             </div>
             <p className="mt-2 max-w-3xl text-xs leading-relaxed text-foreground/55">{shape.description}</p>
@@ -293,13 +300,13 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
               <div
                 className="rounded-lg bg-muted px-3 py-2"
                 title={
-                  evidence.schemaValidated
+                  evidence.contractValidated
                     ? undefined
-                    : "No canonical schema was available to validate these records."
+                    : "No canonical contract was run against these artifacts."
                 }
               >
-                <div className={cn("text-sm font-semibold", !evidence.schemaValidated && "text-foreground/25")}>
-                  {evidence.schemaValidated ? evidence.validCount : "—"}
+                <div className={cn("text-sm font-semibold", !evidence.contractValidated && "text-foreground/25")}>
+                  {evidence.contractValidated ? evidence.validCount : "—"}
                 </div>
                 <div className="text-[9px] uppercase tracking-wide text-foreground/35">valid</div>
               </div>
@@ -314,12 +321,28 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
 
       <div className="space-y-7 p-5 sm:p-6">
         <section className="rounded-xl bg-muted p-4">
-          <h3 className="text-xs font-medium text-foreground">Contract confidence</h3>
+          <h3 className="text-xs font-bold text-foreground">Contract confidence</h3>
           <p className="mt-1 text-[11px] leading-relaxed text-foreground/50">{ASSURANCE_COPY[shape.assurance]}</p>
           <p className="mt-2 text-[10px] text-foreground/35">
             checked {new Date(evidence.checkedAt).toLocaleString()} · {evidence.recordCount} records inspected
           </p>
         </section>
+
+        {evidence.validationLayers.length > 0 ? (
+          <section>
+            <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-foreground/60">Validation layers</h3>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {evidence.validationLayers.map((layer) => (
+                <div key={layer.layer} className="rounded-lg bg-muted px-3 py-2.5">
+                  <div className="text-[11px] font-semibold text-foreground">{layer.layer.replace("-", " ")}</div>
+                  <div className="mt-1 text-[10px] text-foreground/40">
+                    {layer.validated ? `${layer.validCount} valid · ${layer.invalidCount} drift` : "not run"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {shape.runnerLineage ? <RunnerLineageDetail lineage={shape.runnerLineage} /> : null}
 
@@ -346,7 +369,7 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
 
         <section>
           <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-foreground/35">Fields</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-foreground/60">Fields</h3>
             <span className="text-[10px] text-foreground/30">{evidence.fields.length} paths</span>
           </div>
           {evidence.fields.length > 0 ? (
@@ -385,7 +408,7 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
 
         {shape.notes?.length ? (
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-foreground/35">Notes</h3>
+            <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-foreground/60">Notes</h3>
             <ul className="space-y-2 text-xs leading-relaxed text-foreground/50">
               {shape.notes.map((note) => <li key={note}>{note}</li>)}
             </ul>
@@ -467,7 +490,20 @@ export function DataShapesCatalog() {
             ...shape.runnerLineage.surfaces.flatMap((surface) => [surface.label, surface.owner, ...surface.paths]),
           ]
         : [];
-      return [shape.name, shape.id, shape.description, shape.scope, shape.format, shape.assurance, shape.category, ...lineageValues]
+      return [
+        shape.name,
+        shape.id,
+        shape.description,
+        shape.scope,
+        shape.format,
+        shape.assurance,
+        shape.category,
+        ...shape.writers,
+        ...shape.readers,
+        ...(shape.typePaths ?? []),
+        ...(shape.validatorPaths ?? []),
+        ...lineageValues,
+      ]
         .some((value) => value.toLowerCase().includes(query));
     });
   }, [catalog, search]);
@@ -515,7 +551,7 @@ export function DataShapesCatalog() {
         <WorkflowSidebarFilters>
           <WorkflowSidebarSearchInput value={search} onChange={setSearch} placeholder="Search shapes, scopes, formats…" />
           {catalog ? (
-            <div className="grid grid-cols-3 gap-1 text-center">
+            <div className="grid grid-cols-4 gap-1 text-center">
               <div className="rounded-lg bg-card px-2 py-1.5">
                 <div className="text-xs font-semibold">{catalog.summary.total}</div>
                 <div className="text-[8px] uppercase tracking-wide text-foreground/30">shapes</div>
@@ -527,6 +563,15 @@ export function DataShapesCatalog() {
               <div className="rounded-lg bg-card px-2 py-1.5">
                 <div className={cn("text-xs font-semibold", catalog.summary.drifted ? "text-amber-500" : "text-foreground")}>{catalog.summary.drifted}</div>
                 <div className="text-[8px] uppercase tracking-wide text-foreground/30">drift</div>
+              </div>
+              <div className="rounded-lg bg-card px-2 py-1.5">
+                <div className={cn(
+                  "text-xs font-semibold",
+                  catalog.shapes.some((shape) => dataShapeShellSources(shape).length > 0) ? "text-amber-500" : "text-emerald-500",
+                )}>
+                  {catalog.shapes.filter((shape) => dataShapeShellSources(shape).length > 0).length}
+                </div>
+                <div className="text-[8px] uppercase tracking-wide text-foreground/30">shell</div>
               </div>
             </div>
           ) : null}
@@ -554,6 +599,7 @@ export function DataShapesCatalog() {
                         <div className="mt-1 text-[10px] text-foreground/35">
                           {shape.scope} · {shape.format}
                           {shape.runnerLineage ? ` · ${runnerMigrationCoverage(shape.runnerLineage).typedPercent}% typed` : ""}
+                          {dataShapeShellSources(shape).length > 0 ? ` · ${dataShapeShellSources(shape).length} shell` : ""}
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">

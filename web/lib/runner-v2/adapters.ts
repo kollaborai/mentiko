@@ -1,6 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
+import { createHash } from "crypto";
 import config from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
@@ -12,8 +13,9 @@ import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
 import { updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
 import { runnerV2PtyEnv, type RunnerV2Environment } from "@/lib/runner-v2/pty-scope";
 import { pendingHandoffs } from "@/lib/runner-v2/handoff-liveness";
+import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 
-export type AdapterOperation =
+type AdapterOperationPayload =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
   | { type: "schedule-mark"; status: string; chainPath?: string }
   | { type: "webhook"; event: string; chainId?: string; chainPath?: string }
@@ -30,6 +32,12 @@ export type AdapterOperation =
   | ({ type: "generation-import" } & GenerationImportPlan)
   | { type: "circuit-breaker"; action: string; chainName: string; agentId: string; threshold: number; timeout: number }
   | { type: "rollback"; action: string; agentId: string; startSha?: string };
+
+export type AdapterOperation = AdapterOperationPayload & {
+  idempotencyKey?: string;
+  /** Completion occurrence identity used to distinguish legitimate loop visits. */
+  occurrenceId?: string;
+};
 
 export interface AdapterContext {
   runJsonPath: string;
@@ -50,6 +58,16 @@ export interface AdapterResult {
   effectsApplied: string[];
   operations: AdapterOperation[];
   launchesStarted: Array<{ command: string; pid?: number }>;
+}
+
+export class GenerationImportError extends Error {
+  constructor(
+    readonly plan: GenerationImportPlan,
+    readonly detail: string,
+  ) {
+    super(`generation import failed for job ${plan.jobId}: ${detail}`);
+    this.name = "GenerationImportError";
+  }
 }
 
 export function applyTypedExecutorPlan(plan: TypedExecutorPlan, context: AdapterContext): AdapterResult {
@@ -164,7 +182,7 @@ function applyGenerationImport(plan: GenerationImportPlan, context: AdapterConte
     timestamp: new Date().toISOString(),
   });
   if (result.status !== 0) {
-    throw new Error(`generation import failed for job ${plan.jobId}: ${result.stderr || result.stdout || result.status}`);
+    throw new GenerationImportError(plan, result.stderr || result.stdout || String(result.status));
   }
 }
 
@@ -278,21 +296,19 @@ function emitTypedEvent(
   context: AdapterContext,
 ): void {
   const runId = readRunId(context.runJsonPath);
-  const eventsDir = context.eventsDir || join(context.stateDir, "events");
+  const eventsDir = context.eventsDir || config.eventsDir;
   const eventPath = join(
     eventsDir,
     `${runId ? `${sanitizeFilePart(runId)}-` : ""}${sanitizeFilePart(operation.source)}-${sanitizeFilePart(operation.event)}.event`,
   );
   mkdirSync(eventsDir, { recursive: true });
-  writeFileAtomic(eventPath, [
-    `event: ${operation.event}`,
-    `source: ${operation.source}`,
-    `run_id: ${runId}`,
-    `timestamp: ${new Date().toISOString()}`,
-    "processed: false",
-    `data: ${operation.data}`,
-    "",
-  ].join("\n"));
+  writeFileAtomic(eventPath, serializeRunnerEvent({
+    event: operation.event,
+    source: operation.source,
+    runId,
+    timestamp: new Date().toISOString(),
+    data: operation.data,
+  }));
 }
 
 function markSchedule(
@@ -524,15 +540,35 @@ function isExternalQueuedOperation(operation: AdapterOperation): operation is Ex
 }
 
 function queueExternalEffect(operation: AdapterOperation, context: AdapterContext): void {
-  appendJsonl(join(context.stateDir, "external-effects.jsonl"), {
-    type: operation.type,
-    status: "queued",
-    operation,
+  const idempotencyKey = operation.idempotencyKey || externalEffectOperationId(operation, context);
+  enqueueExternalEffectsOnce(join(context.stateDir, "external-effects.jsonl"), [{
+    idempotencyKey,
+    operation: { ...operation, idempotencyKey },
     namespaceId: context.namespaceId,
     orgId: context.orgId,
     reason: "typed runner records external side effects for replay/dispatch audit",
-    timestamp: new Date().toISOString(),
-  });
+  }]);
+}
+
+function externalEffectOperationId(operation: AdapterOperation, context: AdapterContext): string {
+  const runId = readRunId(context.runJsonPath)
+    || ("runId" in operation && typeof operation.runId === "string" ? operation.runId : "global");
+  const digest = createHash("sha256")
+    .update(stableSerialize(operation))
+    .digest("hex")
+    .slice(0, 24);
+  return `runner-v2:${runId}:${operation.type}:${digest}:v1`;
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableSerialize(record[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 function auditRollbackPlan(

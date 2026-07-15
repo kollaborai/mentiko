@@ -972,7 +972,15 @@ describe("GET /api/tasks/reconcile", () => {
         { id: "reviewer", triggers: ["draft-ready"] },
       ],
     };
-    const event = "event: draft-ready\nsource: writer-run-exec\nrun_id: run-exec\nprocessed: false\n";
+    const event = [
+      "event: draft-ready",
+      "source: writer-run-exec",
+      "run_id: run-exec",
+      "timestamp: 2026-07-15T12:00:00.000Z",
+      "processed: false",
+      "data: ready",
+      "",
+    ].join("\n");
     mockReadFileSync.mockImplementation((path: unknown) => {
       const file = String(path);
       if (file.endsWith("/chain.json")) return JSON.stringify(chain);

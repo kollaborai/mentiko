@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
 import { buildTypedExecutorPlan } from "@/lib/runner-v2/executor";
-import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import { parseRunnerEvent, serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { createFanGroupState } from "@/lib/runner-v2/fan-group";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -45,6 +45,16 @@ function routeContext(dir: string) {
   };
 }
 
+function eventContent(event: string, source: string, runId: string): string {
+  return serializeRunnerEvent({
+    event,
+    source,
+    runId,
+    timestamp: "2026-07-14T12:00:00.000Z",
+    data: "",
+  });
+}
+
 describe("runner-v2 typed executor plan", () => {
   it("turns a route decision into event side effects and launch plans", () => {
     const dir = runDir();
@@ -59,7 +69,7 @@ describe("runner-v2 typed executor plan", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("draft-ready", "writer-run-123", "run-123")],
     });
 
     expect(buildTypedExecutorPlan({ pipeline, routeContext: routeContext(dir) })).toMatchObject({
@@ -67,7 +77,7 @@ describe("runner-v2 typed executor plan", () => {
       effects: [{ type: "event-side-effects" }],
       launches: [{
         kind: "single",
-        command: expect.stringContaining("--start 'reviewer'"),
+        command: expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/),
         env: { MENTIKO_RUN_ID: "run-123" },
       }],
     });
@@ -93,7 +103,7 @@ describe("runner-v2 typed executor plan", () => {
       effects: [{ type: "retry" }],
       launches: [{
         kind: "single",
-        command: expect.stringMatching(/^sleep '1\.5'; .*--start 'writer'/),
+        command: expect.stringMatching(/^sleep '1\.5'; .*runner-v2-launch-agent.*'writer'/),
         env: expect.objectContaining({
           MENTIKO_RETRY_ATTEMPT: "1",
           RETRY_ATTEMPT: "1",
@@ -171,7 +181,7 @@ describe("runner-v2 typed executor plan", () => {
         branches: { done: "stop" },
         agents: [{ id: "writer", emits: "done" }],
       },
-      events: ["event: done\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("done", "writer-run-123", "run-123")],
     });
 
     expect(buildTypedExecutorPlan({
@@ -198,7 +208,7 @@ describe("runner-v2 typed executor plan", () => {
       chain: {
         agents: [{ id: "writer", emits: "draft-ready" }],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("draft-ready", "writer-run-123", "run-123")],
     });
 
     const plan = buildTypedExecutorPlan({
@@ -246,7 +256,7 @@ describe("runner-v2 typed executor plan", () => {
           { id: "reviewer", triggers: ["draft-ready"], status: "running" },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("draft-ready", "writer-run-123", "run-123")],
     });
 
     // v1 parity: the shell handler exits quietly when the downstream agent is
@@ -273,7 +283,7 @@ describe("runner-v2 typed executor plan", () => {
           { id: "reviewer", triggers: ["draft-ready"] },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("draft-ready", "writer-run-123", "run-123")],
     });
 
     const plan = buildTypedExecutorPlan({
@@ -386,11 +396,39 @@ describe("runner-v2 typed executor plan", () => {
     ]));
   });
 
+  it("does not recover a system run task id from route context on plain failure", () => {
+    const dir = runDir();
+    const pipeline = runCompletionPipeline({
+      runDir: dir,
+      runJsonPath: seedRun(dir),
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { name: "System Chain", agents: [{ id: "writer", emits: "draft-ready" }] },
+      events: [],
+    });
+
+    const plan = buildTypedExecutorPlan({
+      pipeline,
+      routeContext: routeContext(dir),
+      terminal: {
+        runId: "run-123",
+        chainName: "System Chain",
+        taskId: undefined,
+        lastAgentId: "writer",
+      },
+    });
+    const failure = plan.effects.find((effect) => effect.type === "terminal-failure");
+
+    expect(failure?.type === "terminal-failure"
+      ? failure.plan.steps.some((step) => step.type === "task-status")
+      : true).toBe(false);
+  });
+
   it("uses all events for owned archive side effects", () => {
     const dir = runDir();
-    const owner = parseRunnerEvent("event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n");
-    const owned = parseRunnerEvent("event: extra\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n");
-    const otherRun = parseRunnerEvent("event: extra\nsource: writer-run-999\nrun_id: run-999\nprocessed: false\n");
+    const owner = parseRunnerEvent(eventContent("draft-ready", "writer-run-123", "run-123"));
+    const owned = parseRunnerEvent(eventContent("extra", "writer-run-123", "run-123"));
+    const otherRun = parseRunnerEvent(eventContent("extra", "writer-run-999", "run-999"));
     const pipeline = runCompletionPipeline({
       runDir: dir,
       runJsonPath: seedRun(dir),
@@ -443,7 +481,7 @@ describe("runner-v2 typed executor plan", () => {
           { id: "editor" },
         ],
       },
-      events: ["event: draft-ready\nsource: writer-run-123\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent("draft-ready", "writer-run-123", "run-123")],
     });
 
     expect(buildTypedExecutorPlan({

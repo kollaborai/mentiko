@@ -41,10 +41,18 @@ function runtimeShape(): RuntimeDataShape {
       status: "valid",
       artifactCount: 2,
       recordCount: 2,
+      contractValidated: true,
       schemaValidated: true,
       validCount: 2,
       invalidCount: 0,
       parseErrorCount: 0,
+      validationLayers: [{
+        layer: "normalized-record",
+        validator: "json-schema",
+        validated: true,
+        validCount: 2,
+        invalidCount: 0,
+      }],
       samplePaths: ["runs/example/run.json"],
       fields: [{ path: "$.status", types: ["string"], occurrences: 2, source: "schema" }],
       issues: [],
@@ -89,9 +97,17 @@ describe("data shape clipboard payload", () => {
     shape.evidence = {
       ...shape.evidence,
       status: "observed",
+      contractValidated: false,
       schemaValidated: false,
       validCount: 0,
       invalidCount: 0,
+      validationLayers: [{
+        layer: "normalized-record",
+        validator: "json-schema",
+        validated: false,
+        validCount: 0,
+        invalidCount: 0,
+      }],
     };
 
     const payload = buildDataShapeClipboardPayload(shape);

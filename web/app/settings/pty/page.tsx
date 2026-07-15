@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { RefreshFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, RotateLeftFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
+import { RefreshFilled, ArrowDown2Filled, ArrowUp2Filled, CloseCircleFilled, DocumentTextFilled, Setting2Filled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { useTerminalPreferences } from "@/lib/ui/terminal-preferences";
 import { cn } from "@/lib/utils";
@@ -20,8 +20,6 @@ interface PtySession {
   cmd: string;
   alive: boolean;
 }
-
-const SINGLETONS = ["mentiko-watchdog", "mentiko-chain-watcher"];
 
 function StatusDot({ alive }: { alive: boolean }) {
   if (alive) {
@@ -71,9 +69,7 @@ interface SessionRowProps {
   expanded: boolean;
   onToggleOutput: () => void;
   onKill: () => void;
-  onRestart: () => void;
   killing: boolean;
-  restarting: boolean;
 }
 
 function SessionRow({
@@ -81,12 +77,8 @@ function SessionRow({
   expanded,
   onToggleOutput,
   onKill,
-  onRestart,
   killing,
-  restarting,
 }: SessionRowProps) {
-  const isSingleton = SINGLETONS.includes(session.name);
-
   return (
     <div className="group border-b border-foreground/5 last:border-0">
       <div className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors">
@@ -136,18 +128,6 @@ function SessionRow({
             </Button>
           )}
 
-          {isSingleton && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-[10px] text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
-              onClick={onRestart}
-              disabled={restarting}
-            >
-              <RotateLeftFilled className={cn("h-3 w-3 mr-1", restarting && "animate-spin")} />
-              {restarting ? "restarting..." : "restart"}
-            </Button>
-          )}
         </div>
       </div>
     </div>
@@ -233,9 +213,7 @@ export default function PtySessionsPage() {
   const [loading, setLoading] = useState(true);
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
   const [killing, setKilling] = useState<Record<string, boolean>>({});
-  const [restarting, setRestarting] = useState<Record<string, boolean>>({});
   const [, setRefreshing] = useState(false);
-  const [, setRestartingAll] = useState(false);
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
@@ -273,44 +251,17 @@ export default function PtySessionsPage() {
     setKilling((p) => ({ ...p, [name]: false }));
   };
 
-  const handleRestart = async (name: string) => {
-    setRestarting((p) => ({ ...p, [name]: true }));
-    try {
-      await fetchWithNamespace(`/api/pty/sessions/${encodeURIComponent(name)}/restart`, {
-        method: "POST",
-      });
-      await load();
-    } catch {
-      // ignore
-    }
-    setRestarting((p) => ({ ...p, [name]: false }));
-  };
-
-  const handleRestartAll = async () => {
-    setRestartingAll(true);
-    await Promise.allSettled(
-      SINGLETONS.map((name) =>
-        fetchWithNamespace(`/api/pty/sessions/${encodeURIComponent(name)}/restart`, {
-          method: "POST",
-        })
-      )
-    );
-    await load();
-    setRestartingAll(false);
-  };
-
   return (
     <div className="flex-1 overflow-auto">
       <PageBanner
         title="PTY Sessions"
-        subtitle="Manage active and dead PTY manager sessions. View output, kill, or restart singleton processes."
+        subtitle="Manage active and dead PTY manager sessions. View output or stop sessions that no longer belong here."
         icon={TerminalIcon}
         sectionColor="#a0927b"
         actions={[
           { label: "System Logs", href: "/settings/logs", icon: DocumentTextFilled, iconColor: "#a0927b" },
           { label: "System", href: "/settings/system", icon: Setting2Filled, iconColor: "#a0927b" },
           { label: "Refresh", onClick: () => load(true), icon: RefreshFilled },
-          { label: "Restart Singletons", onClick: handleRestartAll, icon: RotateLeftFilled },
         ]}
       />
       <div className="px-4 py-3 max-w-4xl mx-auto">
@@ -357,9 +308,7 @@ export default function PtySessionsPage() {
                     )
                   }
                   onKill={() => handleKill(session.name)}
-                  onRestart={() => handleRestart(session.name)}
                   killing={!!killing[session.name]}
-                  restarting={!!restarting[session.name]}
                 />
                 {expandedOutput === session.name && (
                   <OutputViewer

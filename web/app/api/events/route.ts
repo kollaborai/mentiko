@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { getNamespaceConfig } from "@/lib/namespace-config";
+import config from "@/lib/config";
 import { Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
+import { parseRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
 
@@ -17,41 +18,12 @@ interface AgentEvent {
   data: string;
 }
 
-function parseEventFile(content: string): Partial<AgentEvent> {
-  const result: Partial<AgentEvent> = {};
-  const lines = content.split("\n");
-  const dataLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("event:")) {
-      result.event = trimmed.slice(6).trim();
-    } else if (trimmed.startsWith("source:")) {
-      result.source = trimmed.slice(7).trim();
-    } else if (trimmed.startsWith("timestamp:")) {
-      result.timestamp = trimmed.slice(10).trim();
-    } else if (trimmed.startsWith("processed:")) {
-      const val = trimmed.slice(10).trim().toLowerCase();
-      result.processed = val === "true";
-    } else if (trimmed.startsWith("data:")) {
-      dataLines.push(trimmed.slice(5).trim());
-    } else if (trimmed && !trimmed.includes(":")) {
-      dataLines.push(trimmed);
-    }
-  }
-
-  result.data = dataLines.join(" ").trim();
-  return result;
-}
-
 export const GET = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
     throw new Unauthorized();
   }
 
-  const namespaceConfig = await getNamespaceConfig(request);
-  const { searchParams } = new URL(request.url);
-  const dir = searchParams.get("dir") || namespaceConfig.eventsDir;
+  const dir = config.eventsDir;
 
   if (!existsSync(dir)) {
     return apiSuccess({ events: [] });
@@ -65,19 +37,21 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     for (const entry of entries) {
       if (entry.isFile()) {
         const name = entry.name.toLowerCase();
-        if (name.endsWith(".event") || name.endsWith(".md") || name.endsWith(".json")) {
+        if (name.endsWith(".event")) {
           const fullPath = join(dir, entry.name);
-          const content = readFileSync(fullPath, "utf-8");
-          const parsed = parseEventFile(content);
-
-          events.push({
-            filename: entry.name,
-            event: parsed.event || "unknown",
-            source: parsed.source || "unknown",
-            timestamp: parsed.timestamp || new Date().toISOString(),
-            processed: parsed.processed ?? false,
-            data: parsed.data || "",
-          });
+          try {
+            const parsed = parseRunnerEvent(readFileSync(fullPath, "utf-8"));
+            events.push({
+              filename: entry.name,
+              event: parsed.event,
+              source: parsed.source,
+              timestamp: parsed.timestamp,
+              processed: parsed.processed,
+              data: parsed.data,
+            });
+          } catch {
+            // Invalid raw event files are excluded; the Data Shapes catalog reports their drift.
+          }
         }
       }
     }

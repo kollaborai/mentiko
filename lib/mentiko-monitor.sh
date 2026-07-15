@@ -200,14 +200,6 @@ while true; do
         echo "$(date -Iseconds) AGENT_COMPLETE" >> "$LOG_FILE"
 
         # trigger completion handler if available
-        PROJECT_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-        if [[ -f "$SCRIPT_DIR/agent-functions.sh" ]]; then
-            source "$SCRIPT_DIR/agent-functions.sh" 2>/dev/null
-            if declare -f ensure-event-file >/dev/null 2>/dev/null; then
-                ensure-event-file "$SESSION_NAME" "end state: $END_STATE" "$PROJECT_ROOT"
-            fi
-        fi
-
         # kill the agent session
         sleep 2
         if transport_has_session "$SESSION_NAME" 2>/dev/null; then

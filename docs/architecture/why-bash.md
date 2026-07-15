@@ -1,10 +1,13 @@
-# Bash Orchestration
+# Hybrid Orchestration
 
-Orchestration layer implementation in bash.
+Shell boundaries launch chains and agents. Long-running orchestration services
+run in the supervised TypeScript background worker.
 
 ## Overview
 
-Chain execution, agent launching, and event monitoring implemented as bash scripts.
+Chain execution and agent launching retain shell boundaries. Event-triggered
+cross-chain launches and stalled-run recovery are TypeScript services owned by
+`web/server/background-worker.ts`; neither service is a shell or PTY daemon.
 
 ## Design
 
@@ -13,10 +16,11 @@ Chain execution, agent launching, and event monitoring implemented as bash scrip
 The orchestration layer:
 1. Reads chain definition (JSON file)
 2. Launches agents in PTY sessions
-3. Watches for event files
-4. Triggers next agent when events appear
+3. Watches canonical event files in the typed chain-watcher service
+4. Recovers stalled runs in the typed watchdog scan
 
-These are file system and process operations. Bash is designed for these tasks.
+Shell remains useful at the chain/agent process boundary. TypeScript owns the
+long-running watcher/watchdog lifecycle and their persisted contracts.
 
 ### Core Scripts
 
@@ -32,19 +36,20 @@ These are file system and process operations. Bash is designed for these tasks.
 - Manages agent input/output
 
 **event-trigger.sh**
-- Watches events directory with inotifywait
-- Matches events to agent triggers
-- Launches dependent agents
+- Delegates canonical event writes to the typed emitter
+- Retains shell event list/mark/archive lifecycle helpers pending migration
 
 **complete-agent.sh**
-- Captures agent output
-- Writes event file
-- Signals downstream agents
+- Legacy spec-agent completion reader
+- Never fabricates a missing declared success event
 
-**watchdog.sh**
-- Monitors PTY session activity
-- Detects stalled runs
-- Implements retry and escalation
+**background-worker.ts**
+- Starts and stops the typed chain-watcher service
+- Runs the typed watchdog scan at startup and every 60 seconds
+
+**watchdog.sh / chain-event-watcher.sh**
+- Retired parity references only
+- Not started by chain bootstrap or any active launch surface
 
 ## Implementation
 
@@ -90,21 +95,11 @@ pty-manager wait --session "$session_id"
 
 ### Event Watching
 
-```bash
-# event-trigger.sh
-events_dir="namespaces/$NAMESPACE_ID/events"
-
-inotifywait -m -e create --format '%f' "$events_dir" | while read event_file; do
-  event_data=$(cat "$events_dir/$event_file")
-  event_name=$(echo "$event_data" | jq -r '.event')
-
-  # Find agents triggered by this event
-  matching_agents=$(jq -r ".agents[] | select(.triggers[] == \"$event_name\") | .id" "$chain_json")
-
-  for agent_id in $matching_agents; do
-    launch_agent "$agent_id" "$chain_json"
-  done
-done
+```text
+process-manager
+  -> web/server/background-worker.ts
+       -> startChainWatcherService()  # typed event-triggered chain launch
+       -> runTypedWatchdogScan()      # typed stalled-run recovery
 ```
 
 ## Characteristics
@@ -114,7 +109,7 @@ done
 **File System Operations:**
 - Bash designed for file manipulation
 - Process management is native
-- Directory watching with inotifywait
+- Typed chain watcher owns long-running event-directory observation
 
 **Text Processing:**
 - JSON parsing with jq
@@ -176,7 +171,7 @@ done
 
 **Dependencies:**
 - jq (JSON parsing)
-- inotifywait (file watching)
+- Node.js (typed background services)
 - pty-manager (PTY allocation)
 
 ## Related

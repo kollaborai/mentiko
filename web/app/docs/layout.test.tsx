@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import DocsLayout from "./layout";
@@ -24,7 +24,9 @@ describe("DocsLayout", () => {
       </DocsLayout>,
     );
 
-    expect(screen.getByRole("link", { name: /mcp/i })).toHaveAttribute(
+    const mcpLink = within(screen.getByTestId("docs-sidebar")).getByRole("link", { name: /mcp/i });
+
+    expect(mcpLink).toHaveAttribute(
       "href",
       "/docs/mcp",
     );
@@ -41,8 +43,9 @@ describe("DocsLayout", () => {
     expect(screen.getByTestId("docs-sidebar-header")).toHaveAttribute("data-docs-sidebar-header");
     expect(screen.getByTestId("docs-content")).toHaveAttribute("data-docs-content");
     expect(screen.getByPlaceholderText("search... (cmd+k)")).toHaveAttribute("data-docs-search");
-    expect(screen.getByRole("link", { name: /mcp/i })).toHaveAttribute("data-docs-link");
-    expect(screen.getByRole("link", { name: /mcp/i })).toHaveAttribute("data-active", "true");
+    const mcpLink = within(screen.getByTestId("docs-sidebar")).getByRole("link", { name: /mcp/i });
+    expect(mcpLink).toHaveAttribute("data-docs-link");
+    expect(mcpLink).toHaveAttribute("data-active", "true");
   });
 
   it("tunes docs chrome only inside floating panel documents", () => {

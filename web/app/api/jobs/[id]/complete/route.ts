@@ -230,13 +230,16 @@ export const POST = withErrorHandling(async (
         : undefined;
       const autoRun = updatedJob.input.autoRun === true;
       const allowDecisionRouting = updatedJob.input.allowDecisionRouting !== false;
+      const taskGenerationResult = unwrapAgentJsonOutput(updatedJob.result) ?? updatedJob.result;
       // Agent-as-gate: the generation agent decides task vs decision in its
       // output; processTaskGenerationResult honors that (route "decision" ->
-      // createTaskDecision, otherwise import the task tree).
+      // createTaskDecision, otherwise import the task tree). Job runners may
+      // persist the agent payload as { output: "<JSON>" }; unwrap that transport
+      // envelope before applying the generation contract.
       const outcome = await processTaskGenerationResult({
         namespaceId,
         orgId,
-        result: (updatedJob.result ?? {}) as Record<string, unknown>,
+        result: taskGenerationResult,
         workspacePath,
         parentId,
         createdBy: "mentiko-generation",

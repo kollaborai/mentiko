@@ -5,9 +5,10 @@
 # Background: agents used to hand-write event files and got the name/source wrong, so
 # the completion handler couldn't recognize the event and chains stalled. Agents now run
 # `mentiko emit <event>`, which must produce:
-#   filename: $EVENTS_DIR/${RUN_ID}-${SOURCE}-${EVENT}.event  (run_id prefix dropped if empty)
+#   filename: $EVENTS_DIR/${RUN_ID}-${SOURCE}-${EVENT}.event for normal run scope
 #   body:     event: / source: ${MENTIKO_AGENT_ID} / run_id: / timestamp: / processed: false
-# `mentiko emit` and emit-event() must produce byte-identical naming + content.
+# Empty-run ingress is exceptional and must be requested explicitly. `mentiko emit`
+# and emit-event() must produce byte-identical naming + content.
 
 set -euo pipefail
 
@@ -71,14 +72,38 @@ assert_eq "run-emit-2-explicit-src-my-event.event" "$(basename "$F2")" \
 assert_contains "$(cat "$F2")" "source: explicit-src" "explicit source arg overrides in body"
 
 # -------------------------------------------------------------------
-# case 3: manual CLI use (no RUN_ID) drops the run-id prefix
+# case 3: no RUN_ID fails closed unless ingress is explicit
 # -------------------------------------------------------------------
 D3="$(mktemp -d)"
-run_emit "$D3" "" "" "custom-event" "researcher"
+if run_emit "$D3" "" "" "custom-event" "researcher"; then
+  fail "no RUN_ID: default run scope must fail"
+else
+  pass "no RUN_ID: default run scope fails closed"
+fi
+if find "$D3" -name '*.event' -print -quit | grep -q .; then
+  fail "no RUN_ID: failed run-scoped emission must not write an event"
+else
+  pass "no RUN_ID: failed run-scoped emission writes no event"
+fi
+
+run_emit "$D3" "" "" --scope ingress "custom-event" "researcher"
 F3="$(find "$D3" -name '*.event' | head -1)"
 assert_eq "researcher-custom-event.event" "$(basename "$F3")" \
-  "no RUN_ID: filename drops the run-id prefix"
-assert_contains "$(cat "$F3")" "run_id: " "run_id: line still present (empty)"
+  "explicit ingress: filename has no run-id prefix"
+assert_contains "$(cat "$F3")" "run_id: " "explicit ingress: canonical empty run_id field remains present"
+
+# Explicit ingress is pre-run only. It must not silently discard an ambient run id.
+D3_RUN="$(mktemp -d)"
+if run_emit "$D3_RUN" "run-present" "researcher" --scope ingress "custom-event"; then
+  fail "explicit ingress with RUN_ID must fail"
+else
+  pass "explicit ingress with RUN_ID fails closed"
+fi
+if find "$D3_RUN" -name '*.event' -print -quit | grep -q .; then
+  fail "rejected ingress with RUN_ID must not write an event"
+else
+  pass "rejected ingress with RUN_ID writes no event"
+fi
 
 # -------------------------------------------------------------------
 # case 4: missing event-name -> usage error, non-zero exit
@@ -125,7 +150,7 @@ assert_contains "$(cat "$F6")" "source: bad/source" "body preserves raw source"
 assert_contains "$(cat "$F6")" "event: event/with/slash" "body preserves raw event name"
 
 # -------------------------------------------------------------------
-# case 6: `mentiko emit` and emit-event() produce identical name + body
+# case 7: `mentiko emit` and emit-event() produce identical name + body
 #         (acceptance: one implementation, proven identical)
 # -------------------------------------------------------------------
 DA="$(mktemp -d)"; DB="$(mktemp -d)"
@@ -146,6 +171,22 @@ if diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") >/dev/null
 else
   fail "mentiko emit and emit-event bodies diverge"
   diff <(grep -v '^timestamp:' "$FA") <(grep -v '^timestamp:' "$FB") || true
+fi
+
+# -------------------------------------------------------------------
+# case 8: help documents the same explicit scope contract enforced above
+# -------------------------------------------------------------------
+HELP_OUTPUT="$(EVENTS_DIR="$(mktemp -d)" bash "$MENTIKO_BIN" emit --help)"
+assert_contains "$HELP_OUTPUT" "[--scope run|ingress]" "emit help advertises explicit scope"
+assert_contains "$HELP_OUTPUT" "run is the default and requires MENTIKO_RUN_ID or RUN_ID" \
+  "emit help documents run-scope identity requirement"
+assert_contains "$HELP_OUTPUT" "ingress must be requested explicitly and must not carry a run id" \
+  "emit help documents ingress boundary"
+
+if EVENTS_DIR="$(mktemp -d)" bash "$MENTIKO_BIN" emit --scope >/dev/null 2>&1; then
+  fail "missing --scope value should exit non-zero"
+else
+  pass "missing --scope value exits non-zero"
 fi
 
 # -------------------------------------------------------------------

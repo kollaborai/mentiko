@@ -39,6 +39,7 @@ describe("runner-v2 terminal completion plan", () => {
     }, "explicit-stop");
 
     expect(plan.steps).toContainEqual({ type: "session-policy", policy: "keep" });
+    expect(plan.steps.some((step) => step.type === "task-status")).toBe(false);
   });
 
   it("plans legacy webhook when on_complete is webhook", () => {
@@ -104,7 +105,7 @@ describe("runner-v2 terminal completion plan", () => {
 
   it("omits the circuit breaker step when the failing agent is unknown", () => {
     const plan = planTerminalFailure({ runId: "run-1", chainName: "Build Chain" });
-    expect(plan.steps.map((step) => step.type)).toEqual(["task-status", "notification", "metadata-webhooks"]);
+    expect(plan.steps.map((step) => step.type)).toEqual(["notification", "metadata-webhooks"]);
   });
 });
 
@@ -123,6 +124,19 @@ describe("runner-v2 agent completion plan", () => {
       { type: "plugin", event: "agent-completed", chainName: "Build Chain", runId: "run-1", agentId: "writer" },
       { type: "notification", event: "agent-completed", chainName: "Build Chain", runId: "run-1", agentId: "writer" },
     ]);
+  });
+
+  it("carries one completion occurrence identity to every agent external effect", () => {
+    const plan = planAgentCompletion({
+      runId: "run-1",
+      chainName: "Build Chain",
+      agentId: "writer",
+      occurrenceId: "completion-occurrence-1",
+      chainWebhooks: { enabled: true, urls: ["https://a.example/hook"] },
+    });
+
+    expect(plan.steps).toHaveLength(3);
+    expect(plan.steps.every((step) => step.occurrenceId === "completion-occurrence-1")).toBe(true);
   });
 
   it("plans chain-config agent_complete webhooks only when enabled and subscribed", () => {

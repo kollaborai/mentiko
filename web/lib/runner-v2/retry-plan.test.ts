@@ -66,15 +66,17 @@ describe("runner-v2 retry planner", () => {
   });
 
   it("exhausts immediately when max_retries is zero or absent", () => {
-    expect(planNoEventRetry({
+    const plan = planNoEventRetry({
       runId: "run-123",
       chainName: "Build Chain",
       agentId: "writer",
       retry: { max_retries: 0 },
-    })).toMatchObject({
+    });
+    expect(plan).toMatchObject({
       action: "exhausted",
       maxRetries: 0,
     });
+    expect(plan.steps.some((step) => step.type === "task-status")).toBe(false);
   });
 
   it("models rollback as plan-only on exhausted on_error=rollback", () => {

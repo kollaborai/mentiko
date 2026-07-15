@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
@@ -160,12 +161,11 @@ describe("runner-v2 completion entrypoint liveness", () => {
       config: { project_root: root },
       agents: [{ id: "writer", name: "Writer", emits: "draft-ready" }],
     });
-    writeFileSync(join(eventsDir, "writer-draft-ready.event"), [
-      "event: draft-ready",
-      "source: writer",
-      "run_id: run-123",
-      "processed: false",
-    ].join("\n"));
+    writeFileSync(join(eventsDir, "writer-draft-ready.event"), runnerEventFixture({
+      event: "draft-ready",
+      source: "writer",
+      runId: "run-123",
+    }));
     mockSpawnSync.mockImplementation((_cmd, args) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
       if (argv[0] === "remove") return { status: 0, stdout: "removed\n", stderr: "" } as ReturnType<typeof spawnSync>;

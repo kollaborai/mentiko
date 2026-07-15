@@ -6,6 +6,7 @@ jest.mock("@/lib/config", () => ({
   default: {
     binDir: "/repo/bin",
     codeRoot: "/repo",
+    eventsDir: "/project/events",
   },
   ptyDaemonEnv: () => ({ PTY_DAEMON: "mentiko-test", PTY_MANAGER_DIR: "/repo/.pty-manager" }),
 }));

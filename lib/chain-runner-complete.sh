@@ -374,38 +374,13 @@ event_file_matches_current_run() {
 }
 
 # write a DIAGNOSTIC (non-handoff) event for a failure surfaced by this handler.
-# Mirrors the monitor's _monitor_emit_diagnostic_event shape EXACTLY (same fields,
-# same timestamped ${ts}-${run_id}-${agent}-${event}.event filename scheme) except
-# source is "chain-runner-complete" (this component) rather than "monitor". Because
-# source is never the agent id, the completion matcher's source.includes(agentId)
-# test can never read this as a success handoff. The event name (agent-error /
-# agent-timeout) is canonical (schema enum + contract canonical list), never the
-# agent's declared emits name — so this can never be mistaken for a fabricated
-# success. See group A's spec in lib/agent-functions.sh (monitor failure surfacing).
+# Event bytes, filename, timestamp, and root ownership stay in the typed emitter.
 emit_completion_diagnostic_event() {
     local event_name="$1"   # agent-error | agent-timeout
     local agent_id="$2"
     local reason="$3"
-    local extra="${4:-}"    # optional extra "key: value" lines
-
-    local diag_run_id="${RUN_ID:-}"
-    local ts
-    ts="$(date -u +"%Y%m%dT%H%M%S")"
-    local safe_agent="${agent_id//[^A-Za-z0-9._-]/_}"
-    [[ -z "$safe_agent" ]] && safe_agent="unknown"
-    local event_file="$EVENTS_DIR/${ts}-${diag_run_id:+${diag_run_id}-}${safe_agent}-${event_name}.event"
-
-    {
-        printf 'event: %s\n' "$event_name"
-        printf 'source: chain-runner-complete\n'
-        printf 'run_id: %s\n' "$diag_run_id"
-        printf 'agent: %s\n' "$agent_id"
-        printf 'timestamp: %s\n' "$(date -Iseconds)"
-        printf 'reason: %s\n' "$reason"
-        [[ -n "$extra" ]] && printf '%s\n' "$extra"
-        printf 'processed: false\n'
-    } > "$event_file" 2>/dev/null || true
-    echo "  diagnostic event written: $(basename "$event_file")"
+    local args=(diagnostic --scope run --event "$event_name" --source "chain-runner-complete" --run-id "${RUN_ID:-}" --agent "$agent_id" --reason "$reason")
+    node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js" "${args[@]}"
 }
 
 import_generation_job_backstop() {

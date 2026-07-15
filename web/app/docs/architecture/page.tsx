@@ -18,12 +18,12 @@ const layers = [
   {
     icon: TerminalIcon,
     name: "Orchestration Layer",
-    description: "bash scripts + Node.js modules that coordinate chain execution",
+    description: "shell chain boundaries + TypeScript background services",
     items: [
       { label: "chain-runner.sh", desc: "main orchestrator, reads chain.json, spawns agents" },
       { label: "launch-agent.sh", desc: "creates pty session, invokes ai cli" },
-      { label: "complete-agent.sh", desc: "marks agent complete, writes completion event" },
-      { label: "event-trigger.sh", desc: "monitors events, triggers agents on match" },
+      { label: "event-trigger.sh", desc: "invokes typed event writes; retains shell lifecycle helpers" },
+      { label: "background-worker.ts", desc: "owns typed chain watcher and watchdog lifecycle" },
       { label: ".mjs files", desc: "job-runner.mjs, pty-manager.mjs, chain-generator.mjs" },
     ],
   },
@@ -46,7 +46,7 @@ const layers = [
     name: "Data Layer",
     description: "file-based storage scoped by namespace",
     items: [
-      { label: "events/", desc: "agent-generated json events, trigger matching" },
+      { label: "events/", desc: "canonical line-oriented events and trigger matching" },
       { label: "state/", desc: "runtime state, agent status, chain progress" },
       { label: "runs/", desc: "chain execution history, logs, outputs" },
       { label: "chains/", desc: "chain definitions, agent configs" },

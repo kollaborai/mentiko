@@ -1,19 +1,13 @@
 import {
   BackgroundWorkerStatus,
-  clearBackgroundWorkerPid,
+  commitStoppedBackgroundWorkerState,
   isProcessAlive,
-  readBackgroundWorkerPid,
+  readBackgroundWorkerOwner,
   readBackgroundWorkerStatusFile,
-  writeBackgroundWorkerStatusFile,
 } from "./background-worker-state";
+import { claimProcessMatchesIdentity } from "@/lib/runner-v2/file-claim";
 
-const STOP_TIMEOUT_MS = 5000;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function stoppedStatus(
+export function stoppedBackgroundWorkerStatus(
   statusFile: BackgroundWorkerStatus | null,
   note?: string
 ): BackgroundWorkerStatus {
@@ -24,72 +18,59 @@ function stoppedStatus(
     checkCount: statusFile?.checkCount,
     lastReconcile: statusFile?.lastReconcile,
     lastReconcileCleaned: statusFile?.lastReconcileCleaned,
+    lastExternalDrain: statusFile?.lastExternalDrain,
+    lastExternalDispatched: statusFile?.lastExternalDispatched,
+    autoRun: statusFile?.autoRun
+      ? { ...statusFile.autoRun, status: "stopped" }
+      : undefined,
+    chainWatcher: statusFile?.chainWatcher
+      ? { ...statusFile.chainWatcher, status: "stopped" }
+      : undefined,
+    watchdog: statusFile?.watchdog
+      ? { ...statusFile.watchdog, status: "stopped" }
+      : undefined,
     note: note || statusFile?.note,
   };
 }
 
-function cleanupStaleState(note?: string) {
-  const statusFile = readBackgroundWorkerStatusFile();
-  clearBackgroundWorkerPid();
-  writeBackgroundWorkerStatusFile(stoppedStatus(statusFile, note));
+function cleanupStaleState(
+  owner: { pid: number; processIdentity?: string },
+  statusFile: BackgroundWorkerStatus | null,
+  note?: string,
+): boolean {
+  return commitStoppedBackgroundWorkerState(
+    owner,
+    stoppedBackgroundWorkerStatus(statusFile, note),
+  );
 }
 
 export function getBackgroundWorkerStatus(): BackgroundWorkerStatus {
-  const pid = readBackgroundWorkerPid();
+  const owner = readBackgroundWorkerOwner();
+  const pid = owner?.pid;
   const statusFile = readBackgroundWorkerStatusFile();
 
-  if (pid && isProcessAlive(pid)) {
+  const ownerAlive = pid
+    ? claimProcessMatchesIdentity(pid, owner?.processIdentity, isProcessAlive)
+    : false;
+
+  if (pid && ownerAlive) {
     const startedAt = statusFile?.startedAt;
     const uptime = startedAt
       ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)
       : undefined;
 
     return {
-      status: "running",
       ...statusFile,
+      status: "running",
       pid,
       uptime,
     };
   }
 
-  if (pid && !isProcessAlive(pid)) {
-    cleanupStaleState("worker exited unexpectedly");
+  if (pid && !ownerAlive) {
+    cleanupStaleState(owner, statusFile, "worker exited unexpectedly");
     return getBackgroundWorkerStatus();
   }
 
-  return stoppedStatus(statusFile);
-}
-
-/**
- * Returns current worker status. The worker is managed by process-manager
- * (processes.dev.json / processes.json) -- not spawned from here.
- */
-export function checkBackgroundWorker(): BackgroundWorkerStatus {
-  return getBackgroundWorkerStatus();
-}
-
-export async function stopBackgroundWorker(): Promise<BackgroundWorkerStatus> {
-  const pid = readBackgroundWorkerPid();
-  if (!pid) {
-    cleanupStaleState("worker not running");
-    return getBackgroundWorkerStatus();
-  }
-
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    cleanupStaleState("worker not running");
-    return getBackgroundWorkerStatus();
-  }
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < STOP_TIMEOUT_MS) {
-    await sleep(250);
-    if (!isProcessAlive(pid)) {
-      cleanupStaleState("worker stopped");
-      return getBackgroundWorkerStatus();
-    }
-  }
-
-  throw new Error("background worker did not stop cleanly");
+  return stoppedBackgroundWorkerStatus(statusFile);
 }

@@ -920,13 +920,6 @@ const endpoints: ApiEndpoint[] = [
     body: [{ name: "cmd", type: "string", required: true, description: "command to send" }],
     response: { success: true },
   },
-  {
-    method: "POST",
-    path: "/api/pty/sessions/:name/restart",
-    auth: true,
-    description: "restart pty session",
-    response: { success: true },
-  },
   // File System
   {
     method: "GET",
@@ -1945,22 +1938,8 @@ const endpoints: ApiEndpoint[] = [
     method: "GET",
     path: "/api/schedules/daemon",
     auth: true,
-    description: "background worker status (running/stopped, uptime, last check) -- the standalone worker owning scheduler + reconciler loops",
+    description: "background worker status for scheduler, reconciler, auto-run, external effects, chain watcher, and watchdog",
     response: { status: "string", uptimeMs: 0 },
-  },
-  {
-    method: "POST",
-    path: "/api/schedules/daemon",
-    auth: true,
-    description: "start the background worker (no-op if already running; worker is actually managed by process-manager, restart the dev server to truly start it)",
-    response: { status: "string" },
-  },
-  {
-    method: "DELETE",
-    path: "/api/schedules/daemon",
-    auth: true,
-    description: "stop the background worker",
-    response: { success: true },
   },
   {
     method: "GET",

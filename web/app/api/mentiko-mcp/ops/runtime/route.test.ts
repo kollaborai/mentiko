@@ -28,6 +28,25 @@ jest.mock("@/lib/ai-engine/mentiko-mcp-ops-auth", () => ({
 }));
 
 jest.mock("@/lib/config", () => ({
+  __esModule: true,
+  get config() {
+    const orgRoot = [globalThis.__MENTIKO_RUNTIME_TEST_ROOT__, "namespaces", "tenant-a", "orgs", "engineering"].join("/");
+    return {
+      namespaceId: "tenant-a",
+      orgId: "engineering",
+      eventsDir: `${orgRoot}/events`,
+      runsDir: `${orgRoot}/runs`,
+    };
+  },
+  get default() {
+    const orgRoot = [globalThis.__MENTIKO_RUNTIME_TEST_ROOT__, "namespaces", "tenant-a", "orgs", "engineering"].join("/");
+    return {
+      namespaceId: "tenant-a",
+      orgId: "engineering",
+      eventsDir: `${orgRoot}/events`,
+      runsDir: `${orgRoot}/runs`,
+    };
+  },
   orgPath: jest.fn((namespaceId: string, orgId: string, ...segments: string[]) => {
     return [globalThis.__MENTIKO_RUNTIME_TEST_ROOT__, "namespaces", namespaceId, "orgs", orgId, ...segments].join("/");
   }),
@@ -64,7 +83,15 @@ describe("/api/mentiko-mcp/ops/runtime", () => {
     mkdirSync(join(orgRoot, "logs"), { recursive: true });
     writeFileSync(
       join(orgRoot, "events", "20260514T021248-run-1778724644028-stalled.event"),
-      JSON.stringify({ type: "run-stalled", runId: "run-1778724644028" }),
+      [
+        "event: run-stalled",
+        "source: watchdog",
+        "run_id: run-1778724644028",
+        "timestamp: 2026-05-14T02:12:48.000Z",
+        "processed: false",
+        "data: run stalled",
+        "",
+      ].join("\n"),
     );
     writeFileSync(
       join(orgRoot, "runs", "run-1778724644028", "run.json"),
@@ -127,12 +154,44 @@ describe("/api/mentiko-mcp/ops/runtime", () => {
   });
 
   test("returns only event files for the requested run id", async () => {
+    writeFileSync(
+      join(orgRoot, "events", "opaque-owned.event"),
+      [
+        "event: agent-complete",
+        "source: writer",
+        "run_id: run-1778724644028",
+        "timestamp: 2026-05-14T02:13:00.000Z",
+        "processed: false",
+        "data: owned",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(orgRoot, "events", "run-1778724644028-foreign.event"),
+      [
+        "event: agent-complete",
+        "source: writer",
+        "run_id: run-1778724644028-other",
+        "timestamp: 2026-05-14T02:13:01.000Z",
+        "processed: false",
+        "data: foreign",
+        "",
+      ].join("\n"),
+    );
     const res = await GET(request("get_run_events", { runId: "run-1778724644028" }));
 
     expect(res.status).toBe(200);
-    const body = await res.json() as { events: Array<{ name: string; content: string }> };
-    expect(body.events).toHaveLength(1);
-    expect(body.events[0].name).toContain("stalled");
+    const body = await res.json() as { events: Array<{ name: string; content: string; parsed: { event: string } }> };
+    expect(body.events).toHaveLength(2);
+    expect(body.events.map((event) => event.name)).toEqual(expect.arrayContaining([
+      "20260514T021248-run-1778724644028-stalled.event",
+      "opaque-owned.event",
+    ]));
+    expect(body.events.map((event) => event.parsed.event)).toEqual(expect.arrayContaining([
+      "run-stalled",
+      "agent-complete",
+    ]));
+    expect(body.events.map((event) => event.name)).not.toContain("run-1778724644028-foreign.event");
   });
 
   test("queries structured system logs with filters", async () => {

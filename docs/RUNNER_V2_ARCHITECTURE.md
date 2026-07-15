@@ -4,8 +4,8 @@ Status: current working-tree architecture, verified 2026-07-14.
 
 Runner v2 is Mentiko's typed orchestration path. It is a side-by-side migration,
 not a complete replacement of the shell engine. The current system deliberately
-mixes typed planning and state transitions with shell-owned launch and daemon
-behavior while parity work continues.
+mixes typed planning, state transitions, and background services with
+shell-owned launch behavior while parity work continues.
 
 This document describes the code that exists now. It does not claim that the
 working tree is released or deployed. Runtime evidence still outranks this
@@ -45,6 +45,10 @@ imports and call path in code decide current ownership.
 
 ```mermaid
 flowchart TD
+    PROCESSES["processes.dev.json / processes.json"] --> WORKER["background-worker.ts<br/>compiled JS in production"]
+    WORKER --> WATCHER["chain-watcher-service.ts<br/>typed start, status, stop"]
+    WORKER --> WATCHDOG["watchdog.ts<br/>startup + 60s scans"]
+
     HTTP["POST /api/chains/run"] --> SERVICE["startChainRun<br/>authorize, resolve, write chain.json and run.json"]
     SERVICE --> GATE{"MENTIKO_RUNNER_V2 enabled?"}
 
@@ -85,12 +89,14 @@ flowchart TD
 The typed path currently owns the initial local bootstrap, `AgentAttempt`
 state, monitor reduction, completion reduction, routing decisions, effect
 planning, locked TypeScript writes to `run.json`, and durable external-effect
-queuing.
+queuing. Independently of each chain launch, the TypeScript background worker
+owns chain-watcher start/status/stop and startup plus periodic watchdog scans.
 
 The shell path still owns the default launch, routed next-agent launch,
-non-local launch behavior, scheduler behavior, and the long-running watchdog
-and chain-event-watcher daemons. Shell-routed agents return to typed monitoring
-and typed completion when the relevant flags remain enabled.
+and non-local launch behavior. Shell-routed agents return to typed monitoring
+and typed completion when the relevant flags remain enabled. The retired
+watchdog and chain-event-watcher scripts are parity references, not active
+daemons.
 
 ## Runtime selection and fallback rules
 
@@ -138,6 +144,22 @@ The direct typed bootstrap currently supports only local workspaces.
 `WORKSPACE_TYPE=ssh` or `docker` returns unsupported before side effects and
 uses the shell bridge. The routed launch path also uses `chain-runner.sh`, whose
 workspace handling remains authoritative for local, SSH, and Docker launches.
+
+### Background service selection
+
+Watcher and watchdog ownership does not depend on either runner-v2 flag and is
+not an agent-bootstrap side effect. The process manager starts one background
+worker:
+
+- development: `npx tsx server/background-worker.ts`,
+- production: `node server/background-worker.js`.
+
+The worker starts `startChainWatcherService()`, includes
+`getChainWatcherServiceStatus()` in its durable status, and awaits
+`stopChainWatcherService()` during shutdown. It runs `runTypedWatchdogScan()`
+once at startup and every 60 seconds with an in-flight guard, publishing scan
+and PTY-transport state. No active launch path starts the retired shell daemon
+sessions and there is no shell fallback for these services.
 
 ### Monitor selection
 
@@ -245,8 +267,8 @@ run-only directory, so the watcher and completion path see the same handoff.
 
 ### 5. Typed attempt creation and admission
 
-`executeLocalBootstrap` first ensures the shell watchdog and chain-event-watcher
-singletons exist. Those daemons remain shell-owned.
+`executeLocalBootstrap` does not start watcher or watchdog processes. Their
+lifecycle is already owned by the independently supervised background worker.
 
 It then creates `runnerV2.attempts[]` in `run.json` for `writer`:
 
@@ -370,7 +392,14 @@ agentIds: [reviewer]
 `adapters.ts:applyTypedExecutorPlan` applies local state changes immediately.
 Network, plugin, notification, webhook, and task-status operations are appended
 to `state/external-effects.jsonl`; the background worker claims, retries, audits,
-and drains that outbox.
+and drains that outbox. Enqueue and claim rename share one filesystem claim, and
+every operation carries a stable ID through pending, claimed, and audit records.
+Replay skips completed IDs; the notification and task sinks also apply that ID
+idempotently across a crash between local delivery and audit. Plugins and
+webhooks remain at-least-once because their remote side effects cannot share the
+local commit: plugins receive `MENTIKO_EXTERNAL_EFFECT_ID`, metadata webhooks
+receive `data.idempotencyKey`, and legacy webhooks receive `Idempotency-Key` so
+the consumer can suppress duplicates.
 
 ### 11. The shell handoff to the next agent
 
@@ -505,6 +534,8 @@ Typed today:
 - retry, fan-group, loop, terminal, and routing plans,
 - event ownership and archive planning,
 - durable external-effect outbox and dispatcher,
+- background-worker chain-watcher start, status, and stop,
+- startup and periodic typed watchdog scans with durable status,
 - completion recovery and switch-readiness checks.
 
 Shell-owned today:
@@ -513,8 +544,6 @@ Shell-owned today:
 - non-local agent launch,
 - routed next-agent and parallel launch,
 - shell completion when typed completion is disabled,
-- watchdog and chain-event-watcher daemon behavior,
-- scheduler behavior,
 - several observability, profile, transport, and workspace compatibility paths.
 
 ## Known current gaps
@@ -640,14 +669,26 @@ Completion, routing, and effects:
 - `web/lib/runner-v2/terminal-plan.ts`
 - `web/lib/runner-v2/handoff-liveness.ts`
 
+Background services:
+
+- `web/server/background-worker.ts`
+- `web/lib/runner-v2/chain-watcher-service.ts`
+- `web/lib/runner-v2/watchdog.ts`
+- `web/lib/system/background-worker-state.ts`
+- `web/processes.dev.json`
+- `web/processes.json`
+
 Shell bridges:
 
 - `lib/chain-runner.sh`
 - `lib/agent-functions.sh`
 - `lib/chain-runner-complete.sh`
+- `lib/scheduler.sh`
+
+Legacy watcher/watchdog parity references (not launched):
+
 - `lib/watchdog.sh`
 - `lib/chain-event-watcher.sh`
-- `lib/scheduler.sh`
 
 Readiness and recovery:
 

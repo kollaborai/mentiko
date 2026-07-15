@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 import {
   captureAssertsAgentComplete,
   captureHash,
@@ -18,6 +19,23 @@ import {
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), "monitor-io-"));
+}
+
+function seedEvent(dir: string, name: string, fields: Record<string, string>) {
+  const canonical = new Set(["event", "source", "run_id", "timestamp", "processed", "data"]);
+  const extensions = Object.entries(fields)
+    .filter(([key]) => !canonical.has(key))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n");
+  const body = serializeRunnerEvent({
+    event: fields.event,
+    source: fields.source,
+    runId: fields.run_id ?? "",
+    timestamp: fields.timestamp ?? "2026-07-08T00:00:00.000Z",
+    processed: fields.processed === "true",
+    data: fields.data ?? "",
+  });
+  writeFileSync(join(dir, name), extensions ? `${body}${extensions}\n` : body);
 }
 
 describe("monitor-io — verifiable adapter core", () => {
@@ -41,11 +59,6 @@ describe("monitor-io — verifiable adapter core", () => {
   });
 
   describe("findCompletionEventFile", () => {
-    function seedEvent(dir: string, name: string, fields: Record<string, string>) {
-      const body = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n");
-      writeFileSync(join(dir, name), `${body}\n`);
-    }
-
     it("matches an unprocessed event for the right run + agent (source stamped with the session name)", () => {
       const dir = tempDir();
       seedEvent(dir, "run-1-writer-draft.event", { event: "draft", source: "writer-run-1", run_id: "run-1", processed: "false" });
@@ -103,16 +116,16 @@ describe("monitor-io — verifiable adapter core", () => {
       expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "api", expectedEvent: "draft", sessionName: "api-run-1" })).toBe("");
     });
 
-    it("parses a JSON event body (event/source/run_id) the same as key:value", () => {
+    it("rejects a JSON body instead of applying a compatibility parser", () => {
       const dir = tempDir();
       writeFileSync(join(dir, "e.event"), JSON.stringify({ event: "draft", source: "writer-run-1", run_id: "run-1", processed: false }));
-      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "draft", sessionName: "writer-run-1" })).toBe("e.event");
+      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "draft", sessionName: "writer-run-1" })).toBe("");
     });
 
-    it("parses JSON event/source alias keys (event_name, source_agent, runId)", () => {
+    it("rejects JSON alias keys instead of applying field fallbacks", () => {
       const dir = tempDir();
       writeFileSync(join(dir, "e.event"), JSON.stringify({ event_name: "draft", source_agent: "writer-run-1", runId: "run-1", processed: false }));
-      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "draft", sessionName: "writer-run-1" })).toBe("e.event");
+      expect(findCompletionEventFile({ eventsDir: dir, runId: "run-1", agentId: "writer", expectedEvent: "draft", sessionName: "writer-run-1" })).toBe("");
     });
   });
 
@@ -143,11 +156,6 @@ describe("monitor-io — verifiable adapter core", () => {
   });
 
   describe("cross-run completion recovery", () => {
-    function seedEvent(dir: string, name: string, fields: Record<string, string>) {
-      const body = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n");
-      writeFileSync(join(dir, name), `${body}\n`);
-    }
-
     describe("findAgentCompletionEventAnyRun", () => {
       it("matches the agent's declared emit event under a DIFFERENT run (ignores run_id)", () => {
         const dir = tempDir();

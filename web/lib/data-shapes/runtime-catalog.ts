@@ -3,7 +3,11 @@ import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import {
+  parseRunnerEvent,
+  validateRawRunnerEvent,
+} from "@/lib/runner-v2/events";
+import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract.mjs";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_CATALOG_VERSION,
@@ -25,19 +29,29 @@ export interface DataShapeIssue {
   message: string;
 }
 
+export interface DataShapeValidationLayer {
+  layer: "raw-file" | "normalized-record";
+  validator: "runner-event-raw-contract" | "task-generation-payload-contract" | "json-schema";
+  validated: boolean;
+  validCount: number;
+  invalidCount: number;
+}
+
 export interface DataShapeEvidence {
   status: RuntimeShapeStatus;
   artifactCount: number;
   recordCount: number;
+  /** Whether the primary physical or record contract was actually run. */
+  contractValidated: boolean;
   /**
-   * Whether a canonical schema was available and actually run against the
-   * inspected records. When false, validCount can only ever be 0 and carries no
-   * information — surfaces must not present it as a measurement.
+   * Whether the normalized JSON Schema was actually run. Layer-specific counts
+   * live in validationLayers; top-level counts reflect the complete contract.
    */
   schemaValidated: boolean;
   validCount: number;
   invalidCount: number;
   parseErrorCount: number;
+  validationLayers: DataShapeValidationLayer[];
   samplePaths: string[];
   fields: DataShapeFieldEvidence[];
   issues: DataShapeIssue[];
@@ -342,6 +356,10 @@ function inspectShape(
   let validCount = 0;
   let invalidCount = 0;
   let parseErrorCount = 0;
+  let rawValidCount = 0;
+  let rawInvalidCount = 0;
+  let normalizedValidCount = 0;
+  let normalizedInvalidCount = 0;
 
   if (definition.samples) {
     const root = rootFor(roots, definition.samples.root);
@@ -368,6 +386,79 @@ function inspectShape(
       }
 
       const content = readFileSync(path, "utf8");
+      if (definition.id === "runner-event" && definition.samples?.format === "key-value") {
+        const raw = validateRawRunnerEvent(content);
+
+        if (raw.valid) rawValidCount += 1;
+        else {
+          rawInvalidCount += 1;
+          for (const issue of raw.issues) {
+            const suffix = issue.line ? ` line ${issue.line}` : issue.field ? ` ${issue.field}` : "";
+            issues.push({ path: `${displayPath}${suffix}`, message: `Raw file: ${issue.message}` });
+          }
+        }
+
+        let normalizedValid = false;
+        if (raw.valid) {
+          const record = parseRunnerEvent(content);
+          recordCount += 1;
+          observeValue(record, fields, "$", 0, Boolean(definition.sensitive));
+          normalizedValid = true;
+          if (validate) {
+            normalizedValid = Boolean(validate(record));
+            if (normalizedValid) normalizedValidCount += 1;
+            else {
+              normalizedInvalidCount += 1;
+              issues.push(...validationIssues(`${displayPath} normalized`, validate.errors));
+            }
+          }
+        }
+
+        if (raw.valid && normalizedValid) validCount += 1;
+        else invalidCount += 1;
+        continue;
+      }
+
+      if (definition.id === "task-generation-payload" && definition.samples?.format === "json") {
+        const payload = JSON.parse(content) as Record<string, unknown>;
+        const rawValid = isPayloadCompatibleWithKind(payload, "task");
+        if (rawValid) rawValidCount += 1;
+        else {
+          rawInvalidCount += 1;
+          invalidCount += 1;
+          issues.push({
+            path: displayPath,
+            message: "Raw payload: expected a routed task/decision envelope or a legacy bare task object",
+          });
+          continue;
+        }
+
+        recordCount += 1;
+        observeValue(payload, fields, "$", 0, Boolean(definition.sensitive));
+
+        // A decision hand-back is complete under the physical agent-as-gate
+        // contract but intentionally has no task record to validate. Task
+        // envelopes and legacy bare tasks normalize to the canonical task
+        // schema before they can contribute a valid artifact.
+        if (payload.route === "decision") {
+          validCount += 1;
+          continue;
+        }
+
+        const task = payload.route === "task" && payload.task && typeof payload.task === "object" && !Array.isArray(payload.task)
+          ? payload.task
+          : payload;
+        if (!validate || validate(task)) {
+          validCount += 1;
+          if (validate) normalizedValidCount += 1;
+        } else {
+          invalidCount += 1;
+          normalizedInvalidCount += 1;
+          issues.push(...validationIssues(`${displayPath} normalized task`, validate.errors));
+        }
+        continue;
+      }
+
       let records: unknown[] = [];
       if (definition.samples?.format === "json") {
         records = recordsFromJson(JSON.parse(content), definition.samples.valuePath, validationSchema);
@@ -377,17 +468,14 @@ function inspectShape(
           .filter((line) => line.trim())
           .map((line) => JSON.parse(line));
       } else if (definition.samples?.format === "key-value") {
-        if (definition.id === "runner-event") records = [parseRunnerEvent(content)];
-        else {
-          const keyed: Record<string, string> = {};
-          for (const line of content.split(/\r?\n/)) {
-            const separator = line.indexOf(":");
-            if (separator < 0) continue;
-            const key = line.slice(0, separator).trim();
-            if (key && keyed[key] === undefined) keyed[key] = line.slice(separator + 1).trim();
-          }
-          records = [keyed];
+        const keyed: Record<string, string> = {};
+        for (const line of content.split(/\r?\n/)) {
+          const separator = line.indexOf(":");
+          if (separator < 0) continue;
+          const key = line.slice(0, separator).trim();
+          if (key && keyed[key] === undefined) keyed[key] = line.slice(separator + 1).trim();
         }
+        records = [keyed];
       } else if (definition.samples?.format === "text") {
         records = [{ text: true, bytes: statSync(path).size }];
       }
@@ -396,9 +484,13 @@ function inspectShape(
         recordCount += 1;
         observeValue(record, fields, "$", 0, Boolean(definition.sensitive));
         if (!validate) continue;
-        if (validate(record)) validCount += 1;
+        if (validate(record)) {
+          validCount += 1;
+          normalizedValidCount += 1;
+        }
         else {
           invalidCount += 1;
+          normalizedInvalidCount += 1;
           issues.push(...validationIssues(displayPath, validate.errors));
         }
       }
@@ -412,10 +504,35 @@ function inspectShape(
 
   let status: RuntimeShapeStatus;
   if (!definition.samples) status = "unavailable";
-  else if (files.size === 0 || recordCount === 0) status = "absent";
+  else if (files.size === 0) status = "absent";
   else if (invalidCount > 0 || parseErrorCount > 0 || issues.length > 0) status = "drift";
+  else if (recordCount === 0) status = "absent";
   else if (validate) status = "valid";
   else status = "observed";
+
+  const isRunnerEvent = definition.id === "runner-event";
+  const isTaskGenerationPayload = definition.id === "task-generation-payload";
+  const hasRawContract = isRunnerEvent || isTaskGenerationPayload;
+  const rawValidationCount = rawValidCount + rawInvalidCount;
+  const normalizedValidationCount = normalizedValidCount + normalizedInvalidCount;
+  const validationLayers: DataShapeValidationLayer[] = [
+    ...(hasRawContract ? [{
+      layer: "raw-file" as const,
+      validator: isRunnerEvent
+        ? "runner-event-raw-contract" as const
+        : "task-generation-payload-contract" as const,
+      validated: rawValidationCount > 0,
+      validCount: rawValidCount,
+      invalidCount: rawInvalidCount,
+    }] : []),
+    {
+      layer: "normalized-record",
+      validator: "json-schema",
+      validated: Boolean(validate) && normalizedValidationCount > 0,
+      validCount: normalizedValidCount,
+      invalidCount: normalizedInvalidCount,
+    },
+  ];
 
   return {
     ...definition,
@@ -423,10 +540,12 @@ function inspectShape(
       status,
       artifactCount: files.size,
       recordCount,
-      schemaValidated: Boolean(validate),
+      contractValidated: hasRawContract ? rawValidationCount > 0 : normalizedValidationCount > 0,
+      schemaValidated: Boolean(validate) && normalizedValidationCount > 0,
       validCount,
       invalidCount,
       parseErrorCount,
+      validationLayers,
       samplePaths: [...new Set([...files.values()].map((sample) => safePatternPath(sample.root, sample.pattern)))]
         .slice(0, MAX_SAMPLE_PATHS),
       fields: finalizeFields(fields),

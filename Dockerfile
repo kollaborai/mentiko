@@ -140,6 +140,15 @@ RUN if [ -f /build/web/lib/runner-v2/monitor-cli.ts ]; then \
         --outfile=/context/lib/monitor-v2.js; \
     fi
 
+# compile the sole runner-event writer used by shell invocation boundaries.
+RUN if [ -f /build/web/lib/runner-v2/event-emitter-cli.ts ]; then \
+      echo "=== compiling typed runner event emitter ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/event-emitter-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-event-emitter.js; \
+    fi
+
 # compile process-manager.ts (tsc — needs same anchor; use relative paths
 # from web/ so tsconfig.json auto-discovery picks up web/tsconfig.json)
 RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \

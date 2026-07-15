@@ -88,6 +88,8 @@ interface DaemonStatus {
   status: "running" | "stopped";
   pid?: number;
   uptime?: number;
+  chainWatcher?: { status: "running" | "stopped"; lastError?: string | null };
+  watchdog?: { status: "running" | "stopped"; lastError?: string };
   lastCheck?: string;
 }
 
@@ -250,8 +252,14 @@ function SchedulesPageContent() {
         fetchWithNamespace("/api/schedules/circuit-breaker"),
         fetchWithNamespace("/api/schedules/daemon"),
       ]);
-      if (cbRes.ok) setCircuitBreaker(await cbRes.json());
-      if (dmRes.ok) setDaemon(await dmRes.json());
+      if (cbRes.ok) {
+        const raw = await cbRes.json();
+        setCircuitBreaker(raw?.data ?? raw);
+      }
+      if (dmRes.ok) {
+        const raw = await dmRes.json();
+        setDaemon(raw?.data ?? raw);
+      }
     } catch {
       // non-fatal
     }
@@ -404,19 +412,6 @@ function SchedulesPageContent() {
     }
   };
 
-  const handleDaemonToggle = async () => {
-    try {
-      if (daemon?.status === "running") {
-        await fetchWithNamespace("/api/schedules/daemon", { method: "DELETE" });
-      } else {
-        await fetchWithNamespace("/api/schedules/daemon", { method: "POST" });
-      }
-      fetchControlPlane();
-    } catch {
-      // ignore
-    }
-  };
-
   const filtered = schedules
     .filter((s) => {
       const targetSummary = getScheduleTargetSummary(s.target, s.chainName).toLowerCase();
@@ -465,7 +460,6 @@ function SchedulesPageContent() {
           daemon={daemon}
           onCBAction={handleCBAction}
           onCBUpdate={handleCBUpdate}
-          onDaemonToggle={handleDaemonToggle}
         />
 
         <div className="flex flex-1 overflow-hidden pl-4">
@@ -641,7 +635,6 @@ interface ControlPlaneBannerProps {
   daemon: DaemonStatus | null;
   onCBAction: (action: string, reason?: string) => void;
   onCBUpdate: (updates: Partial<CircuitBreakerState>) => void;
-  onDaemonToggle: () => void;
 }
 
 function ControlPlaneBanner({
@@ -649,7 +642,6 @@ function ControlPlaneBanner({
   daemon,
   onCBAction,
   onCBUpdate,
-  onDaemonToggle,
 }: ControlPlaneBannerProps) {
   const [maxRunsInput, setMaxRunsInput] = useState("");
   const cb = circuitBreaker;
@@ -720,19 +712,35 @@ function ControlPlaneBanner({
             )}
           />
           <span>
-            daemon {daemon?.status === "running" ? "running" : "stopped"}
+            worker {daemon?.status === "running" ? "running" : "stopped"}
           </span>
           {daemon?.status === "running" && daemon.uptime != null && (
             <span className="text-foreground/30">
               ({formatUptime(daemon.uptime)})
             </span>
           )}
-          <button
-            onClick={onDaemonToggle}
-            className="ml-1 text-[10px] text-foreground/40 hover:text-foreground/70 underline underline-offset-2"
-          >
-            {daemon?.status === "running" ? "stop" : "start"}
-          </button>
+        </div>
+
+        <div className="h-3 w-px bg-foreground/10" />
+
+        <div className="flex items-center gap-1.5">
+          <div className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            daemon?.chainWatcher?.status === "running" && !daemon.chainWatcher.lastError
+              ? "bg-emerald-400"
+              : "bg-amber-400",
+          )} />
+          <span>event watcher</span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <div className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            daemon?.watchdog?.status === "running" && !daemon.watchdog.lastError
+              ? "bg-emerald-400"
+              : "bg-amber-400",
+          )} />
+          <span>watchdog</span>
         </div>
 
         {/* separator */}

@@ -1,41 +1,54 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/watchdog.sh", "lib/chain-event-watcher.sh", "lib/scheduler.sh"],
-  "role": "singleton daemon supervision, event-triggered chain launch, schedule launch, and stalled run recovery",
-  "daemons": {
+  "source_files": [
+    "web/lib/runner-v2/chain-watcher-service.ts",
+    "web/lib/runner-v2/watchdog.ts",
+    "web/server/background-worker.ts"
+  ],
+  "legacy_reference_files": ["lib/watchdog.sh", "lib/chain-event-watcher.sh"],
+  "role": "background-worker-owned event-triggered chain launch and stalled run recovery",
+  "owns": [
+    "background-worker lifecycle for typed chain-watcher start, status, and stop",
+    "background-worker startup and periodic typed watchdog scans with durable status reporting",
+    "event-triggered chain launch with handled-marker idempotency",
+    "stalled run recovery and scoped terminal-session reaping"
+  ],
+  "services": {
     "watchdog": {
-      "session": "mentiko-watchdog",
-      "command": "bash lib/watchdog.sh",
-      "loop": "check pty-manager, scan runs, cleanup orphans, reconcile tasks",
-      "interval": "WATCHDOG_INTERVAL default 60"
+      "owner": "web/server/background-worker.ts",
+      "entrypoint": "runTypedWatchdogScan from web/lib/runner-v2/watchdog.ts",
+      "lifecycle": "run once at worker startup, then on the worker 60-second interval with an in-flight guard; result and transport failures are written to background-worker status",
+      "loop": "observe scoped PTY state, scan runs, recheck liveness before mutation, recover incomplete durable stall effects, and reap only dead sessions proven to belong to terminal scoped runs after a fresh liveness read",
+      "interval": "background-worker WATCHDOG_INTERVAL_MS = 60000"
     },
     "chain_event_watcher": {
-      "session": "mentiko-chain-watcher",
-      "command": "bash lib/chain-event-watcher.sh --namespace $NAMESPACE_ID",
-      "singleton": "per-namespace mkdir lock with stale-lock reclaim and trap cleanup; duplicate watchers must not accumulate (7816b0f)",
-      "loop": "blocking inotifywait/fswatch wait on the events dir (no busy poll; idle watcher is ~0% CPU), then scan events and chain config.event_triggers (7816b0f)",
-      "interval": "CHAIN_WATCHER_INTERVAL default 10 (fallback poll cadence when no fs-watch backend exists)"
+      "owner": "web/server/background-worker.ts",
+      "entrypoint": "startChainWatcherService/stopChainWatcherService/getChainWatcherServiceStatus from web/lib/runner-v2/chain-watcher-service.ts",
+      "singleton": "one in-process service plus a per-namespace/org mkdir lock with live-pid detection and stale-lock reclaim; duplicate watchers must not accumulate",
+      "loop": "filesystem watch with a bounded timeout fallback, then strict event parsing and chain config.event_triggers scanning; an unexpected service failure exits the worker non-zero for process-manager restart",
+      "interval": "DEFAULT_POLL_INTERVAL_MS = 10000 when the filesystem watch does not fire"
     }
   },
   "event_triggers": {
     "source": "$CHAINS_DIR/*/chain.json .config.event_triggers[]",
     "enabled": "included unless enabled == false",
     "idempotency": "handled marker under runtime/chain-watcher/handled",
-    "condition_policy": "safe_trigger_condition hard-rejects command substitution, backticks, ; | &, [[ ]] breakout, process substitution, and newlines before evaluating the remaining simple comparison; rejected or malformed conditions do not match (fail-closed); empty condition always matches (2b65e43)",
-    "launch": "nohup bash lib/chain-runner.sh <chain_path>",
-    "env": ["NAMESPACE_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT"]
+    "condition_policy": "evaluateChainWatcherCondition implements a narrow comparison grammar; command substitution, backticks, ; | &, [[ ]] breakout, process substitution, unsafe regex forms, and newlines do not match; empty condition always matches",
+    "launch": "detached bin/mentiko run <chain_path> child process from TypeScript",
+    "env": ["NAMESPACE_ID", "ORG_ID", "CHAIN_TRIGGER_EVENT", "CHAIN_TRIGGER_SOURCE", "CHAIN_INPUT", "MENTIKO_RUNNER_V2", "MENTIKO_RUNNER_V2_COMPLETION"]
   },
   "watchdog_recovery": {
     "stall_condition": "running run has no alive session/monitor/grace and running or pending agents",
-    "preferred_write": "watchdog-stop-run from run-lib under shared run lock",
-    "fallback_write": "inline jq rewrite",
-    "event": "diagnostic run-stalled event, not canonical agent handoff"
+    "write": "updateRunJson read-modify-write under the shared run lock with a durable runnerV2.watchdog step marker",
+    "event": "strictly serialized diagnostic run-stalled event with recovery details in data; not a canonical agent handoff",
+    "effects": "task-status and notification enqueue is deduped by stable effect IDs; executable hooks are at-least-once with a stable dispatch key exposed to hooks and a durable zero-exit acknowledgement; incomplete post-terminalization steps are retried on later scans"
   },
   "session_liveness": {
     "reap_scope": "deny-list of terminal run states: only runs in completed/failed/stopped territory are reap-eligible; unknown or non-terminal statuses (pending, blocked, paused, future values) are spared (e289ea8)",
     "source_of_truth": "live PTY session means alive",
-    "foreign_scope": "skip sessions from another MENTIKO_GLOBAL_ROOT/NAMESPACE_ID/ORG_ID",
-    "skip_prefixes": ["mentiko-watchdog", "mentiko-chain-watcher", "monitor-", "complete-", "term-", "link-", "peer-"]
+    "foreign_scope": "the worker resolves one configured project and its namespaced PTY transport; explicit alternate paths are required for another scope",
+    "reap_policy": "remove only dead agent and companion-monitor names referenced exclusively by terminal scoped runs after a fresh PTY list recheck; never remove a currently alive or unreferenced session",
+    "protected_prefixes": ["term-", "gh-auth-", "cli-auth-", "link-", "peer-", "complete-"]
   },
   "invariants": [
     "do not treat stale age as dead if PTY session is live",

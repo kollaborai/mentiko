@@ -4,12 +4,12 @@
 # BUG-022: a UI attach resizes the pty and re-wraps the instruction echo
 # ("...make the final non-empty line exactly AGENT_COMPLETE.") so a standalone
 # "AGENT_COMPLETE" line appears on the RENDERED screen while the agent is still
-# working. The monitor false-latched off that screen text and ensure-event-file
-# fabricated the declared emits event off it (2026-07-04 incident, a9b4cbf).
+# working. The old monitor false-latched off that screen text and synthesized
+# the declared emits event off it (2026-07-04 incident, a9b4cbf).
 #
 # The fix requires DURABLE evidence — the marker in the agent's session
-# transcript JSONL (never re-wrapped) — before latching completion or writing a
-# fallback event. This oracle drives the durable-evidence seam directly.
+# transcript JSONL (never re-wrapped) — before latching completion. Completion
+# never creates a missing declared event; that path fails closed downstream.
 
 set -euo pipefail
 
@@ -27,7 +27,6 @@ eval "$(extract_fn 'agent-complete-marker-seen')"
 eval "$(extract_fn '_agent_transcript_jsonl')"
 eval "$(extract_fn 'agent-complete-marker-durable')"
 eval "$(extract_fn 'agent-completion-latched')"
-eval "$(extract_fn 'ensure-event-file')"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -r "$TMP_DIR"' EXIT
@@ -142,51 +141,17 @@ else
   bad "screen scan: re-wrapped screen genuinely presents a standalone marker (durable gate is doing the work)"
 fi
 
-# ---- ensure-event-file fabrication guard (BUG-022 complete gap) ------------
+# ---- no missing-event synthesis (BUG-022 completion gap) -------------------
 
-EVENTS_DIR="$TMP_DIR/events"
-mkdir -p "$EVENTS_DIR"
-SPEC="$TMP_DIR/spec.md"
-{
-  printf '%s\n' 'session-prefix: sess'
-  printf '%s\n' 'playbook:'
-  printf '%s\n' '  event: work-done'
-} > "$SPEC"
-AGENT_CONTEXT="Agent context. Spec: spec.md"
-
-# no event file + no durable evidence -> refuse to fabricate, write nothing.
-SCREEN_FIXTURE="$REWRAP_SCREEN"
-set +e
-EVENTS_DIR="$EVENTS_DIR" MENTIKO_RUN_ID="run-x" MENTIKO_TRANSCRIPT_JSONL="$ECHO_ONLY" \
-  ensure-event-file "sess" "$AGENT_CONTEXT" "$TMP_DIR" >/dev/null 2>&1
-guard_rc=$?
-set -e
-if [[ "$guard_rc" -ne 0 ]]; then
-  ok "fabrication guard: refuses (non-zero) without durable completion evidence"
+if grep -q '^ensure-event-file()' "$PROJECT_ROOT/lib/agent-functions.sh"; then
+  bad "no-fabrication contract: legacy missing-event synthesizer must stay removed"
 else
-  bad "fabrication guard: refuses (non-zero) without durable completion evidence"
+  ok "no-fabrication contract: legacy missing-event synthesizer stays removed"
 fi
-if find "$EVENTS_DIR" -name '*.event' -type f 2>/dev/null | grep -q .; then
-  bad "fabrication guard: MUST NOT write any event file off a rendered marker"
+if find "$TMP_DIR" -name '*.event' -type f 2>/dev/null | grep -q .; then
+  bad "no-fabrication contract: durable or rendered marker checks must not write events"
 else
-  ok "fabrication guard: MUST NOT write any event file off a rendered marker"
-fi
-
-# no event file + durable evidence present -> the fallback is legitimate.
-set +e
-EVENTS_DIR="$EVENTS_DIR" MENTIKO_RUN_ID="run-x" MENTIKO_TRANSCRIPT_JSONL="$CLAUDE_DONE" \
-  ensure-event-file "sess" "$AGENT_CONTEXT" "$TMP_DIR" >/dev/null 2>&1
-allow_rc=$?
-set -e
-if [[ "$allow_rc" -eq 0 ]]; then
-  ok "fabrication guard: writes the fallback when the transcript proves completion"
-else
-  bad "fabrication guard: writes the fallback when the transcript proves completion"
-fi
-if find "$EVENTS_DIR" -name '*work-done*.event' -type f 2>/dev/null | grep -q .; then
-  ok "fabrication guard: durable completion produces the declared emits fallback event"
-else
-  bad "fabrication guard: durable completion produces the declared emits fallback event"
+  ok "no-fabrication contract: durable or rendered marker checks do not write events"
 fi
 
 # ---- transcript resolution: decoy-UUID resilience -------------------------

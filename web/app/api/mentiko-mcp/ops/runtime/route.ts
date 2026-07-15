@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { join, relative, resolve } from "path";
-import { orgPath } from "@/lib/config";
+import config, { orgPath } from "@/lib/config";
 import { requireOpsAuth } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { readLogs, type LogEntry, type LogLevel } from "@/lib/system/system-logger";
+import { parseRunnerEvent } from "@/lib/runner-v2/events";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,14 @@ interface RunJson {
 
 function runtimeRoots(namespaceId: string, orgId: string): RuntimeRoot[] {
   const root = orgPath(namespaceId, orgId);
-  return RUNTIME_SUBTREES.map((label) => ({ label, path: join(root, label) }));
+  return RUNTIME_SUBTREES.map((label) => ({
+    label,
+    path: label === "events"
+      ? config.eventsDir
+      : label === "runs"
+        ? config.runsDir
+        : join(root, label),
+  }));
 }
 
 function resolveRuntimePath(rawPath: string, namespaceId: string, orgId: string): RuntimePath | null {
@@ -93,8 +101,8 @@ function safeRunId(runId: string | null): string | null {
   return runId;
 }
 
-function readRunJson(runId: string, namespaceId: string, orgId: string): RunJson | null {
-  const runPath = join(orgPath(namespaceId, orgId, "runs"), runId, "run.json");
+function readRunJson(runId: string): RunJson | null {
+  const runPath = join(config.runsDir, runId, "run.json");
   if (!existsSync(runPath)) return null;
   return JSON.parse(readFileSync(runPath, "utf-8")) as RunJson;
 }
@@ -124,34 +132,33 @@ function deriveRunDiagnostics(run: RunJson) {
   };
 }
 
-function findRunEvents(runId: string, namespaceId: string, orgId: string) {
-  const eventsDir = orgPath(namespaceId, orgId, "events");
+function findRunEvents(runId: string) {
+  const eventsDir = config.eventsDir;
   if (!existsSync(eventsDir)) return [];
 
   return readdirSync(eventsDir, { withFileTypes: true, encoding: "utf8" })
-    .filter((entry) => entry.isFile() && entry.name.includes(runId))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".event"))
     .slice(0, MAX_DIR_ENTRIES)
-    .map((entry) => {
+    .flatMap((entry) => {
       const eventPath = join(eventsDir, entry.name);
       const stat = statSync(eventPath);
-      let parsed: unknown = null;
       let content = "";
-      if (stat.size <= MAX_FILE_SIZE) {
-        content = readFileSync(eventPath, "utf-8");
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          parsed = null;
-        }
+      if (stat.size > MAX_FILE_SIZE) return [];
+      content = readFileSync(eventPath, "utf-8");
+      try {
+        const parsed = parseRunnerEvent(content);
+        if (parsed.runId !== runId) return [];
+        return [{
+          name: entry.name,
+          path: eventPath,
+          size: stat.size,
+          modifiedAt: stat.mtime.toISOString(),
+          content,
+          parsed,
+        }];
+      } catch {
+        return [];
       }
-      return {
-        name: entry.name,
-        path: eventPath,
-        size: stat.size,
-        modifiedAt: stat.mtime.toISOString(),
-        content,
-        parsed,
-      };
     });
 }
 
@@ -190,6 +197,9 @@ export async function GET(req: Request) {
   if (ctx instanceof NextResponse) return ctx;
 
   const { namespaceId, orgId } = ctx;
+  if (namespaceId !== config.namespaceId || orgId !== config.orgId) {
+    return new NextResponse("Runtime ops only supports the configured project scope", { status: 400 });
+  }
   const { searchParams } = new URL(req.url);
   const action = searchParams.get("action") || "read_file";
 
@@ -246,11 +256,11 @@ export async function GET(req: Request) {
   if (action === "get_run_state") {
     const runId = safeRunId(searchParams.get("runId"));
     if (!runId) return new NextResponse("Invalid runId", { status: 400 });
-    const run = readRunJson(runId, namespaceId, orgId);
+    const run = readRunJson(runId);
     if (!run) return new NextResponse("Run not found", { status: 404 });
     return NextResponse.json({
       runId,
-      path: join(orgPath(namespaceId, orgId, "runs"), runId, "run.json"),
+      path: join(config.runsDir, runId, "run.json"),
       run,
       diagnostics: deriveRunDiagnostics(run),
     });
@@ -259,7 +269,7 @@ export async function GET(req: Request) {
   if (action === "get_run_events") {
     const runId = safeRunId(searchParams.get("runId"));
     if (!runId) return new NextResponse("Invalid runId", { status: 400 });
-    return NextResponse.json({ runId, events: findRunEvents(runId, namespaceId, orgId) });
+    return NextResponse.json({ runId, events: findRunEvents(runId) });
   }
 
   if (action === "get_system_logs") {

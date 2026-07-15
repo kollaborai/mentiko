@@ -1,16 +1,24 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { execFile } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
 import {
   dispatchExternalEffects,
   drainExternalEffectsOutbox,
   drainRunnerV2ExternalEffects,
+  enqueueExternalEffectsOnce,
+  withExternalEffectsLock,
 } from "@/lib/runner-v2/external-effects";
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
 import { createNotification } from "@/lib/notifications/notification-server";
-import { taskGet, taskMergeMeta, taskUpdate } from "@/lib/tasks/task-store";
+import {
+  taskClaimMetadataKeyIfUnset,
+  taskGet,
+  taskMergeMeta,
+  taskUpdate,
+} from "@/lib/tasks/task-store";
+import { claimProcessIdentityHash } from "@/lib/runner-v2/file-claim";
 
 jest.mock("@/lib/webhooks/webhook-utils", () => ({
   fireWebhooks: jest.fn(() => Promise.resolve()),
@@ -26,6 +34,7 @@ jest.mock("@/lib/notifications/notification-server", () => ({
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskGet: jest.fn(() => ({ id: "TASK-1", status: "in_progress" })),
+  taskClaimMetadataKeyIfUnset: jest.fn(() => true),
   taskMergeMeta: jest.fn(),
   taskUpdate: jest.fn(),
 }));
@@ -47,9 +56,60 @@ function writeOutbox(dir: string, records: unknown[]) {
   return path;
 }
 
+const externalEffectsChildFixture = join(
+  __dirname,
+  "test-support",
+  "external-effects-child.fixture.ts",
+);
+const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+
+function spawnExternalEffectsFixture(input: {
+  mode: "hold" | "enqueue";
+  outboxPath: string;
+  artifactPath: string;
+  gatePath?: string;
+  effectId?: string;
+}): ChildProcess {
+  return spawn(process.execPath, [
+    jestBin,
+    "--runInBand",
+    "--testMatch",
+    "**/external-effects-child.fixture.ts",
+    "--runTestsByPath",
+    externalEffectsChildFixture,
+  ], {
+    cwd: process.cwd(),
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      EXTERNAL_EFFECTS_CHILD_MODE: input.mode,
+      EXTERNAL_EFFECTS_CHILD_OUTBOX: input.outboxPath,
+      EXTERNAL_EFFECTS_CHILD_ARTIFACT: input.artifactPath,
+      EXTERNAL_EFFECTS_CHILD_GATE: input.gatePath || "",
+      EXTERNAL_EFFECTS_CHILD_ID: input.effectId || "",
+    },
+  });
+}
+
+async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function waitForExit(child: ChildProcess): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+}
+
 describe("runner-v2 external effects dispatcher", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (taskClaimMetadataKeyIfUnset as jest.Mock).mockReturnValue(true);
   });
 
   it("dispatches supported notification and metadata webhook records", async () => {
@@ -87,6 +147,37 @@ describe("runner-v2 external effects dispatcher", () => {
     expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "build-chain", "completed", { runId: "run-123" });
     expect(result).toMatchObject({ handled: 2, dispatched: 2, skipped: 0, failed: 0 });
     expect(readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8")).toContain("\"status\":\"dispatched\"");
+  });
+
+  it("audits notification persistence failures as failed instead of dispatched", async () => {
+    (createNotification as jest.Mock).mockImplementationOnce(() => {
+      throw new Error("notification store write failed");
+    });
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [{
+      type: "notification",
+      idempotencyKey: "notification-write-failure",
+      status: "queued",
+      operation: {
+        type: "notification",
+        event: "chain-completed",
+        chainName: "Build Chain",
+        runId: "run-123",
+        idempotencyKey: "notification-write-failure",
+      },
+    }]);
+
+    const result = await dispatchExternalEffects({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(result).toMatchObject({ handled: 1, dispatched: 0, skipped: 0, failed: 1 });
+    const audit = readFileSync(join(dir, "external-effects.dispatch.jsonl"), "utf8");
+    expect(audit).toContain("\"status\":\"failed\"");
+    expect(audit).toContain("notification store write failed");
+    expect(audit).not.toContain("\"status\":\"dispatched\"");
   });
 
   it("does not derive metadata webhook chain ids from run-local chain snapshots", async () => {
@@ -174,6 +265,30 @@ describe("runner-v2 external effects dispatcher", () => {
     expect(result).toMatchObject({ handled: 2, dispatched: 2 });
   });
 
+  it("dispatches typed watchdog stalls as chain failures", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [{
+      type: "notification",
+      status: "queued",
+      operation: {
+        type: "notification",
+        event: "chain-stalled",
+        chainName: "Build Chain",
+        runId: "run-123",
+        reason: "no live session",
+      },
+    }]);
+
+    await dispatchExternalEffects({ outboxPath, namespaceId: "default", orgId: "default" });
+
+    expect(createNotification).toHaveBeenCalledWith("default", expect.objectContaining({
+      type: "chain_failed",
+      title: "Chain stalled",
+      message: "no live session",
+      metadata: expect.objectContaining({ runId: "run-123" }),
+    }));
+  });
+
   it("uses the tenant identity recorded on each queued record over the input default", async () => {
     const dir = tempDir();
     const outboxPath = writeOutbox(dir, [
@@ -248,6 +363,31 @@ describe("runner-v2 external effects dispatcher", () => {
 
     expect(fireWebhooks).toHaveBeenCalledWith("default", "default", "run-summary-generation", "completed");
     expect(result).toMatchObject({ handled: 1, dispatched: 1, skipped: 0, failed: 0 });
+  });
+
+  it("exposes a stable operation ID to at-least-once webhook consumers", async () => {
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [{
+      type: "webhook",
+      idempotencyKey: "effect-webhook-1",
+      status: "queued",
+      operation: {
+        type: "webhook",
+        event: "chain-completed",
+        chainId: "build-chain",
+        idempotencyKey: "effect-webhook-1",
+      },
+    }]);
+
+    await dispatchExternalEffects({ outboxPath, namespaceId: "default", orgId: "default" });
+
+    expect(fireWebhooks).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "build-chain",
+      "completed",
+      { idempotencyKey: "effect-webhook-1" },
+    );
   });
 
   it("skips a webhook event whose chain path cannot be resolved", async () => {
@@ -437,7 +577,103 @@ describe("runner-v2 external effects dispatcher", () => {
 describe("runner-v2 external effects drain", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (taskClaimMetadataKeyIfUnset as jest.Mock).mockReturnValue(true);
   });
+
+  it("serializes enqueue against claim rename under the shared lock", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    let blockedDrain: Awaited<ReturnType<typeof drainExternalEffectsOutbox>> | undefined;
+
+    await withExternalEffectsLock(outboxPath, async () => {
+      blockedDrain = await drainExternalEffectsOutbox({
+        outboxPath,
+        namespaceId: "default",
+        orgId: "default",
+      });
+      appendFileSync(outboxPath, `${JSON.stringify({
+        type: "notification",
+        idempotencyKey: "effect-locked",
+        status: "queued",
+        operation: {
+          type: "notification",
+          event: "chain-stalled",
+          chainName: "Build Chain",
+          runId: "run-locked",
+          idempotencyKey: "effect-locked",
+        },
+      })}\n`);
+    });
+
+    expect(blockedDrain).toMatchObject({ handled: 0, dispatched: 0 });
+    const drained = await drainExternalEffectsOutbox({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+    expect(drained).toMatchObject({ handled: 1, dispatched: 1 });
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits a bounded interval for a live external-effects lock holder", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    const readyPath = join(dir, "holder-ready");
+    const holder = spawnExternalEffectsFixture({
+      mode: "hold",
+      outboxPath,
+      artifactPath: readyPath,
+    });
+    await waitForFile(readyPath);
+
+    const queued = enqueueExternalEffectsOnce(outboxPath, [{
+      idempotencyKey: "effect-after-live-holder",
+      operation: {
+        type: "notification",
+        event: "chain-completed",
+        chainName: "Build Chain",
+        runId: "run-after-live-holder",
+      },
+    }]);
+
+    expect(await waitForExit(holder)).toBe(0);
+    expect(queued).toBe(1);
+    expect(readFileSync(outboxPath, "utf8")).toContain("effect-after-live-holder");
+  }, 10_000);
+
+  it("persists distinct effects from two concurrent enqueue processes", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    const gatePath = join(dir, "enqueue-go");
+    const firstReady = join(dir, "first-ready");
+    const secondReady = join(dir, "second-ready");
+    const first = spawnExternalEffectsFixture({
+      mode: "enqueue",
+      outboxPath,
+      artifactPath: firstReady,
+      gatePath,
+      effectId: "effect-concurrent-a",
+    });
+    const second = spawnExternalEffectsFixture({
+      mode: "enqueue",
+      outboxPath,
+      artifactPath: secondReady,
+      gatePath,
+      effectId: "effect-concurrent-b",
+    });
+    await Promise.all([waitForFile(firstReady), waitForFile(secondReady)]);
+    writeFileSync(gatePath, "go\n");
+
+    expect(await Promise.all([waitForExit(first), waitForExit(second)])).toEqual([0, 0]);
+    const records = readFileSync(outboxPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { idempotencyKey: string });
+    expect(records.map((record) => record.idempotencyKey).sort()).toEqual([
+      "effect-concurrent-a",
+      "effect-concurrent-b",
+    ]);
+  }, 10_000);
 
   it("consumes the outbox after dispatching every queued record", async () => {
     const dir = tempDir();
@@ -482,7 +718,7 @@ describe("runner-v2 external effects drain", () => {
   it("adopts a claim file orphaned by a crashed drain", async () => {
     const dir = tempDir();
     const outboxPath = join(dir, "external-effects.jsonl");
-    const orphanPath = `${outboxPath}.claim-999-1`;
+    const orphanPath = `${outboxPath}.claim-999999-1`;
     writeFileSync(orphanPath, JSON.stringify({
       type: "notification",
       status: "queued",
@@ -496,6 +732,129 @@ describe("runner-v2 external effects drain", () => {
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ handled: 1, dispatched: 1 });
     expect(existsSync(orphanPath)).toBe(false);
+  });
+
+  it("does not adopt a legacy orphan claim whose owner probe returns EPERM", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    const ownerPid = 999_998;
+    const claimPath = `${outboxPath}.claim-${ownerPid}-1`;
+    writeFileSync(claimPath, JSON.stringify({
+      type: "notification",
+      status: "queued",
+      operation: {
+        type: "notification",
+        event: "chain-completed",
+        chainName: "Build Chain",
+        runId: "run-eperm-owner",
+      },
+    }) + "\n");
+    const past = new Date(Date.now() - 10 * 60_000);
+    utimesSync(claimPath, past, past);
+    const actualKill = process.kill.bind(process);
+    const kill = jest.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === ownerPid) {
+        throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+      }
+      return actualKill(pid, signal);
+    });
+
+    try {
+      const result = await drainExternalEffectsOutbox({
+        outboxPath,
+        namespaceId: "default",
+        orgId: "default",
+      });
+      expect(result).toMatchObject({ handled: 0, dispatched: 0 });
+      expect(existsSync(claimPath)).toBe(true);
+      expect(createNotification).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it("adopts an identity-bearing claim after same-PID process reuse", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    const oldIdentityHash = claimProcessIdentityHash("old-process-start-identity");
+    const claimPath = `${outboxPath}.claim-${process.pid}-i${oldIdentityHash}-1-old`;
+    writeFileSync(claimPath, JSON.stringify({
+      type: "notification",
+      status: "queued",
+      operation: {
+        type: "notification",
+        event: "chain-completed",
+        chainName: "Build Chain",
+        runId: "run-reused-pid",
+      },
+    }) + "\n");
+    const past = new Date(Date.now() - 10 * 60_000);
+    utimesSync(claimPath, past, past);
+
+    const result = await drainExternalEffectsOutbox({
+      outboxPath,
+      namespaceId: "default",
+      orgId: "default",
+    });
+
+    expect(result).toMatchObject({ handled: 1, dispatched: 1 });
+    expect(existsSync(claimPath)).toBe(false);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips an already completed stable operation when adopting an orphan claim", async () => {
+    const dir = tempDir();
+    const outboxPath = join(dir, "external-effects.jsonl");
+    const orphanPath = `${outboxPath}.claim-999999-1`;
+    const idempotencyKey = "watchdog:run-123:run-stalled:notification:v1";
+    writeFileSync(orphanPath, `${JSON.stringify({
+      type: "notification",
+      idempotencyKey,
+      status: "queued",
+      operation: {
+        type: "notification",
+        event: "chain-stalled",
+        chainName: "Build Chain",
+        runId: "run-123",
+        idempotencyKey,
+      },
+    })}\n`);
+    writeFileSync(join(dir, "external-effects.dispatch.jsonl"), `${JSON.stringify({
+      type: "notification",
+      idempotencyKey,
+      status: "dispatched",
+      timestamp: new Date().toISOString(),
+    })}\n`);
+    const past = new Date(Date.now() - 10 * 60_000);
+    utimesSync(orphanPath, past, past);
+
+    const result = await drainExternalEffectsOutbox({ outboxPath, namespaceId: "default", orgId: "default" });
+
+    expect(result).toMatchObject({ handled: 1, dispatched: 0, skipped: 1 });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it("lets the task sink reject a stable operation already applied before audit", async () => {
+    (taskClaimMetadataKeyIfUnset as jest.Mock).mockReturnValueOnce(false);
+    const dir = tempDir();
+    const outboxPath = writeOutbox(dir, [{
+      type: "task-status",
+      idempotencyKey: "watchdog:run-123:task-status:v1",
+      status: "queued",
+      operation: {
+        type: "task-status",
+        status: "stopped",
+        taskId: "TASK-1",
+        runId: "run-123",
+        idempotencyKey: "watchdog:run-123:task-status:v1",
+      },
+    }]);
+
+    const result = await drainExternalEffectsOutbox({ outboxPath, namespaceId: "default", orgId: "default" });
+
+    expect(result).toMatchObject({ handled: 1, dispatched: 0, skipped: 1 });
+    expect(taskMergeMeta).not.toHaveBeenCalled();
+    expect(taskUpdate).not.toHaveBeenCalled();
   });
 
   it("sweeps the project state outbox and per-run state outboxes for the live path", async () => {

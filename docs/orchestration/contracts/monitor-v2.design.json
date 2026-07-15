@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-07",
   "migration_mode": "side-by-side",
-  "replaces": "the shell CHAIN agent monitor: the monitor-chain-agent function and its helpers in lib/agent-functions.sh (monitor-chain-agent at :919, monitor-agent-died, monitor-agent-stalled, ensure-event-file, durable AGENT_COMPLETE detection) + lib/monitor-completion.sh. NOTE: lib/mentiko-monitor.sh is the SEPARATE standalone 'mentiko monitor' CLI for manual monitoring, NOT the chain path (its own header says the chain path uses monitor-chain-agent); it is out of scope here unless a later pass unifies them.",
+  "replaces": "the shell CHAIN agent monitor: the monitor-chain-agent function and its remaining helpers in lib/agent-functions.sh (monitor-chain-agent, monitor-agent-died, monitor-agent-stalled, durable AGENT_COMPLETE detection) + lib/monitor-completion.sh. The old ensure-event-file success fallback has already been removed and is not a migration dependency. NOTE: lib/mentiko-monitor.sh is the SEPARATE standalone 'mentiko monitor' CLI for manual monitoring, NOT the chain path (its own header says the chain path uses monitor-chain-agent); it is out of scope here unless a later pass unifies them.",
   "preserves": "docs/orchestration/contracts/monitor.contract.json is the v1 behavior of record; every invariant and behavior there must survive the port unchanged unless explicitly superseded below",
   "flag": {
     "name": "MENTIKO_MONITOR_V2",

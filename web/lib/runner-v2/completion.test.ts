@@ -1,5 +1,23 @@
 import { agentOwnsEvent, findCompletionEvent, rejectCompletionEvent, sourceMatchesAgent } from "@/lib/runner-v2/completion";
-import { parseRunnerEvent } from "@/lib/runner-v2/events";
+import { parseRunnerEvent, serializeRunnerEvent } from "@/lib/runner-v2/events";
+
+function eventContent(input: {
+  event: string;
+  source: string;
+  runId: string;
+  processed?: boolean;
+  agent?: string;
+}): string {
+  const content = serializeRunnerEvent({
+    event: input.event,
+    source: input.source,
+    runId: input.runId,
+    timestamp: "2026-07-14T12:00:00.000Z",
+    processed: input.processed,
+    data: "",
+  });
+  return input.agent ? `${content}agent: ${input.agent}\n` : content;
+}
 
 describe("runner-v2 completion matcher", () => {
   const agent = { id: "writer", emits: "draft-ready", sessionPrefix: "content-writer" };
@@ -11,7 +29,7 @@ describe("runner-v2 completion matcher", () => {
       events: [
         // session-suffixed source (session prefix + run suffix) -- the
         // legitimate shell-parity prefix match, not an exact agent id/prefix.
-        "event: draft-ready\nsource: content-writer-run-123\nrun_id: run-123\nprocessed: false\n",
+        eventContent({ event: "draft-ready", source: "content-writer-run-123", runId: "run-123" }),
       ],
     });
 
@@ -21,7 +39,7 @@ describe("runner-v2 completion matcher", () => {
 
   it("rejects diagnostic events from monitor or completion handler", () => {
     for (const source of ["monitor", "chain-runner-complete"]) {
-      const event = parseRunnerEvent(`event: draft-ready\nsource: ${source}\nrun_id: run-123\nprocessed: false\n`);
+      const event = parseRunnerEvent(eventContent({ event: "draft-ready", source, runId: "run-123" }));
 
       expect(rejectCompletionEvent(event, agent, "draft-ready", "run-123")).toBe(
         "diagnostic source cannot complete agent",
@@ -34,7 +52,7 @@ describe("runner-v2 completion matcher", () => {
       agent,
       runId: "run-123",
       events: [
-        "event: draft-ready\nsource: writer\nrun_id: run-999\nprocessed: false\n",
+        eventContent({ event: "draft-ready", source: "writer", runId: "run-999" }),
       ],
     });
 
@@ -42,13 +60,13 @@ describe("runner-v2 completion matcher", () => {
   });
 
   it("rejects unexpected event names from the same agent", () => {
-    const event = parseRunnerEvent("event: review-ready\nsource: writer\nrun_id: run-123\nprocessed: false\n");
+    const event = parseRunnerEvent(eventContent({ event: "review-ready", source: "writer", runId: "run-123" }));
 
     expect(rejectCompletionEvent(event, agent, "draft-ready", "run-123")).toBe("event name mismatch");
   });
 
   it("rejects processed events", () => {
-    const event = parseRunnerEvent("event: draft-ready\nsource: writer\nrun_id: run-123\nprocessed: true\n");
+    const event = parseRunnerEvent(eventContent({ event: "draft-ready", source: "writer", runId: "run-123", processed: true }));
 
     expect(rejectCompletionEvent(event, agent, "draft-ready", "run-123")).toBe("event already processed");
   });
@@ -89,7 +107,7 @@ describe("runner-v2 completion matcher", () => {
     expect(findCompletionEvent({
       agent: { id: "writer" },
       runId: "run-123",
-      events: ["event: anything\nsource: writer\nrun_id: run-123\nprocessed: false\n"],
+      events: [eventContent({ event: "anything", source: "writer", runId: "run-123" })],
     })).toEqual({
       matched: false,
       reason: "agent has no declared emits event",
@@ -101,21 +119,21 @@ describe("agentOwnsEvent", () => {
   const owner = { id: "writer", sessionPrefix: "content-writer" };
 
   it("matches by exact agent id, session prefix, or session name -- never by substring", () => {
-    expect(agentOwnsEvent(parseRunnerEvent("event: draft-ready\nsource: writer\nrun_id: run-123\n"), owner)).toBe(true);
-    expect(agentOwnsEvent(parseRunnerEvent("event: draft-ready\nsource: content-writer\nrun_id: run-123\n"), owner)).toBe(true);
-    expect(agentOwnsEvent(parseRunnerEvent("event: draft-ready\nsource: writer-run-123\nrun_id: run-123\n"), owner, "writer-run-123")).toBe(true);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "draft-ready", source: "writer", runId: "run-123" })), owner)).toBe(true);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "draft-ready", source: "content-writer", runId: "run-123" })), owner)).toBe(true);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })), owner, "writer-run-123")).toBe(true);
     // session-suffixed source with no matching sessionName argument is NOT owned
     // (the old bug would have matched this via substring containment of "writer").
-    expect(agentOwnsEvent(parseRunnerEvent("event: draft-ready\nsource: writer-run-123\nrun_id: run-123\n"), owner)).toBe(false);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })), owner)).toBe(false);
   });
 
   it("does not let a prefix-colliding sibling agent id match in either direction (api vs api-reviewer)", () => {
-    expect(agentOwnsEvent(parseRunnerEvent("event: review-complete\nsource: api-reviewer\nrun_id: run-1\n"), { id: "api" })).toBe(false);
-    expect(agentOwnsEvent(parseRunnerEvent("event: build-complete\nsource: api\nrun_id: run-1\n"), { id: "api-reviewer" })).toBe(false);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "review-complete", source: "api-reviewer", runId: "run-1" })), { id: "api" })).toBe(false);
+    expect(agentOwnsEvent(parseRunnerEvent(eventContent({ event: "build-complete", source: "api", runId: "run-1" })), { id: "api-reviewer" })).toBe(false);
   });
 
   it("matches diagnostic events via the distinct agent: field", () => {
-    const event = parseRunnerEvent("event: agent-timeout\nsource: monitor\nagent: writer\nrun_id: run-123\n");
+    const event = parseRunnerEvent(eventContent({ event: "agent-timeout", source: "monitor", runId: "run-123", agent: "writer" }));
     expect(agentOwnsEvent(event, { id: "writer" })).toBe(true);
   });
 });

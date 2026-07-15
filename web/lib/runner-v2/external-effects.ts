@@ -1,15 +1,29 @@
 import { basename, dirname, join } from "path";
-import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "fs";
 import { execFile } from "child_process";
+import { createHash } from "crypto";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { fireWebhooks, type WebhookEvent } from "@/lib/webhooks/webhook-utils";
 import { postOutboundWebhook } from "@/lib/webhooks/outbound-webhook-delivery";
-import { taskGet, taskMergeMeta, taskUpdate } from "@/lib/tasks/task-store";
+import {
+  taskClaimMetadataKeyIfUnset,
+  taskGet,
+  taskMergeMeta,
+  taskUpdate,
+} from "@/lib/tasks/task-store";
 import config, { orgPath } from "@/lib/config";
 import type { AdapterOperation } from "@/lib/runner-v2/adapters";
+import {
+  claimProcessIdentity,
+  claimProcessIdentityHash,
+  claimProcessIsAlive,
+  ExclusiveFileClaimBusyError,
+  withExclusiveFileClaim,
+} from "@/lib/runner-v2/file-claim";
 
 type QueuedExternalEffect = {
   type: AdapterOperation["type"];
+  idempotencyKey?: string;
   status?: string;
   operation?: AdapterOperation;
   namespaceId?: string;
@@ -43,6 +57,7 @@ export interface RunnerV2ExternalEffectsSweepResult extends ExternalEffectsDrain
 
 type DispatchAuditRecord = {
   type: string;
+  idempotencyKey?: string;
   status: "dispatched" | "skipped" | "failed";
   operation?: AdapterOperation;
   reason?: string;
@@ -55,19 +70,69 @@ const DEFAULT_MAX_DISPATCH_ATTEMPTS = 3;
 const ORPHANED_CLAIM_MIN_AGE_MS = 5 * 60_000;
 const PLUGIN_DISPATCH_TIMEOUT_MS = 30_000;
 
+export interface ExternalEffectEnqueueRecord {
+  idempotencyKey: string;
+  operation: AdapterOperation;
+  namespaceId?: string;
+  orgId?: string;
+  reason?: string;
+  timestamp?: string;
+}
+
+export function externalEffectsLockPath(outboxPath: string): string {
+  return join(dirname(outboxPath), ".external-effects.lock");
+}
+
+export function withExternalEffectsLock<T>(outboxPath: string, fn: () => T): T {
+  return withExclusiveFileClaim(externalEffectsLockPath(outboxPath), fn);
+}
+
+export function enqueueExternalEffectsOnce(
+  outboxPath: string,
+  records: ExternalEffectEnqueueRecord[],
+): number {
+  mkdirSync(dirname(outboxPath), { recursive: true });
+  return withExternalEffectsLock(outboxPath, () => {
+    const knownIds = knownExternalEffectIds(outboxPath);
+    const missing = records.filter((record) => !knownIds.has(record.idempotencyKey));
+    if (missing.length === 0) return 0;
+    appendFileSync(outboxPath, missing.map((record) => JSON.stringify({
+      type: record.operation.type,
+      idempotencyKey: record.idempotencyKey,
+      status: "queued",
+      operation: { ...record.operation, idempotencyKey: record.idempotencyKey },
+      namespaceId: record.namespaceId,
+      orgId: record.orgId,
+      reason: record.reason || "typed runner queued durable external effect",
+      timestamp: record.timestamp || new Date().toISOString(),
+    })).join("\n") + "\n");
+    return missing.length;
+  });
+}
+
 export async function dispatchExternalEffects(input: ExternalEffectsDispatchInput): Promise<ExternalEffectsDispatchResult> {
   const auditPath = input.auditPath || join(dirname(input.outboxPath), "external-effects.dispatch.jsonl");
   const result: ExternalEffectsDispatchResult = { handled: 0, dispatched: 0, skipped: 0, failed: 0 };
+  const completedIds = completedExternalEffectIds(auditPath);
 
   for (const record of readQueuedEffects(input.outboxPath)) {
-    const operation = record.operation;
-    if (!operation) continue;
+    const queuedOperation = record.operation;
+    if (!queuedOperation) continue;
     result.handled += 1;
+    const idempotencyKey = externalEffectId(record);
+    const operation = idempotencyKey
+      ? { ...queuedOperation, idempotencyKey } as AdapterOperation
+      : queuedOperation;
+    if (idempotencyKey && completedIds.has(idempotencyKey)) {
+      result.skipped += 1;
+      continue;
+    }
 
     try {
       const dispatch = await dispatchOperation(operation, dispatchContextForRecord(record, input));
       appendJsonl(auditPath, {
         type: operation.type,
+        idempotencyKey,
         status: dispatch.status,
         operation,
         reason: dispatch.reason,
@@ -78,10 +143,12 @@ export async function dispatchExternalEffects(input: ExternalEffectsDispatchInpu
       } else {
         result.skipped += 1;
       }
+      if (idempotencyKey) completedIds.add(idempotencyKey);
     } catch (error) {
       result.failed += 1;
       appendJsonl(auditPath, {
         type: operation.type,
+        idempotencyKey,
         status: "failed",
         operation,
         error: error instanceof Error ? error.message : String(error),
@@ -106,16 +173,24 @@ export interface ExternalEffectsDrainInput extends ExternalEffectsDispatchInput 
  */
 export async function drainExternalEffectsOutbox(input: ExternalEffectsDrainInput): Promise<ExternalEffectsDrainResult> {
   const result: ExternalEffectsDrainResult = { handled: 0, dispatched: 0, skipped: 0, failed: 0, requeued: 0 };
-  const claimPaths = adoptOrphanedClaims(input.outboxPath, input.now);
-
-  if (existsSync(input.outboxPath)) {
-    const claimPath = `${input.outboxPath}.claim-${process.pid}-${Date.now()}`;
-    try {
-      renameSync(input.outboxPath, claimPath);
-      claimPaths.push(claimPath);
-    } catch {
-      // another consumer claimed it between existsSync and rename; nothing to do
-    }
+  let claimPaths: string[];
+  try {
+    claimPaths = withExternalEffectsLock(input.outboxPath, () => {
+      const paths = adoptOrphanedClaims(input.outboxPath, input.now);
+      if (existsSync(input.outboxPath)) {
+        const claimPath = freshClaimPath(input.outboxPath);
+        try {
+          renameSync(input.outboxPath, claimPath);
+          paths.push(claimPath);
+        } catch {
+          // another consumer claimed it between existsSync and rename
+        }
+      }
+      return paths;
+    });
+  } catch (error) {
+    if (error instanceof ExclusiveFileClaimBusyError) return result;
+    throw error;
   }
 
   for (const claimPath of claimPaths) {
@@ -211,17 +286,27 @@ async function drainClaimedFile(claimPath: string, input: ExternalEffectsDrainIn
   const auditPath = input.auditPath || join(dirname(input.outboxPath), "external-effects.dispatch.jsonl");
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_DISPATCH_ATTEMPTS;
   const result: ExternalEffectsDrainResult = { handled: 0, dispatched: 0, skipped: 0, failed: 0, requeued: 0 };
+  const completedIds = completedExternalEffectIds(auditPath);
 
   for (const record of readQueuedEffects(claimPath)) {
-    const operation = record.operation;
-    if (!operation) continue;
+    const queuedOperation = record.operation;
+    if (!queuedOperation) continue;
     result.handled += 1;
+    const idempotencyKey = externalEffectId(record);
+    const operation = idempotencyKey
+      ? { ...queuedOperation, idempotencyKey } as AdapterOperation
+      : queuedOperation;
+    if (idempotencyKey && completedIds.has(idempotencyKey)) {
+      result.skipped += 1;
+      continue;
+    }
     const attempt = (record.attempts ?? 0) + 1;
 
     try {
       const dispatch = await dispatchOperation(operation, dispatchContextForRecord(record, input));
       appendJsonl(auditPath, {
         type: operation.type,
+        idempotencyKey,
         status: dispatch.status,
         operation,
         reason: dispatch.reason,
@@ -233,6 +318,7 @@ async function drainClaimedFile(claimPath: string, input: ExternalEffectsDrainIn
       } else {
         result.skipped += 1;
       }
+      if (idempotencyKey) completedIds.add(idempotencyKey);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (attempt < maxAttempts) {
@@ -244,6 +330,7 @@ async function drainClaimedFile(claimPath: string, input: ExternalEffectsDrainIn
         });
         appendJsonl(auditPath, {
           type: operation.type,
+          idempotencyKey,
           status: "failed",
           operation,
           error: message,
@@ -255,6 +342,7 @@ async function drainClaimedFile(claimPath: string, input: ExternalEffectsDrainIn
         result.failed += 1;
         appendJsonl(auditPath, {
           type: operation.type,
+          idempotencyKey,
           status: "failed",
           operation,
           error: message,
@@ -280,12 +368,46 @@ function adoptOrphanedClaims(outboxPath: string, now?: Date): string[] {
     if (!entry.startsWith(prefix)) continue;
     const path = join(dir, entry);
     try {
-      if (statSync(path).mtimeMs <= cutoff) adopted.push(path);
+      const owner = claimOwner(entry, prefix);
+      if (owner?.pid && claimProcessIsAlive(owner.pid)) {
+        // Legacy claim names have no start identity, so a live/EPERM PID is
+        // conservatively authoritative. New names can prove PID reuse.
+        if (!owner.processIdentityHash) continue;
+        const currentIdentity = claimProcessIdentity(owner.pid);
+        if (
+          currentIdentity === undefined
+          || claimProcessIdentityHash(currentIdentity) === owner.processIdentityHash
+        ) continue;
+      }
+      if (statSync(path).mtimeMs > cutoff) continue;
+      const freshPath = freshClaimPath(outboxPath);
+      renameSync(path, freshPath);
+      adopted.push(freshPath);
     } catch {
-      // claim removed by its owner between readdir and stat
+      // claim removed or adopted by another consumer
     }
   }
   return adopted;
+}
+
+function freshClaimPath(outboxPath: string): string {
+  const identity = claimProcessIdentity(process.pid);
+  const identityPart = identity ? `i${claimProcessIdentityHash(identity)}` : "u";
+  return `${outboxPath}.claim-${process.pid}-${identityPart}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function claimOwner(
+  entry: string,
+  prefix: string,
+): { pid: number; processIdentityHash?: string } | undefined {
+  const parts = entry.slice(prefix.length).split("-");
+  const pid = Number.parseInt(parts[0] || "", 10);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  const identity = /^i([a-f0-9]{16})$/.exec(parts[1] || "");
+  return {
+    pid,
+    ...(identity ? { processIdentityHash: identity[1] } : {}),
+  };
 }
 
 function hasPendingOutboxWork(outboxPath: string): boolean {
@@ -320,7 +442,10 @@ async function dispatchOperation(
   context: OperationDispatchContext,
 ): Promise<{ status: "dispatched" | "skipped"; reason?: string }> {
   if (operation.type === "notification") {
-    createNotification(context.namespaceId, notificationFromOperation(operation));
+    createNotification(context.namespaceId, {
+      ...notificationFromOperation(operation),
+      idempotencyKey: operation.idempotencyKey,
+    });
     return { status: "dispatched" };
   }
 
@@ -328,6 +453,7 @@ async function dispatchOperation(
     const chainId = operation.chainId || persistentChainIdFromPath(operation.chainPath) || operation.chainName;
     await fireWebhooks(context.namespaceId, context.orgId, chainId, normalizeWebhookEvent(operation.event), {
       runId: operation.runId,
+      ...(operation.idempotencyKey ? { idempotencyKey: operation.idempotencyKey } : {}),
     });
     return { status: "dispatched" };
   }
@@ -340,10 +466,33 @@ async function dispatchOperation(
     if (!task) {
       return { status: "skipped", reason: `task not found: ${operation.taskId}` };
     }
-    taskMergeMeta(context.orgId, operation.taskId, {
+    const metadata = {
       last_run_status: operation.status,
       ...(operation.runId ? { last_run_id: operation.runId } : {}),
-    }, context.namespaceId);
+    };
+    if (operation.idempotencyKey) {
+      const claimKey = `runner_v2_external_effect_${stableKey(operation.idempotencyKey)}`;
+      const taskMetadata = task.metadata && typeof task.metadata === "object"
+        ? task.metadata as Record<string, unknown>
+        : {};
+      if (taskMetadata[claimKey] === operation.idempotencyKey) {
+        return { status: "skipped", reason: "task-status operation already applied" };
+      }
+      // Reopen before claiming the metadata ID. If the worker dies between
+      // these writes, retry sees no claim and finishes the metadata update;
+      // claiming first could permanently suppress the still-missing reopen.
+      if (operation.status === "completed" && task.status !== "open") {
+        taskUpdate(context.orgId, operation.taskId, { status: "open" }, context.namespaceId);
+      }
+      const claimed = taskClaimMetadataKeyIfUnset(context.orgId, operation.taskId, claimKey, {
+        ...metadata,
+        [claimKey]: operation.idempotencyKey,
+      }, context.namespaceId);
+      if (!claimed) return { status: "skipped", reason: "task-status operation already applied" };
+      return { status: "dispatched" };
+    } else {
+      taskMergeMeta(context.orgId, operation.taskId, metadata, context.namespaceId);
+    }
     // shell parity (run-lib.sh update-task-from-run): a completed run returns
     // its task to the open column for triage.
     if (operation.status === "completed" && task.status !== "open") {
@@ -357,7 +506,14 @@ async function dispatchOperation(
     if (!chainId) {
       return { status: "skipped", reason: "webhook operation missing chain path" };
     }
-    await fireWebhooks(context.namespaceId, context.orgId, chainId, normalizeWebhookEvent(operation.event));
+    const event = normalizeWebhookEvent(operation.event);
+    if (operation.idempotencyKey) {
+      await fireWebhooks(context.namespaceId, context.orgId, chainId, event, {
+        idempotencyKey: operation.idempotencyKey,
+      });
+    } else {
+      await fireWebhooks(context.namespaceId, context.orgId, chainId, event);
+    }
     return { status: "dispatched" };
   }
 
@@ -377,7 +533,11 @@ async function dispatchOperation(
     }
     const response = await postOutboundWebhook(operation.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "User-Agent": "mentiko/1.0" },
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "mentiko/1.0",
+        ...(operation.idempotencyKey ? { "Idempotency-Key": operation.idempotencyKey } : {}),
+      },
       body: JSON.stringify(operation.payload),
       timeoutMs: 10_000,
     });
@@ -423,6 +583,9 @@ function runPluginsViaShell(
           NAMESPACE_ID: context.namespaceId,
           ORG_ID: context.orgId,
           MENTIKO_ORG_ROOT: orgPath(context.namespaceId, context.orgId),
+          ...(operation.idempotencyKey
+            ? { MENTIKO_EXTERNAL_EFFECT_ID: operation.idempotencyKey }
+            : {}),
         },
       },
       (error, _stdout, stderr) => {
@@ -443,7 +606,8 @@ function notificationFromOperation(operation: Extract<AdapterOperation, { type: 
   metadata: Record<string, unknown>;
 } {
   const chainName = operation.chainName || "chain";
-  const failed = operation.event.includes("failed") || operation.event.includes("stopped");
+  const stalled = operation.event.includes("stalled");
+  const failed = stalled || operation.event.includes("failed") || operation.event.includes("stopped");
   // agent-level events keep agent typing (dispatch route parity:
   // agent-completed -> agent_complete, agent-failed -> agent_error) so a
   // mid-chain agent completion never reads as a chain-level notification.
@@ -462,7 +626,7 @@ function notificationFromOperation(operation: Extract<AdapterOperation, { type: 
   }
   return {
     type: failed ? "chain_failed" : "chain_complete",
-    title: failed ? "Chain failed" : "Chain completed",
+    title: stalled ? "Chain stalled" : failed ? "Chain failed" : "Chain completed",
     message: operation.reason || `${chainName} ${failed ? "failed" : "completed"}`,
     metadata: {
       chainId: operation.chainName,
@@ -490,6 +654,68 @@ function chainIdFromPath(chainPath?: string): string | undefined {
 function persistentChainIdFromPath(chainPath?: string): string | undefined {
   const id = chainIdFromPath(chainPath);
   return id && !id.startsWith("run-") ? id : undefined;
+}
+
+function knownExternalEffectIds(outboxPath: string): Set<string> {
+  const dir = dirname(outboxPath);
+  const paths = [outboxPath, join(dir, "external-effects.dispatch.jsonl")];
+  if (existsSync(dir)) {
+    const prefix = `${basename(outboxPath)}.claim-`;
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith(prefix)) paths.push(join(dir, entry));
+    }
+  }
+  const ids = new Set<string>();
+  for (const path of paths) {
+    for (const record of readJsonlRecords(path)) {
+      const id = externalEffectId(record as QueuedExternalEffect);
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function completedExternalEffectIds(auditPath: string): Set<string> {
+  const ids = new Set<string>();
+  for (const record of readJsonlRecords(auditPath)) {
+    if (record.status !== "dispatched" && record.status !== "skipped") continue;
+    const id = externalEffectId(record as QueuedExternalEffect);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function externalEffectId(record: QueuedExternalEffect): string | undefined {
+  if (typeof record.idempotencyKey === "string" && record.idempotencyKey) {
+    return record.idempotencyKey;
+  }
+  const operation = record.operation;
+  return operation && typeof operation.idempotencyKey === "string" && operation.idempotencyKey
+    ? operation.idempotencyKey
+    : undefined;
+}
+
+function readJsonlRecords(path: string): Array<Record<string, unknown>> {
+  if (!existsSync(path)) return [];
+  try {
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          const value = JSON.parse(line);
+          return value && typeof value === "object" && !Array.isArray(value) ? [value] : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+}
+
+function stableKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }
 
 function readQueuedEffects(path: string): QueuedExternalEffect[] {

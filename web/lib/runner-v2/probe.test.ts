@@ -52,6 +52,7 @@ describe("runner-v2 synthetic probe", () => {
     const dir = runDir();
     const result = runSyntheticRunnerV2Probe({
       runDir: dir,
+      eventsDir: join(dir, "events"),
       env: { MENTIKO_RUNNER_V2: "1" },
     });
 
@@ -63,13 +64,13 @@ describe("runner-v2 synthetic probe", () => {
         effects: [{ type: "event-side-effects" }],
         launches: [{
           kind: "single",
-          command: expect.stringContaining("--start 'reviewer'"),
+          command: expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/),
           env: { MENTIKO_RUN_ID: "run-probe", MENTIKO_RUNNER_V2: "1" },
         }],
       },
       adapter: {
         effectsApplied: ["event-side-effects"],
-        launchesStarted: [{ command: expect.stringContaining("--start 'reviewer'"), pid: undefined }],
+        launchesStarted: [{ command: expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/), pid: undefined }],
       },
     });
     if (result.status !== "ok") {
@@ -90,6 +91,7 @@ describe("runner-v2 synthetic probe", () => {
     const dir = runDir();
     const result = runSyntheticRunnerV2Probe({
       runDir: dir,
+      eventsDir: join(dir, "events"),
       env: { MENTIKO_RUNNER_V2: "1" },
       dryRun: false,
     });
@@ -98,13 +100,13 @@ describe("runner-v2 synthetic probe", () => {
       status: "ok",
       mode: "live",
       adapter: {
-        launchesStarted: [{ command: expect.stringContaining("--start 'reviewer'"), pid: 4242 }],
+        launchesStarted: [{ command: expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/), pid: 4242 }],
       },
     });
     expect(readFileSync(join(dir, "events", "run-probe-writer-draft-ready.event"), "utf8")).toContain("processed: true");
     expect(spawn).toHaveBeenCalledWith(
       "/bin/bash",
-      ["-lc", expect.stringContaining("--start 'reviewer'")],
+      ["-lc", expect.stringMatching(/runner-v2-launch-agent.*'reviewer'/)],
       expect.objectContaining({
         detached: true,
       }),
@@ -115,6 +117,7 @@ describe("runner-v2 synthetic probe", () => {
     const dir = runDir();
     const result = await runSyntheticRunnerV2ProbeWithDispatch({
       runDir: dir,
+      eventsDir: join(dir, "events"),
       env: { MENTIKO_RUNNER_V2: "1" },
       dryRun: false,
       dispatchExternalEffects: true,

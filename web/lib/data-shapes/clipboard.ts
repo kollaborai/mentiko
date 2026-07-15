@@ -48,10 +48,12 @@ export function buildDataShapeClipboardPayload(shape: RuntimeDataShape) {
         statusMeaning: statusMeaning(evidence.status),
         artifactCount: evidence.artifactCount,
         recordCount: evidence.recordCount,
+        contractValidated: evidence.contractValidated,
         schemaValidated: evidence.schemaValidated,
         validCount: evidence.validCount,
         invalidCount: evidence.invalidCount,
         parseErrorCount: evidence.parseErrorCount,
+        validationLayers: evidence.validationLayers,
         samplePaths: evidence.samplePaths,
         fields: evidence.fields.map((field) => ({
           path: field.path,

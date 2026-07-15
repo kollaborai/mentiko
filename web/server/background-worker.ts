@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import {
-  clearBackgroundWorkerPid,
-  writeBackgroundWorkerPid,
+  captureBackgroundWorkerOwner,
+  commitStoppedBackgroundWorkerState,
+  registerBackgroundWorker,
   writeBackgroundWorkerStatusFile,
 } from "../lib/system/background-worker-state";
 import { reconcileOrphanedRuns } from "../lib/runs/run-reconciler";
@@ -17,18 +18,28 @@ import {
   startAutoRunService,
   stopAutoRunService,
 } from "../lib/runs/auto-run-service";
+import {
+  getChainWatcherServiceStatus,
+  startChainWatcherService,
+  stopChainWatcherService,
+} from "../lib/runner-v2/chain-watcher-service";
+import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
+import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;
 const EXTERNAL_DRAIN_INTERVAL_MS = 15_000;
+const WATCHDOG_INTERVAL_MS = 60_000;
 
 let reconcileInterval: ReturnType<typeof setInterval> | null = null;
 let externalDrainInterval: ReturnType<typeof setInterval> | null = null;
+let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-let stopping = false;
 let externalDrainInFlight = false;
+let watchdogInFlight = false;
 
 const startedAt = new Date().toISOString();
+const workerOwner = captureBackgroundWorkerOwner(process.pid);
 const reconcilerState: {
   lastRun?: string;
   lastCleaned?: number;
@@ -39,14 +50,22 @@ const externalDrainState: {
   lastDispatched?: number;
   note?: string;
 } = {};
+const watchdogState: {
+  lastCheck?: string;
+  checkCount: number;
+  lastStalled?: number;
+  transportAvailable?: boolean;
+  lastError?: string;
+} = { checkCount: 0 };
 
 function currentStatus(note?: string) {
   const scheduler = getSchedulerStatus();
   const autoRun = getAutoRunServiceStatus();
+  const chainWatcher = getChainWatcherServiceStatus();
   const uptime = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
 
   return {
-    status: stopping ? "stopped" as const : "running" as const,
+    status: shutdownController.isStopping() ? "stopped" as const : "running" as const,
     pid: process.pid,
     startedAt,
     uptime,
@@ -61,6 +80,21 @@ function currentStatus(note?: string) {
       lastTriggered: autoRun.lastTriggered,
       lastError: autoRun.lastError,
     },
+    chainWatcher: {
+      status: chainWatcher.status,
+      startedAt: chainWatcher.startedAt,
+      lastCheck: chainWatcher.lastCheck,
+      checkCount: chainWatcher.checkCount,
+      lastError: chainWatcher.lastError,
+    },
+    watchdog: {
+      status: shutdownController.isStopping() ? "stopped" as const : "running" as const,
+      lastCheck: watchdogState.lastCheck,
+      checkCount: watchdogState.checkCount,
+      lastStalled: watchdogState.lastStalled,
+      transportAvailable: watchdogState.transportAvailable,
+      lastError: watchdogState.lastError,
+    },
     lastExternalDrain: externalDrainState.lastRun,
     lastExternalDispatched: externalDrainState.lastDispatched,
     note: note || reconcilerState.note || externalDrainState.note,
@@ -68,7 +102,7 @@ function currentStatus(note?: string) {
 }
 
 function persistStatus(note?: string) {
-  writeBackgroundWorkerStatusFile(currentStatus(note));
+  writeBackgroundWorkerStatusFile(workerOwner, currentStatus(note));
 }
 
 async function runReconciler(label: string) {
@@ -88,6 +122,40 @@ async function runReconciler(label: string) {
     reconcilerState.note = err instanceof Error ? err.message : String(err);
     console.warn(`[worker] reconciler ${label} failed:`, err);
   } finally {
+    persistStatus();
+  }
+}
+
+/**
+ * Recover stalled runs from the same long-lived TypeScript worker that owns
+ * scheduling and event-triggered launches. PTY observation failure is surfaced
+ * in status and the watchdog itself fails closed without mutating runs.
+ */
+async function runWatchdog(label: string) {
+  if (watchdogInFlight) return;
+  watchdogInFlight = true;
+  try {
+    const result = await runTypedWatchdogScan();
+    watchdogState.lastCheck = new Date().toISOString();
+    watchdogState.checkCount += 1;
+    watchdogState.lastStalled = result.stalled.length;
+    watchdogState.transportAvailable = result.transportAvailable;
+    watchdogState.lastError = result.errors.length > 0 ? result.errors.join("; ") : undefined;
+
+    if (result.stalled.length > 0 || result.errors.length > 0) {
+      console.log(
+        `[worker] watchdog ${label}: ${result.stalled.length} stalled, `
+        + `${result.sessionsRemoved.length + result.orphanSessionsRemoved.length} sessions removed, `
+        + `${result.errors.length} errors`,
+      );
+    }
+  } catch (err) {
+    watchdogState.lastCheck = new Date().toISOString();
+    watchdogState.checkCount += 1;
+    watchdogState.lastError = err instanceof Error ? err.message : String(err);
+    console.warn(`[worker] watchdog ${label} failed:`, err);
+  } finally {
+    watchdogInFlight = false;
     persistStatus();
   }
 }
@@ -125,15 +193,22 @@ async function runExternalDrain(label: string) {
 }
 
 async function start() {
-  writeBackgroundWorkerPid(process.pid);
+  registerBackgroundWorker(workerOwner);
   persistStatus("worker booting");
 
   startScheduler();
   startAutoRunService();
-  persistStatus("scheduler + auto-run started");
+  startChainWatcherService({
+    onFatalError: (error) => {
+      console.error("[worker] chain watcher failed; requesting supervised restart:", error);
+      void shutdown("chainWatcherFailure", 1);
+    },
+  });
+  persistStatus("scheduler + auto-run + chain watcher started");
 
   await new Promise((resolve) => setTimeout(resolve, RECONCILE_STARTUP_DELAY_MS));
   await runReconciler("startup");
+  await runWatchdog("startup");
   await runExternalDrain("startup");
 
   reconcileInterval = setInterval(() => {
@@ -144,6 +219,10 @@ async function start() {
     void runExternalDrain("periodic");
   }, EXTERNAL_DRAIN_INTERVAL_MS);
 
+  watchdogInterval = setInterval(() => {
+    void runWatchdog("periodic");
+  }, WATCHDOG_INTERVAL_MS);
+
   heartbeatInterval = setInterval(() => {
     persistStatus();
   }, 5000);
@@ -151,10 +230,7 @@ async function start() {
   console.log("[worker] background worker started");
 }
 
-function shutdown(signal: string) {
-  if (stopping) return;
-  stopping = true;
-
+async function stopWorkerServices() {
   if (reconcileInterval) {
     clearInterval(reconcileInterval);
     reconcileInterval = null;
@@ -163,39 +239,62 @@ function shutdown(signal: string) {
     clearInterval(externalDrainInterval);
     externalDrainInterval = null;
   }
+  if (watchdogInterval) {
+    clearInterval(watchdogInterval);
+    watchdogInterval = null;
+  }
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
 
-  const finalStatus = {
-    ...currentStatus(`worker stopped (${signal})`),
-    status: "stopped" as const,
-    pid: undefined,
-  };
-
-  stopScheduler();
-  stopAutoRunService();
-  writeBackgroundWorkerStatusFile(finalStatus);
-  clearBackgroundWorkerPid();
-
-  setTimeout(() => process.exit(0), 0);
+  const failures: unknown[] = [];
+  try { stopScheduler(); } catch (error) { failures.push(error); }
+  try { stopAutoRunService(); } catch (error) { failures.push(error); }
+  try { await stopChainWatcherService(); } catch (error) { failures.push(error); }
+  if (failures.length > 0) throw failures[0];
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+const shutdownController = createBackgroundWorkerShutdown({
+  stop: stopWorkerServices,
+  finalize: ({ signal }) => {
+    const finalStatus = {
+      ...currentStatus(`worker stopped (${signal})`),
+      status: "stopped" as const,
+      pid: undefined,
+    };
+    commitStoppedBackgroundWorkerState(
+      workerOwner,
+      finalStatus,
+    );
+  },
+  exit: (exitCode) => {
+    setTimeout(() => process.exit(Math.max(exitCode, shutdownController.exitCode())), 0);
+  },
+  onError: (error) => {
+    console.error("[worker] shutdown error:", error);
+  },
+});
+
+function shutdown(signal: string, exitCode = 0): Promise<void> {
+  return shutdownController.request(signal, exitCode);
+}
+
+process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+process.on("SIGINT", () => { void shutdown("SIGINT"); });
 process.on("uncaughtException", (err) => {
   console.error("[worker] uncaught exception:", err);
   persistStatus(err instanceof Error ? err.message : String(err));
-  shutdown("uncaughtException");
+  void shutdown("uncaughtException", 1);
 });
 process.on("unhandledRejection", (err) => {
   console.error("[worker] unhandled rejection:", err);
   persistStatus(err instanceof Error ? err.message : String(err));
+  void shutdown("unhandledRejection", 1);
 });
 
 void start().catch((err) => {
   console.error("[worker] failed to start:", err);
   persistStatus(err instanceof Error ? err.message : String(err));
-  shutdown("startupFailure");
+  void shutdown("startupFailure", 1);
 });
