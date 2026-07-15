@@ -322,12 +322,13 @@ function ensureDirectory(path: string, label: string): string {
 function canonicalizeTrustedSystemAlias(path: string): string {
   // These are macOS-owned root aliases. Only normalize this fixed allow-list;
   // a configured artifact/capture directory may not use a caller-owned link.
+  const normalized = resolve(path);
   for (const alias of ["/tmp", "/var", "/etc"]) {
-    if (path !== alias && !path.startsWith(`${alias}/`)) continue;
+    if (normalized !== alias && !normalized.startsWith(`${alias}/`)) continue;
     const canonical = realpathSync(alias);
-    return path === alias ? canonical : join(canonical, path.slice(alias.length + 1));
+    return normalized === alias ? canonical : join(canonical, normalized.slice(alias.length + 1));
   }
-  return path;
+  return normalized;
 }
 
 /** Reject a symlink at every existing component, before mkdir can follow it. */
