@@ -48,6 +48,17 @@ describe("runner-v2 routing decision", () => {
     });
   });
 
+  it("normalizes a self-referential fan-in into one ordinary launch", () => {
+    expect(decideNextRoute({
+      branches: { done: { fan_out: ["verifier"], fan_in: "verifier", wait_for: "all" } },
+      agents: [{ id: "verifier" }],
+    }, "done")).toEqual({
+      action: "launch",
+      agentIds: ["verifier"],
+      reason: "branch fan-out",
+    });
+  });
+
   it("falls back to trigger lookup when no branch exists", () => {
     expect(decideNextRoute({
       agents: [

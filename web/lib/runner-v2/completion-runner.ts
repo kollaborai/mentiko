@@ -281,7 +281,11 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     now: input.now,
     onMutation: input.onRunMutation,
   });
-  if (input.fanGroup) {
+  // Older generated chains may have a one-member fan-out whose fan-in names
+  // that same member. Do not short-circuit normal completion into a second
+  // launch; the fan-group planner marks it complete without a launch and the
+  // ordinary route below performs terminal completion or the real next route.
+  if (input.fanGroup && !isSelfReferentialFanIn(input.fanGroup, input.agent.id)) {
     return {
       action: "fan-group-member",
       event: match.event,
@@ -440,4 +444,8 @@ function planFanGroupCompletion(input: CompleteAgentInput, status: "complete" | 
     agentId: input.agent.id,
     status,
   });
+}
+
+function isSelfReferentialFanIn(group: FanGroupState, agentId: string): boolean {
+  return group.fanInAgent === agentId && group.fanOutAgents.includes(agentId);
 }

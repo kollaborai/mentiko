@@ -394,6 +394,38 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
+  it("treats a completed self-referential fan-in member as ordinary completion", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { agents: [{ id: "writer", emits: "draft-ready" }] },
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
+      fanGroup: createFanGroupState({
+        id: "legacy-self-join",
+        event: "draft-ready",
+        fanOutAgents: ["writer"],
+        fanInAgent: "writer",
+        waitFor: "all",
+        runId: "run-123",
+      }),
+      now: new Date("2026-07-15T17:46:07.399Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "route",
+      route: { action: "wait", reason: "no downstream target" },
+      fanGroup: {
+        claimed: false,
+        group: { status: "complete", members: { writer: "complete" } },
+      },
+    });
+  });
+
   it("marks agent complete and returns routing decision on a real event", () => {
     const file = runPath();
     seedRun(file);

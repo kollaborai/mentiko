@@ -59,6 +59,14 @@ function decisionFromBranch(branch: unknown, agents: RoutingAgent[], eventName: 
   if (isFanOutBranch(branch)) {
     const decision = decisionFromTargets(branch.fan_out, agents, "branch fan-out", eventTimestamp);
     if (decision.action !== "launch") return decision;
+    // A generated chain once used the same agent as the fan-out member and
+    // fan-in target. That launches the agent normally, then launches it again
+    // when its own completion satisfies the one-member group. Treat the
+    // redundant join declaration as a plain route so persisted/generated
+    // single-target chains execute exactly once.
+    if (branch.fan_in && decision.agentIds.includes(branch.fan_in)) {
+      return decision;
+    }
     return {
       ...decision,
       fanIn: branch.fan_in,

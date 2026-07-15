@@ -97,6 +97,13 @@ export function completeFanGroupMember(input: FanGroupCompletionInput): FanGroup
     failed: input.group.failed + (status === "failed" ? 1 : 0),
   };
 
+  // Defensive repair for persisted groups written before routing normalized a
+  // self-referential fan-in. The member has already done the work a second
+  // launch would request, so close the group without producing another launch.
+  if (status === "complete" && input.group.fanInAgent === input.agentId) {
+    return { group: { ...nextGroup, status: "complete" }, claimed: false };
+  }
+
   const claim = claimFanGroup(nextGroup);
   if (!claim) {
     return { group: nextGroup, claimed: false };

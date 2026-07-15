@@ -77,6 +77,22 @@ describe("runner-v2 fan group planner", () => {
     });
   });
 
+  it("closes a legacy self-referential fan-in without launching its completed member again", () => {
+    const group = createFanGroupState({
+      id: "legacy-self-join",
+      event: "verification-complete",
+      fanOutAgents: ["verifier"],
+      fanInAgent: "verifier",
+      waitFor: "all",
+      runId: "run-123",
+    });
+
+    expect(completeFanGroupMember({ group, agentId: "verifier", status: "complete" })).toEqual({
+      group: expect.objectContaining({ status: "complete", completed: 1, failed: 0, members: { verifier: "complete" } }),
+      claimed: false,
+    });
+  });
+
   it("supports any and quorum wait policies", () => {
     const any = createFanGroupState({
       id: "any-group",
