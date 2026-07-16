@@ -40,12 +40,12 @@ Generated: 2026-03-11
 ### Data Sources
 - **pty-manager** - bin/p PTY session daemon (list, capture, sendKeys, spawn, remove, alive)
 - **Filesystem** - Namespace-scoped files under `namespaces/{id}/`
-- **cliPipe** - lib/cli-pipe.ts wrapper for spawning claude CLI with prompts
-- **task-store** - Native sqlite task store (web/lib/task-store.ts)
+- **job pipeline** - Route calls `createJob()` (web/lib/runs/job-store.ts), which enqueues a validated job record and spawns the detached typed worker `lib/runner-job-worker.js`. The worker, not the route, runs the agent CLI. Routes return a `jobId` immediately.
+- **task-store** - Native sqlite task store (web/lib/tasks/task-store.ts)
 - **execSync** - Node child_process for synchronous command execution
 - **DB** - SQLite database
 - **External** - Third-party APIs (GitHub, Stripe, Resend, SMTP, Telegram, Anthropic)
-- **In-memory** - Runtime data structures (job store, circuit breaker state, push subscriptions)
+- **In-memory** - Runtime data structures (push subscriptions only). The job store, circuit breaker state, and breakpoints are NOT in-memory — all three are persisted JSON registered in the data-shape catalog (`job-record`, `runner-circuit-breaker-state`, `global-circuit-breaker`, `breakpoints`) and written atomically via tmp+rename.
 
 ---
 
@@ -114,8 +114,8 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | DELETE | `/api/agents/registry/[id]` | Delete standalone agent directory | Filesystem: recursive rm | manage_chains | Yes | agent-registry-detail | |
 | GET | `/api/agents/registry/scan` | Scan CLI tool skills directory for importable skills | scanAllSkills() | checkAuth | Yes | skill-import-dialog | |
 | POST | `/api/agents/registry/import` | Import CLI skills as standalone agents | Skills scan + fs write | manage_chains | Yes | skill-import-dialog | |
-| POST | `/api/agents/registry/edit` | Edit agent JSON using AI via cliPipe | cliPipe (claude CLI) | checkAuth | Yes | agent-edit-dialog | |
-| POST | `/api/agents/registry/generate` | Generate new agent from prompt using AI | cliPipe + schema + template | checkAuth | Yes | agent-generate-dialog, add-agent-dialog | |
+| POST | `/api/agents/registry/edit` | Edit agent JSON using AI (async job) | job pipeline (createJob) | checkAuth | Yes | agent-edit-dialog | |
+| POST | `/api/agents/registry/generate` | Generate new agent from prompt using AI | job pipeline (createJob) + schema + template | checkAuth | Yes | agent-generate-dialog, add-agent-dialog | |
 | POST | `/api/agents/registry/save` | Save new agent (auto-slugs name to directory) | Filesystem: agents/{slug}/agent.json | manage_chains | Yes | agent-edit-dialog, agent-generate-dialog | acts as upsert |
 | GET | `/api/agents/marketplace` | List marketplace agents (builtin + community) with ratings | Scan builtin + marketplace + ratings.json | checkAuth | No | (not implemented in UI) | header fallback not documented |
 | POST | `/api/agents/marketplace/install` | Install marketplace agent to namespace | Marketplace -> namespace agents | checkAuth | No | (not implemented in UI) | |
@@ -151,9 +151,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/chains/import` | Import chain from URL or body, with var substitution | External URL or body.chain + save | checkAuth | Yes | chains page | analyze mode not documented |
 | POST | `/api/chains/validate` | Validate chain schema, triggers, circular deps | chain.schema.json + filesystem validation | checkAuth | Yes | chains/new | |
 | GET | `/api/chains/status` | Get agent states and sessions for a run | Filesystem: stateDir, runsDir + pty.list() | checkAuth | Yes | conversations page, conversations/[id] | |
-| POST | `/api/chains/generate` | Generate chain from prompt (sync, deprecated) | cliPipe + getTemplate + getChainSchema + resolveTemplate | checkAuth | No | (replaced by generate-v2) | |
-| POST | `/api/chains/generate-v2` | Generate chain from prompt with agent catalog | cliPipe + getAllStandaloneAgents + getTemplate + getChainSchema | checkAuth | Yes | chains/new | |
-| POST | `/api/chains/recommend` | Recommend existing chain or suggest generation | getAllChains + buildChainSummary + cliPipe | checkAuth | No | (not used in web/) | expects complex task object |
+| POST | `/api/chains/recommend` | Recommend existing chain or suggest generation | getAllChains + buildChainSummary + job pipeline (createJob) | checkAuth | No | (not used in web/) | expects complex task object |
 | POST | `/api/chains/run` | Execute chain (spawn detached process) | Filesystem: runsDir + chain-runner.sh spawn | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | executor, runId params not documented |
 | POST | `/api/chains/run-batch` | Run multiple chains in parallel/sequential mode | Typed batch record + typed detached batch worker | checkAuth | Yes | batch-runner | |
 | GET | `/api/chains/run-batch` | List batches or get specific batch status | Filesystem: batches/ | checkAuth | Yes | batch-runner | |
@@ -178,9 +176,9 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/chains/[id]/versions/restore` | Restore chain from version (increments patch) | Filesystem: versions/{version}.json -> chains/{id}/ | checkAuth | Yes | hooks/use-chain-version-control, version-history | |
 | GET | `/api/chains/[id]/versions/diff` | Diff two chain versions | Filesystem: versions/{from}.json, versions/{to}.json | checkAuth | Yes | hooks/use-chain-version-control, version-history | JSON diff, not git diff |
 | GET | `/api/chains/[id]/versions/[version]` | Get specific version content | Filesystem: agents/versions/{id}/{version}.json | checkAuth | No | (only list and diff used) | |
-| GET | `/api/chains/[id]/breakpoints` | List breakpoints for chain | breakpoint-store (in-memory Map) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
-| POST | `/api/chains/[id]/breakpoints` | Set/clear/resume breakpoints | breakpoint-store (in-memory Map) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
-| DELETE | `/api/chains/[id]/breakpoints` | Clear all breakpoints | breakpoint-store (in-memory Map) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
+| GET | `/api/chains/[id]/breakpoints` | List breakpoints for chain | breakpoint-store (persisted JSON) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
+| POST | `/api/chains/[id]/breakpoints` | Set/clear/resume breakpoints | breakpoint-store (persisted JSON) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
+| DELETE | `/api/chains/[id]/breakpoints` | Clear all breakpoints | breakpoint-store (persisted JSON) | checkAuth | Yes | hooks/use-breakpoints, hooks/use-debug | |
 | GET | `/api/chains/[id]/debug` | Get debug state OR inspect specific agent (?agent=agentId) | Filesystem: debugDir/{id}.json, runsDir | checkAuth | No | (breakpoints used instead) | agent inspection uses query param ?agent=agentId |
 | POST | `/api/chains/[id]/debug` | Control debug run (pause/continue/step/skip) | Filesystem: debugDir/{id}.json | checkAuth | No | (breakpoints used instead) | |
 | DELETE | `/api/chains/[id]/debug` | Clear debug state | Filesystem: debugDir/{id}.json | checkAuth | No | (breakpoints used instead) | |
@@ -253,7 +251,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/tasks/create` | Create new task with optional chain assignment | task-store.ts | manage_tasks | Yes | task-create-dialog, task-assign-workflow | |
 | GET | `/api/tasks/epics` | Get epic status with completion progress (children counts) | task-store.ts | view_tasks | Yes | tasks page, epic-status-panel | |
 | GET | `/api/tasks/activity` | Get recent activity feed (commits, comments, status changes) | task-store.ts | view_tasks | Yes | tasks page, activity-feed | since param: 24h, 7d, 30d, etc |
-| POST | `/api/tasks/generate` | AI-generate tasks from prompt | cliPipe (claude CLI) | checkAuth | No | (not used in UI) | |
+| POST | `/api/tasks/generate` | AI-generate tasks from prompt | job pipeline (createJob) | checkAuth | No | (not used in UI) | |
 | GET | `/api/tasks/auto-run` | Check for tasks ready for auto-run (has chain, unblocked) | task-store.ts + job store | checkAuth | No | (internal daemon) | |
 | POST | `/api/tasks/auto-run` | Force-trigger auto-run for specific task | task-store.ts + chains/run API | checkAuth | No | (internal daemon) | |
 | POST | `/api/tasks/deps` | Add dependency between tasks (from depends on to) | task-store.ts | manage_tasks | Yes | task-dependency-dialog, tasks page | |
@@ -351,7 +349,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/links/save` | Create or update link | Filesystem: {linksDir}/{id}/link.json | x-namespace-id | Yes | links page | |
 | DELETE | `/api/links/{id}` | Delete link | Filesystem: {linksDir}/{id}/ | x-namespace-id | Yes | links page | |
 | POST | `/api/links/run` | Launch link run (manager + 2 peers) | bin/peer-manager, bin/p | None | Yes | links page | Returns runId, AI execution risk |
-| POST | `/api/links/generate` | Start AI generation of link (async job) | cliPipe, Anthropic API | x-namespace-id | Yes | links page | Returns jobId for polling |
+| POST | `/api/links/generate` | Start AI generation of link (async job) | job pipeline (createJob) | x-namespace-id | Yes | links page | Returns jobId for polling |
 | POST | `/api/links/generate/apply` | Apply generated link (create agents + save) | Filesystem: {linksDir}, {agentsDir} | x-namespace-id | Yes | links page | Creates agents from generation output |
 | POST | `/api/links/runs/{runId}/stop` | Stop link run sessions | bin/p | None | Yes | links page, run-detail-panel | Kills all PTY sessions |
 | POST | `/api/links/runs/{runId}/escalate` | Report peer escalation (trigger notification) | File: peer-escalations, Anthropic API, Telegram | None | No | link-run-timeline | Called by peer-manager |
@@ -553,7 +551,7 @@ Response:
 | POST | `/api/events/triggers` | Create new event trigger | Filesystem: event-triggers.json | x-namespace-id | Yes | events page, event-trigger-generate-dialog | |
 | PATCH | `/api/events/triggers/[id]` | Update trigger enabled status | Filesystem: event-triggers.json | x-namespace-id | Yes | events page | |
 | DELETE | `/api/events/triggers/[id]` | Delete event trigger | Filesystem: event-triggers.json | x-namespace-id | Yes | events page | |
-| POST | `/api/events/triggers/generate` | AI-generate event trigger config | LLM (cliPipe) | checkAuth | Yes | event-trigger-generate-dialog | |
+| POST | `/api/events/triggers/generate` | AI-generate event trigger config | job pipeline (createJob) | checkAuth | Yes | event-trigger-generate-dialog | |
 | GET | `/api/events/registry` | Get platform event registry | Static (PLATFORM_EVENTS constant) | checkAuth | Yes | events page | |
 
 ---
@@ -576,9 +574,9 @@ Response:
 
 | Method | Path | Purpose | Data Source | Auth | Used? | Screen/Component | Notes |
 |--------|------|---------|-------------|------|-------|------------------|-------|
-| POST | `/api/jobs` | Create async job (recommend/generate chains) | In-memory job store + spawns job-runner.mjs | checkAuth | Yes | chain-assign-workflow, tasks/auto-run API, use-notifications-listener | |
-| GET | `/api/jobs` | List jobs with filters | In-memory job store | checkAuth | Yes | use-notifications-listener | |
-| GET | `/api/jobs/[id]` | Get job by ID | In-memory job store | checkAuth | Yes | use-job-status, chain-assign-workflow | |
+| POST | `/api/jobs` | Create async job (recommend/generate chains) | job pipeline (createJob + spawns lib/runner-job-worker.js) | checkAuth | Yes | chain-assign-workflow, tasks/auto-run API, use-notifications-listener | |
+| GET | `/api/jobs` | List jobs with filters | job store (persisted JSON) | checkAuth | Yes | use-notifications-listener | |
+| GET | `/api/jobs/[id]` | Get job by ID | job store (persisted JSON) | checkAuth | Yes | use-job-status, chain-assign-workflow | |
 
 ---
 
@@ -669,7 +667,7 @@ Response:
 | PATCH/DELETE | `/api/webhooks/inbound/config/{id}` | Update, regenerate token, or delete inbound webhook config | File: inbound-webhooks.json | manage_chains | Yes | webhooks page, webhook-generate-dialog | |
 | POST | `/api/webhooks/inbound/{token}` | Execute inbound webhook via token | Files: inbound-webhooks.json, inbound-webhook-triggers.json; chain run service | token | No | (external services only) | Returns runId, triggerId, statusToken, statusUrl |
 | GET | `/api/webhooks/inbound/triggers/{triggerId}` | Check inbound trigger and current run status | Files: inbound-webhook-triggers.json, runs/{runId}/run.json | status token | No | (external services only) | token query param or x-webhook-status-token header required |
-| POST | `/api/webhooks/generate` | AI-generate webhook config (inbound/outbound) | External: Anthropic API (via cliPipe) | checkAuth | Yes | webhook-generate-dialog | |
+| POST | `/api/webhooks/generate` | AI-generate webhook config (inbound/outbound) | job pipeline (createJob) | checkAuth | Yes | webhook-generate-dialog | |
 | GET/POST/PUT | `/api/webhooks/config` | List/create/update outbound runtime webhooks | File: mentiko-webhooks.json | view/manage | Yes | webhooks page, webhook-generate-dialog | Secrets encrypted at rest and masked in responses |
 | GET/POST/DELETE | `/api/webhooks/config/{id}` | Read/test/delete outbound runtime webhook | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | view/manage | Yes | webhooks page, webhook-generate-dialog | POST sends test delivery |
 | POST | `/api/webhooks/config/{id}/test` | Send outbound runtime webhook test delivery | Files: mentiko-webhooks.json, mentiko-webhook-deliveries.jsonl | manage_chains | Yes | webhooks page | Compatibility path used by detail panel |
@@ -785,7 +783,7 @@ Response:
 |--------|------|---------|-------------|------|-------|------------------|-------|
 | GET | `/api/generation-templates` | List generation templates | Filesystem: generation-templates.json | checkAuth | Yes | workflows/generation, templates/generation | |
 | PUT | `/api/generation-templates` | Update generation templates | Filesystem: generation-templates.json | checkAuth | Yes | workflows/generation, templates/generation | |
-| POST | `/api/generation-templates/test` | Test template with sample prompt | LLM (cliPipe) | checkAuth | Yes | generation-template-editor | |
+| POST | `/api/generation-templates/test` | Test template with sample prompt | job pipeline (createJob) | checkAuth | Yes | generation-template-editor | |
 
 ---
 
@@ -827,7 +825,7 @@ Response:
 - Server-side webhooks (expected)
 - Internal endpoints (expected)
 - Future features (marketplace, integrations)
-- Deprecated endpoints (chains/generate, agents/resume)
+- Deprecated endpoints (agents/resume)
 
 ### High-Usage Components
 - hooks/use-chains.ts - chain CRUD (7+ endpoints)
