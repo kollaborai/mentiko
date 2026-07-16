@@ -64,3 +64,25 @@ agent_profile_field() {
 agent_profile_write_snapshot() {
     _agent_profile_cli snapshot --output-path "$1" --agent-id "$2" --profile-id "$3" --profile-source "$4" --profile-file "$5" --cli "$6" --session "$7" --timestamp "$8"
 }
+
+# Read fields out of a profile-selection record without parsing JSON in the
+# shell. The typed reader lib/agent-profile-fields.mjs owns the record shape.
+_agent_profile_fields_cli() {
+    local code_root="${MENTIKO_CODE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    local cli="$code_root/lib/agent-profile-fields.mjs"
+    [[ -f "$cli" ]] || {
+        echo "agent-profile-fields runtime is unavailable: $cli" >&2
+        return 1
+    }
+    node "$cli" "$@"
+}
+
+# Print id, path, and name of a selection record on three lines.
+agent_profile_selection_triple() {
+    printf '%s' "$1" | _agent_profile_fields_cli triple
+}
+
+# Print a single field (id|path|name) of a selection record.
+agent_profile_selection_field() {
+    printf '%s' "$1" | _agent_profile_fields_cli field "$2"
+}

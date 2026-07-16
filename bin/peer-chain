@@ -42,9 +42,7 @@ else
     PROFILE_JSON=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE_ID") || exit 1
 fi
 
-PROFILE_ID=$(printf '%s' "$PROFILE_JSON" | jq -r '.id // empty')
-PROFILE_FILE=$(printf '%s' "$PROFILE_JSON" | jq -r '.path // empty')
-PROFILE_NAME=$(printf '%s' "$PROFILE_JSON" | jq -r '.name // empty')
+{ IFS= read -r PROFILE_ID; IFS= read -r PROFILE_FILE; IFS= read -r PROFILE_NAME; } < <(agent_profile_selection_triple "$PROFILE_JSON")
 if [[ -z "$PROFILE_ID" || -z "$PROFILE_FILE" ]]; then
     echo "  error: no agent profile found"
     echo "  set a default in settings or pass --profile <id>"
