@@ -1080,7 +1080,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     writers: ["web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/schedule-contract.ts"],
     readers: ["web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/schedule-contract.ts"],
     samples: { root: "organization", patterns: [["schedules", "state.json"], ["schedules", "file-trigger-state.json"]], format: "json" },
-    notes: ["The compatibility shell scheduler invokes the typed schedule contract with configured roots and does not parse or mutate runtime state."],
+    notes: ["The compatibility shell scheduler invokes the typed schedule contract with configured roots and does not parse or mutate runtime state. The live scheduler service and trigger-now route resolve the workspace then start the compiled typed direct-run lifecycle; unsupported workspace definitions fail at that typed boundary and do not fall back to chain-runner."],
   }),
   shape({
     id: "schedule-execution-history",

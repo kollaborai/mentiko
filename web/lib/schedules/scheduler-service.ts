@@ -2,13 +2,12 @@
  * scheduler service
  *
  * shared scheduler loop used by the standalone background worker.
- * reads schedules.json, checks cron expressions, fires chain-runner.sh
+ * reads schedules.json, checks cron expressions, starts the typed direct-run CLI
  * for due schedules, and creates notifications on failure.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import { spawn } from "child_process";
 import config, { orgPath } from "../config";
 import type { Schedule } from "../types";
 import { getWorkspace } from "../workspaces/workspace-storage";
@@ -25,6 +24,7 @@ import {
 } from "./schedule-file-triggers";
 import { calculateCronNextRun } from "./cron-next-run";
 import { createNotification } from "../notifications/notification-server";
+import { launchDetachedDirectRun } from "./direct-run-launch";
 
 // ---------------------------------------------------------------------------
 // state (on globalThis to survive module reloads within a long-running host)
@@ -410,9 +410,9 @@ function fireChain(
   schedule: Schedule
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const chainRunner = join(config.codeRoot, "lib", "chain-runner.sh");
-    if (!existsSync(chainRunner)) {
-      console.warn("[scheduler] chain-runner.sh not found");
+    const directRun = join(config.codeRoot, "lib", "runner-v2-direct-run.js");
+    if (!existsSync(directRun)) {
+      console.warn("[scheduler] typed direct-run runtime not found");
       resolve(false);
       return;
     }
@@ -431,22 +431,16 @@ function fireChain(
     delete env.CLAUDECODE;
 
     // resolve workspace path from schedule's workspaceId
-    const args = [chainRunner, chainFile];
+    let workspacePath: string | undefined;
     if (schedule.workspaceId) {
       const ws = getWorkspace(nsId, orgId, schedule.workspaceId);
       if (ws?.path) {
-        args.push("--workspace", ws.path);
+        workspacePath = ws.path;
       }
     }
 
     try {
-      const proc = spawn("bash", args, {
-        detached: true,
-        stdio: "ignore",
-        env,
-      });
-
-      proc.unref();
+      const proc = launchDetachedDirectRun({ runtimePath: directRun, chainPath: chainFile, workspacePath, env });
 
       proc.on("error", () => {
         resolve(false);

@@ -1112,6 +1112,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/adapters.ts", "web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/schedule-contract.ts", "web/lib/runner-v2/schedule-contract-cli.ts"],
       },
+      {
+        id: "typed-scheduled-direct-launch",
+        label: "Resolve a scheduled local workspace and start the compiled typed direct-run lifecycle without a shell runner",
+        owner: "runner-v2",
+        paths: ["web/lib/schedules/scheduler-service.ts", "web/app/api/schedules/route.ts", "web/lib/runner-v2/direct-run.ts", "lib/runner-v2-direct-run.js"],
+      },
     ],
     legacyEquivalent: {
       summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records.",

@@ -8,7 +8,6 @@ import { getNamespaceConfig, getNamespaceIdFromRequest, getOrgIdFromRequest } fr
 import { checkAuth } from "@/lib/auth/api-auth";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { spawn } from "child_process";
 import { validateSchedule } from "@/lib/validators";
 import { checkScheduleConflicts } from "@/lib/schedules/schedule-utils";
 import { canExecute, incrementActiveRuns, decrementActiveRuns } from "@/lib/api/circuit-breaker";
@@ -30,6 +29,7 @@ import {
   slugify,
 } from "@/lib/schedules/schedule-storage";
 import { listWorkspaces, getWorkspace } from "@/lib/workspaces/workspace-storage";
+import { launchDetachedDirectRun } from "@/lib/schedules/direct-run-launch";
 import type { Schedule, ScheduleTarget, ScheduleTrigger } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -350,7 +350,11 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
 
   incrementActiveRuns();
 
-  const chainRunner = join(config.codeRoot, "lib", "chain-runner.sh");
+  const directRun = join(config.codeRoot, "lib", "runner-v2-direct-run.js");
+  if (!existsSync(directRun)) {
+    decrementActiveRuns();
+    throw new Error("typed direct-run runtime is unavailable");
+  }
 
   const schedEnv = buildChildEnv({
     MENTIKO_GLOBAL_ROOT: config.globalRoot,
@@ -365,23 +369,17 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   delete schedEnv.CLAUDECODE;
 
   // resolve workspace from schedule's workspaceId
-  const chainArgs = [chainRunner, chainPath];
+  let workspacePath: string | undefined;
   const schedules = await listSchedules(nsId, orgId);
   const matchedSchedule = schedules.find((s) => s.chainId === chainId);
   if (matchedSchedule?.workspaceId) {
     const ws = getWorkspace(nsId, orgId, matchedSchedule.workspaceId);
     if (ws?.path) {
-      chainArgs.push("--workspace", ws.path);
+      workspacePath = ws.path;
     }
   }
 
-  const proc = spawn("bash", chainArgs, {
-    detached: true,
-    stdio: "ignore",
-    env: schedEnv,
-  });
-
-  proc.unref();
+  const proc = launchDetachedDirectRun({ runtimePath: directRun, chainPath, workspacePath, env: schedEnv });
 
   proc.on("exit", () => {
     decrementActiveRuns();
