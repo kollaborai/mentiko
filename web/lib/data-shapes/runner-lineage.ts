@@ -196,7 +196,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-existing-run-snapshot-launch",
-        label: "Validate the immutable run-local snapshot before typed bootstrap of a preallocated run",
+        label: "Validate the immutable run-local snapshot, bind its name/id identity to run provenance, and fail closed on mismatch before typed bootstrap of a preallocated run",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/existing-run-launch.ts", "web/lib/runner-v2/existing-run-launch-cli.ts", "lib/runner-v2-existing-run.js"],
       },
@@ -379,7 +379,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-existing-run-preflight",
-        label: "Verify existing run identity, path containment, terminal state, and replay evidence before typed bootstrap",
+        label: "Verify existing run identity, path containment, terminal state, and replay evidence, then claim the run for single-flight bootstrap under an owner-bearing file claim released only on pre-launch failure, before typed bootstrap",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/existing-run-launch.ts", "web/lib/runner-v2/existing-run-launch-cli.ts", "lib/runner-v2-existing-run.js"],
       },

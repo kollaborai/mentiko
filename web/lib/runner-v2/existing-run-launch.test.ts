@@ -57,6 +57,80 @@ describe("typed existing-run launch", () => {
     expect(existsSync(join(runDir, "chain.json"))).toBe(false);
   });
 
+  it("binds the snapshot identity to run provenance and fails closed on mismatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-existing-mismatch-"));
+    const tampered = JSON.stringify({
+      name: "tampered",
+      agents: [{ id: "manual", name: "Manual", triggers: ["manual-start"], emits: "done", prompt: "work" }],
+    });
+    createRunRecordWithSnapshot(root, record(), tampered);
+    await expect(launchExistingTypedRun({ runsDir: root, runId: "run-existing" })).rejects.toThrow(/identity mismatch/);
+    expect(mockBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("admits exactly one concurrent launch for a pristine run and rejects the other before bootstrap", async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), "mentiko-existing-concurrent-"));
+    const paths = createRunRecordWithSnapshot(runsDir, record(), snapshot);
+
+    let resolveFirstBootstrap!: () => void;
+    const firstBootstrap = new Promise<void>((resolve) => { resolveFirstBootstrap = resolve; });
+    let bootstrapCalls = 0;
+    mockBootstrap.mockImplementation(() => {
+      bootstrapCalls += 1;
+      const ok = { support: "supported" as const, mode: "typed-plan" as const, sessionName: "manual-run-existing" };
+      return bootstrapCalls === 1 ? firstBootstrap.then(() => ok) : Promise.resolve(ok);
+    });
+
+    const previousWait = process.env.MENTIKO_EXISTING_RUN_CLAIM_WAIT_MS;
+    process.env.MENTIKO_EXISTING_RUN_CLAIM_WAIT_MS = "60";
+    try {
+      // First call acquires the claim synchronously in its prefix, then suspends
+      // at the awaited bootstrap. No await between the two calls is intentional:
+      // the second call must observe the first's held LIVE claim.
+      const first = launchExistingTypedRun({ runsDir, runId: "run-existing" });
+
+      await expect(launchExistingTypedRun({ runsDir, runId: "run-existing" })).rejects.toThrow(/in-progress launch/);
+      expect(mockBootstrap).toHaveBeenCalledTimes(1);
+
+      resolveFirstBootstrap();
+      const result = await first;
+      expect(result).toMatchObject({ runId: "run-existing", runDir: paths.runDir, agentId: "manual" });
+    } finally {
+      if (previousWait === undefined) delete process.env.MENTIKO_EXISTING_RUN_CLAIM_WAIT_MS;
+      else process.env.MENTIKO_EXISTING_RUN_CLAIM_WAIT_MS = previousWait;
+    }
+  });
+
+  it("retires a stale claim from a dead launcher and launches a still-pristine run", async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), "mentiko-existing-stale-"));
+    const paths = createRunRecordWithSnapshot(runsDir, record(), snapshot);
+    // A pid far above any realistic pid_max is provably dead on every host, so the
+    // claim primitive retires it deterministically rather than waiting it out.
+    const claimDir = join(paths.runDir, ".launch-claim");
+    mkdirSync(claimDir);
+    writeFileSync(join(claimDir, "owner.json"), JSON.stringify({ pid: 2_000_000_000, token: "dead-launcher" }));
+    mockBootstrap.mockResolvedValue({ support: "supported", mode: "typed-plan", sessionName: "manual-run-existing" });
+
+    const result = await launchExistingTypedRun({ runsDir, runId: "run-existing" });
+
+    expect(result).toMatchObject({ runId: "run-existing", agentId: "manual" });
+    expect(mockBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the claim on a pre-launch failure so a retry can launch the pristine run", async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), "mentiko-existing-release-"));
+    createRunRecordWithSnapshot(runsDir, record(), snapshot);
+    mockBootstrap.mockResolvedValue({ support: "unsupported", reason: "boom", fallbackAllowed: false });
+
+    await expect(launchExistingTypedRun({ runsDir, runId: "run-existing" })).rejects.toThrow("boom");
+
+    mockBootstrap.mockReset();
+    mockBootstrap.mockResolvedValue({ support: "supported", mode: "typed-plan", sessionName: "manual-run-existing" });
+    const result = await launchExistingTypedRun({ runsDir, runId: "run-existing" });
+    expect(result.runId).toBe("run-existing");
+    expect(mockBootstrap).toHaveBeenCalledTimes(1);
+  });
+
   it("parses only explicit existing-run launch arguments", () => {
     expect(parseExistingRunLaunchArgs(["--run-id", "run-existing", "--start", "manual", "--debug"])).toMatchObject({ runId: "run-existing", agentId: "manual", debug: true });
     expect(() => parseExistingRunLaunchArgs(["--run-id", "run-existing", "--dry-run"])).toThrow("unsupported");
