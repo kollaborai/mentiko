@@ -94,9 +94,9 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-generation-payload-resolution",
-        label: "Resolve and validate run-owned artifact, event, transcript, and output payload candidates",
+        label: "Resolve and validate task-owned artifact, event, transcript, and output payload candidates; audit only task-kind shared generation-result handoffs",
         owner: "runner-v2",
-        paths: ["web/lib/generation/payload-resolver.ts", "web/lib/generation/payload-import-cli.ts"],
+        paths: ["web/lib/generation/payload-resolver.ts", "web/lib/generation/payload-import-cli.ts", "web/lib/data-shapes/runtime-catalog.ts"],
       },
     ],
     legacyEquivalent: {
@@ -389,6 +389,25 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["lib/agent-state-client.sh", "web/lib/runner-v2/agent-state-cli.ts"],
     },
   },
+  "runner-monitor-state": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-standalone-monitor-state",
+        label: "Create a canonical standalone run and own its monitor state, completion, and terminal mutations",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/standalone-monitor.ts",
+          "web/lib/runner-v2/standalone-monitor-cli.ts",
+          "web/lib/runner-v2/monitor-live-io.ts",
+        ],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "The active standalone spec launcher now routes into the typed monitor. Retained shell monitor functions are unreachable from the documented launcher and are not a fallback path.",
+      paths: ["lib/launch-agent.sh", "lib/agent-functions.sh"],
+    },
+  },
   "completion-launch-context": {
     usage: "runner-v2",
     surfaces: [
@@ -659,6 +678,27 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     legacyEquivalent: {
       summary: "Replaces implicit shell completion session cleanup with an explicit typed decision ledger.",
       paths: ["web/lib/runner-v2/terminal-plan.ts", "web/lib/runner-v2/adapters.ts"],
+    },
+  },
+  "pty-daemon-session-projection": {
+    usage: "shared",
+    surfaces: [
+      {
+        id: "typed-pty-transport-owner",
+        label: "Derive daemon identity and project daemon readiness, liveness, registered sessions, and child PID",
+        owner: "runner-v2",
+        paths: ["web/lib/config.ts", "web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
+      },
+      {
+        id: "shell-pty-command-boundary",
+        label: "Forward primitive transport operations and invoke only the required external PTY CLI actions",
+        owner: "runner-v2",
+        paths: ["lib/session-transport.sh", "lib/agent-functions.sh", "lib/chain-runner.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces shell daemon-name derivation, readiness polling, session-list parsing, liveness checks, and PID projection with the typed PTY transport client.",
+      paths: ["lib/session-transport.sh"],
     },
   },
   "watchdog-hook-dispatch": {

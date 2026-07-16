@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import config, { nsPath, orgPath } from "@/lib/config";
 import {
   parseRunnerEvent,
@@ -341,6 +341,30 @@ function loadSchema(definition: DataShapeDefinition): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+/**
+ * generation-result.json is the shared, typed handoff filename for every core
+ * generator. This shape is deliberately task-specific, so a declared
+ * non-task core generation run is not evidence that a task payload drifted.
+ *
+ * Unknown and malformed run snapshots stay in scope: excluding those would
+ * hide an actual task artifact defect. Only an explicit typed core-generation
+ * declaration with a non-task kind is excluded.
+ */
+function isApplicableTaskGenerationSample(definition: DataShapeDefinition, path: string): boolean {
+  if (definition.id !== "task-generation-payload" || basename(path) !== "generation-result.json") return true;
+
+  try {
+    const chain = JSON.parse(readFileSync(join(dirname(dirname(path)), "chain.json"), "utf8")) as unknown;
+    if (!chain || typeof chain !== "object" || Array.isArray(chain)) return true;
+    const metadata = (chain as Record<string, unknown>).metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return true;
+    const record = metadata as Record<string, unknown>;
+    return record.coreGenerationChain !== true || record.generationKind === "task";
+  } catch {
+    return true;
+  }
+}
+
 function inspectShape(
   definition: DataShapeDefinition,
   roots: CatalogRoots,
@@ -375,8 +399,10 @@ function inspectShape(
     }
   }
 
+  const applicableFiles = [...files].filter(([path]) => isApplicableTaskGenerationSample(definition, path));
+
   let artifactIndex = 0;
-  for (const [path, sample] of files) {
+  for (const [path, sample] of applicableFiles) {
     artifactIndex += 1;
     const displayPath = `${safePatternPath(sample.root, sample.pattern)} #${artifactIndex}`;
     try {
@@ -504,7 +530,7 @@ function inspectShape(
 
   let status: RuntimeShapeStatus;
   if (!definition.samples) status = "unavailable";
-  else if (files.size === 0) status = "absent";
+  else if (applicableFiles.length === 0) status = "absent";
   else if (invalidCount > 0 || parseErrorCount > 0 || issues.length > 0) status = "drift";
   else if (recordCount === 0) status = "absent";
   else if (validate) status = "valid";
@@ -538,7 +564,7 @@ function inspectShape(
     ...definition,
     evidence: {
       status,
-      artifactCount: files.size,
+      artifactCount: applicableFiles.length,
       recordCount,
       contractValidated: hasRawContract ? rawValidationCount > 0 : normalizedValidationCount > 0,
       schemaValidated: Boolean(validate) && normalizedValidationCount > 0,
@@ -546,7 +572,7 @@ function inspectShape(
       invalidCount,
       parseErrorCount,
       validationLayers,
-      samplePaths: [...new Set([...files.values()].map((sample) => safePatternPath(sample.root, sample.pattern)))]
+      samplePaths: [...new Set(applicableFiles.map(([, sample]) => safePatternPath(sample.root, sample.pattern)))]
         .slice(0, MAX_SAMPLE_PATHS),
       fields: finalizeFields(fields),
       issues: issues.slice(0, MAX_ISSUES_PER_SHAPE),

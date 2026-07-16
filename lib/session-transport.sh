@@ -23,25 +23,23 @@
 # otherwise fall back to pty-mgr on PATH (container/production)
 _TRANSPORT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _LOCAL_P="${_TRANSPORT_SCRIPT_DIR}/../bin/p"
+_TRANSPORT_TYPED_CLI="${_TRANSPORT_SCRIPT_DIR}/runner-pty-transport.js"
 
-_transport_slug_part() {
-    printf '%s' "$1" \
-        | sed 's/[^A-Za-z0-9_-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//' \
-        | cut -c1-48
+_transport_typed() {
+    [[ -f "$_TRANSPORT_TYPED_CLI" ]] || {
+        echo "mentiko: typed PTY transport bundle missing: $_TRANSPORT_TYPED_CLI" >&2
+        return 1
+    }
+    node "$_TRANSPORT_TYPED_CLI" "$@"
 }
 
-_transport_derive_pty_daemon() {
-    local root_slug namespace_slug org_slug
-    root_slug="$(_transport_slug_part "${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}")"
-    namespace_slug="$(_transport_slug_part "${NAMESPACE_ID:-default}")"
-    org_slug="$(_transport_slug_part "${ORG_ID:-default}")"
-    [[ -n "$root_slug" ]] || root_slug="root"
-    [[ -n "$namespace_slug" ]] || namespace_slug="default"
-    [[ -n "$org_slug" ]] || org_slug="default"
-    printf 'mentiko-%s-%s-%s\n' "$root_slug" "$namespace_slug" "$org_slug"
-}
-
-export PTY_DAEMON="${PTY_DAEMON:-$(_transport_derive_pty_daemon)}"
+if [[ -z "${PTY_DAEMON:-}" ]]; then
+    PTY_DAEMON="$(_transport_typed daemon-name)" || {
+        echo "mentiko: typed PTY daemon resolution failed" >&2
+        return 1 2>/dev/null || exit 1
+    }
+fi
+export PTY_DAEMON
 
 if [[ -x "$_LOCAL_P" ]] && ! [[ -L "$_LOCAL_P" && ! -e "$_LOCAL_P" ]]; then
     PTY_CMD="$_LOCAL_P"
@@ -56,22 +54,7 @@ fi
 # idempotent - safe to call multiple times
 # -------------------------------------------------------------------
 transport_init() {
-    if "$PTY_CMD" status >/dev/null 2>&1; then
-        return 0
-    fi
-    echo "  starting pty-manager daemon..."
-    "$PTY_CMD" daemon 2>/dev/null
-    # daemon forks and reports ready, but verify
-    local retries=0
-    while ! "$PTY_CMD" status >/dev/null 2>&1; do
-        retries=$((retries + 1))
-        if [[ $retries -ge 10 ]]; then
-            echo "  error: pty-manager daemon failed to start"
-            return 1
-        fi
-        sleep 0.5
-    done
-    return 0
+    _transport_typed ensure >/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -136,16 +119,13 @@ transport_capture() {
 # checks if session is alive
 # -------------------------------------------------------------------
 transport_has_session() {
-    local result
-    result=$("$PTY_CMD" alive "$1" 2>/dev/null) || return 1
-    [[ "$result" == "alive" ]] && return 0
-    return 1
+    _transport_typed alive --name "$1" >/dev/null
 }
 
 # transport_session_exists: true if session is registered (alive or exited)
 # use this when you want to detect any known session, not just alive ones
 transport_session_exists() {
-    "$PTY_CMD" list 2>/dev/null | awk '{print $1}' | grep -qxF "$1"
+    _transport_typed has --name "$1" >/dev/null
 }
 
 # -------------------------------------------------------------------
@@ -162,12 +142,7 @@ transport_kill_session() {
 # lists all session names
 # -------------------------------------------------------------------
 transport_list_sessions() {
-    local output
-    output=$("$PTY_CMD" list 2>/dev/null) || return 0
-    if [[ "$output" == "no sessions" ]]; then
-        return 0
-    fi
-    echo "$output" | awk '{print $1}'
+    _transport_typed list
 }
 
 # -------------------------------------------------------------------
@@ -175,7 +150,7 @@ transport_list_sessions() {
 # gets child process pid
 # -------------------------------------------------------------------
 transport_pid() {
-    "$PTY_CMD" pid "$1" 2>/dev/null
+    _transport_typed pid --name "$1"
 }
 
 echo "  session-transport: loaded (pty-manager)"

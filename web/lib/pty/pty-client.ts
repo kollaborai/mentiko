@@ -146,7 +146,7 @@ function sendCommand(req: Record<string, unknown>): Promise<DaemonResponse> {
 }
 
 // try to auto-start the daemon if not running
-async function ensureDaemon(): Promise<void> {
+export async function ensurePtyDaemon(): Promise<void> {
   try {
     await sendCommand({ cmd: "status" });
     return; // already running
@@ -209,7 +209,7 @@ class PtyClient {
     args?: string[],
     opts?: { cwd?: string; env?: Record<string, string> }
   ): Promise<{ name: string; pid: number }> {
-    await ensureDaemon();
+    await ensurePtyDaemon();
     const res = await sendCommand({
       cmd: "spawn",
       name,
@@ -290,7 +290,7 @@ class PtyClient {
 
   // list all sessions
   async list(): Promise<SessionInfo[]> {
-    await ensureDaemon();
+    await ensurePtyDaemon();
     const res = await sendCommand({ cmd: "list" });
     if (!res.ok) return [];
     return (res.sessions as SessionInfo[]) || [];

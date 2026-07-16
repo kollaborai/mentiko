@@ -114,21 +114,18 @@ echo ""
 
 # start monitor if requested
 if [[ "$MONITOR" == "--monitor" ]]; then
-    AGENT_CONTEXT="Spec: $(echo "$SPEC_FILE" | sed "s|^${PROJECT_ROOT}/||"). Agent: $AGENT_NAME."
     MONITOR_SESSION="monitor-${SESSION_NAME}"
     MONITOR_INTERVAL="${MENTIKO_MONITOR_INTERVAL:-60}"
-    MONITOR_SCRIPT="/tmp/monitor-${SESSION_NAME}.sh"
-    MONITOR_ADVISOR_PROFILE="$(agent_profile_advisor_field "${AGENT_PROFILES_DIR:?AGENT_PROFILES_DIR must be configured}" "id" 2>/dev/null || true)"
-
-    {
-        echo "#!/bin/bash"
-        printf 'export AGENT_PROFILES_DIR=%q\n' "${AGENT_PROFILES_DIR:-}"
-        printf 'export MENTIKO_MONITOR_PROFILE_ID=%q\n' "$MONITOR_ADVISOR_PROFILE"
-        printf 'source %q 2>/dev/null\n' "${SCRIPT_DIR}/agent-functions.sh"
-        printf 'monitor-with-ai %q %q %q\n' "$SESSION_NAME" "$MONITOR_INTERVAL" "$AGENT_CONTEXT"
-    } > "$MONITOR_SCRIPT"
-    chmod +x "$MONITOR_SCRIPT"
-    new_pty_session "$MONITOR_SESSION" bash "$MONITOR_SCRIPT"
+    MONITOR_RUNTIME="${SCRIPT_DIR}/runner-v2-standalone-monitor.js"
+    if [[ ! -f "$MONITOR_RUNTIME" ]]; then
+        echo "error: typed standalone monitor runtime missing: $MONITOR_RUNTIME" >&2
+        exit 1
+    fi
+    new_pty_session "$MONITOR_SESSION" node "$MONITOR_RUNTIME" \
+        --session "$SESSION_NAME" \
+        --spec "$SPEC_FILE" \
+        --interval "$MONITOR_INTERVAL" \
+        --workspace "$PROJECT_ROOT"
     echo "  monitor started: $MONITOR_SESSION"
 fi
 

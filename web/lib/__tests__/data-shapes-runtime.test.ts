@@ -74,6 +74,17 @@ describe("runtime data shape catalog", () => {
         },
       },
     );
+    // Core generators intentionally share generation-result.json. The task
+    // catalog must not classify a declared chain-generation handoff as a
+    // malformed task payload merely because it has a different typed kind.
+    writeJson(join(namespaceRoot, "runs", "run-chain-generation", "chain.json"), {
+      id: "chain-generation",
+      metadata: { coreGenerationChain: true, generationKind: "chain_generation" },
+    });
+    writeJson(
+      join(namespaceRoot, "runs", "run-chain-generation", "artifacts", "generation-result.json"),
+      { name: "Generated chain", version: "1.0.0", agents: [] },
+    );
 
     mkdirSync(join(namespaceRoot, "data"), { recursive: true });
     const db = new Database(join(namespaceRoot, "data", "tasks.db"));
@@ -144,6 +155,7 @@ describe("runtime data shape catalog", () => {
         },
       ],
     });
+    expect(generatedTask?.evidence.issues).toEqual([]);
 
     const responseShape = JSON.stringify(catalog);
     expect(responseShape).not.toContain("run-valid");
@@ -151,5 +163,30 @@ describe("runtime data shape catalog", () => {
     expect(responseShape).not.toContain("exercise the contract");
     expect(responseShape).not.toContain("artifact.json");
     expect(responseShape).not.toContain("Generated task contract fixture");
+  });
+
+  it("excludes only declared non-task core generator handoffs", () => {
+    // A shared filename without an explicit non-task declaration remains in
+    // scope. That prevents the audit from hiding a malformed task handoff.
+    writeJson(
+      join(namespaceRoot, "runs", "run-unclassified-generation", "artifacts", "generation-result.json"),
+      { output: "not a task payload" },
+    );
+
+    const catalog = buildRuntimeDataShapeCatalog("default", "default");
+    const generatedTask = catalog.shapes.find((shape) => shape.id === "task-generation-payload");
+
+    expect(generatedTask?.evidence).toMatchObject({
+      status: "drift",
+      artifactCount: 2,
+      validCount: 1,
+      invalidCount: 1,
+    });
+    expect(generatedTask?.evidence.validationLayers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ layer: "raw-file", validCount: 1, invalidCount: 1 }),
+    ]));
+    expect(generatedTask?.evidence.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining("expected a routed task/decision envelope") }),
+    ]));
   });
 });

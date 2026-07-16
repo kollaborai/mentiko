@@ -20,7 +20,15 @@ const pairs = [
   ["audit-ship-cli", "runner-audit-ship"],
   ["notification-dispatcher-cli", "runner-notification-dispatcher"],
   ["agent-transcript-cli", "runner-agent-transcript"],
+  ["agent-profile-cli", "runner-agent-profile"],
+  ["launch-agent-cli", "runner-v2-launch-agent"],
+  ["monitor-cli", "monitor-v2"],
+  ["standalone-monitor-cli", "runner-v2-standalone-monitor"],
   ["lib/system/audit-cli.ts", "runner-audit"],
+];
+const standaloneBundles = [
+  ["lib/runner-v2/job-worker.ts", "runner-job-worker"],
+  ["lib/pty/pty-transport-cli.ts", "runner-pty-transport"],
 ];
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));
 try {
@@ -30,5 +38,11 @@ try {
     execFileSync("npx", ["esbuild", sourcePath, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
     assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
   }
-  console.log(`bundle parity: ${pairs.length}/${pairs.length}`);
+  for (const [source, bundle] of standaloneBundles) {
+    const output = join(temp, `${bundle}.js`);
+    execFileSync("npx", ["esbuild", source, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
+    assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
+  }
+  const bundleCount = pairs.length + standaloneBundles.length;
+  console.log(`bundle parity: ${bundleCount}/${bundleCount}`);
 } finally { rmSync(temp, { recursive: true, force: true }); }

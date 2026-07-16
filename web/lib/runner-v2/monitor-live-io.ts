@@ -61,6 +61,8 @@ export interface LiveMonitorContext {
   workspaceType: string;
   eventsDir: string;
   stateDir: string;
+  /** Optional run-local monitor bookkeeping root. Core monitors retain their existing root. */
+  monitorStateDir?: string;
   namespaceId: string;
   orgId: string;
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
@@ -166,7 +168,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       if (latched) writeLatch(session);
       return {
         processGone: context.workspaceType === "local"
-          ? await monitorAgentProcessGone(session, context.env)
+          ? await monitorAgentProcessGone(session, context.env, context.monitorStateDir)
           : false,
         captureHash: captureHash(capture, 20),
         completionEventPresent: Boolean(eventFile),
@@ -255,9 +257,9 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       return "terminal";
     },
     sleep: (seconds) => sleepMs(seconds * 1000),
-    loadState: loadMonitorState,
-    saveState: saveMonitorState,
-    clearState: clearMonitorState,
+    loadState: (session) => loadMonitorState(session, context.monitorStateDir),
+    saveState: (session, state) => saveMonitorState(session, state, context.monitorStateDir),
+    clearState: (session) => clearMonitorState(session, context.monitorStateDir),
     log: (message) => console.log(message),
   };
 }
@@ -352,10 +354,11 @@ function currentCompletionEventPath(context: LiveMonitorContext): string {
 async function monitorAgentProcessGone(
   sessionName: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  monitorStateDir?: string,
 ): Promise<boolean> {
   const panePid = await pty.pid(sessionName);
   if (!panePid) return false;
-  const paths = monitorStatePaths(sessionName);
+  const paths = monitorStatePaths(sessionName, monitorStateDir);
   const graceMax = positiveInt(env.MENTIKO_MONITOR_NEVER_ARMED_GRACE, 5);
 
   if (hasPgrep()) {

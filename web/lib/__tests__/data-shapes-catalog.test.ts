@@ -108,6 +108,19 @@ describe("data shape catalog", () => {
     expect(queue).toEqual([]);
   });
 
+  it("documents task-specific validation for the shared core generation handoff filename", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "task-generation-payload");
+
+    expect(shape?.validatorPaths).toContain("web/lib/data-shapes/runtime-catalog.ts");
+    expect(shape?.notes?.join(" ")).toMatch(/shared by typed core generators.*non-task core generation kinds are excluded/i);
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "typed-generation-payload-resolution",
+        paths: expect.arrayContaining(["web/lib/data-shapes/runtime-catalog.ts"]),
+      }),
+    ]));
+  });
+
   it("documents pending handoff as read-and-retire pre-cutover evidence", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-v2-pending-handoff");
     expect(shape?.writers).toEqual(["web/lib/runner-v2/run-state.ts"]);
@@ -139,6 +152,23 @@ describe("data shape catalog", () => {
     ]);
     expect(shape?.notes?.join(" ")).toMatch(/0700.*0600.*acceptance receipt/i);
     expect(shape?.runnerLineage?.usage).toBe("runner-v2");
+  });
+
+  it("records typed ownership of the external PTY daemon projection", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "pty-daemon-session-projection");
+    expect(shape).toMatchObject({
+      scope: "external",
+      format: "text",
+      assurance: "typed",
+      writers: ["web/lib/pty/pty-client.ts"],
+      readers: ["web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
+    });
+    expect(shape?.notes?.join(" ")).toMatch(/does not independently derive/i);
+    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "typed-pty-transport-owner" }),
+      expect.objectContaining({ id: "shell-pty-command-boundary" }),
+    ]));
   });
 
   it("pins runner retry storage to run-and-agent-scoped typed JSON", () => {
