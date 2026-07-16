@@ -15,7 +15,6 @@
 
 import type { Decision } from "@/lib/decisions/decision-types";
 import { listWorkspaces, resolveDecisionAutoApprove } from "@/lib/workspaces/workspace-storage";
-import { listDecisions } from "@/lib/decisions/decision-storage";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -415,25 +414,5 @@ export function advanceDecisionAfterPhase(input: {
         autoApprovedByWorkspacePolicy: true,
       },
     );
-  }
-}
-
-/**
- * Catch up decisions that were already waiting at a human gate when a workspace
- * enables auto-approval. New decisions enter through advanceDecisionAfterPhase;
- * this pass closes the historical gap without needing a browser refresh or a
- * new agent run.
- */
-export function advanceWorkspaceDecisionAutoApprovals(input: {
-  namespaceId: string;
-  orgId: string;
-  workspacePath: string;
-}): void {
-  for (const decision of listDecisions(input.namespaceId, input.orgId, input.workspacePath)) {
-    advanceDecisionAfterPhase({
-      namespaceId: input.namespaceId,
-      orgId: input.orgId,
-      decision,
-    });
   }
 }

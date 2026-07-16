@@ -1,6 +1,6 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   decodeRawChainDefinition,
   loadNormalizedChainDefinition,
@@ -12,6 +12,7 @@ import {
   runnerAgentStatePath,
   transitionRunnerAgentState,
 } from "@/lib/runner-v2/agent-state";
+import { updateRunJson } from "@/lib/runner-v2/run-state";
 
 export type AgentErrorType = "error" | "timeout";
 export type ErrorDetectionCode = 0 | 1 | 2;
@@ -21,7 +22,6 @@ export interface ErrorHandlingInput {
   errorType: AgentErrorType;
   reportFile: string;
   chainFile: string;
-  chainRunner: string;
   stateDir: string;
   runId: string;
   agentsDir?: string;
@@ -44,7 +44,7 @@ export interface RetryConfig {
 }
 
 export interface ScheduleLaunch {
-  (chainRunner: string, chainFile: string, agentId: string, delaySeconds: number): void;
+  (chainFile: string, agentId: string, delaySeconds: number): void;
 }
 
 export function detectAgentError(reportFile: string): ErrorDetectionCode {
@@ -114,7 +114,7 @@ export function handleAgentError(
     const delay = calculateRetryDelay(retryCount, retry.backoff, retry.initialDelay, retry.maxDelay, retry.multiplier);
     write(`      scheduling retry ${nextCount} in ${delay}s...`);
     incrementAgentRetryCount(input.stateDir, sessionPrefix, input.runId);
-    schedule(input.chainRunner, input.chainFile, input.agentId, delay);
+    schedule(input.chainFile, input.agentId, delay);
     return { code: 0, retryCount, maxRetries: retry.maxRetries, action: "retry" };
   }
 
@@ -125,7 +125,7 @@ export function handleAgentError(
       "failed",
       input.errorType,
     );
-    schedule(input.chainRunner, input.chainFile, handlerAgent, 2);
+    schedule(input.chainFile, handlerAgent, 2);
     return { code: 0, retryCount, maxRetries: retry.maxRetries, handlerAgent, action: "handler" };
   }
 
@@ -135,18 +135,19 @@ export function handleAgentError(
 }
 
 /**
- * Schedule a detached typed dispatch. The chain runner itself remains an
- * external product boundary; this module owns delay, argument validation, and
- * process lifecycle rather than asking shell to sleep and fork it.
+ * Schedule a detached typed dispatch. This module owns delay, argument
+ * validation, and process lifecycle rather than asking shell to sleep and fork
+ * it. The detached `dispatch` sub-process waits out the backoff, authorizes one
+ * fresh typed occurrence, and re-enters the existing run through the typed
+ * launch-agent bundle — it never invokes chain-runner.sh --start.
  */
-export function scheduleChainRunner(chainRunner: string, chainFile: string, agentId: string, delaySeconds: number): void {
-  assertExternalPath(chainRunner, "chain runner");
+export function scheduleChainRunner(chainFile: string, agentId: string, delaySeconds: number): void {
   assertExternalPath(chainFile, "chain file");
   if (!agentId.trim()) throw new Error("agent id must not be empty");
   assertNonNegativeFinite(delaySeconds, "delay seconds");
   const bundle = resolve(process.argv[1] || "");
   if (!bundle || !isAbsolute(bundle)) throw new Error("Typed error-handling bundle path is unavailable for dispatch.");
-  const child = spawn(process.execPath, [bundle, "dispatch", "--delay-seconds", String(delaySeconds), "--chain-runner", chainRunner, "--chain-file", chainFile, "--agent-id", agentId], {
+  const child = spawn(process.execPath, [bundle, "dispatch", "--delay-seconds", String(delaySeconds), "--chain-file", chainFile, "--agent-id", agentId], {
     detached: true,
     stdio: "ignore",
     env: process.env,
@@ -155,18 +156,102 @@ export function scheduleChainRunner(chainRunner: string, chainFile: string, agen
   child.unref();
 }
 
-export function dispatchChainRunner(chainRunner: string, chainFile: string, agentId: string, delaySeconds: number): Promise<void> {
-  assertExternalPath(chainRunner, "chain runner");
-  assertExternalPath(chainFile, "chain file");
+/**
+ * Wait out the backoff inside this process, then authorize one fresh typed
+ * occurrence and spawn the typed launch-agent bundle detached. The launcher
+ * reuses the exact run id, the run-local immutable chain snapshot, parent
+ * provenance, and terminal attempt history (createAgentAttempt preserves it);
+ * the resumedAt authorization is the typed runtime's documented mechanism for a
+ * direct bootstrap of an agent whose latest attempt is terminal, mirroring the
+ * resume route. Detached + unref'd: the relaunch outlives this process and
+ * never blocks the error decision that scheduled it.
+ */
+export function dispatchChainRunner(chainFile: string, agentId: string, delaySeconds: number): Promise<void> {
+  const plan = buildTypedRelaunchPlan(chainFile, agentId);
   assertNonNegativeFinite(delaySeconds, "delay seconds");
-  return new Promise((resolveDispatch, rejectDispatch) => {
+  return new Promise((resolveDispatch) => {
     setTimeout(() => {
-      const child = spawn("/bin/bash", [chainRunner, chainFile, "--start", agentId], { detached: true, stdio: "ignore", env: process.env });
-      child.on("error", rejectDispatch);
+      authorizeTypedRelaunch(plan.runJsonPath, plan.runId);
+      const child = spawn(process.execPath, [plan.launcher, ...plan.args], {
+        detached: true,
+        stdio: "ignore",
+        env: plan.env,
+      });
+      child.on("error", () => undefined);
       child.unref();
       resolveDispatch();
     }, delaySeconds * 1000);
   });
+}
+
+export interface TypedRelaunchPlan {
+  launcher: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  runDir: string;
+  runId: string;
+  runJsonPath: string;
+}
+
+/**
+ * Resolve the typed relaunch as a pure plan: the sibling launch-agent bundle,
+ * the run-local chain snapshot as chainPath, and an environment that pins the
+ * exact run id and run directory so the launcher re-enters the existing run
+ * rather than creating a new one. Validated eagerly so a missing launcher or run
+ * id fails before the backoff wait, not after it.
+ */
+export function buildTypedRelaunchPlan(chainFile: string, agentId: string, bundlePath: string = resolve(process.argv[1] || "")): TypedRelaunchPlan {
+  assertExternalPath(chainFile, "chain file");
+  if (!agentId.trim()) throw new Error("agent id must not be empty");
+  const runId = process.env.MENTIKO_RUN_ID || process.env.RUN_ID;
+  if (!runId) throw new Error("Typed relaunch requires MENTIKO_RUN_ID to preserve the existing run.");
+  const runDir = process.env.MENTIKO_RUN_DIR || dirname(chainFile);
+  if (!isAbsolute(runDir)) throw new Error(`Typed relaunch run directory must be absolute: ${runDir}`);
+  return {
+    launcher: resolveTypedLauncher(bundlePath),
+    args: [chainFile, agentId],
+    env: { ...process.env, MENTIKO_RUN_ID: runId, RUN_ID: runId, MENTIKO_RUN_DIR: runDir },
+    runDir,
+    runId,
+    runJsonPath: join(runDir, "run.json"),
+  };
+}
+
+/**
+ * The typed launch-agent bundle is a sibling of this compiled bundle in lib/.
+ * Fails closed when missing so a checkout without the built runtime never leaves
+ * a relaunch half-scheduled.
+ */
+function resolveTypedLauncher(bundlePath: string): string {
+  if (!bundlePath || !isAbsolute(bundlePath)) throw new Error("Typed error-handling bundle path is unavailable for typed launch dispatch.");
+  const compiled = join(dirname(bundlePath), "runner-v2-launch-agent.js");
+  if (!existsSync(compiled) || !statSync(compiled).isFile()) {
+    throw new Error(`Typed runner-v2 launch-agent bundle missing: ${compiled}`);
+  }
+  return compiled;
+}
+
+/**
+ * Authorize one fresh typed occurrence for a non-terminal run. The typed
+ * bootstrap's assertBootstrapLaunchable gate admits a direct relaunch of an
+ * agent whose latest attempt is terminal only when run.resumedAt is newer than
+ * that attempt's updatedAt; retry/handler relaunches are detached direct
+ * bootstraps (not routed-completion replays), so they need this durable
+ * authorization rather than an env occurrence claim. Identity-guarded and
+ * best-effort: a missing record or write failure never changes the durable
+ * retry/handler decision, and a record whose id does not match is left untouched.
+ */
+export function authorizeTypedRelaunch(runJsonPath: string, runId: string): void {
+  if (!existsSync(runJsonPath)) return;
+  try {
+    updateRunJson(runJsonPath, (current) => {
+      if (!current) throw new Error(`run.json not found during relaunch authorization: ${runJsonPath}`);
+      if (current.id !== runId) return current; // never authorize a foreign record
+      return { ...current, resumedAt: new Date().toISOString() };
+    });
+  } catch {
+    // The launcher's own gate remains authoritative; authorization is best-effort.
+  }
 }
 
 function loadChain(chainFile: string, agentsDir?: string): ChainRecord {

@@ -479,13 +479,13 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-error-lifecycle-owner",
-        label: "Detect report failures, resolve retry policy, mutate retry state, and schedule typed handler/retry launches",
+        label: "Detect report failures, resolve retry policy, mutate retry state, authorize one fresh occurrence (run.resumedAt), and dispatch typed retry/handler relaunches through runner-v2-launch-agent",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts"],
+        paths: ["web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts", "lib/runner-v2-launch-agent.js"],
       },
       {
         id: "shell-error-invocation-boundary",
-        label: "Forward legacy error helper arguments to the compiled typed owner",
+        label: "Forward legacy error helper arguments to the compiled typed owner; retry/handler relaunch reuses the exact run id and re-enters through the typed launch-agent, never chain-runner.sh --start",
         owner: "runner-v2",
         paths: ["lib/error-handling.sh"],
       },

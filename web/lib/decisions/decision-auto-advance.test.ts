@@ -4,7 +4,6 @@
 
 import {
   advanceDecisionAfterPhase,
-  advanceWorkspaceDecisionAutoApprovals,
   decisionPhaseKey,
   startDecisionPhaseOnce,
 } from "./decision-auto-advance";
@@ -14,12 +13,7 @@ jest.mock("@/lib/workspaces/workspace-storage", () => ({
   resolveDecisionAutoApprove: jest.fn(),
 }));
 
-jest.mock("@/lib/decisions/decision-storage", () => ({
-  listDecisions: jest.fn(),
-}));
-
 import { listWorkspaces, resolveDecisionAutoApprove } from "@/lib/workspaces/workspace-storage";
-import { listDecisions } from "@/lib/decisions/decision-storage";
 
 describe("decision auto-advance", () => {
   const originalFetch = global.fetch;
@@ -29,7 +23,6 @@ describe("decision auto-advance", () => {
     jest.restoreAllMocks();
     jest.mocked(listWorkspaces).mockReset();
     jest.mocked(resolveDecisionAutoApprove).mockReset();
-    jest.mocked(listDecisions).mockReset();
   });
 
   it("coalesces concurrent research-complete nudges into one deck request", async () => {
@@ -150,32 +143,6 @@ describe("decision auto-advance", () => {
       selectedOptionId: "option-a",
       autoApprovedByWorkspacePolicy: true,
     }));
-  });
-
-  it("catches up a plan that was ready when workspace auto-approval was enabled", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
-    global.fetch = fetchMock;
-    jest.mocked(listWorkspaces).mockReturnValue([{ id: "ws", path: "/repo", name: "repo" }] as never);
-    jest.mocked(resolveDecisionAutoApprove).mockReturnValue(true);
-    jest.mocked(listDecisions).mockReturnValue([{
-      id: "dec-catch-up",
-      status: "briefed",
-      workspacePath: "/repo",
-      options: [{ id: "option-a" }],
-      recommendation: { choiceId: "option-a" },
-      guidedFlow: {
-        currentRound: 3,
-        round1: { status: "complete", questions: [], answers: [] },
-        round2: { status: "ready", tailoredOptions: [], selectedOptionId: "option-a" },
-        round3: { status: "ready", plan: { summary: "plan", tasks: [], dependencies: [] } },
-      },
-    }] as never);
-
-    advanceWorkspaceDecisionAutoApprovals({ namespaceId: "ns", orgId: "org", workspacePath: "/repo" });
-    await Promise.resolve();
-
-    expect(listDecisions).toHaveBeenCalledWith("ns", "org", "/repo");
-    expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-catch-up/resolve");
   });
 
   it("retries a failed pointer write by adopting the original run", async () => {

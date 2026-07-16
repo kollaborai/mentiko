@@ -53,7 +53,6 @@ handle-agent-error() {
         --error-type "$2"
         --report-file "$3"
         --chain-file "$4"
-        --chain-runner "$5"
     )
     [[ -n "${AGENTS_DIR:-}" ]] && args+=(--agents-dir "$AGENTS_DIR")
     _error_handling_cli "${args[@]}"

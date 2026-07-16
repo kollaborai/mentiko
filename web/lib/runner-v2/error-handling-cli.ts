@@ -40,11 +40,11 @@ export async function runErrorHandlingCli(argv: string[], write: (line: string) 
     return 0;
   }
   if (command === "dispatch") {
-    rejectUnexpected(values, new Set(["--delay-seconds", "--chain-runner", "--chain-file", "--agent-id"]));
-    await dispatchChainRunner(required(values, "--chain-runner"), required(values, "--chain-file"), required(values, "--agent-id"), number(values, "--delay-seconds"));
+    rejectUnexpected(values, new Set(["--delay-seconds", "--chain-file", "--agent-id"]));
+    await dispatchChainRunner(required(values, "--chain-file"), required(values, "--agent-id"), number(values, "--delay-seconds"));
     return 0;
   }
-  rejectUnexpected(values, new Set(["--state-dir", "--run-id", "--session-prefix", "--agent-id", "--error-type", "--report-file", "--chain-file", "--chain-runner", "--agents-dir"]));
+  rejectUnexpected(values, new Set(["--state-dir", "--run-id", "--session-prefix", "--agent-id", "--error-type", "--report-file", "--chain-file", "--agents-dir"]));
   const stateDir = required(values, "--state-dir");
   const runId = required(values, "--run-id");
   const result = handleAgentError({
@@ -52,7 +52,6 @@ export async function runErrorHandlingCli(argv: string[], write: (line: string) 
     errorType: errorType(values),
     reportFile: required(values, "--report-file"),
     chainFile: required(values, "--chain-file"),
-    chainRunner: required(values, "--chain-runner"),
     stateDir,
     runId,
     agentsDir: optional(values, "--agents-dir"),
