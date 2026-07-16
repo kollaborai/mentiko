@@ -88,7 +88,7 @@ The catalog can report `Typed % = 100` for mapped persisted-shape surfaces while
 
 Catalog tests require every direct `web/lib/runner-v2/*` or runner shell source reference to have lineage, verify the ownership label against current readers and writers, and existence-check every lineage evidence path.
 
-`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; the registry holds 110 shapes as of this commit. Do not treat any count written into this page as current.
+`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; the registry holds 112 shapes as of this commit. Do not treat any count written into this page as current.
 
 A one-time drift repair ran on 2026-07-14 against one developer's local default namespace. Those figures are a dated observation of that machine, not a standing property of the system, and the local namespace has since grown well past the run count sampled below:
 

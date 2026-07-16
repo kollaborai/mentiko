@@ -162,7 +162,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/chains/[id]/git/branches/route.ts",
     ],
     notes: [
-      "Git remains the required external CLI product behavior. The typed owner parses status, history, diff, branch, conflict, commit, comparison, and stash stdout and owns the JSON records, including base64 diff payloads; lib/git-integration.sh only forwards primitive arguments to lib/runner-git-integration.js.",
+      "Git remains the required external CLI product behavior. The typed owner parses projection/read stdout and owns the JSON records, including base64 diff payloads. lib/git-integration.sh forwards projection arguments to lib/runner-git-integration.js; mutation operations invoke Git directly as the required external CLI, including shell-side conflict-resolution working-tree writes.",
       "The external .git directory is cataloged as the source of truth; no JSON projection is written into the Mentiko data root.",
     ],
   }),
