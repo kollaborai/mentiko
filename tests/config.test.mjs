@@ -8,12 +8,13 @@
  */
 
 import { execFileSync } from "child_process";
-import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, copyFileSync } from "fs";
 import { join, dirname } from "path";
 
 const TMP = `/tmp/test-config-sh-${process.pid}`;
 const REPO_ROOT = join(import.meta.dirname, "..");
 const CONFIG_SH = join(REPO_ROOT, "lib", "config.sh");
+const RUNTIME_PATHS_BUNDLE = join(REPO_ROOT, "lib", "runner-runtime-paths.js");
 
 const tests = [];
 let passed = 0;
@@ -95,6 +96,13 @@ function runBash(code, envOverrides = {}) {
 function resetTmp() {
   rmSync(TMP, { recursive: true, force: true });
   mkdirSync(TMP, { recursive: true });
+}
+
+function runtimeCodeRoot(name) {
+  const root = join(TMP, name);
+  mkdirSync(join(root, "lib"), { recursive: true });
+  copyFileSync(RUNTIME_PATHS_BUNDLE, join(root, "lib", "runner-runtime-paths.js"));
+  return root;
 }
 
 // -------------------------------------------------------------------
@@ -854,19 +862,37 @@ test("project-level dirs follow project nesting", () => {
 // -------------------------------------------------------------------
 
 test("MENTIKO_CODE_ROOT override works", () => {
+  resetTmp();
+  const codeRoot = runtimeCodeRoot("custom-code-root");
   const out = runConfig('echo "$MENTIKO_CODE_ROOT"', {
     MENTIKO_GLOBAL_ROOT: TMP,
-    MENTIKO_CODE_ROOT: "/custom/code-root",
+    MENTIKO_CODE_ROOT: codeRoot,
   });
-  assertEqual(out.trim(), "/custom/code-root", "MENTIKO_CODE_ROOT override");
+  assertEqual(out.trim(), codeRoot, "MENTIKO_CODE_ROOT override");
 });
 
 test("MENTIKO_ROOT backward compat follows MENTIKO_CODE_ROOT override", () => {
+  resetTmp();
+  const codeRoot = runtimeCodeRoot("custom-code-root");
   const out = runConfig('echo "$MENTIKO_ROOT"', {
     MENTIKO_GLOBAL_ROOT: TMP,
-    MENTIKO_CODE_ROOT: "/custom/code-root",
+    MENTIKO_CODE_ROOT: codeRoot,
   });
-  assertEqual(out.trim(), "/custom/code-root", "MENTIKO_ROOT follows CODE_ROOT");
+  assertEqual(out.trim(), codeRoot, "MENTIKO_ROOT follows CODE_ROOT");
+});
+
+test("config.sh fails closed when its typed runtime bundle is absent", () => {
+  const missingCodeRoot = join(TMP, "missing-runtime-code-root");
+  let threw = false;
+  try {
+    runBash('source "' + CONFIG_SH + '" || exit $?\necho "unreachable"', {
+      MENTIKO_GLOBAL_ROOT: TMP,
+      MENTIKO_CODE_ROOT: missingCodeRoot,
+    });
+  } catch {
+    threw = true;
+  }
+  assert(threw, "config.sh must reject a missing typed runtime bundle");
 });
 
 test("MENTIKO_PROJECT_ID derived from project dir path", () => {

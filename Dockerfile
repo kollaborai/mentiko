@@ -365,6 +365,16 @@ RUN if [ -f /build/web/lib/runner-v2/chain-validation-cli.ts ]; then \
       --outfile=/context/lib/runner-chain-validation.js; \
     fi
 
+# compile the typed runtime-path owner. config.sh only locates this bundle and
+# sources its shell-safe export projection; it performs no path derivation.
+RUN if [ -f /build/web/lib/runner-v2/runtime-paths-cli.ts ]; then \
+      echo "=== compiling typed runtime paths ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/runtime-paths-cli.ts \
+        --bundle --platform=node --target=node20 \
+      --outfile=/context/lib/runner-runtime-paths.js; \
+    fi
+
 # compile the typed chain generation contract; the legacy shell command only
 # forwards arguments to the external model process.
 RUN if [ -f /build/web/lib/runner-v2/chain-generation-cli.ts ]; then \
