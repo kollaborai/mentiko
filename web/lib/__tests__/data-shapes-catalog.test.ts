@@ -300,6 +300,26 @@ describe("data shape catalog", () => {
     expect(shape?.notes?.join(" ")).toMatch(/trigger is consumed last/i);
   });
 
+  it("separates the typed manual monitor state from run-scoped standalone monitoring", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "manual-monitor-state");
+
+    expect(shape).toMatchObject({
+      scope: "external",
+      format: "mixed",
+      assurance: "typed",
+      writers: ["web/lib/runner-v2/manual-monitor.ts"],
+      readers: ["web/lib/runner-v2/manual-monitor.ts"],
+    });
+    expect(shape?.storage).toContain("~/.mentiko_monitor/{session}_log");
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
+    expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
+      typed: 1,
+      legacy: 0,
+      state: "typed",
+    });
+    expect(shape?.notes?.join(" ")).toMatch(/does not fabricate a run/i);
+  });
+
   it("catalogs the actual project-level watchdog hook ledger and typed owner", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "watchdog-hook-dispatch");
 

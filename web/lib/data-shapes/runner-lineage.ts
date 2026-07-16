@@ -474,8 +474,21 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "The active standalone spec launcher now routes into the typed monitor. Retained shell monitor functions are unreachable from the documented launcher and are not a fallback path.",
-      paths: ["lib/launch-agent.sh", "lib/agent-functions.sh"],
+      summary: "The active standalone spec launcher routes into the typed run-scoped monitor. It is distinct from the manual profile-aware CLI monitor, which has its own typed global state shape.",
+      paths: ["lib/launch-agent.sh"],
+    },
+  },
+  "manual-monitor-state": {
+    usage: "runner-v2",
+    surfaces: [{
+      id: "typed-manual-monitor-owner",
+      label: "Validate manual monitor arguments and profiles, own global stale/hash/log records, invoke the configured advisor CLI, and control the attached PTY session",
+      owner: "runner-v2",
+      paths: ["web/lib/runner-v2/manual-monitor.ts", "web/lib/runner-v2/manual-monitor-cli.ts"],
+    }],
+    legacyEquivalent: {
+      summary: "Replaces the manual mentiko-monitor.sh loop, including profile prompt construction, advisor output sanitization, global state/log mutation, and session cleanup. The shell command now only invokes the compiled typed CLI.",
+      paths: ["bin/mentiko", "lib/agent-functions.sh"],
     },
   },
   "completion-launch-context": {

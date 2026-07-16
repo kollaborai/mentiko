@@ -163,8 +163,9 @@ monitor-chain-agent <session_name> [check_interval] [agent_context] [chain_file]
 mentiko-monitor <session_name> "end_state" [profile] [interval]
   -------------------------------------------------------------
 
-  profile-aware monitor wrapper. calls mentiko-monitor.sh script
-  with provided arguments.
+  profile-aware manual monitor wrapper. It forwards primitive arguments to the
+  compiled typed manual-monitor CLI; TypeScript owns profile parsing, global
+  state/log records, advisor prompt construction, nudges, and PTY cleanup.
 
   usage: mentiko-monitor "my-session" "complete" "default-profile" 60
 
@@ -229,4 +230,5 @@ lib/agent-functions.sh        this file
 lib/session-transport.sh      pty-manager abstraction
 lib/chain-runner.sh          main orchestrator (sources this)
 web/lib/runner-v2/completion-entrypoint.ts typed completion owner
-lib/mentiko-monitor.sh          profile-aware monitor script
+web/lib/runner-v2/manual-monitor-cli.ts typed profile-aware manual monitor
+lib/runner-manual-monitor.js     compiled manual monitor runtime

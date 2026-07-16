@@ -23,6 +23,7 @@ const pairs = [
   ["agent-profile-cli", "runner-agent-profile"],
   ["launch-agent-cli", "runner-v2-launch-agent"],
   ["monitor-cli", "monitor-v2"],
+  ["manual-monitor-cli", "runner-manual-monitor"],
   ["standalone-monitor-cli", "runner-v2-standalone-monitor"],
   ["lib/system/audit-cli.ts", "runner-audit"],
 ];

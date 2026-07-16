@@ -2,7 +2,7 @@
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-07",
   "migration_mode": "side-by-side",
-  "replaces": "the shell CHAIN agent monitor path for runner-v2 launches. The legacy helpers remain only as historical/reference surfaces outside the typed launch path; lib/mentiko-monitor.sh is the separate manual CLI and not a chain-launch fallback.",
+  "replaces": "the shell CHAIN agent monitor path for runner-v2 launches. The separate profile-aware manual CLI is also typed in manual-monitor-cli.ts; neither path has a shell fallback.",
   "preserves": "docs/orchestration/contracts/monitor.contract.json is the v1 behavior of record; every invariant and behavior there must survive the port unchanged unless explicitly superseded below",
   "why": {
     "problem": "the monitor — the loop that watches an agent over time and owns the patient 'wait, nudge, then latch' behavior — is still shell, while the completion verdict (a one-shot) is typed. The shell monitor is PATIENT: it nudges a stalled-but-alive agent and only latches completion on a real declared event or a standalone AGENT_COMPLETE. But the typed completion bridge it invokes runs its OWN blind retry/exhaust with no view of liveness. That split-brain — patient shell watcher, impatient typed verdict — is exactly what failed TASK-093: the typed bridge exhausted and declared the agent failed while the agent was still alive and emitted its declared event ~4.5 minutes later.",
@@ -18,7 +18,7 @@
     "env_carry": "the monitor command preserves the explicit run context. On completion, completion-launch.ts copies the allowlisted values into a private one-shot 0600 file because the PTY daemon filters spawn env; only the random path enters completion PTY argv, and validated deletion is the child-acceptance receipt."
   },
   "monitor_loop": {
-    "watch": "poll the session capture on an interval (shell: lib/mentiko-monitor.sh while-loop with CHECK_INTERVAL); the typed port keeps the same poll-until-terminal shape and must NOT block or run inside the completion PTY",
+    "watch": "poll the session capture on an interval; the typed port keeps the same poll-until-terminal shape and must NOT block or run inside the completion PTY",
     "completion_latch": "OR-latch from authoritative evidence: a standalone AGENT_COMPLETE line in the current-attempt durable transcript, a declared emits event owned by this agent/run, or a compatible canonical generation-result.json whose core-chain/run/job/token/attempt freshness boundaries agree. Latch recorded at ~/.mentiko_monitor/${session}_complete.",
     "stale": "md5 of the last 20 captured lines unchanged marks a stale tick (advisor_threshold MENTIKO_ADVISOR_STALE_COUNT default 3, max_stale default 5). Stale drives advisor nudges / blocked diagnostics ONLY — never completion. 'stale output does not imply completion.'",
     "nudge_budget": "durable ceiling MENTIKO_MONITOR_MAX_NUDGES tracked in ~/.mentiko_monitor/${session}_nudges; survives screen-echo stale resets and monitor restarts; an exhausted budget escalates (awaits latch) instead of nudging forever (20ce3b1). The typed port MUST persist this to disk, not memory, or a monitor restart resets the budget.",

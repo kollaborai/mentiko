@@ -318,11 +318,11 @@ EOF
         ;;
 
     # -------------------------------------------------------------------
-    # mentiko-monitor (profile-aware agent monitor)
+    # typed manual monitor (profile-aware agent monitor)
     # -------------------------------------------------------------------
 
     monitor)
-        bash "$LIB_DIR/mentiko-monitor.sh" "$@"
+        node "$LIB_DIR/runner-manual-monitor.js" "$@"
         ;;
 
     # -------------------------------------------------------------------

@@ -628,7 +628,26 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     samples: { root: "project", patterns: [["runs", "*", "monitor", "*_state"]], format: "key-value" },
     notes: [
       "Standalone spec launches create a typed run record and store monitor bookkeeping under that run before the monitor starts; they do not write ~/.mentiko_monitor.",
-      "Legacy global monitor files are not a supported runtime shape. The retained shell monitor functions are unreachable from the standalone launch entrypoints and must not be reintroduced as a fallback.",
+      "This run-scoped shape is separate from the typed manual-monitor global state. Neither monitor path has a shell fallback.",
+    ],
+  }),
+  shape({
+    id: "manual-monitor-state",
+    name: "Manual Monitor State",
+    category: "runner",
+    description: "Typed global bookkeeping for the profile-aware `mentiko monitor` command: terminal capture hash, stale count, and human-readable monitor log for an already-running session.",
+    scope: "external",
+    format: "mixed",
+    storage: ["~/.mentiko_monitor/{session}_state", "~/.mentiko_monitor/{session}_stale", "~/.mentiko_monitor/{session}_log"],
+    assurance: "typed",
+    typePaths: ["web/lib/runner-v2/manual-monitor.ts"],
+    validatorPaths: ["web/lib/runner-v2/manual-monitor.ts", "web/lib/runner-v2/manual-monitor-cli.ts"],
+    writers: ["web/lib/runner-v2/manual-monitor.ts"],
+    readers: ["web/lib/runner-v2/manual-monitor.ts"],
+    notes: [
+      "The manual command accepts session, expected end state, profile, and interval. It does not fabricate a run or reinterpret itself as the spec-driven standalone monitor.",
+      "TypeScript validates the session/profile path components, writes the same global state/log filenames with private modes, invokes the configured advisor CLI as the required external process, and cleans state/stale files only after terminal session handling. The log is retained.",
+      "bin/mentiko and the legacy shell function are invocation-only boundaries for the compiled CLI; neither parses profiles or mutates monitor state.",
     ],
   }),
   shape({

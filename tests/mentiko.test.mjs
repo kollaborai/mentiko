@@ -42,7 +42,7 @@ set -euo pipefail
 script="$1"
 name="\${script##*/}"
 case "$name" in
-  chain-runner.sh|chain-generator.sh|validate.sh|launch-agent.sh|mentiko-monitor.sh)
+  chain-runner.sh|chain-generator.sh|validate.sh|launch-agent.sh)
     printf '%s\n' "bash:$*" >> "\${MENTIKO_TEST_CALL_LOG}"
     exit 0
     ;;
@@ -53,7 +53,7 @@ exec /bin/bash "$@"
 set -euo pipefail
 script="$1"
 name="\${script##*/}"
-if [[ "$name" == "mentiko-cli-schedules.mjs" ]]; then
+if [[ "$name" == "mentiko-cli-schedules.mjs" || "$name" == "runner-manual-monitor.js" ]]; then
   printf '%s\n' "node:$*" >> "\${MENTIKO_TEST_CALL_LOG}"
   exit 0
 fi
@@ -207,13 +207,13 @@ test("dispatches schedule family commands to mentiko-cli-schedules", () => {
   assert(calls[0].includes("list_schedules"), `missing subcommand: ${calls[0]}`);
 });
 
-test("dispatches monitor command to mentiko-monitor", () => {
+test("dispatches monitor command to the typed manual monitor", () => {
   clearCalls();
   const res = runMentiko(["monitor", "agent-42", "healthy"]);
   const calls = readCalls();
   assert(res.status === 0, `expected status 0, got ${res.status}`);
   assert(calls.length === 1, `expected one dispatch, got ${calls.length}`);
-  assert(calls[0].includes("mentiko-monitor.sh"), `missing monitor dispatch: ${calls[0]}`);
+  assert(calls[0].includes("runner-manual-monitor.js"), `missing typed monitor dispatch: ${calls[0]}`);
 });
 
 test("rejects audit clear without explicit confirmation", () => {

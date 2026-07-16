@@ -1063,12 +1063,12 @@ monitor-chain-agent() {
 }
 
 # -------------------------------------------------------------------
-# mentiko-monitor: profile-aware monitor (wrapper for the script)
+# mentiko-monitor: typed profile-aware manual monitor invocation boundary
 # usage: mentiko-monitor <session-name> "end state" [profile] [interval]
 # -------------------------------------------------------------------
 mentiko-monitor() {
     local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    bash "$lib_dir/mentiko-monitor.sh" "$@"
+    node "$lib_dir/runner-manual-monitor.js" "$@"
 }
 
 # exports

@@ -150,6 +150,16 @@ RUN if [ -f /build/web/lib/runner-v2/monitor-cli.ts ]; then \
         --outfile=/context/lib/monitor-v2.js; \
     fi
 
+# compile the manual profile-aware monitor. The CLI owns its state, profile
+# parsing, advisor invocation, and PTY loop; bin/mentiko only invokes it.
+RUN if [ -f /build/web/lib/runner-v2/manual-monitor-cli.ts ]; then \
+      echo "=== compiling typed manual monitor ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/manual-monitor-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-manual-monitor.js; \
+    fi
+
 # compile the sole runner-event writer used by shell invocation boundaries.
 RUN if [ -f /build/web/lib/runner-v2/event-emitter-cli.ts ]; then \
       echo "=== compiling typed runner event emitter ===" && \
