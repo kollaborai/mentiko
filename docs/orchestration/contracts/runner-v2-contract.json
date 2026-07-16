@@ -1,10 +1,11 @@
 {
   "schema_version": "runner-contract/v1",
   "generated_at": "2026-07-05",
-  "revised_at": "2026-07-15",
-  "revision_note": "cut local launch, monitor, and completion ownership over to typed runner-v2 entrypoints; local failures fail closed, while SSH/Docker retain only the direct external mentiko CLI required for transport",
+  "revised_at": "2026-07-16",
+  "revision_note": "supported local direct and scheduled launches, monitor, and completion are typed and fail closed; default_runner remains a side-by-side migration classification for explicitly remaining legacy executable paths, not the implementation of bin/mentiko run",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
+  "default_runner_scope": "Migration classification for remaining batch, next-chain/retry, and direct legacy parallel shell execution. Supported local bin/mentiko run and scheduled launches use typed direct-run.",
   "flag": {
     "name": "MENTIKO_RUNNER_V2",
     "enabled_values": [
@@ -29,9 +30,9 @@
   },
   "entrypoints": {
     "web_initial_launch": {
-      "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>'",
+      "current": "web/lib/runs/chain-run-service.ts -> /bin/zsh -lc 'bin/mentiko run <chain.json>' -> compiled runner-v2-direct-run.js for supported local launch",
       "v2": "web/lib/runner-v2/controller.ts -> startRunnerV2Bootstrap: agent-bootstrap-plan resolves first-agent/profile context and bootstrap-executor spawns the agent PTY directly, gates readiness, submits instructions, and starts compiled monitor-v2 (typed-plan; no shell chain-runner --start)",
-      "fallback": "none for local runner-v2. Unsupported local planning or launch fails closed. SSH/Docker invoke bin/mentiko run directly because that external product CLI owns transport; no zsh or chain-runner bridge is added."
+      "fallback": "none. Unsupported local planning or launch and SSH/Docker direct-run definitions fail at typed boundaries; neither invokes chain-runner.sh as a fallback."
     },
     "direct_cli_initial_launch": {
       "current": "bin/mentiko run execs compiled lib/runner-v2-direct-run.js for the supported local single-agent initial-launch slice",

@@ -1,6 +1,6 @@
 # Runner v2 architecture
 
-Status: current working-tree architecture, verified 2026-07-14.
+Status: current committed architecture, checked 2026-07-16.
 
 Runner v2 is Mentiko's typed orchestration path. It is a side-by-side migration,
 not a complete replacement of the shell engine. The current system deliberately
@@ -26,15 +26,15 @@ Use these sources in this order:
 The contract is intentionally pinned to:
 
 - `migration_mode: side-by-side`
-- `default_runner: shell`
+- `default_runner: shell` as a migration classification for remaining legacy launch paths, not as a statement that `bin/mentiko run` is shell
 - `MENTIKO_RUNNER_V2` off by default
-- `MENTIKO_RUNNER_V2_COMPLETION` off by default
+- `MENTIKO_RUNNER_V2_COMPLETION` on as a deprecated forced compatibility marker
 
 `web/lib/runner-v2/contracts.ts` rejects changes to `migration_mode`,
-`default_runner`, or either flag name. The JSON contract records both flags as
-default-off, but that default value is not itself validated by `contracts.ts`.
-Passing switch-readiness checks therefore proves parity coverage under the
-side-by-side contract; it does not make runner v2 the default engine.
+`default_runner`, or either flag name. The machine contract retains the
+side-by-side classification while the supported direct local CLI is already
+typed. Passing switch-readiness checks proves the declared migration coverage;
+it does not prove that every remaining executable launch path is typed.
 
 The contract ledger also retains baseline ownership rows for the shell
 contracts alongside the newer `monitor-v2.contract.json` coverage. Treat those
@@ -52,7 +52,7 @@ flowchart TD
     HTTP["POST /api/chains/run"] --> SERVICE["startChainRun<br/>authorize, resolve, write chain.json and run.json"]
     SERVICE --> GATE{"MENTIKO_RUNNER_V2 enabled?"}
 
-    GATE -->|no| SHELL0["bin/mentiko run<br/>shell-default launch"]
+    GATE -->|no| DIRECT0["bin/mentiko run<br/>typed direct local launch"]
     GATE -->|yes| CONTROLLER["controller.ts<br/>validate side-by-side contract"]
     CONTROLLER --> BOOTSTRAP["typed local bootstrap"]
     BOOTSTRAP --> PLAN["agent-bootstrap-plan.ts"]
@@ -63,12 +63,10 @@ flowchart TD
     READY --> SUBMIT["idempotent instruction submission"]
 
     CONTROLLER -->|local unsupported| CLOSE0["fail closed; no second owner"]
-    CONTROLLER -->|SSH/Docker transport| EXTERNAL0["bin/mentiko run<br/>direct external CLI"]
-    SHELL0 --> SHELLAGENT["chain-runner.sh launches agent PTY"]
-    EXTERNAL0 --> SHELLAGENT
+    CONTROLLER -->|SSH/Docker unsupported| CLOSE1["fail closed; no shell fallback"]
+    DIRECT0 --> MONITOR
 
     SUBMIT --> MONITOR["monitor-v2<br/>typed reducer and live PTY/event adapter"]
-    SHELLAGENT --> MONITOR
 
     MONITOR --> EVIDENCE["authoritative completion evidence"]
     EVIDENCE --> CONTEXT["private one-shot completion context"]
@@ -91,11 +89,14 @@ planning, locked TypeScript writes to `run.json`, and durable external-effect
 queuing. Independently of each chain launch, the TypeScript background worker
 owns chain-watcher start/status/stop and startup plus periodic watchdog scans.
 
-The shell path still owns the default launch and non-local initial-launch
-compatibility. Routed next-agent and parallel launches use the typed launcher
-directly and fail closed without consuming the parent event when typed startup
-cannot be durably accepted. The retired watchdog and chain-event-watcher
-scripts are parity references, not active daemons.
+The supported local direct CLI and scheduled launch paths are typed. Remaining
+legacy shell execution is explicit rather than a fallback: batch workers spawn
+`chain-runner.sh` for each snapshot, typed adapters use it for `next-chain`
+continuations and retries, and direct legacy `chain-runner.sh --parallel`
+still owns that process fan-out. Routed same-run agents use the typed launcher
+and fail closed without consuming the parent event when typed startup cannot be
+durably accepted. The retired watchdog and chain-event-watcher scripts are
+parity references, not active daemons.
 
 ## Runtime selection and fallback rules
 
@@ -105,14 +106,16 @@ scripts are parity references, not active daemons.
 directory, `run.json`, and the run-local `chain.json` before selecting an
 engine.
 
-When `MENTIKO_RUNNER_V2` is absent or false, it starts:
+When `MENTIKO_RUNNER_V2` is absent or false, the web service still starts:
 
 ```text
 /bin/zsh -lc "bin/mentiko run <run-dir>/chain.json ..."
 ```
 
-When `MENTIKO_RUNNER_V2` is true, it calls
-`web/lib/runner-v2/controller.ts:startRunnerV2Launch`.
+That wrapper is not a shell engine: `bin/mentiko run` execs compiled
+`runner-v2-direct-run.js` for the supported local single-agent contract. When
+`MENTIKO_RUNNER_V2` is true, the service calls
+`web/lib/runner-v2/controller.ts:startRunnerV2Launch` directly.
 
 The controller first calls `startRunnerV2Bootstrap`, which directly allocates
 and drives the first agent PTY for local workspaces. Local runner-v2 is
@@ -122,9 +125,8 @@ does not create a second shell owner.
 ### Workspace boundary
 
 The direct typed bootstrap currently supports only local workspaces.
-`WORKSPACE_TYPE=ssh` or `docker` is delegated directly to `bin/mentiko run`,
-the required external product CLI that owns remote transport. It is not wrapped
-in `zsh`, `chain-runner.sh`, or a command-level fallback. Routed launch remains
+`WORKSPACE_TYPE=ssh` or `docker` is rejected at the typed boundary; it is not
+delegated to `chain-runner.sh` or another shell fallback. Routed launch remains
 typed and fail-closed.
 
 ### Background service selection
@@ -166,9 +168,9 @@ Assume a chain has two agents:
 - `writer` starts manually and emits `draft.ready`.
 - `reviewer` triggers on `draft.ready`.
 
-The following is the exact happy path when both runner-v2 flags are enabled,
-the workspace is local, the concurrency and readiness gates pass, monitor v2
-is available and does not return `64`, `writer` produces an owned
+The following is the exact happy path for a supported local typed launch when
+the concurrency and readiness gates pass, monitor v2 is available and does not
+return `64`, `writer` produces an owned
 `draft.ready` event, and no quality-gate, retry, loop, or fan-group branch
 intercepts completion.
 
@@ -539,17 +541,19 @@ does not depend on this missing merge context.
 
 ### Some launch boundaries remain shell-owned
 
-Initial unsupported/non-local launch may still use the shell compatibility
-bridge. Typed `next-chain` currently invokes `chain-runner.sh` synchronously and
-checks its exit, and retry delay is still represented as a generated shell
-command. Same-run routed local agents use the typed launcher and full
-`AgentAttempt` startup evidence without a shell fallback.
+Unsupported/non-local direct launch fails at the typed boundary. Remaining
+legacy executable paths are batch worker launches, typed `next-chain`
+continuations, retry dispatch, and direct `chain-runner.sh --parallel` use.
+Same-run routed local agents use the typed launcher and full `AgentAttempt`
+startup evidence without a shell fallback.
 
-### The default engine is still shell
+### The migration classification is still side-by-side
 
-Runner-v2 readiness and proof artifacts do not change the contract default.
-Do not describe runner v2 as the shipped default until the contract, runtime
-configuration, and observed deployment all agree.
+`default_runner: shell` remains a machine-contract classification because the
+legacy executable paths above still exist. Do not translate that field into a
+claim that the supported direct local CLI or scheduled service launches a shell
+runner; both are typed. Do not claim complete typed orchestration until batch,
+next-chain/retry, and direct legacy parallel execution are removed or migrated.
 
 ### Historical proof artifacts are not fresh runtime proof
 
