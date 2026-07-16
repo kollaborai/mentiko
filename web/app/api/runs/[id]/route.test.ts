@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 const mockGetSessionUser = jest.fn();
+const mockGetNamespaceConfig = jest.fn();
 const mockGetNamespaceIdFromRequest = jest.fn();
 const mockGetOrgIdFromRequest = jest.fn();
 
@@ -8,6 +9,7 @@ jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
 }));
 jest.mock("@/lib/namespace-config", () => ({
+  getNamespaceConfig: (...args: unknown[]) => mockGetNamespaceConfig(...args),
   getNamespaceIdFromRequest: (...args: unknown[]) => mockGetNamespaceIdFromRequest(...args),
   getOrgIdFromRequest: (...args: unknown[]) => mockGetOrgIdFromRequest(...args),
 }));
@@ -56,6 +58,7 @@ describe("GET /api/runs/[id] canonical record reads", () => {
     globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__ = join(root, "runs");
     mkdirSync(globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__);
     mockGetSessionUser.mockResolvedValue({ id: "user-1" });
+    mockGetNamespaceConfig.mockResolvedValue({ stateDir: join(globalThis.__MENTIKO_RUN_DETAIL_ROUTE_TEST_DIR__, "state") });
     mockGetNamespaceIdFromRequest.mockResolvedValue("default");
     mockGetOrgIdFromRequest.mockResolvedValue("default");
   });
