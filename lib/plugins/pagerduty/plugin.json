@@ -7,7 +7,7 @@
   "category": "notification",
   "builtin": true,
   "events": ["chain-stopped"],
-  "onEventScript": "on-event.sh",
+  "nativeHandler": "pagerduty",
   "configSchema": [
     {
       "key": "routing_key",
