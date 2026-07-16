@@ -261,7 +261,7 @@ using the current key only (no old key needed if the key hasn't changed yet).
 
 ### 5.1 Migration Trigger
 
-On startup, `web/lib/secrets-store.ts` will not auto-migrate. Migration is
+On startup, `web/lib/secrets/secrets-store.ts` will not auto-migrate. Migration is
 explicit — operator runs it.
 
 ### 5.2 Same-key Migration (no rotation)
@@ -365,18 +365,28 @@ They are never written. Operator must delete or repair them manually.
 
 ### 6.6 Keychain Mismatch Between Web and CLI
 
-`job-runner.mjs` duplicates the decryption logic in plain JS (it cannot import
-the TypeScript store). It must be updated to handle v1 ciphertext format. If it
-is not updated, it will fail on v1
-ciphertext (split() returns 5 parts, old code expects 3).
+The detached job worker duplicates the decryption logic rather than importing
+the secrets store. Both copies now handle v1 (5-part) and v0 (3-part)
+ciphertext, so the v1 rollout described below is complete.
 
-The ciphertext parser must be updated in both locations atomically:
-- `web/lib/secrets-store.ts`
-- `lib/job-runner.mjs`
+The duplication itself is not. It moved from the deleted `lib/job-runner.mjs`
+to `web/lib/runner-v2/job-worker.ts`, which carries its own `getDerivedKey()`,
+`getKeyId()`, `decrypt()`, and `getSecretByName()`. The original reason — a
+plain-`.mjs` file outside the Next.js module graph could not import the
+TypeScript store — no longer applies: `job-worker.ts` is TypeScript in the web
+tree and already imports `@/lib/runs/job-record` and
+`@/lib/runner-v2/agent-profile-args`. It could import the secrets store. It does
+not, and it is marked `@ts-nocheck`, so its crypto is neither shared nor
+type-checked.
+
+Until that duplication is removed, the ciphertext parser must be kept in sync
+across both locations atomically:
+- `web/lib/secrets/secrets-store.ts`
+- `web/lib/runner-v2/job-worker.ts`
 
 ## 7. Files to Change
 
-### 7.1 web/lib/secrets-store.ts
+### 7.1 web/lib/secrets/secrets-store.ts
 
 - `encrypt()`: produce v1 format, include keyId in ciphertext
 - `decrypt()`: handle both v0 (3-part) and v1 (5-part) formats
@@ -392,7 +402,7 @@ The ciphertext parser must be updated in both locations atomically:
 - new export: `getSecretsStatus(namespaceId, orgId)` — returns per-secret
   status (ok / unreadable / unknown) without decrypted values
 
-### 7.2 lib/job-runner.mjs
+### 7.2 web/lib/runner-v2/job-worker.ts
 
 - `getDerivedKey()`: no change
 - `decrypt()`: apply the same v1 format update as the typed secrets store
@@ -424,17 +434,19 @@ The ciphertext parser must be updated in both locations atomically:
 - show warning badge for `unreadable` secrets
 - show "Re-enter value" button that opens the edit flow
 
-### 7.9 web/app/api/secrets/[id]/route.ts (existing, if present)
+### 7.9 web/app/api/secrets/[id]/route.ts (does not exist)
 
-- `GET` single secret: include `status` field
+There is no per-secret route. `web/app/api/secrets/route.ts` and
+`web/app/api/secrets/rotate/route.ts` are the only two. If a per-secret `GET`
+is added later, it should include the `status` field.
 
-### 7.10 web/lib/dev-secret.ts
+### 7.10 web/lib/secrets/dev-secret.ts
 
 - no changes needed
 
 ## 8. Testing Plan
 
-### 8.1 Unit Tests (jest, web/__tests__/secrets-store.test.ts)
+### 8.1 Unit Tests (jest, web/lib/__tests__/secrets-store.test.ts)
 
 ```
 describe("encrypt/decrypt")
@@ -514,7 +526,7 @@ test: GET /api/secrets
 ### 8.5 Regression Tests
 
 ```
-test: job-runner.mjs decrypts v1 ciphertext
+test: job-worker.ts decrypts v1 ciphertext
   - create v1 secret, run job that uses it, verify env var set correctly
 
 test: existing v0 secrets still work after code deploy
