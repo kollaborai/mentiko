@@ -1,4 +1,8 @@
-import { rewriteChainInlineToRef } from "@/lib/chains/chain-postprocessor";
+import {
+  extractInlineAgents,
+  normalizeAgentAuthorities,
+  rewriteChainInlineToRef,
+} from "@/lib/chains/chain-postprocessor";
 import { validateChain } from "@/lib/validators";
 
 describe("rewriteChainInlineToRef", () => {
@@ -122,5 +126,35 @@ describe("rewriteChainInlineToRef", () => {
       },
     });
     expect(validateChain(rewritten).valid).toBe(true);
+  });
+});
+
+describe("generated agent authority contract", () => {
+  it("canonicalizes the legacy generated string-array shorthand before registry persistence", () => {
+    expect(normalizeAgentAuthorities(["read_files", "run_commands"])).toEqual({
+      can: ["read_files", "run_commands"],
+      needs_approval: [],
+    });
+
+    const [extracted] = extractInlineAgents({
+      agents: [{
+        id: "generated-reader",
+        name: "Generated Reader",
+        prompt: "Read the requested files.",
+        triggers: ["manual-start"],
+        emits: "reader-complete",
+        authorities: ["read_files"],
+      }],
+    });
+
+    expect(extracted.agent.authorities).toEqual({
+      can: ["read_files"],
+      needs_approval: [],
+    });
+  });
+
+  it("rejects malformed authority values before they can be persisted", () => {
+    expect(() => normalizeAgentAuthorities(["read_files", 42])).toThrow(/only strings/i);
+    expect(() => normalizeAgentAuthorities({ can: "read_files" })).toThrow(/array of strings/i);
   });
 });

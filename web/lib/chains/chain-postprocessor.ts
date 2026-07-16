@@ -3,6 +3,8 @@ import { join, dirname } from "path";
 import { orgPath } from "@/lib/config";
 import type { AgentDefinition } from "@/lib/agents/agent-loader";
 
+type AgentAuthorities = NonNullable<AgentDefinition["authorities"]>;
+
 export interface ExtractedAgent {
   agent: AgentDefinition;
   originalId: string;
@@ -44,6 +46,43 @@ function toKebabCase(str: string): string {
 }
 
 /**
+ * Generated chains historically used `authorities: string[]`, while the
+ * persisted Agent Definition contract requires an object. Canonicalize that
+ * known producer shorthand at the registry write boundary; malformed values
+ * are rejected before they can become durable invalid agent.json records.
+ */
+export function normalizeAgentAuthorities(value: unknown): AgentAuthorities | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    if (!value.every((capability) => typeof capability === "string")) {
+      throw new Error("agent authorities array must contain only strings");
+    }
+    return { can: [...value], needs_approval: [] };
+  }
+  if (!value || typeof value !== "object") {
+    throw new Error("agent authorities must be an object or a string array");
+  }
+
+  const authorities = value as Record<string, unknown>;
+  for (const field of ["can", "needs_approval"] as const) {
+    const capabilities = authorities[field];
+    if (capabilities !== undefined && (!Array.isArray(capabilities) || !capabilities.every((capability) => typeof capability === "string"))) {
+      throw new Error(`agent authorities.${field} must be an array of strings`);
+    }
+  }
+  return authorities as AgentAuthorities;
+}
+
+function normalizedAgentForRegistry(agent: AgentDefinition, id: string): AgentDefinition {
+  const authorities = normalizeAgentAuthorities(agent.authorities);
+  return {
+    ...agent,
+    id,
+    ...(authorities ? { authorities } : {}),
+  };
+}
+
+/**
  * Iterate chain agents array, extract inline agents (those with a prompt).
  * Skips pure $ref entries (has $ref but no prompt).
  */
@@ -82,7 +121,7 @@ export function extractInlineAgents(
       triggers: (agent.triggers as string[]) || [],
       emits: (agent.emits as string) || "",
       context: agent.context as AgentDefinition["context"],
-      authorities: agent.authorities as AgentDefinition["authorities"],
+      authorities: normalizeAgentAuthorities(agent.authorities),
       retry: agent.retry as AgentDefinition["retry"],
       timeout: agent.timeout as number | undefined,
       model: agent.model as string | undefined,
@@ -131,7 +170,7 @@ export function writeAgentToRegistry(
     if (!existsSync(agentPath)) {
       // no collision — write here
       finalId = candidateId;
-      const agentWithId = { ...agent, id: finalId };
+      const agentWithId = normalizedAgentForRegistry(agent, finalId);
       mkdirSync(dirname(agentPath), { recursive: true });
       writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
       return finalId;
@@ -140,7 +179,7 @@ export function writeAgentToRegistry(
     // path exists — check if content is identical
     try {
       const existing = JSON.parse(readFileSync(agentPath, "utf-8")) as AgentDefinition;
-      const incomingStr = JSON.stringify({ ...agent, id: candidateId }, null, 2);
+      const incomingStr = JSON.stringify(normalizedAgentForRegistry(agent, candidateId), null, 2);
       const existingStr = JSON.stringify(existing, null, 2);
       if (incomingStr === existingStr) {
         // identical — no-op
@@ -149,7 +188,7 @@ export function writeAgentToRegistry(
     } catch {
       // unreadable existing file — overwrite
       finalId = candidateId;
-      const agentWithId = { ...agent, id: finalId };
+      const agentWithId = normalizedAgentForRegistry(agent, finalId);
       mkdirSync(dirname(agentPath), { recursive: true });
       writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
       return finalId;
@@ -161,7 +200,7 @@ export function writeAgentToRegistry(
   // fallback: use -v5 and overwrite
   finalId = `${agent.id}-v5`;
   const agentPath = join(orgPath(namespaceId, orgId, "agents"), finalId, "agent.json");
-  const agentWithId = { ...agent, id: finalId };
+  const agentWithId = normalizedAgentForRegistry(agent, finalId);
   mkdirSync(dirname(agentPath), { recursive: true });
   writeFileSync(agentPath, JSON.stringify(agentWithId, null, 2), "utf-8");
   return finalId;
