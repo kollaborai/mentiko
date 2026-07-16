@@ -95,6 +95,53 @@ describe("validateChain", () => {
     ]));
   });
 
+  it("rejects obsolete MCP task-tool names in inline and referenced agents", () => {
+    const inline = validateChain({
+      ...chainWithTimeout(0),
+      agents: [{
+        id: "worker",
+        name: "Worker",
+        triggers: ["chain_start"],
+        emits: "done",
+        tools: ["mentiko_get_task"],
+        authorities: { needs_approval: ["mentiko_update_task"] },
+      }],
+    });
+    expect(inline.valid).toBe(false);
+    expect(inline.errors).toEqual(expect.arrayContaining([
+      "agents[0].tools[0]: obsolete MCP task tool 'mentiko_get_task'; use 'get_task'",
+      "agents[0].authorities.needs_approval[0]: obsolete MCP task tool 'mentiko_update_task'; use 'update_task'",
+    ]));
+
+    const referenced = validateChain({
+      ...chainWithTimeout(0),
+      agents: [{
+        $ref: "worker",
+        tools: ["mentiko_update_task"],
+      }],
+    });
+    expect(referenced.valid).toBe(false);
+    expect(referenced.errors).toContain(
+      "agents[0].tools[0]: obsolete MCP task tool 'mentiko_update_task'; use 'update_task'",
+    );
+  });
+
+  it("accepts canonical MCP task-tool names", () => {
+    const result = validateChain({
+      ...chainWithTimeout(0),
+      agents: [{
+        id: "worker",
+        name: "Worker",
+        triggers: ["chain_start"],
+        emits: "done",
+        tools: ["get_task", "update_task"],
+        authorities: { can: ["get_task"], needs_approval: ["update_task"] },
+      }],
+    });
+
+    expect(result.valid).toBe(true);
+  });
+
   it("rejects branch fan-out keys and targets that cannot run", () => {
     const chain = {
       ...chainWithTimeout(0),

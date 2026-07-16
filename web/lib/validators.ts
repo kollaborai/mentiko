@@ -1,6 +1,10 @@
 import { validateScheduleTarget } from "./schedules/schedule-targets";
 import type { ScheduleTarget, ScheduleTrigger } from "./types";
 import { isSafeCronExpression } from "./schedules/cron-validation";
+import {
+  formatMcpTaskToolReferenceIssue,
+  validateMcpTaskToolReferences,
+} from "./agents/mcp-task-tool-contract";
 
 // validation result type
 export interface ValidationResult {
@@ -331,6 +335,9 @@ export function validateAgent(agent: unknown): ValidationResult {
   optionalStrictString(a.agent_profile, "agent_profile", errors);
   optionalStrictString(a.on_error, "on_error", errors);
   optionalStrictString(a.on_timeout, "on_timeout", errors);
+  for (const issue of validateMcpTaskToolReferences(a)) {
+    errors.push(formatMcpTaskToolReferenceIssue(issue));
+  }
 
   return { valid: errors.length === 0, errors };
 }
@@ -428,6 +435,9 @@ export function validateChain(chain: unknown): ValidationResult {
         validateRetryConfig(refAgent.retry, `agents[${i}].retry`, errors);
         optionalStrictString(refAgent.on_error, `agents[${i}].on_error`, errors);
         optionalStrictString(refAgent.on_timeout, `agents[${i}].on_timeout`, errors);
+        for (const issue of validateMcpTaskToolReferences(refAgent)) {
+          errors.push(`agents[${i}].${formatMcpTaskToolReferenceIssue(issue)}`);
+        }
         return;
       }
       const agentResult = validateAgent(agent);
