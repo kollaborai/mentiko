@@ -17,9 +17,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Resolve the typed Slack owner. node performs the fetch, so Slack no longer
-# needs bash 4 associative arrays — the historical bash 3.2 declare -A crash
-# (docs/PHASE6_STALL_ROOTCAUSE.md) is gone. A missing node fails the single
-# notification without aborting the chain.
+# needs the bash-4 associative arrays whose bash 3.2 parse once crashed launch
+# (docs/PHASE6_STALL_ROOTCAUSE.md). A missing node fails the single notification
+# without aborting the chain.
 _slack_notification_cli() {
     local mjs="${MENTIKO_CODE_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}/lib/slack-notification.mjs"
     if ! command -v node >/dev/null 2>&1; then
