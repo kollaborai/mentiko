@@ -304,9 +304,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "Physical JSON validation (empty bytes, JSON syntax, object root) is separate from normalized schema and invariant validation.",
       "The list and compare APIs project only stable UI fields from validated records; they do not expose runnerV2 or unknown persistence extensions.",
       "Invalid records and directory/id mismatches are omitted from list reads, never repaired by inventing a missing id.",
-      "Shell command boundaries invoke named operations in the compiled Run Record CLI; they do not parse or mutate run.json.",
+      "Shell command boundaries invoke named operations in the compiled Run Record CLI; they do not parse or mutate run.json. This includes build-summary and write-summary: TypeScript reads agent summary JSON, assigns the run verdict, atomically writes artifacts/run-summary.json, and links that artifact back to run.json.",
       "Current job/run stores resolve through namespace paths in several call sites; default project collapse hides that scope drift.",
-      "For task-linked execution, metadata.task_run_scope is the same immutable v1 claim persisted on the task: { version: 1, taskId, runId, namespaceId, orgId }. Typed readers use that declared scope to locate the record directly and verify identity, task ownership, and execution provenance; they do not scan alternate roots.",
+      "For task-linked execution, metadata.task_run_scope is the same immutable v1 active claim persisted on the task: { version: 1, taskId, runId, namespaceId, orgId }. Typed readers use that declared scope to locate the record directly and verify identity, task ownership, and execution provenance; they do not scan alternate roots. A terminal retry clears this active claim before re-admission and records retry_source_run_id plus retry_source_task_run_scope only when the source scope agrees with that terminal task run.",
     ],
   }),
   shape({
@@ -447,7 +447,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     samples: { root: "namespace", patterns: [["data", "tasks.db"]], format: "sqlite" },
     notes: [
-      "metadata.task_run_scope is the typed v1 task-to-run claim: { version: 1, taskId, runId, namespaceId, orgId }. Manual task launch and auto-run persist the claim before dispatch; the chain-run route records the same immutable scope in run.json metadata.",
+      "metadata.task_run_scope is the typed v1 active task-to-run claim: { version: 1, taskId, runId, namespaceId, orgId }. Manual task launch and auto-run persist the claim before dispatch; the chain-run route records the same immutable scope in run.json metadata. A terminal retry clears task_run_scope and retains retry_source_run_id plus retry_source_task_run_scope only for the verified source execution.",
       "Typed task attempts, outcome evidence, reconciliation, and auto-run resolve a scoped claim only through task-run-locator. It resolves the declared namespace/org root directly, then verifies run id, task id, and execution provenance. A malformed, missing, or mismatched scoped claim fails closed; it never permits alternate-root scanning or fallback lookup.",
       "Tasks created before task_run_scope retain their existing single request/config-resolved root read. That legacy unscoped behavior is not a fallback for a task that already has a scope claim.",
     ],

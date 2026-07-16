@@ -366,6 +366,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         ],
       },
       {
+        id: "typed-run-summary-verdict",
+        label: "Read agent summary JSON, derive the conservative run verdict, atomically publish run-summary.json, and link it to run.json",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/run-record-operations.ts", "web/lib/runner-v2/run-record-cli.ts"],
+      },
+      {
         id: "typed-run-recovery",
         label: "Typed completion recovery and reconciliation",
         owner: "runner-v2",
@@ -391,7 +397,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "shell-run-command-boundary",
-        label: "Shell command clients invoke the typed Run Record CLI",
+        label: "Shell command clients forward primitive arguments to the typed Run Record CLI, including summary operations",
         owner: "runner-v2",
         paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
       },
@@ -729,13 +735,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-task-run-scope-contract",
-        label: "Validate and persist the immutable v1 task-to-run scope during manual and auto task launch, then carry the same claim into run metadata",
+        label: "Validate and persist the immutable v1 active task-to-run scope during manual and auto task launch, then release it atomically on terminal retry while retaining verified source provenance",
         owner: "runner-v2",
         paths: [
           "web/lib/tasks/task-run-locator.ts",
           "web/app/api/tasks/[id]/run-chain/route.ts",
           "web/app/api/tasks/auto-run/route.ts",
           "web/app/api/chains/run/route.ts",
+          "web/app/api/tasks/reconcile/route.ts",
+          "web/lib/tasks/completion-audit-apply.ts",
         ],
       },
       {
@@ -764,6 +772,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     fieldRules: [
       {
         path: "metadata.task_run_scope",
+        usage: "runner-v2",
+      },
+      {
+        path: "metadata.retry_source_task_run_scope",
         usage: "runner-v2",
       },
     ],
