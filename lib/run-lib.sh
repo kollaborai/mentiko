@@ -23,17 +23,21 @@ source "$SCRIPT_DIR/terminal-sanitize.sh"
 # PROJECT_ROOT for data paths (namespace runs, reports, etc.)
 PROJECT_ROOT="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
 
-# unified system log (writes to /api/system/logs -> system.jsonl)
+# Shell invocation boundary for the typed system-log writer. This function
+# supplies primitive arguments only; TypeScript owns level validation, payload
+# construction, endpoint resolution, and dispatch.
+#
+# Best-effort by contract: callers include the chain-runner ERR trap, so this
+# must never fail or block the failure it is reporting.
 _sys_log() {
     local level="$1" source="$2" message="$3" detail="${4:-}"
-    curl -sf -X POST \
-        -H "Authorization: Bearer ${BETTER_AUTH_SECRET:-}" \
-        -H "x-namespace-id: ${NAMESPACE_ID:-default}" \
-        -H "x-org-id: ${ORG_ID:-default}" \
-        -H "Content-Type: application/json" \
-        -d "$(jq -nc --arg l "$level" --arg s "$source" --arg m "$message" --arg d "$detail" \
-            '{level:$l, source:$s, message:$m} + (if $d != "" then {detail:$d} else {} end)')" \
-        "http://localhost:${WEB_PORT:-3000}/api/system/logs" >/dev/null 2>&1 &
+    local cli="${MENTIKO_CODE_ROOT:-}/lib/runner-system-log.js"
+    [[ -f "$cli" ]] || return 0
+    node "$cli" \
+        --level "$level" \
+        --source "$source" \
+        --message "$message" \
+        --detail "$detail" >/dev/null 2>&1 &
 }
 
 # Shell invocation boundary for the typed runner-event writer. This function

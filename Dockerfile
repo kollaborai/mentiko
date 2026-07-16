@@ -159,6 +159,15 @@ RUN if [ -f /build/web/lib/runner-v2/event-emitter-cli.ts ]; then \
         --outfile=/context/lib/runner-event-emitter.js; \
     fi
 
+# compile the sole system-log writer used by shell invocation boundaries.
+RUN if [ -f /build/web/lib/system/system-log-cli.ts ]; then \
+      echo "=== compiling typed system log boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/system/system-log-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-system-log.js; \
+    fi
+
 # compile the strict event lifecycle boundary used by shell invocation surfaces.
 RUN if [ -f /build/web/lib/runner-v2/event-lifecycle-cli.ts ]; then \
       echo "=== compiling typed runner event lifecycle ===" && \

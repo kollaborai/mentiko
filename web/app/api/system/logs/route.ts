@@ -3,7 +3,7 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { readLogs, writeLog } from "@/lib/system/system-logger";
+import { normalizeSystemLogSubmission, readLogs, writeLog } from "@/lib/system/system-logger";
 import type { LogLevel } from "@/lib/system/system-logger";
 
 export const dynamic = "force-dynamic";
@@ -32,10 +32,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   }
   const namespaceId = await getNamespaceIdFromRequest(request);
   const orgId = await getOrgIdFromRequest(request);
-  const { level, source, message, detail } = await request.json();
-  if (!level || !source || !message) {
-    throw new BadRequest("level, source, message required");
+
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    throw new BadRequest("body must be valid JSON");
   }
-  writeLog(namespaceId, orgId, level as LogLevel, source, message, detail);
+
+  const normalized = normalizeSystemLogSubmission(raw);
+  if (!normalized.ok) throw new BadRequest(normalized.error);
+
+  const { level, source, message, detail } = normalized.submission;
+  writeLog(namespaceId, orgId, level, source, message, detail);
   return apiSuccess({ ok: true });
 });

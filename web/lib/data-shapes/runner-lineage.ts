@@ -89,6 +89,27 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["web/lib/runner-v2/job-worker.ts"],
     },
   },
+  "system-log": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-system-log-contract",
+        label: "Normalize submissions and append validated entries to the system log",
+        owner: "runner-v2",
+        paths: ["web/lib/system/system-logger.ts", "web/app/api/system/logs/route.ts"],
+      },
+      {
+        id: "typed-system-log-dispatch",
+        label: "Own payload construction and dispatch for shell invocation boundaries",
+        owner: "runner-v2",
+        paths: ["web/lib/system/system-log-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces the jq payload construction in run-lib.sh's _sys_log, which built the record inline and posted a level the route cast onto the entry without checking it. lib/run-lib.sh now forwards primitive arguments to the compiled CLI and retains no fallback.",
+      paths: ["lib/run-lib.sh"],
+    },
+  },
   "token-usage": {
     usage: "runner-v2",
     surfaces: [

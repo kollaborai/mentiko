@@ -12,6 +12,49 @@ export interface LogEntry {
   detail?: string;
 }
 
+export const LOG_LEVELS: readonly LogLevel[] = ["error", "warn", "info"];
+
+/** A submission before it is trusted: shape asserted, nothing else. */
+export interface SystemLogSubmission {
+  level: LogLevel;
+  source: string;
+  message: string;
+  detail?: string;
+}
+
+export type SystemLogNormalization =
+  | { ok: true; submission: SystemLogSubmission }
+  | { ok: false; error: string };
+
+function trimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/**
+ * Normalize a raw system-log submission from any caller. Both doors onto this
+ * shape -- the HTTP route and the shell-facing CLI -- validate through here, so
+ * an unrecognized level is rejected at the boundary rather than cast and
+ * persisted.
+ */
+export function normalizeSystemLogSubmission(raw: unknown): SystemLogNormalization {
+  if (!raw || typeof raw !== "object") return { ok: false, error: "submission must be an object" };
+  const candidate = raw as Record<string, unknown>;
+
+  const level = trimmedString(candidate.level);
+  const source = trimmedString(candidate.source);
+  const message = trimmedString(candidate.message);
+  const detail = trimmedString(candidate.detail);
+
+  if (!level || !source || !message) return { ok: false, error: "level, source, message required" };
+  if (!LOG_LEVELS.includes(level as LogLevel)) {
+    return { ok: false, error: `level must be one of ${LOG_LEVELS.join(", ")}` };
+  }
+
+  return { ok: true, submission: { level: level as LogLevel, source, message, ...(detail ? { detail } : {}) } };
+}
+
 function getLogPath(namespaceId: string, orgId: string): string {
   return orgPath(namespaceId, orgId, "logs", "system.jsonl");
 }

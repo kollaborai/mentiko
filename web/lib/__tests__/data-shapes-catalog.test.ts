@@ -315,6 +315,17 @@ describe("data shape catalog", () => {
     ]));
   });
 
+  it("pins the system log to one validator shared by both writing doors", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "system-log");
+
+    expect(shape?.assurance).toBe("typed");
+    expect(shape?.validatorPaths).toContain("web/lib/system/system-logger.ts");
+    expect(shape?.writers).toContain("web/lib/system/system-log-cli.ts");
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/_sys_log/);
+    // shell reaches the shape only by invoking the compiled CLI
+    expect(dataShapeShellSources(shape!)).toEqual([]);
+  });
+
   it("pins token-usage extraction to the typed owner and records the shell lineage", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "token-usage");
 
