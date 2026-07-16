@@ -23,7 +23,7 @@ export async function dispatchPagerDuty(env: NodeJS.ProcessEnv, post: (payload: 
   const payload = JSON.stringify({ routing_key: routingKey, event_action: "trigger", dedup_key: `mentiko-${chainId}`, payload: { summary: `Chain '${chainId}' failed${runId ? ` (run: ${runId})` : ""}`, severity: env.PLUGIN_SEVERITY || "error", source: "mentiko" } });
   const response = await post(payload);
   if (response.statusCode !== 202) throw new Error(`[pagerduty] error (HTTP ${response.statusCode}): ${response.message || "unknown error"}`);
-  console.log(`[pagerduty] incident triggered: ${response.dedupKey || ""}`);
+  console.error(`[pagerduty] incident triggered: ${response.dedupKey || ""}`);
 }
 
 export function postPagerDuty(payload: string): Promise<{ statusCode: number; dedupKey?: string; message?: string }> {
