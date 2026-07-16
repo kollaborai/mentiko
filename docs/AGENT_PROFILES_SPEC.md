@@ -256,7 +256,7 @@ Sets `claude-sonnet` as default if no default exists.
 | glm | GLM | glm | -p |
 
 Provider logos are SVG strings defined in a frontend constant
-(web/lib/provider-bundles.ts). Not stored in profile JSON.
+(web/lib/agents/provider-bundles.ts). Not stored in profile JSON.
 
 ---
 
@@ -353,7 +353,7 @@ Call site in chain-runner.sh (before launching agent via pty-manager):
 Singleton cache to avoid multiple fetches on chain editor:
 
 ```typescript
-// web/lib/use-agent-profiles.ts
+// web/lib/hooks/use-agent-profiles.ts
 import { useState, useEffect } from "react";
 
 let cache: AgentProfile[] | null = null;
@@ -483,9 +483,14 @@ On the run button click (as a second check):
 
 ## Sidebar Nav Update
 
-In web/components/app-sidebar.tsx, System navGroup, add:
+Shipped, but not as planned. `web/components/app-sidebar.tsx` never existed;
+there is no single app-sidebar component. The entry landed at
+`/settings/agent-configs` with the label **Agent Configs**, not "Agent
+Profiles", and is registered in the settings route table at
+`web/app/api/mentiko-mcp/ops/meta/settings/route.ts`:
+
 ```typescript
-{ href: "/settings/agent-configs", label: "Agent Profiles", icon: Cpu }
+{ route: "/settings/agent-configs", label: "Agent Configs", description: "CLI execution configurations", category: "workspace" }
 ```
 
 ---
@@ -510,9 +515,9 @@ In web/components/app-sidebar.tsx, System navGroup, add:
 ## Implementation Phases
 
 ### Phase A — Foundation (parallel)
-- A1: `web/lib/agent-profile-storage.ts` — CRUD + slugify + find_default
+- A1: `web/lib/agents/agent-profile-storage.ts` — CRUD + slugify + find_default
 - A2: TypeScript types in `web/lib/types.ts`
-- A3: `web/lib/provider-bundles.ts` — bundle manifests + SVG logos
+- A3: `web/lib/agents/provider-bundles.ts` — bundle manifests + SVG logos
 - A4: `chain.schema.json` — add default_agent_profile + agent_profile fields
 
 ### Phase B — API (parallel, after A)
@@ -523,11 +528,11 @@ In web/components/app-sidebar.tsx, System navGroup, add:
 
 ### Phase C — UI (parallel, after B)
 - C1: `web/app/settings/agent-configs/page.tsx` — full list-detail page
-- C2: `web/lib/use-agent-profiles.ts` — singleton cache hook
+- C2: `web/lib/hooks/use-agent-profiles.ts` — singleton cache hook
 - C3: Chain detail view — profile badges per agent
 - C4: Chain editor — chain default + per-agent profile pickers
 - C5: Zero-state gate + pre-run override section on Goal tab
-- C6: Sidebar nav entry (app-sidebar.tsx + layout-client.tsx)
+- C6: Settings nav entry (shipped as "Agent Configs"; see Sidebar Nav Update above)
 
 ### Phase D — Bash Integration (after A)
 - D1: `lib/chain-runner.sh` — resolve_agent_profile + build_profile_command

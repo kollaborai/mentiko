@@ -63,8 +63,8 @@ entering audit logs going forward.
 
 ## Files
 
-- `web/lib/user-crypto.ts` — DEK management + encrypt/decrypt
-- `web/lib/gdpr-data-map.ts` — exhaustive data surface inventory
+- `web/lib/auth/user-crypto.ts` — DEK management + encrypt/decrypt
+- `web/lib/system/gdpr-data-map.ts` — exhaustive data surface inventory
 - `web/app/api/gdpr/export/route.ts` — export endpoint
 - `web/app/api/gdpr/delete/route.ts` — delete endpoint
 - `lib/gdpr-sweep.sh` — filesystem cleanup

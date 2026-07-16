@@ -8,9 +8,9 @@ comprehensive task management system built on react, typescript, and sqlite.
 ## architecture overview
 
 data layer:
-  - web/lib/task-store.ts       native sqlite CRUD (replaced legacy external task system)
-  - web/lib/task-store-types.ts type definitions for tasks, comments, activity
-  - web/lib/task-transforms.ts  utility functions (mapPriority, timeAgo, etc)
+  - web/lib/tasks/task-store.ts       native sqlite CRUD (replaced legacy external task system)
+  - web/lib/tasks/task-store-types.ts type definitions for tasks, comments, activity
+  - web/lib/tasks/task-transforms.ts  utility functions (mapPriority, timeAgo, etc)
 
 component organization:
   - dialogs: create, edit, generate, dependency picker
@@ -171,7 +171,7 @@ component organization:
 
 ## type system
 
-key types from web/lib/task-store-types.ts:
+key types from web/lib/tasks/task-store-types.ts:
   - task: id, title, description, type, priority (0-4), status, owner, assignee, parentId
   - chainBinding: chain_id, chain_name, auto_run, last_run_id, last_run_status, analysis/generation jobs
   - comment: id, issue_id, text, author, created_at
@@ -224,11 +224,11 @@ useJobStatus (web/hooks/use-job-status.ts):
   - tracks job status via SSE or polling
   - returns { job, setJob } with status, result, error, activity
 
-mapPriority (web/lib/task-transforms.ts):
+mapPriority (web/lib/tasks/task-transforms.ts):
   - converts raw priority number to TaskPriority enum
   - 0->critical, 1->high, 2->medium, 3->low, 4->none
 
-timeAgo (web/lib/task-transforms.ts):
+timeAgo (web/lib/tasks/task-transforms.ts):
   - human-readable relative time: "5m ago", "2h ago", "3d ago"
 
 priorityBgColor / typeBgColor:

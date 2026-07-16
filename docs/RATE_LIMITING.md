@@ -38,18 +38,23 @@ body:   { "error": "rate_limited", "retry_after_seconds": N }
 
 ## tuning
 
-limits are in web/lib/rate-limit.ts (LIMITS object).
+limits are in web/lib/api/rate-limit.ts (LIMITS object).
 adjust values and redeploy.
 
 ## monitoring
 
 - 429 responses show up in access logs.
-- X-RateLimit-* headers are NOT added by the edge middleware
-  (to keep middleware cheap). route-level decorators in security.ts
-  still add them for individual endpoints.
+- X-RateLimit-* headers are NOT added by the proxy
+  (to keep it cheap). route-level decorators in
+  web/lib/auth/security.ts still add them for individual endpoints.
 
 ## files
 
-  web/lib/rate-limit.ts       — store interface + in-memory impl + limits
-  web/middleware.ts            — next.js edge middleware
+  web/lib/api/rate-limit.ts       — store interface + in-memory impl + limits
+  web/proxy.ts                    — the Next.js 16 request interceptor that
+                                    enforces the limits. This is the file that
+                                    middleware.ts became in Next 16; it carries
+                                    the same `export const config = { matcher }`
+                                    contract. There is no middleware.ts.
+  web/lib/auth/security.ts        — per-route header decorators
   web/lib/__tests__/rate-limit-enterprise.test.ts — unit tests

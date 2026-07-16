@@ -96,8 +96,8 @@ credentials never appear in:
 
   web/lib/task-provider/index.ts           factory + secret resolution
   web/lib/task-provider/types.ts           TASK_PROVIDER_META field definitions
-  web/lib/secrets-store.ts                 encrypted storage + resolution
-  web/lib/workspace-storage.ts             workspace config (holds references)
+  web/lib/secrets/secrets-store.ts                 encrypted storage + resolution
+  web/lib/workspaces/workspace-storage.ts             workspace config (holds references)
   web/components/workspace/workspace-settings.tsx  UI + migration
   web/app/api/workspaces/[id]/task-provider/route.ts  API endpoints
   web/app/api/secrets/route.ts             secrets CRUD

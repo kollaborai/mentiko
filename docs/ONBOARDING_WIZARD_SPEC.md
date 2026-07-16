@@ -197,7 +197,7 @@ secrets dialog form
                GITHUB_TOKEN presets
 
 secrets store
-  AS-IS: web/lib/secrets-store.ts
+  AS-IS: web/lib/secrets/secrets-store.ts
   no changes needed. createSecret/listSecrets/getSecretsEnvVars all work.
 
 folder browser

@@ -43,7 +43,7 @@ review:
 
 ## data model
 
-types defined in web/lib/link-types.ts.
+types defined in web/lib/links/link-types.ts.
 
 link definition (persisted):
   Link {

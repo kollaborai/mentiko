@@ -497,10 +497,10 @@ disabled gracefully. bash fires the escalation API call, web returns
 
 ---
 
-## Telegram API wrapper (lib/telegram.ts)
+## Telegram API wrapper (web/lib/notifications/telegram.ts)
 
 ```typescript
-// lib/telegram.ts
+// web/lib/notifications/telegram.ts
 const BASE = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 
 export async function sendMessage(chat_id: string, text: string): Promise<number | null> {
@@ -518,10 +518,10 @@ export async function sendMessage(chat_id: string, text: string): Promise<number
 
 ---
 
-## escalation registry helpers (lib/peer-escalations.ts)
+## escalation registry helpers (web/lib/system/peer-escalations.ts)
 
 ```typescript
-// lib/peer-escalations.ts
+// web/lib/system/peer-escalations.ts
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { NAMESPACE_ROOT } from "./config";
 import path from "path";
