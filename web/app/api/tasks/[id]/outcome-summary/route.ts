@@ -36,10 +36,10 @@ export const POST = requirePermission("manage_tasks")(
     if (!sourceRunId) {
       throw new BadRequest("Task has no execution run to summarize");
     }
-    if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) {
+    if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId, metadata)) {
       throw new BadRequest("Task outcome summary source must be an execution run");
     }
-    const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId);
+    const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId, metadata);
     if (!isOutcomeSummaryTerminalStatus(runStatus)) {
       throw new BadRequest(`Execution run ${sourceRunId} is ${runStatus}; outcome summary requires a terminal run`);
     }

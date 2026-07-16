@@ -245,4 +245,30 @@ describe("POST /api/tasks/[id]/run-chain", () => {
       "marco",
     );
   });
+
+  it("persists and forwards one exact task run scope", async () => {
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "FEAT-001" }),
+    });
+
+    expect(res.status).toBe(200);
+    const persistedMetadata = mockTaskUpdate.mock.calls[0][2].metadata;
+    const scope = persistedMetadata.task_run_scope;
+    const runCall = (global.fetch as jest.Mock).mock.calls.find(([url]) =>
+      String(url).endsWith("/api/chains/run"),
+    );
+    const body = JSON.parse(runCall![1].body as string);
+
+    expect(scope).toMatchObject({
+      version: 1,
+      taskId: "FEAT-001",
+      namespaceId: "marco",
+      orgId: "default",
+      runId: expect.stringMatching(/^run-\d+$/),
+    });
+    expect(body).toMatchObject({
+      runId: scope.runId,
+      metadata: { task_run_scope: scope },
+    });
+  });
 });

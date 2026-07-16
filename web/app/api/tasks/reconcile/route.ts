@@ -37,6 +37,11 @@ import {
 } from "@/lib/orchestration/task-lifecycle-service";
 import type { TaskLifecycleEffect, TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
 import { currentRunTerminalFingerprint, outcomeSummarySourceEligibility } from "@/lib/tasks/run-outcome-evidence";
+import {
+  locateTaskRun,
+  parseTaskRunScope,
+  TASK_RUN_SCOPE_METADATA_KEY,
+} from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
 
 export const dynamic = "force-dynamic";
@@ -159,7 +164,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   // audit pointing at the wrong failed run. Re-apply the durable verdict only
   // when this task has no fresh terminal execution to audit. The audit helper
   // is idempotent: close re-closes a reopened task, while decision preserves
-  // its human gate and restores the completed source-run evidence.
+  // its human gate and restores only exact source-run terminal evidence.
   const activeSweepTaskIds = new Set(
     [...runningTasks, ...terminalAutoRunTasks].map((issue) => issue.id),
   );
@@ -584,6 +589,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const verdict = meta.last_audit_verdict as "close" | "decision";
     try {
       const safeId = validateTaskId(issue.id);
+      const sourceTerminalMetadata = verdict === "decision"
+        ? readAuditedSourceTerminalMetadata(safeId, runId, meta)
+        : undefined;
       const outcome = await applyCompletionAudit({
         request,
         namespaceId,
@@ -605,6 +613,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           : undefined,
         workspacePath: typeof issue.workspace_id === "string" ? issue.workspace_id : undefined,
         metadata: meta,
+        sourceTerminalMetadata,
       });
       writeLog(namespaceId, orgId, "warn", "task-reconciler",
         `task ${safeId} run ${runId}: ${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`,
@@ -801,6 +810,75 @@ function terminalRunReason(run: Record<string, unknown>): string {
     : undefined;
   if (typeof blockedAgent?.lastMessage === "string" && blockedAgent.lastMessage.trim()) return blockedAgent.lastMessage.trim();
   return "runner-v2 blocked this run without a recorded reason";
+}
+
+function readAuditedSourceTerminalMetadata(
+  taskId: string,
+  runId: string,
+  taskMetadata: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  // A persisted scope is the task's authoritative run location. Do not weaken
+  // a bad claim into a config-root read: a missing, malformed, or mismatched
+  // scoped record is invalid provenance, not permission to guess another root.
+  if (TASK_RUN_SCOPE_METADATA_KEY in taskMetadata) {
+    try {
+      const scope = parseTaskRunScope(taskMetadata[TASK_RUN_SCOPE_METADATA_KEY]);
+      if (scope.taskId !== taskId || scope.runId !== runId) return undefined;
+      return auditedTerminalMetadata(taskId, runId, locateTaskRun(scope).run);
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Legacy tasks predating task_run_scope retain the one historical direct
+  // config-root read. This is deliberately not a root scan or fallback for a
+  // scoped task.
+  const runJsonPath = join(config.runsDir, runId, "run.json");
+  if (!existsSync(runJsonPath)) return undefined;
+
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(runJsonPath, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return auditedTerminalMetadata(taskId, runId, parsed as Record<string, unknown>);
+  } catch {
+    return undefined;
+  }
+}
+
+function auditedTerminalMetadata(
+  taskId: string,
+  runId: string,
+  run: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const status = typeof run.status === "string" ? run.status : undefined;
+  // The audit pointer is not enough: only the exact persisted run, linked to
+  // this task and terminal in this namespace/org scope, can repair task
+  // execution provenance. Missing or mismatched records fail closed.
+  if (run.id !== runId || run.taskId !== taskId || !status || !TERMINAL_RUN_STATUSES.has(status)) {
+    return undefined;
+  }
+
+  const agents = Array.isArray(run.agents)
+    ? run.agents
+      .filter((agent): agent is Record<string, unknown> => Boolean(agent) && typeof agent === "object")
+      .map((agent) => `${String(agent.id || "unknown")}|${String(agent.status || "unknown")}`)
+      .join(",")
+    : "";
+  const metadata: Record<string, unknown> = {
+    last_run_id: runId,
+    last_run_status: status,
+    last_run_agents: agents,
+    last_run_artifacts: Array.isArray(run.artifacts) ? run.artifacts : [],
+  };
+  if (typeof run.chain === "string" && run.chain) metadata.last_run_chain = run.chain;
+  if (typeof run.started === "string" && run.started) metadata.last_run_started = run.started;
+  if (typeof run.completed === "string" && run.completed) metadata.last_run_completed = run.completed;
+  if (status === "blocked") {
+    const reason = terminalRunReason(run);
+    metadata.last_run_error = reason;
+    metadata.last_run_blocked_reason = reason;
+  }
+  return metadata;
 }
 
 function stringArray(value: unknown): string[] {

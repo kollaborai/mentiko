@@ -25,6 +25,15 @@ jest.mock("../tasks/task-store", () => ({
   taskUpdate: jest.fn(),
 }));
 
+const mockLocateTaskRun = jest.fn();
+jest.mock("@/lib/tasks/task-run-locator", () => {
+  const actual = jest.requireActual("@/lib/tasks/task-run-locator");
+  return {
+    ...actual,
+    locateTaskRun: (...args: unknown[]) => mockLocateTaskRun(...args),
+  };
+});
+
 const mockTaskList = taskList as jest.MockedFunction<typeof taskList>;
 const mockTaskGet = taskGet as jest.MockedFunction<typeof taskGet>;
 const mockTaskUpdate = taskUpdate as jest.MockedFunction<typeof taskUpdate>;
@@ -328,6 +337,90 @@ describe("getAutoRunCandidates", () => {
       }),
       "default",
     );
+  });
+
+  it("uses a nondefault persisted scope for active-run admission and reconciliation", () => {
+    const task = {
+      id: "TASK-SCOPED",
+      title: "Scoped active run",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        last_run_id: "run-scoped-active",
+        last_run_status: "running",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-SCOPED",
+          runId: "run-scoped-active",
+          namespaceId: "tenant-a",
+          orgId: "engineering",
+        },
+      },
+    } as never;
+    mockLocateTaskRun.mockReturnValue({
+      runsDir: "/scoped/tenant-a/orgs/engineering/runs",
+      run: {
+        id: "run-scoped-active",
+        taskId: "TASK-SCOPED",
+        status: "running",
+        chain: "release-review",
+        chainId: "release-review",
+        started: "2026-07-15T12:00:00.000Z",
+        agents: [],
+        metadata: { taskExecution: true },
+      },
+    });
+
+    expect(canAdmitAutoRun(task, "default", "default")).toMatchObject({
+      admit: false,
+      action: "active_run_exists",
+    });
+    expect(reconcileTaskActiveRun("default", task, "default")).toMatchObject({
+      activeRun: { id: "run-scoped-active", status: "running" },
+      reconciled: true,
+    });
+    expect(mockLocateTaskRun).toHaveBeenCalledWith(expect.objectContaining({
+      namespaceId: "tenant-a",
+      orgId: "engineering",
+    }));
+    expect(mockReaddirSync).not.toHaveBeenCalled();
+  });
+
+  it("does not scan or mutate from a broken persisted task-run scope", () => {
+    const task = {
+      id: "TASK-BROKEN-SCOPE",
+      title: "Broken scoped claim",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        last_run_id: "run-missing-scoped",
+        last_run_status: "retry_requested",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-BROKEN-SCOPE",
+          runId: "run-missing-scoped",
+          namespaceId: "tenant-a",
+          orgId: "engineering",
+        },
+      },
+    } as never;
+    mockLocateTaskRun.mockImplementation(() => {
+      throw new Error("missing scoped run");
+    });
+
+    expect(canAdmitAutoRun(task, "default", "default")).toEqual({
+      admit: false,
+      reason: "task run scope is invalid",
+      action: "task_run_scope_invalid",
+    });
+    expect(reconcileTaskActiveRun("default", task, "default")).toEqual({
+      activeRun: null,
+      reconciled: false,
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockReaddirSync).not.toHaveBeenCalled();
   });
 
   it("orders ready tasks by priority, creation time, then natural task id", () => {

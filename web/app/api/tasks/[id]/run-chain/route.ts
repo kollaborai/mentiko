@@ -13,6 +13,10 @@ import { taskDetailHref } from "@/lib/tasks/task-routes";
 import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import type { TaskChainBinding } from "@/lib/tasks/task-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import {
+  createTaskRunScope,
+  TASK_RUN_SCOPE_METADATA_KEY,
+} from "@/lib/tasks/task-run-locator";
 
 export const dynamic = "force-dynamic";
 
@@ -146,6 +150,13 @@ export const POST = requirePermission("manage_tasks")(async (
 
     // 5. pre-generate runId and update task status + metadata FIRST
     const runId = `run-${Date.now()}`;
+    const taskRunScope = createTaskRunScope({
+      version: 1,
+      taskId: safeId,
+      runId,
+      namespaceId,
+      orgId,
+    });
     const updatedMeta = {
       ...executionStartedLifecycleMetadata({
         taskId: safeId,
@@ -153,6 +164,7 @@ export const POST = requirePermission("manage_tasks")(async (
         runId,
         chainId: binding.chain_id,
       }),
+      [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
       auto_run_retries: 0,
     };
     taskUpdate(orgId, safeId, { status: "in_progress", metadata: updatedMeta }, namespaceId);
@@ -171,6 +183,9 @@ export const POST = requirePermission("manage_tasks")(async (
         debug: binding.run_config?.debug ?? false,
         taskId: safeId,
         runId,
+        metadata: {
+          [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
+        },
         ...(workspacePath ? { workspacePath } : {}),
         ...(workspaceId ? { workspaceId } : {}),
       }),
@@ -183,7 +198,7 @@ export const POST = requirePermission("manage_tasks")(async (
       const rawError = runData.error;
       const errorMsg = typeof rawError === "string" ? rawError : rawError?.message || "Unknown error";
       const errorMeta = {
-        ...metadata,
+        ...updatedMeta,
         last_run_id: runId,
         last_run_status: "failed",
         last_run_error: errorMsg,

@@ -4,6 +4,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { randomBytes } from "crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { withRunJsonLock, writeRunJsonAtomic } from "@/lib/runs/run-json-lock";
@@ -44,6 +45,12 @@ import {
 import { internalApiUrl, forwardedHeaders } from "@/lib/auth/internal-web-origin";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
+import {
+  createTaskRunScope,
+  locateTaskRun,
+  parseTaskRunScope,
+  TASK_RUN_SCOPE_METADATA_KEY,
+} from "@/lib/tasks/task-run-locator";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { pruneInvalidChainBranches } from "@/lib/validators";
@@ -57,6 +64,7 @@ const JOB_CLAIM_PREFIX = "claim-";
 const JOB_CLAIM_STALE_MS = 5 * 60 * 1000;
 const EXECUTE_DIRECTLY_GATE_KEY = "auto_run_execute_directly_gate";
 const EXECUTE_DIRECTLY_GATE_STALE_MS = 5 * 60 * 1000;
+const TASK_RUN_LAUNCH_FAILURE_METADATA_KEY = "task_run_launch_failure";
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -268,30 +276,60 @@ function readResumableRunId(
   const lastRunStatus = typeof metadata.last_run_status === "string" ? metadata.last_run_status : undefined;
   if (!runId || !lastRunStatus || !RESUMABLE_RUN_STATUSES.has(lastRunStatus)) return null;
 
+  // A task with an explicit scope must read exactly that record. A bad scoped
+  // claim is not eligible for resume and must never fall back to the request
+  // namespace root, which could resume another task's similarly named run.
+  if (TASK_RUN_SCOPE_METADATA_KEY in metadata) {
+    try {
+      const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+      if (scope.taskId !== taskId || scope.runId !== runId) return null;
+      return resumableRunIdFromRecord(taskId, chainId, runId, locateTaskRun(scope).run);
+    } catch {
+      return null;
+    }
+  }
+
   const runJsonPath = join(nsPath(namespaceId, "runs"), runId, "run.json");
   if (!existsSync(runJsonPath)) return null;
 
   try {
-    const run = JSON.parse(readFileSync(runJsonPath, "utf-8")) as {
-      taskId?: string;
-      chainId?: string;
-      status?: string;
-      agents?: Array<{ status?: string }>;
-      metadata?: unknown;
-    };
-    if (run.taskId !== taskId) return null;
-    if (isNonExecutionRun(run)) return null;
-    if (run.chainId && run.chainId !== chainId) return null;
-    if (run.status === "running" || run.status === "pending") return null;
-    if (!run.status || !RESUMABLE_RUN_STATUSES.has(run.status)) return null;
-    const agents = run.agents || [];
-    if (agents.length > 0 && agents.every((agent) => agent.status === "complete")) {
-      return null;
-    }
-    return runId;
+    return resumableRunIdFromRecord(
+      taskId,
+      chainId,
+      runId,
+      JSON.parse(readFileSync(runJsonPath, "utf-8")) as {
+        taskId?: string;
+        chainId?: string;
+        status?: string;
+        agents?: Array<{ status?: string }>;
+        metadata?: unknown;
+      },
+    );
   } catch {
     return null;
   }
+}
+
+function resumableRunIdFromRecord(
+  taskId: string,
+  chainId: string,
+  runId: string,
+  run: {
+    taskId?: string;
+    chainId?: string;
+    status?: string;
+    agents?: Array<{ status?: string }>;
+    metadata?: unknown;
+  },
+): string | null {
+  if (run.taskId !== taskId) return null;
+  if (isNonExecutionRun(run)) return null;
+  if (run.chainId && run.chainId !== chainId) return null;
+  if (run.status === "running" || run.status === "pending") return null;
+  if (!run.status || !RESUMABLE_RUN_STATUSES.has(run.status)) return null;
+  const agents = run.agents || [];
+  if (agents.length > 0 && agents.every((agent) => agent.status === "complete")) return null;
+  return runId;
 }
 
 async function resumeExistingRun(
@@ -1650,6 +1688,38 @@ async function startChainRun(
     return { triggered: false, taskId, error: "Chain data missing" };
   }
 
+  // A task-linked run must claim its exact data root before dispatch. The
+  // chain endpoint receives this same immutable scope and writes it into the
+  // run record; readers never have to infer a root from the current session.
+  const runId = `run-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  const taskRunScope = createTaskRunScope({
+    version: 1,
+    taskId,
+    runId,
+    namespaceId,
+    orgId,
+  });
+  const launchMetadata = {
+    ...executionStartedLifecycleMetadata({
+      taskId,
+      metadata: taskMetadataForUpdate(orgId, taskId, namespaceId, metadata),
+      runId,
+      chainId,
+    }),
+    [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
+    auto_run_retries: 0,
+  };
+  try {
+    taskUpdate(orgId, taskId, {
+      status: "in_progress",
+      metadata: launchMetadata,
+    }, namespaceId);
+  } catch {
+    // Starting without a durable task->run claim recreates the scope ambiguity
+    // this contract removes, so fail before dispatch instead of guessing later.
+    return { triggered: false, taskId, error: "Failed to persist task run scope" };
+  }
+
   const runRes = await fetch(internalApiUrl("/api/chains/run", request.url), {
     method: "POST",
     headers: forwardedHeaders(request, namespaceId, orgId, {
@@ -1660,6 +1730,10 @@ async function startChainRun(
       chainId,
       userPrompt: taskTitle,
       taskId,
+      runId,
+      metadata: {
+        [TASK_RUN_SCOPE_METADATA_KEY]: taskRunScope,
+      },
       ...(workspacePath ? { workspacePath } : {}),
       ...(taskMetadata?.workspace_id ? { workspaceId: taskMetadata.workspace_id } : {}),
     }),
@@ -1667,38 +1741,81 @@ async function startChainRun(
 
   if (!runRes.ok) {
     const err = await runRes.json().catch(() => ({}));
-    return { triggered: false, taskId, error: (err as { error?: string }).error || "Failed to start run" };
+    const rawError = (err as { error?: unknown }).error;
+    const message = typeof rawError === "string" ? rawError : "Failed to start run";
+    return recordTaskRunLaunchFailure({
+      taskId,
+      namespaceId,
+      orgId,
+      metadata,
+      scope: taskRunScope,
+      message,
+    });
   }
 
   const runData = await runRes.json();
 
-  // record last_run_id in task metadata
-  try {
-    const currentTask = taskGet(orgId, taskId, namespaceId);
-    const existingMeta = currentTask?.metadata && typeof currentTask.metadata === "object"
-      ? currentTask.metadata as Record<string, unknown>
-      : taskMetadata || {};
-    taskUpdate(orgId, taskId, {
-      metadata: {
-        ...executionStartedLifecycleMetadata({
-          taskId,
-          metadata: existingMeta,
-          runId: runData.data.runId,
-          chainId,
-        }),
-        auto_run_retries: 0,
-      },
-    }, namespaceId);
-  } catch {
-    /* non-fatal */
+  if (runData?.data?.runId !== runId) {
+    return recordTaskRunLaunchFailure({
+      taskId,
+      namespaceId,
+      orgId,
+      metadata,
+      scope: taskRunScope,
+      message: "Chain run did not confirm the requested task run id",
+    });
   }
 
   return {
     triggered: true,
     taskId,
-    runId: runData.data.runId,
+    runId,
     action: "chain_run",
   };
+}
+
+/**
+ * A rejected launch has no durable run to reconcile. Remove the provisional
+ * task-run scope, retain the attempted scope as diagnostic evidence, and block
+ * automatic admission until a human explicitly resolves the launch failure.
+ */
+function recordTaskRunLaunchFailure(input: {
+  taskId: string;
+  namespaceId: string;
+  orgId: string;
+  metadata: Record<string, unknown>;
+  scope: ReturnType<typeof createTaskRunScope>;
+  message: string;
+}): TriggerResult {
+  const { [TASK_RUN_SCOPE_METADATA_KEY]: _provisionalScope, ...priorMetadata } = input.metadata;
+  try {
+    taskUpdate(input.orgId, input.taskId, {
+      status: "blocked",
+      metadata: {
+        ...priorMetadata,
+        auto_run_paused: true,
+        auto_run_paused_reason: input.message,
+        [TASK_RUN_LAUNCH_FAILURE_METADATA_KEY]: {
+          version: 1,
+          attempted_scope: input.scope,
+          message: input.message,
+        },
+      },
+    }, input.namespaceId);
+    return {
+      triggered: false,
+      taskId: input.taskId,
+      action: "task_run_launch_failed",
+      error: input.message,
+    };
+  } catch {
+    return {
+      triggered: false,
+      taskId: input.taskId,
+      action: "task_run_launch_failure_unpersisted",
+      error: `${input.message}; failed to persist launch failure state`,
+    };
+  }
 }
 
 async function startAnalysisJob(

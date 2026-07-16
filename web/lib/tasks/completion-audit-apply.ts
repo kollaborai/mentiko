@@ -47,6 +47,12 @@ interface ApplyCompletionAuditInput {
   workspacePath?: string;
   /** Current parent-task metadata (already parsed). */
   metadata: Record<string, unknown>;
+  /**
+   * Exact terminal execution fields read from this audit's source run. This is
+   * supplied only by reconciliation after it verifies the run id and task
+   * linkage; an audit verdict must never infer these fields on its own.
+   */
+  sourceTerminalMetadata?: Record<string, unknown>;
 }
 
 interface DecisionGateResult extends ApplyCompletionAuditResult {
@@ -189,6 +195,14 @@ function closeExecutionMetadataNeedsRepair(
     || metadata.last_run_outcome !== undefined
     || metadata.last_run_summary !== undefined
     || (completedAt ? metadata.last_run_completed !== completedAt : metadata.last_run_completed !== undefined);
+}
+
+function sourceTerminalMetadataNeedsRepair(
+  metadata: Record<string, unknown>,
+  sourceTerminalMetadata: Record<string, unknown>,
+): boolean {
+  return Object.entries(sourceTerminalMetadata).some(([key, value]) =>
+    JSON.stringify(metadata[key]) !== JSON.stringify(value));
 }
 
 function findExistingCompletionAuditDecisionSubtask(
@@ -468,7 +482,16 @@ async function closeSupersededDecisionSubtasks(input: ApplyCompletionAuditInput)
 export async function applyCompletionAudit(
   input: ApplyCompletionAuditInput,
 ): Promise<ApplyCompletionAuditResult> {
-  const { namespaceId, orgId, task, audit, runId, runFingerprint, metadata } = input;
+  const {
+    namespaceId,
+    orgId,
+    task,
+    audit,
+    runId,
+    runFingerprint,
+    metadata,
+    sourceTerminalMetadata,
+  } = input;
 
   // Idempotency: never act twice on the same audited run.
   const appliedFingerprint = typeof metadata.completion_audit_run_fingerprint === "string"
@@ -486,18 +509,31 @@ export async function applyCompletionAudit(
   const closeVerdictNotYetClosed =
     audit.verdict === "close" && !CLOSED_TASK_STATUSES.has(task.status);
   if (auditAlreadyApplied && !closeVerdictNotYetClosed) {
-    if ((audit.verdict === "close" || audit.verdict === "decision")
+    if (audit.verdict === "close"
       && closeExecutionMetadataNeedsRepair(metadata, runId, runFingerprint)) {
       taskMergeMeta(orgId, task.id, {
         ...lifecycleMetadata(hydrateLifecycleState(task.id, metadata)),
         last_audit_verdict: audit.verdict,
         ...closeExecutionMetadata(runId, runFingerprint),
-        ...(audit.verdict === "decision" ? { last_run_decision_required: true } : {}),
         completion_audit_run_id: runId,
         completion_audit_apply_status: "applied",
         ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
       }, namespaceId);
       return { action: "skipped", detail: "audit already applied for this run; repaired execution metadata" };
+    }
+    if (audit.verdict === "decision"
+      && sourceTerminalMetadata
+      && sourceTerminalMetadataNeedsRepair(metadata, sourceTerminalMetadata)) {
+      taskMergeMeta(orgId, task.id, {
+        ...lifecycleMetadata(hydrateLifecycleState(task.id, metadata)),
+        last_audit_verdict: "decision",
+        ...sourceTerminalMetadata,
+        last_run_decision_required: true,
+        completion_audit_run_id: runId,
+        completion_audit_apply_status: "applied",
+        ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
+      }, namespaceId);
+      return { action: "skipped", detail: "audit already applied for this run; repaired source execution metadata" };
     }
     return { action: "skipped", detail: "audit already applied for this run" };
   }
@@ -568,7 +604,10 @@ export async function applyCompletionAudit(
     taskMergeMeta(orgId, task.id, {
       ...lifecycleMetadata(state),
       last_audit_verdict: "decision",
-      ...closeExecutionMetadata(runId, runFingerprint),
+      // A decision gates the task; it does not prove the execution completed.
+      // Preserve the source run's terminal status, reason, and evidence exactly
+      // as reconciliation recorded them. Only a close verdict owns the
+      // completed-state metadata reset above.
       last_run_decision_required: true,
       decision_subtask_id: decisionResult.decisionTaskId,
       completion_audit_run_id: runId,

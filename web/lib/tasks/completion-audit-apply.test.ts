@@ -250,7 +250,7 @@ describe("applyCompletionAudit", () => {
   });
 
   // 2. verdict "decision"
-  it("decision: creates decision subtask with parentTaskId=task.id, starts research, merges decision metadata, returns decision_created", async () => {
+  it("decision: creates decision subtask with parentTaskId=task.id, starts research, merges gate metadata, returns decision_created", async () => {
     const task = makeTask();
     const audit: CompletionAudit = {
       verdict: "decision",
@@ -286,11 +286,6 @@ describe("applyCompletionAudit", () => {
         gated_run_fingerprints: ["run-abc::completed:t1"],
         lifecycle_phase: "decision_blocked",
         last_audit_verdict: "decision",
-        last_run_id: "run-abc",
-        last_run_status: "completed",
-        last_run_completed: "t1",
-        last_run_blocked_reason: undefined,
-        last_run_agents: undefined,
       }),
       "default",
     );
@@ -332,7 +327,44 @@ describe("applyCompletionAudit", () => {
     expect(startDecisionResearch).not.toHaveBeenCalled();
   });
 
-  it("decision: repairs stale execution provenance when the same applied audit is replayed", async () => {
+  it("decision: does not overwrite blocked source-run provenance while creating its gate", async () => {
+    const task = makeTask({ status: "in_progress" });
+    const audit: CompletionAudit = {
+      verdict: "decision",
+      reason: "Needs human input.",
+      decision: { prompt: "Which path?" },
+    };
+
+    await applyCompletionAudit({
+      ...makeInput(task, audit, {
+        last_run_id: "run-abc",
+        last_run_status: "blocked",
+        last_run_blocked_reason: "startup_recovery:unknown",
+        last_run_error: "CLI readiness unresolved after 90s",
+        last_run_agents: "inspector|cancelled",
+        last_run_artifacts: ["evidence.json"],
+      }),
+      runFingerprint: "blocked:t1",
+    });
+
+    const gateMerge = taskMergeMeta.mock.calls.find((call) => {
+      const meta = call[2] as Record<string, unknown>;
+      return meta.last_audit_verdict === "decision";
+    })?.[2] as Record<string, unknown>;
+    expect(gateMerge).toEqual(expect.objectContaining({
+      last_audit_verdict: "decision",
+      last_run_decision_required: true,
+    }));
+    expect(gateMerge).not.toHaveProperty("last_run_id");
+    expect(gateMerge).not.toHaveProperty("last_run_status");
+    expect(gateMerge).not.toHaveProperty("last_run_completed");
+    expect(gateMerge).not.toHaveProperty("last_run_blocked_reason");
+    expect(gateMerge).not.toHaveProperty("last_run_error");
+    expect(gateMerge).not.toHaveProperty("last_run_agents");
+    expect(gateMerge).not.toHaveProperty("last_run_artifacts");
+  });
+
+  it("decision: restores only supplied authoritative terminal provenance when the same applied audit is replayed", async () => {
     const task = makeTask({ status: "blocked" });
     const audit: CompletionAudit = {
       verdict: "decision",
@@ -352,23 +384,35 @@ describe("applyCompletionAudit", () => {
         last_run_agents: "inspector|cancelled",
       }),
       runFingerprint: "completed:t1",
+      sourceTerminalMetadata: {
+        last_run_id: "run-abc",
+        last_run_status: "blocked",
+        last_run_started: "t0",
+        last_run_completed: "t1",
+        last_run_agents: "reader|complete,updater|failed",
+        last_run_artifacts: [],
+        last_run_error: "agent summary status is blocked",
+        last_run_blocked_reason: "agent summary status is blocked",
+      },
     });
 
     expect(result).toEqual({
       action: "skipped",
-      detail: "audit already applied for this run; repaired execution metadata",
+      detail: "audit already applied for this run; repaired source execution metadata",
     });
     expect(createTaskDecision).not.toHaveBeenCalled();
     expect(taskMergeMeta).toHaveBeenCalledWith(
       "default",
       "TASK-42",
       expect.objectContaining({
-        last_audit_verdict: "decision",
         last_run_id: "run-abc",
-        last_run_status: "completed",
+        last_run_status: "blocked",
+        last_run_started: "t0",
         last_run_completed: "t1",
-        last_run_blocked_reason: undefined,
-        last_run_agents: undefined,
+        last_run_agents: "reader|complete,updater|failed",
+        last_run_artifacts: [],
+        last_run_error: "agent summary status is blocked",
+        last_run_blocked_reason: "agent summary status is blocked",
         last_run_decision_required: true,
       }),
       "default",

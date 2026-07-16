@@ -90,6 +90,15 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskAddDep: (...args: unknown[]) => mockTaskAddDep(...args),
 }));
 
+const mockLocateTaskRun = jest.fn();
+jest.mock("@/lib/tasks/task-run-locator", () => {
+  const actual = jest.requireActual("@/lib/tasks/task-run-locator");
+  return {
+    ...actual,
+    locateTaskRun: (...args: unknown[]) => mockLocateTaskRun(...args),
+  };
+});
+
 const mockTriggerAutoRunScan = jest.fn();
 jest.mock("@/lib/runs/auto-run-service", () => ({
   triggerAutoRunScan: (...args: unknown[]) => mockTriggerAutoRunScan(...args),
@@ -182,6 +191,11 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function taskRunResponse(init?: RequestInit) {
+  const body = JSON.parse(String(init?.body || "{}"));
+  return jsonResponse({ success: true, data: { runId: body.runId } });
 }
 
 describe("POST /api/tasks/auto-run", () => {
@@ -585,7 +599,7 @@ describe("POST /api/tasks/auto-run", () => {
     expect(mockGetJob).not.toHaveBeenCalled();
   });
 
-  it("resumes a stopped assigned run instead of starting a duplicate run", async () => {
+  it("does not resume a stopped in-progress run until lifecycle requests retry", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",
       title: "Resume existing run",
@@ -620,33 +634,116 @@ describe("POST /api/tasks/auto-run", () => {
 
     expect(res.status).toBe(200);
     expect(body.data).toMatchObject({
-      triggered: true,
+      triggered: false,
       taskId: "TASK-1",
-      runId: "run-stopped",
+      action: "not_runnable",
+      reason: "task status 'in_progress' is not runnable",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("resumes a terminal run from its persisted nondefault scope without reading the request root", async () => {
+    const task = {
+      id: "TASK-SCOPED-RESUME",
+      title: "Resume scoped run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-scoped-resume",
+        last_run_status: "stopped",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-SCOPED-RESUME",
+          runId: "run-scoped-resume",
+          namespaceId: "tenant-a",
+          orgId: "engineering",
+        },
+      },
+    };
+    mockTaskGet.mockReturnValue(task);
+    mockLocateTaskRun.mockReturnValue({
+      runsDir: "/scoped/tenant-a/orgs/engineering/runs",
+      run: {
+        id: "run-scoped-resume",
+        taskId: "TASK-SCOPED-RESUME",
+        chain: "Release Review",
+        chainId: "release-review",
+        goal: "Resume the scoped task run",
+        started: "2026-07-15T12:00:00.000Z",
+        status: "stopped",
+        agents: [{ id: "reviewer", name: "Reviewer", session: "session", status: "stopped" }],
+        metadata: { taskExecution: true },
+      },
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: true,
+      data: { runId: "run-scoped-resume", resumeFrom: "reviewer" },
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-SCOPED-RESUME" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: true,
+      taskId: "TASK-SCOPED-RESUME",
+      runId: "run-scoped-resume",
       action: "chain_resume",
     });
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toBe(
-      "http://localhost:3000/api/runs/run-stopped/resume"
-    );
-    expect(mockTaskUpdate).toHaveBeenCalledWith(
-      "default",
-      "TASK-1",
-      expect.objectContaining({
-        status: "in_progress",
-        metadata: expect.objectContaining({
-          lifecycle_phase: "executing",
-          execution_retries: 0,
-          last_run_id: "run-stopped",
-          last_run_status: "running",
-          auto_run_retries: 2,
-        }),
-      }),
-      "default",
+    expect(mockLocateTaskRun).toHaveBeenCalledWith(expect.objectContaining({
+      namespaceId: "tenant-a",
+      orgId: "engineering",
+    }));
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/runs/run-scoped-resume/resume"),
+      expect.any(Object),
     );
   });
 
-  it("starts a fresh chain run instead of resuming a stale audit run id", async () => {
+  it("does not retry a task when its persisted scope is missing", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-BROKEN-SCOPE",
+      title: "Broken scoped run",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+        last_run_id: "run-missing-scoped",
+        last_run_status: "retry_requested",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-BROKEN-SCOPE",
+          runId: "run-missing-scoped",
+          namespaceId: "tenant-a",
+          orgId: "engineering",
+        },
+      },
+    });
+    mockLocateTaskRun.mockImplementation(() => {
+      throw new Error("missing scoped run");
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-BROKEN-SCOPE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-BROKEN-SCOPE",
+      action: "task_run_scope_invalid",
+    });
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a stale audit run while the task remains in progress", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",
       title: "Run recommended chain",
@@ -672,7 +769,7 @@ describe("POST /api/tasks/auto-run", () => {
         generationKind: "chain_recommendation",
       },
     }));
-    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes("/api/runs/run-audit/resume")) {
         return Promise.resolve(jsonResponse({ error: "audit run must not resume" }, 500));
       }
@@ -689,7 +786,7 @@ describe("POST /api/tasks/auto-run", () => {
         }));
       }
       if (String(url).endsWith("/api/chains/run")) {
-        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+        return Promise.resolve(taskRunResponse(init));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -699,24 +796,164 @@ describe("POST /api/tasks/auto-run", () => {
 
     expect(res.status).toBe(200);
     expect(body.data).toMatchObject({
-      triggered: true,
+      triggered: false,
       taskId: "TASK-1",
-      runId: "run-exec",
-      action: "chain_run",
+      action: "not_runnable",
+      reason: "task status 'in_progress' is not runnable",
     });
-    expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url))).toEqual([
-      "http://localhost:3000/api/chains/release-review",
-      "http://localhost:3000/api/chains/run",
-    ]);
-    expect(mockTaskUpdate).toHaveBeenCalledWith(
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
+  it("persists and forwards one exact task run scope before auto dispatch", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-SCOPE",
+      title: "Record task scope",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "release-review",
+      },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Release Review", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(taskRunResponse(init));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-SCOPE" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    const persistedMetadata = mockTaskUpdate.mock.calls[0][2].metadata;
+    const scope = persistedMetadata.task_run_scope;
+    const runCall = (global.fetch as jest.Mock).mock.calls.find(([url]) =>
+      String(url).endsWith("/api/chains/run"),
+    );
+    const runBody = JSON.parse(runCall![1].body as string);
+    expect(body.data).toMatchObject({ triggered: true, taskId: "TASK-SCOPE", runId: scope.runId });
+    expect(scope).toMatchObject({
+      version: 1,
+      taskId: "TASK-SCOPE",
+      namespaceId: "default",
+      orgId: "default",
+      runId: expect.stringMatching(/^run-\d+-[a-f0-9]{8}$/),
+    });
+    expect(runBody).toMatchObject({
+      runId: scope.runId,
+      metadata: { task_run_scope: scope },
+    });
+  });
+
+  it("blocks and clears the provisional scope when chain launch is rejected", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-LAUNCH-FAIL",
+      title: "Record launch failure",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, chain_id: "release-review" },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).endsWith("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Release Review", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ error: "runner unavailable" }, 503));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-LAUNCH-FAIL" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-LAUNCH-FAIL",
+      action: "task_run_launch_failed",
+      error: "runner unavailable",
+    });
+    const provisionalScope = mockTaskUpdate.mock.calls[0][2].metadata.task_run_scope;
+    const failureMetadata = mockTaskUpdate.mock.calls.at(-1)[2].metadata;
+    expect(failureMetadata).not.toHaveProperty("task_run_scope");
+    expect(mockTaskUpdate).toHaveBeenLastCalledWith(
       "default",
-      "TASK-1",
+      "TASK-LAUNCH-FAIL",
       expect.objectContaining({
+        status: "blocked",
         metadata: expect.objectContaining({
-          lifecycle_phase: "executing",
-          execution_retries: 0,
-          last_run_id: "run-exec",
-          last_run_status: "running",
+          auto_run_paused: true,
+          auto_run_paused_reason: "runner unavailable",
+          task_run_launch_failure: {
+            version: 1,
+            attempted_scope: provisionalScope,
+            message: "runner unavailable",
+          },
+        }),
+      }),
+      "default",
+    );
+  });
+
+  it("blocks and clears the provisional scope when chain launch confirms another id", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RUN-MISMATCH",
+      title: "Reject mismatched run id",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, chain_id: "release-review" },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).endsWith("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Release Review", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-other" } }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RUN-MISMATCH" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RUN-MISMATCH",
+      action: "task_run_launch_failed",
+      error: "Chain run did not confirm the requested task run id",
+    });
+    const provisionalScope = mockTaskUpdate.mock.calls[0][2].metadata.task_run_scope;
+    const failureMetadata = mockTaskUpdate.mock.calls.at(-1)[2].metadata;
+    expect(failureMetadata).not.toHaveProperty("task_run_scope");
+    expect(mockTaskUpdate).toHaveBeenLastCalledWith(
+      "default",
+      "TASK-RUN-MISMATCH",
+      expect.objectContaining({
+        status: "blocked",
+        metadata: expect.objectContaining({
+          auto_run_paused: true,
+          task_run_launch_failure: expect.objectContaining({
+            attempted_scope: provisionalScope,
+            message: "Chain run did not confirm the requested task run id",
+          }),
         }),
       }),
       "default",
@@ -773,7 +1010,7 @@ describe("POST /api/tasks/auto-run", () => {
         }));
       }
       if (String(url).endsWith("/api/chains/run")) {
-        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-123" } }));
+        return Promise.resolve(taskRunResponse(init));
       }
       throw new Error(`Unexpected fetch: ${url} ${init?.method || "GET"}`);
     });
@@ -785,7 +1022,7 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({
       triggered: true,
       taskId: "TASK-2",
-      runId: "run-123",
+      runId: expect.stringMatching(/^run-\d+-[a-f0-9]{8}$/),
       action: "chain_run",
     });
 
@@ -990,7 +1227,7 @@ describe("POST /api/tasks/auto-run", () => {
         }),
       },
     });
-    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes("/api/chains/release-review")) {
         return Promise.resolve(jsonResponse({
           success: true,
@@ -1004,7 +1241,7 @@ describe("POST /api/tasks/auto-run", () => {
         }));
       }
       if (String(url).endsWith("/api/chains/run")) {
-        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+        return Promise.resolve(taskRunResponse(init));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -1016,7 +1253,7 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({
       triggered: true,
       taskId: "TASK-097",
-      runId: "run-exec",
+      runId: expect.stringMatching(/^run-\d+-[a-f0-9]{8}$/),
       action: "chain_run",
     });
     // Assigned + ran the existing chain -- and crucially did NOT re-launch a
@@ -1060,7 +1297,7 @@ describe("POST /api/tasks/auto-run", () => {
         }),
       },
     });
-    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes("/api/chains/release-review")) {
         return Promise.resolve(jsonResponse({
           success: true,
@@ -1074,7 +1311,7 @@ describe("POST /api/tasks/auto-run", () => {
         }));
       }
       if (String(url).endsWith("/api/chains/run")) {
-        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+        return Promise.resolve(taskRunResponse(init));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -1086,7 +1323,7 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({
       triggered: true,
       taskId: "TASK-097",
-      runId: "run-exec",
+      runId: expect.stringMatching(/^run-\d+-[a-f0-9]{8}$/),
       action: "chain_run",
     });
     const calledUrls = (global.fetch as jest.Mock).mock.calls.map(([url]) => String(url));
@@ -1123,7 +1360,7 @@ describe("POST /api/tasks/auto-run", () => {
         },
       },
     });
-    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes("/api/chains/release-review")) {
         return Promise.resolve(jsonResponse({
           success: true,
@@ -1137,7 +1374,7 @@ describe("POST /api/tasks/auto-run", () => {
         }));
       }
       if (String(url).endsWith("/api/chains/run")) {
-        return Promise.resolve(jsonResponse({ success: true, data: { runId: "run-exec" } }));
+        return Promise.resolve(taskRunResponse(init));
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -1149,7 +1386,7 @@ describe("POST /api/tasks/auto-run", () => {
     expect(body.data).toMatchObject({
       triggered: true,
       taskId: "TASK-097",
-      runId: "run-exec",
+      runId: expect.stringMatching(/^run-\d+-[a-f0-9]{8}$/),
       action: "chain_run",
     });
     expect((global.fetch as jest.Mock).mock.calls.map(([url]) => String(url))).toEqual([

@@ -50,6 +50,15 @@ jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
   outcomeSummarySourceEligibility: jest.fn(() => ({ eligible: true, status: "completed", fingerprint: "completed:now" })),
 }));
 
+const mockLocateTaskRun = jest.fn();
+jest.mock("@/lib/tasks/task-run-locator", () => {
+  const actual = jest.requireActual("@/lib/tasks/task-run-locator");
+  return {
+    ...actual,
+    locateTaskRun: (...args: unknown[]) => mockLocateTaskRun(...args),
+  };
+});
+
 const mockResolveTaskAutoRunDefault = jest.fn();
 jest.mock("@/lib/tasks/task-auto-run-default", () => ({
   resolveTaskAutoRunDefault: (...args: unknown[]) => mockResolveTaskAutoRunDefault(...args),
@@ -138,6 +147,7 @@ describe("GET /api/tasks/reconcile", () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
     mockCurrentRunTerminalFingerprint.mockReturnValue("completed:no-terminal-time");
+    mockLocateTaskRun.mockReset();
     mockRecoverLateCompletionEvents.mockReturnValue({ recovered: [], deliveries: [], run: { status: "stopped" } });
     mockClaimLateCompletionDelivery.mockReturnValue(true);
     mockAcknowledgeLateCompletionDelivery.mockReturnValue(true);
@@ -1516,11 +1526,25 @@ describe("GET /api/tasks/reconcile", () => {
     expect(mockApplyCompletionAudit).not.toHaveBeenCalled();
   });
 
-  it("repairs stale source-run provenance for an already-applied decision without creating another decision", async () => {
+  it("repairs stale source-run provenance for an already-applied decision from its exact terminal run without creating another decision", async () => {
     mockApplyCompletionAudit.mockResolvedValueOnce({
       action: "skipped",
-      detail: "audit already applied for this run; repaired execution metadata",
+      detail: "audit already applied for this run; repaired source execution metadata",
     });
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-completed",
+      taskId: "TASK-020",
+      status: "blocked",
+      started: "2026-07-15T23:10:01.000Z",
+      completed: "2026-07-15T23:11:54.313Z",
+      status_message: "agent summary status is blocked",
+      chain: "task-020-execution",
+      agents: [
+        { id: "inspector", status: "complete" },
+        { id: "updater", status: "failed" },
+      ],
+      artifacts: ["evidence.json"],
+    }));
     mockTaskList.mockReturnValue([
       {
         id: "TASK-020",
@@ -1560,8 +1584,108 @@ describe("GET /api/tasks/reconcile", () => {
       expect.objectContaining({
         runId: "run-completed",
         runFingerprint: "completed:2026-07-15T23:11:54.313Z",
+        sourceTerminalMetadata: {
+          last_run_id: "run-completed",
+          last_run_status: "blocked",
+          last_run_started: "2026-07-15T23:10:01.000Z",
+          last_run_completed: "2026-07-15T23:11:54.313Z",
+          last_run_chain: "task-020-execution",
+          last_run_agents: "inspector|complete,updater|failed",
+          last_run_artifacts: ["evidence.json"],
+          last_run_error: "agent summary status is blocked",
+          last_run_blocked_reason: "agent summary status is blocked",
+        },
         audit: expect.objectContaining({ verdict: "decision" }),
         task: expect.objectContaining({ id: "TASK-020" }),
+      }),
+    );
+  });
+
+  it("does not repair an audited decision from a terminal run linked to another task", async () => {
+    mockApplyCompletionAudit.mockResolvedValueOnce({
+      action: "skipped",
+      detail: "audit already applied for this run",
+    });
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-completed",
+      taskId: "TASK-OTHER",
+      status: "blocked",
+      started: "2026-07-15T23:10:01.000Z",
+      completed: "2026-07-15T23:11:54.313Z",
+      status_message: "agent summary status is blocked",
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-020",
+        title: "Document log function behavior",
+        status: "blocked",
+        metadata: {
+          last_audit_verdict: "decision",
+          completion_audit_run_id: "run-completed",
+          completion_audit_apply_status: "applied",
+          last_run_id: "run-completed",
+          last_run_status: "completed",
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    expect(res.status).toBe(200);
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-completed",
+        sourceTerminalMetadata: undefined,
+      }),
+    );
+  });
+
+  it("does not fall back to config.runsDir when a scoped audited run is missing or mismatched", async () => {
+    mockLocateTaskRun.mockImplementation(() => {
+      throw new Error("persisted task run scope does not match the run record");
+    });
+    // If this were read, a legacy config-root fallback would fabricate valid
+    // provenance. A scoped failure must leave it untouched.
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-completed",
+      taskId: "TASK-020",
+      status: "blocked",
+      metadata: { taskExecution: true },
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-020",
+        title: "Document log function behavior",
+        status: "blocked",
+        metadata: {
+          last_audit_verdict: "decision",
+          completion_audit_run_id: "run-completed",
+          completion_audit_apply_status: "applied",
+          task_run_scope: {
+            version: 1,
+            taskId: "TASK-020",
+            runId: "run-completed",
+            namespaceId: "other-namespace",
+            orgId: "other-org",
+          },
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+
+    expect(res.status).toBe(200);
+    expect(mockLocateTaskRun).toHaveBeenCalledWith({
+      version: 1,
+      taskId: "TASK-020",
+      runId: "run-completed",
+      namespaceId: "other-namespace",
+      orgId: "other-org",
+    });
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+    expect(mockApplyCompletionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-completed",
+        sourceTerminalMetadata: undefined,
       }),
     );
   });

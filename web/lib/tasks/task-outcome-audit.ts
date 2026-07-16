@@ -63,8 +63,8 @@ export async function startTaskOutcomeAudit(
         ? metadata.last_run_id
         : "";
   if (!sourceRunId) return { status: "no_run" };
-  if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId)) return { status: "no_run" };
-  const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId);
+  if (!isOutcomeSummaryExecutionSource(namespaceId, orgId, sourceRunId, metadata)) return { status: "no_run" };
+  const runStatus = currentRunStatus(namespaceId, orgId, sourceRunId, metadata);
   if (!isOutcomeSummaryTerminalStatus(runStatus)) {
     return { status: "not_terminal", sourceRunId };
   }
@@ -74,7 +74,7 @@ export async function startTaskOutcomeAudit(
   const runFingerprint =
     typeof input.runFingerprint === "string" && input.runFingerprint.length > 0
       ? input.runFingerprint
-      : currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId);
+      : currentRunTerminalFingerprint(namespaceId, orgId, sourceRunId, metadata);
   const auditedFingerprint =
     typeof metadata.task_outcome_summary_run_fingerprint === "string"
       ? metadata.task_outcome_summary_run_fingerprint
@@ -115,8 +115,8 @@ export async function startTaskOutcomeAudit(
   }
 
   const workspacePath = task.workspace_id || (typeof metadata.workspace_path === "string" ? metadata.workspace_path : undefined);
-  const runSummary = currentRunSummary(namespaceId, orgId, sourceRunId, metadata.last_run_summary);
-  const runArtifacts = currentRunArtifacts(namespaceId, orgId, sourceRunId, metadata.last_run_artifacts);
+  const runSummary = currentRunSummary(namespaceId, orgId, sourceRunId, metadata.last_run_summary, metadata);
+  const runArtifacts = currentRunArtifacts(namespaceId, orgId, sourceRunId, metadata.last_run_artifacts, metadata);
   const generationFlow = {
     task_generation_run_id: metadata.task_generation_run_id,
     recommendation_run_id: metadata.recommendation_run_id,

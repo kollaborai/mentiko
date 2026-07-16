@@ -1,6 +1,11 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import {
+  locateTaskRun,
+  parseTaskRunScope,
+  TaskRunScopeError,
+} from "./task-run-locator";
 import type {
   TaskAttempt,
   TaskAttemptCategory,
@@ -113,6 +118,11 @@ function duplicateOutcomeSummaryRunIds(metadata: Record<string, unknown>): Set<s
   const value = metadata.duplicate_outcome_summary_run_ids;
   if (!Array.isArray(value)) return new Set();
   return new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0));
+}
+
+function persistedTaskRunScope(metadata: Record<string, unknown>) {
+  if (!("task_run_scope" in metadata)) return undefined;
+  return parseTaskRunScope(metadata.task_run_scope);
 }
 
 function toAttempt(
@@ -247,6 +257,19 @@ export function listTaskAttempts({
   taskId: string;
   metadata?: unknown;
 }): TaskAttempt[] {
+  const metadataRecord = maybeJsonRecord(metadata);
+  const persistedScope = persistedTaskRunScope(metadataRecord);
+  if (persistedScope) {
+    if (persistedScope.taskId !== taskId) {
+      throw new TaskRunScopeError(
+        "taskId",
+        "Task run scope taskId must match the task attempts request.",
+      );
+    }
+    const located = locateTaskRun(persistedScope);
+    return buildTaskAttempts({ taskId, metadata: metadataRecord, runs: [located.run] });
+  }
+
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);
   if (!existsSync(runsDir)) {
     return buildTaskAttempts({ taskId, metadata, runs: [] });

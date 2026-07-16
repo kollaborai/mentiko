@@ -307,6 +307,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       // runnerV2 is an intentionally isolated typed namespace within the
       // canonical TypeScript-owned envelope.
       { path: "runnerV2", usage: "runner-v2" },
+      { path: "metadata.task_run_scope", usage: "runner-v2" },
     ],
     surfaces: [
       {
@@ -324,6 +325,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         label: "Typed completion recovery and reconciliation",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/completion-recovery.ts", "web/lib/runs/run-reconciler.ts"],
+      },
+      {
+        id: "typed-task-run-scope-run-metadata",
+        label: "Persist the task's immutable v1 scope claim in run metadata so all task readers resolve the same exact record",
+        owner: "runner-v2",
+        paths: ["web/lib/tasks/task-run-locator.ts", "web/app/api/chains/run/route.ts", "web/lib/runs/chain-run-service.ts"],
       },
       {
         id: "shell-run-command-boundary",
@@ -645,10 +652,43 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     usage: "runner-v2",
     surfaces: [
       {
+        id: "typed-task-run-scope-contract",
+        label: "Validate and persist the immutable v1 task-to-run scope during manual and auto task launch, then carry the same claim into run metadata",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/tasks/task-run-locator.ts",
+          "web/app/api/tasks/[id]/run-chain/route.ts",
+          "web/app/api/tasks/auto-run/route.ts",
+          "web/app/api/chains/run/route.ts",
+        ],
+      },
+      {
+        id: "typed-task-run-scope-readers",
+        label: "Resolve the exact claimed run for attempts, outcome evidence, reconciliation, and auto-run admission without scanning alternate roots",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/tasks/task-run-locator.ts",
+          "web/lib/tasks/task-attempts.ts",
+          "web/lib/tasks/run-outcome-evidence.ts",
+          "web/app/api/tasks/reconcile/route.ts",
+          "web/lib/runs/auto-run.ts",
+        ],
+      },
+      {
         id: "typed-run-task-terminal-sync",
         label: "Project terminal run status and exact blocked reason onto the linked task",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/run-task-sync.ts", "web/app/api/tasks/reconcile/route.ts", "web/lib/tasks/task-transforms.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Tasks without task_run_scope, created before the v1 claim existed, retain their existing single request/config-resolved root read. This is legacy unscoped behavior only; a scoped task must fail closed rather than scan or fall back to another root.",
+      paths: ["web/lib/tasks/task-attempts.ts", "web/lib/tasks/run-outcome-evidence.ts", "web/app/api/tasks/reconcile/route.ts", "web/lib/runs/auto-run.ts"],
+    },
+    fieldRules: [
+      {
+        path: "metadata.task_run_scope",
+        usage: "runner-v2",
       },
     ],
   },

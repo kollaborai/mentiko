@@ -173,7 +173,12 @@ describe("startTaskOutcomeAudit", () => {
     });
 
     expect(result.status).toBe("started");
-    expect(isOutcomeSummaryExecutionSource).toHaveBeenCalledWith("default", "default", "run-new");
+    expect(isOutcomeSummaryExecutionSource).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "run-new",
+      expect.objectContaining({ last_run_id: "run-old" }),
+    );
     expect(currentRunTerminalFingerprint).not.toHaveBeenCalled();
     expect(createJob).toHaveBeenCalledWith(
       "task_run_summary",
@@ -197,6 +202,66 @@ describe("startTaskOutcomeAudit", () => {
         }),
       },
       "default",
+    );
+  });
+
+  it("uses the persisted task-run scope for every source-evidence read", async () => {
+    const metadata = {
+      last_run_id: "run-scoped",
+      task_run_scope: {
+        version: 1,
+        taskId: "TASK-093",
+        runId: "run-scoped",
+        namespaceId: "persisted-namespace",
+        orgId: "engineering",
+      },
+    };
+    taskGet.mockReturnValue({
+      id: "TASK-093",
+      title: "Lead capture API",
+      status: "in_progress",
+      issue_type: "task",
+      metadata,
+    });
+
+    await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "request-namespace",
+      orgId: "default",
+      taskId: "TASK-093",
+    });
+
+    expect(isOutcomeSummaryExecutionSource).toHaveBeenCalledWith(
+      "request-namespace",
+      "default",
+      "run-scoped",
+      metadata,
+    );
+    expect(currentRunStatus).toHaveBeenCalledWith(
+      "request-namespace",
+      "default",
+      "run-scoped",
+      metadata,
+    );
+    expect(currentRunTerminalFingerprint).toHaveBeenCalledWith(
+      "request-namespace",
+      "default",
+      "run-scoped",
+      metadata,
+    );
+    expect(currentRunSummary).toHaveBeenCalledWith(
+      "request-namespace",
+      "default",
+      "run-scoped",
+      undefined,
+      metadata,
+    );
+    expect(currentRunArtifacts).toHaveBeenCalledWith(
+      "request-namespace",
+      "default",
+      "run-scoped",
+      undefined,
+      metadata,
     );
   });
 

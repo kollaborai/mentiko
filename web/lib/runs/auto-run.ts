@@ -14,6 +14,12 @@ import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import {
+  locateTaskRun,
+  parseTaskRunScope,
+  TASK_RUN_SCOPE_METADATA_KEY,
+} from "@/lib/tasks/task-run-locator";
+import type { RunRecord } from "@/lib/runs/run-record";
 
 type DependencyStatus = {
   id: string;
@@ -45,6 +51,57 @@ export interface ActiveTaskRun {
   chain?: string;
   chainId?: string;
   started?: string;
+}
+
+interface ScopedTaskRunLookup {
+  valid: boolean;
+  activeRun: ActiveTaskRun | null;
+}
+
+/**
+ * Resolve a task's persisted run claim without consulting a namespace snapshot.
+ * A scoped claim is authoritative: a malformed, missing, or mismatched record
+ * is invalid evidence, never permission to search a different run root.
+ */
+function resolveScopedTaskRun(
+  taskId: string,
+  metadata: Record<string, unknown>,
+): ScopedTaskRunLookup | undefined {
+  if (!(TASK_RUN_SCOPE_METADATA_KEY in metadata)) return undefined;
+
+  try {
+    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    if (scope.taskId !== taskId || metadata.last_run_id !== scope.runId) {
+      return { valid: false, activeRun: null };
+    }
+
+    const located = locateTaskRun(scope);
+    return {
+      valid: true,
+      activeRun: activeRunFromRecord(located.run, located.runsDir),
+    };
+  } catch {
+    return { valid: false, activeRun: null };
+  }
+}
+
+function activeRunFromRecord(run: RunRecord, runsDir: string): ActiveTaskRun | null {
+  if (!ACTIVE_RUN_STATUSES.has(run.status)) return null;
+  if (allDeclaredAgentsComplete(run, runsDir)) return null;
+  if (
+    hasNonExecutionChainId(run) ||
+    isNonExecutionRun(run) ||
+    hasTerminalRunnerV2Attempt(run as { runnerV2?: unknown })
+  ) {
+    return null;
+  }
+  return {
+    id: run.id,
+    status: run.status,
+    chain: run.chain,
+    chainId: run.chainId,
+    started: run.started,
+  };
 }
 
 /**
@@ -287,7 +344,10 @@ export function findActiveRunForTask(
   taskId: string,
   namespaceId?: string,
   snapshot?: RunsSnapshot,
+  metadata?: Record<string, unknown>,
 ): ActiveTaskRun | null {
+  const scoped = metadata ? resolveScopedTaskRun(taskId, metadata) : undefined;
+  if (scoped) return scoped.valid ? scoped.activeRun : null;
   return (snapshot ?? buildRunsSnapshot(namespaceId)).activeRunByTask.get(taskId) ?? null;
 }
 
@@ -306,10 +366,19 @@ export function reconcileTaskActiveRun(
     return { activeRun: null, reconciled: false };
   }
 
-  const activeRun = findActiveRunForTask(task.id, namespaceId, snapshot);
+  const metadata = task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+    ? task.metadata as Record<string, unknown>
+    : {};
+  const scoped = resolveScopedTaskRun(task.id, metadata);
+  // A bad scoped claim must not be reconciled from a namespace snapshot. That
+  // would silently overwrite the task's durable pointer with a different run.
+  if (scoped && !scoped.valid) return { activeRun: null, reconciled: false };
+
+  const activeRun = scoped
+    ? scoped.activeRun
+    : findActiveRunForTask(task.id, namespaceId, snapshot);
   if (!activeRun) return { activeRun: null, reconciled: false };
 
-  const metadata = task.metadata && typeof task.metadata === "object" ? task.metadata : {};
   const nextMetadata = {
     ...executionStartedLifecycleMetadata({
       taskId: task.id,
@@ -395,6 +464,7 @@ export type AutoRunRejectReason =
   | "decision_required"
   | "already_completed"
   | "active_run_exists"
+  | "task_run_scope_invalid"
   | "not_runnable"
   | "max_retries"
   | "deps_not_ready";
@@ -528,7 +598,18 @@ export function canAdmitAutoRun(
   // tasks pass a shared RunsSnapshot so this stays one runs-dir read per scan;
   // a caller that omits it gets a correct-but-uncached walk (same contract as
   // workspaceAutoRunDefault above).
-  if (findActiveRunForTask(task.id, namespaceId, snapshot)) {
+  const scoped = resolveScopedTaskRun(task.id, metadata);
+  if (scoped && !scoped.valid) {
+    return {
+      admit: false,
+      reason: "task run scope is invalid",
+      action: "task_run_scope_invalid",
+    };
+  }
+  const activeRun = scoped
+    ? scoped.activeRun
+    : findActiveRunForTask(task.id, namespaceId, snapshot);
+  if (activeRun) {
     return { admit: false, reason: "a run for this task is already active", action: "active_run_exists" };
   }
 

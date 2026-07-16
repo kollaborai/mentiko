@@ -2,6 +2,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import {
+  locateTaskRun,
+  parseTaskRunScope,
+  TaskRunScopeError,
+} from "./task-run-locator";
 
 export interface RunArtifactEvidence {
   path: string;
@@ -40,12 +45,50 @@ export function runDirPath(namespaceId: string, orgId: string, runId: string): s
   return join(resolveLinkRunsDir(namespaceId, orgId), runId);
 }
 
+interface RunEvidenceLocation {
+  runDir: string;
+  run?: Record<string, unknown>;
+}
+
+function persistedTaskRunScope(taskMetadata: unknown) {
+  const metadata = metadataRecord(taskMetadata);
+  if (!("task_run_scope" in metadata)) return undefined;
+  return parseTaskRunScope(metadata.task_run_scope);
+}
+
+/**
+ * A persisted task-run scope is authoritative evidence. It is resolved directly
+ * and validated by the locator; it must never broaden into another root search.
+ */
+function locateRunEvidence(
+  namespaceId: string,
+  orgId: string,
+  runId: string,
+  taskMetadata?: unknown,
+): RunEvidenceLocation {
+  const scope = persistedTaskRunScope(taskMetadata);
+  if (!scope) return { runDir: runDirPath(namespaceId, orgId, runId) };
+  if (scope.runId !== runId) {
+    throw new TaskRunScopeError(
+      "runId",
+      "Task run scope runId must match the run evidence request.",
+    );
+  }
+  const located = locateTaskRun(scope);
+  return { runDir: located.runDir, run: located.run };
+}
+
+function runEvidenceRecord(location: RunEvidenceLocation): Record<string, unknown> {
+  return location.run || metadataRecord(readJsonFile(join(location.runDir, "run.json")));
+}
+
 export function currentRunTerminalFingerprint(
   namespaceId: string,
   orgId: string,
   runId: string,
+  taskMetadata?: unknown,
 ): string {
-  const run = metadataRecord(readJsonFile(join(runDirPath(namespaceId, orgId, runId), "run.json")));
+  const run = runEvidenceRecord(locateRunEvidence(namespaceId, orgId, runId, taskMetadata));
   const status = typeof run.status === "string" ? run.status : "unknown";
   const completed = typeof run.completed === "string" ? run.completed : "";
   const updatedAt = typeof run.updatedAt === "string" ? run.updatedAt : "";
@@ -56,8 +99,9 @@ export function currentRunStatus(
   namespaceId: string,
   orgId: string,
   runId: string,
+  taskMetadata?: unknown,
 ): string {
-  const run = metadataRecord(readJsonFile(join(runDirPath(namespaceId, orgId, runId), "run.json")));
+  const run = runEvidenceRecord(locateRunEvidence(namespaceId, orgId, runId, taskMetadata));
   return typeof run.status === "string" ? run.status : "unknown";
 }
 
@@ -92,9 +136,10 @@ export function outcomeSummarySourceEligibility(
   orgId: string,
   runId: string,
   expectedFingerprint?: string,
+  taskMetadata?: unknown,
 ): OutcomeSummarySourceEligibility {
-  const status = currentRunStatus(namespaceId, orgId, runId);
-  const fingerprint = currentRunTerminalFingerprint(namespaceId, orgId, runId);
+  const status = currentRunStatus(namespaceId, orgId, runId, taskMetadata);
+  const fingerprint = currentRunTerminalFingerprint(namespaceId, orgId, runId, taskMetadata);
   if (!isOutcomeSummaryTerminalStatus(status)) {
     return {
       eligible: false,
@@ -126,8 +171,9 @@ export function isOutcomeSummaryExecutionSource(
   namespaceId: string,
   orgId: string,
   runId: string,
+  taskMetadata?: unknown,
 ): boolean {
-  const run = metadataRecord(readJsonFile(join(runDirPath(namespaceId, orgId, runId), "run.json")));
+  const run = runEvidenceRecord(locateRunEvidence(namespaceId, orgId, runId, taskMetadata));
   if (!Object.keys(run).length) return false;
   const chainId = typeof run.chainId === "string" ? run.chainId : "";
   const chain = typeof run.chain === "string" ? run.chain : "";
@@ -140,8 +186,10 @@ export function currentRunSummary(
   orgId: string,
   runId: string,
   fallback: unknown,
+  taskMetadata?: unknown,
 ): unknown {
-  const p = join(runDirPath(namespaceId, orgId, runId), "artifacts", "run-summary.json");
+  const { runDir } = locateRunEvidence(namespaceId, orgId, runId, taskMetadata);
+  const p = join(runDir, "artifacts", "run-summary.json");
   return readJsonFile(p) || fallback || null;
 }
 
@@ -175,9 +223,11 @@ export function currentRunArtifacts(
   orgId: string,
   runId: string,
   fallback: unknown,
+  taskMetadata?: unknown,
 ): unknown {
-  const runDir = runDirPath(namespaceId, orgId, runId);
-  const run = metadataRecord(readJsonFile(join(runDir, "run.json")));
+  const location = locateRunEvidence(namespaceId, orgId, runId, taskMetadata);
+  const runDir = location.runDir;
+  const run = runEvidenceRecord(location);
   const fromRunJson = Array.isArray(run.artifacts) ? run.artifacts : [];
   const fromFallback = Array.isArray(fallback) ? fallback : [];
   const fromDisk: RunArtifactEvidence[] = [];
