@@ -13,6 +13,8 @@ describe("Claude run-scoped Mentiko MCP config", () => {
       MENTIKO_SESSION_ID: "chain-run-123",
       MENTIKO_SESSION_TOKEN: "session-token",
       MENTIKO_CODE_ROOT: join(process.cwd(), ".."),
+      MENTIKO_INBOX_KEY: "interactive-app-key",
+      MENTIKO_MCP_TOOL_SCOPE: "bar",
     }, { serverPath, tempRoot });
 
     try {
@@ -28,6 +30,8 @@ describe("Claude run-scoped Mentiko MCP config", () => {
               MENTIKO_WEB_URL: "http://127.0.0.1:3200",
               MENTIKO_SESSION_ID: "chain-run-123",
               MENTIKO_SESSION_TOKEN: "session-token",
+              MENTIKO_INBOX_KEY: "",
+              MENTIKO_MCP_TOOL_SCOPE: "runner",
             },
           },
         },
