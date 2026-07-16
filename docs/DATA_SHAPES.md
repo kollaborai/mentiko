@@ -45,6 +45,8 @@ global
 
 The default organization collapses into the namespace root for backward compatibility. The default project can also collapse into the organization root. Several current run/job stores resolve through namespace or organization paths, so the catalog describes actual paths and notes scope mismatches instead of presenting the intended hierarchy as current behavior.
 
+`web/lib/runner-v2/runtime-paths.ts` is the typed owner of this hierarchy and its contract-directory creation; `runtime-paths-cli.ts` emits the fixed shell export projection. `lib/config.sh` is source-only: it locates that checked-in bundle and evaluates its shell-quoted primitive exports. It does not derive paths or create directories.
+
 ## Confidence levels
 
 - `enforced`: a writer, runtime validator, or database schema actively constrains the shape.

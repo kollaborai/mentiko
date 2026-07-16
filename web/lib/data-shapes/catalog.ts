@@ -971,7 +971,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     writers: ["operators and deployment tooling"],
     readers: ["web/lib/runner-v2/chain-contract.ts"],
     samples: { root: "organization", patterns: [["config-profiles", "*", "*.json"]], format: "json" },
-    notes: ["The directory is created by config.sh, while TypeScript owns raw JSON decoding, profile-path validation, and execution/model overlay resolution. No active web writer exists."],
+    notes: ["web/lib/runner-v2/runtime-paths.ts and runtime-paths-cli.ts own hierarchy resolution and best-effort contract-directory creation. lib/config.sh is a source-only adapter: it invokes the checked-in typed bundle and evaluates its fixed, shell-quoted export projection; it derives no paths and creates no directories. TypeScript also owns raw JSON decoding, profile-path validation, and execution/model overlay resolution. No active web writer exists."],
   }),
   shape({
     id: "agent-profile",

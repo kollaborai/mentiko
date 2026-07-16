@@ -121,6 +121,20 @@ describe("data shape catalog", () => {
     ]));
   });
 
+  it("records typed runtime-path ownership and keeps config.sh source-only", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "config-profile");
+
+    expect(shape?.notes?.join(" ")).toMatch(/runtime-paths\.ts.*runtime-paths-cli\.ts.*config\.sh is a source-only adapter/i);
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "typed-runtime-path-resolution",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/runtime-paths.ts", "web/lib/runner-v2/runtime-paths-cli.ts"],
+      }),
+    ]));
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/replaces shell path derivation, directory creation/i);
+  });
+
   it("documents pending handoff as read-and-retire pre-cutover evidence", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-v2-pending-handoff");
     expect(shape?.writers).toEqual(["web/lib/runner-v2/run-state.ts"]);

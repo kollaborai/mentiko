@@ -943,6 +943,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     usage: "runner-v2",
     surfaces: [
       {
+        id: "typed-runtime-path-resolution",
+        label: "Resolve namespace, organization, and project roots and provision the contract directory set",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/runtime-paths.ts", "web/lib/runner-v2/runtime-paths-cli.ts"],
+      },
+      {
         id: "typed-config-profile",
         label: "Decode and resolve execution and model overlays",
         owner: "runner-v2",
@@ -950,7 +956,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "Replaces direct shell profile-file decoding; shell only invokes the typed field resolver.",
+      summary: "Replaces shell path derivation, directory creation, and direct profile-file decoding. lib/config.sh only invokes the typed runtime-path bundle, evaluates its fixed export projection, and forwards profile fields to the typed resolver.",
       paths: ["lib/chain-runner.sh", "lib/config.sh"],
     },
   },
