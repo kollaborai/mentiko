@@ -160,6 +160,14 @@ RUN if [ -f /build/web/lib/runner-v2/manual-monitor-cli.ts ]; then \
         --outfile=/context/lib/runner-manual-monitor.js; \
     fi
 
+RUN if [ -f /build/web/lib/system/native-plugin-handler-cli.ts ]; then \
+      echo "=== compiling typed builtin plugin handler boundary ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/system/native-plugin-handler-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-native-plugin.js; \
+    fi
+
 # compile the sole runner-event writer used by shell invocation boundaries.
 RUN if [ -f /build/web/lib/runner-v2/event-emitter-cli.ts ]; then \
       echo "=== compiling typed runner event emitter ===" && \

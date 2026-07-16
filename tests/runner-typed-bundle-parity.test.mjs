@@ -26,6 +26,7 @@ const pairs = [
   ["manual-monitor-cli", "runner-manual-monitor"],
   ["standalone-monitor-cli", "runner-v2-standalone-monitor"],
   ["lib/system/audit-cli.ts", "runner-audit"],
+  ["lib/system/native-plugin-handler-cli.ts", "runner-native-plugin"],
 ];
 const standaloneBundles = [
   ["lib/runner-v2/job-worker.ts", "runner-job-worker"],

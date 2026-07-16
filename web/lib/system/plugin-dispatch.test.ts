@@ -52,4 +52,17 @@ describe("typed plugin dispatch", () => {
     expect(() => dispatchPlugins({ namespaceId: "ns", orgId: "org", event: "chain.completed" })).toThrow(/escapes its plugin directory/);
     expect(spawn).not.toHaveBeenCalled();
   });
+
+  it("routes a declared builtin native handler to the compiled typed boundary", () => {
+    (getPlugins as jest.Mock).mockReturnValue([{
+      id: "pagerduty",
+      enabled: true,
+      pluginDir: dir,
+      manifest: { id: "pagerduty", name: "PagerDuty", description: "test", version: "1", category: "notification", events: ["chain-stopped"], builtin: true, nativeHandler: "pagerduty", configSchema: [] },
+      config: {},
+    }]);
+
+    expect(dispatchPlugins({ namespaceId: "ns", orgId: "org", event: "chain-stopped" })).toEqual({ launched: ["pagerduty"], skipped: [] });
+    expect(spawn).toHaveBeenCalledWith(process.execPath, [expect.stringMatching(/lib\/runner-native-plugin\.js$/), "dispatch", "--handler", "pagerduty"], expect.objectContaining({ detached: true, stdio: "ignore" }));
+  });
 });

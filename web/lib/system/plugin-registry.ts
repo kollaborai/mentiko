@@ -298,7 +298,8 @@ function isPluginManifest(value: unknown): value is PluginManifest {
     && typeof manifest.category === "string"
     && Array.isArray(manifest.events) && manifest.events.every((event) => typeof event === "string")
     && Array.isArray(manifest.configSchema)
-    && typeof manifest.onEventScript === "string" && manifest.onEventScript.length > 0;
+    && ((manifest.builtin === true && typeof manifest.nativeHandler === "string")
+      || (typeof manifest.onEventScript === "string" && manifest.onEventScript.length > 0));
 }
 
 function isPluginState(value: unknown, namespaceId: string): value is PluginState {

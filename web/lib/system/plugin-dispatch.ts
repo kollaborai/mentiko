@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import config from "@/lib/config";
 import { spawn } from "node:child_process";
 import { getPlugins } from "@/lib/system/plugin-registry";
 import type { PluginRegistration } from "@/lib/system/plugin-types";
@@ -66,8 +67,9 @@ export function dispatchPlugins(input: PluginDispatchInput): PluginDispatchResul
   const result: PluginDispatchResult = { launched: [], skipped: [] };
   for (const plugin of getPlugins(input.namespaceId, input.orgId)) {
     if (!matchingPlugin(plugin, input.event)) continue;
-    const script = pluginScriptPath(plugin);
-    const child = spawn("bash", [script], { detached: true, stdio: "ignore", env: pluginEnvironment(plugin, input) });
+    const child = plugin.manifest.builtin && plugin.manifest.nativeHandler
+      ? spawn(process.execPath, [join(config.codeRoot, "lib", "runner-native-plugin.js"), "dispatch", "--handler", plugin.manifest.nativeHandler], { detached: true, stdio: "ignore", env: pluginEnvironment(plugin, input) })
+      : spawn("bash", [pluginScriptPath(plugin)], { detached: true, stdio: "ignore", env: pluginEnvironment(plugin, input) });
     child.unref();
     result.launched.push(plugin.id);
   }

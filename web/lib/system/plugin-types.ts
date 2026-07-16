@@ -71,7 +71,9 @@ export interface PluginManifest {
     | "custom";         // user-defined scripts
   events: PluginEventType[]; // which events this plugin handles
   configSchema: PluginConfigField[];
-  /** path to the onEvent bash script, relative to plugin dir */
+  /** Built-in implementation selected by the typed native handler boundary. */
+  nativeHandler?: "pagerduty" | "github-pr" | "linear" | "custom-webhook" | "email-digest" | "notify-email";
+  /** path to the onEvent bash script, relative to plugin dir. User hooks remain external commands. */
   onEventScript?: string;
   /** path to the configure bash script, relative to plugin dir */
   configureScript?: string;
