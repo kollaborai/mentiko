@@ -8,22 +8,33 @@ Schedules enable automated, recurring chain execution based on cron expressions.
 
 ## Configuration
 
-**Schedule file:** `schedules/{name}.json`
+**Storage:** all schedules live in one org-level file, `{orgRoot}/schedules.json`
+— not one file per schedule. Snooze state is separate, at
+`{orgRoot}/schedules/{id}/.snooze`.
+
+Canonical schema: `lib/schemas/schedule.schema.json`. It sets
+`additionalProperties: false`, so unknown fields are rejected. Required:
+`id`, `chainId`, `workspaceId`, `cron`, `timezone`.
 
 ```json
 {
-  "name": "daily-report",
-  "schedule": "0 9 * * *",
+  "id": "daily-report",
+  "chainId": "daily-summary",
+  "workspaceId": "local",
+  "cron": "0 9 * * *",
   "timezone": "America/New_York",
-  "chain": "daily-summary",
   "enabled": true,
-  "retry_policy": {
-    "max_retries": 3,
-    "backoff": "exponential",
-    "timeout": 300
-  }
+  "goal": "Optional prompt text injected as the chain goal at runtime",
+  "createdAt": "2026-07-15T09:00:00Z",
+  "updatedAt": "2026-07-15T09:00:00Z"
 }
 ```
+
+A schedule binds a **chain** to a workspace. There is no `taskId` or embedded
+task; `docs/schedule-schema-v2-spec.md` proposes that, but it is unbuilt.
+
+Retry and backoff are not schedule fields. Retry policy is per-agent in
+`chain.json` and is owned by `web/lib/runner-v2/retry-circuit.ts`.
 
 ## Cron Syntax
 

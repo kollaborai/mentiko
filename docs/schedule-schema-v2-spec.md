@@ -1,8 +1,25 @@
-# Schedule System Specification
+# Schedule System Specification — v2 proposal, NOT IMPLEMENTED
+
+> Status: unbuilt design. This describes a proposed v2 in which schedules point
+> at tasks. The shipped system does not work this way and no part of this
+> proposal has landed.
+>
+> What is actually implemented: `lib/schemas/schedule.schema.json` has
+> properties `id, chainId, workspaceId, cron, timezone, enabled, goal,
+> createdAt, updatedAt`. There is no `taskId` and no embedded `task` — a
+> schedule points at a **chain**, not a task, and `web/lib/schedules/
+> schedule-storage.ts` has no taskId handling. The `create:` list below names
+> three files that were never created (`web/lib/task-generator.ts`,
+> `web/app/api/schedules/stats/route.ts`, `web/app/api/schedules/preview/
+> route.ts`), and the `delete:` list targets `web/app/api/schedules/next/
+> route.ts`, which is still live.
+>
+> Read this as a proposal. Do not read it as a description of the running
+> system.
 
 ## overview
 
-schedules trigger tasks in the native task store which may run chains, agents, or workspace actions.
+proposed: schedules trigger tasks in the native task store which may run chains, agents, or workspace actions.
 
 ```
 schedule fires
@@ -146,12 +163,12 @@ web/lib/types.ts
   - add EmbeddedTask interface
   - add ScheduleStats interface
 
-web/lib/schedule-storage.ts
+web/lib/schedules/schedule-storage.ts
   - update for new file structure
   - add getScheduleStats()
   - add listSchedulesByWorkspace()
 
-web/lib/schedule-utils.ts
+web/lib/schedules/schedule-utils.ts
   - update calculateNextRun()
   - add generateTaskTitle()
   - update detectConflicts()
