@@ -1,6 +1,7 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/run-lib.sh", "web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-emitter.ts", "web/lib/runner-v2/event-lifecycle.ts"],
+  "source_files": ["web/lib/runs/run-record.ts", "web/lib/runner-v2/run-record-cli.ts", "web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-emitter.ts", "web/lib/runner-v2/event-lifecycle.ts"],
+  "legacy_boundary": "lib/run-lib.sh forwards every run operation through the single _run_record_cli seam in lib/run-record-client.sh to lib/runner-run-record.js; it contains no jq call and builds no run or event JSON",
   "role": "run.json mutation and task propagation plus typed runner-event emission, validation, lookup, processed mutation, and archive lifecycle",
   "run_json": {
     "path": "$RUNS_DIR/<run_id>/run.json",
@@ -40,6 +41,7 @@
     "archive scope is run plus source/agent",
     "archive receipts prove exact lifecycle identity and never act as event triggers or ownership fallback",
     "schemas are not trusted over actual disk format",
-    "exported functions avoid heredoc bodies (export -f serialization hazard); run/event JSON is built via printf or jq -n (0c96b73, ebda700)"
+    "exported functions avoid heredoc bodies (export -f serialization hazard)",
+    "shell never builds run or event JSON: run records are written by lib/runner-run-record.js and canonical event bytes by lib/runner-event-emitter.js; lib/run-lib.sh has zero jq calls"
   ]
 }
