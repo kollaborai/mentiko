@@ -1225,6 +1225,9 @@ Output ONLY valid JSON:
       "title": "specific action item (imperative form)",
       "description": "what needs to be done and why this step matters",
       "subtasks": ["concrete subtask 1", "concrete subtask 2"],
+      "deliverable": "the exact file, behavior, test result, deployment state, or other observable output this task leaves behind",
+      "verification": "the repeatable command, inspection, or assertion that proves the deliverable exists and satisfies the intended behavior",
+      "acceptance_criteria": "a concise, testable completion rule; include the expected result, not just an activity",
       "priority": 2,
       "phase": 1
     }
@@ -1236,13 +1239,14 @@ Output ONLY valid JSON:
 
 RULES:
 1. Break into 2-4 phases (preparation, execution, validation, rollout)
-2. 5-15 total tasks - enough detail to act on, not so much it's noise
+2. Use the smallest delivery path that proves the selected option. Do not create bookkeeping tasks such as "document status", "create follow-up task", or "update tracking" unless that record is itself the requested deliverable.
 3. Dependencies must not be circular
 4. Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
-5. Each task must be independently completable by one person
-6. Include verification/testing/validation tasks
-7. Task titles should be imperative: "Set up X" not "X setup"
-8. Phase 1 should be the smallest possible step that proves the
+5. Each task must be independently completable by one person and must include non-empty deliverable, verification, and acceptance_criteria fields.
+6. The deliverable field must name an observable output or changed state. The verification field must name a repeatable command, test, inspection, or assertion with an expected result. Do not use vague phrases such as "ensure it works".
+7. Include verification/testing in the task that owns the change when possible; do not pad the plan with process-only validation tasks.
+8. Task titles should be imperative: "Set up X" not "X setup"
+9. Phase 1 should be the smallest possible step that proves the
    approach works (de-risk early)
 
 EXAMPLE (for "SQLite with WAL mode" option):
@@ -1259,6 +1263,9 @@ EXAMPLE (for "SQLite with WAL mode" option):
         "Measure: writes/sec, p50/p95/p99 latency, lock contention rate",
         "Document baseline in a test report"
       ],
+      "deliverable": "A reproducible load-test script and baseline metrics report",
+      "verification": "Run the script against auth.db and confirm the report contains writes/sec, p50/p95/p99 latency, and lock contention",
+      "acceptance_criteria": "The baseline report is committed and contains all four stated metrics from a successful run.",
       "priority": 1,
       "phase": 1
     },
@@ -1272,6 +1279,9 @@ EXAMPLE (for "SQLite with WAL mode" option):
         "Verify WAL mode persists across restarts",
         "Test that better-auth operations work correctly in WAL mode"
       ],
+      "deliverable": "Database initialization that enables WAL and a passing auth persistence regression",
+      "verification": "Restart the test database, query PRAGMA journal_mode, and run the focused auth regression suite",
+      "acceptance_criteria": "PRAGMA journal_mode returns wal after restart and the focused auth suite exits 0.",
       "priority": 0,
       "phase": 2
     },

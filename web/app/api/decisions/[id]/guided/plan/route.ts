@@ -14,6 +14,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
 import { startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
+import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +50,9 @@ export const POST = withErrorHandling(async (
     if (job.status === "failed") throw new InternalServerError(job.error || "Job failed");
     if (job.status !== "complete") throw new BadRequest("Job not complete");
 
-    const parsed = job.result as unknown as ExecutionPlan;
+    const validatedPlan = validateExecutionPlan(job.result);
+    if (!validatedPlan.valid) throw new BadRequest(validatedPlan.error);
+    const parsed = validatedPlan.plan;
     const decision = getDecision(namespaceId, orgId, id, workspacePath);
     if (!decision) throw new NotFound("Decision", id);
 
