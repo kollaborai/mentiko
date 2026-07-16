@@ -1889,8 +1889,14 @@ else
 fi
 
 # NOTE: the WIP cli-readiness-enhanced.sh + agent-launch-enhanced.sh modules (commit
-# 538b228, "Untested by me") were sourced here. Removed: none of their functions are
-# called anywhere (pure dead code), and agent-launch-enhanced.sh re-sources
+# 538b228, "Untested by me") were sourced here. Unsourced: none of their functions are
+# called anywhere (pure dead code), and agent-launch-enhanced.sh re-sourced
 # cli-readiness-enhanced.sh, so its `declare -r READINESS_STATE_*` ran twice in one
 # invocation → "readonly variable" exit 1 → ERR trap → run marked failed AFTER the agent
-# already launched. Re-integrate properly (idempotent + wired in) before sourcing again.
+# already launched.
+#
+# agent-launch-enhanced.sh has since been retired outright: launch_agent_enhanced and
+# agent_launch_log had no callers in the tree. cli-readiness-enhanced.sh is still present
+# as the invocation-only adapter for web/lib/runner-v2/readiness-cli.ts (its shape is
+# pinned by tests/readiness-shell-boundary.test.mjs) but is NOT wired into this runner —
+# re-integrate it idempotently before sourcing again.
