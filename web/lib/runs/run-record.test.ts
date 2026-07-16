@@ -8,6 +8,7 @@ import {
   RunRecordAlreadyExistsError,
   RunRecordValidationError,
   createRunRecordFile,
+  createRunRecordWithSnapshot,
   mutateRunRecordFile,
   parseRunRecord,
   projectRunRecordForList,
@@ -213,6 +214,35 @@ describe("run record path and persistence contract", () => {
     expect(() => createRunRecordFile(root, record({ goal: "overwrite" })))
       .toThrow(RunRecordAlreadyExistsError);
     expect(JSON.parse(readFileSync(paths.runJsonPath, "utf8"))).toEqual(first);
+  });
+
+  it("publishes an immutable chain snapshot before the exclusive run record", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-run-snapshot-create-"));
+    const snapshot = '{"name":"batch snapshot","agents":[]}\n';
+    const paths = createRunRecordWithSnapshot(root, record(), snapshot);
+
+    expect(readFileSync(join(paths.runDir, "chain.json"), "utf8")).toBe(snapshot);
+    expect(JSON.parse(readFileSync(paths.runJsonPath, "utf8"))).toEqual(record());
+    expect(() => createRunRecordWithSnapshot(root, record({ goal: "overwrite" }), '{"name":"other"}\n'))
+      .toThrow(RunRecordAlreadyExistsError);
+    expect(readFileSync(join(paths.runDir, "chain.json"), "utf8")).toBe(snapshot);
+  });
+
+  it("cleans only its newly-created snapshot directory when run publication fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-run-snapshot-cleanup-"));
+    const invalidJsonWriter = Object.assign(record(), { toJSON: () => { throw new Error("injected run serialization failure"); } });
+    expect(() => createRunRecordWithSnapshot(root, invalidJsonWriter, '{"name":"snapshot"}\n'))
+      .toThrow("injected run serialization failure");
+    expect(existsSync(join(root, "run-123"))).toBe(false);
+  });
+
+  it("never follows an existing run-directory symlink while publishing a snapshot", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-run-snapshot-symlink-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "mentiko-run-snapshot-symlink-outside-"));
+    symlinkSync(outside, join(root, "run-123"));
+    expect(() => createRunRecordWithSnapshot(root, record(), '{"name":"snapshot"}\n'))
+      .toThrow(RunRecordAlreadyExistsError);
+    expect(existsSync(join(outside, "chain.json"))).toBe(false);
   });
 
   it("checks directory identity when reading from the configured root", () => {

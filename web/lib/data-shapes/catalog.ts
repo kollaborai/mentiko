@@ -108,6 +108,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/mentiko-mcp/ops/chains/route.ts",
       "web/lib/chains/chain-postprocessor.ts",
       "web/lib/chains/core-chain-installer.ts",
+      "web/lib/runs/run-record.ts",
       "web/lib/runner-v2/chain-generation-cli.ts",
       "web/lib/runner-v2/direct-run.ts",
     ],

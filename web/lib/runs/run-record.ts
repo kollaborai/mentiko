@@ -6,6 +6,8 @@ import {
   realpathSync,
   rmdirSync,
   statSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
@@ -440,6 +442,43 @@ export function createRunRecordFile(runsDir: string, record: RunRecord): RunReco
     if (!existsSync(paths.runJsonPath)) {
       try { rmdirSync(paths.runDir); } catch { /* preserve non-empty evidence */ }
     }
+    throw error;
+  }
+}
+
+/**
+ * Exclusively publish a run-local immutable chain snapshot before its run.json
+ * becomes visible. This is the durability seam for callers that allocate a
+ * run id before launching it: readers can never observe a valid new run record
+ * that lacks the exact chain definition the launch must consume.
+ */
+export function createRunRecordWithSnapshot(
+  runsDir: string,
+  record: RunRecord,
+  chainSnapshot: string,
+): RunRecordPaths {
+  assertRunRecord(record);
+  if (!chainSnapshot.trim()) throw new Error("Run chain snapshot must not be empty.");
+  const paths = resolveRunRecordPaths(runsDir, record.id);
+  const snapshotPath = join(paths.runDir, "chain.json");
+  mkdirSync(paths.runsDir, { recursive: true });
+  try {
+    mkdirSync(paths.runDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new RunRecordAlreadyExistsError(paths.runDir);
+    throw error;
+  }
+
+  try {
+    // `wx` is deliberate: no caller may replace a snapshot in a claimed run.
+    writeFileSync(snapshotPath, chainSnapshot, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    writeRunJsonExclusive(paths.runJsonPath, record);
+    return paths;
+  } catch (error) {
+    // This call alone created the directory. Remove only our exact private
+    // files; a concurrent/foreign file turns cleanup into a harmless no-op.
+    try { unlinkSync(snapshotPath); } catch { /* snapshot was never published or is preserved on interference */ }
+    try { rmdirSync(paths.runDir); } catch { /* non-empty evidence is never deleted */ }
     throw error;
   }
 }

@@ -188,6 +188,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
       },
+      {
+        id: "typed-preallocated-run-snapshot",
+        label: "Exclusively publish an immutable run-local chain snapshot before the preallocated run record",
+        owner: "runner-v2",
+        paths: ["web/lib/runs/run-record.ts"],
+      },
     ],
     legacyEquivalent: {
       summary: "Replaces direct shell jq decoding, generation, reference expansion, validation, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands or the required external model process.",
