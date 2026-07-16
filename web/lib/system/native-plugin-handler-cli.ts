@@ -14,14 +14,14 @@ export function runNativePluginHandlerCli(argv: string[]): Promise<void> {
   return dispatchPagerDuty(process.env);
 }
 
-export async function dispatchPagerDuty(env: NodeJS.ProcessEnv): Promise<void> {
+export async function dispatchPagerDuty(env: NodeJS.ProcessEnv, post: (payload: string) => Promise<{ statusCode: number; dedupKey?: string; message?: string }> = postPagerDuty): Promise<void> {
   const routingKey = env.PLUGIN_ROUTING_KEY || "";
   if (!routingKey) throw new Error("[pagerduty] PLUGIN_ROUTING_KEY not set");
   if (env.PLUGIN_EVENT_TYPE !== "chain-stopped") return;
   const chainId = env.PLUGIN_CHAIN_ID || "unknown";
   const runId = env.PLUGIN_RUN_ID || "";
   const payload = JSON.stringify({ routing_key: routingKey, event_action: "trigger", dedup_key: `mentiko-${chainId}`, payload: { summary: `Chain '${chainId}' failed${runId ? ` (run: ${runId})` : ""}`, severity: env.PLUGIN_SEVERITY || "error", source: "mentiko" } });
-  const response = await postPagerDuty(payload);
+  const response = await post(payload);
   if (response.statusCode !== 202) throw new Error(`[pagerduty] error (HTTP ${response.statusCode}): ${response.message || "unknown error"}`);
   console.log(`[pagerduty] incident triggered: ${response.dedupKey || ""}`);
 }

@@ -1007,12 +1007,13 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     readers: ["web/lib/system/plugin-registry.ts", "web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"],
     samples: { root: "organization", patterns: [["plugins", "registry.json"]], format: "json" },
     sensitive: true,
-    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while built-in nativeHandler declarations route to the compiled typed boundary without a shell fallback."],
+    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while built-in nativeHandler declarations route to the compiled typed boundary without a shell fallback. PagerDuty is the first typed built-in owner; its deleted shell hook is not dispatchable."],
     runnerLineage: {
       usage: "runner-v2",
       surfaces: [
         { id: "typed-plugin-registry", label: "Validate and atomically persist plugin registrations", owner: "runner-v2", paths: ["web/lib/system/plugin-registry.ts"] },
-        { id: "typed-plugin-dispatch", label: "Resolve enabled hooks and invoke declared external commands", owner: "runner-v2", paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"] },
+        { id: "typed-plugin-dispatch", label: "Resolve enabled hooks, invoke user external commands, and route declared built-ins to compiled typed handlers", owner: "runner-v2", paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"] },
+        { id: "typed-pagerduty-native-handler", label: "Build, send, and validate PagerDuty Events API v2 requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
       ],
     },
   }),
