@@ -11,11 +11,18 @@ import path from "path";
 import crypto from "crypto";
 import config, { encodeProjectPath, orgPath } from "../config";
 import type { Decision } from "./decision-types";
+import {
+  ExclusiveFileClaimBusyError,
+  withExclusiveFileClaim,
+} from "../runner-v2/file-claim";
 
 // async file-based lock with timeout + retry (no busy-wait)
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 10000; // 2x timeout for stale detection
 const LOCK_RETRY_INTERVAL_MS = 50;
+const RESOLUTION_CLAIM_WAIT_MS = 30_000;
+const RESOLUTION_CLAIM_RETRY_MS = 50;
+const RESOLUTION_CLAIM_FRESH_MS = 5 * 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -152,6 +159,48 @@ export function listDecisions(nsId: string, orgId: string, workspacePath?: strin
 
 export function getDecision(nsId: string, orgId: string, id: string, workspacePath?: string): Decision | null {
   return findDecisionLocation(nsId, orgId, id, workspacePath)?.decision ?? null;
+}
+
+/**
+ * Serialize the complete decision-resolution transaction across Next workers.
+ *
+ * The normal decision update lock only protects the final JSON write. Resolution
+ * creates task rows before that write, so callers need a distinct claim around
+ * the entire operation to prevent two approvals from creating duplicate trees.
+ * The claim path is derived from the actual decision location (including the
+ * workspace/project fallback), while updateDecision keeps using its own lock.
+ */
+export async function withDecisionResolutionLock<T>(
+  nsId: string,
+  orgId: string,
+  id: string,
+  workspacePath: string | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const location = findDecisionLocation(nsId, orgId, id, workspacePath);
+  if (!location) {
+    // Preserve the resolver's normal NotFound error when the decision has
+    // disappeared before the claim can be established.
+    return fn();
+  }
+
+  const claimPath = `${location.filePath}.resolve`;
+  const deadline = Date.now() + RESOLUTION_CLAIM_WAIT_MS;
+  while (true) {
+    try {
+      // Use a zero synchronous wait: a competing worker must not block this
+      // event loop while the owner completes its async task/lifecycle work.
+      return await withExclusiveFileClaim(claimPath, fn, {
+        waitTimeoutMs: 0,
+        freshMs: RESOLUTION_CLAIM_FRESH_MS,
+      });
+    } catch (error) {
+      if (!(error instanceof ExclusiveFileClaimBusyError) || Date.now() >= deadline) {
+        throw error;
+      }
+      await sleep(RESOLUTION_CLAIM_RETRY_MS);
+    }
+  }
 }
 
 export function createDecision(

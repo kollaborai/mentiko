@@ -16,6 +16,27 @@ const taskUpdate = jest.fn();
 const taskAddDep = jest.fn();
 const getDecision = jest.fn();
 const updateDecision = jest.fn();
+let resolutionLockTail = Promise.resolve();
+const withDecisionResolutionLock = jest.fn(
+  async (
+    _namespaceId: string,
+    _orgId: string,
+    _decisionId: string,
+    _workspacePath: string | undefined,
+    fn: () => Promise<unknown>,
+  ) => {
+    const previous = resolutionLockTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    resolutionLockTail = current;
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  },
+);
 
 jest.mock("@/lib/tasks/task-store", () => ({
   taskCreate: (...a: unknown[]) => taskCreate(...a),
@@ -27,6 +48,10 @@ jest.mock("@/lib/tasks/task-store", () => ({
 jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...a: unknown[]) => getDecision(...a),
   updateDecision: (...a: unknown[]) => updateDecision(...a),
+  withDecisionResolutionLock: (...a: unknown[]) =>
+    withDecisionResolutionLock(
+      ...a as [string, string, string, string | undefined, () => Promise<unknown>],
+    ),
 }));
 
 // scan_unblocked_auto_run_tasks fires a real fetch() to localhost in prod (see
@@ -75,6 +100,7 @@ const planFlow = {
 beforeEach(() => {
   jest.clearAllMocks();
   seq = 0;
+  resolutionLockTail = Promise.resolve();
   // each create returns a unique id in call order: NEW-1, NEW-2, ...
   taskCreate.mockImplementation((_org: unknown, fields: Record<string, unknown>) => ({ id: `NEW-${++seq}`, ...fields }));
   taskGet.mockReturnValue({ id: "FEAT-019", issue_type: "epic", workspace_id: undefined });
@@ -82,6 +108,66 @@ beforeEach(() => {
 });
 
 describe("resolveDecisionToTasks parenting", () => {
+  it("returns an existing resolution for a repeated approval without creating tasks", async () => {
+    const decision = makeDecision({
+      status: "approved",
+      resolution: {
+        selectedOptionId: "opt-a",
+        selectedBy: "user",
+        selectedAt: "2026-07-15T23:55:56.557Z",
+        taskId: "NEW-1",
+        taskIds: ["DEC-TASK-1", "NEW-1", "NEW-2"],
+      },
+    });
+    getDecision.mockReturnValue(decision);
+
+    const res = await resolveDecisionToTasks({
+      namespaceId: "default",
+      orgId: "default",
+      decisionId: "DEC-1",
+      selectedOptionId: "opt-a",
+    });
+
+    expect(res).toEqual({
+      decision,
+      taskId: "NEW-1",
+      taskIds: ["DEC-TASK-1", "NEW-1", "NEW-2"],
+    });
+    expect(taskCreate).not.toHaveBeenCalled();
+    expect(taskUpdate).not.toHaveBeenCalled();
+    expect(updateDecision).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent approvals so only one task tree is created", async () => {
+    let stored = makeDecision({ ...planFlow });
+    getDecision.mockImplementation(() => stored);
+    updateDecision.mockImplementation(
+      (_namespaceId: string, _orgId: string, _decisionId: string, patch: Record<string, unknown>) => {
+        stored = { ...stored, ...patch };
+        return Promise.resolve(stored);
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      resolveDecisionToTasks({
+        namespaceId: "default",
+        orgId: "default",
+        decisionId: "DEC-1",
+        selectedOptionId: "opt-a",
+      }),
+      resolveDecisionToTasks({
+        namespaceId: "default",
+        orgId: "default",
+        decisionId: "DEC-1",
+        selectedOptionId: "opt-a",
+      }),
+    ]);
+
+    expect(taskCreate).toHaveBeenCalledTimes(3);
+    expect(updateDecision).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+  });
+
   it("plan + existing parentTaskId: parents every generated task under the parent, creates NO new epic", async () => {
     getDecision.mockReturnValue(makeDecision({ parentTaskId: "FEAT-019", ...planFlow }));
 

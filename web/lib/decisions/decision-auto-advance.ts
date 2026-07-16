@@ -1,13 +1,13 @@
 // Server-side decision auto-advance.
 //
 // Decisions must progress through their generation pipeline without a live browser tab.
-// This driver takes them to the only human gate -- selecting an option -- then resolves
-// the resulting plan into tasks:
+// This driver handles only headless generation; humans choose the option and approve
+// the resulting plan before tasks are created:
 //
 //   research done (briefed) -> auto-generate the deck (round-1 questions)  [headless]
 //   deck ready              -> auto-generate the options                   [headless]
 //   options ready (round 2) -> stop: the human selects an option
-//   plan ready (round 3)    -> auto-resolve into tasks
+//   plan ready (round 3)    -> stop: the human approves task creation
 //
 // Browser effects can race these server nudges. Phase starts therefore share a
 // single-flight ledger and retain a launched run when persisting its decision pointer
@@ -368,9 +368,7 @@ export function advanceDecisionAfterPhase(input: {
     return;
   }
 
-  if (gf?.round3?.status === "ready" && gf.round3.plan && gf.round2?.selectedOptionId) {
-    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/resolve`, ws, {
-      selectedOptionId: gf.round2.selectedOptionId,
-    });
-  }
+  // A generated plan is not authorization to create tasks. The guided-flow UI
+  // owns the explicit "Approve and create tasks" action; resolving here races
+  // that click and makes a stale browser retry look like a failed run.
 }

@@ -87,4 +87,36 @@ describe("decision-storage", () => {
       }),
     );
   });
+
+  it("serializes concurrent resolution claims for the actual decision file", async () => {
+    const { createDecision, withDecisionResolutionLock } = await import("../decisions/decision-storage");
+    const created = createDecision(
+      "mike",
+      "default",
+      { prompt: "Create one task tree" },
+      "/repo/marketplace",
+    );
+    let active = 0;
+    let maxActive = 0;
+    const order: string[] = [];
+
+    const run = (label: string) => withDecisionResolutionLock(
+      "mike",
+      "default",
+      created.id,
+      "/repo/marketplace",
+      async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push(label);
+        active -= 1;
+        return label;
+      },
+    );
+
+    await expect(Promise.all([run("first"), run("second")])).resolves.toEqual(["first", "second"]);
+    expect(maxActive).toBe(1);
+    expect(order).toEqual(["first", "second"]);
+  });
 });

@@ -1,4 +1,8 @@
-import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
+import {
+  getDecision,
+  updateDecision,
+  withDecisionResolutionLock,
+} from "@/lib/decisions/decision-storage";
 import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
@@ -200,7 +204,17 @@ async function applyResolutionLifecycle(input: {
   );
 }
 
-export async function resolveDecisionToTasks({
+export async function resolveDecisionToTasks(input: ResolveDecisionToTasksInput): Promise<ResolveDecisionToTasksResult> {
+  return withDecisionResolutionLock(
+    input.namespaceId,
+    input.orgId,
+    input.decisionId,
+    input.workspacePath,
+    () => resolveDecisionToTasksUnlocked(input),
+  );
+}
+
+async function resolveDecisionToTasksUnlocked({
   namespaceId,
   orgId,
   decisionId,
@@ -216,6 +230,21 @@ export async function resolveDecisionToTasks({
 
   if (!decision) {
     throw new NotFound("Decision", decisionId);
+  }
+
+  // A browser can retry after a successful approval (for example when the
+  // plan-import response and the click response cross in flight). Return the
+  // persisted resolution instead of creating a second task tree.
+  if (decision.status === "approved" || decision.status === "in_progress" || decision.status === "done") {
+    const resolution = decision.resolution;
+    if (resolution?.selectedOptionId === selectedOptionId && resolution.taskId) {
+      return {
+        decision,
+        taskId: resolution.taskId,
+        taskIds: resolution.taskIds?.length ? resolution.taskIds : [resolution.taskId],
+      };
+    }
+    throw new BadRequest(`Cannot resolve decision in status: ${decision.status}`);
   }
 
   if (decision.status !== "pending" && decision.status !== "briefed") {
