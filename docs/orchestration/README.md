@@ -203,9 +203,12 @@ supporting libraries
 ====================
 
 [session-transport.md](./session-transport.md)
-  pty-manager abstraction layer.
+  invocation-only pty-manager boundary. `web/lib/pty/pty-client.ts` owns daemon
+  identity, readiness, session listing, liveness, and child-PID projection; the
+  shell forwards primitive transport operations to `runner-pty-transport.js` and
+  invokes the external `bin/p` CLI, which is the required product behavior.
 
-  functions:
+  functions (each forwards to the typed transport CLI or the PTY binary):
     - transport_init           ensure daemon running
     - transport_new_session    spawn PTY session
     - transport_send_keys      send text + enter
@@ -220,7 +223,11 @@ supporting libraries
   remote workspaces: local PTY session that SSHs or docker-execs in
 
 [run-lib.md](./run-lib.md)
-  run object lifecycle management.
+  invocation-only run-record boundary. `web/lib/runs/run-record.ts` and
+  `web/lib/runner-v2/run-record-cli.ts` own run creation, locked `run.json`
+  mutation, and validation. Every function below forwards through the single
+  `_run_record_cli` seam in `lib/run-record-client.sh` to
+  `runner-run-record.js`; run-lib.sh parses no JSON.
 
   functions:
     - create-run              create run-{id}/run.json
@@ -264,9 +271,12 @@ supporting libraries
   mutation, and scoped archival live in web/lib/runner-v2/event-lifecycle.ts.
 
 [routing-lib.md](./routing-lib.md)
-  advanced routing patterns.
+  invocation-only routing boundary. `web/lib/runner-v2/routing-contract.ts` owns
+  the branch/fan/error/timeout contract. Each function below is a one-line
+  forward to `runner-routing-contract.js`; the file must never parse chain
+  routing JSON itself.
 
-  functions:
+  functions (all forwarding):
     - retry-calculate-delay     exponential backoff
     - branch-parse              parse branch config
     - error-handler-resolve     find error handler
@@ -297,7 +307,7 @@ data flow
 
 2. agent launch
    launch_chain_agent function:
-     -> pre-flight: budget check, circuit breaker, approval gate
+     -> pre-flight: circuit breaker, approval gate
      -> creates PTY session (transport_new_session)
      -> writes git-before.txt (for diff capture later)
      -> sends agent instructions (multi-line via heredoc)
@@ -525,10 +535,13 @@ supporting:
   lib/approval-gate.sh             invocation-only approval boundary
   lib/webhook-sender.sh            webhook notifications
   lib/slack-integration.sh         slack notifications
-  lib/metrics.sh                   performance metrics
+  lib/metrics.sh                   invocation-only metrics boundary; forwards
+                                   primitive metric operations to runner-legacy-metrics.js
   lib/parallel-launcher.sh         external parallel agent process boundary; typed group records live in runner-v2
   lib/chain-runner.sh              invokes the typed parallel group record while retaining only process launch/wait
-  lib/profiler.sh                  agent profiling
+  lib/profiler.sh                  collects only live PTY/OS resource samples;
+                                   the typed runtime-profiler owns the records
+  lib/performance.sh               collects only real PTY process resource values
 
 binary:
   bin/p                            pty-manager daemon (node.js)
