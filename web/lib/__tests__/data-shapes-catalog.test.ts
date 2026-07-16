@@ -171,6 +171,18 @@ describe("data shape catalog", () => {
     ]));
   });
 
+  it("documents the typed agent-summary JSON gate inside the otherwise open run artifacts", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "run-artifacts");
+    expect(shape?.validatorPaths).toEqual(expect.arrayContaining([
+      "web/lib/runner-v2/completion-entrypoint.ts",
+      "web/lib/runner-v2/quality-gate.ts",
+    ]));
+    expect(shape?.notes?.join(" ")).toMatch(/cannot be parsed.*fails instead of silently routing/i);
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "typed-agent-summary-json-gate" }),
+    ]));
+  });
+
   it("pins runner retry storage to run-and-agent-scoped typed JSON", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "runner-retry-state");
     expect(shape).toMatchObject({

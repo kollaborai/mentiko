@@ -40,6 +40,7 @@ describe("runner-v2 completion PTY launcher", () => {
 
   it("uses a private one-shot context while keeping secrets out of PTY command metadata", async () => {
     const token = "gateway-token-must-not-enter-argv";
+    const sessionToken = "run-scoped-session-token-must-not-enter-argv";
     let contextPath = "";
     let persisted: { version: number; env: Record<string, string> } | undefined;
     ptyMock.spawn.mockImplementation(async (_name: string, _cmd: string, args: string[]) => {
@@ -60,6 +61,8 @@ describe("runner-v2 completion PTY launcher", () => {
         MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
         MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/v1",
         MENTIKO_AI_GATEWAY_LOCAL_TOKEN: token,
+        MENTIKO_SESSION_ID: "chain-run-1",
+        MENTIKO_SESSION_TOKEN: sessionToken,
       }),
     });
 
@@ -73,9 +76,12 @@ describe("runner-v2 completion PTY launcher", () => {
       expect.stringMatching(/mentiko-completion-context-.*\/context\.json$/),
     ]);
     expect(JSON.stringify(call.slice(0, 3))).not.toContain(token);
+    expect(JSON.stringify(call.slice(0, 3))).not.toContain(sessionToken);
     expect(call[3]).toBeUndefined();
     expect(persisted?.env).toMatchObject({
       MENTIKO_AI_GATEWAY_LOCAL_TOKEN: token,
+      MENTIKO_SESSION_ID: "chain-run-1",
+      MENTIKO_SESSION_TOKEN: sessionToken,
       MENTIKO_RUN_DIR: "/tmp/runs/run-1",
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",

@@ -289,6 +289,9 @@ export function runRunnerV2CompletionEntrypoint(
           NAMESPACE_ID: env.NAMESPACE_ID,
           ORG_ID: env.ORG_ID,
           WORKSPACE_TYPE: env.WORKSPACE_TYPE,
+          MENTIKO_SESSION_ID: env.MENTIKO_SESSION_ID,
+          MENTIKO_SESSION_TOKEN: env.MENTIKO_SESSION_TOKEN,
+          MENTIKO_WEB_URL: env.MENTIKO_WEB_URL,
           MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
           MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
           MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
@@ -427,7 +430,8 @@ function maybeHandleQualityGateFailure(input: {
 }) {
   const artifactsDir = join(input.runDir, "artifacts");
   const summaryPath = join(artifactsDir, `${input.agent.id}-summary.json`);
-  const summary = readJsonObject(summaryPath) as AgentSummary | undefined;
+  const summaryArtifact = readAgentSummaryArtifact(summaryPath);
+  const summary = summaryArtifact.summary as AgentSummary | undefined;
   const result = evaluateQualityGate({
     agent: {
       id: input.agent.id,
@@ -435,8 +439,14 @@ function maybeHandleQualityGateFailure(input: {
       role: stringValue((input.agent as unknown as Record<string, unknown>).role),
     },
     summary,
+    summaryParseError: summaryArtifact.parseError,
   });
   if (result.passed) return null;
+
+  // "blocked" is a deliberate terminal outcome, not a failed attempt to
+  // retry blindly. Preserve that distinction for reconciliation and task UI.
+  const summaryStatus = summary?.status?.trim().toLowerCase();
+  const terminalRunStatus = summaryStatus === "blocked" ? "blocked" : "failed";
 
   const artifact: { status: string; executionId?: string; artifactPath?: string } = !input.dryRun ? runQualityGateEventArtifact({
     namespaceId: input.namespaceId,
@@ -456,18 +466,18 @@ function maybeHandleQualityGateFailure(input: {
         id: input.run.id,
         chainId: resolveCompletionChainId(input.run, input.chain),
         chainName: input.chain.name,
-        status: "failed",
+        status: terminalRunStatus,
         artifactsDir,
       },
       ...(input.run.taskId ? {
         task: {
           id: input.run.taskId,
           title: input.run.taskId,
-          status: "failed",
+          status: terminalRunStatus,
         },
       } : {}),
       qualityGate: {
-        status: summary?.status?.toLowerCase() === "partial" ? "partial" : "failed",
+        status: summaryStatus === "partial" ? "partial" : terminalRunStatus,
         agentId: input.agent.id,
         reason: result.reason,
         summaryPath: existsSync(summaryPath) ? summaryPath : undefined,
@@ -485,7 +495,7 @@ function maybeHandleQualityGateFailure(input: {
 
   if (!input.dryRun) {
     updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-    updateRunStatus(input.runJsonPath, "failed", result.reason, input.now, input.onRunMutation);
+    updateRunStatus(input.runJsonPath, terminalRunStatus, result.reason, input.now, input.onRunMutation);
   }
   return artifact;
 }
@@ -892,13 +902,19 @@ function monitorCompletionRecoveryEvidence(
   return undefined;
 }
 
-function readJsonObject(path: string): Record<string, unknown> | undefined {
-  if (!existsSync(path)) return undefined;
+function readAgentSummaryArtifact(path: string): {
+  summary?: Record<string, unknown>;
+  parseError?: string;
+} {
+  if (!existsSync(path)) return {};
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return objectValue(parsed);
-  } catch {
-    return undefined;
+    const summary = objectValue(parsed);
+    return summary ? { summary } : { parseError: "summary must be a JSON object" };
+  } catch (error) {
+    return {
+      parseError: error instanceof Error ? `summary JSON parse failed: ${error.message}` : "summary JSON parse failed",
+    };
   }
 }
 

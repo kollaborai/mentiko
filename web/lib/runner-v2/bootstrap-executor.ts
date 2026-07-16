@@ -95,6 +95,8 @@ export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "age
     '  "risks": ["known risks or gaps"],',
     '  "nextAgentHints": ["what the next agent should read or do"]',
     "}",
+    "Write a syntactically valid JSON object. Do not put literal line breaks inside JSON strings; use arrays or escaped \\n instead.",
+    `Before emitting completion, validate the summary with: node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' ${shellEscape(summaryJson)}`,
     "",
     ...eventHandoff,
     "Do NOT hand-write any .event file. The typed emitter owns the canonical event bytes, filename, provenance, and validation.",

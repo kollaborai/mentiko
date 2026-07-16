@@ -451,6 +451,113 @@ describe("runner-v2 completion entrypoint", () => {
     });
   });
 
+  it("fails typed completion instead of silently accepting a malformed required summary artifact", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [
+        { id: "validator", name: "Validator", emits: "validated" },
+        { id: "deployer", name: "Deployer", triggers: ["validated"] },
+      ],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      taskId: "FEAT-1",
+      status: "running",
+      agents: [{ id: "validator", name: "Validator", session: "validator-run-123", status: "running" }],
+      sessions: ["validator-run-123"],
+    }));
+    writeFileSync(join(artifactsDir, "validator-summary.json"), '{"status":"complete","nextAgentHints":["line one\nline two"]}');
+    writeFileSync(join(eventsDir, "run-123-validator-validated.event"), runnerEventFixture({
+      event: "validated",
+      source: "validator-run-123",
+      runId: "run-123",
+      timestamp: "2026-06-26T00:00:00.000Z",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "validator-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result.decision).toBe("quality-gate-failed");
+    expect(existsSync(join(artifactsDir, "triage-result.json"))).toBe(true);
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "failed",
+      status_message: "agent summary artifact is invalid JSON",
+    });
+  });
+
+  it("preserves an agent-declared blocked summary as a non-retryable blocked run", () => {
+    const root = tempRoot();
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(artifactsDir, { recursive: true });
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Build Chain",
+      config: { project_root: root },
+      agents: [{ id: "updater", name: "Updater", emits: "updated" }],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    const run = createRunRecord({ chainName: "Build Chain", goal: "ship" });
+    updateRunJson(runJsonPath, () => ({
+      ...run,
+      id: "run-123",
+      status: "running",
+      agents: [{ id: "updater", name: "Updater", session: "updater-run-123", status: "running" }],
+      sessions: ["updater-run-123"],
+    }));
+    writeFileSync(join(artifactsDir, "updater-summary.json"), JSON.stringify({
+      status: "blocked",
+      executiveSummary: "missing capability",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "updater-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        NAMESPACE_ID: "default",
+        ORG_ID: "default",
+      },
+      now: new Date("2026-07-16T00:00:00.000Z"),
+    });
+
+    expect(result.decision).toBe("quality-gate-failed");
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "blocked",
+      status_message: "agent summary status is blocked",
+    });
+  });
+
   it("rolls back adopted and agent state when the quality-gate terminal write fails", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");
@@ -704,6 +811,8 @@ describe("runner-v2 completion entrypoint", () => {
       ORG_ID: "org-1",
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",
+      MENTIKO_SESSION_ID: "chain-run-123",
+      MENTIKO_SESSION_TOKEN: "run-scoped-test-token",
     };
   }
 
@@ -985,6 +1094,14 @@ describe("runner-v2 completion entrypoint", () => {
       expect.objectContaining({ type: "plugin", event: "agent-completed", agentId: "verifier" }),
       expect.objectContaining({ type: "notification", event: "agent-completed", agentId: "verifier" }),
     ]));
+    expect(result.plan.launches[0]?.env).toMatchObject({
+      MENTIKO_SESSION_ID: "chain-run-123",
+      MENTIKO_SESSION_TOKEN: "run-scoped-test-token",
+    });
+
+    // Capabilities may cross the private completion handoff, but are never
+    // persisted in the durable run receipt.
+    expect(JSON.stringify(readRunJson(fixture.runJsonPath))).not.toContain("run-scoped-test-token");
 
     // dry run restored the snapshot: no adopted attempt persists
     const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {

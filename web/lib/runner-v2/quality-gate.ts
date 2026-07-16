@@ -30,6 +30,8 @@ interface CoverageValues {
 export interface QualityGateInput {
   agent: AgentDescriptor;
   summary?: AgentSummary;
+  /** A required agent summary existed but could not be decoded as a JSON object. */
+  summaryParseError?: string;
   routeCoverage?: RouteCoverageReport;
   requiredRouteCoverageRate?: number;
 }
@@ -64,6 +66,13 @@ export interface QualityGateFailurePlan {
 const GATE_AGENT_RE = /(verifier|validator|validation|compliance|tester|reviewer|qa|coverage|quality|gate|auditor)/i;
 
 export function evaluateQualityGate(input: QualityGateInput): QualityGateResult {
+  if (input.summaryParseError) {
+    return {
+      passed: false,
+      reason: "agent summary artifact is invalid JSON",
+      details: input.summaryParseError,
+    };
+  }
   const summaryStatus = input.summary?.status?.trim().toLowerCase();
   if (summaryStatus && ["failed", "failure", "error", "blocked"].includes(summaryStatus)) {
     return {

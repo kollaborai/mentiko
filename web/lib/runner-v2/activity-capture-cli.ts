@@ -1,19 +1,32 @@
 #!/usr/bin/env node
-import { captureAgentActivity } from "@/lib/runner-v2/activity-capture";
+import { captureAgentActivity, captureAgentStartProvenance } from "@/lib/runner-v2/activity-capture";
 
-type Command = "capture";
+type Command = "capture" | "start";
 
 export function runActivityCaptureCli(
   argv: string[],
   write: (line: string) => void = (line) => console.log(line),
 ): void {
   const command = argv[0] as Command | undefined;
-  if (command !== "capture") throw new Error("usage: runner-activity-capture capture [options]");
+  if (command !== "capture" && command !== "start") throw new Error("usage: runner-activity-capture <capture|start> [options]");
   const values = parseValues(argv.slice(1));
-  rejectUnexpected(values, new Set([
+  const common = new Set([
     "--agent-id", "--run-id", "--project-root", "--runs-dir", "--report-file",
     "--profile-file", "--namespace-id",
-  ]));
+  ]);
+  rejectUnexpected(values, common);
+  if (command === "start") {
+    for (const key of ["--report-file", "--profile-file", "--namespace-id"]) {
+      if (values.has(key)) throw new Error(`${key} is not valid for runner-activity-capture start`);
+    }
+    write(JSON.stringify(captureAgentStartProvenance({
+      agentId: required(values, "--agent-id"),
+      runId: required(values, "--run-id"),
+      projectRoot: required(values, "--project-root"),
+      runsDir: required(values, "--runs-dir"),
+    })));
+    return;
+  }
   write(JSON.stringify(captureAgentActivity({
     agentId: required(values, "--agent-id"),
     runId: required(values, "--run-id"),

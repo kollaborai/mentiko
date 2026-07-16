@@ -37,6 +37,23 @@ export interface ActivityCaptureInput {
   now?: Date;
 }
 
+export interface ActivityStartProvenanceInput {
+  agentId: string;
+  runId: string;
+  projectRoot: string;
+  runsDir: string;
+  now?: Date;
+}
+
+export interface ActivityStartProvenanceResult {
+  agentId: string;
+  runId: string;
+  artifactsDir: string;
+  gitBeforePath: string;
+  startedAtPath: string;
+  gitSha?: string;
+}
+
 export interface ActivityChangedFile {
   status: string;
   file: string;
@@ -109,6 +126,40 @@ export function captureAgentActivity(input: ActivityCaptureInput): ActivityCaptu
   captureOutput({ ...input, agentId, artifactsDir }, result);
   updateManifest({ runsDir, runId, agentId, runJsonPath: paths.runJsonPath, result, now });
   return result;
+}
+
+/**
+ * Publish the two completion-time provenance inputs before an agent receives
+ * instructions. This is intentionally separate from captureAgentActivity:
+ * start provenance must be durable even if the agent never reaches completion.
+ */
+export function captureAgentStartProvenance(input: ActivityStartProvenanceInput): ActivityStartProvenanceResult {
+  const agentId = requireAgentId(input.agentId);
+  const runId = requireRunId(input.runId);
+  const projectRoot = requireDirectory(input.projectRoot, "project root");
+  const runsDir = canonicalizeRunsDir(input.runsDir);
+  const paths = resolveExistingRunRecordPaths(runsDir, runId);
+  const artifactsDir = join(paths.runDir, "artifacts");
+  ensureDirectory(artifactsDir, "activity artifact directory");
+  const now = input.now ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new Error("Activity start timestamp is invalid.");
+
+  const gitProbe = runGit(projectRoot, ["rev-parse", "HEAD"]);
+  const gitSha = gitProbe.status === 0 && GIT_SHA_PATTERN.test(gitProbe.stdout.trim())
+    ? gitProbe.stdout.trim()
+    : "";
+  const gitBeforePath = join(artifactsDir, `${agentId}-git-before.txt`);
+  const startedAtPath = join(artifactsDir, `${agentId}-started-at.txt`);
+  writeAtomic(gitBeforePath, `${gitSha}\n`);
+  writeAtomic(startedAtPath, `${now.toISOString()}\n`);
+  return {
+    agentId,
+    runId,
+    artifactsDir,
+    gitBeforePath,
+    startedAtPath,
+    ...(gitSha ? { gitSha } : {}),
+  };
 }
 
 interface GitCaptureInput {

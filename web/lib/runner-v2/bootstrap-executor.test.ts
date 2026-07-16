@@ -135,6 +135,8 @@ describe("runner-v2 bootstrap executor", () => {
     expect(contract).toContain(`- ${join(root, "artifacts", "writer-summary.md")}`);
     expect(contract).toContain("mentiko emit done");
     expect(contract).toContain("Do NOT hand-write any .event file.");
+    expect(contract).toContain("Do not put literal line breaks inside JSON strings");
+    expect(contract).toContain("Before emitting completion, validate the summary with: node -e");
     expect(contract).toContain("The final non-empty line must be exactly AGENT_COMPLETE.");
     expect(contract.split("\n")).toContain("The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.");
     expect(contract.split("\n")).toContain("The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.");

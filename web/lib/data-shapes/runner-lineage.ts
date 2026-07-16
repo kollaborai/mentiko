@@ -535,9 +535,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-agent-activity-capture",
-        label: "Capture, validate, normalize, and atomically publish per-agent activity artifacts",
+        label: "Capture local agent-start provenance plus completion-time activity, validate it, and atomically publish per-agent activity artifacts",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/activity-capture.ts", "web/lib/runner-v2/activity-capture-cli.ts"],
+      },
+      {
+        id: "shell-local-activity-start-invocation",
+        label: "Forward local start identity and roots to the typed activity-start owner before CLI startup",
+        owner: "runner-v2",
+        paths: ["lib/chain-runner.sh", "web/lib/runner-v2/activity-capture-cli.ts"],
       },
       {
         id: "typed-agent-activity-provenance",
@@ -783,6 +789,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         label: "Use durable handoff artifacts as completion evidence",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/completion-runner.ts"],
+      },
+      {
+        id: "typed-agent-summary-json-gate",
+        label: "Require parseable JSON-object agent summaries before accepting typed completion",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
       },
     ],
     legacyEquivalent: {

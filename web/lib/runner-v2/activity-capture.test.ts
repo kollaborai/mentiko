@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRunRecordFile, readRunRecordAt, type RunRecord } from "@/lib/runs/run-record";
-import { captureAgentActivity } from "@/lib/runner-v2/activity-capture";
+import { captureAgentActivity, captureAgentStartProvenance } from "@/lib/runner-v2/activity-capture";
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "mentiko-activity-capture-"));
@@ -41,6 +41,35 @@ function createRun(runsDir: string, runId: string): void {
 }
 
 describe("typed agent activity capture", () => {
+  it("publishes agent-start git and timestamp provenance atomically before completion capture", () => {
+    const root = tempDir();
+    const projectRoot = join(root, "project");
+    const runsDir = join(root, "runs");
+    mkdirSync(projectRoot);
+    mkdirSync(runsDir);
+    git(projectRoot, "init", "-q");
+    git(projectRoot, "config", "user.email", "activity@example.test");
+    git(projectRoot, "config", "user.name", "Activity Test");
+    writeFileSync(join(projectRoot, "notes.txt"), "before\n");
+    git(projectRoot, "add", "notes.txt");
+    git(projectRoot, "commit", "-qm", "before activity");
+    createRun(runsDir, "run-start");
+
+    const result = captureAgentStartProvenance({
+      agentId: "writer",
+      runId: "run-start",
+      projectRoot,
+      runsDir,
+      now: new Date("2026-07-15T12:34:56.000Z"),
+    });
+
+    expect(result.gitSha).toBe(git(projectRoot, "rev-parse", "HEAD"));
+    expect(readFileSync(result.gitBeforePath, "utf8")).toBe(`${result.gitSha}\n`);
+    expect(readFileSync(result.startedAtPath, "utf8")).toBe("2026-07-15T12:34:56.000Z\n");
+    expect(lstatSync(result.gitBeforePath).isFile()).toBe(true);
+    expect(lstatSync(result.startedAtPath).isFile()).toBe(true);
+  });
+
   it("captures git, transcript, output, and run provenance through typed atomic writes", () => {
     const root = tempDir();
     const projectRoot = join(root, "project");

@@ -12,6 +12,10 @@ const body = source.slice(start, end).replace(/^\s*#.*$/gm, "");
 
 assert.match(body, /runner-task-context\.js/);
 assert.match(body, /source "\$env_file"/);
+assert.match(body, /ARTIFACTS_DIR/);
+assert.match(body, /BETTER_AUTH_URL/);
+assert.match(body, /MENTIKO_WEB_URL/);
+assert.doesNotMatch(body, /\$\{TMPDIR:-\/tmp\}/, "task context handoff must not use the macOS /tmp symlink");
 for (const forbidden of ["curl", "jq", "sed", "awk", "grep", "cat", "JSON.parse", "echo \"\$task_json\""]) {
   assert.doesNotMatch(body, new RegExp(forbidden.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")), forbidden);
 }

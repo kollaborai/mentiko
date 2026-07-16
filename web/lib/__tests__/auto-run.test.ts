@@ -46,7 +46,7 @@ describe("getAutoRunCandidates", () => {
     }) as never);
   });
 
-  it("includes in-progress auto-run tasks whose last run stopped", () => {
+  it("does not re-admit an in-progress task whose terminal run awaits lifecycle reduction", () => {
     mockTaskList.mockReturnValue([
       {
         id: "TASK-031",
@@ -61,12 +61,7 @@ describe("getAutoRunCandidates", () => {
       },
     ] as never);
 
-    expect(getAutoRunCandidates("default")).toEqual([
-      expect.objectContaining({
-        taskId: "TASK-031",
-        title: "Retry me",
-      }),
-    ]);
+    expect(getAutoRunCandidates("default")).toEqual([]);
     expect(mockTaskList).toHaveBeenCalledWith("default", { status: "all" }, undefined, undefined);
   });
 
@@ -509,6 +504,27 @@ describe("getAutoRunCandidates", () => {
     const admission = canAdmitAutoRun(task, "default");
 
     expect(admission.action).not.toBe("already_completed");
+  });
+
+  it("does not relaunch an in-progress task after a terminal execution until lifecycle writes retry_requested", () => {
+    const task = {
+      id: "TASK-terminal-failure",
+      title: "A terminal execution",
+      status: "in_progress",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        chain_id: "task-metadata-update-chain",
+        last_run_id: "run-terminal",
+        last_run_status: "failed",
+        execution_retries: 1,
+      },
+    } as never;
+
+    const admission = canAdmitAutoRun(task, "default");
+
+    expect(admission).toEqual(expect.objectContaining({ admit: false, action: "not_runnable" }));
   });
 
   it("excludes a task paused via auto_run_paused_reason from auto-run candidates", () => {

@@ -28,7 +28,6 @@ export type ReadyCheckResult = {
 };
 
 const DONE_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
-const RETRYABLE_RUN_STATUSES = new Set(["stopped", "failed", "deleted", "unknown", "cancelled"]);
 const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
 const ACTIVE_RUN_STATUSES = new Set(["running", "pending"]);
 const TERMINAL_RUNNER_V2_ATTEMPT_PHASES = new Set(["completion_failed"]);
@@ -534,7 +533,10 @@ export function canAdmitAutoRun(
   }
 
   if (task.status !== "open") {
-    if (task.status !== "in_progress" || !lastRunStatus || !RETRYABLE_RUN_STATUSES.has(lastRunStatus)) {
+    // A terminal execution is reduced by the lifecycle service. Until that
+    // service explicitly writes retry_requested, a pending/stale auto-run
+    // scan must not launch the same task again.
+    if (task.status !== "in_progress" || lastRunStatus !== "retry_requested") {
       return { admit: false, reason: `task status '${task.status}' is not runnable`, action: "not_runnable" };
     }
   }

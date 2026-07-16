@@ -175,9 +175,12 @@ load_task_context() {
         return 0
     fi
 
-    local api_base="http://localhost:${WEB_PORT:-3000}"
+    local api_base="${BETTER_AUTH_URL:-${MENTIKO_WEB_URL:-http://localhost:${WEB_PORT:-${PORT:-3000}}}}"
     local env_file
-    env_file="$(mktemp "${TMPDIR:-/tmp}/mentiko-task-context.XXXXXX")"
+    # The typed writer rejects symlink parents. macOS /tmp is a symlink to
+    # /private/tmp, so use the run-local artifact directory that the runner
+    # already owns instead of weakening that validation.
+    env_file="$(mktemp "${ARTIFACTS_DIR:?ARTIFACTS_DIR must be configured}/mentiko-task-context.XXXXXX")"
 
     if ! node "${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-task-context.js" load \
         --task-id "$task_id" \
@@ -1281,27 +1284,41 @@ $rs_produces
         add-run-session "$RUN_ID" "$session_name" "$agent_id" "$agent_name"
     fi
 
-    # snapshot git HEAD before agent runs (for diff capture on completion)
+    # Persist completion-time activity provenance before the agent starts. Local
+    # runs use the typed owner so git output, timestamp format, path containment,
+    # and atomic artifact publication have one contract. Remote workspace paths
+    # remain in this shell phase until their remote filesystem boundary is typed.
     if [[ -n "$RUN_ID" ]]; then
-        local snap_dir
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
-            snap_dir="$RUNS_DIR/$RUN_ID/artifacts"
+            local activity_capture_cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-activity-capture.js"
+            if ! node "$activity_capture_cli" start \
+                --agent-id "$agent_id" \
+                --run-id "$RUN_ID" \
+                --project-root "$CHAIN_PROJECT_ROOT" \
+                --runs-dir "$RUNS_DIR" >/dev/null; then
+                local activity_start_reason="activity_start_provenance_failed"
+                mark_run_agent_blocked "$RUN_ID" "$agent_id" "$activity_start_reason" || true
+                "$PTY_CMD" remove "$session_name" >/dev/null 2>&1 || true
+                echo "  agent not started: typed activity-start provenance failed"
+                return 0
+            fi
         else
             # Remote workspace: build namespace-aware path with collapse
+            local snap_dir
             if [[ "${ORG_ID:-default}" == "default" ]]; then
                 snap_dir="$REMOTE_PROJECT_ROOT/runs/$RUN_ID/artifacts"
             else
                 snap_dir="$REMOTE_PROJECT_ROOT/namespaces/${NAMESPACE_ID}/runs/$RUN_ID/artifacts"
             fi
+            mkdir -p "$snap_dir"
+            local before_sha
+            before_sha=$(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+            if [[ -n "$before_sha" ]]; then
+                echo "$before_sha" > "$snap_dir/${agent_id}-git-before.txt"
+            fi
+            # also write a timestamp sentinel file for conversation discovery
+            date -Iseconds > "$snap_dir/${agent_id}-started-at.txt"
         fi
-        mkdir -p "$snap_dir"
-        local before_sha
-        before_sha=$(git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-        if [[ -n "$before_sha" ]]; then
-            echo "$before_sha" > "$snap_dir/${agent_id}-git-before.txt"
-        fi
-        # also write a timestamp sentinel file for conversation discovery
-        date -Iseconds > "$snap_dir/${agent_id}-started-at.txt"
     fi
 
     # update state before CLI launch so startup prompts can mark the run blocked
@@ -1513,7 +1530,9 @@ $rs_produces
 
     rm -f "$tmp_instructions"
 
-    # snapshot git state before agent starts (for activity capture)
+    # The local typed activity-start boundary above owns git-before and started-at
+    # publication. Preserve the remote path until the remote filesystem boundary
+    # is migrated; profile metadata remains a separate later contract.
     if [[ -n "${RUN_ID:-}" ]]; then
         local snap_artifacts_dir
         if [[ "$WORKSPACE_TYPE" == "local" ]]; then
@@ -1526,11 +1545,13 @@ $rs_produces
                 snap_artifacts_dir="$REMOTE_PROJECT_ROOT/namespaces/${NAMESPACE_ID}/runs/${RUN_ID}/artifacts"
             fi
         fi
-        mkdir -p "$snap_artifacts_dir"
-        git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null \
-            > "$snap_artifacts_dir/${agent_id}-git-before.txt" \
-            || echo "" > "$snap_artifacts_dir/${agent_id}-git-before.txt"
-        date -Iseconds > "$snap_artifacts_dir/${agent_id}-started-at.txt"
+        if [[ "$WORKSPACE_TYPE" != "local" ]]; then
+            mkdir -p "$snap_artifacts_dir"
+            git -C "$CHAIN_PROJECT_ROOT" rev-parse HEAD 2>/dev/null \
+                > "$snap_artifacts_dir/${agent_id}-git-before.txt" \
+                || echo "" > "$snap_artifacts_dir/${agent_id}-git-before.txt"
+            date -Iseconds > "$snap_artifacts_dir/${agent_id}-started-at.txt"
+        fi
 
         local profile_cli=""
         local profile_file_path=""

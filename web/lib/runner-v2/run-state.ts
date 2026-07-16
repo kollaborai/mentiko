@@ -38,6 +38,9 @@ export interface CreateRunRecordInput {
 const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "completed", "cancelled"]);
 const TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancelled", "error"]);
 
+/** A routed child may not revive a run already terminalized by completion. */
+export class TerminalRunRevivalError extends Error {}
+
 function nowIso(now = new Date()): string {
   return now.toISOString();
 }
@@ -121,6 +124,11 @@ export function addRunSession(
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    if (TERMINAL_RUN_STATUSES.has(current.status)) {
+      throw new TerminalRunRevivalError(
+        `cannot add session ${sessionName}: run ${current.id} is terminal (${current.status})`,
+      );
+    }
     const agents = [...(current.agents || [])];
     const existing = agents.findIndex((agent) => agent.id === agentId);
     const nextAgent: RunAgentRecord = {

@@ -746,6 +746,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     samples: { root: "project", patterns: [["runs", "*", "artifacts", "*-files-changed.json"]], format: "json" },
     notes: [
       "TypeScript owns raw-file checks, normalized name-status parsing, transcript path resolution, symlink rejection, atomic writes, and the run.json activity manifest mutation.",
+      "For local chain-runner launches, the typed activity-start operation publishes git-before and started-at provenance before the agent receives instructions; the SSH/Docker remote-filesystem snapshot branch remains a separately bounded migration surface.",
       "Git remains an external process probe; its stdout is parsed by the typed capture owner. The legacy shell file only forwards semantic arguments to the compiled CLI.",
     ],
   }),
@@ -841,10 +842,15 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "mixed",
     storage: ["{runRoot}/{runId}/artifacts/*"],
     assurance: "open",
+    typePaths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
+    validatorPaths: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
     writers: ["agents", "web/app/api/jobs/[id]/complete/route.ts", "web/lib/runner-v2/adapters.ts"],
     readers: ["web/lib/runs/job-store.ts", "web/lib/tasks/run-outcome-evidence.ts", "web/lib/event-artifacts/event-artifact-ledger.ts"],
     samples: { root: "project", patterns: [["runs", "*", "artifacts", "*.json"]], format: "json" },
-    notes: ["Known JSON handoffs coexist with arbitrary code and prose. The catalog observes JSON shapes but does not imply a closed artifact contract."],
+    notes: [
+      "Known JSON handoffs coexist with arbitrary code and prose. The catalog observes JSON shapes but does not imply a closed artifact contract.",
+      "Typed bootstrap requires each agent summary artifact to be a JSON object and gives agents a pre-emit JSON.parse check. If a required *-summary.json artifact exists but cannot be parsed, typed completion fails instead of silently routing the completion event.",
+    ],
   }),
   shape({
     id: "workspace-registry",

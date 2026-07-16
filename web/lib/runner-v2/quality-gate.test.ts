@@ -12,6 +12,17 @@ describe("runner-v2 quality gate", () => {
     });
   });
 
+  it("fails a completion when its required summary artifact is not valid JSON", () => {
+    expect(evaluateQualityGate({
+      agent: { id: "writer" },
+      summaryParseError: "summary JSON parse failed: Bad control character",
+    })).toEqual({
+      passed: false,
+      reason: "agent summary artifact is invalid JSON",
+      details: "summary JSON parse failed: Bad control character",
+    });
+  });
+
   it("fails partial summaries only for gate-like agents", () => {
     expect(isQualityGateAgent({ id: "coverage-reviewer", role: "qa" })).toBe(true);
     expect(evaluateQualityGate({
