@@ -159,30 +159,69 @@ do not start a second copy without checking the existing session.
 
 ## orchestration model
 
-Mentiko's current chain orchestration is hybrid TypeScript/shell and event-driven.
+Mentiko's chain orchestration is event-driven. TypeScript owns the data
+contracts and the lifecycle decisions; shell remains in the launch path as an
+invocation boundary.
 
 The key point: `chain-runner.sh` is not a long loop over every agent. It
-launches one matching agent, starts the required companion monitor, writes
-state, and exits. When an agent completes, the monitor invokes the typed
-completion launcher. The typed entrypoint processes the handoff and accepts the
-next agent or branch before it consumes the parent event.
+launches one matching agent, starts the required companion monitor, records
+state through the typed run-record CLI, and exits. When an agent completes, the
+monitor invokes the typed completion launcher. The typed entrypoint processes
+the handoff and accepts the next agent or branch before it consumes the parent
+event.
 
-Core files:
+TypeScript owns every runtime data contract. Shell files under `lib/*.sh` are
+invocation boundaries: they forward primitive arguments into a compiled typed
+CLI (`lib/runner-*.js`, esbuild bundles of `web/lib/**`), or they invoke the
+external agent/PTY binary that is the actual product behavior. `chain-runner.sh`
+and `agent-functions.sh` contain zero `jq` calls — no shell file parses or
+serializes chain, run, or event JSON.
 
-- `lib/chain-runner.sh`: chain validation, agent/profile resolution, run
-  initialization, concurrency admission, PTY agent launch.
+Typed owners:
+
 - `web/lib/runner-v2/completion-entrypoint.ts`: completion capture, event
   matching, artifacts, retries, routing, fan-in/fan-out, and run completion.
-- `lib/agent-functions.sh`: PTY session helpers and monitor wiring.
-- `lib/session-transport.sh`: transport abstraction over `pty-mgr`.
+- `web/lib/runs/run-record.ts` + `web/lib/runner-v2/run-record-cli.ts`: run
+  object creation and locked `run.json` updates.
+- `web/lib/runner-v2/chain-validation-cli.ts`: chain validation.
+- `web/lib/runner-v2/agent-profile.ts`: agent/profile resolution and command
+  compilation.
+- `web/lib/runner-v2/concurrency-admission-cli.ts`: chain concurrency admission.
+- `web/lib/runner-v2/routing-contract-cli.ts`: branch and fan-in/fan-out routing.
+- `web/lib/runner-v2/schedule-contract-cli.ts`: schedule contract evaluation.
+- `web/lib/pty/pty-client.ts`: daemon identity, readiness, session listing,
+  liveness, and child-PID projection over `pty-mgr`.
 - `web/lib/runner-v2/event-emitter.ts`: writes validated file-backed events.
 - `web/lib/runner-v2/event-lifecycle.ts`: strictly lists, finds, marks, and archives runner events behind one filesystem claim.
 - `web/lib/runner-v2/chain-watcher-service.ts`: watches event files and launches chains from the background worker.
 - `web/lib/runner-v2/watchdog.ts`: performs stalled-run recovery and scoped cleanup from the background worker.
-- `lib/run-lib.sh`: run object creation and locked `run.json` updates.
-- `lib/concurrency-cap.sh`: shared chain concurrency gate.
-- `lib/scheduler.sh`: schedule evaluation and scheduled launch.
-- `lib/routing-lib.sh`: branch and fan-in/fan-out routing helpers.
+
+Shell boundaries:
+
+- `lib/chain-runner.sh`: sequences the launch — invokes the typed validator,
+  profile compiler, run-record CLI, and admission CLI, then starts the selected
+  agent in a PTY session.
+- `lib/validate.sh`: 14 lines; invokes `runner-chain-validation.js` only.
+- `lib/run-lib.sh`: forwards every run operation to `runner-run-record.js`
+  through the single `_run_record_cli` seam in `lib/run-record-client.sh`.
+- `lib/concurrency-cap.sh`: forwards to `runner-concurrency-admission.js`.
+- `lib/routing-lib.sh`: forwards to `runner-routing-contract.js`; it must never
+  parse chain routing JSON itself.
+- `lib/scheduler.sh`: compatibility surface only. The typed background worker
+  owns the scheduler loop; this file invokes `chain-runner` only when explicitly
+  asked.
+- `lib/agent-functions.sh`: PTY session helpers and monitor wiring; invokes the
+  typed transcript, event-emitter, completion-launch, and monitor bundles.
+- `lib/session-transport.sh`: forwards primitive transport operations to
+  `runner-pty-transport.js` and invokes the external `pty-mgr` CLI. It does not
+  derive the daemon name or parse session lists.
+
+`lib/` holds 43 compiled bundles. `tests/runner-typed-bundle-parity.test.mjs`
+rebuilds 28 of them from their TypeScript sources and fails if any has drifted.
+The remaining 15 — including `runner-run-record.js`, `runner-event-emitter.js`,
+and `runner-v2-complete.js` — have no parity guard, so a stale or hand-edited
+bundle there would not be caught by that test. Never edit a bundle directly;
+change the TypeScript source and rebuild.
 
 Flow:
 
@@ -250,17 +289,19 @@ That is the job-runner path, not the normal chain-agent path.
 
 ## background jobs
 
-`lib/job-runner.mjs` is the detached background job runner for generation,
-recommendation, decision research, and other single-turn AI jobs.
+`web/lib/runner-v2/job-worker.ts` is the detached background job runner for
+generation, recommendation, decision research, and other single-turn AI jobs.
+It is spawned as its compiled bundle `lib/runner-job-worker.js`, because the
+detached process starts outside the Next.js module graph.
 
 Launch path:
 
 ```text
 web job route or service
-  -> create job file under jobs/
+  -> create job record under jobs/ (web/lib/runs/job-record.ts contract)
   -> web/lib/runs/job-runner-launch.ts
-  -> spawn node lib/job-runner.mjs <jobId>
-  -> job-runner reads prompt and profile
+  -> spawn node lib/runner-job-worker.js <jobId>
+  -> worker reads prompt and profile
   -> spawns CLI with stdio ["pipe", "pipe", "pipe"]
   -> validates output and calls callback/import route
 ```
