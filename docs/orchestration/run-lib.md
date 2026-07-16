@@ -1,8 +1,13 @@
-# run-lib.sh - Run object management
+# Typed run record contract
 
-run object lifecycle management for mentiko. a Run groups sessions
-by execution, providing run-id for session naming, run.json for
-metadata, and run history tracking.
+a Run groups sessions by execution, providing run-id for session naming,
+run.json for metadata, and run history tracking.
+
+`web/lib/runs/run-record.ts` and `web/lib/runner-v2/run-record-cli.ts` own run
+creation, ID generation, validation, and every locked `run.json` mutation.
+`lib/run-lib.sh` is an invocation-only boundary: each of its functions forwards
+through the single `_run_record_cli` seam in `lib/run-record-client.sh` to the
+compiled `lib/runner-run-record.js`. Shell parses and serializes no run JSON.
 
 see also:
   - [chain-runner-flow.md](./chain-runner-flow.md) - run creation in phase 4
@@ -249,7 +254,11 @@ non-default org:
 related files
 =============
 
-lib/run-lib.sh                this file
+web/lib/runs/run-record.ts    typed run record owner
+web/lib/runner-v2/run-record-cli.ts  typed command boundary source
+lib/runner-run-record.js      compiled run-record CLI
+lib/run-record-client.sh      the single _run_record_cli shell seam
+lib/run-lib.sh                this file; invocation-only wrapper
 lib/config.sh                 path resolution (RUNS_DIR, DEBUG_DIR)
 lib/chain-runner.sh           creates run via create-run
 web/lib/runner-v2/completion-entrypoint.ts  updates through the typed shared-lock writer

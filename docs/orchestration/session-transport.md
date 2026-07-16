@@ -1,8 +1,16 @@
-# session-transport.sh - PTY session abstraction layer
+# Typed PTY transport boundary
 
-abstraction layer for session management. wraps pty-manager daemon
-for all session types. remote workspaces (ssh/docker) create a local
-PTY session that SSH's or docker-exec's into the remote host.
+session management for all session types. remote workspaces (ssh/docker) create
+a local PTY session that SSH's or docker-exec's into the remote host.
+
+`web/lib/pty/pty-client.ts` is the abstraction layer. It derives the daemon name
+from the configured global root, namespace, and organization, and owns daemon
+readiness, registered-session listing, liveness, existence, and child-PID
+projection. `lib/session-transport.sh` is an invocation-only boundary: it
+forwards primitive transport operations to the compiled
+`lib/runner-pty-transport.js` and invokes the external `bin/p` CLI for the
+spawn/send/capture actions that are the required product behavior. It does not
+derive the daemon name or parse session lists.
 
 see also:
   - [chain-runner-flow.md](./chain-runner-flow.md) - usage in agent launch
@@ -199,6 +207,10 @@ related files
 =============
 
 lib/session-transport.sh    this file
+web/lib/pty/pty-client.ts    typed PTY socket client and projection owner
+web/lib/pty/pty-transport-cli.ts  typed command boundary source
+lib/runner-pty-transport.js  compiled transport CLI
+lib/session-transport.sh    this file; invocation-only wrapper
 bin/p                        pty-manager daemon (node.js)
 lib/chain-runner.sh         uses transport for local agents
 lib/agent-functions.sh      uses transport for session mgmt
