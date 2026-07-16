@@ -74,13 +74,19 @@ create-run <chain.json> <goal>
   create a new run object.
 
   flow:
-    1. validate chain file exists
-    2. extract chain name from jq
-    3. generate run-id: run-$(date +%s)
-    4. create run directory: RUNS_DIR/run-{id}/
-    5. write run.json with initial state
-    6. include parent_run_id if MENTIKO_PARENT_RUN_ID set
-    7. echo run-id (for capture by caller)
+    shell:
+      1. check the chain file exists, else fail
+      2. assemble primitive flags (--runs-dir, --chain-file, --goal, and
+         optionally --parent-run-id, --workspace-path, --task-id)
+      3. forward to runner-run-record.js via _run_record_cli
+      4. echo whatever the typed owner returns (the run-id)
+
+    typed owner (web/lib/runs/run-record.ts):
+      5. read the chain name from the chain file
+      6. generate the run-id
+      7. create RUNS_DIR/run-{id}/ and validate + atomically write run.json
+
+  shell runs no jq and constructs no JSON here.
 
   usage:
     RUN_ID=$(create-run chain.json "deploy to production")
