@@ -7,26 +7,31 @@ related: [task-store, agent-profiles, decision-flow, generation-templates]
 
 ## Overview
 
-The job runner system enables long-running AI operations to execute outside the HTTP request lifecycle. When an API route needs to run an AI prompt (chain recommendation, generation, decision research), it spawns a detached `job-runner.mjs` process that survives the API response.
+The job runner system enables long-running AI operations to execute outside the HTTP request lifecycle. When an API route needs to run an AI prompt (chain recommendation, generation, decision research), it spawns a detached worker process that survives the API response.
+
+The worker is TypeScript. `web/lib/runner-v2/job-worker.ts` is the source of record; `lib/runner-job-worker.js` is its esbuild bundle, and it is the file actually spawned, because the detached process starts outside the Next.js module graph. `tests/runner-typed-bundle-parity.test.mjs` rebuilds the bundle and fails if it has drifted from the TypeScript source, so the bundle is never edited by hand. The predecessor `lib/job-runner.mjs` was deleted in `ef34d30`.
 
 Key components:
-- **lib/job-runner.mjs** - Detached process that reads job files, runs CLI prompts, writes results
-- **web/lib/job-store.ts** - Filesystem-backed job storage with atomic writes
+- **web/lib/runner-v2/job-worker.ts** - Typed worker: reads job records, resolves profiles, runs CLI prompts, writes results
+- **lib/runner-job-worker.js** - Compiled bundle of the above; the spawned entry point
+- **web/lib/runs/job-record.ts** - Typed job record contract: `JOB_TYPES`, `JOB_STATUSES`, validation
+- **web/lib/runs/job-store.ts** - Filesystem-backed job storage with atomic writes
+- **web/lib/runs/job-runner-launch.ts** - Builds child env and spawns the detached worker
 - **web/app/api/jobs/** - Job CRUD and completion callback endpoints
 - **web/hooks/use-job-status.ts** - React hook for polling/SSE job status
-- **web/lib/auto-run.ts** - Auto-run candidate detection
-- **web/lib/auto-run-service.ts** - Background worker that polls for auto-ready tasks
+- **web/lib/runs/auto-run.ts** - Auto-run candidate detection
+- **web/lib/runs/auto-run-service.ts** - Background worker that polls for auto-ready tasks
 
 ## Job Lifecycle
 
 ```
 1. API route (POST /api/jobs)
    ├─ createJob(type, input, taskId)
-   ├─ spawn job-runner.mjs detached (child.unref())
+   ├─ launchJobRunner() spawns lib/runner-job-worker.js detached (child.unref())
    └─ return { jobId } immediately
 
-2. job-runner.mjs (detached)
-   ├─ read job file, mark status: "running"
+2. runner-job-worker.js (detached)
+   ├─ read job record, mark status: "running"
    ├─ resolve agent profile (CLI binary, args, env vars)
    ├─ decrypt {secret:NAME} references from vault
    ├─ spawn claude CLI with stdin (no shell escaping)
@@ -43,29 +48,30 @@ Key components:
 
 ## Key Interfaces
 
-### Job Type (job-store.ts)
+### Job Type (web/lib/runs/job-record.ts)
+
+The type union is a runtime `as const` array, not a bare type alias — `readJobRecord`/`writeJobRecord` validate against it and throw `JobRecordValidationError` on an unknown type or status. `job-store.ts` re-exports these; it does not define them.
 
 ```typescript
-type JobType =
-  | "recommend"           // chain recommendation from task
-  | "generate"            // chain generation from prompt
-  | "link"                // agent link generation
-  | "decision_research"   // decision context research
-  | "decision_guided_questions"  // guided flow round 1
-  | "decision_guided_options"    // guided flow round 2
-  | "decision_guided_plan"       // guided flow round 3
-  | "decision_retrospective"
-  | "template_test"
-  | ...;
+export const JOB_TYPES = [
+  "recommend", "generate", "link", "task", "agent", "artifact",
+  "decision_research", "decision_steering", "decision_retrospective",
+  "decision_guided_questions", "decision_guided_options", "decision_guided_plan",
+  "preference_synthesis", "agent_edit", "webhook_inbound", "webhook_outbound",
+  "event_trigger", "template_test", "link_summary", "task_run_summary",
+] as const;
 
-type JobStatus = "pending" | "running" | "complete" | "failed";
+export const JOB_STATUSES = ["pending", "running", "complete", "failed"] as const;
 
-interface Job {
+interface JobRecord {
   id: string;              // job-{timestamp}-{random}
   type: JobType;
   status: JobStatus;
   taskId?: string;         // linked task for metadata updates
   decisionId?: string;     // linked decision
+  runId?: string;
+  chainId?: string;
+  createdBy?: string;
   input: Record<string, unknown>;  // includes resolved prompt
   result?: Record<string, unknown>;
   error?: string;
@@ -97,18 +103,20 @@ POST /api/jobs creates a new background job:
 3. Resolves generation template (stored in `input.prompt`)
 4. Creates job file via `createJob()`
 5. Persists `jobId` to task metadata (analysis_job_id or generation_job_id)
-6. Spawns `job-runner.mjs` detached:
+6. Calls `launchJobRunner()` (web/lib/runs/job-runner-launch.ts), which spawns the compiled worker detached:
    ```typescript
-   spawn(process.execPath, [runnerPath, jobId], {
+   const runnerPath = join(config.codeRoot, "lib", "runner-job-worker.js");
+   const child = spawn(process.execPath, [runnerPath, job.id], {
      detached: true,
      stdio: ["ignore", "ignore", "ignore"],
-     env: { ...process.env, JOB_CALLBACK_URL, ... }
+     env: buildChildEnv({ MENTIKO_GLOBAL_ROOT, MENTIKO_ORG_ROOT, JOB_CALLBACK_URL, JOB_CALLBACK_SECRET, ... }),
    });
    child.unref(); // parent doesn't wait for child
    ```
+   Env is built by `buildChildEnv()` rather than spread from `process.env`, and the callback secret comes from `resolveInternalAuthSecret("jobs-complete")`.
 7. Returns `{ jobId }` immediately (HTTP response closes)
 
-### 2. Job Runner Execution (lib/job-runner.mjs)
+### 2. Job Runner Execution (web/lib/runner-v2/job-worker.ts)
 
 The detached process:
 
@@ -180,7 +188,7 @@ background-worker.ts (process-manager spawns)
   └─ auto-run launches ready task chains and records their runs
 ```
 
-### Candidate Detection (web/lib/auto-run.ts)
+### Candidate Detection (web/lib/runs/auto-run.ts)
 
 A task is "auto-ready" when:
 1. `status === "open"` (not closed/running)
@@ -193,7 +201,7 @@ isTaskReady(orgId, taskId): ReadyCheckResult
 getAutoRunCandidates(orgId, workspaceId?): AutoRunCandidate[]
 ```
 
-### Background Service (web/lib/auto-run-service.ts)
+### Background Service (web/lib/runs/auto-run-service.ts)
 
 State stored on `globalThis` to survive module reloads:
 
@@ -236,7 +244,7 @@ Critical for long AI prompts that would exceed HTTP timeout.
 
 ### Stale Job Detection
 
-Jobs stuck in "running" status > 5 minutes are auto-marked failed:
+Jobs stuck in "running" status > 10 minutes are auto-marked failed (`STALE_MS` in `web/lib/runs/job-store.ts`). The window is deliberately wider than the 8-minute `RUNNER_CHILD_TIMEOUT_MS` child timeout in the worker, to leave room for result import:
 
 ```typescript
 // in getJob()
@@ -286,9 +294,9 @@ This prevents the claude CLI from refusing to run inside another claude session.
 ## Dependencies
 
 - **web/lib/config.ts** - Path resolution (JOBS_DIR, AGENT_PROFILES_DIR, SECRETS_DIR)
-- **web/lib/task-store.ts** - Task metadata updates
-- **web/lib/decision-storage.ts** - Decision state updates
+- **web/lib/tasks/task-store.ts** - Task metadata updates
+- **web/lib/decisions/decision-storage.ts** - Decision state updates
 - **web/lib/namespace-config.ts** - Namespace/org context from request
-- **web/lib/generation-template-storage.ts** - Template resolution for prompts
-- **lib/chain-postprocessor.ts** - Extracts inline agents from generated chains
+- **web/lib/generation/generation-template-storage.ts** - Template resolution for prompts
+- **web/lib/chains/chain-postprocessor.ts** - Extracts inline agents from generated chains
 - **web/app/api/events/stream/route.ts** - SSE events for job status updates
