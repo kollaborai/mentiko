@@ -22,11 +22,16 @@ export const POST = withErrorHandling(async (
   const workspaceId = getWorkspaceId(request);
   const workspacePath = getWorkspacePath(request);
 
-  const { selectedOptionId, notes } = await request.json();
+  const { selectedOptionId, notes, autoApprovedByWorkspacePolicy } = await request.json();
 
   if (!selectedOptionId) {
     throw new BadRequest("selectedOptionId is required");
   }
+
+  const selectedBy = autoApprovedByWorkspacePolicy === true
+    && request.headers.get("Authorization") === `Bearer ${process.env.BETTER_AUTH_SECRET || ""}`
+    ? "workspace-auto-approve"
+    : "user";
 
   const result = await resolveDecisionToTasks({
     namespaceId: nsId,
@@ -36,7 +41,7 @@ export const POST = withErrorHandling(async (
     notes,
     workspaceId,
     workspacePath,
-    selectedBy: "user",
+    selectedBy,
   });
 
   return apiSuccess(result);

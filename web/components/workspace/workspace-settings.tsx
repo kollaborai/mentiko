@@ -124,6 +124,9 @@ export function WorkspaceSettings({
   const [projectDefaultChain, setProjectDefaultChain] = useState(workspace.project?.defaultChain || "");
 
   const [autoRun, setAutoRun] = useState(workspace.auto_run || "inherit");
+  const [autoApproveDecisions, setAutoApproveDecisions] = useState(
+    workspace.auto_approve_decisions === true,
+  );
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -367,6 +370,7 @@ export function WorkspaceSettings({
           default_branch: branch || undefined,
           default_agent_profile: agentProfile || undefined,
           auto_run: autoRun as "enabled" | "disabled" | "inherit",
+          auto_approve_decisions: autoApproveDecisions,
           project: (projectGitUrl || projectDefaultChain)
             ? { gitUrl: projectGitUrl || undefined, defaultChain: projectDefaultChain || undefined }
             : undefined,
@@ -549,6 +553,20 @@ export function WorkspaceSettings({
                 : "Chains will never auto-start in this workspace"}
             </p>
           </div>
+          <label className="flex items-start gap-2.5 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-amber-500"
+              checked={autoApproveDecisions}
+              onChange={(event) => setAutoApproveDecisions(event.target.checked)}
+            />
+            <span>
+              <span className="block text-xs text-foreground/80">Auto-approve decision recommendations</span>
+              <span className="mt-1 block text-[10px] text-foreground/40">
+                Automatically selects the recommended option, generates its plan, and creates the resulting tasks. Decisions without a valid recommendation remain paused.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 

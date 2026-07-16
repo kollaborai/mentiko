@@ -14,6 +14,8 @@
 // fails, so the next request repairs the pointer instead of launching a duplicate run.
 
 import type { Decision } from "@/lib/decisions/decision-types";
+import { listWorkspaces, resolveDecisionAutoApprove } from "@/lib/workspaces/workspace-storage";
+import { listDecisions } from "@/lib/decisions/decision-storage";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -339,6 +341,14 @@ function internalDecisionPost(
   });
 }
 
+function decisionAutoApprovalEnabled(namespaceId: string, orgId: string, decision: Decision): boolean {
+  if (!decision.workspacePath) return false;
+  const workspace = listWorkspaces(namespaceId, orgId).find(
+    (candidate) => candidate.id === decision.workspacePath || candidate.path === decision.workspacePath,
+  );
+  return resolveDecisionAutoApprove(workspace);
+}
+
 /**
  * Advance a decision after a phase's job completed. Pass the updated decision returned
  * by applyDecisionRunResult so the dispatch keys off its current state.
@@ -368,7 +378,62 @@ export function advanceDecisionAfterPhase(input: {
     return;
   }
 
-  // A generated plan is not authorization to create tasks. The guided-flow UI
-  // owns the explicit "Approve and create tasks" action; resolving here races
-  // that click and makes a stale browser retry look like a failed run.
+  // Preserve the human gate unless this workspace explicitly opts in. The
+  // recommendation must name a real option; no inferred first-option fallback.
+  const recommendedOptionId = decision.recommendation?.choiceId;
+  const recommendationIsValid = Boolean(
+    recommendedOptionId && decision.options.some((option) => option.id === recommendedOptionId),
+  );
+  if (!decisionAutoApprovalEnabled(namespaceId, orgId, decision) || !recommendationIsValid || !recommendedOptionId) {
+    return;
+  }
+
+  if (gf?.round2.status === "ready" && !gf.round2.selectedOptionId) {
+    internalDecisionPost(
+      namespaceId,
+      orgId,
+      `/api/decisions/${decision.id}/guided/plan`,
+      ws,
+      { selectedOptionId: recommendedOptionId },
+    );
+    return;
+  }
+
+  if (
+    gf?.round3.status === "ready" &&
+    gf.round2.selectedOptionId === recommendedOptionId &&
+    gf.round3.plan
+  ) {
+    internalDecisionPost(
+      namespaceId,
+      orgId,
+      `/api/decisions/${decision.id}/resolve`,
+      ws,
+      {
+        selectedOptionId: recommendedOptionId,
+        notes: "Automatically approved by this workspace's decision policy.",
+        autoApprovedByWorkspacePolicy: true,
+      },
+    );
+  }
+}
+
+/**
+ * Catch up decisions that were already waiting at a human gate when a workspace
+ * enables auto-approval. New decisions enter through advanceDecisionAfterPhase;
+ * this pass closes the historical gap without needing a browser refresh or a
+ * new agent run.
+ */
+export function advanceWorkspaceDecisionAutoApprovals(input: {
+  namespaceId: string;
+  orgId: string;
+  workspacePath: string;
+}): void {
+  for (const decision of listDecisions(input.namespaceId, input.orgId, input.workspacePath)) {
+    advanceDecisionAfterPhase({
+      namespaceId: input.namespaceId,
+      orgId: input.orgId,
+      decision,
+    });
+  }
 }

@@ -58,6 +58,12 @@ export interface Workspace {
   taskProvider?: TaskProviderConfig;
   /** Per-workspace auto-run override. Defaults to "inherit" (uses system setting). */
   auto_run?: WorkspaceAutoRun;
+  /**
+   * When enabled, the recommendation for a decision in this workspace is selected
+   * and its generated plan is approved without waiting for a browser action.
+   * Absent is deliberately false so existing workspaces keep their human gate.
+   */
+  auto_approve_decisions?: boolean;
 }
 
 function getWorkspacesFile(namespaceId: string, orgId: string): string {
@@ -139,6 +145,14 @@ export function resolveAutoRun(
   if (workspace.auto_run === "disabled") return false;
   // "inherit" or undefined → use system default
   return systemDefault;
+}
+
+/**
+ * Decision approval is workspace-scoped and opt-in. Unlike task auto-run, there
+ * is no system-level default: a missing setting must retain the human gate.
+ */
+export function resolveDecisionAutoApprove(workspace: Workspace | null | undefined): boolean {
+  return workspace?.auto_approve_decisions === true;
 }
 
 /**

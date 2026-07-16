@@ -61,7 +61,8 @@ export default function WorkspacesDocPage() {
   "max_rounds": 50,
   "default_branch": "main",
   "default_agent_profile": "codex-default",
-  "auto_run": "enabled"
+  "auto_run": "enabled",
+  "auto_approve_decisions": false
 }`}</CodeBlock>
       </section>
 
@@ -75,6 +76,17 @@ export default function WorkspacesDocPage() {
           <div><code className="text-foreground/70">disabled</code> - never auto-run, manual only</div>
           <div><code className="text-foreground/70">inherit</code> - use organization default</div>
         </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-sm font-medium mb-2">Decision Auto-Approval</h2>
+        <p className="text-xs text-foreground/60 leading-relaxed mb-3">
+          Set <code className="text-foreground/70">auto_approve_decisions</code> to <code className="text-foreground/70">true</code> only when this workspace should proceed without a human decision click.
+          Mentiko then selects the decision&apos;s explicit recommendation, generates that option&apos;s plan, and creates the plan&apos;s tasks.
+        </p>
+        <p className="text-xs text-foreground/60 leading-relaxed">
+          The default is <code className="text-foreground/70">false</code>. A missing or invalid recommendation stays paused; Mentiko never guesses a first option.
+        </p>
       </section>
 
       <section className="mb-6">

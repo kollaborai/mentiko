@@ -5,6 +5,7 @@ import type { WorkspaceExecution, WorkspaceModel, WorkspaceProject } from "@/lib
 import { Unauthorized, NotFound, Forbidden } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { advanceWorkspaceDecisionAutoApprovals } from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +76,7 @@ export const PATCH = withErrorHandling(async (
     default_agent_profile,
     project,
     auto_run,
+    auto_approve_decisions,
     members,
   } = body as {
     icon?: string;
@@ -89,6 +91,7 @@ export const PATCH = withErrorHandling(async (
     default_agent_profile?: string;
     project?: WorkspaceProject;
     auto_run?: "enabled" | "disabled" | "inherit";
+    auto_approve_decisions?: boolean;
     members?: string[];
   };
 
@@ -105,8 +108,16 @@ export const PATCH = withErrorHandling(async (
     default_agent_profile,
     project,
     auto_run,
+    auto_approve_decisions,
     members,
   });
+  if (workspace.auto_approve_decisions) {
+    advanceWorkspaceDecisionAutoApprovals({
+      namespaceId,
+      orgId,
+      workspacePath: workspace.path,
+    });
+  }
   return apiSuccess({ workspace });
 });
 
