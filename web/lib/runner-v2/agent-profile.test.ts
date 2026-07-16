@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { buildAgentProfileCommand, resolveAgentProfile } from "@/lib/runner-v2/agent-profile";
 
 jest.mock("@/lib/secrets/secrets-store", () => ({
@@ -86,6 +86,40 @@ describe("runner-v2 agent profile contract", () => {
 
     expect(buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
       .toContain("'--permission-mode' 'bypassPermissions' '--add-dir' '/tmp/path with spaces'");
+  });
+
+  it("uses a private, run-scoped Mentiko MCP config for Claude instead of user config", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    const previous = {
+      MENTIKO_WEB_URL: process.env.MENTIKO_WEB_URL,
+      MENTIKO_SESSION_ID: process.env.MENTIKO_SESSION_ID,
+      MENTIKO_SESSION_TOKEN: process.env.MENTIKO_SESSION_TOKEN,
+      MENTIKO_CODE_ROOT: process.env.MENTIKO_CODE_ROOT,
+    };
+    Object.assign(process.env, {
+      MENTIKO_WEB_URL: "http://127.0.0.1:3200",
+      MENTIKO_SESSION_ID: "chain-run-123",
+      MENTIKO_SESSION_TOKEN: "run-token",
+      MENTIKO_CODE_ROOT: join(process.cwd(), ".."),
+    });
+    let configPath: string | undefined;
+    try {
+      writeJson(profilePath, { id: "profile", name: "Profile", cli: "claude" });
+      const command = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
+      expect(command).toContain("'--mcp-config'");
+      expect(command).toContain("'--strict-mcp-config'");
+      expect(command).toContain("mentiko-claude-mcp-");
+      expect(command).not.toContain("run-token");
+      configPath = command.match(/--mcp-config' '([^']+)'/)?.[1];
+    } finally {
+      if (configPath) rmSync(configPath, { force: true });
+      if (configPath) rmdirSync(dirname(configPath));
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("renders each non-interactive pipe flag as its own quoted argv token", () => {

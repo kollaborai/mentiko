@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { resolveProfilePermissionArgs, splitProfileArgumentString } from "@/lib/runner-v2/agent-profile-args";
+import { createClaudeMentikoMcpConfig, withClaudeMentikoMcpCleanup } from "@/lib/runner-v2/claude-mentiko-mcp-config";
 import { getSecretByName } from "@/lib/secrets/secrets-store";
 import type { AgentProfile, AgentProfileReadinessConfig } from "@/lib/types";
 
@@ -97,14 +98,18 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
   const { profile } = loadAgentProfile(input.profilePath);
   const envFile = writeProfileEnvFile(profile, input.namespaceId, input.orgId);
   const model = input.modelOverride ?? (input.purpose === "relay" ? profile.relay_model ?? profile.model : profile.model);
+  const mentikoMcp = profile.cli === "claude" ? createClaudeMentikoMcpConfig(process.env) : undefined;
   const args = [
     profile.cli,
     ...(input.interactive || !profile.pipe_flag ? [] : splitProfileArgumentString(profile.pipe_flag, "pipe_flag")),
     ...resolveProfilePermissionArgs(profile.cli, profile.permission_flag),
     ...(model ? ["--model", model] : []),
     ...(profile.extra_args ?? []),
+    // `--strict-mcp-config` prevents an old user-level `mentiko` entry from
+    // overriding this run's URL/session capability.
+    ...(mentikoMcp ? ["--mcp-config", mentikoMcp.path, "--strict-mcp-config"] : []),
   ];
-  const command = args.map(shellQuote).join(" ");
+  const command = withClaudeMentikoMcpCleanup(args.map(shellQuote).join(" "), mentikoMcp);
   const setup = [
     envFile ? `source ${shellQuote(envFile)}; rm -f ${shellQuote(envFile)}; rmdir ${shellQuote(dirname(envFile))} 2>/dev/null || true` : "",
     envFile && !Object.hasOwn(profile.env ?? {}, "ANTHROPIC_API_KEY") ? "unset ANTHROPIC_API_KEY" : "",
