@@ -96,7 +96,9 @@ if [[ -z "$PROFILE_ID" ]]; then
 else
   PROFILE_JSON=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE_ID") || exit 1
 fi
-{ IFS= read -r PROFILE_ID; IFS= read -r PROFILE_FILE; IFS= read -r PROFILE_NAME; } < <(agent_profile_selection_triple "$PROFILE_JSON")
+PROFILE_ID=$(printf '%s' "$PROFILE_JSON" | jq -r '.id // empty')
+PROFILE_FILE=$(printf '%s' "$PROFILE_JSON" | jq -r '.path // empty')
+PROFILE_NAME=$(printf '%s' "$PROFILE_JSON" | jq -r '.name // empty')
 [[ -z "$PROFILE_ID" || -z "$PROFILE_FILE" ]] && { echo "  error: no agent profile found"; exit 1; }
 
 # per-agent profile overrides (--profile1, --profile2)
@@ -104,13 +106,13 @@ PROFILE_FILE_1="$PROFILE_FILE"
 PROFILE_FILE_2="$PROFILE_FILE"
 if [[ -n "$PROFILE1_OVERRIDE" ]]; then
   _p1_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE1_OVERRIDE") || exit 1
-  PROFILE_FILE_1=$(agent_profile_selection_field "$_p1_json" path)
+  PROFILE_FILE_1=$(printf '%s' "$_p1_json" | jq -r '.path // empty')
   [[ -n "$PROFILE_FILE_1" ]] || { log "error: profile '$PROFILE1_OVERRIDE' has no path"; exit 1; }
   log "agent 1 profile override: $PROFILE1_OVERRIDE"
 fi
 if [[ -n "$PROFILE2_OVERRIDE" ]]; then
   _p2_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE2_OVERRIDE") || exit 1
-  PROFILE_FILE_2=$(agent_profile_selection_field "$_p2_json" path)
+  PROFILE_FILE_2=$(printf '%s' "$_p2_json" | jq -r '.path // empty')
   [[ -n "$PROFILE_FILE_2" ]] || { log "error: profile '$PROFILE2_OVERRIDE' has no path"; exit 1; }
   log "agent 2 profile override: $PROFILE2_OVERRIDE"
 fi
@@ -123,7 +125,7 @@ CLI_CMD_2=$(agent_profile_command "$PROFILE_FILE_2" true "${NAMESPACE_ID:-defaul
 RELAY_PROFILE_FILE="$PROFILE_FILE"
 if [[ -n "$RELAY_PROFILE_OVERRIDE" ]]; then
   _rp_json=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$RELAY_PROFILE_OVERRIDE") || exit 1
-  RELAY_PROFILE_FILE=$(agent_profile_selection_field "$_rp_json" path)
+  RELAY_PROFILE_FILE=$(printf '%s' "$_rp_json" | jq -r '.path // empty')
   [[ -n "$RELAY_PROFILE_FILE" ]] || { log "error: relay profile '$RELAY_PROFILE_OVERRIDE' has no path"; exit 1; }
   log "using relay profile override: $RELAY_PROFILE_OVERRIDE"
 fi

@@ -76,14 +76,22 @@ Runner-facing shapes also carry explicit lineage from `web/lib/data-shapes/runne
 - `Legacy shell`: the persisted shape is still shell-only.
 - `Typed %`: named lifecycle surfaces owned by runner v2 divided by all mapped surfaces. The denominator is declared behavior, not files, lines of code, or observed artifacts.
 
-Each mapped surface names its current owner and evidence paths. The legacy-equivalent note states what the typed contract replaced or, when no persisted predecessor existed, says so directly. For example, `runnerV2.pendingHandoffs[]` is runner-v2-owned data, but its surrounding routed lifecycle is currently two of three mapped surfaces typed: typed persistence, typed liveness reconciliation, and a shell-owned `chain-runner.sh --start/--parallel` launch.
+Each mapped surface names its current owner and evidence paths. The legacy-equivalent note states what the typed contract replaced or, when no persisted predecessor existed, says so directly.
+
+No registered shape names a `.sh` file as a writer, reader, type source, or validator. `dataShapeShellSources()` returns empty for every entry, and the catalog test `has no documented data shape with a direct shell contract owner` fails the suite if that stops being true. Shell files still appear as surface *evidence* — `lib/chain-runner.sh`, `lib/session-transport.sh`, `lib/run-lib.sh`, `lib/retry-utils.sh`, and peers — but only on surfaces whose owner is runner-v2, where shell forwards primitive arguments into a compiled typed CLI or invokes the external agent/PTY binary that is the product behavior. Shell owns no data contract and no orchestration decision.
+
+Every mapped lifecycle surface in `runner-lineage.ts` is currently owned by runner-v2; no surface carries the `legacy-shell` owner, so every mapped shape reports `Typed % = 100`. `pty-daemon-session-projection` is the only shape still labelled `Shared`, and both of its surfaces are runner-v2-owned: the typed PTY socket client owns daemon identity and readiness projection, while the shell boundary forwards primitive transport commands and invokes the external PTY CLI. The `Legacy shell` label remains in the type union but currently matches no shape and no surface.
+
+`runner-v2-pending-handoff` shows how a retired contract is recorded. It maps two surfaces, both runner-v2-owned — `typed-handoff-cleanup` reads and clears pre-cutover evidence, `typed-handoff-reconciliation` retires live legacy records. Its predecessor was not shell: earlier typed completion code in `web/lib/runner-v2/adapters.ts` wrote these receipts around detached routed launches. Routed launch now proves delivery synchronously, verifying run agent, session, and AgentAttempt state before consuming the parent event, so no new pending handoff receipt is ever written. The shape persists only so reconciliation can clear pre-cutover records.
 
 Catalog tests require every direct `web/lib/runner-v2/*` or runner shell source reference to have lineage, verify the ownership label against current readers and writers, and existence-check every lineage evidence path.
 
-The repaired 2026-07-14 live scan found 88 registered shapes, 31 present in the local default namespace, and zero drifted shapes:
+`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; the registry holds 110 shapes as of this commit. Do not treat any count written into this page as current.
 
-- `run.json`: 38 of 38 records match `run.schema.json`. Two orphaned blocked/stopped job-route test fixtures were moved intact out of the live runs root, and that test now uses an isolated temporary data root plus canonical run fixtures.
-- generated task definitions: 3 of 3 sampled `draft-child-tasks.json` artifacts match `task.schema.json`. The event-artifact producer now emits an epic parent with newline-delimited acceptance criteria, validates before the atomic write, and validates again before import.
+A one-time drift repair ran on 2026-07-14 against one developer's local default namespace. Those figures are a dated observation of that machine, not a standing property of the system, and the local namespace has since grown well past the run count sampled below:
+
+- `run.json`: 38 of 38 records matched `run.schema.json` at that time. Two orphaned blocked/stopped job-route test fixtures were moved intact out of the live runs root, and that test now uses an isolated temporary data root plus canonical run fixtures.
+- generated task definitions: 3 of 3 sampled `draft-child-tasks.json` artifacts matched `task.schema.json`. The event-artifact producer now emits an epic parent with newline-delimited acceptance criteria, validates before the atomic write, and validates again before import.
 
 The schemas were not weakened. The repair command is dry-run by default, requires exact expected counts before applying, keeps sibling backups for normalized task drafts, and quarantines leaked test-run directories without deleting them:
 
