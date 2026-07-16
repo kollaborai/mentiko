@@ -291,8 +291,8 @@ monitor not nudging stalled agents
     # reduce interval for testing
     export MENTIKO_MONITOR_INTERVAL=30
 
-    # manually run monitor check
-    cd lib && ./monitor-check.sh <session-name>
+    # manually run the monitor against a session
+    ./bin/mentiko monitor <session-name> "expected end state description"
 
 ---
 
