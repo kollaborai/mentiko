@@ -103,12 +103,14 @@ describe("validateChain", () => {
         name: "Worker",
         triggers: ["chain_start"],
         emits: "done",
+        prompt: "Call mentiko_get_task before making changes.",
         tools: ["mentiko_get_task"],
         authorities: { needs_approval: ["mentiko_update_task"] },
       }],
     });
     expect(inline.valid).toBe(false);
     expect(inline.errors).toEqual(expect.arrayContaining([
+      "agents[0].prompt: obsolete MCP task tool 'mentiko_get_task'; use 'get_task'",
       "agents[0].tools[0]: obsolete MCP task tool 'mentiko_get_task'; use 'get_task'",
       "agents[0].authorities.needs_approval[0]: obsolete MCP task tool 'mentiko_update_task'; use 'update_task'",
     ]));

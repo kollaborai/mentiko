@@ -23,6 +23,13 @@ function collectToolIssues(value: unknown, path: string, issues: McpTaskToolRefe
   });
 }
 
+function collectPromptIssues(value: unknown, issues: McpTaskToolReferenceIssue[]): void {
+  if (typeof value !== "string") return;
+  for (const [tool, replacement] of Object.entries(OBSOLETE_MCP_TASK_TOOL_REPLACEMENTS)) {
+    if (value.includes(tool)) issues.push({ path: "prompt", tool, replacement });
+  }
+}
+
 /**
  * Reject retired MCP task-tool names before an agent or chain can persist them.
  * Canonical task tools are `get_task` and `update_task`; this is intentionally
@@ -33,6 +40,7 @@ export function validateMcpTaskToolReferences(agent: unknown): McpTaskToolRefere
 
   const record = agent as Record<string, unknown>;
   const issues: McpTaskToolReferenceIssue[] = [];
+  collectPromptIssues(record.prompt, issues);
   collectToolIssues(record.tools, "tools", issues);
 
   const authorities = record.authorities;
