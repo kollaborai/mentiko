@@ -20,9 +20,11 @@ const ENGINE_URL  = process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433";
 const SESSION_ID  = process.env.MENTIKO_SESSION_ID || "";
 const FETCH_TIMEOUT_MS = 15000;
 
-// In-memory token. Precedence: sidecar (written by the device-flow reconnect)
-// takes priority over the static env seed; then it's refreshed on 401.
-let currentToken: string = readSidecarForAuth()?.session_token || process.env.MENTIKO_SESSION_TOKEN || "";
+// An explicitly injected run/session token is the authority for that process.
+// It must not be shadowed by a host-level device-flow sidecar from another
+// session. When it expires, refreshToken still uses the normal sidecar/device/
+// engine recovery sequence before retrying once.
+let currentToken: string = process.env.MENTIKO_SESSION_TOKEN || readSidecarForAuth()?.session_token || "";
 
 function getEngineToken(): string {
   try {

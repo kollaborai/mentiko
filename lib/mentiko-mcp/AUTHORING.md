@@ -48,8 +48,10 @@ build-and-respawn step that trips everyone up the first time.
 - **`handlers/*.ts`** — grouped by domain (`tasks.ts`, `chains.ts`, …). Each
   function just shapes a call to the ops-client. No business logic here.
 - **`handlers/ops-client.ts`** — the HTTP client for `/api/mentiko-mcp/ops/*`.
-  Bearer token precedence: typed validated sidecar (`~/.mentiko/mcp/session.json`) > env
-  `MENTIKO_SESSION_TOKEN`; auto-refreshes and retries once on 401.
+  Bearer token precedence: explicit `MENTIKO_SESSION_TOKEN` (including a
+  runner-injected token) > typed validated sidecar
+  (`~/.mentiko/mcp/session.json`). On 401 it still auto-refreshes from the
+  sidecar, device flow, or engine and retries once.
 - **`web/app/api/mentiko-mcp/ops/**`** — the platform side. This is where auth,
   permission, workspace authorization, and the actual store calls happen. The
   bridge is a dumb pipe; the ops route is the trust boundary.
