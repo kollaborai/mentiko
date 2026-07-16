@@ -477,7 +477,10 @@ function maybeHandleQualityGateFailure(input: {
         },
       } : {}),
       qualityGate: {
-        status: summaryStatus === "partial" ? "partial" : terminalRunStatus,
+        // The blocked distinction belongs to the run and task lifecycle above.
+        // This payload's contract is "partial" | "failed": the gate reports a
+        // verdict, not a run state, and a blocked run did not pass it.
+        status: summaryStatus === "partial" ? "partial" : "failed",
         agentId: input.agent.id,
         reason: result.reason,
         summaryPath: existsSync(summaryPath) ? summaryPath : undefined,
