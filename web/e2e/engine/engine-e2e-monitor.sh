@@ -536,7 +536,7 @@ echo
 # SCENARIO E — BOUNDED AUTO-RECOVERY (the phase-aware advisor, now wired).
 # The agent starts parked on a BENIGN "Press Enter to continue" prompt — recoverable,
 # not ready. A blocked startup must NOT just fail: the engine consults the phase-aware
-# startup advisor (advisor-recovery.sh), which returns a low-risk/high-confidence
+# startup advisor (web/lib/runner-v2/readiness-cli.ts), which returns a low-risk/high-confidence
 # send_keys[ENTER]; the engine applies it ONCE (bounded by MENTIKO_STARTUP_RECOVERY_MAX),
 # the agent clears the prompt, becomes ready, gets its task, and COMPLETES. Proves
 # recovery actually works AND leaves a durable decision audit.

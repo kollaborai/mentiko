@@ -41,11 +41,11 @@ export type MigrationClaimState = "active" | "stale";
  * docs ledger renders the claim next to the shape it covers.
  */
 export const MIGRATION_CLAIM_BY_SHAPE_ID: Record<string, MigrationClaim> = {
-  "github-issue-projection": {
+  "startup-recovery-decision-log": {
     holder: "claude-opus-4-8",
     since: "2026-07-16T05:30:24Z",
-    heartbeat: "2026-07-16T05:30:24Z",
-    note: "Typing lib/github-integration.sh: the shell owns GitHub issue payload construction and API response parsing through jq. Moving both to a typed owner and leaving curl as the external effect, mirroring git-integration-projection. Touching lib/github-integration.sh, web/lib/runner-v2/github-integration*.ts, tests/e2e/test-integrations-e2e.sh.",
+    heartbeat: "2026-07-16T06:04:00Z",
+    note: "Cataloging the startup recovery decision log and retiring lib/advisor-recovery.sh, the dead duplicate of the readiness-cli.ts recovery contract. Touching web/lib/data-shapes/*, web/e2e/engine/ comments. Not touching readiness-cli.ts behavior.",
   },
 };
 

@@ -68,6 +68,27 @@ export function runnerMigrationCoverage(lineage: RunnerContractLineage): RunnerM
  * for each surface and are existence-checked by the catalog test suite.
  */
 export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> = {
+  "startup-recovery-decision-log": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-recovery-decision-gate",
+        label: "Validate the advisor payload and decide whether a recovery may be auto-applied unattended",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/readiness-cli.ts"],
+      },
+      {
+        id: "typed-recovery-decision-audit",
+        label: "Append every considered decision to a private, symlink-rejecting run-scoped log",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/readiness-cli.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces the advisor-recovery.sh jq contract, which validated .action as any string rather than the five-action enum its own prompt documented, and split validation from the auto-apply policy so a caller could consult either half alone. The typed owner enum-checks the action, requires a reason, and folds validation into the single auto-apply gate, so a decision cannot be applied without passing the contract that describes it.",
+      paths: ["web/lib/runner-v2/readiness-cli.ts"],
+    },
+  },
   "job-record": {
     usage: "runner-v2",
     surfaces: [

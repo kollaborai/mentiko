@@ -150,7 +150,7 @@ fi
 
 # advisor-recover mode: stand in for the PHASE-AWARE startup advisor. Ignores stdin
 # (the recovery prompt) and returns a single low-risk, high-confidence send_keys[ENTER]
-# JSON action — the advisor-recovery.sh contract. Used to prove the engine consults the
+# JSON action — the readiness-cli.ts recovery contract. Used to prove the engine consults the
 # advisor on a recoverable startup, auto-applies the key, and the agent then proceeds.
 if [[ "$STUB_MODE" == "advisor-recover" ]]; then
   printf '%s\n' '{"action":"send_keys","confidence":0.95,"risk":"low","reason":"benign continue prompt","evidence":"Press Enter to continue","keys":["ENTER"],"retry_after_seconds":0}'
