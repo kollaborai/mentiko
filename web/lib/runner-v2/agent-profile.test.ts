@@ -88,6 +88,20 @@ describe("runner-v2 agent profile contract", () => {
       .toContain("'--permission-mode' 'bypassPermissions' '--add-dir' '/tmp/path with spaces'");
   });
 
+  it("renders each non-interactive pipe flag as its own quoted argv token", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, {
+      id: "profile",
+      name: "Profile",
+      cli: "claude",
+      pipe_flag: '-p --add-dir "/tmp/path with spaces"',
+    });
+
+    expect(buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" }))
+      .toContain("'claude' '-p' '--add-dir' '/tmp/path with spaces'");
+  });
+
   it("rejects malformed permission argument fragments instead of handing them to the CLI", () => {
     const root = tempDir();
     const profilePath = join(root, "profile.json");
@@ -100,6 +114,20 @@ describe("runner-v2 agent profile contract", () => {
 
     expect(() => buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
       .toThrow("Invalid permission_flag");
+  });
+
+  it("rejects malformed non-interactive pipe fragments instead of handing them to the CLI", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, {
+      id: "profile",
+      name: "Profile",
+      cli: "claude",
+      pipe_flag: '--add-dir "/tmp/path with spaces',
+    });
+
+    expect(() => buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" }))
+      .toThrow("Invalid pipe_flag");
   });
 
   it("rejects malformed profile values before they reach an external CLI", () => {

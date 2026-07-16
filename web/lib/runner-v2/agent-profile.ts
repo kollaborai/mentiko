@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { resolveProfilePermissionArgs } from "@/lib/runner-v2/agent-profile-args";
+import { resolveProfilePermissionArgs, splitProfileArgumentString } from "@/lib/runner-v2/agent-profile-args";
 import { getSecretByName } from "@/lib/secrets/secrets-store";
 import type { AgentProfile, AgentProfileReadinessConfig } from "@/lib/types";
 
@@ -99,7 +99,7 @@ export function buildAgentProfileCommand(input: ProfileCommandInput): string {
   const model = input.modelOverride ?? (input.purpose === "relay" ? profile.relay_model ?? profile.model : profile.model);
   const args = [
     profile.cli,
-    ...(input.interactive || !profile.pipe_flag ? [] : [profile.pipe_flag]),
+    ...(input.interactive || !profile.pipe_flag ? [] : splitProfileArgumentString(profile.pipe_flag, "pipe_flag")),
     ...resolveProfilePermissionArgs(profile.cli, profile.permission_flag),
     ...(model ? ["--model", model] : []),
     ...(profile.extra_args ?? []),
