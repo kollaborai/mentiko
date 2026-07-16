@@ -39,6 +39,11 @@
       "v2": "web/lib/runner-v2/direct-run.ts strictly parses direct CLI arguments, validates and snapshots the normalized chain, creates the locked pending run record, resolves exactly one initial agent, then calls startRunnerV2Bootstrap",
       "fallback": "none. --task, --parallel, --dry-run, unknown options, and SSH/Docker workspace definitions fail before a run is created; direct CLI never invokes chain-runner.sh."
     },
+    "existing_run_initial_launch": {
+      "current": "compiled lib/runner-v2-existing-run.js accepts only a preallocated run id and consumes its immutable run-local chain.json snapshot",
+      "v2": "web/lib/runner-v2/existing-run-launch.ts proves run path and record identity, rejects symlinks, terminal/replayed state and non-local workspaces, then calls startRunnerV2Bootstrap without creating or replacing a run record",
+      "fallback": "none. Missing snapshots, invalid records, terminal or replayed runs, unsupported options, and remote workspace definitions fail closed without chain-runner."
+    },
     "completion_reentry": {
       "current": "lib/agent-functions.sh and monitor-live-io.ts call web/lib/runner-v2/completion-launch.ts, which starts compiled /opt/mentiko/lib/runner-v2-complete.js through a private one-shot context handoff",
       "v2": "web/lib/runner-v2/completion-entrypoint.ts is the only completion owner; same-run routed local agents launch through runner-v2-launch-agent with bounded synchronous acceptance",

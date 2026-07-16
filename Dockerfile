@@ -149,6 +149,14 @@ RUN if [ -f /build/web/lib/runner-v2/direct-run-cli.ts ]; then \
         --outfile=/context/lib/runner-v2-direct-run.js; \
     fi
 
+# compile typed existing-run launch; callers provide only a preallocated run id.
+RUN if [ -f /build/web/lib/runner-v2/existing-run-launch-cli.ts ]; then \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/existing-run-launch-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-existing-run.js; \
+    fi
+
 # compile monitor-v2 bridge so tenant runtime does not need tsx.
 RUN if [ -f /build/web/lib/runner-v2/monitor-cli.ts ]; then \
       echo "=== compiling runner-v2 monitor bridge ===" && \

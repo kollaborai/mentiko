@@ -194,6 +194,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runs/run-record.ts"],
       },
+      {
+        id: "typed-existing-run-snapshot-launch",
+        label: "Validate the immutable run-local snapshot before typed bootstrap of a preallocated run",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/existing-run-launch.ts", "web/lib/runner-v2/existing-run-launch-cli.ts", "lib/runner-v2-existing-run.js"],
+      },
     ],
     legacyEquivalent: {
       summary: "Replaces direct shell jq decoding, generation, reference expansion, validation, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands or the required external model process.",
@@ -370,6 +376,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         label: "Create a pending direct local run under the locked typed Run Record contract before bootstrap",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+      },
+      {
+        id: "typed-existing-run-preflight",
+        label: "Verify existing run identity, path containment, terminal state, and replay evidence before typed bootstrap",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/existing-run-launch.ts", "web/lib/runner-v2/existing-run-launch-cli.ts", "lib/runner-v2-existing-run.js"],
       },
       {
         id: "typed-task-run-scope-run-metadata",
