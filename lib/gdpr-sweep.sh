@@ -20,47 +20,24 @@ source "$SCRIPT_DIR/run-record-client.sh"
 
 echo "[gdpr-sweep] starting sweep for user=$USER_ID namespace=$NAMESPACE_ID"
 
-# chains owned by this user
-CHAINS_DIR="$NS_ROOT/chains"
-if [[ -d "$CHAINS_DIR" ]]; then
-    for chain_dir in "$CHAINS_DIR"/*/; do
-        chain_file="$chain_dir/chain.json"
-        if [[ -f "$chain_file" ]] && grep -q "\"created_by\":\"$USER_ID\"" "$chain_file" 2>/dev/null; then
-            echo "[gdpr-sweep] removing chain: $chain_dir"
-            rm -rf "$chain_dir"
-        fi
-    done
+# chains, conversations, and decisions owned by this user. Ownership detection
+# (canonical field comparison, not raw-JSON grep) and removal are owned by the
+# typed module lib/gdpr-user-artifacts.mjs; the shell forwards the namespace
+# root and user id and parses no JSON. There is no shell fallback.
+GDPR_ARTIFACTS_MJS="${MENTIKO_CODE_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}/lib/gdpr-user-artifacts.mjs"
+if [[ ! -f "$GDPR_ARTIFACTS_MJS" ]]; then
+    echo "[gdpr-sweep] typed gdpr-user-artifacts module missing: $GDPR_ARTIFACTS_MJS" >&2
+    exit 1
 fi
+node "$GDPR_ARTIFACTS_MJS" sweep --ns-root "$NS_ROOT" --user-id "$USER_ID"
 
-# runs by this user
+# runs by this user (owned by the typed Run Record CLI)
 RUNS_DIR="$NS_ROOT/runs"
 if [[ -d "$RUNS_DIR" ]]; then
     deleted_runs=$(_run_record_cli delete-user-runs --runs-dir "$RUNS_DIR" --user-id "$USER_ID")
     while IFS= read -r run_dir; do
         [[ -n "$run_dir" ]] && echo "[gdpr-sweep] removed run: $run_dir"
     done <<< "$deleted_runs"
-fi
-
-# conversations by this user
-CONV_DIR="$NS_ROOT/conversations"
-if [[ -d "$CONV_DIR" ]]; then
-    for conv_file in "$CONV_DIR"/*.jsonl; do
-        if [[ -f "$conv_file" ]] && grep -q "\"user_id\":\"$USER_ID\"" "$conv_file" 2>/dev/null; then
-            echo "[gdpr-sweep] removing conversation: $conv_file"
-            rm -f "$conv_file"
-        fi
-    done
-fi
-
-# decisions by this user
-DECISIONS_DIR="$NS_ROOT/decisions"
-if [[ -d "$DECISIONS_DIR" ]]; then
-    for dec_file in "$DECISIONS_DIR"/*.json; do
-        if [[ -f "$dec_file" ]] && grep -q "\"userId\":\"$USER_ID\"" "$dec_file" 2>/dev/null; then
-            echo "[gdpr-sweep] removing decision: $dec_file"
-            rm -f "$dec_file"
-        fi
-    done
 fi
 
 echo "[gdpr-sweep] complete for user=$USER_ID"
