@@ -89,6 +89,27 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["web/lib/runner-v2/job-worker.ts"],
     },
   },
+  "token-usage": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-token-transcript-extraction",
+        label: "Parse agent transcript dialects and report the observed model and provider provenance",
+        owner: "runner-v2",
+        paths: ["web/lib/system/token-usage-extraction.ts"],
+      },
+      {
+        id: "typed-token-record-store",
+        label: "Price, atomically persist, and index per-agent token usage records",
+        owner: "runner-v2",
+        paths: ["web/lib/system/token-store.ts", "web/app/api/tokens/record/route.ts", "web/app/api/runs/[id]/cost/route.ts"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces token-extractor.sh stdout scraping, whose \"usage\":{[^}]*} regex truncated on the nested server_tool_use object and whose OpenAI branch matched prompt/completion keys codex never emits. The typed owner reads transcript JSONL, sums per-message Claude usage, takes the last cumulative codex token_count, and records only the model a transcript named.",
+      paths: ["web/lib/system/token-usage-extraction.ts"],
+    },
+  },
   "task-generation-payload": {
     usage: "runner-v2",
     surfaces: [

@@ -315,6 +315,24 @@ describe("data shape catalog", () => {
     ]));
   });
 
+  it("pins token-usage extraction to the typed owner and records the shell lineage", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "token-usage");
+
+    expect(shape?.assurance).toBe("typed");
+    expect(shape?.typePaths).toContain("web/lib/system/token-usage-extraction.ts");
+    // the cost route reconstructs records from transcripts, so it writes as well as reads
+    expect(shape?.writers).toContain("web/app/api/runs/[id]/cost/route.ts");
+    expect(shape?.readers).toContain("web/app/api/runs/[id]/cost/route.ts");
+    expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "typed-token-transcript-extraction",
+        paths: expect.arrayContaining(["web/lib/system/token-usage-extraction.ts"]),
+      }),
+    ]));
+    expect(shape?.runnerLineage?.legacyEquivalent?.summary).toMatch(/token-extractor\.sh/i);
+    expect(dataShapeShellSources(shape!)).toEqual([]);
+  });
+
   it("pins notification persistence to the centralized atomic store", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "notifications");
 

@@ -1931,10 +1931,14 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "json",
     storage: ["{namespaceRoot}/tokens/_index.json", "{namespaceRoot}/tokens/{runId}/{agentId}.json"],
     assurance: "typed",
-    typePaths: ["web/lib/system/token-store.ts"],
-    writers: ["web/lib/system/token-store.ts", "web/app/api/tokens/record/route.ts"],
+    typePaths: ["web/lib/system/token-store.ts", "web/lib/system/token-usage-extraction.ts"],
+    writers: ["web/lib/system/token-store.ts", "web/app/api/tokens/record/route.ts", "web/app/api/runs/[id]/cost/route.ts"],
     readers: ["web/lib/system/token-store.ts", "web/app/api/runs/[id]/cost/route.ts"],
     samples: { root: "namespace", patterns: [["tokens", "_index.json"], ["tokens", "*", "*.json"]], format: "json" },
+    notes: [
+      "The cost route both reads the store and writes back records it reconstructs from transcripts, so it is cataloged as a writer as well as a reader.",
+      "provider and model are provenance, not defaults: TypeScript records only the model a transcript named and reports provider \"unknown\" when none was observed. Pricing still falls back to the default cost model, which is why an unpriced record never implies an observed model.",
+    ],
   }),
   shape({
     id: "onboarding-state",
