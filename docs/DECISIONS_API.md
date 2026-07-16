@@ -15,7 +15,7 @@ common headers:
 Data Model
 ==========
 
-see: web/lib/decision-types.ts
+see: web/lib/decisions/decision-types.ts
 
 Decision object:
   id              string        unique identifier
@@ -173,7 +173,7 @@ response: { jobId: string, status: "pending" }
 side effects:
   - decision.status set to "researching"
   - decision.activeJobId set to job id
-  - spawns detached job-runner.mjs process
+  - spawns the detached typed job worker (lib/runner-job-worker.js)
 
   curl -s -X POST http://localhost:3200/api/decisions/abc123/research \
     -H "x-namespace-id: default" \
@@ -278,7 +278,7 @@ response: { jobId: string, status: "pending" }
 
 side effects:
   - decision.retroJobId set to job id
-  - spawns detached job-runner.mjs process
+  - spawns the detached typed job worker (lib/runner-job-worker.js)
 
   curl -s -X POST http://localhost:3200/api/decisions/abc123/retrospective \
     -H "x-namespace-id: default" \
@@ -543,21 +543,24 @@ all async AI generation (research, retrospective, guided rounds)
 follows the same pattern:
 
   1. API endpoint creates a job via createJob()
-     - job stored as JSON file in project jobs dir
+     - job stored as a validated JSON record in the namespace jobs dir
+       (job-store.ts resolves nsPath(nsId, "jobs"); it collapses onto the
+       project root only in the default namespace)
      - job.status = "pending"
      - job.decisionId links back to the decision
 
-  2. API spawns a detached job-runner.mjs process
+  2. API spawns the detached typed job worker (lib/runner-job-worker.js,
+     compiled from web/lib/runner-v2/job-worker.ts)
      - runs as child_process.spawn with detached: true
      - inherits env vars for namespace/org/project resolution
      - receives JOB_CALLBACK_URL and JOB_CALLBACK_SECRET
 
-  3. job-runner.mjs executes the AI prompt
+  3. the job worker executes the AI prompt
      - reads job from disk, sets status to "running"
      - pipes prompt through CLI (claude)
      - extracts JSON result from AI output
 
-  4. job-runner.mjs calls JOB_CALLBACK_URL on completion
+  4. the job worker calls JOB_CALLBACK_URL on completion
      - POST /api/jobs/:id/complete
      - body: { status: "complete", result: {...} } or
              { status: "failed", error: "..." }
