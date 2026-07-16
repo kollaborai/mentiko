@@ -562,9 +562,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-plugin-dispatch",
-        label: "Validate registry ownership and invoke declared plugin hooks",
+        label: "Validate registry ownership, invoke user hooks, and route declared built-ins to compiled typed handlers",
         owner: "runner-v2",
         paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"],
+      },
+      {
+        id: "typed-custom-webhook-native-handler",
+        label: "Filter and deliver typed custom-webhook requests",
+        owner: "runner-v2",
+        paths: ["web/lib/system/native-plugin-handler-cli.ts"],
       },
     ],
   },

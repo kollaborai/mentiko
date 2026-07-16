@@ -65,4 +65,21 @@ describe("typed plugin dispatch", () => {
     expect(dispatchPlugins({ namespaceId: "ns", orgId: "org", event: "chain-stopped" })).toEqual({ launched: ["pagerduty"], skipped: [] });
     expect(spawn).toHaveBeenCalledWith(process.execPath, [expect.stringMatching(/lib\/runner-native-plugin\.js$/), "dispatch", "--handler", "pagerduty"], expect.objectContaining({ detached: true, stdio: "ignore" }));
   });
+
+  it("routes custom-webhook through the compiled typed boundary instead of a shell hook", () => {
+    (getPlugins as jest.Mock).mockReturnValue([{
+      id: "custom-webhook",
+      enabled: true,
+      pluginDir: dir,
+      manifest: { id: "custom-webhook", name: "Outbound Webhook", description: "test", version: "1", category: "outbound-webhook", events: ["chain-stopped"], builtin: true, nativeHandler: "custom-webhook", configSchema: [] },
+      config: { url: "https://example.test/hook" },
+    }]);
+
+    expect(dispatchPlugins({ namespaceId: "ns", orgId: "org", event: "chain-stopped" })).toEqual({ launched: ["custom-webhook"], skipped: [] });
+    expect(spawn).toHaveBeenCalledWith(process.execPath, [expect.stringMatching(/lib\/runner-native-plugin\.js$/), "dispatch", "--handler", "custom-webhook"], expect.objectContaining({
+      detached: true,
+      stdio: "ignore",
+      env: expect.objectContaining({ PLUGIN_URL: "https://example.test/hook" }),
+    }));
+  });
 });
