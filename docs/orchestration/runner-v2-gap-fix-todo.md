@@ -3,6 +3,11 @@
 status: draft
 scope: runner-v2 switch blockers discovered while reviewing FEAT-019 failures
 
+note: `web/lib/runner-v2/phase-plan.ts`, referenced in the completed items
+below, was deleted in `0ac3f84` — the same commit that landed the shared
+payload contract. Those file lists are a record of what the work touched at the
+time, not current paths.
+
 todo:
   ☑ make generation import authoritative for core generation completions
     files:
@@ -208,17 +213,29 @@ chain re-runs on every scan; auto-run "fix" left this half-closed):
         chain_id is present but empty") — passing.
 
   ☐ STRUCTURAL: one validated job-result shape across both consumer paths
-    (this is the root cause behind the three tactical items above — audit 2026-07-08)
+    (this is the root cause behind the three tactical items above — audit 2026-07-08;
+     shared-validator half landed, envelope + typing still open — recheck 2026-07-15)
     context:
-      - generation-result.json is validated + normalized on the CLI import path
-        ONLY: lib/mentiko-cli-generation.mjs isPayloadCompatibleWithKind +
-        normalizeResultForKind (invoked via the runner's generation-import effect).
-      - the in-process hydration path (job-store.ts readCompletedRunResult, added
-        in 88a072b) trusts the file raw and returns { output: "<string>" }, so
-        every downstream consumer re-guesses the shape (auto-run's
-        unwrapAgentJsonOutput + payload?.recommendation ?? payload). two readers,
-        two shapes, no shared parser. job.result is Record<string,unknown>
-        (job-types.ts) — no schema, compiler is blind to the drift.
+      - the shared validator now EXISTS: web/lib/generation/payload-contract.ts
+        owns isPayloadCompatibleWithKind, normalizeResultForKind,
+        jobTypeToGenerationKind, and the GenerationKind union. It replaced
+        lib/mentiko-cli-generation.mjs, deleted in ef34d30.
+      - all three consumer doors now import it, so "two readers, two shapes, no
+        shared parser" no longer holds:
+          web/lib/runs/job-store.ts readCompletedRunResult (in-process hydration)
+          web/lib/runner-v2/completion-entrypoint.ts (CLI import path)
+          web/app/api/tasks/auto-run/route.ts
+        readCompletedRunResult no longer trusts the file raw — it returns
+        undefined when isPayloadCompatibleWithKind rejects the parsed payload.
+      - STILL OPEN: the { output: "<json string>" } envelope survives.
+        result.output is the raw text of generation-result.json, so consumers
+        must still parse it, and normalizeResultForKind re-wraps bare objects the
+        same way. This is now recorded as a catalog contract on the job-record
+        shape, not an accident.
+      - STILL OPEN: job.result is Record<string, unknown>
+        (web/lib/runs/job-record.ts:22) — only the job envelope is typed, the
+        sub-paths under input/result are unmodeled, so the compiler stays blind
+        to producer/consumer drift.
       - the event-template-artifact-contract was meant to be the "schema
         expectations" home, but it is half-enforced: the quality_gate.failed
         triage flow is wired live (event-artifact-runner.ts, called from
@@ -230,12 +247,14 @@ chain re-runs on every scan; auto-run "fix" left this half-closed):
         at runtime (orphaned as a source of truth). no event-mapping editor
         exists — mappings are code defaults (event-template-map.ts) only.
     fix:
-      - extract the CLI validator/normalizer into a shared TS module (kind-aware)
-        and route readCompletedRunResult (kind from job.type) through it, so
-        in-process hydration and CLI import emit the SAME validated object; then
-        job.result can drop the { output } envelope and consumers drop the ad-hoc
-        unwrap.
-      - give job.result a discriminated type per job kind + a schema test, so a
+      - ☑ extract the CLI validator/normalizer into a shared TS module
+        (kind-aware) and route readCompletedRunResult (kind from job.type)
+        through it, so in-process hydration and CLI import validate against the
+        SAME contract. Landed as web/lib/generation/payload-contract.ts.
+      - ☐ drop the { output } envelope from job.result so consumers drop the
+        ad-hoc unwrap (auto-run's unwrapAgentJsonOutput +
+        payload?.recommendation ?? payload).
+      - ☐ give job.result a discriminated type per job kind + a schema test, so a
         producer/consumer shape drift is a compile/test failure, not a silent loop.
       - (contract) make event-artifact-runner consume the referenced artifact
         template and validate the emitted artifact against its schema, so the
