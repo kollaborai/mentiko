@@ -587,6 +587,7 @@ export async function applyCompletionAudit(
 
     taskMergeMeta(orgId, task.id, {
       ...releaseTaskRunScopeForRetry({
+        ...metadata,
         ...lifecycleMetadata(state),
         last_audit_verdict: "retry",
         last_run_status: "retry_requested",
