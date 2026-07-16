@@ -32,37 +32,26 @@ ai_gateway_agent_unset_command() {
     printf "\n"
 }
 
-ai_gateway_profile_has_provider_credential() {
-    local profile_file="${1:-}"
-    [[ -n "$profile_file" && -f "$profile_file" ]] || return 1
-
-    local key
-    for key in "${AI_GATEWAY_PROVIDER_ENV_KEYS[@]}"; do
-        if jq -e --arg k "$key" \
-            '(.env // {}) as $env | ($env | has($k)) and (($env[$k] | tostring | length) > 0)' \
-            "$profile_file" >/dev/null 2>&1; then
-            return 0
-        fi
-    done
-
-    return 1
+# Invocation-only boundary to the typed AI-gateway env owner. The agent-profile
+# `.env` provider-credential contract and the local-proxy injection policy are
+# owned by lib/ai-gateway-agent-env.mjs; the shell forwards a profile path plus
+# primitive arguments and parses no JSON. There is no shell fallback.
+_ai_gateway_agent_env_cli() {
+    local mjs="${MENTIKO_CODE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/lib/ai-gateway-agent-env.mjs"
+    if ! command -v node >/dev/null 2>&1; then
+        echo "  mentiko: node is required for typed AI-gateway agent env" >&2
+        return 2
+    fi
+    if [[ ! -f "$mjs" ]]; then
+        echo "  mentiko: typed ai-gateway-agent-env module missing: $mjs" >&2
+        return 2
+    fi
+    node "$mjs" "$@"
 }
 
-ai_gateway_lines_have_provider_credential() {
-    local lines="${1:-}"
-    [[ -n "$lines" ]] || return 1
-
-    local key
-    local line_key
-    local line_value
-    while IFS='=' read -r line_key line_value; do
-        [[ -n "$line_key" && -n "$line_value" ]] || continue
-        for key in "${AI_GATEWAY_PROVIDER_ENV_KEYS[@]}"; do
-            [[ "$line_key" == "$key" ]] && return 0
-        done
-    done <<< "$lines"
-
-    return 1
+ai_gateway_profile_has_provider_credential() {
+    local profile_file="${1:-}"
+    _ai_gateway_agent_env_cli profile-has-provider-credential --profile-file "$profile_file"
 }
 
 ai_gateway_should_use_local_proxy() {
@@ -75,18 +64,10 @@ ai_gateway_local_proxy_env_lines() {
     local existing_gateway_env="${2:-}"
     local workspace_type="${3:-${WORKSPACE_TYPE:-local}}"
 
-    ai_gateway_should_use_local_proxy "$workspace_type" || return 0
-    [[ "${MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED:-}" == "true" ]] || return 0
-    [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_BASE_URL:-}" ]] || return 0
-    [[ -n "${MENTIKO_AI_GATEWAY_LOCAL_TOKEN:-}" ]] || return 0
-
-    ai_gateway_profile_has_provider_credential "$profile_file" && return 0
-    ai_gateway_lines_have_provider_credential "$existing_gateway_env" && return 0
-
-    printf "OPENAI_BASE_URL=%s\n" "$MENTIKO_AI_GATEWAY_LOCAL_BASE_URL"
-    printf "OPENAI_API_BASE=%s\n" "$MENTIKO_AI_GATEWAY_LOCAL_BASE_URL"
-    printf "OPENAI_API_KEY=%s\n" "$MENTIKO_AI_GATEWAY_LOCAL_TOKEN"
-    printf "MENTIKO_AI_GATEWAY_PROXY=local\n"
+    _ai_gateway_agent_env_cli local-proxy-env-lines \
+        --profile-file "$profile_file" \
+        --existing-gateway-env "$existing_gateway_env" \
+        --workspace-type "$workspace_type"
 }
 
 ai_gateway_append_export_line() {

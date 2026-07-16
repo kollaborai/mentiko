@@ -61,7 +61,8 @@ describe("runner-v2 agent profile contract", () => {
     });
 
     const command = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
-    expect(command).toContain("--allow-dangerously-skip-permissions --permission-mode bypassPermissions");
+    expect(command).toContain("'--allow-dangerously-skip-permissions' '--permission-mode' 'bypassPermissions'");
+    expect(command).not.toContain("'--allow-dangerously-skip-permissions --permission-mode bypassPermissions'");
     expect(command).not.toContain("{secret:");
     expect(command).not.toContain("resolved-secret");
     expect(command).not.toContain("visible-only-in-file");
@@ -71,6 +72,34 @@ describe("runner-v2 agent profile contract", () => {
     expect(env).toContain("export AVAILABLE='resolved-secret'");
     expect(env).toContain("export PLAIN='visible-only-in-file'");
     expect(env).not.toContain("MISSING");
+  });
+
+  it("renders each configured permission flag as its own quoted argv token", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, {
+      id: "profile",
+      name: "Profile",
+      cli: "claude",
+      permission_flag: '--permission-mode bypassPermissions --add-dir "/tmp/path with spaces"',
+    });
+
+    expect(buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
+      .toContain("'--permission-mode' 'bypassPermissions' '--add-dir' '/tmp/path with spaces'");
+  });
+
+  it("rejects malformed permission argument fragments instead of handing them to the CLI", () => {
+    const root = tempDir();
+    const profilePath = join(root, "profile.json");
+    writeJson(profilePath, {
+      id: "profile",
+      name: "Profile",
+      cli: "claude",
+      permission_flag: '--permission-mode "bypassPermissions',
+    });
+
+    expect(() => buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
+      .toThrow("Invalid permission_flag");
   });
 
   it("rejects malformed profile values before they reach an external CLI", () => {

@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { createDecipheriv, createHash, createHmac, pbkdf2Sync } from "node:crypto";
 import { buildAiGatewayAgentEnv } from "../../../lib/ai-gateway-agent-env.mjs";
 import { cleanAiOutput, parseAiJsonOutput } from "../../../lib/job-runner-output-parser.mjs";
+import { resolveProfilePermissionArgs, splitProfileArgumentString } from "@/lib/runner-v2/agent-profile-args";
 import { parseJobRecord, requireJobId, resolveJobRecordPaths, writeJobRecord } from "@/lib/runs/job-record";
 // spawn imported inline below to avoid top-level collision with the detached child
 
@@ -175,12 +176,6 @@ function resolveProfileEnvVars(profileEnv) {
   return result;
 }
 
-function splitProfileArgs(value) {
-  if (typeof value !== "string" || !value.trim()) return [];
-  const matches = value.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-  return matches.map((arg) => arg.replace(/^(['"])(.*)\1$/, "$2"));
-}
-
 function defaultPipeArgsForCli(cli) {
   const bin = String(cli || "").split(/[\\/]/).pop();
   return bin === "agy" || bin === "antigravity" ? [] : ["-p"];
@@ -339,65 +334,72 @@ function sysLog(level, message, detail) {
   }).catch(() => {}); // fire-and-forget
 }
 
-// resolve default agent profile from filesystem (reads agent-profiles, not config-profiles)
-function resolveDefaultProfile() {
-  let cli = "claude";
-  let cliArgs = ["-p"];
-  let env = {};
-
-  try {
-    if (!existsSync(AGENT_PROFILES_DIR)) return { cli, cliArgs, env };
-
-    // scan agent-profiles dir for the one with isDefault=true
-    const files = readdirSync(AGENT_PROFILES_DIR).filter(f => f.endsWith(".json"));
-    let defaultProfile = null;
-    for (const file of files) {
-      const profile = JSON.parse(readFileSync(join(AGENT_PROFILES_DIR, file), "utf-8"));
-      if (profile.isDefault) {
-        defaultProfile = profile;
-        break;
-      }
+/**
+ * Read the profile marked isDefault. A missing directory or no default profile
+ * is a legitimate "nothing configured" state; unreadable profile JSON is not,
+ * and is surfaced rather than silently skipped.
+ */
+function readDefaultProfileRecord() {
+  if (!existsSync(AGENT_PROFILES_DIR)) return null;
+  for (const file of readdirSync(AGENT_PROFILES_DIR).filter(f => f.endsWith(".json")).sort()) {
+    const profilePath = join(AGENT_PROFILES_DIR, file);
+    let profile;
+    try {
+      profile = JSON.parse(readFileSync(profilePath, "utf-8"));
+    } catch (err) {
+      throw new Error(`Cannot read agent profile at ${profilePath}: ${err.message}`);
     }
-    if (!defaultProfile) return { cli, cliArgs, env };
-
-    if (defaultProfile.cli) cli = defaultProfile.cli;
-    if (defaultProfile.pipe_flag) cliArgs = splitProfileArgs(defaultProfile.pipe_flag);
-    else cliArgs = defaultPipeArgsForCli(cli);
-    if (defaultProfile.permission_flag) {
-      if (cli === "claude" && defaultProfile.permission_flag === "--dangerously-skip-permissions") {
-        cliArgs.push("--allow-dangerously-skip-permissions", "--permission-mode", "bypassPermissions");
-      } else {
-        cliArgs.push(...splitProfileArgs(defaultProfile.permission_flag));
-      }
-    }
-    if (defaultProfile.model) cliArgs.push("--model", defaultProfile.model);
-    if (Array.isArray(defaultProfile.extra_args)) {
-      cliArgs.push(...defaultProfile.extra_args);
-    }
-    // disallowed_tools: space-separated list of tools to block. only the claude CLI
-    // supports --disallowed-tools; other CLIs ignore it. jobs need structured JSON
-    // output, so Write/Edit/MultiEdit/NotebookEdit default to blocked — otherwise the
-    // model "helpfully" drops a file and narrates instead of returning JSON. users
-    // can override in settings → agent-configs (set to empty string to allow all).
-    if (cli === "claude") {
-      const raw = defaultProfile.disallowed_tools;
-      let value;
-      if (typeof raw === "string") {
-        value = raw.trim(); // empty string = explicit opt-out
-      } else {
-        value = "Write Edit MultiEdit NotebookEdit"; // undefined = apply safe default
-      }
-      if (value) {
-        cliArgs.push("--disallowed-tools", value);
-      }
-    }
-    if (defaultProfile.env && typeof defaultProfile.env === "object") {
-      // resolve {secret:NAME} references to actual values
-      env = resolveProfileEnvVars(defaultProfile.env);
-    }
-  } catch {
-    // fallback to defaults on any error
+    if (profile && profile.isDefault) return profile;
   }
+  return null;
+}
+
+/**
+ * Resolve default agent profile from filesystem (reads agent-profiles, not
+ * config-profiles). argv fragments are tokenized by the canonical typed parser
+ * so this detached worker and the shell command compiler cannot disagree about
+ * what a profile means. A malformed profile throws: handing a half-built argv
+ * to the CLI is how a combined permission_flag reached claude as one argument
+ * ("unknown option '--allow-dangerously-skip-permissions --permission-mode
+ * bypassPermissions'") instead of failing where the fault was.
+ */
+function resolveDefaultProfile() {
+  const defaultProfile = readDefaultProfileRecord();
+  if (!defaultProfile) return { cli: "claude", cliArgs: ["-p"], env: {} };
+
+  const cli = typeof defaultProfile.cli === "string" && defaultProfile.cli.trim()
+    ? defaultProfile.cli
+    : "claude";
+
+  const cliArgs = defaultProfile.pipe_flag
+    ? splitProfileArgumentString(defaultProfile.pipe_flag, "pipe_flag")
+    : defaultPipeArgsForCli(cli);
+
+  cliArgs.push(...resolveProfilePermissionArgs(cli, defaultProfile.permission_flag));
+
+  if (defaultProfile.model) cliArgs.push("--model", defaultProfile.model);
+  if (Array.isArray(defaultProfile.extra_args)) {
+    cliArgs.push(...defaultProfile.extra_args);
+  }
+  // disallowed_tools: space-separated list of tools to block. only the claude CLI
+  // supports --disallowed-tools; other CLIs ignore it. jobs need structured JSON
+  // output, so Write/Edit/MultiEdit/NotebookEdit default to blocked — otherwise the
+  // model "helpfully" drops a file and narrates instead of returning JSON. users
+  // can override in settings → agent-configs (set to empty string to allow all).
+  if (cli === "claude") {
+    const raw = defaultProfile.disallowed_tools;
+    const value = typeof raw === "string"
+      ? raw.trim() // empty string = explicit opt-out
+      : "Write Edit MultiEdit NotebookEdit"; // undefined = apply safe default
+    if (value) {
+      cliArgs.push("--disallowed-tools", value);
+    }
+  }
+
+  // resolve {secret:NAME} references to actual values
+  const env = defaultProfile.env && typeof defaultProfile.env === "object"
+    ? resolveProfileEnvVars(defaultProfile.env)
+    : {};
 
   return { cli, cliArgs, env };
 }
@@ -506,8 +508,24 @@ if (!prompt) {
 // run the AI prompt via cli - use spawn + stdin to avoid shell escaping issues
 import { spawn as spawnProcess } from "node:child_process";
 
-// resolve CLI binary, args, and env from default profile
-const resolvedProfile = resolveDefaultProfile();
+// resolve CLI binary, args, and env from default profile. An invalid profile
+// fails the job here: the process-level handlers below are not registered yet,
+// so an escaping throw would leave the record stranded in "running".
+let resolvedProfile;
+try {
+  resolvedProfile = resolveDefaultProfile();
+} catch (err) {
+  job.status = "failed";
+  job.completedAt = new Date().toISOString();
+  job.error = `agent profile is invalid: ${err.message}`;
+  try {
+    persistJob(job);
+  } catch {}
+  sysLog("error", `job failed: ${jobId}`, `invalid agent profile: ${err.message}`);
+  // fire-and-forget callback - process will exit before it completes, but that's ok
+  notifyCompletion().catch(() => {});
+  process.exit(1);
+}
 const resolvedCli = resolvedProfile.cli;
 const resolvedArgs = resolvedProfile.cliArgs;
 const profileEnv = resolvedProfile.env;

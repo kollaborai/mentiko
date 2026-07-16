@@ -19,6 +19,7 @@ describe("chain-runner AI gateway source contract", () => {
   const sessionLogResolverPath = fileURLToPath(new URL("../../lib/session-log-resolver.sh", import.meta.url));
   const sessionLogResolver = readFileSync(new URL("../../lib/session-log-resolver.sh", import.meta.url), "utf8");
   const shellHelper = readFileSync(new URL("../../lib/ai-gateway-agent-env.sh", import.meta.url), "utf8");
+  const typedGatewayEnv = readFileSync(new URL("../../lib/ai-gateway-agent-env.mjs", import.meta.url), "utf8");
   const seedScript = readFileSync(new URL("../../web/scripts/seed.ts", import.meta.url), "utf8");
   const smokeAgent = readFileSync(new URL("../../bin/ai-gateway-smoke-agent.mjs", import.meta.url), "utf8");
 
@@ -26,10 +27,17 @@ describe("chain-runner AI gateway source contract", () => {
     expect(chainRunner).toContain('source "$SCRIPT_DIR/ai-gateway-agent-env.sh"');
     expect(chainRunner).toContain("ai_gateway_local_proxy_env_lines");
     expect(chainRunner).toContain("gateway_env_vars=");
-    expect(shellHelper).toContain("OPENAI_BASE_URL=%s");
-    expect(shellHelper).toContain("OPENAI_API_BASE=%s");
-    expect(shellHelper).toContain("OPENAI_API_KEY=%s");
-    expect(shellHelper).toContain("MENTIKO_AI_GATEWAY_PROXY=local");
+    // The `.env` provider-credential contract and local-proxy injection policy
+    // are owned by the typed twin; the shell only forwards to it and parses no
+    // JSON. Guard both the delegation and that no shell fallback re-prints lines.
+    expect(shellHelper).toContain("local-proxy-env-lines");
+    expect(shellHelper).toContain("profile-has-provider-credential");
+    expect(shellHelper).not.toContain("OPENAI_BASE_URL=%s");
+    expect(shellHelper).not.toMatch(/\bjq\b/);
+    expect(typedGatewayEnv).toContain("OPENAI_BASE_URL=${baseUrl}");
+    expect(typedGatewayEnv).toContain("OPENAI_API_BASE=${baseUrl}");
+    expect(typedGatewayEnv).toContain("OPENAI_API_KEY=${token}");
+    expect(typedGatewayEnv).toContain("MENTIKO_AI_GATEWAY_PROXY=local");
     expect(shellHelper).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN");
   });
 
