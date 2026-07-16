@@ -188,7 +188,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{runtimeRoot}/events/*.event", "{runtimeRoot}/events/archive/*.event"],
     assurance: "drift-checked",
     schemaPath: "lib/schemas/event.schema.json",
-    typePaths: ["web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/monitor-completion-contract.ts"],
+    typePaths: ["web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runner-v2/raw-event-audit.ts"],
     validatorPaths: ["web/lib/runner-v2/events.ts", "web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/app/api/validate/route.ts"],
     writers: [
       "web/app/api/chain-triggers/route.ts",
@@ -222,6 +222,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "Every raw file must contain event, source, run_id, timestamp, processed, and data exactly once; optional extension fields must be lowercase, unique, and non-colliding, while event names remain open vocabulary.",
       "Shell command boundaries pass semantic arguments to compiled TypeScript entrypoints; no shell parser, lifecycle mutator, inferred event root, or runless compatibility path remains.",
+      "The typed raw-event audit reports canonical, malformed, unsupported-legacy, and direct structured-write evidence without accepting, moving, rewriting, or deleting any event file; its read-only review manifest contains opaque candidate IDs and no filesystem paths, filenames, raw values, or raw field names.",
     ],
   }),
   shape({

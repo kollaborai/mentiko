@@ -1,0 +1,8 @@
+{
+  "event": "agent-complete",
+  "source": "writer",
+  "run_id": "run-123",
+  "timestamp": "2026-07-15T12:00:00.000Z",
+  "processed": false,
+  "data": "complete"
+}
