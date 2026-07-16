@@ -2,7 +2,7 @@
 # mentiko - CLI entry point
 #
 # usage:
-#   mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
+#   mentiko run <chain.json> [--workspace <path>] [--start <agent-id>] [--debug]
 #   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
 #   mentiko decision import <artifact.json> --decision <id> --phase <phase>
 #   mentiko generation import <artifact.json> --job <id> --kind <kind>
@@ -56,7 +56,7 @@ case "$CMD" in
     # -------------------------------------------------------------------
 
     run)
-        bash "$LIB_DIR/chain-runner.sh" "$@"
+        exec node "$LIB_DIR/runner-v2-direct-run.js" "$@"
         ;;
 
     generate)

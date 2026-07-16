@@ -263,6 +263,7 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/monitor-live-io.ts",
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
+      "web/lib/runner-v2/direct-run.ts",
     ]);
     expect(shape?.readers).toEqual([
       "web/app/api/activity/route.ts",
@@ -281,7 +282,7 @@ describe("data shape catalog", () => {
     ]);
     expect(shape?.runnerLineage?.usage).toBe("runner-v2");
     expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
-      typed: 4,
+      typed: 5,
       legacy: 0,
       typedPercent: 100,
       state: "typed",

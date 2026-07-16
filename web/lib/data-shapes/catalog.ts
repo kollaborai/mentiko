@@ -109,6 +109,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/chains/chain-postprocessor.ts",
       "web/lib/chains/core-chain-installer.ts",
       "web/lib/runner-v2/chain-generation-cli.ts",
+      "web/lib/runner-v2/direct-run.ts",
     ],
     readers: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
     samples: { root: "organization", patterns: [["chains", "*", "chain.json"]], format: "json" },
@@ -213,6 +214,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/monitor-live-io.ts",
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
+      "web/lib/runner-v2/direct-run.ts",
     ],
     readers: [
       "web/app/api/activity/route.ts",
@@ -276,6 +278,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/run-state.ts",
       "web/lib/runner-v2/run-record-operations.ts",
       "web/lib/runner-v2/completion-recovery.ts",
+      "web/lib/runner-v2/direct-run.ts",
       "web/lib/runner-v2/watchdog.ts",
       "web/lib/runs/run-json-lock.ts",
       "web/app/api/runs/[id]/approve/route.ts",

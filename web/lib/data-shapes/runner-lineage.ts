@@ -182,6 +182,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/chain-generation-cli.ts", "lib/runner-chain-generation.js"],
       },
+      {
+        id: "typed-direct-local-snapshot",
+        label: "Validate and materialize the direct local execution snapshot before typed bootstrap",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+      },
     ],
     legacyEquivalent: {
       summary: "Replaces direct shell jq decoding, generation, reference expansion, validation, routing reads, and monitor completion matching; shell callers only invoke typed primitive commands or the required external model process.",
@@ -309,6 +315,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runner-v2/monitor-completion-cli.ts"],
       },
+      {
+        id: "typed-direct-local-bootstrap",
+        label: "Start the typed local bootstrap that creates the configured event root before any agent instructions",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+      },
     ],
   },
   "runner-event-archive-receipt": {
@@ -346,6 +358,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         label: "Typed completion recovery and reconciliation",
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/completion-recovery.ts", "web/lib/runs/run-reconciler.ts"],
+      },
+      {
+        id: "typed-direct-local-run-create",
+        label: "Create a pending direct local run under the locked typed Run Record contract before bootstrap",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
       },
       {
         id: "typed-task-run-scope-run-metadata",

@@ -53,7 +53,7 @@ exec /bin/bash "$@"
 set -euo pipefail
 script="$1"
 name="\${script##*/}"
-if [[ "$name" == "mentiko-cli-schedules.mjs" || "$name" == "runner-manual-monitor.js" ]]; then
+if [[ "$name" == "mentiko-cli-schedules.mjs" || "$name" == "runner-manual-monitor.js" || "$name" == "runner-v2-direct-run.js" ]]; then
   printf '%s\n' "node:$*" >> "\${MENTIKO_TEST_CALL_LOG}"
   exit 0
 fi
@@ -138,14 +138,15 @@ test("defaults to help when no command is provided", () => {
   assert(readCalls().length === 0, "did not dispatch without command");
 });
 
-test("dispatches run command to chain-runner", () => {
+test("dispatches supported direct run to the typed runtime without chain-runner", () => {
   clearCalls();
-  const res = runMentiko(["run", CHAIN_FIXTURE, "--dry-run"]);
+  const res = runMentiko(["run", CHAIN_FIXTURE, "--start", "researcher"]);
   const calls = readCalls();
   assert(res.status === 0, `expected status 0, got ${res.status}`);
   assert(calls.length === 1, `expected one dispatch, got ${calls.length}`);
-  assert(calls[0].includes("chain-runner.sh"), `unexpected call: ${calls[0]}`);
-  assert(calls[0].includes(CHAIN_FIXTURE), `chain runner got wrong args: ${calls[0]}`);
+  assert(calls[0].includes("runner-v2-direct-run.js"), `unexpected call: ${calls[0]}`);
+  assert(!calls[0].includes("chain-runner.sh"), `shell runner must not be invoked: ${calls[0]}`);
+  assert(calls[0].includes(CHAIN_FIXTURE), `typed runtime got wrong args: ${calls[0]}`);
 });
 
 test("dispatches generate command to chain-generator", () => {
