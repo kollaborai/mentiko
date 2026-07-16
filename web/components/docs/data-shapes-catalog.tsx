@@ -10,7 +10,8 @@ import {
   WorkflowSidebarSectionHeader,
 } from "@/components/ui/workflow-sidebar";
 import { serializeDataShapeForLlm } from "@/lib/data-shapes/clipboard";
-import { dataShapeShellSources } from "@/lib/data-shapes/catalog";
+import { DATA_SHAPE_CATALOG, dataShapeShellSources } from "@/lib/data-shapes/catalog";
+import { CLAIM_STALE_MS, MIGRATION_CLAIM_BY_SHAPE_ID, migrationClaimState, type MigrationClaim } from "@/lib/data-shapes/migration-claims";
 import { ASSURANCE_MEANING, STATUS_LEGEND } from "@/lib/data-shapes/semantics";
 import {
   runnerFieldUsage,
@@ -151,6 +152,101 @@ function SourceList({ title, paths }: { title: string; paths: string[] }) {
             {path}
           </code>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * `now` resolves after mount so the staleness verdict never differs between the
+ * server render and hydration. Until then the claim renders without a verdict.
+ */
+function useMountedNow(): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+/**
+ * Every active claim, including claims whose shape the catalog does not document
+ * yet. An agent announcing work that will itself add the shape has nowhere to be
+ * seen until that shape lands, which is exactly the window where a second agent
+ * would collide with them.
+ */
+export function MigrationClaimsBanner() {
+  const now = useMountedNow();
+  const claims = useMemo(() => {
+    const documented = new Set(DATA_SHAPE_CATALOG.map((entry) => entry.id));
+    return Object.entries(MIGRATION_CLAIM_BY_SHAPE_ID)
+      .map(([shapeId, claim]) => ({ shapeId, claim, pending: !documented.has(shapeId) }))
+      .sort((a, b) => a.shapeId.localeCompare(b.shapeId));
+  }, []);
+
+  const active = now === null
+    ? claims
+    : claims.filter((entry) => migrationClaimState(entry.claim, now) === "active");
+
+  if (active.length === 0) return null;
+
+  return (
+    <LegendSection id="migration-claims-legend" title="Claimed shapes">
+      <p className="mb-2 text-[11px] leading-relaxed text-foreground/50">
+        Shapes an agent is actively migrating on this branch. Pick an unclaimed shape unless you are the holder. A claim whose heartbeat goes quiet for {Math.round(CLAIM_STALE_MS / 60_000)} minutes is treated as released.
+      </p>
+      <div className="space-y-1.5">
+        {active.map(({ shapeId, claim, pending }) => (
+          <div key={shapeId} className="rounded-lg bg-muted px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="text-[11px] font-semibold text-foreground/80">{shapeId}</code>
+              <Badge className="bg-foreground/5 text-foreground/55">{claim.holder}</Badge>
+              {pending ? (
+                <Badge className="bg-foreground/5 text-foreground/40">Shape not documented yet</Badge>
+              ) : null}
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-foreground/50">{claim.note}</p>
+            <div className="mt-1 text-[10px] text-foreground/40">
+              Last heartbeat <time dateTime={claim.heartbeat}>{claim.heartbeat}</time>
+            </div>
+          </div>
+        ))}
+      </div>
+    </LegendSection>
+  );
+}
+
+function MigrationClaimDetail({ claim }: { claim: MigrationClaim }) {
+  const now = useMountedNow();
+  const state = now === null ? null : migrationClaimState(claim, now);
+  return (
+    <section className="rounded-xl border border-border/60 bg-muted p-4" aria-labelledby="migration-claim-heading">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 id="migration-claim-heading" className="text-xs font-bold text-foreground">Migration Claim</h3>
+          <p className="mt-1 text-[11px] leading-relaxed text-foreground/50">
+            {state === "stale"
+              ? "The last heartbeat is old enough that this claim is treated as released. Another agent may take this shape."
+              : "An agent is actively migrating this shape. Pick a different shape unless you are the holder."}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Badge className="bg-foreground/5 text-foreground/55">{claim.holder}</Badge>
+          {state ? (
+            <Badge className={state === "active" ? "bg-emerald-500/10 text-emerald-500" : "bg-foreground/5 text-foreground/40"}>
+              {state === "active" ? "Active" : "Stale"}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+
+      <p className="mt-3 text-[11px] leading-relaxed text-foreground/65">{claim.note}</p>
+
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-foreground/40">
+        <span>Claimed <time dateTime={claim.since}>{claim.since}</time></span>
+        <span>Last heartbeat <time dateTime={claim.heartbeat}>{claim.heartbeat}</time></span>
       </div>
     </section>
   );
@@ -343,6 +439,8 @@ function ShapeDetail({ shape }: { shape: RuntimeDataShape }) {
             </div>
           </section>
         ) : null}
+
+        {shape.migrationClaim ? <MigrationClaimDetail claim={shape.migrationClaim} /> : null}
 
         {shape.runnerLineage ? <RunnerLineageDetail lineage={shape.runnerLineage} /> : null}
 

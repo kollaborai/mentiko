@@ -2,6 +2,10 @@ import {
   RUNNER_LINEAGE_BY_SHAPE_ID,
   type RunnerContractLineage,
 } from "./runner-lineage";
+import {
+  MIGRATION_CLAIM_BY_SHAPE_ID,
+  type MigrationClaim,
+} from "./migration-claims";
 
 export type DataShapeScope = "global" | "namespace" | "organization" | "project" | "run" | "external";
 export type DataShapeFormat = "json" | "jsonl" | "key-value" | "sqlite" | "text" | "mixed";
@@ -35,6 +39,8 @@ export interface DataShapeDefinition {
   sensitive?: boolean;
   notes?: string[];
   runnerLineage?: RunnerContractLineage;
+  /** Advisory: an agent is actively migrating this shape. See migration-claims.ts. */
+  migrationClaim?: MigrationClaim;
 }
 
 /**
@@ -57,7 +63,12 @@ export function dataShapeShellSources(
 
 function shape(definition: DataShapeDefinition): DataShapeDefinition {
   const runnerLineage = RUNNER_LINEAGE_BY_SHAPE_ID[definition.id];
-  return runnerLineage ? { ...definition, runnerLineage } : definition;
+  const migrationClaim = MIGRATION_CLAIM_BY_SHAPE_ID[definition.id];
+  return {
+    ...definition,
+    ...(runnerLineage ? { runnerLineage } : {}),
+    ...(migrationClaim ? { migrationClaim } : {}),
+  };
 }
 
 export const DATA_SHAPE_CATALOG_VERSION = 2;

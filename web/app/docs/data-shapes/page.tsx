@@ -2,7 +2,7 @@
 
 import { Data2Filled, DocumentTextFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import { DataShapeStatusLegend, DataShapesCatalog, RunnerLineageLegend } from "@/components/docs/data-shapes-catalog";
+import { DataShapeStatusLegend, DataShapesCatalog, MigrationClaimsBanner, RunnerLineageLegend } from "@/components/docs/data-shapes-catalog";
 
 export default function DataShapesPage() {
   return (
@@ -16,6 +16,7 @@ export default function DataShapesPage() {
           { label: "Architecture", href: "/docs/architecture", icon: DocumentTextFilled, iconColor: "#f59e0b" },
         ]}
       />
+      <MigrationClaimsBanner />
       <DataShapeStatusLegend />
       <RunnerLineageLegend />
       <DataShapesCatalog />
