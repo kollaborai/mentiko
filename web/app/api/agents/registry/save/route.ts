@@ -6,10 +6,7 @@ import { requirePermission } from "@/lib/auth/rbac-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import {
-  formatMcpTaskToolReferenceIssue,
-  validateMcpTaskToolReferences,
-} from "@/lib/agents/mcp-task-tool-contract";
+import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +27,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new BadRequest("agent must have triggers and emits");
   }
 
-  const taskToolIssue = validateMcpTaskToolReferences(agent)[0];
-  if (taskToolIssue) throw new BadRequest(formatMcpTaskToolReferenceIssue(taskToolIssue));
+  let normalizedAgent: Record<string, unknown>;
+  try {
+    normalizedAgent = normalizeMcpTaskToolDeclarations(agent);
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : "Invalid MCP task tool declaration");
+  }
 
   const slug = (name || agent.id)
     .toLowerCase()
@@ -43,8 +44,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const now = new Date().toISOString();
   const agentData = {
-    ...agent,
-    created_at: agent.created_at || now,
+    ...normalizedAgent,
+    created_at: normalizedAgent.created_at || now,
     updated_at: now,
   };
 

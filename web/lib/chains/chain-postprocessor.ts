@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { orgPath } from "@/lib/config";
 import type { AgentDefinition } from "@/lib/agents/agent-loader";
-import { assertCanonicalMcpTaskToolReferences } from "@/lib/agents/mcp-task-tool-contract";
+import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
 
 type AgentAuthorities = NonNullable<AgentDefinition["authorities"]>;
 
@@ -75,10 +75,10 @@ export function normalizeAgentAuthorities(value: unknown): AgentAuthorities | un
 }
 
 function normalizedAgentForRegistry(agent: AgentDefinition, id: string): AgentDefinition {
-  assertCanonicalMcpTaskToolReferences(agent);
-  const authorities = normalizeAgentAuthorities(agent.authorities);
+  const taskToolNormalized = normalizeMcpTaskToolDeclarations(agent);
+  const authorities = normalizeAgentAuthorities(taskToolNormalized.authorities);
   return {
-    ...agent,
+    ...taskToolNormalized,
     id,
     ...(authorities ? { authorities } : {}),
   };

@@ -8,10 +8,7 @@ import { enforceGuestWrites } from "@/lib/middleware";
 import type { Agent } from "@/lib/types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
-import {
-  formatMcpTaskToolReferenceIssue,
-  validateMcpTaskToolReferences,
-} from "@/lib/agents/mcp-task-tool-contract";
+import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -101,14 +98,18 @@ export const PUT = withErrorHandling(async (
   }
 
   // merge with updates, preserve timestamps
-  const agentData = {
+  const mergedAgentData = {
     ...existingData,
     ...updates,
     created_at: existingData.created_at || updates.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  const taskToolIssue = validateMcpTaskToolReferences(agentData)[0];
-  if (taskToolIssue) throw new BadRequest(formatMcpTaskToolReferenceIssue(taskToolIssue));
+  let agentData: Record<string, unknown>;
+  try {
+    agentData = normalizeMcpTaskToolDeclarations(mergedAgentData);
+  } catch (error) {
+    throw new BadRequest(error instanceof Error ? error.message : "Invalid MCP task tool declaration");
+  }
 
   // ensure directory exists
   mkdirSync(agentDir, { recursive: true });

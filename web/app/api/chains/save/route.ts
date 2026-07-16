@@ -11,6 +11,7 @@ import { addAuditLog } from "@/lib/api/audit-queue";
 import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
+import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -101,28 +102,33 @@ async function migrateInlineAgents(
     mkdirSync(agentDir, { recursive: true });
 
     const now = new Date().toISOString();
-    const agentData = {
-      id: agentSlug,
-      name: inline.name,
-      description: inline.description,
-      role: inline.role,
-      prompt: inline.prompt,
-      triggers: inline.triggers || [],
-      emits: inline.emits || "",
-      timeout: inline.timeout,
-      retry: inline.retry,
-      on_error: inline.on_error,
-      on_timeout: inline.on_timeout,
-      model: inline.model,
-      tools: inline.tools,
-      agent_profile: inline.agent_profile,
-      gateway: inline.gateway,
-      context: inline.context,
-      authorities: inline.authorities,
-      artifacts: inline.artifacts,
-      created_at: now,
-      updated_at: now,
-    };
+    let agentData: Record<string, unknown>;
+    try {
+      agentData = normalizeMcpTaskToolDeclarations({
+        id: agentSlug,
+        name: inline.name,
+        description: inline.description,
+        role: inline.role,
+        prompt: inline.prompt,
+        triggers: inline.triggers || [],
+        emits: inline.emits || "",
+        timeout: inline.timeout,
+        retry: inline.retry,
+        on_error: inline.on_error,
+        on_timeout: inline.on_timeout,
+        model: inline.model,
+        tools: inline.tools,
+        agent_profile: inline.agent_profile,
+        gateway: inline.gateway,
+        context: inline.context,
+        authorities: inline.authorities,
+        artifacts: inline.artifacts,
+        created_at: now,
+        updated_at: now,
+      });
+    } catch (error) {
+      throw new BadRequest(error instanceof Error ? error.message : "Invalid MCP task tool declaration");
+    }
 
     writeFileSync(agentPath, JSON.stringify(agentData, null, 2));
 

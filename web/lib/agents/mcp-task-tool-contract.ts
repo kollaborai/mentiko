@@ -3,6 +3,9 @@ const OBSOLETE_MCP_TASK_TOOL_REPLACEMENTS: Readonly<Record<string, string>> = Ob
   mentiko_update_task: "update_task",
 });
 
+const CANONICAL_MCP_TASK_TOOLS = ["get_task", "update_task"] as const;
+const CANONICAL_MCP_TASK_TOOL_SET = new Set<string>(CANONICAL_MCP_TASK_TOOLS);
+
 export interface McpTaskToolReferenceIssue {
   path: string;
   tool: string;
@@ -62,4 +65,34 @@ export function formatMcpTaskToolReferenceIssue(issue: McpTaskToolReferenceIssue
 export function assertCanonicalMcpTaskToolReferences(agent: unknown): void {
   const issue = validateMcpTaskToolReferences(agent)[0];
   if (issue) throw new Error(formatMcpTaskToolReferenceIssue(issue));
+}
+
+/**
+ * `tools` is the runner's executable capability declaration; mentioning an MCP
+ * tool in prompt text does not make it available. Synchronize only the two
+ * task MCP declarations with their canonical prompt references, preserving
+ * every non-task tool supplied by the agent author.
+ */
+export function normalizeMcpTaskToolDeclarations<T extends object>(agent: T): T & { tools?: string[] } {
+  assertCanonicalMcpTaskToolReferences(agent);
+
+  const record = agent as Record<string, unknown>;
+  const prompt = typeof record.prompt === "string" ? record.prompt : "";
+  const promptTools = CANONICAL_MCP_TASK_TOOLS.filter((tool) =>
+    new RegExp(`\\b${tool}\\b`).test(prompt)
+  );
+  const declaredTools = record.tools;
+
+  if (declaredTools === undefined) {
+    return promptTools.length > 0 ? { ...record, tools: promptTools } as T & { tools?: string[] } : agent;
+  }
+  if (!Array.isArray(declaredTools) || !declaredTools.every((tool) => typeof tool === "string")) {
+    throw new Error("agent tools must be an array of strings");
+  }
+
+  const normalizedTools = [
+    ...declaredTools.filter((tool) => !CANONICAL_MCP_TASK_TOOL_SET.has(tool)),
+    ...promptTools,
+  ];
+  return { ...record, tools: normalizedTools } as T & { tools?: string[] };
 }
