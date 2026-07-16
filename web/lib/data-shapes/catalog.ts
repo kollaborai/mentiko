@@ -518,6 +518,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     },
     notes: [
       "Completion preserves the specific accepted evidence in terminalReason (declared event, durable marker, verified cross-run event, or handoff artifact) instead of collapsing recovery into a generic event result; terminalDetail remains the producer diagnostic companion.",
+      "Invalid agent admission is a typed terminal transition: the TypeScript owner writes the canonical blocked run reason and matching agent state, while the shell boundary forwards only primitive identifiers and exit behavior.",
     ],
   }),
   shape({

@@ -322,6 +322,15 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/agent-attempt.ts",
         ],
       },
+      {
+        id: "typed-invalid-admission-block",
+        label: "Typed invalid-admission run and agent terminal transition",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/concurrency-admission.ts",
+          "web/lib/runner-v2/concurrency-admission-cli.ts",
+        ],
+      },
     ],
     legacyEquivalent: {
       summary: "No single persisted predecessor existed; attempt state was implicit across shell .state files, run.json agent fields, and PTY sessions.",

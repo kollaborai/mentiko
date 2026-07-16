@@ -1254,10 +1254,19 @@ $rs_produces
 
     # concurrency cap (phase-2 step 2): secondary smoothing gate on ACTIVE AGENT
     # SESSIONS — the unit that actually maps to RAM (real CLIs are 150-400MB RSS each;
-    # the 2GB cgroup fits ~2-3). Bounded, observable wait; on expiry it proceeds (the
-    # chain-slot cap above is the hard bound) rather than hang. Skipped for --dry-run.
+    # the 2GB cgroup fits ~2-3). A normal typed timeout remains advisory (the
+    # chain-slot cap above is the hard bound), but an invalid/corrupt scan is
+    # fail-closed and blocks this run before a PTY is launched. Skipped for --dry-run.
     if [[ "$DRY_RUN" != "true" ]] && declare -f cap_wait_for_agent_slot >/dev/null 2>&1; then
-        cap_wait_for_agent_slot "$RUN_ID" "$agent_name ($agent_id)" || true
+        if cap_wait_for_agent_slot "$RUN_ID" "$agent_id"; then
+            :
+        else
+            local cap_wait_exit=$?
+            if [[ "$cap_wait_exit" -eq 2 ]]; then
+                echo "  agent not started: invalid concurrency admission evidence (typed block requested for run $RUN_ID)"
+                return 0
+            fi
+        fi
     fi
 
     # create session (all workspace types use local pty-manager).
@@ -1468,6 +1477,7 @@ $rs_produces
     local instruction_pointer
     instruction_file="$(write-agent-instructions-file "$agent_id" "$instructions")"
     instruction_pointer="$(build-instruction-pointer "$agent_id" "$instruction_file")"
+    local transcript_instruction_path="$instruction_file"
     local tmp_instructions=$(mktemp)
     printf '%s\n' "$instructions" > "$tmp_instructions"
 
@@ -1479,6 +1489,7 @@ $rs_produces
         sleep 1
     elif [[ "$WORKSPACE_TYPE" == "ssh" ]]; then
         local remote_tmp="/tmp/agent-instructions-${session_name}.txt"
+        transcript_instruction_path="$remote_tmp"
         scp -q -i "${SSH_KEY:-~/.ssh/id_rsa}" -P "$SSH_PORT" \
             "$tmp_instructions" "${SSH_USER}@${SSH_HOST}:${remote_tmp}"
         local remote_pointer
@@ -1489,6 +1500,7 @@ $rs_produces
         sleep 1
     elif [[ "$WORKSPACE_TYPE" == "docker" ]]; then
         local container_tmp="/tmp/agent-instructions-${session_name}.txt"
+        transcript_instruction_path="$container_tmp"
         docker cp "$tmp_instructions" \
             "$DOCKER_CONTAINER:$container_tmp"
         local container_pointer
@@ -1626,6 +1638,7 @@ export MENTIKO_RUN_ID="${RUN_ID}"
 export RUN_ID="${RUN_ID}"
 export MENTIKO_AGENT_ID="${agent_id}"
 export MENTIKO_AGENT_PROFILE_PATH="${profile_file:-}"
+export MENTIKO_TRANSCRIPT_INSTRUCTION_PATH="${transcript_instruction_path:-}"
 export AGENT_PROFILES_DIR="${AGENT_PROFILES_DIR}"
 export MENTIKO_MONITOR_PROFILE_ID="${monitor_advisor_profile}"
 export MENTIKO_MONITOR_MAX_NUDGES="${MENTIKO_MONITOR_MAX_NUDGES:-}"

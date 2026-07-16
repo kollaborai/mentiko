@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { admitChain, canAdmitAgent, waitForAgentAdmission, waitForChainAdmission } from "@/lib/runner-v2/concurrency-admission";
+import { admitChain, blockAgentForInvalidAdmission, canAdmitAgent, waitForAgentAdmission, waitForChainAdmission } from "@/lib/runner-v2/concurrency-admission";
 import { ExclusiveFileClaimBusyError } from "@/lib/runner-v2/file-claim";
 
 export function runConcurrencyAdmissionCli(argv: string[], write: (line: string) => void = console.log): void {
@@ -25,6 +25,16 @@ export function runConcurrencyAdmissionCli(argv: string[], write: (line: string)
     write(waitForChainAdmission({ runsDir: required(values,"--runs-dir"), runId: required(values,"--run-id"), cap: integer(values,"--cap"), maxWaitSecs: integer(values,"--max-wait-secs"), pollSecs: integer(values,"--poll-secs"), pollMaxSecs: integer(values,"--poll-max-secs") })); return;
   }
   if (command === "wait-agent") { allow(values,new Set(["--runs-dir","--cap","--max-wait-secs","--poll-secs","--poll-max-secs","--pty-cmd"])); write(waitForAgentAdmission({runsDir:required(values,"--runs-dir"),cap:integer(values,"--cap"),maxWaitSecs:integer(values,"--max-wait-secs"),pollSecs:integer(values,"--poll-secs"),pollMaxSecs:integer(values,"--poll-max-secs"),ptyCmd:required(values,"--pty-cmd")})); return; }
+  if (command === "block-agent") {
+    allow(values, new Set(["--runs-dir", "--run-id", "--agent-id"]));
+    blockAgentForInvalidAdmission({
+      runsDir: required(values, "--runs-dir"),
+      runId: required(values, "--run-id"),
+      agentId: required(values, "--agent-id"),
+    });
+    write("blocked");
+    return;
+  }
   if (command === "admit-agent") {
     allow(values, new Set(["--runs-dir", "--active", "--cap"]));
     try {
@@ -39,7 +49,7 @@ export function runConcurrencyAdmissionCli(argv: string[], write: (line: string)
     }
     return;
   }
-  throw new Error("usage: runner-concurrency-admission <admit-chain|wait-chain|admit-agent> [options]");
+  throw new Error("usage: runner-concurrency-admission <admit-chain|wait-chain|wait-agent|admit-agent|block-agent> [options]");
 }
 
 function parseValues(argv: string[]): Map<string, string> {
