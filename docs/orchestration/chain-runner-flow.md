@@ -30,15 +30,20 @@ phase 0: initialization
    - agent-functions.sh      agent utility functions (see [agent-functions.md](./agent-functions.md))
    - webhook-sender.sh       webhook notifications
    - slack-integration.sh    slack notifications
-   - run-lib.sh              run tracking (create-run, update-run-status, etc)
-   - metrics.sh              performance metrics
+   - run-lib.sh              invocation-only typed run-record boundary
+                             (create-run, update-run-status, etc all forward to
+                             runner-run-record.js)
+   - metrics.sh              invocation-only typed metrics boundary; forwards
+                             primitive metric operations only
    - performance.sh          OS/PTY sample boundary for typed performance tracking
    - profiler.sh             OS/PTY sample boundary for typed agent profiling
-   - error-handling.sh       error handling
+   - error-handling.sh       invocation-only typed error boundary; forwards
+                             primitive arguments to runner-error-handling.js
    - scheduler.sh            invocation-only typed schedule boundary
    - runner-audit.js         typed audit CLI boundary
    - retry-utils.sh          invocation-only typed retry/circuit boundary
-   - approval-gate.sh        human approval gates
+   - approval-gate.sh        invocation-only typed approval boundary; forwards
+                             primitive approval arguments to the typed gate
    - plugin-runner.sh        typed plugin-dispatch CLI invocation boundary
 
    runner-event emission and lifecycle are not sourced shell libraries. process
@@ -154,7 +159,9 @@ phase 2: chain.json validation
    --------------
    if RUN_ID set:
    - RUNSPACE_DIR = RUNS_DIR/{runId}/runspace
-   - creates manifest.json (run_id, chain_name, artifacts[])
+   - shell invokes the typed manifest owner via runspace-manifest-client.sh ->
+     runner-runspace-manifest.js, which writes manifest.json
+     (run_id, chain_name, artifacts[])
 
 phase 3: agent resolution
 =========================
@@ -197,10 +204,10 @@ phase 4: run initialization
 1. create run object
    ------------------
    if RUN_ID not set:
-   - calls create-run from run-lib.sh
-   - generates run-{timestamp} ID
-   - creates RUNS_DIR/{runId}/run.json
-   - exports RUN_ID for subprocesses
+   - calls create-run from run-lib.sh, which forwards to runner-run-record.js
+   - the typed owner generates the run-{timestamp} ID, validates the record, and
+     atomically writes RUNS_DIR/{runId}/run.json; shell writes no JSON
+   - shell exports RUN_ID for subprocesses
 
 2. run.json schema
    ---------------
