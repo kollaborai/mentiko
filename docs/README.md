@@ -31,7 +31,7 @@ Technical reference for the Mentiko platform - event-driven AI agent orchestrati
 
 ## Architecture
 
-- [Why Bash](/architecture/why-bash) - Rationale for bash orchestration
+- [Hybrid Orchestration](/architecture/why-bash) - Where the TypeScript/shell boundary falls, and why
 - [PTY Sessions](/architecture/pty-sessions) - Real terminal sessions for agents
 - [Without Kubernetes](/architecture/without-kubernetes) - Lightweight deployment
 - [File Events](/architecture/file-events) - File-based event system

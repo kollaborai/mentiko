@@ -1,175 +1,117 @@
 # Hybrid Orchestration
 
-Shell boundaries launch chains and agents. Long-running orchestration services
-run in the supervised TypeScript background worker.
+TypeScript owns every runtime data contract and every orchestration decision.
+Shell survives in two narrow roles: as a minimal boundary that forwards
+primitive arguments into compiled typed code, and as the thing that executes an
+external CLI which is itself the product behavior.
 
-## Overview
+## The rule
 
-Chain execution and agent launching retain shell boundaries. Event-triggered
-cross-chain launches and stalled-run recovery are TypeScript services owned by
-`web/server/background-worker.ts`; neither service is a shell or PTY daemon.
+Shell must never own a data contract or an orchestration decision. It may
+remain only to:
 
-## Design
+1. exec into compiled typed code, passing primitives and returning its result, or
+2. invoke an external command (the agent CLI, `pty-mgr`, `git`, `diff`, `rclone`)
+   where running that command *is* the product behavior.
 
-### Orchestration Responsibilities
+There are no shell fallbacks. If the typed runtime is missing, the boundary
+fails closed rather than reimplementing the contract in bash.
 
-The orchestration layer:
-1. Reads chain definition (JSON file)
-2. Launches agents in PTY sessions
-3. Watches canonical event files in the typed chain-watcher service
-4. Recovers stalled runs in the typed watchdog scan
+The measurable consequence: `lib/chain-runner.sh` and `lib/agent-functions.sh`
+contain zero `jq` calls. No shell file in the orchestration path parses or
+serializes chain, run, or event JSON.
 
-Shell remains useful at the chain/agent process boundary. TypeScript owns the
-long-running watcher/watchdog lifecycle and their persisted contracts.
+## Where the line falls
 
-### Core Scripts
+TypeScript (`web/lib/**`, compiled to `lib/runner-*.js`) owns:
 
-**chain-runner.sh**
-- Reads chain.json
-- Resolves agent dependencies
-- Manages execution order
-- Handles chain lifecycle
+- chain validation, agent and profile resolution, command compilation
+- run record creation and every locked `run.json` mutation
+- event serialization, validation, lookup, processed mutation, archival
+- completion capture, routing, retries, fan-in/fan-out, run completion
+- concurrency admission, retry policy and circuit state, approval gates
+- the chain watcher and watchdog, as long-running services under
+  `web/server/background-worker.ts`
 
-**launch-agent.sh**
-- Spawns agent in PTY session via pty-manager
-- Sets up environment and workspace
-- Manages agent input/output
+Shell owns:
 
-**event-emitter.ts / event-lifecycle.ts**
-- Own canonical event writes and strict raw-file validation
-- Own list, completion lookup, processed mutation, and scoped archival
-- Expose compiled TypeScript CLIs to shell process boundaries
+- sequencing the launch and starting the agent in a PTY session
+- forwarding primitive arguments to a typed CLI
 
-**completion-entrypoint.ts**
-- Owns completion, routing, and strict event consumption in TypeScript
-- Never fabricates a missing declared success event and has no shell fallback
+## What a boundary actually looks like
 
-**background-worker.ts**
-- Starts and stops the typed chain-watcher service
-- Runs the typed watchdog scan at startup and every 60 seconds
-
-## Implementation
-
-### Chain Execution
+The whole of `lib/run-record-client.sh` is the seam through which every run
+operation passes:
 
 ```bash
-# chain-runner.sh
-chain_dir="chains/$chain_name"
-chain_json="$chain_dir/chain.json"
-
-# Read chain definition
-agents=$(jq '.agents[]' "$chain_json")
-
-# Execute in dependency order
-for agent in $(topological_sort "$agents"); do
-  agent_id=$(echo "$agent" | jq -r '.id')
-  launch_agent "$agent_id" "$chain_json"
-  wait_for_completion "$agent_id"
-done
+_run_record_cli() {
+  local cli="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-run-record.js"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  mentiko: node is required for typed run records" >&2
+    return 1
+  fi
+  if [[ ! -f "$cli" ]]; then
+    echo "  mentiko: typed run-record bundle missing: $cli" >&2
+    return 1
+  fi
+  node "$cli" "$@"
+}
 ```
 
-### Agent Launching
+`lib/run-lib.sh` then reads as pure forwarding — no JSON, no fallback:
 
 ```bash
-# launch-agent.sh
-agent_id=$1
-chain_json=$2
+# args: <run-id> <status> [status_message]
+update-run-status() {
+    local run_id="$1"
+    local status="$2"
+    local status_message="${3:-}"
 
-# Get agent config
-agent_config=$(jq ".agents[] | select(.id == \"$agent_id\")" "$chain_json")
-
-# Allocate PTY session
-session_id=$(pty-manager allocate --workspace "$workspace")
-
-# Execute agent in PTY
-pty-manager exec --session "$session_id" \
-  claude --prompt "$(get_agent_prompt "$agent_config")" \
-  < "$input_file" > "$output_dir/$agent_id.output"
-
-# Wait for completion
-pty-manager wait --session "$session_id"
+    local args=(set-status --runs-dir "$RUNS_DIR" --run-id "$run_id" --status "$status")
+    [[ -n "$status_message" ]] && args+=(--message "$status_message")
+    _run_record_cli "${args[@]}" >/dev/null
+}
 ```
 
-### Event Watching
+`lib/validate.sh` is 14 lines and does nothing but invoke
+`runner-chain-validation.js`. `lib/routing-lib.sh` is 40 lines of one-line
+forwards, with a comment stating it must never parse chain routing JSON itself.
 
-```text
-process-manager
-  -> web/server/background-worker.ts
-       -> startChainWatcherService()  # typed event-triggered chain launch
-       -> runTypedWatchdogScan()      # typed stalled-run recovery
-```
+## Compiled bundles
 
-## Characteristics
+Typed code reaches shell as esbuild bundles in `lib/`, because these processes
+start outside the Next.js module graph. `lib/` holds 43 of them.
+`tests/runner-typed-bundle-parity.test.mjs` rebuilds 28 from source and fails if
+any has drifted. The remaining 15 — including `runner-run-record.js` and
+`runner-event-emitter.js` — have no parity guard. Never edit a bundle by hand;
+change the TypeScript source and rebuild.
 
-### Advantages
+## Why shell remains at all
 
-**File System Operations:**
-- Bash designed for file manipulation
-- Process management is native
-- Typed chain watcher owns long-running event-directory observation
+Not because bash is good at JSON — it is not, and it no longer does any. The
+launch path is a process boundary: fork a PTY, set an environment, exec a CLI,
+exit. That is what a shell is for, and rewriting it in TypeScript would buy
+nothing while adding a runtime hop in front of every agent start.
 
-**Text Processing:**
-- JSON parsing with jq
-- String manipulation
-- File format conversion
+Everything above that boundary — anything that reads a contract, decides what
+runs next, or writes state — is TypeScript, because those are exactly the places
+where bash's lack of types, its silent error paths, and its untestability caused
+real incidents.
 
-**Process Control:**
-- Spawn and monitor child processes
-- Signal handling
-- Exit code checking
+## Known rough edge
 
-**Integration:**
-- Direct access to Unix tools
-- No serialization needed
-- Native pipe support
+`lib/chain-runner.sh` is 1902 lines. It parses no JSON and owns no contract, but
+it is still a large amount of shell sequencing the launch. It is the strongest
+remaining candidate for further typed migration.
 
-### Limitations
+## Not a loop
 
-**Error Handling:**
-- No type system
-- Error codes must be checked manually
-- No exception mechanisms
-
-**Testing:**
-- Harder to unit test than typed languages
-- Reliance on integration tests
-- Mock file system operations
-
-**Complexity:**
-- Bash scripts become complex at scale
-- Refactoring tools limited
-- No module system
-
-## Alternatives Considered
-
-**Node.js:**
-- More complex for file/process operations
-- JSON parsing native but overhead for simple operations
-- Requires runtime dependency
-
-**Python:**
-- Overhead for process orchestration use case
-- Requires Python runtime
-- More complex deployment
-
-**Go:**
-- Compiled binary required
-- Overhead for simple scripting tasks
-- Longer development cycle
-
-## Script Structure
-
-**Line count:** ~800 lines across 5 scripts
-
-**Modularity:**
-- Single-responsibility scripts
-- Shared functions via source
-- Configuration via JSON files
-
-**Dependencies:**
-- jq (JSON parsing)
-- Node.js (typed background services)
-- pty-manager (PTY allocation)
+`chain-runner.sh` launches ONE agent and exits. It does not iterate over a
+dependency graph. When an agent finishes, its companion monitor invokes the
+typed completion entrypoint, which decides what runs next and durably accepts
+the target before consuming the parent event. This is what keeps a crash in one
+agent from cascading, and it is why there is no `for agent in ...` loop anywhere
+in the runner.
 
 ## Related
 
