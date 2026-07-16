@@ -60,6 +60,46 @@ describe("runner-v2 completion matcher", () => {
     expect(result).toEqual({ matched: false, reason: "no matching completion event" });
   });
 
+  it("rejects malformed raw event bytes and reports that they were not accepted", () => {
+    expect(findCompletionEvent({
+      agent,
+      runId: "run-123",
+      events: [
+        "event: draft-ready\nsource: writer\nrun_id: run-123\ntimestamp: 2026-07-14T12:00:00.000Z\nprocessed: false\n",
+      ],
+    })).toEqual({
+      matched: false,
+      reason: "no matching completion event; rejected 1 invalid event record",
+    });
+  });
+
+  it("rejects hand-built normalized records that bypassed raw parsing", () => {
+    expect(findCompletionEvent({
+      agent,
+      runId: "run-123",
+      events: [{
+        event: "draft-ready",
+        source: "writer",
+        runId: "run-123",
+        timestamp: "2026-07-14T12:00:00.000Z",
+        processed: false,
+        data: "ready",
+        fields: {
+          event: "draft-ready",
+          source: "writer",
+          run_id: "run-123",
+          timestamp: "2026-07-14T12:00:00.000Z",
+          processed: "false",
+          // Deliberately conflicts with data above.
+          data: "not-ready",
+        },
+      }],
+    })).toEqual({
+      matched: false,
+      reason: "no matching completion event; rejected 1 invalid event record",
+    });
+  });
+
   it("rejects unexpected event names from the same agent", () => {
     const event = parseRunnerEvent(eventContent({ event: "review-ready", source: "writer", runId: "run-123" }));
 

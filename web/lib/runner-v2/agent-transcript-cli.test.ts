@@ -49,12 +49,12 @@ describe("runner agent transcript CLI boundary", () => {
   it("binds a decoy-first capture to the current run and never latches the other run's transcript", () => {
     const { root, workspace, profilePath, capture } = fixture();
     try {
-      const resolved = run(["resolve", "--profile-path", profilePath, "--workspace", workspace], capture);
+      const resolved = run(["resolve", "--profile-path", profilePath, "--workspace", workspace, "--attempt-started-at", "2026-07-15T11:59:00.000Z"], capture);
       expect(resolved.out.at(0)).toBe(join(root, "logs", `${REAL}.jsonl`));
 
       // The decoy carries a standalone marker, so a boundary that resolved on
       // capture position alone would exit 0 here off another run's output.
-      expect(run(["durable-marker", "--profile-path", profilePath, "--workspace", workspace], capture).code).toBe(0);
+      expect(run(["durable-marker", "--profile-path", profilePath, "--workspace", workspace, "--attempt-started-at", "2026-07-15T11:59:00.000Z"], capture).code).toBe(0);
       expect(run(
         ["durable-marker", "--profile-path", profilePath, "--workspace", workspace],
         `decision_id: ${DECOY}\n`,
@@ -90,8 +90,8 @@ describe("runner agent transcript CLI boundary", () => {
       writeFileSync(profilePath, JSON.stringify({ log_path: logs }));
 
       const capture = `${DECOY}\n${REAL}\n`;
-      expect(run(["resolve", "--profile-path", profilePath, "--workspace", workspace], capture).out).toEqual([]);
-      expect(run(["durable-marker", "--profile-path", profilePath, "--workspace", workspace], capture).code).toBe(1);
+      expect(run(["resolve", "--profile-path", profilePath, "--workspace", workspace, "--attempt-started-at", "2026-07-15T11:59:00.000Z"], capture).out).toEqual([]);
+      expect(run(["durable-marker", "--profile-path", profilePath, "--workspace", workspace, "--attempt-started-at", "2026-07-15T11:59:00.000Z"], capture).code).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -105,7 +105,7 @@ describe("runner agent transcript CLI boundary", () => {
       expect(run(["durable-marker", "--explicit-jsonl", decoyPath], "").code).toBe(0);
       // With an anchor supplied, the seam is scored like any other candidate and
       // cannot smuggle a foreign-workspace transcript past the boundary.
-      expect(run(["durable-marker", "--explicit-jsonl", decoyPath, "--workspace", workspace], "").code).toBe(1);
+      expect(run(["durable-marker", "--explicit-jsonl", decoyPath, "--workspace", workspace, "--attempt-started-at", "2026-07-15T11:59:00.000Z"], "").code).toBe(1);
       expect(run(["durable-marker", "--explicit-jsonl", join(root, "missing.jsonl")], "").code).toBe(1);
       expect(run(["resolve", "--explicit-jsonl", root], "").out).toEqual([]);
       const symlinkPath = join(root, "decoy-link.jsonl");

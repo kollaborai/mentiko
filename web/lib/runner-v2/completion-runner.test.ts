@@ -217,7 +217,7 @@ describe("runner-v2 completion runner", () => {
     });
     expect(runnerV2Attempts(file)[0]).toMatchObject({
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_handoff_artifact",
     });
   });
 
@@ -239,7 +239,7 @@ describe("runner-v2 completion runner", () => {
         ],
       },
       events: [],
-      agentCompleteMarker: true,
+      completionRecoveryEvidence: "durable-marker" as const,
       liveness: { sessionAlive: true, processAlive: true, outputChanged: true },
       now: new Date("2026-06-25T10:00:00.000Z"),
     };
@@ -264,7 +264,67 @@ describe("runner-v2 completion runner", () => {
     });
     expect(runnerV2Attempts(file)[0]).toMatchObject({
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_durable_marker",
+    });
+  });
+
+  it("records accepted cross-run event adoption separately from marker recovery", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: {
+        agents: [
+          { id: "writer", emits: "draft-ready" },
+          { id: "reviewer", triggers: ["draft-ready"] },
+        ],
+      },
+      events: [],
+      completionRecoveryEvidence: "accepted-cross-run-event",
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "route",
+      event: { data: "salvaged-from-accepted-cross-run-event" },
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_cross_run_event",
+      terminalDetail: "accepted cross-run completion event recovered declared completion draft-ready",
+    });
+  });
+
+  it("rejects malformed event bytes instead of treating them as declared completion", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { agents: [] },
+      // Missing the required data field: this is physical raw-file drift, not
+      // a completion event. It must remain rejected rather than normalized.
+      events: [
+        "event: draft-ready\nsource: writer\nrun_id: run-123\ntimestamp: 2026-06-25T10:00:00.000Z\nprocessed: false\n",
+      ],
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "fail",
+      reason: "no matching completion event; rejected 1 invalid event record",
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
+      terminalDetail: "declared completion event missing: no matching completion event; rejected 1 invalid event record",
     });
   });
 
@@ -456,8 +516,8 @@ describe("runner-v2 completion runner", () => {
     });
     expect(runnerV2Attempts(file)[0]).toMatchObject({
       phase: "completed",
-      terminalReason: "completed_from_event",
-      terminalDetail: "matched completion event draft-ready",
+      terminalReason: "completed_from_declared_event",
+      terminalDetail: "matched declared completion event draft-ready",
     });
   });
 

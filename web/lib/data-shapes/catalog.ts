@@ -516,6 +516,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       valuePath: "runnerV2.attempts",
       schemaPointer: "/definitions/agentAttempt",
     },
+    notes: [
+      "Completion preserves the specific accepted evidence in terminalReason (declared event, durable marker, verified cross-run event, or handoff artifact) instead of collapsing recovery into a generic event result; terminalDetail remains the producer diagnostic companion.",
+    ],
   }),
   shape({
     id: "runner-v2-pending-handoff",

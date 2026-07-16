@@ -285,7 +285,7 @@ describe("recoverLateCompletionEvents", () => {
     expect(list[list.length - 1]).toMatchObject({
       agentId: "writer",
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_declared_event",
       origin: "routed-completion-adoption",
     });
   });
@@ -346,7 +346,7 @@ describe("recoverLateCompletionEvents", () => {
     expect(attempts(file)).toHaveLength(2);
     expect(attempts(file)[1]).toMatchObject({
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_declared_event",
     });
     expect(second.run).toMatchObject({
       status: "running",
@@ -405,7 +405,7 @@ describe("recoverLateCompletionEvents", () => {
       .sort()).toEqual([0, 1]);
     expect(readFileSync(commitMarkerPath, "utf8").trim().split("\n")).toHaveLength(1);
     expect(attempts(file)).toHaveLength(2);
-    expect(attempts(file)[1]).toMatchObject({ phase: "completed", terminalReason: "completed_from_event" });
+    expect(attempts(file)[1]).toMatchObject({ phase: "completed", terminalReason: "completed_from_declared_event" });
     expect(readEvent(event.path!)).toMatchObject({ processed: true });
     expect(readRunJson(file)).toMatchObject({
       status: "running",

@@ -239,13 +239,22 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
       instructionPath: "/tmp/private/instructions.md",
       pointer: "Read /tmp/private/instructions.md",
     });
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      to: "startup_failed",
+      reason: "readiness_deadline_expired",
+      detail: "CLI readiness unresolved after 90 seconds",
+    });
 
     const projected = projectAgentAttemptsForStatus(readRun(path).runnerV2);
 
     expect(projected.attempts[0]).toMatchObject({
       id: attempt.id,
       agentId: "writer",
-      phase: "created",
+      phase: "startup_failed",
+      terminalReason: "readiness_deadline_expired",
+      terminalDetail: "CLI readiness unresolved after 90 seconds",
       recoveryDecisionCount: 0,
     });
     expect(JSON.stringify(projected)).not.toContain("/tmp/private");
@@ -336,7 +345,7 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     });
     expect(completed).toMatchObject({
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_declared_event",
       origin: "routed-completion-adoption",
     });
   });

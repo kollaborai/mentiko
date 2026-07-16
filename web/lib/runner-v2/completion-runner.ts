@@ -9,9 +9,12 @@ import { planNoEventRetry, type RetryNoEventPlan, type RetryPolicy } from "@/lib
 import { completeFanGroupMember, type FanGroupCompletionPlan, type FanGroupState } from "@/lib/runner-v2/fan-group";
 import { applyLoopGuardToRoute, routeAgentIds, type LoopGuardDecision } from "@/lib/runner-v2/loop-guard";
 import {
+  markAgentAttemptCompletedFromCrossRunEvent,
+  markAgentAttemptCompletedFromDurableMarker,
   markAgentAttemptCompletedFromEmptyEmits,
   markAgentAttemptCompletedFromEvent,
   markAgentAttemptCompletedFromGeneration,
+  markAgentAttemptCompletedFromHandoffArtifact,
   markAgentAttemptFailedNoCompletion,
   markAgentAttemptRetriesExhausted,
   readRunnerV2AttemptState,
@@ -50,7 +53,12 @@ export interface CompleteAgentInput {
   };
   fanGroup?: FanGroupState;
   generation?: GenerationImportPlan & { importablePayload?: boolean };
-  agentCompleteMarker?: boolean;
+  // Recovery evidence can only be introduced by the typed monitor after it
+  // validates the corresponding durable proof. It is intentionally distinct
+  // from a declared event so the run record does not claim an event was
+  // accepted when recovery actually came from a marker or a guarded cross-run
+  // adoption.
+  completionRecoveryEvidence?: CompletionRecoveryEvidence;
   loopGuard?: {
     visited?: string[];
     currentRound?: number;
@@ -60,6 +68,16 @@ export interface CompleteAgentInput {
   now?: Date;
   onRunMutation?: RunMutationObserver;
 }
+
+export type CompletionRecoveryEvidence =
+  | "durable-marker"
+  | "accepted-cross-run-event";
+
+type CompletionEvidenceProvenance =
+  | "declared-event"
+  | "durable-marker"
+  | "accepted-cross-run-event"
+  | "handoff-artifact";
 
 export interface AgentLivenessInput {
   sessionAlive?: boolean;
@@ -103,6 +121,7 @@ export function evaluateAgentLiveness(input?: AgentLivenessInput): AgentLiveness
 }
 
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
+  let completionEvidence: CompletionEvidenceProvenance = "declared-event";
   let match = findCompletionEvent({
     agent: input.agent,
     runId: input.runId,
@@ -121,6 +140,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       const salvaged = synthesizeCompletionEventFromHandoff(input);
       if (salvaged) {
         match = { matched: true, event: salvaged };
+        completionEvidence = "handoff-artifact";
       }
     }
   }
@@ -151,10 +171,17 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       };
     }
 
-    if (input.agentCompleteMarker) {
+    if (input.completionRecoveryEvidence === "durable-marker") {
       const salvaged = synthesizeCompletionEventFromAgentCompleteMarker(input);
       if (salvaged) {
         match = { matched: true, event: salvaged };
+        completionEvidence = "durable-marker";
+      }
+    } else if (input.completionRecoveryEvidence === "accepted-cross-run-event") {
+      const salvaged = synthesizeCompletionEventFromAcceptedCrossRunEvent(input);
+      if (salvaged) {
+        match = { matched: true, event: salvaged };
+        completionEvidence = "accepted-cross-run-event";
       }
     }
   }
@@ -273,11 +300,12 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
 
   const fanGroup = planFanGroupCompletion(input, "complete");
   updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now, input.onRunMutation);
-  markAgentAttemptCompletedFromEvent({
+  markCompletionEvidence({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
     agentId: input.agent.id,
-    detail: `matched completion event ${match.event.event}`,
+    event: match.event.event,
+    evidence: completionEvidence,
     now: input.now,
     onMutation: input.onRunMutation,
   });
@@ -364,6 +392,70 @@ function synthesizeCompletionEventFromAgentCompleteMarker(input: CompleteAgentIn
       data: "salvaged-from-agent-complete-marker",
     },
   };
+}
+
+function synthesizeCompletionEventFromAcceptedCrossRunEvent(input: CompleteAgentInput): RunnerEventRecord | null {
+  if (!input.agent.emits) return null;
+  const timestamp = (input.now || new Date()).toISOString();
+  return {
+    event: input.agent.emits,
+    source: input.agent.id,
+    runId: input.runId,
+    timestamp,
+    processed: false,
+    data: "salvaged-from-accepted-cross-run-event",
+    fields: {
+      event: input.agent.emits,
+      source: input.agent.id,
+      run_id: input.runId,
+      timestamp,
+      processed: "false",
+      data: "salvaged-from-accepted-cross-run-event",
+    },
+  };
+}
+
+function markCompletionEvidence(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  event: string;
+  evidence: CompletionEvidenceProvenance;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): void {
+  const common = {
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    agentId: input.agentId,
+    now: input.now,
+    onMutation: input.onMutation,
+  };
+  switch (input.evidence) {
+    case "durable-marker":
+      markAgentAttemptCompletedFromDurableMarker({
+        ...common,
+        detail: `durable AGENT_COMPLETE marker recovered declared completion ${input.event}`,
+      });
+      return;
+    case "accepted-cross-run-event":
+      markAgentAttemptCompletedFromCrossRunEvent({
+        ...common,
+        detail: `accepted cross-run completion event recovered declared completion ${input.event}`,
+      });
+      return;
+    case "handoff-artifact":
+      markAgentAttemptCompletedFromHandoffArtifact({
+        ...common,
+        detail: `fresh handoff artifact recovered declared completion ${input.event}`,
+      });
+      return;
+    case "declared-event":
+      markAgentAttemptCompletedFromEvent({
+        ...common,
+        detail: `matched declared completion event ${input.event}`,
+      });
+  }
 }
 
 function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): RunnerEventRecord | null {

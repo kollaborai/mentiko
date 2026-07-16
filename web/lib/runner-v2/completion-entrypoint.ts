@@ -8,7 +8,7 @@ import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readT
 import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
-import type { AgentLivenessInput } from "@/lib/runner-v2/completion-runner";
+import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
 import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 import { eventMatchesRunId, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
@@ -215,7 +215,7 @@ export function runRunnerV2CompletionEntrypoint(
         lastAgentId: agent.id,
       },
       generation: generationImportPlan(run, runDir, agent.id, env),
-      agentCompleteMarker: monitorCompletionLatchAccepted(env),
+      completionRecoveryEvidence: monitorCompletionRecoveryEvidence(env),
       fanGroup,
       liveness,
       onRunMutation,
@@ -883,9 +883,13 @@ function clearCompletionLivenessExtension(
   }, undefined, onMutation);
 }
 
-function monitorCompletionLatchAccepted(env: NodeJS.ProcessEnv | Record<string, string | undefined>): boolean {
+function monitorCompletionRecoveryEvidence(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): CompletionRecoveryEvidence | undefined {
   const value = (env.MENTIKO_MONITOR_COMPLETION_LATCH || "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "agent_complete";
+  if (value === "durable-marker") return "durable-marker";
+  if (value === "accepted-cross-run-event") return "accepted-cross-run-event";
+  return undefined;
 }
 
 function readJsonObject(path: string): Record<string, unknown> | undefined {

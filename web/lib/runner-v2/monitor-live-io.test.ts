@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createLiveMonitorIO, hasAuthoritativeGenerationArtifact, selectTranscriptFromCapture, transcriptRootFromProfile } from "@/lib/runner-v2/monitor-live-io";
 import { runChainMonitor } from "@/lib/runner-v2/monitor";
+import { clearMonitorState } from "@/lib/runner-v2/monitor-io";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
 import { consumeCompletionLaunchContext } from "@/lib/runner-v2/completion-launch-context";
 import { createRunRecord, readRunJson, updateRunJson, type RunRecord } from "@/lib/runner-v2/run-state";
@@ -184,6 +185,50 @@ describe("monitor-v2 live IO", () => {
     expect(observed.completionEventPresent).toBe(false);
   });
 
+  it("rejects a symlinked explicit transcript even when it contains a marker", async () => {
+    const f = fixture();
+    const transcript = join(f.root, "transcript.jsonl");
+    const link = join(f.root, "transcript-link.jsonl");
+    writeFileSync(transcript, [
+      JSON.stringify({
+        type: "assistant",
+        cwd: f.workspace,
+        timestamp: new Date().toISOString(),
+        message: { content: [{ type: "text", text: "AGENT_COMPLETE" }] },
+      }),
+      "",
+    ].join("\n"));
+    symlinkSync(transcript, link);
+    clearMonitorState("writer-run-123");
+
+    const observed = await liveIo(f, { MENTIKO_TRANSCRIPT_JSONL: link }).observe("writer-run-123");
+    expect(observed.latched).toBe(false);
+    expect(observed.completionEventPresent).toBe(false);
+  });
+
+  it("uses the typed instruction-path anchor for shell-created runs without attempt rows", async () => {
+    const f = fixture();
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      runnerV2: { attempts: [] },
+    }));
+    const instructionPath = join(f.runDir, "artifacts", "writer-instructions.md");
+    const transcript = join(f.root, "transcript-instructions.jsonl");
+    writeFileSync(transcript, `${JSON.stringify({
+      type: "assistant",
+      cwd: f.workspace,
+      message: { content: [{ type: "text", text: `Read ${instructionPath}\nAGENT_COMPLETE` }] },
+    })}\n`);
+    clearMonitorState("writer-run-123");
+
+    const observed = await liveIo(f, {
+      MENTIKO_TRANSCRIPT_JSONL: transcript,
+      MENTIKO_TRANSCRIPT_INSTRUCTION_PATH: instructionPath,
+    }).observe("writer-run-123");
+    expect(observed.latched).toBe(true);
+    expect(observed.completionEventPresent).toBe(false);
+  });
+
   it("spawns completion in a separate PTY with typed bridge env", async () => {
     const f = fixture();
     const transcript = join(f.root, "transcript.jsonl");
@@ -216,7 +261,7 @@ describe("monitor-v2 live IO", () => {
       STATE_DIR: f.stateDir,
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",
-      MENTIKO_MONITOR_COMPLETION_LATCH: "1",
+      MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
     });
   });
 
@@ -440,7 +485,7 @@ describe("monitor-v2 live IO", () => {
       await io.onComplete("writer-run-123");
 
       const completionEnv = lastCompletionContext;
-      expect(completionEnv.MENTIKO_MONITOR_COMPLETION_LATCH).toBe("1");
+      expect(completionEnv.MENTIKO_MONITOR_COMPLETION_LATCH).toBe("accepted-cross-run-event");
 
       const result = runRunnerV2CompletionEntrypoint({
         sessionName: "writer-run-123",

@@ -1,4 +1,8 @@
-import { parseRunnerEvent, type RunnerEventRecord } from "@/lib/runner-v2/events";
+import {
+  parseRunnerEvent,
+  validateRunnerEventRecord,
+  type RunnerEventRecord,
+} from "@/lib/runner-v2/events";
 import { runnerEventIdentityMatches } from "@/lib/runner-v2/event-identity";
 
 export interface CompletionAgentRef {
@@ -32,11 +36,21 @@ export function findCompletionEvent(input: CompletionMatchInput): CompletionMatc
     return { matched: false, reason: "agent has no declared emits event" };
   }
 
+  let rejectedInvalidRecordCount = 0;
   for (const candidate of input.events) {
     let event: RunnerEventRecord;
     try {
       event = typeof candidate === "string" ? parseRunnerEvent(candidate) : candidate;
     } catch {
+      rejectedInvalidRecordCount += 1;
+      continue;
+    }
+    // Most candidates came through scanRunnerEventFiles and are already
+    // validated. Keep this boundary strict for typed callers that supply a
+    // hand-built record: a structurally invalid object must not become a
+    // completion just because it bypassed the raw file scanner.
+    if (!validateRunnerEventRecord(event).valid) {
+      rejectedInvalidRecordCount += 1;
       continue;
     }
     const rejected = rejectCompletionEvent(event, input.agent, expectedEvent, input.runId, input.allAgentIds);
@@ -45,7 +59,12 @@ export function findCompletionEvent(input: CompletionMatchInput): CompletionMatc
     }
   }
 
-  return { matched: false, reason: "no matching completion event" };
+  return {
+    matched: false,
+    reason: rejectedInvalidRecordCount > 0
+      ? `no matching completion event; rejected ${rejectedInvalidRecordCount} invalid event record${rejectedInvalidRecordCount === 1 ? "" : "s"}`
+      : "no matching completion event",
+  };
 }
 
 export function rejectCompletionEvent(

@@ -18,7 +18,13 @@ export type AgentAttemptPhase =
   | "released";
 
 export type AgentAttemptTerminalReason =
+  // Legacy persisted reason. New records name the actual accepted completion
+  // evidence below instead of collapsing it into a generic "event" label.
   | "completed_from_event"
+  | "completed_from_declared_event"
+  | "completed_from_durable_marker"
+  | "completed_from_cross_run_event"
+  | "completed_from_handoff_artifact"
   | "completed_from_generation_artifact"
   | "completed_empty_emits_last_agent"
   | "no_completion_event"
@@ -92,6 +98,7 @@ export interface AgentAttemptStatusDto {
   agentId: string;
   phase: AgentAttemptPhase;
   terminalReason?: AgentAttemptTerminalReason;
+  terminalDetail?: string;
   processEvidence?: AgentAttemptProcessEvidence;
   recoveryDecisionCount: number;
   updatedAt: string;
@@ -377,7 +384,49 @@ export function markAgentAttemptCompletedFromEvent(input: {
 }): AgentAttemptRecord | undefined {
   return markLatestAttemptCompleted({
     ...input,
-    reason: "completed_from_event",
+    reason: "completed_from_declared_event",
+  });
+}
+
+export function markAgentAttemptCompletedFromDurableMarker(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_durable_marker",
+  });
+}
+
+export function markAgentAttemptCompletedFromCrossRunEvent(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_cross_run_event",
+  });
+}
+
+export function markAgentAttemptCompletedFromHandoffArtifact(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  return markLatestAttemptCompleted({
+    ...input,
+    reason: "completed_from_handoff_artifact",
   });
 }
 
@@ -498,6 +547,7 @@ export function projectAgentAttemptsForStatus(state: RunnerV2AttemptState | unde
       agentId: attempt.agentId,
       phase: attempt.phase,
       terminalReason: attempt.terminalReason,
+      terminalDetail: attempt.terminalDetail,
       processEvidence: attempt.processEvidence,
       recoveryDecisionCount: attempt.recoveryDecisionCount,
       updatedAt: attempt.updatedAt,

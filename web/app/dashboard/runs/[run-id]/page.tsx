@@ -33,6 +33,7 @@ import {
   TaskSquareFilled,
 } from "@aliimam/icons";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
+import { formatAgentAttemptTerminalReason } from "@/lib/runner-v2/attempt-terminal-reason";
 
 interface Agent {
   id: string;
@@ -634,7 +635,17 @@ export default function RunDetailPage() {
                               </div>
                               <div className="bg-muted rounded p-2">
                                 <p className="text-foreground/40 uppercase">terminal reason</p>
-                                <p className="font-mono truncate">{attempt.terminalReason || "-"}</p>
+                                <p className="truncate">{formatAgentAttemptTerminalReason(attempt.terminalReason)}</p>
+                                {attempt.terminalReason && (
+                                  <p className="truncate font-mono text-[9px] text-foreground/40" title={attempt.terminalReason}>
+                                    {attempt.terminalReason}
+                                  </p>
+                                )}
+                                {attempt.terminalDetail && (
+                                  <p className="mt-1 line-clamp-2 text-[9px] text-foreground/40" title={attempt.terminalDetail}>
+                                    {attempt.terminalDetail}
+                                  </p>
+                                )}
                               </div>
                               <div className="bg-muted rounded p-2">
                                 <p className="text-foreground/40 uppercase">process</p>

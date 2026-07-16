@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pty } from "@/lib/pty/pty-client";
 import config from "@/lib/config";
@@ -42,6 +42,7 @@ import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
 import { launchRunnerV2CompletionPty } from "@/lib/runner-v2/completion-launch";
 import { serializeRunnerEvent } from "@/lib/runner-v2/events";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
+import type { CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
 
 // The transcript/provenance contract is owned by @/lib/runner-v2/agent-transcript
 // (pure + fs-only, so it stays usable from the compiled CLI bundle and from unit
@@ -82,8 +83,9 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     if (!completionEvidence) return false;
     writeLatch(session);
     await launchCompletionSession(session, context, {
-      agentCompleteMarker: completionEvidence.kind === "durable-marker",
-      acceptedCompletionEvent: acceptedCrossRunCompletionEvent,
+      completionRecoveryEvidence: completionEvidence.kind === "durable-marker"
+        ? "durable-marker"
+        : acceptedCrossRunCompletionEvent ? "accepted-cross-run-event" : undefined,
     });
     return true;
   };
@@ -185,8 +187,9 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     onComplete: async (session) => {
       completionEvidence = completionEvidence || await probeCompletionEvidence(session, context);
       await launchCompletionSession(session, context, {
-        agentCompleteMarker: completionEvidence?.kind === "durable-marker",
-        acceptedCompletionEvent: acceptedCrossRunCompletionEvent,
+        completionRecoveryEvidence: completionEvidence?.kind === "durable-marker"
+          ? "durable-marker"
+          : acceptedCrossRunCompletionEvent ? "accepted-cross-run-event" : undefined,
       });
     },
     recheckCompletion: async (session) => {
@@ -205,7 +208,7 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         timestamp: timestamp(),
       });
       if (verdict.outcome === "complete-normally") {
-        await launchCompletionSession(session, context, { agentCompleteMarker: false });
+        await launchCompletionSession(session, context);
         return "complete";
       }
       updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
@@ -399,7 +402,15 @@ async function resolveTranscriptJsonl(
 ): Promise<string> {
   const explicit = env.MENTIKO_TRANSCRIPT_JSONL;
   const identity = transcriptIdentityFromContext(context);
-  if (explicit && existsSync(explicit)) {
+  if (explicit) {
+    try {
+      // A symlink or directory is not durable transcript provenance. Match the
+      // typed CLI boundary: only a regular file selected by the caller may be
+      // scored or used as completion evidence.
+      if (!lstatSync(explicit).isFile()) return "";
+    } catch {
+      return "";
+    }
     if (!context) return explicit;
     return scoreTranscriptIdentity(explicit, undefined, identity) === null ? "" : explicit;
   }
@@ -415,20 +426,25 @@ async function resolveTranscriptJsonl(
 
 function transcriptIdentityFromContext(context?: LiveMonitorContext): TranscriptIdentityOptions {
   if (!context) return {};
-  const run = safeReadRunJson(context.runJsonPath);
-  const attempts = readRunnerV2AttemptState(context.runJsonPath).attempts;
-  const attempt = [...attempts].reverse().find((candidate) => candidate.agentId === context.agentId);
-  return {
-    workspacePath: typeof run?.workspacePath === "string" ? run.workspacePath : undefined,
-    attemptStartedAt: attempt?.createdAt,
-    runId: context.runId,
-    instructionPath: attempt?.instructionLedger.at(-1)?.instructionPath,
-  };
+ const run = safeReadRunJson(context.runJsonPath);
+ const attempts = readRunnerV2AttemptState(context.runJsonPath).attempts;
+ const attempt = [...attempts].reverse().find((candidate) => candidate.agentId === context.agentId && candidate.runId === context.runId);
+  const envAttemptStartedAt = typeof context.env.MENTIKO_TRANSCRIPT_ATTEMPT_STARTED_AT === "string"
+    ? context.env.MENTIKO_TRANSCRIPT_ATTEMPT_STARTED_AT
+    : undefined;
+  const envInstructionPath = typeof context.env.MENTIKO_TRANSCRIPT_INSTRUCTION_PATH === "string"
+    ? context.env.MENTIKO_TRANSCRIPT_INSTRUCTION_PATH
+    : undefined;
+ return {
+   workspacePath: typeof run?.workspacePath === "string" ? run.workspacePath : undefined,
+    attemptStartedAt: attempt?.createdAt || envAttemptStartedAt,
+   runId: context.runId,
+    instructionPath: attempt?.instructionLedger.at(-1)?.instructionPath || envInstructionPath,
+ };
 }
 
 interface CompletionLaunchOptions {
-  agentCompleteMarker?: boolean;
-  acceptedCompletionEvent?: boolean;
+  completionRecoveryEvidence?: CompletionRecoveryEvidence;
 }
 
 async function launchCompletionSession(
@@ -454,13 +470,9 @@ async function launchCompletionSession(
       STATE_DIR: context.stateDir,
       MENTIKO_RUNNER_V2: "1",
       MENTIKO_RUNNER_V2_COMPLETION: "1",
-      MENTIKO_MONITOR_COMPLETION_LATCH: monitorCompletionLatch(options) ? "1" : "",
+      MENTIKO_MONITOR_COMPLETION_LATCH: options.completionRecoveryEvidence || "",
     },
   });
-}
-
-function monitorCompletionLatch(options: CompletionLaunchOptions): boolean {
-  return Boolean(options.agentCompleteMarker || options.acceptedCompletionEvent);
 }
 
 function writeDiagnosticEvent(eventsDir: string, event: MonitorDiagnosticEvent): void {

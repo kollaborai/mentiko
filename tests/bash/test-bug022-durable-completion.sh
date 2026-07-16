@@ -182,10 +182,11 @@ printf '%s\n' \
   > "$REAL_TRANSCRIPT"
 RESOLVE_PROFILE="$TMP_DIR/resolve-profile.json"
 printf '{"cli":"claude","log_path":"~/.claude/projects"}\n' > "$RESOLVE_PROFILE"
+RESOLVE_ATTEMPT_STARTED_AT="2026-07-15T11:59:00.000Z"
 
 # decoy appears FIRST in the scrollback, real UUID last (status-bar shape).
 SCREEN_FIXTURE=$"DECISION_ID: ${DECOY_UUID}"$'\n''...scroll...'$'\n'"bypass permissions ${REAL_UUID}  104416 tokens"
-resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" _agent_transcript_jsonl 'sess')"
+resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" MENTIKO_TRANSCRIPT_ATTEMPT_STARTED_AT="$RESOLVE_ATTEMPT_STARTED_AT" _agent_transcript_jsonl 'sess')"
 if [[ "$resolved" == "$REAL_TRANSCRIPT" ]]; then
   ok "transcript resolution: skips a decoy UUID (first in capture) and resolves the real transcript file"
 else
@@ -193,7 +194,7 @@ else
 fi
 
 # durable-marker completion works end-to-end when a decoy precedes the real UUID.
-if HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" agent-complete-marker-durable 'sess'; then
+if HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" MENTIKO_TRANSCRIPT_ATTEMPT_STARTED_AT="$RESOLVE_ATTEMPT_STARTED_AT" agent-complete-marker-durable 'sess'; then
   ok "durable marker: latches through a decoy-then-real UUID capture (regression: decision-chain completion hang)"
 else
   bad "durable marker: latches through a decoy-then-real UUID capture (regression: decision-chain completion hang)"
@@ -201,7 +202,7 @@ fi
 
 # only a decoy present (no matching transcript file) -> unresolved, fail closed.
 SCREEN_FIXTURE=$"DECISION_ID: ${DECOY_UUID} only"
-resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" _agent_transcript_jsonl 'sess')"
+resolved="$(HOME="$RESOLVE_HOME" MENTIKO_AGENT_PROFILE_PATH="$RESOLVE_PROFILE" MENTIKO_TRANSCRIPT_WORKSPACE="$RESOLVE_WORKSPACE" MENTIKO_TRANSCRIPT_ATTEMPT_STARTED_AT="$RESOLVE_ATTEMPT_STARTED_AT" _agent_transcript_jsonl 'sess')"
 if [[ -z "$resolved" ]]; then
   ok "transcript resolution: a decoy-only capture resolves to nothing (fails closed, no mis-resolve)"
 else

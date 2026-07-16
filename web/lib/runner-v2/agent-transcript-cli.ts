@@ -33,6 +33,7 @@ const COMMANDS = ["resolve", "durable-marker"] as const;
 type Command = (typeof COMMANDS)[number];
 
 const IDENTITY_FLAGS = new Set([
+  "--session-id",
   "--profile-path",
   "--explicit-jsonl",
   "--run-id",
@@ -76,7 +77,10 @@ export function resolveTranscriptPath(
     } catch {
       return "";
     }
-    if (!hasTranscriptIdentityBoundary(identity)) return explicit;
+    if (!hasTranscriptIdentityBoundary(identity)) {
+      const hasWeakIdentity = Boolean(identity.workspacePath || identity.runId);
+      return hasWeakIdentity ? "" : explicit;
+    }
     return scoreTranscriptIdentity(explicit, undefined, identity) === null ? "" : explicit;
   }
 
@@ -126,6 +130,7 @@ function parseCli(argv: string[]): ParsedCli {
 
 function identityFromValues(values: Map<string, string>, now?: Date): TranscriptIdentityOptions {
   return {
+    sessionId: values.get("--session-id"),
     workspacePath: values.get("--workspace"),
     attemptStartedAt: values.get("--attempt-started-at"),
     runId: values.get("--run-id"),
@@ -141,7 +146,7 @@ function captureDepth(raw: string | undefined): number {
 }
 
 function usage(): string {
-  return `usage: runner-agent-transcript <${COMMANDS.join("|")}> [--profile-path <path>] [--explicit-jsonl <path>] [--run-id <id>] [--workspace <path>] [--attempt-started-at <iso>] [--instruction-path <path>] [--capture-depth <n>] < capture`;
+  return `usage: runner-agent-transcript <${COMMANDS.join("|")}> [--profile-path <path>] [--explicit-jsonl <path>] [--session-id <uuid>] [--run-id <id>] [--workspace <path>] [--attempt-started-at <iso>] [--instruction-path <path>] [--capture-depth <n>] < capture`;
 }
 
 /**

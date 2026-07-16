@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { assertTypedMonitorRuntimeAvailable, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
+import { assertTypedMonitorRuntimeAvailable, buildTypedCompletionContract, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { startLaunch } from "@/lib/runner-v2/adapters";
 import { createRunRecord, updateRunJson, type RunStatus } from "@/lib/runner-v2/run-state";
 import { createRunRecordFile } from "@/lib/runs/run-record";
@@ -116,6 +116,49 @@ describe("runner-v2 bootstrap executor", () => {
     expect(() => assertTypedMonitorRuntimeAvailable(root)).not.toThrow();
   });
 
+  it("builds an exact typed completion contract for declared emits", () => {
+    const root = tempDir();
+    const contract = buildTypedCompletionContract({
+      agentId: "writer",
+      artifactsDir: join(root, "artifacts"),
+      eventsDir: join(root, "events"),
+      runContextExports: {
+        MENTIKO_RUN_ID: "run-1",
+        RUN_ID: "run-1",
+        MENTIKO_AGENT_ID: "writer",
+        MENTIKO_AGENT_EMITS: "done",
+      },
+    });
+
+    expect(contract).toContain("Run context: RUN_ID=run-1, MENTIKO_AGENT_ID=writer");
+    expect(contract).toContain(`- ${join(root, "artifacts", "writer-summary.json")}`);
+    expect(contract).toContain(`- ${join(root, "artifacts", "writer-summary.md")}`);
+    expect(contract).toContain("mentiko emit done");
+    expect(contract).toContain("Do NOT hand-write any .event file.");
+    expect(contract).toContain("The final non-empty line must be exactly AGENT_COMPLETE.");
+    expect(contract.split("\n")).toContain("The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.");
+    expect(contract.split("\n")).toContain("The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.");
+  });
+
+  it("keeps generation-result punctuation exact in the core-generation contract", () => {
+    const contract = buildTypedCompletionContract({
+      agentId: "generator",
+      artifactsDir: "/run/artifacts",
+      eventsDir: "/run/events",
+      coreGenerationChain: true,
+      runContextExports: {
+        MENTIKO_RUN_ID: "run-generation",
+        MENTIKO_AGENT_ID: "generator",
+        MENTIKO_AGENT_EMITS: "generation-complete",
+      },
+    });
+
+    expect(contract).toContain("/run/artifacts/generation-result.json.");
+    expect(contract).not.toContain("generation-result.json.\",,");
+    expect(contract).toContain("mentiko emit generation-complete");
+    expect(contract).toContain("the generation file remains authoritative.");
+  });
+
   it("creates local pty session and sends start script plus existing instruction pointer", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
@@ -147,7 +190,18 @@ describe("runner-v2 bootstrap executor", () => {
       },
     }, executor);
 
-    expect(readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8")).toContain("Agent-ID: writer");
+    const instructions = readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8");
+    expect(instructions).toContain("Agent-ID: writer");
+    expect(instructions).toContain("COMPLETION CONTRACT:");
+    expect(instructions).toContain("Run context: RUN_ID=run-1, MENTIKO_AGENT_ID=writer");
+    expect(instructions).toContain(`Event root: EVENTS_DIR=${join(root, "events")}`);
+    expect(instructions).toContain(`Artifact root: ARTIFACTS_DIR=${join(root, "artifacts")}`);
+    expect(instructions).toContain(join(root, "artifacts", "writer-summary.json"));
+    expect(instructions).toContain(join(root, "artifacts", "writer-summary.md"));
+    expect(instructions).toContain("mentiko emit done");
+    expect(instructions).toContain("Do NOT hand-write any .event file.");
+    expect(instructions).not.toContain("ensure-event-file");
+    expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
     expect(startScript).toContain("runner-agent-profile.js");
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
@@ -326,6 +380,47 @@ describe("runner-v2 bootstrap executor", () => {
       "agent writer has terminal attempt run-1:writer:1 (completed)",
     );
     expect(executor.spawn).not.toHaveBeenCalled();
+  });
+
+  it("allows the resume route's durable resumedAt to create a fresh typed attempt", async () => {
+    const root = tempDir();
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root, "running");
+    updateRunJson(runJsonPath, (run) => ({
+      ...run!,
+      resumedAt: "2026-07-15T00:02:00.000Z",
+      runnerV2: {
+        attempts: [{
+          id: "run-1:writer:1",
+          runId: "run-1",
+          agentId: "writer",
+          phase: "completed",
+          desiredPhase: "completed",
+          observedPhase: "completed",
+          terminalReason: "completed_from_event",
+          instructionLedger: [],
+          recoveryDecisionCount: 0,
+          createdAt: "2026-07-15T00:00:00.000Z",
+          updatedAt: "2026-07-15T00:01:00.000Z",
+          transitions: [],
+        }],
+      },
+    }));
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), context(root), executor);
+
+    expect(executor.spawn).toHaveBeenCalledWith(
+      "workspace-writer-run-1",
+      "zsh",
+      [],
+      expect.objectContaining({ cwd: join(root, "workspace") }),
+    );
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(run.runnerV2.attempts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "run-1:writer:1", phase: "completed" }),
+      expect.objectContaining({ id: "run-1:writer:2", leaseId: "workspace-writer-run-1" }),
+    ]));
   });
 
   it("makes two absent fan-out targets durably acceptable through real bootstrap registration", async () => {

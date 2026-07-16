@@ -312,6 +312,16 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/completion-entrypoint.ts"],
       },
+      {
+        id: "typed-completion-evidence-provenance",
+        label: "Typed monitor-to-attempt completion evidence provenance",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/monitor-live-io.ts",
+          "web/lib/runner-v2/completion-runner.ts",
+          "web/lib/runner-v2/agent-attempt.ts",
+        ],
+      },
     ],
     legacyEquivalent: {
       summary: "No single persisted predecessor existed; attempt state was implicit across shell .state files, run.json agent fields, and PTY sessions.",

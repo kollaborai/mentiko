@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   agentCompleteMarkerDurable,
   findTranscriptJsonl,
+  scoreTranscriptIdentity,
   selectTranscriptFromCapture,
 } from "@/lib/runner-v2/agent-transcript";
 
@@ -72,6 +73,46 @@ describe("agent transcript typed owner", () => {
       writeFileSync(assistant, `${transcriptRecord(REAL, root, "finished\nAGENT_COMPLETE")}\n`);
       expect(agentCompleteMarkerDurable(userOnly)).toBe(false);
       expect(agentCompleteMarkerDurable(assistant)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a strong attempt anchor and does not substring-match run ids", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const path = join(root, `${REAL}.jsonl`);
+    try {
+      writeFileSync(path, JSON.stringify({
+        type: "assistant",
+        sessionId: REAL,
+        runId: "run-10",
+        cwd: root,
+        timestamp: "2026-07-15T12:00:00.000Z",
+        message: { content: [{ type: "text", text: "run-10\nAGENT_COMPLETE" }] },
+      }) + "\n");
+
+      expect(scoreTranscriptIdentity(path, REAL, { runId: "run-1" })).toBeNull();
+      expect(scoreTranscriptIdentity(path, REAL, {
+        runId: "run-1",
+        attemptStartedAt: "2026-07-15T11:59:00.000Z",
+        now: new Date("2026-07-15T12:01:00.000Z"),
+      })).toBeNull();
+
+      // A run id in assistant text must use token boundaries: run-1 is not
+      // present inside the decoy token run-10.
+      writeFileSync(path, JSON.stringify({
+        type: "assistant",
+        sessionId: REAL,
+        cwd: root,
+        timestamp: "2026-07-15T12:00:00.000Z",
+        message: { content: [{ type: "text", text: "run-10\nAGENT_COMPLETE" }] },
+      }) + "\n");
+      expect(scoreTranscriptIdentity(path, REAL, {
+        runId: "run-1",
+        attemptStartedAt: "2026-07-15T11:59:00.000Z",
+        now: new Date("2026-07-15T12:01:00.000Z"),
+      })).toBe(120);
+      expect(selectTranscriptFromCapture(REAL, () => path, { runId: "run-1" })).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

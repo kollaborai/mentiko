@@ -43,6 +43,78 @@ export class TerminalBootstrapStateError extends Error {}
 export class TypedMonitorRuntimeMissingError extends Error {}
 
 /**
+ * Completion instructions are part of the typed launch contract, not a shell
+ * prompt convention. Keep the event command and artifact requirements next to
+ * the code that writes the instruction file so every typed bootstrap receives
+ * the same canonical handoff rules as the legacy launcher.
+ */
+export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "agentId" | "artifactsDir" | "eventsDir" | "runContextExports" | "coreGenerationChain">): string {
+  const runId = plan.runContextExports.MENTIKO_RUN_ID || plan.runContextExports.RUN_ID || "unknown";
+  const agentId = plan.agentId || plan.runContextExports.MENTIKO_AGENT_ID || "unknown";
+  const emits = plan.runContextExports.MENTIKO_AGENT_EMITS || "";
+  const summaryJson = join(plan.artifactsDir, `${agentId}-summary.json`);
+  const summaryMarkdown = join(plan.artifactsDir, `${agentId}-summary.md`);
+  const emitCommand = emits ? `mentiko emit ${emits}` : "";
+
+  const eventHandoff = emits
+    ? plan.coreGenerationChain
+      ? [
+        "Core generation handoff:",
+        `- Write the authoritative generation payload to ${join(plan.artifactsDir, "generation-result.json")}.`,
+        "- Mentiko imports that file automatically when this run completes.",
+        `- You may run "${emitCommand}" after writing the payload; the generation file remains authoritative.`,
+      ]
+      : [
+        "Canonical event handoff:",
+        "When completely finished, signal completion by running this command exactly:",
+        `    ${emitCommand}`,
+      ]
+    : [
+      "This agent has no declared completion event.",
+      "Do not create or hand-write any .event file; the final completion marker is the only terminal signal.",
+    ];
+
+  return [
+    "COMPLETION CONTRACT:",
+    `Run context: RUN_ID=${runId}, MENTIKO_AGENT_ID=${agentId}`,
+    `Event root: EVENTS_DIR=${plan.eventsDir}`,
+    `Artifact root: ARTIFACTS_DIR=${plan.artifactsDir}`,
+    "",
+    "Before you finish, create these user-facing handoff artifacts:",
+    `- ${summaryJson}`,
+    `- ${summaryMarkdown}`,
+    "",
+    "The JSON summary must use this shape:",
+    "{",
+    '  "status": "complete|partial|blocked",',
+    '  "executiveSummary": "2-4 sentences suitable for the run UI",',
+    '  "workCompleted": ["specific work performed"],',
+    '  "artifactsProduced": ["artifact paths you created or updated"],',
+    '  "codeChanges": ["files changed, or \'none\'"],',
+    '  "findings": ["important discoveries"],',
+    '  "risks": ["known risks or gaps"],',
+    '  "nextAgentHints": ["what the next agent should read or do"]',
+    "}",
+    "",
+    ...eventHandoff,
+    "Do NOT hand-write any .event file. The typed emitter owns the canonical event bytes, filename, provenance, and validation.",
+    "Do NOT create output files in the project working directory unless the task explicitly requires it; put reports and handoff artifacts under ARTIFACTS_DIR.",
+    "",
+    "Your final terminal response must be in this order:",
+    "SUMMARY:",
+    "- one to three concise bullets",
+    "ARTIFACTS:",
+    "- paths to the most important artifacts",
+    "NEXT:",
+    '- handoff notes or "none"',
+    "<the completion marker line>",
+    "",
+    "The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.",
+    "The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.",
+  ].join("\n");
+}
+
+/**
  * The monitor is part of the typed launch contract. Validate the checked-in
  * runtime bundle before allocating an agent PTY, so a local checkout with an
  * unbuilt bundle fails closed without leaving an unmonitored live agent.
@@ -241,10 +313,17 @@ function assertBootstrapLaunchable(
     .find((attempt) => attempt.runId === runId && attempt.agentId === agentId);
   if (!latestAttempt || !isTerminalAgentAttemptPhase(latestAttempt.phase)) return;
 
-  // An environment occurrence id is only a caller claim, not durable proof of
-  // a newer route. Existing routed launches are replayed from their persisted
-  // acceptance receipt by adapters.ts before bootstrap is reached; a direct
-  // bootstrap therefore fails closed on terminal attempt evidence.
+  // A resume route authorizes one fresh occurrence by persisting resumedAt on
+  // the run before relaunch. This is durable route state, unlike an environment
+  // occurrence id (which is only a caller claim). createAgentAttempt then
+  // allocates the next attempt id and preserves the terminal history.
+  const resumedAt = typeof run.resumedAt === "string" ? Date.parse(run.resumedAt) : Number.NaN;
+  const attemptUpdatedAt = Date.parse(latestAttempt.updatedAt);
+  if (Number.isFinite(resumedAt) && Number.isFinite(attemptUpdatedAt) && resumedAt > attemptUpdatedAt) return;
+
+  // Existing routed launches are replayed from their persisted acceptance
+  // receipt by adapters.ts before bootstrap is reached; a direct bootstrap
+  // therefore fails closed on terminal attempt evidence.
   throw new TerminalBootstrapStateError(
     `runner-v2 bootstrap rejected: agent ${agentId} has terminal attempt ${latestAttempt.id} (${latestAttempt.phase})`,
   );
@@ -276,7 +355,7 @@ function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2Lau
     "Read the chain JSON for your full task context:",
     context.chainPath,
     "",
-    "When the instructions are complete, finish with AGENT_COMPLETE on its own final line.",
+    buildTypedCompletionContract(plan),
   ].join("\n");
 }
 

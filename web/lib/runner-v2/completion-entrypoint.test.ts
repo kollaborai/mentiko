@@ -272,7 +272,7 @@ describe("runner-v2 completion entrypoint", () => {
         STATE_DIR: stateDir,
         MENTIKO_RUNNER_V2: "1",
         MENTIKO_RUNNER_V2_COMPLETION: "1",
-        MENTIKO_MONITOR_COMPLETION_LATCH: "1",
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
       },
       dryRun: true,
       now: new Date("2026-06-26T00:00:00.000Z"),
@@ -734,7 +734,7 @@ describe("runner-v2 completion entrypoint", () => {
       id: "run-123:verifier:1",
       agentId: "verifier",
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_declared_event",
       origin: "routed-completion-adoption",
       processEvidence: { ptySessionId: "verifier-run-123" },
     });
@@ -1298,7 +1298,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(run.runnerV2?.attempts?.[0]).toMatchObject({
       id: "run-123:verifier:1",
       phase: "completed",
-      terminalReason: "completed_from_event",
+      terminalReason: "completed_from_declared_event",
     });
     expect(run.runnerV2?.attempts?.[0]?.origin).toBeUndefined();
   });

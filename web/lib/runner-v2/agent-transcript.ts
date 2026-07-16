@@ -155,12 +155,15 @@ export function agentCompleteMarkerDurable(jsonlPath: string): boolean {
 
 /**
  * Identity boundary a candidate transcript must satisfy to be accepted as the
- * CURRENT run attempt's own transcript. Every field is optional because the live
- * caller derives them from run.json and the attempt ledger, both of which can be
- * partial; `hasTranscriptIdentityBoundary` is what refuses to guess when they
- * are all absent.
+ * CURRENT run attempt's own transcript. The live caller derives these values
+ * from run.json and the attempt ledger, which can be partial; only a trusted
+ * session id, attempt clock, or instruction path is strong enough to bind a
+ * transcript. Workspace and run id are contextual scoring signals, never a
+ * standalone acceptance boundary.
  */
 export interface TranscriptIdentityOptions {
+  /** Optional transcript/session UUID supplied by a trusted caller. */
+  sessionId?: string;
   workspacePath?: string;
   attemptStartedAt?: string;
   runId?: string;
@@ -188,6 +191,11 @@ function isWithinWorkspace(workspace: string, cwd: string): boolean {
  * the strongest signal, then attempt freshness, then instruction and run id --
  * and the caller treats a tie as ambiguous rather than picking one.
  */
+function containsIdentityToken(body: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9_-])${escaped}(?=$|[^A-Za-z0-9_-])`).test(body);
+}
+
 export function scoreTranscriptIdentity(
   path: string,
   uuid: string | undefined,
@@ -202,6 +210,7 @@ export function scoreTranscriptIdentity(
 
   const cwds = new Set<string>();
   const sessionIds = new Set<string>();
+  const runIds = new Set<string>();
   const timestamps: number[] = [];
   for (const line of body.split("\n")) {
     if (!line.trim()) continue;
@@ -210,6 +219,9 @@ export function scoreTranscriptIdentity(
       if (typeof record.cwd === "string") cwds.add(record.cwd);
       for (const key of ["sessionId", "session_id"] as const) {
         if (typeof record[key] === "string") sessionIds.add(record[key].toLowerCase());
+      }
+      for (const key of ["runId", "run_id"] as const) {
+        if (typeof record[key] === "string") runIds.add(record[key]);
       }
       if (typeof record.timestamp === "string") {
         const value = Date.parse(record.timestamp);
@@ -221,8 +233,12 @@ export function scoreTranscriptIdentity(
   }
 
   if (uuid && sessionIds.size > 0 && !sessionIds.has(uuid)) return null;
+  const requestedSessionId = identity.sessionId?.toLowerCase();
+  if (requestedSessionId && (sessionIds.size === 0 || !sessionIds.has(requestedSessionId))) return null;
+  if (identity.runId && runIds.size > 0 && !runIds.has(identity.runId)) return null;
 
   let score = uuid && sessionIds.has(uuid) ? 40 : 0;
+  if (requestedSessionId && sessionIds.has(requestedSessionId)) score += 60;
   if (identity.workspacePath) {
     const workspace = resolve(identity.workspacePath);
     const workspaceMatch = [...cwds].some((cwd) => isWithinWorkspace(workspace, cwd));
@@ -245,21 +261,26 @@ export function scoreTranscriptIdentity(
     score += 80;
   }
 
-  const runMatch = Boolean(identity.runId && body.includes(identity.runId));
+  const runMatch = Boolean(identity.runId && containsIdentityToken(body, identity.runId));
   const instructionMatch = Boolean(identity.instructionPath && body.includes(identity.instructionPath));
   if (runMatch) score += 20;
   if (instructionMatch) score += 30;
-  if (!identity.workspacePath && !identity.attemptStartedAt && !runMatch && !instructionMatch) return null;
+  // A run id or workspace is contextual metadata, not a sufficient provenance
+  // anchor: either the attempt clock, instruction path, or trusted session id
+  // must bind this transcript to the current attempt. This prevents a decoy
+  // containing only a copied run id from latching completion.
+  if (!identity.attemptStartedAt && !identity.instructionPath && !requestedSessionId) return null;
   return score;
 }
 
 /**
- * True when the caller supplied at least one identity anchor. With none of them,
- * every candidate would score on position alone -- which is exactly the decoy
- * failure this module exists to prevent -- so selection fails closed instead.
+ * True when the caller supplied a strong identity anchor. Workspace and run id
+ * alone are intentionally excluded: copied metadata can appear in another
+ * run's transcript, so selection fails closed until the attempt clock,
+ * instruction path, or trusted session id is also present.
  */
 export function hasTranscriptIdentityBoundary(identity: TranscriptIdentityOptions): boolean {
-  return Boolean(identity.workspacePath || identity.attemptStartedAt || identity.runId || identity.instructionPath);
+  return Boolean(identity.sessionId || identity.attemptStartedAt || identity.instructionPath);
 }
 
 /**

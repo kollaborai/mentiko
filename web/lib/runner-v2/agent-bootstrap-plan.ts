@@ -32,6 +32,10 @@ export interface BootstrapChainFile {
   id?: string;
   name?: string;
   default_agent_profile?: string;
+  metadata?: {
+    coreGenerationChain?: boolean;
+    [key: string]: unknown;
+  };
   config?: BootstrapChainConfig;
   agents?: BootstrapChainAgent[];
 }
@@ -58,6 +62,8 @@ export interface AgentBootstrapPlan {
   artifactsDir: string;
   eventsDir: string;
   projectRoot: string;
+  /** Core generation chains may treat generation-result.json as the handoff. */
+  coreGenerationChain?: boolean;
   profileId?: string;
   profilePath?: string;
   profileReadiness?: AgentProfileReadinessConfig;
@@ -129,6 +135,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     artifactsDir,
     eventsDir,
     projectRoot,
+    ...(chain.metadata?.coreGenerationChain === true ? { coreGenerationChain: true } : {}),
     ...(profile.id ? { profileId: profile.id } : {}),
     ...(profile.path ? { profilePath: profile.path } : {}),
     ...(profile.readiness ? { profileReadiness: profile.readiness } : {}),
