@@ -810,6 +810,8 @@ describe("GET /api/tasks/reconcile", () => {
           auto_run: true,
           last_run_id: undefined,
           last_run_status: "retry_requested",
+          task_run_scope: undefined,
+          retry_source_run_id: "run-exec",
           auto_run_retries: 99,
           execution_retries: 1,
           lifecycle_phase: "retrying",

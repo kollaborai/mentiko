@@ -40,6 +40,7 @@ import { currentRunTerminalFingerprint, outcomeSummarySourceEligibility } from "
 import {
   locateTaskRun,
   parseTaskRunScope,
+  releaseTaskRunScopeForRetry,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
@@ -757,11 +758,14 @@ function makeLifecycleDeps(input: {
     // (the ones whose last blocker just cleared), fire-and-forget. Storm-safe -- the
     // terminal rule blocks any completed chain -- and O(dependents), not O(org).
     scanUnblockedAutoRunTasks: () => { void triggerAutoRunScan(input.namespaceId, input.orgId, input.taskId); },
-    retryExecution: ({ lifecycleState }) => {
+    retryExecution: ({ lifecycleState, previousRunId }) => {
       taskUpdate(input.orgId, input.taskId, {
         status: "open",
         metadata: {
-          ...metadataWithLifecycleState(input.metadata, lifecycleState),
+          ...releaseTaskRunScopeForRetry(
+            metadataWithLifecycleState(input.metadata, lifecycleState),
+            { taskId: input.taskId, sourceRunId: previousRunId },
+          ),
           last_run_id: undefined,
           last_run_status: "retry_requested",
           last_run_error: input.reason || `Execution run ended with ${input.runStatus || "failed"}`,

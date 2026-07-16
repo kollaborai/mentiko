@@ -469,6 +469,8 @@ describe("applyCompletionAudit", () => {
       "TASK-42",
       expect.objectContaining({
         last_run_id: undefined,
+        task_run_scope: undefined,
+        retry_source_run_id: "run-abc",
         execution_retries: 2,
         lifecycle_phase: "retrying",
         last_audit_verdict: "retry",
