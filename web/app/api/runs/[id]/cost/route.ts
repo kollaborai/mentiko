@@ -3,8 +3,10 @@
  *
  * Returns token usage and cost breakdown for a run.
  * Fast path: reads from token store at namespaces/{ns}/tokens/{runId}/
- * Fallback: parses JSONL conversation files from agent activity artifacts,
- *           then caches results in token store for future requests.
+ * Fallback: parses JSONL conversation files from agent activity artifacts via
+ *           lib/system/token-usage-extraction, then caches results in the token
+ *           store for future requests. Provider and model come from what the
+ *           transcript named; neither is assumed.
  *
  * Response:
  *   {
@@ -40,55 +42,15 @@ import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { DEFAULT_COST_MODEL } from "@/lib/agents/agent-provider-catalog";
+import {
+  addTokenTotals,
+  emptyTokenTotals,
+  hasTokenCounts,
+  providerForModel,
+  readTranscriptTokens,
+} from "@/lib/system/token-usage-extraction";
 
 export const dynamic = "force-dynamic";
-
-// ---------------------------------------------------------------------------
-// JSONL parsing
-// ---------------------------------------------------------------------------
-
-interface JasonlMessage {
-  type?: string;
-  message?: {
-    model?: string;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-      cache_read_input_tokens?: number;
-      cache_creation_input_tokens?: number;
-    };
-  };
-}
-
-async function parseJsonlTokens(
-  filePath: string
-): Promise<{ model: string; inputTokens: number; outputTokens: number; cacheRead: number; cacheWrite: number }> {
-  const result = { model: DEFAULT_COST_MODEL, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0 };
-  if (!existsSync(filePath)) return result;
-
-  try {
-    const content = readFileSync(filePath, "utf-8");
-    for (const line of content.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line) as JasonlMessage;
-        if (msg.type === "assistant" && msg.message?.usage) {
-          const u = msg.message.usage;
-          if (msg.message.model) result.model = msg.message.model;
-          result.inputTokens += u.input_tokens ?? 0;
-          result.outputTokens += u.output_tokens ?? 0;
-          result.cacheRead += u.cache_read_input_tokens ?? 0;
-          result.cacheWrite += u.cache_creation_input_tokens ?? 0;
-        }
-      } catch {
-        // skip malformed lines
-      }
-    }
-  } catch {
-    // unreadable file
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // route
@@ -166,11 +128,7 @@ export const GET = withErrorHandling(async (
 
   for (const [agentId, convPaths] of Object.entries(agentConvPaths)) {
     const agentMeta = agents.find((a) => a.id === agentId);
-    let model = DEFAULT_COST_MODEL;
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheRead = 0;
-    let cacheWrite = 0;
+    let totals = emptyTokenTotals();
 
     for (const convPath of convPaths) {
       // convPath is relative to repo root (e.g. namespaces/default/runs/.../artifacts/...)
@@ -186,28 +144,33 @@ export const GET = withErrorHandling(async (
         for (const entry of convData) {
           if (!entry.path) continue;
           const jsonlPath = path.isAbsolute(entry.path) ? entry.path : `${repoRoot}/${entry.path}`;
-          const parsed = await parseJsonlTokens(jsonlPath);
-          model = parsed.model;
-          inputTokens += parsed.inputTokens;
-          outputTokens += parsed.outputTokens;
-          cacheRead += parsed.cacheRead;
-          cacheWrite += parsed.cacheWrite;
+          totals = addTokenTotals(totals, readTranscriptTokens(jsonlPath));
         }
       } catch {
         // skip bad artifact
       }
     }
 
-    if (inputTokens === 0 && outputTokens === 0) continue;
+    if (!hasTokenCounts(totals)) continue;
 
-    const costCents = computeTokenCost(model, inputTokens, outputTokens, cacheRead, cacheWrite);
+    // Pricing needs a model, but the record must not claim one the transcript
+    // never named: an unobserved model prices at the default and reports an
+    // unknown provider rather than asserting Claude.
+    const model = totals.observedModel ?? DEFAULT_COST_MODEL;
+    const costCents = computeTokenCost(
+      model,
+      totals.inputTokens,
+      totals.outputTokens,
+      totals.cacheReadTokens,
+      totals.cacheWriteTokens,
+    );
 
     breakdown.push({
       agentId,
       agentName: agentMeta?.name,
       model,
-      inputTokens,
-      outputTokens,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
       costCents,
     });
 
@@ -217,12 +180,12 @@ export const GET = withErrorHandling(async (
       chainName,
       agentId,
       agentName: agentMeta?.name,
-      provider: "claude",
+      provider: providerForModel(totals.observedModel),
       model,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens: cacheRead,
-      cacheWriteTokens: cacheWrite,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      cacheReadTokens: totals.cacheReadTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
       costCents,
       namespaceId,
       recordedAt: new Date().toISOString(),
