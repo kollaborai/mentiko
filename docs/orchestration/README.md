@@ -519,10 +519,10 @@ background services:
 supporting:
   web/lib/runner-v2/error-handling.ts typed report/error/retry lifecycle owner
   lib/error-handling.sh            invocation-only error boundary
-  lib/retry-utils.sh               retry logic
+  web/lib/runner-v2/retry-circuit.ts typed retry policy and circuit-state owner
+  lib/retry-utils.sh               invocation-only typed retry/circuit boundary
   web/lib/runner-v2/approval-gate.ts typed approval request/polling owner
   lib/approval-gate.sh             invocation-only approval boundary
-  lib/budget-check.sh              spending limits
   lib/webhook-sender.sh            webhook notifications
   lib/slack-integration.sh         slack notifications
   lib/metrics.sh                   performance metrics

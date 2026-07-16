@@ -37,10 +37,9 @@ phase 0: initialization
    - error-handling.sh       error handling
    - scheduler.sh            invocation-only typed schedule boundary
    - runner-audit.js         typed audit CLI boundary
-   - retry-utils.sh          retry logic
+   - retry-utils.sh          invocation-only typed retry/circuit boundary
    - approval-gate.sh        human approval gates
    - plugin-runner.sh        typed plugin-dispatch CLI invocation boundary
-   - budget-check.sh         spending limits
 
    runner-event emission and lifecycle are not sourced shell libraries. process
    boundaries invoke the compiled typed emitter and lifecycle CLIs under
@@ -237,10 +236,6 @@ function: launch_chain_agent <agent-id> <round>
 
 1. pre-flight checks
    ------------------
-   budget check:
-   - calls check-budget from budget-check.sh
-   - stops chain if over spending limit
-
    circuit breaker:
    - calls is_circuit_open from error-handling.sh
    - stops chain if agent in open state (too many recent failures)
@@ -548,17 +543,18 @@ web/lib/runner-v2/error-handling.ts typed error/retry lifecycle owner
 lib/error-handling.sh         invocation-only error boundary
 web/lib/runner-v2/approval-gate.ts typed approval request/polling owner
 lib/approval-gate.sh          invocation-only approval boundary
-lib/budget-check.sh           spending limits
 web/lib/runner-v2/chain-watcher-service.ts  file-event chain launches (see [chain-watcher.md](./chain-watcher.md))
 web/lib/runner-v2/watchdog.ts               stalled run detection (see [watchdog.md](./watchdog.md))
 web/lib/runner-v2/schedule-contract.ts      embedded-schedule/state validation and atomic mutation
 lib/scheduler.sh              invocation-only typed schedule boundary
 web/lib/system/audit-log.ts   typed audit logging and index ownership
 web/lib/system/audit-cli.ts   compiled audit command source
-lib/retry-utils.sh            retry logic
+web/lib/runner-v2/retry-circuit.ts  typed retry policy and circuit-state owner
+web/lib/runner-v2/retry-circuit-cli.ts  compiled retry/circuit command source
+lib/retry-utils.sh            invocation-only typed retry/circuit boundary
 web/lib/system/plugin-dispatch.ts typed registry parsing and hook dispatch
 lib/plugin-runner.sh          minimal typed plugin-dispatch invocation boundary
-lib/token-extractor.sh        token usage extraction
+web/lib/system/token-store.ts typed token usage parsing and persistence
 
 related daemons
 ===============
