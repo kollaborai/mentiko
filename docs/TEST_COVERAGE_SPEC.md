@@ -36,7 +36,12 @@ bin
 
 lib
 ☑ lib/chain-runner.mjs — RETIRED (moved to .trash; production chains run via bash lib/chain-runner.sh)
-☐ [agent-1] lib/job-runner.mjs
+☑ lib/job-runner.mjs — RETIRED (deleted in ef34d30). Replaced by the typed
+  worker web/lib/runner-v2/job-worker.ts, bundled as lib/runner-job-worker.js.
+  Covered by tests/job-runner.test.mjs (black-box child-process tests over
+  job loading, profile resolution, secret decryption, CLI spawn, output
+  parsing, error handling, workspace resolution) plus the bundle-drift guard in
+  tests/runner-typed-bundle-parity.test.mjs.
 ☐ [agent-2] lib/pty-manager.mjs
 ☐ [agent-3] lib/mentiko-cli-schedules.mjs
 ☐ [agent-4] lib/mentiko-mcp/server.ts
@@ -60,7 +65,6 @@ lib
 
 agent priority order
 1 lib/pty-manager.mjs
-3 lib/job-runner.mjs
 5 bin/secrets-rotate
 6 bin/validate-artifacts
 7 lib/mentiko-cli-schedules.mjs
