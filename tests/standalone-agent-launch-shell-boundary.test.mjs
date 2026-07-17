@@ -19,10 +19,12 @@ assert.match(launcher, /^#!\/bin\/bash[\s\S]*exec node .*runner-v2-standalone-ag
 assert.doesNotMatch(launcher, /\b(source|grep|sed|xargs|date|sleep|new_pty_session|send-message|_agent_state_cli)\b/);
 assert.match(cli, /launch\)[\s\S]*exec node "\$LIB_DIR\/runner-v2-standalone-agent-launch\.js"/);
 assert.doesNotMatch(cli, /launch\)[\s\S]*launch-agent\.sh/);
+assert.doesNotMatch(functions, /\bnew-agent-session\b/);
+assert.doesNotMatch(functions, /\bMENTIKO_CLI\b/);
 const fromSpec = exportedFunction(functions, "new-agent-from-spec");
 assert.match(fromSpec, /node "\$_AF_SCRIPT_DIR\/runner-v2-standalone-agent-launch\.js" "\$@"/);
 assert.doesNotMatch(fromSpec, /\b(grep|sed|xargs|date|sleep|new_pty_session|send-message|new-agent-session|_agent_state_cli|runner-v2-standalone-monitor)\b/);
 for (const required of ["readStandaloneAgentSpec", "pty.spawn", "createRunnerAgentState", "standaloneAgentInstruction", "runner-v2-standalone-monitor.js"]) {
   assert.ok(typed.includes(required), `typed standalone launcher missing ${required}`);
 }
-console.log("PASS: standalone spec launch is TypeScript-owned; shell only forwards to the compiled entrypoint");
+console.log("PASS: standalone spec launch is TypeScript-owned; generic shell agent launch is retired");

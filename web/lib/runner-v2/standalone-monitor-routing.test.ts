@@ -10,7 +10,7 @@ function standaloneMonitorBlock(source: string, start: string): string {
 }
 
 describe("standalone monitor shell routing", () => {
-  it("keeps every standalone launcher as a typed forwarding boundary", () => {
+  it("keeps the standalone launcher as a typed forwarding boundary and retires generic launch", () => {
     const launcher = readFileSync(join(root, "lib", "launch-agent.sh"), "utf8");
     const functions = readFileSync(join(root, "lib", "agent-functions.sh"), "utf8");
     const functionBlock = standaloneMonitorBlock(functions, "new-agent-from-spec() {");
@@ -26,8 +26,9 @@ describe("standalone monitor shell routing", () => {
     expect(functionBlock).not.toContain("xargs");
     expect(functionBlock).not.toContain("date");
     expect(functionBlock).not.toContain("_agent_state_cli");
-    expect(functionBlock).not.toContain("new-agent-session");
     expect(functionBlock).not.toContain("monitor-with-ai");
     expect(functionBlock).not.toContain(".mentiko_monitor");
+    expect(functions).not.toContain("new-agent-session");
+    expect(functions).not.toContain("MENTIKO_CLI");
   });
 });
