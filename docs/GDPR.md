@@ -67,6 +67,6 @@ entering audit logs going forward.
 - `web/lib/system/gdpr-data-map.ts` — exhaustive data surface inventory
 - `web/app/api/gdpr/export/route.ts` — export endpoint
 - `web/app/api/gdpr/delete/route.ts` — delete endpoint
-- `lib/gdpr-sweep.sh` — filesystem cleanup
+- `web/lib/runs/gdpr-user-sweep.ts` — typed filesystem cleanup
 - `scripts/scrub-audit-pii.mjs` — PII migration for audit logs
 - `web/lib/system/audit-log.ts` — typed PII rejection and audit-index ownership

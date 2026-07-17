@@ -418,6 +418,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     ],
   },
   "runner-v2-attempt": {
+      {
+        id: "typed-gdpr-run-erasure",
+        label: "Delete only run records whose validated user_id matches the erased account",
+        owner: "runner-v2",
+        paths: ["web/lib/runs/gdpr-user-sweep.ts", "web/lib/runner-v2/run-record-queries.ts", "web/app/api/gdpr/delete/route.ts"],
+      },
     usage: "runner-v2",
     surfaces: [
       {

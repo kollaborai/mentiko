@@ -301,6 +301,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/runs/[id]/stop/route.ts",
       "web/app/api/agents/resume/route.ts",
       "web/app/api/system/stop-all/route.ts",
+      "web/lib/runs/gdpr-user-sweep.ts",
       "web/app/api/mentiko-mcp/ops/context/runs/cancel/route.ts",
     ],
     readers: [
@@ -407,7 +408,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{orgRoot}/decisions/{id}.json", "{orgRoot}/projects/{encodedWorkspace}/decisions/{id}.json"],
     assurance: "typed",
     typePaths: ["web/lib/decisions/decision-types.ts"],
-    writers: ["web/lib/decisions/decision-storage.ts", "web/lib/decisions/decision-run-results.ts", "web/lib/decisions/decision-resolution.ts"],
+    writers: ["web/lib/decisions/decision-storage.ts", "web/lib/decisions/decision-run-results.ts", "web/lib/decisions/decision-resolution.ts", "web/lib/runs/gdpr-user-sweep.ts"],
     readers: ["web/lib/decisions/decision-storage.ts", "web/app/api/decisions/[id]/route.ts"],
     samples: {
       root: "organization",
