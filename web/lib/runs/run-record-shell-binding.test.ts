@@ -137,40 +137,12 @@ describe("typed Run Record runtime binding", () => {
     expect(existsSync(runDir)).toBe(false);
   });
 
-  it("builds a GitHub error report through the typed Run Record query when sourced standalone", () => {
-    const root = mkdtempSync(join(tmpdir(), "runner-run-record-github-"));
-    const runsDir = join(root, "runs");
-    const captureDir = join(root, "capture");
-    mkdirSync(captureDir);
-    const environment = { ...process.env, MENTIKO_CODE_ROOT: codeRoot, MENTIKO_GLOBAL_ROOT: root, RUNS_DIR: runsDir };
-    const created = spawnSync(process.execPath, [
-      compiledRunRecord, "create", "--runs-dir", runsDir,
-      "--run-id", "run-1", "--chain", "github-chain", "--goal", "report typed context",
-    ], { encoding: "utf8", env: environment });
-    expect(created.status).toBe(0);
-
-    const result = spawnSync("bash", ["-lc", `
-      source ${JSON.stringify(join(codeRoot, "lib", "github-integration.sh"))}
-      github-get-token() { printf token; }
-      github-create-issue() {
-        printf '%s' "$2" > ${JSON.stringify(join(captureDir, "title"))}
-        printf '%s' "$3" > ${JSON.stringify(join(captureDir, "body"))}
-      }
-      github-agent-error-issue owner/repo run-1 writer 'startup failed'
-    `], { encoding: "utf8", env: environment });
-    expect(result.status).toBe(0);
-    expect(readFileSync(join(captureDir, "title"), "utf8")).toBe("Agent Error: writer failed in github-chain");
-    expect(readFileSync(join(captureDir, "body"), "utf8")).toContain("report typed context");
-    expect(readFileSync(join(captureDir, "body"), "utf8")).toContain("startup failed");
-  });
-
   it("leaves shell callers as semantic invocations with no Run Record parser or writer", () => {
     const sources = [
       "lib/run-lib.sh",
       "lib/chain-runner.sh",
       "lib/agent-activity-capture.sh",
       "lib/concurrency-cap.sh",
-      "lib/github-integration.sh",
       "lib/gdpr-sweep.sh",
       "bin/peer-manager",
       "bin/test-relay-prompt",

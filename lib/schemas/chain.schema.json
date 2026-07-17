@@ -146,33 +146,6 @@
           "type": "object",
           "description": "Third-party integration configuration",
           "properties": {
-            "github": {
-              "type": "object",
-              "description": "GitHub integration - create issues on errors",
-              "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": false
-                },
-                "token": {
-                  "type": "string",
-                  "description": "GitHub personal access token"
-                },
-                "owner": {
-                  "type": "string",
-                  "description": "Repository owner/org"
-                },
-                "repo": {
-                  "type": "string",
-                  "description": "Repository name"
-                },
-                "labels": {
-                  "type": "array",
-                  "items": { "type": "string" },
-                  "description": "Labels to add to created issues"
-                }
-              }
-            },
             "teams": {
               "type": "object",
               "description": "Microsoft Teams integration - send webhook notifications",

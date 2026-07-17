@@ -105,11 +105,6 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
-    // Completion copies this typed launch context into routed launches. Keep a
-    // caller-supplied profile root so direct CLI runs preserve profile identity
-    // for every downstream agent instead of re-resolving against an unrelated
-    // process environment.
-    AGENT_PROFILES_DIR: input.env?.AGENT_PROFILES_DIR || config.agentProfilesDir,
     RUNS_DIR: input.env?.RUNS_DIR || dirname(input.runDir),
     // Completion resolves the run dir from this explicit typed launch context.
     MENTIKO_RUN_DIR: input.runDir,
@@ -201,14 +196,8 @@ function resolveAgentProfile(
   projectRoot: string,
   env: Record<string, string | undefined> | undefined,
 ): ProfileResolution {
-  const explicitOrgRoot = env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT;
-  const orgRoot = explicitOrgRoot || config.orgRoot;
-  // Direct typed CLI launches carry process.env, not a web-request context.
-  // They must therefore use config's canonical profile root when no explicit
-  // runtime root was supplied. Routed launches inherit the resolved profile
-  // path from this plan, so resolving it here preserves the same profile over
-  // the whole typed lifecycle.
-  const profilesDir = env?.AGENT_PROFILES_DIR || (explicitOrgRoot ? join(explicitOrgRoot, "agent-profiles") : config.agentProfilesDir);
+  const orgRoot = env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT;
+  const profilesDir = env?.AGENT_PROFILES_DIR || (orgRoot ? join(orgRoot, "agent-profiles") : undefined);
   if (!profilesDir) return {};
   const profile = resolveTypedAgentProfile({ chainPath, agentId, projectRoot, profilesDir, orgRoot });
   return profile ? { id: profile.id, path: profile.path, readiness: profile.profile.readiness } : {};
