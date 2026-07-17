@@ -92,8 +92,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{orgRoot}/chains/{chainId}/chain.json", "{orgRoot}/chains/{chainId}/.git-backup/chain.json.{timestamp}", "{runRoot}/{runId}/chain.json (execution snapshot)"],
     assurance: "enforced",
     schemaPath: "lib/schemas/chain.schema.json",
-    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
-    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
+    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts", "web/lib/chains/generated-chain-delivery-contract.ts"],
+    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts", "web/lib/chains/generated-chain-delivery-contract.ts", "web/app/api/chains/save/route.ts", "web/app/api/jobs/[id]/complete/route.ts"],
     writers: [
       "web/app/api/chains/save/route.ts",
       "web/lib/chains/chains-store.ts",
@@ -114,7 +114,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     readers: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
     samples: { root: "organization", patterns: [["chains", "*", "chain.json"]], format: "json" },
-    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback."],
+    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback.", "A chain that declares metadata.generated_chain_contract is validated as typed delivery or research work: every agent must state an observable deliverable and repeatable verification, while the last agent is a final acceptance gate with an evidence-backed success assertion. Delivery chains also require edit_files authority."],
   }),
   shape({
     id: "chain-version-control",
