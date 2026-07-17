@@ -103,17 +103,18 @@ export async function runPeerLinkController(
   const relayCommand = buildAgentProfileCommand({ profilePath: relayProfile.path, interactive: false, namespaceId: context.namespaceId, orgId: context.orgId, purpose: "relay" });
   const maxRounds = Math.max(1, context.maxRounds || 20);
   let rounds = 0;
+  let steerMessage = "";
   try {
     while (rounds < maxRounds) {
       rounds += 1;
       const firstCapture = await waitForStable(firstSession, dependencies);
       persistPeerOutput(outputDir, firstSession, rounds, firstCapture);
-      await dependencies.transport.sendKeys(secondSession, dependencies.relay(relayCommand, firstCapture));
+      steerMessage = consumeReply(replyPath);
+      await dependencies.transport.sendKeys(secondSession, appendSteerMessage(dependencies.relay(relayCommand, firstCapture), steerMessage));
       const secondCapture = await waitForStable(secondSession, dependencies);
       persistPeerOutput(outputDir, secondSession, rounds, secondCapture);
       await dependencies.transport.sendKeys(firstSession, dependencies.relay(relayCommand, secondCapture));
       writeFileSync(meetingPath, JSON.stringify({ ...JSON.parse(readFileSync(meetingPath, "utf8")), round: rounds }, null, 2));
-      consumeReply(replyPath);
       if (isDone(firstCapture) && isDone(secondCapture)) break;
     }
     if (rounds >= maxRounds) markEscalated(runJsonPath, rounds, "MAX_ROUNDS");
@@ -162,8 +163,15 @@ function copyPeerOutputsToArtifacts(outputDir: string, runDir: string, first: st
   }
 }
 
-function consumeReply(path: string): void {
-  if (existsSync(path)) unlinkSync(path);
+function consumeReply(path: string): string {
+  if (!existsSync(path)) return "";
+  const reply = readFileSync(path, "utf8").trim();
+  unlinkSync(path);
+  return /^(?:continue|c|go)$/i.test(reply) ? "" : reply;
+}
+
+function appendSteerMessage(relay: string, steerMessage: string): string {
+  return steerMessage ? `${relay}\n\nAlso, one more thing: ${steerMessage}` : relay;
 }
 
 function markEscalated(runJsonPath: string, round: number, trigger: string): void {

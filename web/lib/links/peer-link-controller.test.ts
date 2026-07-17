@@ -29,6 +29,9 @@ describe("typed peer link controller", () => {
       alive: async () => true,
       remove: async (name: string) => { removed.push(name); },
     };
+    const replyPath = join(namespaceRoot, "peer-escalations", "link-test", "reply.txt");
+    mkdirSync(join(namespaceRoot, "peer-escalations", "link-test"), { recursive: true });
+    writeFileSync(replyPath, "focus on failures");
 
     await runPeerLinkController({
       runId: "run-123", runDir, runsDir, namespaceId: "default", orgId: "default", managerSession: "link-test",
@@ -42,5 +45,7 @@ describe("typed peer link controller", () => {
     expect(existsSync(join(namespaceRoot, "peer-escalations", "link-test", "meeting.json"))).toBe(true);
     expect(existsSync(join(namespaceRoot, "peer-output"))).toBe(true);
     expect(readFileSync(join(runDir, "artifacts", "agent1-output.txt"), "utf8")).toContain("STATUS:DONE");
+    expect(existsSync(replyPath)).toBe(false);
+    expect(sent.some(([session, text]) => session.includes("Two") && text.includes("Also, one more thing: focus on failures"))).toBe(true);
   });
 });
