@@ -854,6 +854,43 @@ describe("POST /api/tasks/auto-run", () => {
     });
   });
 
+  it("admits the exact nested chainBinding payload created by POST /api/tasks/create", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-CREATED",
+      title: "Run the created chain",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        chainBinding: {
+          chain_id: "release-review",
+          chain_name: "Release Review",
+          auto_run: true,
+        },
+      },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/api/chains/release-review")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Release Review", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) return Promise.resolve(taskRunResponse(init));
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-CREATED" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, taskId: "TASK-CREATED" });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/api/chains/release-review",
+      expect.any(Object),
+    );
+  });
+
   it("blocks and clears the provisional scope when chain launch is rejected", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-LAUNCH-FAIL",

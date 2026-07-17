@@ -4,7 +4,10 @@ import { parseDirectRunArgs, runTypedDirect } from "@/lib/runner-v2/direct-run";
 
 async function main(): Promise<void> {
   const result = await runTypedDirect(parseDirectRunArgs(process.argv.slice(2)));
-  if (result.launch.support !== "supported") throw new Error(result.launch.reason);
+  if (result.dryRun) {
+    console.log(JSON.stringify({ status: "validated", dryRun: true, chainName: result.chainName, agentId: result.agentId }));
+    return;
+  }
   console.log(JSON.stringify({ status: "launched", runId: result.runId, runDir: result.runDir, agentId: result.agentId, mode: result.launch.mode }));
 }
 

@@ -11,8 +11,8 @@ import type { MonitorState } from "@/lib/runner-v2/monitor-types";
 // temp dir. The LIVE-SYSTEM wrappers (PTY capture, pgrep process-gone arming,
 // completion-session spawn) are assembled on top of this in monitor-io-live.ts
 // and can only be proven by a real chain run — see monitor-v2.design.json
-// readiness_gate. Ports the state-file + event-scan + latch pieces of
-// lib/agent-functions.sh monitor-chain-agent / agent-completion-latched.
+// readiness_gate. It preserves the pre-cutover state-file, event-scan, and
+// latch invariants without using a shell monitor.
 
 export const MONITOR_STATE_DIR = join(homedir(), ".mentiko_monitor");
 
@@ -56,10 +56,10 @@ function readTextFile(path: string): string {
 }
 
 /**
- * Load the durable MonitorState from disk. Mirrors how monitor-chain-agent seeds
- * from ${session}_state / ${session}_stale / ${session}_nudges — and, crucially,
+ * Load the durable MonitorState from disk. It preserves the historical monitor's
+ * ${session}_state / ${session}_stale / ${session}_nudges semantics and, crucially,
  * survives a monitor restart (the durable nudge budget must not reset), which is
- * exactly the restart-idempotency the shell relies on.
+ * exactly the restart-idempotency the typed monitor requires.
  */
 export function loadMonitorState(session: string, dir: string = MONITOR_STATE_DIR): MonitorState {
   const p = monitorStatePaths(session, dir);
@@ -102,10 +102,9 @@ export function captureHash(capture: string, lines = 20): string {
 }
 
 /**
- * Find the completion event file for this run/agent in the events dir, mirroring
- * monitor_completion_event_file: an unprocessed event whose run id matches, whose
- * event NAME equals the agent's declared `emits` (shell monitor-completion.sh:44,61
- * -- caller must resolve this via readDeclaredEmits and pass it in), and whose
+ * Find the completion event file for this run/agent in the events dir: an
+ * unprocessed event whose run id matches, whose event NAME equals the agent's
+ * declared `emits` (the caller resolves this via readDeclaredEmits), and whose
  * source/agent EXACTLY identifies this agent -- agentOwnsEvent, never a
  * substring/prefix match, never a diagnostic monitor/watchdog event. Real events are
  * typically stamped with the session name (agentId + run suffix, e.g.

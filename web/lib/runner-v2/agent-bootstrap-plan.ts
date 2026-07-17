@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { basename, dirname, join } from "path";
+import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import config, { ptyDaemonEnv } from "@/lib/config";
 import { shellEscape } from "@/lib/api/audit-exec";
 import { runnerAgentStatePath } from "@/lib/runner-v2/agent-state";
@@ -91,6 +92,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const statePath = runnerAgentStatePath(stateDir, sessionPrefix, input.runId);
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
   const profile = resolveAgentProfile(input.chainPath, agent.id || "", projectRoot, input.env);
+  const gatewayEnv = resolveLocalAiGatewayProxyEnv(input.env);
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
     MENTIKO_BIN: join(config.codeRoot, "bin", "mentiko"),
@@ -105,6 +107,11 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
+    // Completion copies this typed launch context into routed launches. Keep a
+    // caller-supplied profile root so direct CLI runs preserve profile identity
+    // for every downstream agent instead of re-resolving against an unrelated
+    // process environment.
+    AGENT_PROFILES_DIR: input.env?.AGENT_PROFILES_DIR || config.agentProfilesDir,
     RUNS_DIR: input.env?.RUNS_DIR || dirname(input.runDir),
     // Completion resolves the run dir from this explicit typed launch context.
     MENTIKO_RUN_DIR: input.runDir,
@@ -115,6 +122,17 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_SESSION_TOKEN: input.env?.MENTIKO_SESSION_TOKEN || "",
     MENTIKO_WEB_URL: input.env?.MENTIKO_WEB_URL || "",
     KOLLABOR_ENGINE_URL: input.env?.KOLLABOR_ENGINE_URL || "",
+    TASK_ID: input.env?.TASK_ID || "",
+    TASK_TITLE: input.env?.TASK_TITLE || "",
+    TASK_DESCRIPTION: input.env?.TASK_DESCRIPTION || "",
+    TASK_TYPE: input.env?.TASK_TYPE || "",
+    TASK_PRIORITY: input.env?.TASK_PRIORITY || "",
+    TASK_ACCEPTANCE_CRITERIA: input.env?.TASK_ACCEPTANCE_CRITERIA || "",
+    TASK_DESIGN: input.env?.TASK_DESIGN || "",
+    TASK_NOTES: input.env?.TASK_NOTES || "",
+    TASK_COMMENTS: input.env?.TASK_COMMENTS || "",
+    TASK_CONTEXT: input.env?.TASK_CONTEXT || "",
+    ...gatewayEnv,
     ...ptyDaemonEnv(),
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
     MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
@@ -157,6 +175,24 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   };
 }
 
+/**
+ * The typed launch plan owns local AI-gateway propagation. This includes only
+ * the internal proxy request credential, never model-provider API keys. An
+ * already resolved request origin/token wins over a process-local default.
+ */
+function resolveLocalAiGatewayProxyEnv(env?: Record<string, string | undefined>): Record<string, string> {
+  const inherited = [
+    "MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED",
+    "MENTIKO_AI_GATEWAY_LOCAL_BASE_URL",
+    "MENTIKO_AI_GATEWAY_LOCAL_TOKEN",
+  ].reduce<Record<string, string>>((result, key) => {
+    const value = env?.[key];
+    if (typeof value === "string" && value) result[key] = value;
+    return result;
+  }, {});
+  return { ...buildLocalAiGatewayProxyEnv(env?.MENTIKO_WEB_URL), ...inherited };
+}
+
 export function readChain(path: string): BootstrapChainFile {
   return JSON.parse(readFileSync(path, "utf8")) as BootstrapChainFile;
 }
@@ -196,8 +232,14 @@ function resolveAgentProfile(
   projectRoot: string,
   env: Record<string, string | undefined> | undefined,
 ): ProfileResolution {
-  const orgRoot = env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT;
-  const profilesDir = env?.AGENT_PROFILES_DIR || (orgRoot ? join(orgRoot, "agent-profiles") : undefined);
+  const explicitOrgRoot = env?.MENTIKO_ORG_ROOT || env?.NAMESPACE_ROOT || env?.MENTIKO_NAMESPACE_ROOT;
+  const orgRoot = explicitOrgRoot || config.orgRoot;
+  // Direct typed CLI launches carry process.env, not a web-request context.
+  // They must therefore use config's canonical profile root when no explicit
+  // runtime root was supplied. Routed launches inherit the resolved profile
+  // path from this plan, so resolving it here preserves the same profile over
+  // the whole typed lifecycle.
+  const profilesDir = env?.AGENT_PROFILES_DIR || (explicitOrgRoot ? join(explicitOrgRoot, "agent-profiles") : config.agentProfilesDir);
   if (!profilesDir) return {};
   const profile = resolveTypedAgentProfile({ chainPath, agentId, projectRoot, profilesDir, orgRoot });
   return profile ? { id: profile.id, path: profile.path, readiness: profile.profile.readiness } : {};

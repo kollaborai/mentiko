@@ -185,8 +185,8 @@ bin/p remove SESSION_NAME`}
             <div className="bg-card rounded-md p-3">
               <div className="text-[11px] font-mono text-foreground/70 mb-1">session naming conflicts</div>
               <p className="text-xs text-foreground/60">
-                agent sessions use timestamp suffixes. if you run chains too fast, you might hit
-                collision issues. chain-runner.sh adds unique suffixes to prevent this.
+                typed run IDs include a random suffix and typed PTY names are scoped to the run.
+                A conflict is a launch failure to inspect, not a name that the shell retries or rewrites.
               </p>
             </div>
             <div className="bg-card rounded-md p-3">

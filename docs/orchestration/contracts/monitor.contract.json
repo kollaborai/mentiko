@@ -1,7 +1,7 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/agent-functions.sh", "lib/monitor-completion.sh", "web/lib/runner-v2/event-lifecycle.ts", "web/lib/runner-v2/event-lifecycle-cli.ts"],
-  "role": "monitor pty agent sessions, latch completion, classify stale/dead, and launch completion handler",
+  "source_files": ["web/lib/runner-v2/monitor.ts", "web/lib/runner-v2/monitor-live-io.ts", "web/lib/runner-v2/monitor-io.ts", "web/lib/runner-v2/monitor-cli.ts", "web/lib/runner-v2/manual-monitor-cli.ts"],
+  "role": "typed monitor PTY sessions, latch completion, classify stale/dead, and launch the typed completion handler. agent-functions.sh only forwards the separate manual-monitor command and has no chain-monitor ownership.",
   "completion_latch": {
     "rule": "OR latch explicit terminal marker or declared emits event",
     "terminal_marker": "AGENT_COMPLETE on its own stripped terminal line",
@@ -11,7 +11,7 @@
   "stale_behavior": {
     "detector": "md5 of last 20 captured lines unchanged",
     "advisor_threshold": "MENTIKO_ADVISOR_STALE_COUNT default 3",
-    "max_stale": "MENTIKO_MONITOR_MAX_STALE or DEFAULT_MAX_STALE_COUNT default 5",
+    "max_stale": "typed MONITOR_DEFAULTS max stale count, overridden by the typed CLI arguments",
     "effect": "advisor nudge, blocked diagnostic, or failure classification",
     "nudge_budget": "durable ceiling MENTIKO_MONITOR_MAX_NUDGES tracked in ${session}_nudges; survives screen-echo stale resets and monitor restarts; an exhausted budget escalates instead of nudging forever (20ce3b1)",
     "never": "stale output does not imply completion"
@@ -36,6 +36,13 @@
     "event match respects agent id and run id",
     "completion handler runs outside monitor pty",
     "screen-echo repaints never grant more nudges: the nudge budget is durable (20ce3b1)",
-    "exported-fn bodies avoid heredocs (export -f serialization hazard, 0c96b73)"
+    "no shell monitor, completion latch, lifecycle mutation, or diagnostic API remains in agent-functions.sh"
+  ],
+  "agent_session_checklist": [
+    "typed bootstrap or typed routed launch creates the agent session with an explicit run context",
+    "the typed monitor receives only allowlisted run context and observes the same namespaced PTY daemon",
+    "completion accepts only authoritative evidence; stale output or a dead process without a declared event is not success",
+    "actionable blocked runs retain their owned PTY; terminal cleanup removes monitor then agent and verifies both removals",
+    "missing typed monitor, completion, context validation, or PTY acceptance fails closed without a shell monitor or launcher"
   ]
 }

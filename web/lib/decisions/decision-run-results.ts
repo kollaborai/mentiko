@@ -10,6 +10,7 @@ import type {
   TradeoffQuestion,
 } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
+import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
 
 export type DecisionRunPhase =
   | "research"
@@ -142,10 +143,12 @@ export async function applyDecisionRunResult({
   }
 
   if (phase === "plan") {
+    const plan = validateExecutionPlan(parsed);
+    if (!plan.valid) throw new BadRequest(plan.error);
     guidedFlow.currentRound = 3;
     if (selectedOptionId) guidedFlow.round2.selectedOptionId = selectedOptionId;
     guidedFlow.round3.status = "ready";
-    guidedFlow.round3.plan = parsed as unknown as ExecutionPlan;
+    guidedFlow.round3.plan = plan.plan;
     guidedFlow.round3.generationJobId = undefined;
     if (runId) guidedFlow.round3.generationRunId = runId;
     return updateDecision(namespaceId, orgId, decisionId, { guidedFlow }, decisionWs);

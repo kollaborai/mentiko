@@ -20,10 +20,10 @@ export async function startRunnerV2Launch(context: RunnerV2LaunchContext): Promi
       reason: error instanceof Error ? error.message : "runner-v2 contract load failed",
     };
   }
-  if (contract.default_runner !== "shell") {
+  if (contract.default_runner !== "typed") {
     return {
       support: "unsupported",
-      reason: "contract changed default runner before parity gate",
+      reason: "contract does not declare the typed default runner",
     };
   }
 
@@ -78,10 +78,10 @@ export function getRunnerV2TypedExecutorSupport(): RunnerV2TypedExecutorSupport 
     };
   }
 
-  if (contract.default_runner !== "shell") {
+  if (contract.default_runner !== "typed") {
     return {
       support: "unsupported",
-      reason: "typed executor cannot run after default runner contract drift",
+      reason: "typed executor requires the typed default-runner contract",
     };
   }
 

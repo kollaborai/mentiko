@@ -14,9 +14,11 @@ import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
 import {
   locateTaskRun,
   parseTaskRunScope,
+  releaseTaskRunScopeForRetry,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 import type { RunRecord } from "@/lib/runs/run-record";
@@ -36,6 +38,16 @@ export type ReadyCheckResult = {
 const DONE_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 const COMPLETED_RUN_STATUSES = new Set(["completed", "complete"]);
 const ACTIVE_RUN_STATUSES = new Set(["running", "pending"]);
+const TERMINAL_RETRY_SOURCE_RUN_STATUSES = new Set([
+  "completed",
+  "complete",
+  "blocked",
+  "failed",
+  "stopped",
+  "deleted",
+  "unknown",
+  "cancelled",
+]);
 const TERMINAL_RUNNER_V2_ATTEMPT_PHASES = new Set(["completion_failed"]);
 const NON_EXECUTION_CHAIN_IDS = new Set([
   "run-summary-generation",
@@ -102,6 +114,44 @@ function activeRunFromRecord(run: RunRecord, runsDir: string): ActiveTaskRun | n
     chainId: run.chainId,
     started: run.started,
   };
+}
+
+/**
+ * Repair only the old retry half-state created before retries released their
+ * active task_run_scope. This must prove the exact persisted scoped record is
+ * task-owned, execution-provenanced, and terminal; malformed or live claims
+ * remain fail-closed at admission.
+ */
+function repairVerifiedRetryScope(
+  orgId: string,
+  task: TaskRecord,
+  metadata: Record<string, unknown>,
+  namespaceId?: string,
+): boolean {
+  if (
+    metadata.last_run_status !== "retry_requested"
+    || metadata.last_run_id !== undefined
+    || !(TASK_RUN_SCOPE_METADATA_KEY in metadata)
+  ) {
+    return false;
+  }
+
+  try {
+    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    if (scope.taskId !== task.id) return false;
+    const located = locateTaskRun(scope);
+    if (!TERMINAL_RETRY_SOURCE_RUN_STATUSES.has(located.run.status)) return false;
+
+    taskUpdate(orgId, task.id, {
+      metadata: releaseTaskRunScopeForRetry(metadata, {
+        taskId: task.id,
+        sourceRunId: scope.runId,
+      }),
+    }, namespaceId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -369,6 +419,9 @@ export function reconcileTaskActiveRun(
   const metadata = task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
     ? task.metadata as Record<string, unknown>
     : {};
+  if (repairVerifiedRetryScope(orgId, task, metadata, namespaceId)) {
+    return { activeRun: null, reconciled: true };
+  }
   const scoped = resolveScopedTaskRun(task.id, metadata);
   // A bad scoped claim must not be reconciled from a namespace snapshot. That
   // would silently overwrite the task's durable pointer with a different run.
@@ -524,9 +577,9 @@ export function canAdmitAutoRun(
     return { admit: false, reason: "decision tasks advance via the decision pipeline, not chains", action: "not_runnable" };
   }
 
-  const metadata = (task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
-    ? task.metadata
-    : {}) as Record<string, unknown>;
+  const metadata = task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+    ? normalizeTaskChainBindingMetadata(task.metadata as Record<string, unknown>)
+    : {};
 
   const explicitAutoRun = typeof metadata.auto_run === "boolean" ? metadata.auto_run : undefined;
   const autoRun = resolveAutoRunState({

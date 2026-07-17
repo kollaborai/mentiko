@@ -1,6 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   parseBatchRunRecord,
   readBatchChainResult,
@@ -9,6 +9,20 @@ import {
   resolveBatchPaths,
 } from "@/lib/runner-v2/batch-run-record";
 import { markBatchWorkerLaunchFailed, prepareBatch, requestBatchCancellation, runBatch } from "@/lib/runner-v2/batch-runner";
+
+function typedLaunch(
+  callback?: (input: { chainPath: string; goal: string; runId: string; runsDir: string }) => Promise<void> | void,
+) {
+  return async (input: { chainPath: string; goal: string; runId: string; runsDir: string }) => {
+    await callback?.(input);
+    return {
+      runId: input.runId,
+      runDir: join(input.runsDir, input.runId),
+      agentId: "typed-initial-agent",
+      launch: { support: "supported" as const, mode: "typed-plan" as const },
+    };
+  };
+}
 
 describe("typed batch run record", () => {
   let root: string;
@@ -26,22 +40,34 @@ describe("typed batch run record", () => {
     expect(() => resolveBatchPaths(join(root, "batches"), "../batch-escape")).toThrow("Invalid batch id");
   });
 
-  it("creates snapshots and records successful sequential results through TypeScript", async () => {
+  it("creates snapshots and records successful typed bootstrap acceptance", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs");
-    const runner = join(root, "chain-runner.sh");
-    writeFileSync(runner, "#!/usr/bin/env bash\necho batch-ok\n");
-    chmodSync(runner, 0o755);
+    let launchInput: { chainPath: string; goal: string; runId: string; runsDir: string } | undefined;
     const prepared = await prepareBatch({
       batchesDir,
       mode: "sequential",
       chains: [{ id: "first", goal: "ship it", chain: { name: "first", agents: [{ prompt: "{TASK}" }] } }],
     });
-    const completed = await runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env });
+    const completed = await runBatch({
+      batchesDir,
+      batchId: prepared.id,
+      runsDir,
+      launchDirectRun: typedLaunch((input) => { launchInput = input; }),
+    });
     expect(completed.status).toBe("complete");
     expect(completed.chains[0].run_id).toMatch(/^run-/);
+    expect(launchInput).toMatchObject({
+      chainPath: realpathSync(join(batchesDir, prepared.id, "first", "chain.json")),
+      goal: "ship it",
+      runId: completed.chains[0].run_id,
+      runsDir,
+    });
     expect(existsSync(join(batchesDir, prepared.id, "first", "pid"))).toBe(false);
-    expect(JSON.parse(readFileSync(join(batchesDir, prepared.id, "first", "result.json"), "utf8"))).toMatchObject({ status: "complete", output: "batch-ok\n" });
+    expect(JSON.parse(readFileSync(join(batchesDir, prepared.id, "first", "result.json"), "utf8"))).toMatchObject({
+      status: "complete",
+      output: expect.stringContaining('"status":"launched"'),
+    });
   });
 
   it("records cancellation without letting an API route signal arbitrary PIDs", async () => {
@@ -54,15 +80,16 @@ describe("typed batch run record", () => {
   it("atomically claims a chain so duplicate detached workers cannot launch it twice", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs");
-    const runner = join(root, "chain-runner.sh");
     const launches = join(root, "launches.log");
-    writeFileSync(runner, `#!/usr/bin/env bash\nprintf 'launch\\n' >> ${JSON.stringify(launches)}\nsleep 0.15\n`);
-    chmodSync(runner, 0o755);
     const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
+    const launchDirectRun = typedLaunch(async () => {
+      appendFileSync(launches, "launch\n");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
 
     await Promise.all([
-      runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env }),
-      runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env }),
+      runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun }),
+      runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun }),
     ]);
 
     expect(readFileSync(launches, "utf8").trim().split("\n")).toHaveLength(1);
@@ -75,17 +102,7 @@ describe("typed batch run record", () => {
   it("preserves sequential ordering when duplicate workers race", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs");
-    const runner = join(root, "chain-runner.sh");
     const launches = join(root, "sequential.log");
-    writeFileSync(runner, [
-      "#!/usr/bin/env bash",
-      "id=$(basename \"$(dirname \"$1\")\")",
-      `printf 'start:%s\\n' "$id" >> ${JSON.stringify(launches)}`,
-      "sleep 0.15",
-      `printf 'end:%s\\n' "$id" >> ${JSON.stringify(launches)}`,
-      "",
-    ].join("\n"));
-    chmodSync(runner, 0o755);
     const prepared = await prepareBatch({
       batchesDir,
       mode: "sequential",
@@ -94,10 +111,16 @@ describe("typed batch run record", () => {
         { id: "second", chain: { name: "second" } },
       ],
     });
+    const launchDirectRun = typedLaunch(async ({ chainPath }) => {
+      const id = basename(dirname(chainPath));
+      appendFileSync(launches, `start:${id}\n`);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      appendFileSync(launches, `end:${id}\n`);
+    });
 
     await Promise.all([
-      runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env }),
-      runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env }),
+      runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun }),
+      runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun }),
     ]);
 
     expect(readFileSync(launches, "utf8").trim().split("\n")).toEqual([
@@ -111,13 +134,11 @@ describe("typed batch run record", () => {
   it("does not resurrect a cancelled chain when cancellation races the worker claim", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs");
-    const runner = join(root, "chain-runner.sh");
-    writeFileSync(runner, "#!/usr/bin/env bash\nsleep 1\n");
-    chmodSync(runner, 0o755);
     const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
+    const launchDirectRun = typedLaunch(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
 
     await Promise.all([
-      runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env }),
+      runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun }),
       requestBatchCancellation(batchesDir, prepared.id),
     ]);
 
@@ -161,13 +182,17 @@ describe("typed batch run record", () => {
   it("durably fails a chain when its run record cannot be created", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs-file");
-    const runner = join(root, "chain-runner.sh");
     writeFileSync(runsDir, "not a directory");
-    writeFileSync(runner, "#!/usr/bin/env bash\necho should-not-run\n");
-    chmodSync(runner, 0o755);
     const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
 
-    const result = await runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env });
+    const result = await runBatch({
+      batchesDir,
+      batchId: prepared.id,
+      runsDir,
+      launchDirectRun: typedLaunch(({ runsDir: requestedRunsDir }) => {
+        if (!statSync(requestedRunsDir).isDirectory()) throw new Error("runs directory must be a directory");
+      }),
+    });
 
     expect(result).toMatchObject({
       status: "failed",
@@ -175,6 +200,25 @@ describe("typed batch run record", () => {
       chains: [{ id: "one", status: "failed" }],
     });
     expect(result.chains[0].status).not.toBe("running");
+  });
+
+  it("fails closed when an injected typed launcher reports dry-run instead of launch acceptance", async () => {
+    const batchesDir = join(root, "batches");
+    const runsDir = join(root, "runs");
+    const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
+
+    const result = await runBatch({
+      batchesDir,
+      batchId: prepared.id,
+      runsDir,
+      launchDirectRun: async () => ({ dryRun: true, chainName: "one", agentId: "typed-initial-agent" }),
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      status_message: expect.stringContaining("dry-run result"),
+      chains: [{ id: "one", status: "failed" }],
+    });
   });
 
   it("marks every pending chain failed if the detached worker cannot start", async () => {
@@ -190,15 +234,12 @@ describe("typed batch run record", () => {
   it("strictly reads persisted results for the API projection and rejects corrupted results", async () => {
     const batchesDir = join(root, "batches");
     const runsDir = join(root, "runs");
-    const runner = join(root, "chain-runner.sh");
-    writeFileSync(runner, "#!/usr/bin/env bash\necho batch-output\n");
-    chmodSync(runner, 0o755);
     const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
-    await runBatch({ batchesDir, batchId: prepared.id, runsDir, chainRunnerPath: runner, cwd: root, env: process.env });
+    await runBatch({ batchesDir, batchId: prepared.id, runsDir, launchDirectRun: typedLaunch() });
 
-    expect(readBatchChainResult(batchesDir, prepared.id, "one")).toMatchObject({ status: "complete", output: "batch-output\n" });
+    expect(readBatchChainResult(batchesDir, prepared.id, "one")).toMatchObject({ status: "complete", output: expect.stringContaining('"status":"launched"') });
     expect(readBatchRunRecordWithResults(batchesDir, prepared.id).chains).toMatchObject([
-      { id: "one", status: "complete", output: "batch-output\n", exit_code: 0 },
+      { id: "one", status: "complete", output: expect.stringContaining('"status":"launched"'), exit_code: 0 },
     ]);
 
     writeFileSync(join(batchesDir, prepared.id, "one", "result.json"), "{");

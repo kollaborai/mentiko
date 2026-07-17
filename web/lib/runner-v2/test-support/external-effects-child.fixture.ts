@@ -11,6 +11,15 @@ const artifactPath = process.env.EXTERNAL_EFFECTS_CHILD_ARTIFACT || "";
 const gatePath = process.env.EXTERNAL_EFFECTS_CHILD_GATE || "";
 const effectId = process.env.EXTERNAL_EFFECTS_CHILD_ID || "effect-child";
 
+async function waitForGate(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(gatePath)) {
+    if (process.ppid === 1) throw new Error("fixture parent exited before opening the gate");
+    if (Date.now() >= deadline) throw new Error(`fixture gate was not opened within ${timeoutMs}ms`);
+    await delay(5);
+  }
+}
+
 describe("external effects child fixture", () => {
   it("executes the requested child protocol", async () => {
     if (mode === "hold") {
@@ -22,7 +31,7 @@ describe("external effects child fixture", () => {
     }
     if (mode === "enqueue") {
       writeFileSync(artifactPath, "ready\n");
-      while (!existsSync(gatePath)) await delay(5);
+      await waitForGate(10_000);
       enqueueExternalEffectsOnce(outboxPath, [{
         idempotencyKey: effectId,
         operation: {

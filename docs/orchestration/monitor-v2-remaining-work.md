@@ -51,7 +51,7 @@ Committed this session:
 - [x] **Live chain run**: a TASK-093-shaped live watched run completed through typed monitor-v2 and typed completion; proof files: `/tmp/runner-v2-watched-monitor-v2-proof.json` and `/tmp/runner-v2-watched-monitor-v2-default-on-proof.json`.
 - [x] Live parity spot-checks: `MENTIKO_RUNNER_V2=1 MENTIKO_RUNNER_V2_COMPLETION=1 web/e2e/engine/engine-e2e-monitor.sh` passed 28/28: dead-without-event fails with monitor diagnostic, quiet-but-working completes without premature force, chatty/event-file latch completes after marker scroll, never-ready sessions receive no task/nudge, startup recovery completes, echo-stall escalates via durable nudge budget.
 - [x] **Typed-only launch boundary**: local and routed runner-v2 monitor commands have no opt-out or shell fallback.
-- [ ] **Retire separate legacy surface**: remove or migrate `monitor-chain-agent` helpers only after their non-runner-v2/manual callers are identified. They are not a runner-v2 fallback.
+- [x] **Retire separate legacy surface**: `lib/agent-functions.sh` no longer exports a shell monitor, latch, lifecycle, or diagnostic API. Production callers start compiled `lib/monitor-v2.js` (routed chains) or `lib/runner-v2-standalone-monitor.js` (standalone specs) directly.
 - [x] The last binding gap (`monitor-v2.contract.json` late-event recovery invariant) is red→covered: `recoverLateCompletionEvents` is wired through reconcile and route-level tests prove it runs before retry/audit handling.
 
 ### Reviewer's 10 required tests

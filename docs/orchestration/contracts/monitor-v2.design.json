@@ -1,5 +1,6 @@
 {
   "schema_version": "runner-contract/v1",
+  "historical_status": "Pre-cutover migration rationale. Current ownership is defined by monitor-v2.contract.json and runner-v2-contract.json; shell-monitor references below are historical, not active behavior.",
   "generated_at": "2026-07-07",
   "migration_mode": "side-by-side",
   "replaces": "the shell CHAIN agent monitor path for runner-v2 launches. The separate profile-aware manual CLI is also typed in manual-monitor-cli.ts; neither path has a shell fallback.",
@@ -11,7 +12,7 @@
   },
   "entrypoints": {
     "spawn": {
-      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts buildMonitorCommand and lib/chain-runner.sh routed scripts execute compiled lib/monitor-v2.js with the exact session argv and explicit run context.",
+      "current": "web/lib/runner-v2/agent-bootstrap-plan.ts and typed routed launch execute compiled lib/monitor-v2.js with the exact session argv and explicit run context. chain-runner.sh is only a direct-run compatibility exec filename.",
       "v2": "Compiled monitor-v2 is the sole runner-v2 monitor command; PTY spawn, env carry, and singleton semantics remain explicit.",
       "fallback": "none. Missing bundle, invalid context, unsupported input, or a non-zero typed monitor exit fails closed."
     },

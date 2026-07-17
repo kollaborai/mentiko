@@ -157,7 +157,7 @@ describe("monitor-io — verifiable adapter core", () => {
 
   describe("cross-run completion recovery", () => {
     describe("findAgentCompletionEventAnyRun", () => {
-      it("matches the agent's declared emit event under a DIFFERENT run (ignores run_id)", () => {
+      it("matches the agent's declared emit event under a DIFFERENT run when the chain supplies its identity set", () => {
         const dir = tempDir();
         seedEvent(dir, "run-271-decision-researcher-decision-research-complete.event", {
           event: "decision-research-complete",
@@ -166,8 +166,29 @@ describe("monitor-io — verifiable adapter core", () => {
           processed: "false",
         });
         expect(
-          findAgentCompletionEventAnyRun({ eventsDir: dir, agentId: "decision-researcher", emitsEvent: "decision-research-complete" }),
+          findAgentCompletionEventAnyRun({
+            eventsDir: dir,
+            agentId: "decision-researcher",
+            emitsEvent: "decision-research-complete",
+            allAgentIds: ["decision-researcher", "decision-synthesizer"],
+          }),
         ).toBe("run-271-decision-researcher-decision-research-complete.event");
+      });
+
+      it("fails closed for a session-shaped cross-run source when the chain identity set is unavailable", () => {
+        const dir = tempDir();
+        seedEvent(dir, "run-271-decision-researcher-decision-research-complete.event", {
+          event: "decision-research-complete",
+          source: "decision-researcher-run-271",
+          run_id: "run-271",
+          processed: "false",
+        });
+
+        expect(findAgentCompletionEventAnyRun({
+          eventsDir: dir,
+          agentId: "decision-researcher",
+          emitsEvent: "decision-research-complete",
+        })).toBe("");
       });
 
       it("rejects an event whose name is not the declared emit (same agent, wrong event)", () => {

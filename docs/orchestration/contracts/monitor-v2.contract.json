@@ -8,7 +8,7 @@
     "web/lib/runner-v2/agent-transcript.ts",
     "web/lib/runner-v2/pty-scope.ts"
   ],
-  "role": "typed chain monitor decision core (ports lib/agent-functions.sh monitor-chain-agent): watch the agent, latch completion, classify stale/dead, and gate the completion handoff on a genuine done signal. Design rationale + migration plan live in monitor-v2.design.json; this file is the enforceable owns/invariants bound by the switch-readiness gate.",
+  "role": "typed chain monitor decision core: watch the agent, latch completion, classify stale/dead, and gate the completion handoff on a genuine done signal. agent-functions.sh has no chain-monitor ownership. Design rationale + migration plan live in monitor-v2.design.json; this file is the enforceable owns/invariants bound by the switch-readiness gate.",
   "owns": [
     "the typed chain monitor poll-loop decision (classifyMonitorTick) and its action set",
     "the authoritative completion evidence decision (declared event OR durable AGENT_COMPLETE marker OR compatible core-generation artifact)",

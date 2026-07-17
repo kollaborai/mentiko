@@ -6,7 +6,7 @@
 // event-first death) is unit-testable without a live PTY. I/O (capture, send,
 // completion handoff) is the driver's job (monitor.ts).
 
-// Defaults mirror the shell monitor's env-configurable knobs.
+// Defaults preserve the pre-cutover monitor's env-configurable knobs.
 export const MONITOR_DEFAULTS = {
   checkIntervalSec: 5, //                      arg 2 default
   maxStaleCount: 5, //     DEFAULT_MAX_STALE_COUNT / arg 5 default

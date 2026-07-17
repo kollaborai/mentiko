@@ -48,8 +48,8 @@ const ALLOWED_KEYS = [
   // from an explicit agent profile, never inherited from the server process.
   "CLAUDE_CONFIG_DIR",
 
-  // startup readiness + bounded recovery toggles. The engine (chain-runner.sh)
-  // reads these; forwarding them lets a deployment turn fail-closed readiness on
+  // startup readiness + bounded recovery toggles. Typed bootstrap reads these;
+  // forwarding them lets a deployment turn fail-closed readiness on
   // via env (e.g. web/.env.local or the tenant container) without code changes.
   "MENTIKO_READINESS_FAIL_CLOSED",
   "MENTIKO_STARTUP_RECOVERY",
