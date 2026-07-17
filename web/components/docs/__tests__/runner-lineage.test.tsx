@@ -8,7 +8,7 @@ describe("RunnerLineageLegend", () => {
     expect(screen.getByRole("heading", { name: "Runner Lineage" })).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(5);
     expect(screen.getByText("Runner v2")).toBeInTheDocument();
-    expect(screen.getByText("Both")).toBeInTheDocument();
+    expect(screen.getByText("Mixed owners")).toBeInTheDocument();
     expect(screen.getByText("Legacy shell")).toBeInTheDocument();
     expect(screen.getByText("Typed %")).toBeInTheDocument();
     expect(screen.getByText("Shell execution")).toBeInTheDocument();

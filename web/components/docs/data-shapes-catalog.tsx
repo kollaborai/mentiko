@@ -44,7 +44,7 @@ const ASSURANCE_COPY = ASSURANCE_MEANING;
 
 const RUNNER_USAGE_LABEL: Record<RunnerContractUsage, string> = {
   "runner-v2": "Runner v2",
-  shared: "Both",
+  shared: "Mixed owners",
   "legacy-shell": "Legacy shell",
 };
 

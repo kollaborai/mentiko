@@ -880,7 +880,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     },
   },
   "pty-daemon-session-projection": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-pty-transport-owner",

@@ -53,8 +53,6 @@ describe("data shape catalog", () => {
   });
 
   it("maps every direct runner source to explicit, internally consistent lineage", () => {
-    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|config|error-handling|routing-lib|run-lib|retry-utils)\.sh$/;
-
     for (const shape of DATA_SHAPE_CATALOG) {
       const provenance = [
         ...(shape.typePaths ?? []),
@@ -63,13 +61,12 @@ describe("data shape catalog", () => {
         ...shape.readers,
       ];
       const hasTypedRunner = provenance.some((path) => path.startsWith("web/lib/runner-v2/"));
-      const hasShellRunner = provenance.some((path) => runnerShellPath.test(path));
       const hasLegacyShellExecution = shape.runnerLineage?.surfaces.some((surface) => surface.owner === "legacy-shell") ?? false;
-      if (!hasTypedRunner && !hasShellRunner && !hasLegacyShellExecution) continue;
+      if (!hasTypedRunner && !hasLegacyShellExecution) continue;
 
       expect(shape.runnerLineage).toBeDefined();
       expect(shape.runnerLineage?.usage).toBe(
-        hasTypedRunner && (hasShellRunner || hasLegacyShellExecution)
+        hasTypedRunner && hasLegacyShellExecution
           ? "shared"
           : hasTypedRunner
             ? "runner-v2"
@@ -192,7 +189,7 @@ describe("data shape catalog", () => {
       readers: ["web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
     });
     expect(shape?.notes?.join(" ")).toMatch(/does not independently derive/i);
-    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
     expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "typed-pty-transport-owner" }),
       expect.objectContaining({ id: "typed-pty-command-boundary" }),
