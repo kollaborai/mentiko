@@ -480,7 +480,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     sensitive: true,
     notes: [
       "The typed owner separates raw HTTP JSON/envelope validation from normalized task and comment records, builds TASK_CONTEXT, and writes a 0600 atomic shell-safe handoff.",
-      "lib/chain-runner.sh only invokes lib/runner-task-context.js and sources the generated handoff; it does not parse task JSON or provide a shell fallback.",
+      "Typed direct and existing-run launch load this context through task-context.ts before bootstrap. Any compatibility CLI boundary invokes the compiled owner; no shell runner parses task JSON, sources this handoff, or provides a fallback.",
     ],
   }),
   shape({
@@ -920,7 +920,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     samples: { root: "project", patterns: [["runs", "*", "artifacts", "*.json"]], format: "json" },
     notes: [
       "Known JSON handoffs coexist with arbitrary code and prose. The catalog observes JSON shapes but does not imply a closed artifact contract.",
-      "The typed completion-contract owner constructs summary requirements and pre-emit JSON.parse checks for typed bootstrap and the remaining shell launch boundary. lib/chain-runner.sh only forwards primitive launch context to its compiled CLI; it does not construct artifact or event handoff instructions.",
+      "The typed completion-contract owner constructs summary requirements and pre-emit JSON.parse checks for typed bootstrap, routed launch, and standalone launch. No shell runner constructs artifact or event handoff instructions.",
       "If a required *-summary.json artifact exists but cannot be parsed, typed completion fails instead of silently routing the completion event.",
       "The open format is the directory's, not every file in it. Startup recovery writes three typed files here ({agentId}-startup-capture.txt, -startup-readiness.json, -startup-recovery-decisions.jsonl); the decision log carries its own closed contract and is cataloged as startup-recovery-decision-log.",
     ],
@@ -943,7 +943,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "A decision is auto-applied only when it validates AND risk is low AND confidence is at least 0.85 AND the action is send_keys or retry_launch; every other decision is recorded and not applied. The log is therefore the only durable record of unattended keystroke injection.",
       "Records are appended at mode 0600 and the path is rejected if it is a symlink, because the log quotes terminal capture that can carry credentials the agent printed.",
-      "lib/chain-runner.sh only passes --artifact-dir {runRoot}/{runId}/artifacts; it never parses, filters, or writes a decision.",
+      "Typed readiness receives the run artifact directory through its bootstrap plan; no shell runner parses, filters, writes, or forwards a recovery decision.",
       "The advisor prompt embeds the untrusted terminal capture, so a capture can attempt to influence the returned action. The auto-apply gate, not the prompt, is the boundary that keeps a manipulated decision from being applied.",
     ],
   }),
@@ -1853,7 +1853,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "Shell reaches this shape through the typed CLI compiled to lib/runner-system-log.js; lib/run-lib.sh's _sys_log forwards primitive arguments and builds no payload.",
       "Both doors -- the HTTP route and the CLI -- normalize through normalizeSystemLogSubmission, so an unrecognized level is rejected at the boundary instead of being cast onto the record.",
-      "Writing is best-effort by contract: chain-runner.sh logs from its ERR trap, so a rejected or undeliverable entry must never mask the failure being reported.",
+      "Writing is best-effort by contract: typed lifecycle callers must never let a rejected or undeliverable entry mask the failure being reported. The compatibility chain-runner filename has no ERR trap or lifecycle logging ownership.",
     ],
   }),
   shape({

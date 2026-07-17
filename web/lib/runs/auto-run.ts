@@ -14,7 +14,6 @@ import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
-import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
 import {
   locateTaskRun,
   parseTaskRunScope,
@@ -577,9 +576,9 @@ export function canAdmitAutoRun(
     return { admit: false, reason: "decision tasks advance via the decision pipeline, not chains", action: "not_runnable" };
   }
 
-  const metadata = task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
-    ? normalizeTaskChainBindingMetadata(task.metadata as Record<string, unknown>)
-    : {};
+  const metadata = (task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+    ? task.metadata
+    : {}) as Record<string, unknown>;
 
   const explicitAutoRun = typeof metadata.auto_run === "boolean" ? metadata.auto_run : undefined;
   const autoRun = resolveAutoRunState({

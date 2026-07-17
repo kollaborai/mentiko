@@ -420,10 +420,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/tasks/task-run-locator.ts", "web/app/api/chains/run/route.ts", "web/lib/runs/chain-run-service.ts"],
       },
       {
-        id: "shell-run-command-boundary",
-        label: "Shell command clients forward primitive arguments to the typed Run Record CLI, including summary operations",
+        id: "typed-run-command-boundary",
+        label: "Typed run services invoke the Run Record CLI where a compiled process boundary is required, including summary operations",
         owner: "runner-v2",
-        paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/run-record-cli.ts"],
       },
     ],
   },
@@ -678,10 +678,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/runspace-manifest.ts", "web/lib/runner-v2/runspace-manifest-cli.ts"],
       },
       {
-        id: "shell-runspace-command-boundary",
-        label: "Invoke the typed manifest owner during chain launch",
+        id: "typed-runspace-command-boundary",
+        label: "Typed bootstrap invokes the typed manifest owner during chain launch",
         owner: "runner-v2",
-        paths: ["lib/runspace-manifest-client.sh", "lib/chain-runner.sh"],
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/runspace-manifest-cli.ts"],
       },
     ],
     legacyEquivalent: {
@@ -699,10 +699,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/activity-capture.ts", "web/lib/runner-v2/activity-capture-cli.ts"],
       },
       {
-        id: "shell-local-activity-start-invocation",
-        label: "Forward local start identity and roots to the typed activity-start owner before CLI startup",
+        id: "typed-local-activity-start",
+        label: "Typed bootstrap publishes local start identity and roots to the typed activity-start owner before CLI startup",
         owner: "runner-v2",
-        paths: ["lib/chain-runner.sh", "web/lib/runner-v2/activity-capture-cli.ts"],
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/activity-capture-cli.ts"],
       },
       {
         id: "typed-agent-activity-provenance",
@@ -815,8 +815,8 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "Replaces chain-runner.sh curl/jq/sed task and comment parsing; the shell caller only invokes the compiled typed handoff writer.",
-      paths: ["lib/chain-runner.sh", "lib/runner-task-context.js"],
+      summary: "Replaces the pre-cutover chain-runner curl/jq/sed task and comment parsing. Current typed direct and existing-run launch resolve the typed handoff without a shell runner.",
+      paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/task-context.ts"],
     },
   },
   "runtime-profiler": {
@@ -889,10 +889,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/config.ts", "web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
       },
       {
-        id: "shell-pty-command-boundary",
-        label: "Forward primitive transport operations and invoke only the required external PTY CLI actions",
+        id: "typed-pty-command-boundary",
+        label: "Typed launch invokes only required external PTY CLI actions through the typed transport client",
         owner: "runner-v2",
-        paths: ["lib/session-transport.sh", "lib/agent-functions.sh", "lib/chain-runner.sh"],
+        paths: ["web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
       },
     ],
     legacyEquivalent: {
@@ -990,10 +990,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-contract-cli.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
       },
       {
-        id: "shell-completion-contract-invocation",
-        label: "Forward primitive launch context to the typed completion-contract CLI",
+        id: "typed-completion-contract-invocation",
+        label: "Typed bootstrap and completion invoke the typed completion-contract CLI",
         owner: "runner-v2",
-        paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-contract-cli.ts"],
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
@@ -1240,7 +1240,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "shell-circuit-command-boundary",
         label: "Shell forwards retry policy and circuit operations as primitive TypeScript CLI arguments",
         owner: "runner-v2",
-        paths: ["lib/retry-utils.sh", "lib/chain-runner.sh"],
+        paths: ["lib/retry-utils.sh"],
       },
     ],
     legacyEquivalent: {
