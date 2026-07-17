@@ -301,8 +301,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/runs/[id]/stop/route.ts",
       "web/app/api/agents/resume/route.ts",
       "web/app/api/system/stop-all/route.ts",
-      "web/lib/runs/gdpr-user-sweep.ts",
       "web/app/api/mentiko-mcp/ops/context/runs/cancel/route.ts",
+      "web/lib/runs/gdpr-user-sweep.ts",
     ],
     readers: [
       "web/lib/runs/run-record.ts",
@@ -449,6 +449,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/chains/run/route.ts",
       "web/lib/runner-v2/run-task-sync.ts",
       "web/app/api/tasks/reconcile/route.ts",
+      "web/lib/decisions/legacy-decision-plan-recovery.ts",
+      "web/app/api/tasks/decision-plan-recovery/route.ts",
     ],
     readers: [
       "web/lib/tasks/task-store.ts",
@@ -457,6 +459,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/tasks/run-outcome-evidence.ts",
       "web/lib/runs/auto-run.ts",
       "web/app/api/tasks/reconcile/route.ts",
+      "web/lib/decisions/legacy-decision-plan-recovery.ts",
+      "web/app/api/tasks/decision-plan-recovery/route.ts",
       "web/app/api/code/tasks-db/route.ts",
     ],
     samples: { root: "namespace", patterns: [["data", "tasks.db"]], format: "sqlite" },
@@ -464,6 +468,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "metadata.task_run_scope is the typed v1 active task-to-run claim: { version: 1, taskId, runId, namespaceId, orgId }. Manual task launch and auto-run persist the claim before dispatch; the chain-run route records the same immutable scope in run.json metadata. A terminal retry clears task_run_scope and retains retry_source_run_id plus retry_source_task_run_scope only for the verified source execution.",
       "Typed task attempts, outcome evidence, reconciliation, and auto-run resolve a scoped claim only through task-run-locator. It resolves the declared namespace/org root directly, then verifies run id, task id, and execution provenance. A malformed, missing, or mismatched scoped claim fails closed; it never permits alternate-root scanning or fallback lookup.",
       "Tasks created before task_run_scope retain their existing single request/config-resolved root read. That legacy unscoped behavior is not a fallback for a task that already has a scope claim.",
+      "Quarantined legacy decision-plan tasks are repaired only when their own persisted Decision Record now validates the v1 deliverable, verification, and acceptance contract for the recorded decision_plan_task_id. The typed recovery endpoint is dry-run by default; an explicit confirmation either copies that contract and clears the pause or records a visible regeneration-required blocker. It never invents acceptance evidence from task titles, descriptions, or subtasks.",
     ],
   }),
   shape({
