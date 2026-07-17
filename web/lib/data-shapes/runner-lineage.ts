@@ -858,21 +858,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [{ id: "typed-legacy-metrics", label: "Validate and atomically mutate counters, gauges, timers, active timers, and webhook aggregates", owner: "runner-v2", paths: ["web/lib/runner-v2/legacy-metrics.ts", "web/lib/runner-v2/legacy-metrics-cli.ts", "web/app/api/metrics/route.ts"] }, { id: "shell-metric-command-boundary", label: "Shell forwards primitive metric operations only", owner: "runner-v2", paths: ["lib/metrics.sh"] }],
     legacyEquivalent: { summary: "Replaces shell jq metric parsing, file initialization, lock ownership, and JSON mutation with a compiled typed metrics owner.", paths: ["lib/metrics.sh"] },
   },
-  "parallel-group-state": {
-    usage: "runner-v2",
-    surfaces: [
-      {
-        id: "typed-parallel-group-contract",
-        label: "Validate and mutate parallel group lifecycle records",
-        owner: "runner-v2",
-        paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
-      },
-    ],
-    legacyEquivalent: {
-      summary: "Replaces the retired direct --parallel shell mode. Independent chains use typed batch launch and declared branches use typed fan-out routing.",
-      paths: ["web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/routing.ts"],
-    },
-  },
   "session-policy-ledger": {
     usage: "runner-v2",
     surfaces: [

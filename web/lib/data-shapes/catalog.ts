@@ -1872,15 +1872,6 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     sensitive: true,
   }),
   shape({
-    id: "parallel-group-state",
-    name: "Parallel Group State",
-    category: "runner",
-    description: "Typed lifecycle, PIDs, and completion outcomes for parallel agent groups.",
-    scope: "project", format: "json", storage: ["{projectRoot}/state/parallel/parallel-{groupId}.json"], assurance: "typed",
-    typePaths: ["web/lib/runner-v2/parallel-contract.ts"], validatorPaths: ["web/lib/runner-v2/parallel-contract.ts"], writers: ["web/lib/runner-v2/parallel-contract.ts"], readers: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
-    samples: { root: "project", patterns: [["state","parallel","*.json"]], format: "json" }, notes: ["The remaining legacy chain-runner path invokes the typed group contract; only its external agent process launch and wait remain shell boundaries."],
-  }),
-  shape({
     id: "legacy-metrics-state",
     name: "Legacy Metrics State",
     category: "runner",

@@ -114,19 +114,12 @@ describe("data shape catalog", () => {
     expect(queue).toEqual([]);
   });
 
-  it("records parallel-group state as typed after the direct shell parallel mode is retired", () => {
-    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "parallel-group-state");
+  it("has no documented live shell lifecycle owner after parallel retirement", () => {
+    const queue = DATA_SHAPE_CATALOG
+      .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
+      .filter((shape) => shape.shell.length > 0);
 
-    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
-    expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
-      typed: 1,
-      legacy: 0,
-      total: 1,
-      typedPercent: 100,
-      state: "typed",
-    });
-    expect(dataShapeDirectShellContractSources(shape!)).toEqual([]);
-    expect(dataShapeShellSources(shape!)).toEqual([]);
+    expect(queue).toEqual([]);
   });
 
   it("documents task-specific validation for the shared core generation handoff filename", () => {
