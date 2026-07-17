@@ -101,6 +101,20 @@ function maskWebhookUrl(url: string): string {
   }
 }
 
+const DETAIL_MAX_CHARS = 240;
+
+/**
+ * Run status_messages sometimes embed whole upstream response bodies (HTML
+ * error pages included). The digest is read by an LLM and rendered in the UI —
+ * clamp every free-text detail to one readable line.
+ */
+function clampDetail(detail: string): string {
+  const flattened = detail.replace(/\s+/g, " ").trim();
+  return flattened.length > DETAIL_MAX_CHARS
+    ? `${flattened.slice(0, DETAIL_MAX_CHARS)}… [truncated]`
+    : flattened;
+}
+
 function runTimestamp(meta: Record<string, unknown>): string | undefined {
   for (const key of ["updatedAt", "completed", "blockedAt", "resumedAt", "startedAt", "started"]) {
     const value = meta[key];
@@ -157,13 +171,13 @@ function scanRuns(now: number): MonitorStatusDigest["runs"] {
 
     const statusMessage = typeof meta.status_message === "string" ? meta.status_message : "";
     if (statusMessage.startsWith("reaped:") && isRecent(at, now) && result.recentlyReaped.length < 5) {
-      result.recentlyReaped.push({ ...snapshot, detail: statusMessage });
+      result.recentlyReaped.push({ ...snapshot, detail: clampDetail(statusMessage) });
       continue;
     }
     if ((status === "failed" || status === "stopped") && isRecent(at, now) && result.recentFailures.length < 5) {
       result.recentFailures.push({
         ...snapshot,
-        ...(statusMessage ? { detail: statusMessage } : {}),
+        ...(statusMessage ? { detail: clampDetail(statusMessage) } : {}),
       });
     }
   }
@@ -232,7 +246,7 @@ function collectAutoFixes(
   }
   for (const entry of logs) {
     if (entry.source === "task-reconciler" && fixes.length < 12) {
-      fixes.push({ kind: "reconciler", detail: entry.message, at: entry.ts });
+      fixes.push({ kind: "reconciler", detail: clampDetail(entry.message), at: entry.ts });
     }
   }
   if (lastReconcileCleaned && lastReconcileCleaned > 0) {
@@ -291,7 +305,7 @@ export async function buildMonitorStatusDigest(
   const errorsRecent = logs
     .filter((l) => (l.level === "error" || l.level === "warn") && isRecent(l.ts, now))
     .slice(0, 8)
-    .map((l) => ({ ts: l.ts, level: l.level, source: l.source, message: l.message }));
+    .map((l) => ({ ts: l.ts, level: l.level, source: l.source, message: clampDetail(l.message) }));
 
   const attention: MonitorAttentionItem[] = [];
   for (const key of failing) {

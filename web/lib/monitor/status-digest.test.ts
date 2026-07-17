@@ -155,6 +155,24 @@ describe("buildMonitorStatusDigest", () => {
     ]);
   });
 
+  it("clamps embedded error-page blobs in run details to one readable line", async () => {
+    const { buildMonitorStatusDigest, runsDir } = await setup();
+    const htmlBlob = `generation import failed: 500 <!DOCTYPE html><html>${"x".repeat(5000)}</html>`;
+    writeRun(runsDir, "run-blob", {
+      id: "run-blob",
+      chain: "summary",
+      status: "failed",
+      updatedAt: new Date().toISOString(),
+      status_message: htmlBlob,
+    });
+    const digest = await buildMonitorStatusDigest("digest-test", "default");
+
+    const detail = digest.runs.recentFailures[0].detail!;
+    expect(detail.length).toBeLessThan(300);
+    expect(detail).toContain("… [truncated]");
+    expect(detail).toContain("generation import failed: 500");
+  });
+
   it("classifies reaped runs as self-heals, not failures", async () => {
     const { buildMonitorStatusDigest, runsDir } = await setup();
     writeRun(runsDir, "run-reaped", {
