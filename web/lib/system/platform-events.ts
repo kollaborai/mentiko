@@ -78,7 +78,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "chain.started",
     domain: "chain",
     description: "A chain execution has begun. Fired before the first agent starts.",
-    emitters: ["chain-runner.sh", "chains/run API"],
+    emitters: ["web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/direct-run.ts"],
     consumers: ["plugins", "outbound webhooks", "notifications", "metrics"],
     payload: [
       { name: "chainId", type: "string", description: "Chain identifier" },
@@ -163,7 +163,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "agent.started",
     domain: "agent",
     description: "An agent has begun executing within a chain run.",
-    emitters: ["launch-agent.sh", "chain-runner.sh"],
+    emitters: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/launch-agent.ts"],
     consumers: ["plugins", "metrics", "run detail UI"],
     payload: [
       { name: "agentId", type: "string", description: "Agent identifier" },
@@ -237,7 +237,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "run.completed",
     domain: "run",
     description: "A run record has been marked as completed in the database.",
-    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "run-lib.sh"],
+    emitters: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/run-state.ts"],
     consumers: ["run list UI", "task sync", "metrics"],
     payload: [
       { name: "runId", type: "string", description: "Unique run identifier" },
@@ -252,7 +252,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     domain: "run",
     description: "A run was explicitly stopped via the API or UI.",
     emitters: ["runs/[id] API"],
-    consumers: ["chain-runner.sh (SIGTERM)", "run list UI"],
+    consumers: ["typed run-stop service", "run list UI"],
     payload: [
       { name: "runId", type: "string", description: "Unique run identifier" },
       { name: "stoppedBy", type: "string?", description: "User or system that stopped it" },
@@ -265,8 +265,8 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "schedule.triggered",
     domain: "schedule",
     description: "A scheduled chain run was triggered by the scheduler daemon.",
-    emitters: ["scheduler.sh"],
-    consumers: ["chain-runner.sh", "activity feed", "metrics"],
+    emitters: ["web/lib/schedules/scheduler-service.ts"],
+    consumers: ["typed direct/batch launch", "activity feed", "metrics"],
     payload: [
       { name: "scheduleId", type: "string", description: "Schedule identifier" },
       { name: "chainId", type: "string", description: "Chain being triggered" },
@@ -279,7 +279,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "schedule.missed",
     domain: "schedule",
     description: "A scheduled trigger was missed (e.g., system was down during the trigger window).",
-    emitters: ["scheduler.sh"],
+    emitters: ["web/lib/schedules/scheduler-service.ts"],
     consumers: ["notifications", "metrics"],
     payload: [
       { name: "scheduleId", type: "string", description: "Schedule identifier" },
@@ -294,7 +294,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     domain: "webhook",
     description: "An inbound webhook payload was received and validated.",
     emitters: ["webhooks/[id]/receive API"],
-    consumers: ["chain-runner.sh (via event file)", "event triggers", "metrics"],
+    consumers: ["typed chain watcher (via event file)", "event triggers", "metrics"],
     payload: [
       { name: "webhookId", type: "string", description: "Subscription identifier" },
       { name: "source", type: "string", description: "Sender: github | gitlab | slack | custom" },
@@ -307,7 +307,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "webhook.sent",
     domain: "webhook",
     description: "An outbound webhook was dispatched to an external endpoint.",
-    emitters: ["webhook-sender.sh", "chain-runner.sh"],
+    emitters: ["typed external-effects dispatcher", "typed completion adapters"],
     consumers: ["metrics", "webhook logs UI"],
     payload: [
       { name: "url", type: "string", description: "Target URL" },
@@ -336,7 +336,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "task.created",
     domain: "task",
     description: "A new task was created in the task store.",
-    emitters: ["tasks API", "chain runner"],
+    emitters: ["tasks API", "typed completion/task reconciliation"],
     consumers: ["task list UI", "chain binding"],
     payload: [
       { name: "taskId", type: "string", description: "Task identifier" },
@@ -349,7 +349,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "task.updated",
     domain: "task",
     description: "A task's status, assignee, or fields were changed.",
-    emitters: ["tasks API", "chain runner"],
+    emitters: ["tasks API", "typed completion/task reconciliation"],
     consumers: ["task list UI"],
     payload: [
       { name: "taskId", type: "string", description: "Task identifier" },
@@ -361,7 +361,7 @@ export const PLATFORM_EVENTS: PlatformEventDefinition[] = [
     name: "task.completed",
     domain: "task",
     description: "A task was marked as completed.",
-    emitters: ["tasks API", "chain runner"],
+    emitters: ["tasks API", "typed completion/task reconciliation"],
     consumers: ["task list UI", "notifications"],
     payload: [
       { name: "taskId", type: "string", description: "Task identifier" },
@@ -401,7 +401,7 @@ export function getEventDomains(): PlatformEventDomain[] {
   return [...new Set(PLATFORM_EVENTS.map((e) => e.domain))];
 }
 
-/** Map old underscore event names (from chain-runner) to canonical dot names */
+/** Map historical underscore event names to canonical dot names. */
 export const EVENT_NAME_ALIASES: Record<string, PlatformEventName> = {
   "chain-started": "chain.started",
   "chain-completed": "chain.completed",

@@ -13,5 +13,6 @@ const chainRunner = readFileSync(join(import.meta.dirname, "..", "lib", "chain-r
 for (const pattern of [/\.tracking\b/, /\bmkdir\b[^\n]*parallel/, /echo\s+['\"]status:\s+running/]) {
   if (pattern.test(chainRunner)) throw new Error(`chain-runner still owns parallel tracking state: ${pattern}`);
 }
-if (!chainRunner.includes("runner-parallel-contract.js")) throw new Error("chain-runner must invoke the typed parallel contract");
-console.log("PASS: chain-runner delegates parallel state to the typed contract");
+if (!chainRunner.includes("runner-v2-direct-run.js")) throw new Error("chain-runner must exec the typed direct runner");
+if (chainRunner.includes("parallel")) throw new Error("chain-runner must not retain a parallel execution branch");
+console.log("PASS: chain-runner has no parallel ownership and only execs typed direct run");

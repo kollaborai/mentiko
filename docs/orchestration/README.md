@@ -150,18 +150,18 @@ execution layer
   called by: monitor session when AGENT_COMPLETE detected.
 
 [agent-functions.md](./agent-functions.md)
-  function library for PTY session management. sourced by
-  chain-runner.sh and other tools.
+  thin shell boundary for direct external PTY transport plus typed standalone
+  and manual-monitor invocation. It is not sourced by the typed chain runner.
 
   key functions:
-    - new-agent-session        create PTY + launch agent
-    - monitor-chain-agent      watch for AGENT_COMPLETE
-    - monitor-with-ai          legacy monitor (grep-based)
+    - new_pty_session          direct external PTY creation
     - send-message             interactive agent communication
     - peek-session             view session output
+    - new-agent-from-spec      typed standalone-launch forwarding boundary
+    - mentiko-monitor          typed manual-monitor forwarding boundary
 
-  monitor diagnostics delegate canonical runner-event bytes and filenames to
-  the typed event emitter. they never manufacture a missing success handoff.
+  There is no generic shell agent launcher or shell monitor. Typed launch and
+  monitor owners validate lifecycle input and fail closed before touching PTYs.
 
 background service layer
 ------------------------
@@ -309,7 +309,7 @@ data flow
      -> gates readiness before instruction submission
      -> starts the typed monitor with the allowlisted run context
      -> creates monitor session (monitor-{session-name})
-     -> monitor runs monitor-chain-agent function
+    -> monitor runs compiled monitor-v2 with the allowlisted run context
 
 3. agent execution (in agent PTY session)
    agent runs:
@@ -317,7 +317,7 @@ data flow
      -> performs work (writes code, runs commands, etc)
      -> writes AGENT_COMPLETE to output when done
 
-   monitor session (typed monitor by default; shell monitor only when selected):
+   monitor session (typed monitor only):
      -> watches agent output for "AGENT_COMPLETE"
      -> handles timeout (agent.timeout config)
      -> handles stall detection (no output for N intervals)
@@ -475,7 +475,7 @@ two "watchers", different purposes:
 
   monitor session (per-agent)
     - monitor-{session-name} PTY session
-    - runs monitor-chain-agent function
+    - runs the compiled typed monitor
     - watches ONE agent's output for AGENT_COMPLETE
     - handles timeout and stall detection for that agent
     - starts the typed completion launcher when the agent is done
@@ -494,7 +494,7 @@ quick reference: file locations
 core orchestration:
   lib/chain-runner.sh              compatibility filename; execs typed direct runner
   web/lib/runner-v2/completion-entrypoint.ts typed completion owner
-  lib/launch-agent.sh              legacy agent launcher
+  lib/launch-agent.sh              standalone-spec compatibility forwarding boundary
 
 libraries:
   lib/agent-functions.sh           PTY session functions

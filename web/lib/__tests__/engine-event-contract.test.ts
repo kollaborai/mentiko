@@ -370,11 +370,12 @@ describe("typed runner-event producer contract", () => {
     expect(smokeProducer).not.toMatch(/writeFileSync|event:|source:|run_id:|processed:|data:/);
   });
 
-  it("starts routed monitoring directly through the typed entrypoint", () => {
+  it("keeps the compatibility chain filename out of monitor ownership", () => {
     const source = readFileSync(AGENT_FUNCTIONS, "utf8");
     const chainRunner = readFileSync(join(LIB, "chain-runner.sh"), "utf8");
     expect(source).not.toMatch(/monitor-chain-agent|monitor-with-ai|chain-runner-complete\.sh|complete-agent\.sh/);
-    expect(chainRunner).toContain('exec node "\\$_monitor_v2_script"');
+    expect(chainRunner).toContain('exec node "$SCRIPT_DIR/runner-v2-direct-run.js"');
+    expect(chainRunner).not.toContain("monitor-v2.js");
     expect(chainRunner).not.toContain("monitor-chain-agent");
   });
 
