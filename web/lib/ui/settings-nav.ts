@@ -4,7 +4,7 @@ import {
   LockFilled, SecurityFilled, ShieldTickFilled, BotMessageSquare, SmsFilled,
   ExportFilled, PeopleFilled, Setting2Filled, DocumentTextFilled,
   ChartFilled, ActivityFilled, TrendUpFilled, KeyFilled,
-  MagicStarFilled, JudgeFilled,
+  MagicStarFilled, JudgeFilled, RadarFilled,
 } from "@aliimam/icons";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 
@@ -64,6 +64,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     label: "system",
     items: [
       { id: "system", label: "System", href: "/settings/system", icon: Setting2Filled, inSidebar: true, inQuickMenu: true },
+      { id: "monitor", label: "Monitor", href: "/settings/monitor", icon: RadarFilled, inSidebar: true, inQuickMenu: true },
       { id: "logs", label: "Logs", href: "/settings/logs", icon: DocumentTextFilled, inSidebar: true, inQuickMenu: true },
       { id: "audit", label: "Audit Trail", href: "/settings/audit", icon: ShieldTickFilled, inSidebar: true, inQuickMenu: false },
       { id: "pty", label: "PTY Sessions", href: "/settings/pty", icon: TerminalIcon, inSidebar: true, inQuickMenu: true },
