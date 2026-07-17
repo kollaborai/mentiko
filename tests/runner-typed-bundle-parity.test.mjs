@@ -13,7 +13,7 @@ const pairs = [
   ["monitor-completion-cli", "runner-monitor-completion"], ["readiness-cli", "runner-readiness"],
   ["chain-validation-cli", "runner-chain-validation"], ["chain-generation-cli", "runner-chain-generation"],
   ["chain-graph-cli", "runner-chain-graph"],
-  ["parallel-contract-cli", "runner-parallel-contract"], ["activity-capture-cli", "runner-activity-capture"],
+  ["activity-capture-cli", "runner-activity-capture"],
   ["approval-gate-cli", "runner-approval-gate"], ["error-handling-cli", "runner-error-handling"],
   ["teammux-bridge-cli", "runner-teammux-bridge"], ["version-control-cli", "runner-version-control"],
   ["task-context-cli", "runner-task-context"],

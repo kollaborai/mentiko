@@ -266,11 +266,6 @@ RUN if [ -f /build/web/lib/runner-v2/run-record-cli.ts ]; then \
         --outfile=/context/lib/runner-run-record.js; \
     fi
 
-RUN if [ -f /build/web/lib/runner-v2/parallel-contract-cli.ts ]; then \
-      cd /build/web && npx --yes esbuild /build/web/lib/runner-v2/parallel-contract-cli.ts \
-        --bundle --platform=node --target=node20 --outfile=/context/lib/runner-parallel-contract.js; \
-    fi
-
 # compile the typed agent activity/provenance capture boundary.
 RUN if [ -f /build/web/lib/runner-v2/activity-capture-cli.ts ]; then \
       echo "=== compiling typed agent activity capture boundary ===" && \
