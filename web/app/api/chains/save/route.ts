@@ -12,6 +12,7 @@ import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
+import { normalizeAgentAuthorities } from "@/lib/chains/chain-postprocessor";
 import { isGeneratedChainContract, validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
 
 function getClientIp(request: NextRequest): string {
@@ -122,7 +123,11 @@ async function migrateInlineAgents(
         agent_profile: inline.agent_profile,
         gateway: inline.gateway,
         context: inline.context,
-        authorities: inline.authorities,
+        // Generated chains may use the legacy string-array shorthand here,
+        // but standalone agent.json records have the object-only schema.
+        // Normalize at this write boundary so an inline save cannot persist
+        // a record the Agent Definition contract will reject.
+        authorities: normalizeAgentAuthorities(inline.authorities),
         artifacts: inline.artifacts,
         created_at: now,
         updated_at: now,
