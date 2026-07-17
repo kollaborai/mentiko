@@ -13,7 +13,7 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
-import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot } from './process-manager-env';
+import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot, shouldReplaceUnavailableDevContainerRoot } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
 
 interface ManagedProcess {
@@ -691,8 +691,15 @@ async function housekeep() {
   }
 
   const home = os.homedir();
-  if (isDev && !process.env.MENTIKO_GLOBAL_ROOT && !process.env.MENTIKO_ROOT) {
-    process.env.MENTIKO_GLOBAL_ROOT = resolveManagedDevGlobalRoot(process.env, home);
+  const inheritedUnavailableContainerRoot = shouldReplaceUnavailableDevContainerRoot(
+    process.env,
+    fs.existsSync('/app'),
+  );
+  if (isDev && ((!process.env.MENTIKO_GLOBAL_ROOT && !process.env.MENTIKO_ROOT) || inheritedUnavailableContainerRoot)) {
+    const rootEnvironment = inheritedUnavailableContainerRoot
+      ? { ...process.env, MENTIKO_GLOBAL_ROOT: undefined, MENTIKO_ROOT: undefined }
+      : process.env;
+    process.env.MENTIKO_GLOBAL_ROOT = resolveManagedDevGlobalRoot(rootEnvironment, home);
   }
   const skelDir = '/opt/mentiko/skel';
   if (fs.existsSync(skelDir)) {

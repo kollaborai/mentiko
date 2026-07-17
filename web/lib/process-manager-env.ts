@@ -68,6 +68,18 @@ export function resolveManagedDevGlobalRoot(
   return environment.MENTIKO_GLOBAL_ROOT || environment.MENTIKO_ROOT || join(home, ".mentiko");
 }
 
+/**
+ * A local supervisor can inherit `/app` from a long-lived container-oriented
+ * terminal daemon. Treat only a missing `/app` as that stale transport value;
+ * every other explicit root remains authoritative.
+ */
+export function shouldReplaceUnavailableDevContainerRoot(
+  environment: EnvSource,
+  appRootExists: boolean,
+): boolean {
+  return environment.MENTIKO_GLOBAL_ROOT === "/app" && !appRootExists;
+}
+
 function expandEnvValue(value: string, sourceEnv: EnvSource) {
   return value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => sourceEnv[name] || "");
 }
