@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { spawn, spawnSync } from "child_process";
@@ -1473,11 +1473,16 @@ describe("runner-v2 adapters", () => {
     const deployChainDir = join(chainsDir, "deploy");
     mkdirSync(deployChainDir, { recursive: true });
     writeFileSync(join(deployChainDir, "chain.json"), JSON.stringify({ id: "deploy-chain", name: "deploy" }));
-    (spawnSync as jest.Mock).mockImplementationOnce((_command: string, _args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+    (spawnSync as jest.Mock).mockImplementationOnce((command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+      expect(command).toBe("node");
+      expect(args).toEqual(expect.arrayContaining([
+        expect.stringContaining("runner-v2-next-chain.js"),
+        realpathSync(join(deployChainDir, "chain.json")),
+        "--parent-run-id", "run-123", "--runs-dir", runsDir,
+      ]));
       expect(options.env).not.toHaveProperty("MENTIKO_RUN_ID");
       expect(options.env).not.toHaveProperty("RUN_ID");
       expect(options.env).not.toHaveProperty("MENTIKO_RUN_DIR");
-      expect(options.env).toMatchObject({ RUNS_DIR: runsDir, MENTIKO_PARENT_RUN_ID: "run-123" });
       seedNextChainChild(runsDir, { parentRunId: "run-123", chainName: "deploy", chainId: "deploy-chain" });
       return { status: 0, pid: 4242, stdout: "", stderr: "" };
     });
@@ -1506,12 +1511,13 @@ describe("runner-v2 adapters", () => {
       command: expect.stringContaining(join(deployChainDir, "chain.json")),
       pid: 4242,
     })]);
-    expect(spawnSync).toHaveBeenCalledWith("/bin/bash", [
-      "-lc",
-      expect.stringContaining(join(deployChainDir, "chain.json")),
-    ], expect.objectContaining({
+    expect(spawnSync).toHaveBeenCalledWith("node", expect.arrayContaining([
+      expect.stringContaining("runner-v2-next-chain.js"),
+      realpathSync(join(deployChainDir, "chain.json")),
+      "--parent-run-id", "run-123", "--runs-dir", runsDir,
+    ]), expect.objectContaining({
       timeout: expect.any(Number),
-      env: expect.objectContaining({ MENTIKO_PARENT_RUN_ID: "run-123" }),
+      env: expect.not.objectContaining({ MENTIKO_PARENT_RUN_ID: expect.anything() }),
     }));
     expect(JSON.parse(readFileSync(join(dir, "next-chain.jsonl"), "utf8").trim())).toMatchObject({
       chainName: "deploy",

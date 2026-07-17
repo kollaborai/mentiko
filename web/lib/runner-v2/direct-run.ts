@@ -7,7 +7,21 @@ import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
 import { createRunRecord, updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
 import type { RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 
-export interface DirectRunOptions { chainPath: string; workspacePath?: string; agentId?: string; debug: boolean }
+/**
+ * Typed initial-run creation. `parentRunId` is intentionally an explicit
+ * provenance field rather than an inherited environment variable: chained
+ * runs must never accidentally attach to the completing run that happened to
+ * invoke the launcher.
+ */
+export interface DirectRunOptions {
+  chainPath: string;
+  workspacePath?: string;
+  agentId?: string;
+  debug: boolean;
+  parentRunId?: string;
+  /** Explicit runtime root for an internal typed caller (for example on_complete chaining). */
+  runsDir?: string;
+}
 export interface DirectRunResult { runId: string; runDir: string; agentId: string; launch: RunnerV2LaunchResult }
 
 function requiredValue(argv: string[], index: number, flag: string): string {
@@ -63,8 +77,15 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
   const workspacePath = localWorkspace(options.workspacePath);
   const selected = chainAgent(chain, options.agentId);
   const chainName = typeof chain.name === "string" && chain.name ? chain.name : basename(options.chainPath, ".json");
-  const run = createRunRecord({ chainName, goal: typeof chain.description === "string" ? chain.description : "", workspacePath });
-  const runDir = join(config.runsDir, run.id);
+  const runsDir = options.runsDir ? localWorkspace(options.runsDir) : config.runsDir;
+  if (!runsDir) throw new Error("typed direct run requires a runs directory");
+  const run = createRunRecord({
+    chainName,
+    goal: typeof chain.description === "string" ? chain.description : "",
+    workspacePath,
+    parentRunId: options.parentRunId,
+  });
+  const runDir = join(runsDir, run.id);
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   const chainPath = join(runDir, "chain.json");
   writeFileSync(chainPath, `${JSON.stringify(chain, null, 2)}\n`, { mode: 0o600 });
