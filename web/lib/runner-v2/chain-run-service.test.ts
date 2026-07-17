@@ -271,7 +271,7 @@ describe("chain-run-service runner-v2 guard", () => {
 
   it("runs the typed dry-run probe through the service when explicitly requested", async () => {
     const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, MENTIKO_RUNNER_V2: "1" }));
+    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
     await startMinimalRun("run-v2-probe", { runnerV2Probe: true });
 
     expect(mockStartRunnerV2Launch).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe("chain-run-service runner-v2 guard", () => {
 
   it("runs the typed live probe through the service only with explicit live metadata", async () => {
     const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, MENTIKO_RUNNER_V2: "1" }));
+    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
     await startMinimalRun("run-v2-live-probe", {
       runnerV2Probe: true,
       runnerV2ProbeMode: "live",
@@ -333,7 +333,7 @@ describe("chain-run-service runner-v2 guard", () => {
 
   it("runs the typed live probe with external-effects dispatch only when explicitly requested", async () => {
     const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, MENTIKO_RUNNER_V2: "1" }));
+    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
     await startMinimalRun("run-v2-live-dispatch-probe", {
       runnerV2Probe: true,
       runnerV2ProbeMode: "live",
