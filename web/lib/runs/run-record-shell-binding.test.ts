@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { sweepGdprUserData } from "@/lib/runs/gdpr-user-sweep";
 
 const codeRoot = resolve(__dirname, "../../..");
 const webRoot = join(codeRoot, "web");
@@ -113,7 +114,7 @@ describe("typed Run Record runtime binding", () => {
     expect(result.stderr).not.toContain("tsx");
   });
 
-  it("invokes the typed owner selection from standalone GDPR cleanup", () => {
+  it("deletes GDPR-owned runs through the typed cleanup service", () => {
     const root = mkdtempSync(join(tmpdir(), "runner-run-record-gdpr-"));
     const runsDir = join(root, "namespaces", "default", "runs");
     const runDir = join(runsDir, "run-owned");
@@ -127,13 +128,8 @@ describe("typed Run Record runtime binding", () => {
       agents: [],
       user_id: "user-1",
     }));
-    const result = spawnSync("bash", [join(codeRoot, "lib", "gdpr-sweep.sh"), "user-1", "default"], {
-      encoding: "utf8",
-      env: { ...process.env, MENTIKO_CODE_ROOT: codeRoot, MENTIKO_GLOBAL_ROOT: root },
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("removed run:");
-    expect(result.stdout).toContain("/runs/run-owned");
+    const result = sweepGdprUserData(join(root, "namespaces", "default"), "user-1");
+    expect(result.runPaths).toEqual([expect.stringMatching(/\/runs\/run-owned$/)]);
     expect(existsSync(runDir)).toBe(false);
   });
 
@@ -143,7 +139,6 @@ describe("typed Run Record runtime binding", () => {
       "lib/chain-runner.sh",
       "lib/agent-activity-capture.sh",
       "lib/concurrency-cap.sh",
-      "lib/gdpr-sweep.sh",
       "bin/peer-manager",
       "bin/test-relay-prompt",
       "lib/run-record-client.sh",
