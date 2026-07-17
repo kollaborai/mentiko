@@ -1,0 +1,22 @@
+{
+  "schema_version": "runner-contract/v1",
+  "source_files": [
+    "lib/session-log-resolver.sh",
+    "web/lib/runs/session-log-resolver.ts",
+    "web/lib/runs/session-log-resolver-cli.ts"
+  ],
+  "role": "typed path and provenance resolver for external conversation transcripts",
+  "ownership": {
+    "typescript": "validates profile-backed transcript roots, derives provider-specific path slugs, maps PTY capture UUIDs to regular JSONL files, and selects timestamp-window candidates with deterministic newest-file fallback",
+    "shell": "preserves historical function names and forwards primitive arguments to the compiled TypeScript CLI; it owns no profile parsing, path resolution, file discovery, or fallback behavior",
+    "external_cli": "the PTY capture command remains a required external process boundary; transcript JSONL schema and content remain CLI-owned"
+  },
+  "invariants": [
+    "a profile without an explicit log_path degrades capture and does not guess a provider root",
+    "PTY capture UUIDs resolve only to regular JSONL files under the configured root",
+    "Codex transcript discovery is limited to the configured date partition",
+    "the historical plus or minus 30 second selection window precedes deterministic newest-file fallback",
+    "the shell boundary has no parsing or fallback implementation"
+  ],
+  "deletion_gate": "remove lib/session-log-resolver.sh after every source-based caller invokes runner-session-log-resolver.js directly"
+}
