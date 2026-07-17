@@ -608,6 +608,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/error-handling-cli.ts",
     ],
     samples: { root: "project", patterns: [["state", "*.state"]], format: "key-value" },
+    notes: [
+      "Standalone spec state is created only by the typed standalone-agent-launch owner. The retained lib/launch-agent.sh entrypoint and exported lib/agent-functions.sh new-agent-from-spec function forward primitive arguments to its compiled CLI and do not parse specs or mutate state.",
+    ],
   }),
   shape({
     id: "runner-monitor-state",

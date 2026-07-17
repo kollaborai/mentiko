@@ -40,7 +40,7 @@
       "fallback": "none. --task, --parallel, --dry-run, unknown options, and SSH/Docker workspace definitions fail before a run is created; direct CLI never invokes chain-runner.sh."
     },
     "standalone_spec_launch": {
-      "current": "bin/mentiko launch execs compiled lib/runner-v2-standalone-agent-launch.js; lib/launch-agent.sh is a forwarding compatibility entrypoint only.",
+      "current": "bin/mentiko launch execs compiled lib/runner-v2-standalone-agent-launch.js; lib/launch-agent.sh and exported lib/agent-functions.sh new-agent-from-spec are forwarding compatibility boundaries only.",
       "v2": "web/lib/runner-v2/standalone-agent-launch.ts validates the standalone spec, derives the session identity, directly starts the configured interactive agent CLI in the typed PTY transport, publishes typed agent state, injects the instruction, and starts the typed standalone monitor with explicit runtime roots when requested.",
       "fallback": "none. Invalid specs, PTY failure, state publication failure, prompt delivery failure, and monitor startup failure fail closed; partial PTY/state startup is rolled back rather than rerunning a shell launch path."
     },

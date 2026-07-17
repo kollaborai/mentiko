@@ -10,7 +10,7 @@ or diagnostic emission.
 - `send-message <session_name> <message>` sends text and Enter to an existing PTY, then captures its tail.
 - `peek-session <session_name> [tail_lines]` captures a PTY session.
 - `new-agent-session <session_name> <agent_name> <task_description>` creates a PTY and starts the configured external agent CLI.
-- `new-agent-from-spec <spec_file> [--monitor]` is a legacy standalone-spec launcher. When monitoring is requested, it starts compiled `lib/runner-v2-standalone-monitor.js` directly.
+- `new-agent-from-spec <spec_file> [--monitor]` forwards unchanged arguments to compiled `lib/runner-v2-standalone-agent-launch.js`. It does not parse the spec, derive session identity, create a PTY, mutate state, inject instructions, or start a monitor.
 - `mentiko-monitor <session_name> "end state" [profile] [interval]` forwards primitive arguments to compiled `lib/runner-manual-monitor.js`.
 
 ## monitor ownership

@@ -73,64 +73,15 @@ new-agent-session() {
 }
 
 # -------------------------------------------------------------------
-# new-agent-from-spec: launch agent from a spec file
+# new-agent-from-spec: compatibility invocation boundary
+#
+# The compiled TypeScript launcher owns spec parsing, session identity, PTY
+# creation, instruction delivery, state publication, and typed monitor startup.
+# Keep this exported function only for sourced legacy callers; it must not
+# interpret a spec or reconstruct any lifecycle behavior.
 # -------------------------------------------------------------------
 new-agent-from-spec() {
-    local spec_file="$1"
-    local monitor="${2:-}"
-
-    if [[ -z "$spec_file" || ! -f "$spec_file" ]]; then
-        echo "usage: new-agent-from-spec <spec-file> [--monitor]"
-        return 1
-    fi
-
-    local session_prefix=$(grep -m1 "^session-prefix:" "$spec_file" | sed 's/^session-prefix:[[:space:]]*//' | xargs)
-    local agent_name=$(grep -m1 "^name:" "$spec_file" | sed 's/^name:[[:space:]]*//' | xargs)
-
-    if [[ -z "$session_prefix" ]]; then
-        echo "error: spec file missing session-prefix"
-        return 1
-    fi
-
-    # project prefix from git root or cwd
-    local project_root
-    project_root="${MENTIKO_GLOBAL_ROOT:-$HOME/.mentiko}"
-    local project_name=$(basename "$project_root")
-
-    local date_suffix=$(date +%Y%m%d-%H%M)
-    local session_name="${project_name}-${session_prefix}-${date_suffix}"
-
-    local task="Read your agent spec at $spec_file. Follow your playbooks and write deliverables to the paths specified in your spec. Read your context files first. Begin now."
-
-    new-agent-session "$session_name" "$agent_name" "$task"
-
-    # update state if available (use config.sh STATE_DIR)
-    local state_dir="${STATE_DIR:-${MENTIKO_PROJECT_ROOT:-$project_root}/state}"
-    if [[ -d "$state_dir" ]]; then
-        _agent_state_cli start \
-            --state-dir "$state_dir" \
-            --session-prefix "$session_prefix" \
-            --session "$session_name" \
-            --agent-id "$session_prefix" \
-            --workspace "local" \
-            >/dev/null
-    fi
-
-    if [[ "$monitor" == "--monitor" ]]; then
-        local monitor_session="monitor-${session_name}"
-        local lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local monitor_runtime="${lib_dir}/runner-v2-standalone-monitor.js"
-        if [[ ! -f "$monitor_runtime" ]]; then
-            echo "error: typed standalone monitor runtime missing: $monitor_runtime" >&2
-            return 1
-        fi
-        new_pty_session "$monitor_session" node "$monitor_runtime" \
-            --session "$session_name" \
-            --spec "$spec_file" \
-            --interval "$MENTIKO_MONITOR_INTERVAL" \
-            --workspace "$project_root"
-        echo "  monitor started: $monitor_session"
-    fi
+    node "$_AF_SCRIPT_DIR/runner-v2-standalone-agent-launch.js" "$@"
 }
 
 # -------------------------------------------------------------------
