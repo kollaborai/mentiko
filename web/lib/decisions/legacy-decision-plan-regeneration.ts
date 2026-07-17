@@ -50,13 +50,38 @@ function selectedOption(decision: Decision, selectedId: string): Option | Tailor
     || decision.options.find((option) => option.id === selectedId);
 }
 
-function planPrompt(namespaceId: string, orgId: string, decision: Decision, option: Option | TailoredOption): string {
+function legacyTaskReconciliationPrompt(tasks: TaskRecord[]): string {
+  const legacyTasks = tasks.map((task) => {
+    const meta = metadata(task);
+    return {
+      legacy_task_id: task.id,
+      legacy_plan_task_id: text(meta.decision_plan_task_id) ?? null,
+      title: task.title,
+      description: task.description,
+      phase: typeof meta.decision_plan_phase === "number" ? meta.decision_plan_phase : null,
+      priority: task.priority,
+    };
+  });
+  return [
+    "",
+    "LEGACY CHILD TASK RECONCILIATION — REQUIRED FOR THIS REGENERATION:",
+    "These are authoritative persisted child rows. Preserve every obligation; do not infer that two differently named tasks are equivalent.",
+    JSON.stringify(legacyTasks, null, 2),
+    "Your JSON MUST include legacy_task_reconciliation with exactly one entry for every legacy_task_id above:",
+    "- For outcome 'covered', name plan_task_id and make that output task include the same legacy_task_id in legacy_task_ids. That plan task must retain a concrete v1 deliverable, verification, and acceptance_criteria.",
+    "- For outcome 'superseded', omit plan_task_id and give a fact-specific rationale explaining why the legacy obligation is no longer required. Do not use superseded merely because a task title changed.",
+    "- Omitting a legacy row is invalid. Do not silently discard, rename, or merge legacy work without this explicit provenance.",
+    "",
+  ].join("\n");
+}
+
+function planPrompt(namespaceId: string, orgId: string, decision: Decision, option: Option | TailoredOption, legacyTasks: TaskRecord[]): string {
   const template = getTemplate(namespaceId, orgId, "decision_guided_plan");
   return resolveTemplate(template.content, {
     DECISION_CONTEXT: buildDecisionContext(decision),
     SELECTED_OPTION: `${option.letter}. ${option.name}: ${option.description}\nEffort: ${option.effort}\nRisk: ${option.risk}\nPros: ${option.pros.join(", ")}\nCons: ${option.cons.join(", ")}`,
     USER_PREFERENCES: buildPreferenceText(decision.guidedFlow as GuidedFlow),
-  });
+  }) + legacyTaskReconciliationPrompt(legacyTasks);
 }
 
 function markRegenerating(namespaceId: string, orgId: string, tasks: TaskRecord[], decisionId: string, runId: string): void {
@@ -139,7 +164,7 @@ export async function regenerateLegacyDecisionPlans(
         orgId: input.orgId,
         decision,
         phase: "plan",
-        prompt: planPrompt(input.namespaceId, input.orgId, decision, option),
+        prompt: planPrompt(input.namespaceId, input.orgId, decision, option, decisionTasks),
         workspacePath: decision.workspacePath ?? first.workspace_id ?? input.workspacePath,
         selectedOptionId: selectedId,
       }),

@@ -149,6 +149,11 @@ export interface PlanTask {
   verification?: string;
   /** Persisted on the child task so downstream chain generation has a target. */
   acceptance_criteria?: string;
+  /**
+   * Legacy task rows explicitly covered by this regenerated v1 task. This is
+   * provenance, not a semantic guess made by reconciliation.
+   */
+  legacy_task_ids?: string[];
 }
 
 export interface PlanDependency {
@@ -160,6 +165,19 @@ export interface ExecutionPlan {
   summary: string;
   tasks: PlanTask[];
   dependencies: PlanDependency[];
+  /**
+   * Required when a legacy decision plan is regenerated. Every legacy child
+   * must either point at a v1 task which explicitly names it, or carry an
+   * auditable reason why it is superseded.
+   */
+  legacy_task_reconciliation?: LegacyPlanTaskReconciliation[];
+}
+
+export interface LegacyPlanTaskReconciliation {
+  legacy_task_id: string;
+  outcome: "covered" | "superseded";
+  plan_task_id?: string;
+  rationale: string;
 }
 
 export interface Round3State {

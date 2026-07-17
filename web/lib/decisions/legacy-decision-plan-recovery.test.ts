@@ -111,4 +111,100 @@ describe("legacy decision plan recovery", () => {
 
     expect(result).toEqual(expect.objectContaining({ action: "blocked", reason: expect.stringContaining("selection changed") }));
   });
+
+  it("repairs a materially renamed legacy child only with explicit v1 coverage provenance", () => {
+    const legacy = task({
+      id: "TASK-legacy-db-delete",
+      title: "Delete the old database",
+      description: "Remove the deprecated production database.",
+      metadata: {
+        decision_id: "DEC-1",
+        decision_plan_task_id: "delete-db",
+        decision_selected_option_id: "opt-a",
+        decision_plan_contract: "regeneration_required",
+        decision_plan_regeneration_run_id: "run-regenerated",
+      },
+    });
+    const replacement = {
+      ...verifiablePlanTask,
+      id: "secure-export",
+      title: "Publish a verified export workflow",
+      description: "Replace deletion work with a reversible export workflow.",
+      legacy_task_ids: ["TASK-legacy-db-delete"],
+    };
+    const regenerated = decision(replacement);
+    regenerated.guidedFlow!.round3.plan = {
+      summary: "Use the reversible migration path.",
+      tasks: [replacement as never],
+      dependencies: [],
+      legacy_task_reconciliation: [{
+        legacy_task_id: "TASK-legacy-db-delete",
+        outcome: "covered",
+        plan_task_id: "secure-export",
+        rationale: "The selected option replaces irreversible deletion with a verified export workflow.",
+      }],
+    };
+
+    const result = recoverLegacyDecisionPlanTask(legacy, regenerated);
+
+    expect(result).toMatchObject({
+      action: "repaired",
+      metadata: {
+        decision_plan_contract: "v1",
+        decision_plan_reconciliation: expect.objectContaining({
+          outcome: "covered",
+          plan_task_id: "secure-export",
+        }),
+      },
+    });
+  });
+
+  it("does not close a regenerated legacy child without explicit coverage or supersession", () => {
+    const legacy = task({ metadata: {
+      decision_id: "DEC-1",
+      decision_plan_task_id: "delete-db",
+      decision_selected_option_id: "opt-a",
+      decision_plan_contract: "regeneration_required",
+      decision_plan_regeneration_run_id: "run-regenerated",
+    } });
+
+    const result = recoverLegacyDecisionPlanTask(legacy, decision({ ...verifiablePlanTask, id: "different-work" }));
+
+    expect(result).toEqual(expect.objectContaining({
+      action: "blocked",
+      reason: expect.stringContaining("no explicit coverage or supersession"),
+    }));
+  });
+
+  it("closes only a legacy child with an explicit supersession rationale", () => {
+    const legacy = task({ metadata: {
+      decision_id: "DEC-1",
+      decision_plan_task_id: "delete-db",
+      decision_selected_option_id: "opt-a",
+      decision_plan_contract: "regeneration_required",
+      decision_plan_regeneration_run_id: "run-regenerated",
+    } });
+    const regenerated = decision({ ...verifiablePlanTask, id: "different-work" });
+    regenerated.guidedFlow!.round3.plan = {
+      summary: "No deletion work remains.",
+      tasks: [{ ...verifiablePlanTask, id: "different-work" } as never],
+      dependencies: [],
+      legacy_task_reconciliation: [{
+        legacy_task_id: "TASK-001",
+        outcome: "superseded",
+        rationale: "The selected option retains the existing database, so deletion is no longer authorized work.",
+      }],
+    };
+
+    const result = recoverLegacyDecisionPlanTask(legacy, regenerated);
+
+    expect(result).toMatchObject({
+      action: "superseded",
+      status: "closed",
+      metadata: {
+        decision_plan_contract: "superseded",
+        decision_plan_supersession: expect.objectContaining({ outcome: "superseded" }),
+      },
+    });
+  });
 });

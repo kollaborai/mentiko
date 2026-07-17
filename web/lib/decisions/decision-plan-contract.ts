@@ -1,4 +1,4 @@
-import type { ExecutionPlan, PlanDependency, PlanTask } from "@/lib/decisions/decision-types";
+import type { ExecutionPlan, LegacyPlanTaskReconciliation, PlanDependency, PlanTask } from "@/lib/decisions/decision-types";
 
 export interface VerifiablePlanTask extends PlanTask {
   deliverable: string;
@@ -90,6 +90,11 @@ export function validateExecutionPlan(value: unknown): ExecutionPlanValidation {
     }
     const subtasks = stringArray(task.subtasks, `${path} (${id}) subtasks`);
     if (subtasks.error) return { valid: false, error: subtasks.error };
+    const legacyTaskIds = stringArray(task.legacy_task_ids, `${path} (${id}) legacy_task_ids`);
+    if (legacyTaskIds.error) return { valid: false, error: legacyTaskIds.error };
+    if (new Set(legacyTaskIds.value).size !== legacyTaskIds.value?.length) {
+      return { valid: false, error: `${path} (${id}) legacy_task_ids cannot contain duplicates` };
+    }
     taskIds.add(id);
     tasks.push({
       id,
@@ -102,6 +107,7 @@ export function validateExecutionPlan(value: unknown): ExecutionPlanValidation {
       deliverable,
       verification,
       acceptance_criteria: canonicalAcceptanceCriteria(text(task.acceptance_criteria), deliverable, verification),
+      ...(legacyTaskIds.value?.length ? { legacy_task_ids: legacyTaskIds.value } : {}),
     });
   }
 
@@ -118,5 +124,43 @@ export function validateExecutionPlan(value: unknown): ExecutionPlanValidation {
     dependencies.push({ from, to });
   }
 
-  return { valid: true, plan: { summary, tasks, dependencies } };
+  let legacyTaskReconciliation: LegacyPlanTaskReconciliation[] | undefined;
+  if (candidate.legacy_task_reconciliation !== undefined) {
+    if (!Array.isArray(candidate.legacy_task_reconciliation)) {
+      return { valid: false, error: "Decision plan legacy_task_reconciliation must be an array" };
+    }
+    const seenLegacyTaskIds = new Set<string>();
+    legacyTaskReconciliation = [];
+    for (const [index, rawEntry] of candidate.legacy_task_reconciliation.entries()) {
+      const entry = record(rawEntry);
+      const path = `Decision plan legacy_task_reconciliation ${index + 1}`;
+      const legacyTaskId = entry && text(entry.legacy_task_id);
+      const outcome = entry && text(entry.outcome);
+      const rationale = entry && text(entry.rationale);
+      const planTaskId = entry && text(entry.plan_task_id);
+      if (!legacyTaskId || !rationale) return { valid: false, error: `${path} requires legacy_task_id and rationale` };
+      if (seenLegacyTaskIds.has(legacyTaskId)) return { valid: false, error: `${path} duplicates legacy task ${legacyTaskId}` };
+      if (outcome !== "covered" && outcome !== "superseded") {
+        return { valid: false, error: `${path} outcome must be covered or superseded` };
+      }
+      if (outcome === "covered") {
+        if (!planTaskId || !taskIds.has(planTaskId)) return { valid: false, error: `${path} covered outcome requires a known plan_task_id` };
+        const planTask = tasks.find((task) => task.id === planTaskId);
+        if (!planTask?.legacy_task_ids?.includes(legacyTaskId)) {
+          return { valid: false, error: `${path} covered plan task must explicitly include ${legacyTaskId} in legacy_task_ids` };
+        }
+      } else if (planTaskId) {
+        return { valid: false, error: `${path} superseded outcome cannot name plan_task_id` };
+      }
+      seenLegacyTaskIds.add(legacyTaskId);
+      legacyTaskReconciliation.push({
+        legacy_task_id: legacyTaskId,
+        outcome,
+        ...(planTaskId ? { plan_task_id: planTaskId } : {}),
+        rationale,
+      });
+    }
+  }
+
+  return { valid: true, plan: { summary, tasks, dependencies, ...(legacyTaskReconciliation ? { legacy_task_reconciliation: legacyTaskReconciliation } : {}) } };
 }

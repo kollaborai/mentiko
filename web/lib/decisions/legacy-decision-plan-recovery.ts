@@ -8,7 +8,7 @@ const LEGACY_PLAN_REASON =
   "Decision plan is legacy and has no authoritative deliverable, verification, and acceptance contract. Regenerate the decision plan before execution.";
 const LEGACY_PLAN_PAUSE_PREFIX = "Legacy decision plan is missing the required deliverable, verification, and acceptance contract.";
 
-export type LegacyDecisionPlanRecoveryAction = "repaired" | "blocked" | "ignored";
+export type LegacyDecisionPlanRecoveryAction = "repaired" | "superseded" | "blocked" | "ignored";
 
 export interface LegacyDecisionPlanRecovery {
   taskId: string;
@@ -16,6 +16,7 @@ export interface LegacyDecisionPlanRecovery {
   reason: string;
   acceptanceCriteria?: string;
   metadata?: Record<string, unknown>;
+  status?: "closed";
 }
 
 function text(value: unknown): string | undefined {
@@ -41,7 +42,9 @@ export function recoverLegacyDecisionPlanTask(
   const metadata = taskMetadata(task);
   const decisionId = text(metadata.decision_id);
   const planTaskId = text(metadata.decision_plan_task_id);
-  const legacyMarker = metadata.decision_plan_contract === "legacy_unverifiable" || metadata.decision_plan_contract === "regenerating";
+  const legacyMarker = metadata.decision_plan_contract === "legacy_unverifiable"
+    || metadata.decision_plan_contract === "regenerating"
+    || metadata.decision_plan_contract === "regeneration_required";
   const legacyPause = text(metadata.auto_run_paused_reason)?.startsWith(LEGACY_PLAN_PAUSE_PREFIX) ?? false;
 
   if (!legacyMarker && !metadata.decision_plan_quarantined_at && !legacyPause) {
@@ -66,9 +69,41 @@ export function recoverLegacyDecisionPlanTask(
   if (!planResult.valid) {
     return { taskId: task.id, action: "blocked", reason: LEGACY_PLAN_REASON };
   }
-  const sourceTask = planResult.plan.tasks.find((candidate) => candidate.id === planTaskId);
+  const regenerationRunId = text(metadata.decision_plan_regeneration_run_id);
+  const reconciliation = planResult.plan.legacy_task_reconciliation
+    ?.find((entry) => entry.legacy_task_id === task.id);
+  // A regenerated plan needs durable provenance for every legacy child. A
+  // familiar title or a matching old plan-task ID is not coverage evidence.
+  if (regenerationRunId && !reconciliation) {
+    return { taskId: task.id, action: "blocked", reason: `authoritative regenerated plan has no explicit coverage or supersession for legacy child ${task.id}` };
+  }
+  if (reconciliation?.outcome === "superseded") {
+    const { auto_run_paused: _paused, auto_run_paused_reason: _pausedReason, decision_plan_quarantined_at: _quarantinedAt, ...rest } = metadata;
+    return {
+      taskId: task.id,
+      action: "superseded",
+      status: "closed",
+      reason: reconciliation.rationale,
+      metadata: {
+        ...rest,
+        decision_plan_contract: "superseded",
+        decision_plan_superseded_at: new Date().toISOString(),
+        decision_plan_supersession: {
+          version: 1,
+          outcome: "superseded",
+          rationale: reconciliation.rationale,
+          regeneration_run_id: regenerationRunId,
+        },
+      },
+    };
+  }
+  const sourceTask = reconciliation?.outcome === "covered"
+    ? planResult.plan.tasks.find((candidate) => candidate.id === reconciliation.plan_task_id)
+    : planResult.plan.tasks.find((candidate) => candidate.id === planTaskId);
   if (!sourceTask) {
-    return { taskId: task.id, action: "blocked", reason: `authoritative plan no longer contains task ${planTaskId}` };
+    return { taskId: task.id, action: "blocked", reason: reconciliation
+      ? `authoritative regenerated plan references missing covered task ${reconciliation.plan_task_id}`
+      : `authoritative plan no longer contains task ${planTaskId}` };
   }
 
   const { auto_run_paused: _paused, auto_run_paused_reason: _pausedReason, decision_plan_quarantined_at: _quarantinedAt, ...rest } = metadata;
@@ -83,6 +118,15 @@ export function recoverLegacyDecisionPlanTask(
       decision_plan_deliverable: sourceTask.deliverable,
       decision_plan_verification: sourceTask.verification,
       decision_plan_recovered_at: new Date().toISOString(),
+      ...(reconciliation ? {
+        decision_plan_reconciliation: {
+          version: 1,
+          outcome: "covered",
+          plan_task_id: sourceTask.id,
+          rationale: reconciliation.rationale,
+          regeneration_run_id: regenerationRunId,
+        },
+      } : {}),
     },
   };
 }
@@ -98,6 +142,7 @@ export interface ReconcileLegacyDecisionPlansInput {
 export interface ReconcileLegacyDecisionPlansResult {
   scanned: number;
   repaired: number;
+  superseded: number;
   blocked: number;
   ignored: number;
   results: LegacyDecisionPlanRecovery[];
@@ -115,6 +160,7 @@ export function reconcileLegacyDecisionPlans(
       const metadata = taskMetadata(task);
       return metadata.decision_plan_contract === "legacy_unverifiable"
         || metadata.decision_plan_contract === "regenerating"
+        || metadata.decision_plan_contract === "regeneration_required"
         || !!metadata.decision_plan_quarantined_at
         || (text(metadata.auto_run_paused_reason)?.startsWith(LEGACY_PLAN_PAUSE_PREFIX) ?? false);
     })
@@ -131,6 +177,12 @@ export function reconcileLegacyDecisionPlans(
     if (input.apply && recovery.action === "repaired") {
       taskUpdate(input.orgId, task.id, {
         acceptance_criteria: recovery.acceptanceCriteria,
+        metadata: recovery.metadata,
+      }, input.namespaceId);
+    }
+    if (input.apply && recovery.action === "superseded") {
+      taskUpdate(input.orgId, task.id, {
+        status: recovery.status,
         metadata: recovery.metadata,
       }, input.namespaceId);
     }
@@ -153,6 +205,7 @@ export function reconcileLegacyDecisionPlans(
   return {
     scanned: tasks.length,
     repaired: results.filter((result) => result.action === "repaired").length,
+    superseded: results.filter((result) => result.action === "superseded").length,
     blocked: results.filter((result) => result.action === "blocked").length,
     ignored: results.filter((result) => result.action === "ignored").length,
     results,

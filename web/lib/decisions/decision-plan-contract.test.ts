@@ -57,4 +57,36 @@ describe("decision execution-plan contract", () => {
       "Verification: Run npx jest lib/decisions/decision-plan-contract.test.ts --runInBand and expect exit code 0",
     ].join("\n"));
   });
+
+  it("requires covered legacy work to be named by the v1 task instead of inferring equivalence", () => {
+    const result = validateExecutionPlan({
+      ...validPlan,
+      tasks: [{ ...validPlan.tasks[0], legacy_task_ids: ["TASK-legacy-db-delete"] }],
+      legacy_task_reconciliation: [{
+        legacy_task_id: "TASK-legacy-db-delete",
+        outcome: "covered",
+        plan_task_id: "implement",
+        rationale: "The v1 implementation task explicitly preserves the legacy database deletion obligation.",
+      }],
+    });
+
+    expect(result).toMatchObject({ valid: true });
+  });
+
+  it("rejects a claimed legacy coverage when the replacement task does not explicitly name it", () => {
+    const result = validateExecutionPlan({
+      ...validPlan,
+      legacy_task_reconciliation: [{
+        legacy_task_id: "TASK-legacy-db-delete",
+        outcome: "covered",
+        plan_task_id: "implement",
+        rationale: "These tasks sound similar.",
+      }],
+    });
+
+    expect(result).toEqual({
+      valid: false,
+      error: "Decision plan legacy_task_reconciliation 1 covered plan task must explicitly include TASK-legacy-db-delete in legacy_task_ids",
+    });
+  });
 });

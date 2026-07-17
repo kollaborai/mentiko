@@ -73,10 +73,11 @@ describe("legacy decision plan regeneration", () => {
 
   it("uses the durable guided-plan chain and marks only its own tasks as regenerating", async () => {
     startDurableDecisionPhaseOnce.mockImplementation(async (input) => {
-      const run = { runId: "run-regenerated" };
+      const run = await input.start();
       await input.persist(run);
       return { started: run, joined: false, recovered: false, durableRecovered: false };
     });
+    startDecisionChainRun.mockResolvedValue({ runId: "run-regenerated" });
     updateDecision.mockResolvedValue(decision());
 
     const result = await regenerateLegacyDecisionPlans({ request: new Request("http://localhost"), namespaceId: "default", orgId: "default", apply: true });
@@ -88,6 +89,12 @@ describe("legacy decision plan regeneration", () => {
     expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-001", expect.objectContaining({
       metadata: expect.objectContaining({ decision_plan_contract: "regenerating", decision_plan_regeneration_run_id: "run-regenerated" }),
     }), "default");
+    expect(startDecisionChainRun).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('"legacy_task_id": "TASK-001"'),
+    }));
+    expect(startDecisionChainRun).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('"title": "Old task"'),
+    }));
   });
 
   it("refuses to guess when a decision does not retain a stable option", async () => {
