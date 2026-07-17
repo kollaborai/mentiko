@@ -149,6 +149,24 @@ RUN if [ -f /build/web/lib/runner-v2/direct-run-cli.ts ]; then \
         --outfile=/context/lib/runner-v2-direct-run.js; \
     fi
 
+# compile typed graph rendering; `mentiko graph` must not use chain-runner
+# dry-run as a hidden second orchestration path.
+RUN if [ -f /build/web/lib/runner-v2/chain-graph-cli.ts ]; then \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/chain-graph-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-chain-graph.js; \
+    fi
+
+# compile typed chained-run launch. Completion routing creates its linked child
+# run and initial agent without re-entering the legacy shell runner.
+RUN if [ -f /build/web/lib/runner-v2/next-chain-launch-cli.ts ]; then \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/next-chain-launch-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-next-chain.js; \
+    fi
+
 # compile typed existing-run launch; callers provide only a preallocated run id.
 RUN if [ -f /build/web/lib/runner-v2/existing-run-launch-cli.ts ]; then \
       cd /build/web && \
