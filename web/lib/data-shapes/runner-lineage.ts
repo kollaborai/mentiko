@@ -500,6 +500,8 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/agent-state.ts",
           "web/lib/runner-v2/agent-state-cli.ts",
           "web/lib/runner-v2/bootstrap-executor.ts",
+          "web/lib/runner-v2/standalone-agent-launch.ts",
+          "web/lib/runner-v2/standalone-agent-launch-cli.ts",
         ],
       },
       {
@@ -516,8 +518,8 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "The persisted key-value format remains readable, but shell callers now invoke the compiled TypeScript boundary and do not parse or mutate state records; legacy error handling is now an invocation-only adapter.",
-      paths: ["lib/agent-state-client.sh", "web/lib/runner-v2/agent-state-cli.ts"],
+      summary: "The persisted key-value format remains readable, but shell callers now invoke compiled TypeScript boundaries and do not parse or mutate state records. Standalone spec launch state is created by the typed launcher; legacy error handling is an invocation-only adapter.",
+      paths: ["lib/agent-state-client.sh", "lib/launch-agent.sh", "web/lib/runner-v2/agent-state-cli.ts", "web/lib/runner-v2/standalone-agent-launch-cli.ts"],
     },
   },
   "runner-monitor-state": {
@@ -531,12 +533,14 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/standalone-monitor.ts",
           "web/lib/runner-v2/standalone-monitor-cli.ts",
           "web/lib/runner-v2/monitor-live-io.ts",
+          "web/lib/runner-v2/standalone-agent-launch.ts",
+          "web/lib/runner-v2/standalone-agent-launch-cli.ts",
         ],
       },
     ],
     legacyEquivalent: {
-      summary: "The active standalone spec launcher routes into the typed run-scoped monitor. It is distinct from the manual profile-aware CLI monitor, which has its own typed global state shape.",
-      paths: ["lib/launch-agent.sh"],
+      summary: "The typed standalone-spec launcher creates the agent PTY/state and routes into the typed run-scoped monitor. lib/launch-agent.sh only forwards arguments to its compiled CLI. This remains distinct from the manual profile-aware CLI monitor, which has its own typed global state shape.",
+      paths: ["lib/launch-agent.sh", "web/lib/runner-v2/standalone-agent-launch-cli.ts"],
     },
   },
   "manual-monitor-state": {

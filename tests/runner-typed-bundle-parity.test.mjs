@@ -27,6 +27,7 @@ const pairs = [
   ["monitor-cli", "monitor-v2"],
   ["manual-monitor-cli", "runner-manual-monitor"],
   ["standalone-monitor-cli", "runner-v2-standalone-monitor"],
+  ["standalone-agent-launch-cli", "runner-v2-standalone-agent-launch"],
   ["lib/system/audit-cli.ts", "runner-audit"],
   ["lib/system/native-plugin-handler-cli.ts", "runner-native-plugin"],
 ];

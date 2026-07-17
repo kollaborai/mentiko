@@ -10,18 +10,19 @@ function standaloneMonitorBlock(source: string, start: string): string {
 }
 
 describe("standalone monitor shell routing", () => {
-  it("routes both standalone spec entrypoints directly into the typed monitor runtime", () => {
+  it("keeps the old standalone launcher as a typed forwarding boundary and the remaining shell helper on the typed monitor", () => {
     const launcher = readFileSync(join(root, "lib", "launch-agent.sh"), "utf8");
     const functions = readFileSync(join(root, "lib", "agent-functions.sh"), "utf8");
-    const launchBlock = launcher.slice(launcher.indexOf("# start monitor if requested"));
     const functionBlock = standaloneMonitorBlock(functions, "new-agent-from-spec() {");
 
-    for (const block of [launchBlock, functionBlock]) {
-      expect(block).toContain("runner-v2-standalone-monitor.js");
-      expect(block).toContain("--session");
-      expect(block).toContain("--spec");
-      expect(block).not.toContain("monitor-with-ai");
-      expect(block).not.toContain(".mentiko_monitor");
-    }
+    expect(launcher).toContain("runner-v2-standalone-agent-launch.js");
+    expect(launcher).not.toContain("runner-v2-standalone-monitor.js");
+    expect(launcher).not.toContain("monitor-with-ai");
+    expect(launcher).not.toContain(".mentiko_monitor");
+    expect(functionBlock).toContain("runner-v2-standalone-monitor.js");
+    expect(functionBlock).toContain("--session");
+    expect(functionBlock).toContain("--spec");
+    expect(functionBlock).not.toContain("monitor-with-ai");
+    expect(functionBlock).not.toContain(".mentiko_monitor");
   });
 });
