@@ -537,7 +537,6 @@ supporting:
   lib/slack-integration.sh         slack notifications
   lib/metrics.sh                   invocation-only metrics boundary; forwards
                                    primitive metric operations to runner-legacy-metrics.js
-  lib/parallel-launcher.sh         external parallel agent process boundary; typed group records live in runner-v2
   lib/chain-runner.sh              invokes the typed parallel group record while retaining only process launch/wait
   lib/profiler.sh                  collects only live PTY/OS resource samples;
                                    the typed runtime-profiler owns the records

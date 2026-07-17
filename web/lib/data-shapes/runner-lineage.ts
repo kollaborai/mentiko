@@ -875,12 +875,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "legacy-shell-parallel-orchestration",
         label: "Launch, wait for, and reduce the active parallel chain-runner processes",
         owner: "legacy-shell",
-        paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
+        paths: ["lib/chain-runner.sh"],
       },
     ],
     legacyEquivalent: {
-      summary: "TypeScript owns group-state validation and mutation, but the remaining direct legacy parallel mode still launches and waits for shell chain-runner processes. This surface stays shell-owned until that orchestration path is removed or moved to TypeScript.",
-      paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
+      summary: "TypeScript owns group-state validation and mutation, but the remaining direct legacy parallel mode inside chain-runner still launches and waits for shell child processes. This surface stays shell-owned until that orchestration path is removed or moved to TypeScript.",
+      paths: ["lib/chain-runner.sh"],
     },
   },
   "session-policy-ledger": {

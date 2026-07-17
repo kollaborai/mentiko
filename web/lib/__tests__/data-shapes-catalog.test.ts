@@ -128,8 +128,6 @@ describe("data shape catalog", () => {
     expect(dataShapeDirectShellContractSources(shape!)).toEqual([]);
     expect(dataShapeShellSources(shape!)).toEqual([
       "lib/chain-runner.sh",
-      "lib/parallel-coordinator.sh",
-      "lib/parallel-launcher.sh",
     ]);
   });
 
