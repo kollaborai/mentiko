@@ -202,6 +202,25 @@ describe("typed batch run record", () => {
     expect(result.chains[0].status).not.toBe("running");
   });
 
+  it("fails closed when an injected typed launcher reports dry-run instead of launch acceptance", async () => {
+    const batchesDir = join(root, "batches");
+    const runsDir = join(root, "runs");
+    const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });
+
+    const result = await runBatch({
+      batchesDir,
+      batchId: prepared.id,
+      runsDir,
+      launchDirectRun: async () => ({ dryRun: true, chainName: "one", agentId: "typed-initial-agent" }),
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      status_message: expect.stringContaining("dry-run result"),
+      chains: [{ id: "one", status: "failed" }],
+    });
+  });
+
   it("marks every pending chain failed if the detached worker cannot start", async () => {
     const batchesDir = join(root, "batches");
     const prepared = await prepareBatch({ batchesDir, chains: [{ id: "one", chain: { name: "one" } }] });

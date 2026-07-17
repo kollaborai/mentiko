@@ -68,10 +68,12 @@ export interface RunnerV2Contract {
  * contract behavior can never again be silently skipped during migration.
  */
 export interface ImplementationCoverageEntry {
-  /** covered: typed parity with evidence; gap: named parity blocker. */
-  status: "covered" | "gap";
+  /** covered: typed parity with evidence; gap: named parity blocker; shell-owned: explicit temporary boundary. */
+  status: "covered" | "gap" | "shell-owned";
   /** required for covered: file/proof/run evidence */
   evidence?: string;
   /** required for gap: the blocker that must clear before switch */
   blocker?: string;
+  /** required for shell-owned: why the boundary remains outside TypeScript. */
+  reason?: string;
 }

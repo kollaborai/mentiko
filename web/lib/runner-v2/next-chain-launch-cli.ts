@@ -11,6 +11,7 @@ async function main(): Promise<void> {
     runsDir: input.runsDir,
     debug: false,
   });
+  if (result.dryRun) throw new Error("typed next-chain launch returned a dry-run result");
   console.log(JSON.stringify({ status: "launched", runId: result.runId, runDir: result.runDir, agentId: result.agentId, mode: result.launch.mode }));
 }
 

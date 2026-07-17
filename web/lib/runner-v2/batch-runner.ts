@@ -230,6 +230,11 @@ async function runBatchChain(input: RunBatchInput, chainId: string): Promise<voi
     return;
   }
 
+  if (launch.dryRun) {
+    await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, "Typed batch launch returned a dry-run result.", runId);
+    return;
+  }
+
   if (launch.runId !== runId) {
     await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, "Typed batch launch returned a mismatched run identity.", runId);
     return;
