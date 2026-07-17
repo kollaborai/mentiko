@@ -7,7 +7,7 @@ import { taskGet, taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateTaskId } from "@/lib/tasks/task-store";
 import { applyCompletionAudit, supersedeStaleCompletionAuditDecision } from "@/lib/tasks/completion-audit-apply";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
-import { startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
+import { recoverTaskOutcomeAudit, startTaskOutcomeAudit } from "@/lib/tasks/task-outcome-audit";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getLiveSessions } from "@/lib/pty/pty-client";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
@@ -159,6 +159,18 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     const meta = parseMetadata(issue.metadata);
     return meta?.lifecycle_phase === "followup_blocked" && stringArray(meta.followup_task_ids).length > 0;
   });
+  // A summary agent can finish and persist generation-result.json while its
+  // import request fails (for example a transient Next compile error). Those
+  // tasks have no running execution to sweep, but must not remain
+  // `summarizing` forever. Recovery validates and consumes only the failed
+  // summary job explicitly recorded on the task.
+  const stalledOutcomeSummaryTasks = issues.filter((issue) => {
+    if (DONE_TASK_STATUSES.has(issue.status)) return false;
+    const meta = parseMetadata(issue.metadata);
+    return meta?.lifecycle_phase === "summarizing"
+      && meta.task_outcome_summary_status === "running"
+      && typeof meta.task_outcome_summary_job_id === "string";
+  });
   // Reopened after an audited close, or held at a durable decision gate with
   // stale last_run_* provenance. The terminal filter above needs current run
   // metadata; a reopen or a superseded duplicate can leave an already-applied
@@ -232,9 +244,40 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
     runningTasks.length === 0 &&
     terminalAutoRunTasks.length === 0 &&
     followupBlockedTasks.length === 0 &&
-    auditedExecutionMetadataRepairTasks.length === 0
+    auditedExecutionMetadataRepairTasks.length === 0 &&
+    stalledOutcomeSummaryTasks.length === 0
   ) {
     return apiSuccess({ reconciled: results.length, results, failed: failed.length, errors: failed });
+  }
+
+  for (const issue of stalledOutcomeSummaryTasks) {
+    try {
+      const recovery = await recoverTaskOutcomeAudit({
+        request,
+        namespaceId,
+        orgId,
+        taskId: issue.id,
+      });
+      if (recovery.status === "recovered") {
+        results.push({
+          taskId: issue.id,
+          runId: recovery.sourceRunId || "unknown",
+          previousStatus: "summarizing",
+          newStatus: "summary_recovered",
+          reason: `recovered completed summary artifact from ${recovery.jobId}`,
+        });
+      } else if (recovery.status === "superseded") {
+        results.push({
+          taskId: issue.id,
+          runId: recovery.sourceRunId || "unknown",
+          previousStatus: "summarizing",
+          newStatus: "summary_superseded",
+          reason: "summary artifact source run is no longer current",
+        });
+      }
+    } catch (error) {
+      failed.push({ taskId: issue.id, error: `Failed to recover outcome summary: ${(error as Error).message}` });
+    }
   }
 
   const liveSessions = await getLiveSessions();
@@ -641,7 +684,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   return apiSuccess({
     reconciled: results.length,
     checked: runningTasks.length + terminalAutoRunTasks.length + followupBlockedTasks.length
-      + auditedExecutionMetadataRepairTasks.length,
+      + auditedExecutionMetadataRepairTasks.length + stalledOutcomeSummaryTasks.length,
     failed: failed.length,
     results,
     errors: failed,
