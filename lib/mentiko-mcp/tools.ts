@@ -63,6 +63,7 @@ const BAR_TOOL_NAMES = new Set([
   "get_docs_index",
   "get_nav_structure",
   "get_system_info",
+  "get_system_status",
   "navigate_to_doc",
   "detect_cli_status",
   "start_cli_auth",
@@ -1109,6 +1110,11 @@ const ALL_TOOLS: Tool[] = [
   {
     name: "get_system_info",
     description: "Get platform version, build info, and system health status.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "get_system_status",
+    description: "Mentiko Monitor digest: overall pulse, automation loops, runs, tasks, sessions, webhook deliveries, self-heals, recent errors, and what needs the human — plus the monitor directives for reporting it. Call this for any 'how is the system / am I okay / did anything break' question.",
     inputSchema: { type: "object", properties: {} }
   },
   {

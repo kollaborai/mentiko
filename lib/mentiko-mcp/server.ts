@@ -15,6 +15,7 @@ import * as templates from "./handlers/templates.js";
 import * as filesystem from "./handlers/filesystem.js";
 import * as terminal from "./handlers/terminal.js";
 import * as meta from "./handlers/meta.js";
+import * as monitor from "./handlers/monitor.js";
 import * as notifications from "./handlers/notifications.js";
 import * as decisionsHandler from "./handlers/decisions.js";
 import * as onboarding from "./handlers/onboarding.js";
@@ -778,6 +779,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     if (name === "get_system_info") {
       const result = await meta.getSystemInfo();
+      return textResult(JSON.stringify(result, null, 2));
+    }
+
+    if (name === "get_system_status") {
+      const result = await monitor.getSystemStatus();
       return textResult(JSON.stringify(result, null, 2));
     }
 
