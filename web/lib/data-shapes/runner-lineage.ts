@@ -4,6 +4,11 @@ export type RunnerSurfaceOwner = "runner-v2" | "legacy-shell";
 export interface RunnerMigrationSurface {
   id: string;
   label: string;
+  /**
+   * Lifecycle owner, rather than a blanket claim about every field in the
+   * persisted shape. A legacy shell surface can invoke typed contract helpers
+   * while still owning process launch/wait/orchestration.
+   */
   owner: RunnerSurfaceOwner;
   paths: string[];
 }
@@ -857,7 +862,27 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [{ id: "typed-legacy-metrics", label: "Validate and atomically mutate counters, gauges, timers, active timers, and webhook aggregates", owner: "runner-v2", paths: ["web/lib/runner-v2/legacy-metrics.ts", "web/lib/runner-v2/legacy-metrics-cli.ts", "web/app/api/metrics/route.ts"] }, { id: "shell-metric-command-boundary", label: "Shell forwards primitive metric operations only", owner: "runner-v2", paths: ["lib/metrics.sh"] }],
     legacyEquivalent: { summary: "Replaces shell jq metric parsing, file initialization, lock ownership, and JSON mutation with a compiled typed metrics owner.", paths: ["lib/metrics.sh"] },
   },
-  "parallel-group-state": { usage: "runner-v2", surfaces: [{ id: "typed-parallel-group", label: "Validate and mutate parallel group lifecycle records", owner: "runner-v2", paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"] }, { id: "shell-parallel-process-boundary", label: "Launch and wait for external agent processes", owner: "runner-v2", paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"] }] },
+  "parallel-group-state": {
+    usage: "shared",
+    surfaces: [
+      {
+        id: "typed-parallel-group-contract",
+        label: "Validate and mutate parallel group lifecycle records",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
+      },
+      {
+        id: "legacy-shell-parallel-orchestration",
+        label: "Launch, wait for, and reduce the active parallel chain-runner processes",
+        owner: "legacy-shell",
+        paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "TypeScript owns group-state validation and mutation, but the remaining direct legacy parallel mode still launches and waits for shell chain-runner processes. This surface stays shell-owned until that orchestration path is removed or moved to TypeScript.",
+      paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
+    },
+  },
   "session-policy-ledger": {
     usage: "runner-v2",
     surfaces: [

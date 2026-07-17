@@ -43,14 +43,8 @@ export interface DataShapeDefinition {
   migrationClaim?: MigrationClaim;
 }
 
-/**
- * Direct shell sources that currently own some part of a persisted shape's
- * read/write/type/validation contract. This is the general migration queue;
- * runnerLineage remains the more precise lifecycle-surface model for runner
- * contracts. A shell command invoked by typed code is not listed unless that
- * shell file itself appears as a shape owner in the catalog.
- */
-export function dataShapeShellSources(
+/** Direct shell sources that own a persisted shape's read/write/type/validation contract. */
+export function dataShapeDirectShellContractSources(
   definition: Pick<DataShapeDefinition, "writers" | "readers" | "typePaths" | "validatorPaths">,
 ): string[] {
   return Array.from(new Set([
@@ -59,6 +53,24 @@ export function dataShapeShellSources(
     ...(definition.typePaths ?? []),
     ...(definition.validatorPaths ?? []),
   ].filter((path) => /\.sh$/.test(path)))).sort();
+}
+
+/**
+ * Shell paths that are live in the shape's execution path. This includes a
+ * direct shell data-contract owner and a lineage surface explicitly marked as
+ * legacy-shell. It deliberately excludes historical `legacyEquivalent` paths
+ * and invocation-only shell adapters whose lifecycle remains typed.
+ */
+export function dataShapeShellSources(
+  definition: Pick<DataShapeDefinition, "writers" | "readers" | "typePaths" | "validatorPaths" | "runnerLineage">,
+): string[] {
+  const lineageShellPaths = definition.runnerLineage?.surfaces
+    .filter((surface) => surface.owner === "legacy-shell")
+    .flatMap((surface) => surface.paths) ?? [];
+  return Array.from(new Set([
+    ...dataShapeDirectShellContractSources(definition),
+    ...lineageShellPaths.filter((path) => /\.sh$/.test(path)),
+  ])).sort();
 }
 
 function shape(definition: DataShapeDefinition): DataShapeDefinition {
