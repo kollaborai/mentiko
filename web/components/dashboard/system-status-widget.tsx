@@ -276,7 +276,7 @@ export function SystemStatusWidget() {
               bar.setInputValue("how's the system doing?");
               bar.setExpanded(true);
             }}
-            className="text-[11px] font-medium text-foreground/45 transition-colors hover:text-foreground/80"
+            className="whitespace-nowrap text-[11px] font-medium text-foreground/45 transition-colors hover:text-foreground/80"
           >
             ask mentiko
           </button>
