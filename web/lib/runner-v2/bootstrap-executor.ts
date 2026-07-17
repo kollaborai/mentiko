@@ -4,7 +4,6 @@ import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
-import { buildTypedCompletionContract as buildCompletionContract } from "@/lib/runner-v2/completion-contract";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
@@ -50,14 +49,71 @@ export class TypedMonitorRuntimeMissingError extends Error {}
  * the same canonical handoff rules as the legacy launcher.
  */
 export function buildTypedCompletionContract(plan: Pick<AgentBootstrapPlan, "agentId" | "artifactsDir" | "eventsDir" | "runContextExports" | "coreGenerationChain">): string {
-  return buildCompletionContract({
-    agentId: plan.agentId || plan.runContextExports.MENTIKO_AGENT_ID || "unknown",
-    artifactsDir: plan.artifactsDir,
-    eventsDir: plan.eventsDir,
-    runId: plan.runContextExports.MENTIKO_RUN_ID || plan.runContextExports.RUN_ID,
-    emits: plan.runContextExports.MENTIKO_AGENT_EMITS,
-    coreGenerationChain: plan.coreGenerationChain,
-  });
+  const runId = plan.runContextExports.MENTIKO_RUN_ID || plan.runContextExports.RUN_ID || "unknown";
+  const agentId = plan.agentId || plan.runContextExports.MENTIKO_AGENT_ID || "unknown";
+  const emits = plan.runContextExports.MENTIKO_AGENT_EMITS || "";
+  const summaryJson = join(plan.artifactsDir, `${agentId}-summary.json`);
+  const summaryMarkdown = join(plan.artifactsDir, `${agentId}-summary.md`);
+  const emitCommand = emits ? `mentiko emit ${emits}` : "";
+
+  const eventHandoff = emits
+    ? plan.coreGenerationChain
+      ? [
+        "Core generation handoff:",
+        `- Write the authoritative generation payload to ${join(plan.artifactsDir, "generation-result.json")}.`,
+        "- Mentiko imports that file automatically when this run completes.",
+        `- You may run "${emitCommand}" after writing the payload; the generation file remains authoritative.`,
+      ]
+      : [
+        "Canonical event handoff:",
+        "When completely finished, signal completion by running this command exactly:",
+        `    ${emitCommand}`,
+      ]
+    : [
+      "This agent has no declared completion event.",
+      "Do not create or hand-write any .event file; the final completion marker is the only terminal signal.",
+    ];
+
+  return [
+    "COMPLETION CONTRACT:",
+    `Run context: RUN_ID=${runId}, MENTIKO_AGENT_ID=${agentId}`,
+    `Event root: EVENTS_DIR=${plan.eventsDir}`,
+    `Artifact root: ARTIFACTS_DIR=${plan.artifactsDir}`,
+    "",
+    "Before you finish, create these user-facing handoff artifacts:",
+    `- ${summaryJson}`,
+    `- ${summaryMarkdown}`,
+    "",
+    "The JSON summary must use this shape:",
+    "{",
+    '  "status": "complete|partial|blocked",',
+    '  "executiveSummary": "2-4 sentences suitable for the run UI",',
+    '  "workCompleted": ["specific work performed"],',
+    '  "artifactsProduced": ["artifact paths you created or updated"],',
+    '  "codeChanges": ["files changed, or \'none\'"],',
+    '  "findings": ["important discoveries"],',
+    '  "risks": ["known risks or gaps"],',
+    '  "nextAgentHints": ["what the next agent should read or do"]',
+    "}",
+    "Write a syntactically valid JSON object. Do not put literal line breaks inside JSON strings; use arrays or escaped \\n instead.",
+    `Before emitting completion, validate the summary with: node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' ${shellEscape(summaryJson)}`,
+    "",
+    ...eventHandoff,
+    "Do NOT hand-write any .event file. The typed emitter owns the canonical event bytes, filename, provenance, and validation.",
+    "Do NOT create output files in the project working directory unless the task explicitly requires it; put reports and handoff artifacts under ARTIFACTS_DIR.",
+    "",
+    "Your final terminal response must be in this order:",
+    "SUMMARY:",
+    "- one to three concise bullets",
+    "ARTIFACTS:",
+    "- paths to the most important artifacts",
+    "NEXT:",
+    '- handoff notes or "none"',
+    "<the completion marker line>",
+    "",
+    "The completion marker line must contain exactly the token AGENT_COMPLETE and nothing else.",
+    "The final non-empty line must be exactly AGENT_COMPLETE. Do not write anything after it. Do not put AGENT_COMPLETE inside files or earlier in your response.",
+  ].join("\n");
 }
 
 /**

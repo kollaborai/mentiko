@@ -49,11 +49,6 @@ export interface Agent {
   context?: AgentContext;
   authorities?: AgentAuthorities;
   wait_for_events?: AgentWaitForEvents;
-  deliverable?: string;
-  verification?: string;
-  final_verifier?: boolean;
-  verifies_acceptance_criteria?: boolean;
-  success_assertion?: string;
 }
 
 // ============================================================

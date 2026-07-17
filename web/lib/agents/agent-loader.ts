@@ -41,16 +41,6 @@ export interface AgentDefinition {
   created_at?: string;
   updated_at?: string;
   artifacts?: AgentArtifacts;
-  /** Generated-chain contract: concrete output this agent hands to the next stage. */
-  deliverable?: string;
-  /** Generated-chain contract: repeatable check for that output. */
-  verification?: string;
-  /** Marks the terminal acceptance gate in a generated chain. */
-  final_verifier?: boolean;
-  /** Says the terminal gate evaluates the task acceptance criteria, not activity. */
-  verifies_acceptance_criteria?: boolean;
-  /** The precise condition the terminal verifier may assert as successful. */
-  success_assertion?: string;
   source_skill?: {
     tool: string;
     path: string;

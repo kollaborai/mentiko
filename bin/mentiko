@@ -110,7 +110,7 @@ case "$CMD" in
     # -------------------------------------------------------------------
 
     launch)
-        exec node "$LIB_DIR/runner-v2-standalone-agent-launch.js" "$@"
+        bash "$LIB_DIR/launch-agent.sh" "$@"
         ;;
 
     peek)

@@ -49,9 +49,9 @@ const RUNNER_USAGE_LABEL: Record<RunnerContractUsage, string> = {
 };
 
 const RUNNER_USAGE_COPY: Record<RunnerContractUsage, string> = {
-  "runner-v2": "Only runner-v2 owns the mapped lifecycle surfaces for this persisted shape.",
-  shared: "Runner v2 and a legacy shell process both own mapped lifecycle surfaces for this persisted shape.",
-  "legacy-shell": "Only a legacy shell process owns the mapped lifecycle surfaces for this persisted shape.",
+  "runner-v2": "Only runner-v2 code currently reads or writes this persisted shape.",
+  shared: "Runner v2 and the legacy shell runner both currently read or write this persisted shape.",
+  "legacy-shell": "Only the legacy shell runner currently reads or writes this persisted shape.",
 };
 
 function Badge({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -132,9 +132,9 @@ export function RunnerLineageLegend() {
           </span>
         </li>
         <li className="flex min-w-0 items-start gap-2">
-          <Badge className="bg-amber-500/10 text-amber-500">Shell execution</Badge>
+          <Badge className="bg-amber-500/10 text-amber-500">Shell queue</Badge>
           <span className="text-[10px] leading-4 text-foreground/45">
-            Live shell paths that either own a direct data contract or own a mapped legacy lifecycle surface. Historical equivalents and typed invocation-only adapters do not count.
+            Shapes with a direct .sh reader, writer, type, or validator. A typed process invoking an external command does not count unless the shell file owns the shape.
           </span>
         </li>
       </ul>
@@ -667,9 +667,9 @@ export function DataShapesCatalog() {
                   "text-xs font-semibold",
                   catalog.shapes.some((shape) => dataShapeShellSources(shape).length > 0) ? "text-amber-500" : "text-emerald-500",
                 )}>
-                  {new Set(catalog.shapes.flatMap((shape) => dataShapeShellSources(shape))).size}
+                  {catalog.shapes.filter((shape) => dataShapeShellSources(shape).length > 0).length}
                 </div>
-                <div className="text-[8px] uppercase tracking-wide text-foreground/30">shell paths</div>
+                <div className="text-[8px] uppercase tracking-wide text-foreground/30">shell</div>
               </div>
             </div>
           ) : null}
@@ -697,7 +697,7 @@ export function DataShapesCatalog() {
                         <div className="mt-1 text-[10px] text-foreground/35">
                           {shape.scope} · {shape.format}
                           {shape.runnerLineage ? ` · ${runnerMigrationCoverage(shape.runnerLineage).typedPercent}% typed` : ""}
-                          {dataShapeShellSources(shape).length > 0 ? ` · ${dataShapeShellSources(shape).length} shell paths` : ""}
+                          {dataShapeShellSources(shape).length > 0 ? ` · ${dataShapeShellSources(shape).length} shell` : ""}
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">

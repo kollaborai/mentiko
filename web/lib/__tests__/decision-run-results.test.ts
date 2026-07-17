@@ -112,17 +112,7 @@ describe("applyDecisionRunResult", () => {
       selectedOptionId: "opt-a",
       result: {
         summary: "do it",
-        tasks: [{
-          id: "task-1",
-          title: "Test",
-          description: "Test it",
-          subtasks: [],
-          deliverable: "A passing focused test result",
-          verification: "Run npm test -- decision-run-results and expect exit code 0",
-          acceptance_criteria: "The focused test exits 0.",
-          priority: 2,
-          phase: 1,
-        }],
+        tasks: [{ id: "task-1", title: "Test", description: "Test it", subtasks: [], priority: 2, phase: 1 }],
         dependencies: [],
       },
     });

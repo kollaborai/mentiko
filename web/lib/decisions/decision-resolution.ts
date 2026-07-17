@@ -11,10 +11,6 @@ import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import type { Decision, ExecutionPlan, Option, TailoredOption } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
-import {
-  validateExecutionPlan,
-  type VerifiableExecutionPlan,
-} from "@/lib/decisions/decision-plan-contract";
 
 type ResolvedDecisionOption = Pick<
   Option | TailoredOption,
@@ -262,13 +258,8 @@ async function resolveDecisionToTasksUnlocked({
 
   const descriptionParts = buildDescriptionParts(decision, option);
   const notesParts = buildNotesParts(decision, selectedOptionId);
-  const storedPlan = decision.guidedFlow?.round3?.plan as ExecutionPlan | undefined;
-  let plan: VerifiableExecutionPlan | undefined;
-  if (storedPlan) {
-    const planValidation = validateExecutionPlan(storedPlan);
-    if (!planValidation.valid) throw new BadRequest(planValidation.error);
-    plan = planValidation.plan;
-  }
+  const plan = decision.guidedFlow?.round3?.plan as ExecutionPlan | undefined;
+  const hasPlan = plan && Array.isArray(plan.tasks) && plan.tasks.length > 0;
   const decisionTaskId = decision.taskId;
   const existingParentTaskId = decision.parentTaskId;
   const parentTask = existingParentTaskId
@@ -306,7 +297,7 @@ async function resolveDecisionToTasksUnlocked({
     allTaskIds.push(decisionTaskId);
   }
 
-  if (plan && existingParentTaskId) {
+  if (hasPlan && existingParentTaskId) {
     epicId = resolutionParentId as string;
     const taskIdMap: Record<string, string> = {};
     for (const [index, planTask] of plan.tasks.entries()) {
@@ -323,7 +314,6 @@ async function resolveDecisionToTasksUnlocked({
           ].filter(Boolean).join("\n"),
           issue_type: "task",
           priority: planTask.priority ?? priorityToNumber(decision.priority),
-          acceptance_criteria: planTask.acceptance_criteria,
           parent_id: epicId,
           metadata: {
             decision_id: decisionId,
@@ -333,8 +323,6 @@ async function resolveDecisionToTasksUnlocked({
             decision_plan_task_id: planTask.id,
             decision_plan_order: index,
             decision_plan_phase: planTask.phase,
-            decision_plan_deliverable: planTask.deliverable,
-            decision_plan_verification: planTask.verification,
           },
         },
         namespaceId,
@@ -357,7 +345,7 @@ async function resolveDecisionToTasksUnlocked({
         }
       }
     }
-  } else if (plan) {
+  } else if (hasPlan) {
     const epic = taskCreate(
       orgId,
       {
@@ -395,7 +383,6 @@ async function resolveDecisionToTasksUnlocked({
           ].filter(Boolean).join("\n"),
           issue_type: "task",
           priority: planTask.priority ?? priorityToNumber(decision.priority),
-          acceptance_criteria: planTask.acceptance_criteria,
           parent_id: epicId,
           metadata: {
             decision_id: decisionId,
@@ -403,8 +390,6 @@ async function resolveDecisionToTasksUnlocked({
             decision_plan_task_id: planTask.id,
             decision_plan_order: index,
             decision_plan_phase: planTask.phase,
-            decision_plan_deliverable: planTask.deliverable,
-            decision_plan_verification: planTask.verification,
           },
         },
         namespaceId,

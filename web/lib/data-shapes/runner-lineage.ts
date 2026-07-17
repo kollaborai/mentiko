@@ -4,11 +4,6 @@ export type RunnerSurfaceOwner = "runner-v2" | "legacy-shell";
 export interface RunnerMigrationSurface {
   id: string;
   label: string;
-  /**
-   * Lifecycle owner, rather than a blanket claim about every field in the
-   * persisted shape. A legacy shell surface can invoke typed contract helpers
-   * while still owning process launch/wait/orchestration.
-   */
   owner: RunnerSurfaceOwner;
   paths: string[];
 }
@@ -73,25 +68,6 @@ export function runnerMigrationCoverage(lineage: RunnerContractLineage): RunnerM
  * for each surface and are existence-checked by the catalog test suite.
  */
 export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> = {
-  "kollab-integration-config": {
-    usage: "runner-v2",
-    surfaces: [
-      {
-        id: "typed-kollab-mcp-settings",
-        label: "Validate, normalize, and atomically publish the Kollab MCP server registration",
-        owner: "runner-v2",
-        paths: [
-          "web/lib/kollabor-mcp-settings.ts",
-          "web/lib/runner-v2/kollabor-mcp-settings-cli.ts",
-          "web/lib/process-manager.ts",
-        ],
-      },
-    ],
-    legacyEquivalent: {
-      summary: "Replaces the Docker entrypoint inline Node JSON parser and writer. The entrypoint now only invokes the compiled typed CLI.",
-      paths: ["bin/docker-entrypoint.sh"],
-    },
-  },
   "startup-recovery-decision-log": {
     usage: "runner-v2",
     surfaces: [
@@ -390,12 +366,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         ],
       },
       {
-        id: "typed-run-summary-verdict",
-        label: "Read agent summary JSON, derive the conservative run verdict, atomically publish run-summary.json, and link it to run.json",
-        owner: "runner-v2",
-        paths: ["web/lib/runner-v2/run-record-operations.ts", "web/lib/runner-v2/run-record-cli.ts"],
-      },
-      {
         id: "typed-run-recovery",
         label: "Typed completion recovery and reconciliation",
         owner: "runner-v2",
@@ -421,7 +391,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "shell-run-command-boundary",
-        label: "Shell command clients forward primitive arguments to the typed Run Record CLI, including summary operations",
+        label: "Shell command clients invoke the typed Run Record CLI",
         owner: "runner-v2",
         paths: ["lib/run-lib.sh", "lib/chain-runner.sh"],
       },
@@ -505,8 +475,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/agent-state.ts",
           "web/lib/runner-v2/agent-state-cli.ts",
           "web/lib/runner-v2/bootstrap-executor.ts",
-          "web/lib/runner-v2/standalone-agent-launch.ts",
-          "web/lib/runner-v2/standalone-agent-launch-cli.ts",
         ],
       },
       {
@@ -523,8 +491,8 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "The persisted key-value format remains readable, but shell callers now invoke compiled TypeScript boundaries and do not parse or mutate state records. Standalone spec launch state is created by the typed launcher; legacy error handling is an invocation-only adapter.",
-      paths: ["lib/agent-state-client.sh", "lib/launch-agent.sh", "lib/agent-functions.sh", "web/lib/runner-v2/agent-state-cli.ts", "web/lib/runner-v2/standalone-agent-launch-cli.ts"],
+      summary: "The persisted key-value format remains readable, but shell callers now invoke the compiled TypeScript boundary and do not parse or mutate state records; legacy error handling is now an invocation-only adapter.",
+      paths: ["lib/agent-state-client.sh", "web/lib/runner-v2/agent-state-cli.ts"],
     },
   },
   "runner-monitor-state": {
@@ -538,14 +506,12 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
           "web/lib/runner-v2/standalone-monitor.ts",
           "web/lib/runner-v2/standalone-monitor-cli.ts",
           "web/lib/runner-v2/monitor-live-io.ts",
-          "web/lib/runner-v2/standalone-agent-launch.ts",
-          "web/lib/runner-v2/standalone-agent-launch-cli.ts",
         ],
       },
     ],
     legacyEquivalent: {
-      summary: "The typed standalone-spec launcher creates the agent PTY/state and routes into the typed run-scoped monitor. lib/launch-agent.sh and the exported new-agent-from-spec function in lib/agent-functions.sh only forward arguments to its compiled CLI. This remains distinct from the manual profile-aware CLI monitor, which has its own typed global state shape.",
-      paths: ["lib/launch-agent.sh", "lib/agent-functions.sh", "web/lib/runner-v2/standalone-agent-launch-cli.ts"],
+      summary: "The active standalone spec launcher routes into the typed run-scoped monitor. It is distinct from the manual profile-aware CLI monitor, which has its own typed global state shape.",
+      paths: ["lib/launch-agent.sh"],
     },
   },
   "manual-monitor-state": {
@@ -763,15 +729,13 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [
       {
         id: "typed-task-run-scope-contract",
-        label: "Validate and persist the immutable v1 active task-to-run scope during manual and auto task launch, then release it atomically on terminal retry while retaining verified source provenance",
+        label: "Validate and persist the immutable v1 task-to-run scope during manual and auto task launch, then carry the same claim into run metadata",
         owner: "runner-v2",
         paths: [
           "web/lib/tasks/task-run-locator.ts",
           "web/app/api/tasks/[id]/run-chain/route.ts",
           "web/app/api/tasks/auto-run/route.ts",
           "web/app/api/chains/run/route.ts",
-          "web/app/api/tasks/reconcile/route.ts",
-          "web/lib/tasks/completion-audit-apply.ts",
         ],
       },
       {
@@ -800,10 +764,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     fieldRules: [
       {
         path: "metadata.task_run_scope",
-        usage: "runner-v2",
-      },
-      {
-        path: "metadata.retry_source_task_run_scope",
         usage: "runner-v2",
       },
     ],
@@ -862,27 +822,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     surfaces: [{ id: "typed-legacy-metrics", label: "Validate and atomically mutate counters, gauges, timers, active timers, and webhook aggregates", owner: "runner-v2", paths: ["web/lib/runner-v2/legacy-metrics.ts", "web/lib/runner-v2/legacy-metrics-cli.ts", "web/app/api/metrics/route.ts"] }, { id: "shell-metric-command-boundary", label: "Shell forwards primitive metric operations only", owner: "runner-v2", paths: ["lib/metrics.sh"] }],
     legacyEquivalent: { summary: "Replaces shell jq metric parsing, file initialization, lock ownership, and JSON mutation with a compiled typed metrics owner.", paths: ["lib/metrics.sh"] },
   },
-  "parallel-group-state": {
-    usage: "shared",
-    surfaces: [
-      {
-        id: "typed-parallel-group-contract",
-        label: "Validate and mutate parallel group lifecycle records",
-        owner: "runner-v2",
-        paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
-      },
-      {
-        id: "legacy-shell-parallel-orchestration",
-        label: "Launch, wait for, and reduce the active parallel chain-runner processes",
-        owner: "legacy-shell",
-        paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
-      },
-    ],
-    legacyEquivalent: {
-      summary: "TypeScript owns group-state validation and mutation, but the remaining direct legacy parallel mode still launches and waits for shell chain-runner processes. This surface stays shell-owned until that orchestration path is removed or moved to TypeScript.",
-      paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"],
-    },
-  },
+  "parallel-group-state": { usage: "runner-v2", surfaces: [{ id: "typed-parallel-group", label: "Validate and mutate parallel group lifecycle records", owner: "runner-v2", paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"] }, { id: "shell-parallel-process-boundary", label: "Launch and wait for external agent processes", owner: "runner-v2", paths: ["lib/parallel-launcher.sh", "lib/parallel-coordinator.sh", "lib/chain-runner.sh"] }] },
   "session-policy-ledger": {
     usage: "runner-v2",
     surfaces: [
@@ -1012,13 +952,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-agent-summary-json-gate",
         label: "Require parseable JSON-object agent summaries before accepting typed completion",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-contract-cli.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
-      },
-      {
-        id: "shell-completion-contract-invocation",
-        label: "Forward primitive launch context to the typed completion-contract CLI",
-        owner: "runner-v2",
-        paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-contract-cli.ts"],
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
       },
     ],
     legacyEquivalent: {
@@ -1210,7 +1144,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records. Its former check command fails closed so only the supervised TypeScript background worker can admit, transition, and launch a scheduled chain.",
+      summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records.",
       paths: ["lib/scheduler.sh"],
     },
   },

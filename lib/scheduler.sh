@@ -65,12 +65,16 @@ cmd_next() {
     [[ "$next" -gt 0 ]] && echo "next run: $(date -r "$next" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "@$next" '+%Y-%m-%d %H:%M:%S')" || echo "could not calculate next run (install python-croniter)"
 }
 
-# Scheduled-chain admission, lifecycle mutation, and launch belong to the typed
-# background worker. Keep the historical command name only to fail closed for
-# old interactive callers; it must never become a second scheduler.
 cmd_check() {
-    echo "scheduler.sh check is retired; the typed background worker owns scheduled-chain execution" >&2
-    return 1
+    local chain_file="$1" schedule name
+    [[ -f "$chain_file" ]] || { echo "error: chain file not found: $chain_file"; return 1; }
+    schedule="$(get_schedule "$chain_file")"
+    [[ -n "$schedule" ]] || { echo "no schedule configured"; return 0; }
+    [[ "$(should_run_chain "$chain_file")" == "true" ]] || return 0
+    name="$(_schedule_contract_cli field --chain-path "$chain_file" --chain-dir "${CHAIN_DIR:?CHAIN_DIR must be configured}" --field name)"
+    echo "running scheduled chain: $name ($schedule)"
+    mark_run_start "$chain_file"
+    if "$SCRIPT_DIR/chain-runner.sh" "$chain_file"; then mark_run_end "$chain_file" success; else mark_run_end "$chain_file" failed; return 1; fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -19,7 +19,6 @@ import {
   outcomeSummarySourceEligibility,
 } from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
-import { assertValidGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -204,11 +203,6 @@ export const POST = withErrorHandling(async (
       }
 
       if (chainJson && Array.isArray(chainJson.agents)) {
-        // This is the import boundary for model output. Do not persist agents
-        // from an activity-only chain and hope the later task audit infers an
-        // outcome; every generated agent must declare its handoff and the last
-        // one must assert the task contract from evidence.
-        assertValidGeneratedChainDeliveryContract(chainJson);
         const processed = await postProcessChain(chainJson, nsId, oId);
         // update result with processed chain
         result = {
@@ -220,13 +214,8 @@ export const POST = withErrorHandling(async (
         updateJob(id, { result }, namespaceId);
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      updateJob(id, {
-        status: "failed",
-        error: message,
-        completedAt: new Date().toISOString(),
-      }, namespaceId);
-      throw e;
+      console.error("Chain post-processing failed:", e);
+      // don't fail the whole callback - chain is still usable inline
     }
   }
 

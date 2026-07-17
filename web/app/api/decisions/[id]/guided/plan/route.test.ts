@@ -20,7 +20,6 @@ const buildDecisionContext = jest.fn();
 const buildPreferenceText = jest.fn();
 const startDecisionChainRun = jest.fn();
 const resolveLinkRunsDir = jest.fn();
-const getJob = jest.fn();
 
 jest.mock("@/lib/auth/api-auth", () => ({ checkAuth: (...args: unknown[]) => checkAuth(...args) }));
 jest.mock("@/lib/namespace-config", () => ({
@@ -54,7 +53,7 @@ jest.mock("@/lib/decisions/decision-chain-dispatch", () => ({
 jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunsDir: (...args: unknown[]) => resolveLinkRunsDir(...args),
 }));
-jest.mock("@/lib/runs/job-store", () => ({ getJob: (...args: unknown[]) => getJob(...args) }));
+jest.mock("@/lib/runs/job-store", () => ({ getJob: jest.fn() }));
 jest.mock("@/lib/api-response", () => ({
   withErrorHandling: <T extends (...args: never[]) => unknown>(handler: T) => handler,
   apiSuccess: (data: unknown) => ({ status: 200, json: async () => ({ success: true, data }) }),
@@ -101,16 +100,16 @@ function baseDecision(id: string) {
   };
 }
 
-function request(selectedOptionId: string, jobId?: string) {
+function request(selectedOptionId: string) {
   return {
     method: "POST",
     url: "http://localhost:3200/api/decisions/dec-plan/guided/plan",
     headers: new Headers(),
-    json: async () => ({ selectedOptionId, ...(jobId ? { jobId } : {}) }),
+    json: async () => ({ selectedOptionId }),
   } as never;
 }
 
-type PlanPayload = { runId?: string; status?: string; decision?: unknown; plan?: { tasks: Array<Record<string, unknown>> } };
+type PlanPayload = { runId?: string; status?: string; decision?: unknown };
 
 async function responseData(response: { json: () => Promise<unknown> }): Promise<PlanPayload> {
   return ((await response.json()) as { data: PlanPayload }).data;
@@ -215,52 +214,5 @@ describe("POST /api/decisions/[id]/guided/plan", () => {
       selectedOptionId: "option-b",
     }));
     expect(payload).toMatchObject({ runId: "run-plan-option-b", status: "running" });
-  });
-
-  it("refuses a completed legacy plan that cannot prove each generated task", async () => {
-    getJob.mockReturnValue({
-      id: "job-legacy-plan",
-      status: "complete",
-      result: {
-        summary: "An old plan",
-        tasks: [{ id: "old-task", title: "Document status", description: "Write an update", priority: 2, phase: 1 }],
-        dependencies: [],
-      },
-    });
-
-    await expect(POST(request("option-b", "job-legacy-plan"), { params: Promise.resolve({ id: "dec-plan" }) }))
-      .rejects.toThrow("requires a concrete deliverable");
-    expect(updateDecision).not.toHaveBeenCalled();
-  });
-
-  it("stores a verified completed plan with its task contract intact", async () => {
-    getJob.mockReturnValue({
-      id: "job-verified-plan",
-      status: "complete",
-      result: {
-        summary: "A verified plan",
-        tasks: [{
-          id: "implement",
-          title: "Implement the endpoint",
-          description: "Add the endpoint and its focused regression.",
-          subtasks: [],
-          deliverable: "The endpoint and focused regression test",
-          verification: "Run npm test -- endpoint and expect exit code 0",
-          acceptance_criteria: "The endpoint returns 200 and the focused test passes.",
-          priority: 1,
-          phase: 1,
-        }],
-        dependencies: [],
-      },
-    });
-
-    const response = await POST(request("option-b", "job-verified-plan"), { params: Promise.resolve({ id: "dec-plan" }) });
-    const data = await responseData(response);
-
-    expect(data.plan?.tasks[0]).toMatchObject({
-      deliverable: "The endpoint and focused regression test",
-      verification: expect.stringContaining("npm test"),
-      acceptance_criteria: expect.stringContaining("Deliverable: The endpoint and focused regression test"),
-    });
   });
 });

@@ -1,5 +1,6 @@
 import {
   existsSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -54,6 +55,49 @@ export function countRunningRuns(runsDir: string, excludeRunId?: string): number
     .length;
 }
 
+export function githubErrorTitle(runJsonPath: string, agentId: string): string {
+  const run = readExpectedRun(runJsonPath);
+  return `Agent Error: ${agentId} failed in ${run.chain || "unknown"}`;
+}
+
+export function githubErrorBody(input: {
+  runJsonPath: string;
+  agentId: string;
+  errorMessage: string;
+  outputFile?: string;
+  now?: Date;
+}): string {
+  const run = readExpectedRun(input.runJsonPath);
+  const output = input.outputFile && existsSync(input.outputFile)
+    ? tailLines(readFileSync(input.outputFile, "utf8"), 100)
+    : "";
+  const outputSection = output
+    ? `\n\n## Agent Output (last 100 lines)\n${escapeMarkdownCode(output)}`
+    : "";
+  return [
+    "## Agent Error Report",
+    "",
+    `**Run ID:** \`${run.id}\``,
+    `**Agent:** \`${input.agentId}\``,
+    `**Chain:** ${run.chain || "unknown"}`,
+    `**Status:** ${run.status || "unknown"}`,
+    `**Started:** ${run.started || "unknown"}`,
+    "",
+    "## Goal",
+    run.goal || "no goal",
+    "",
+    "## Error",
+    `${escapeMarkdownCode(input.errorMessage)}${outputSection}`,
+    "",
+    "## Run Info",
+    Object.entries(run).map(([key, value]) => `- **${key}:** ${displayValue(value)}`).join("\n"),
+    "",
+    "---",
+    "Created by mentiko github integration",
+    `Timestamp: ${(input.now || new Date()).toISOString()}`,
+  ].join("\n");
+}
+
 export function deleteRunsOwnedByUser(runsDir: string, userId: string): string[] {
   if (!userId) throw new Error("user id must not be empty");
   const canonicalRunsDir = canonicalizeRunsDir(runsDir);
@@ -101,4 +145,17 @@ export function deleteRunsOlderThan(
 function readExpectedRun(runJsonPath: string): RunRecord {
   const runId = basename(dirname(runJsonPath));
   return readRunRecordAt(dirname(dirname(runJsonPath)), runId);
+}
+
+function tailLines(value: string, count: number): string {
+  return value.split("\n").slice(-count).join("\n");
+}
+
+function escapeMarkdownCode(value: string): string {
+  return value.replace(/`/g, "\\`").replace(/\\/g, "\\\\");
+}
+
+function displayValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }

@@ -19,7 +19,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { assertValidGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
 
 export interface ChainGeneratorOptions {
   prompt: string;
@@ -141,8 +140,6 @@ export function validateGeneratedChain(value: unknown): GeneratedChain {
     });
   }
 
-  assertValidGeneratedChainDeliveryContract(value);
-
   return { ...value, name: value.name, agents };
 }
 
@@ -202,7 +199,7 @@ ${schemaContext}
 REQUIREMENTS:
 1. Output ONLY a valid JSON object. No markdown, no explanation, no code blocks.
 2. The JSON must be valid according to the schema above.
-3. All agents must have: id, name, triggers (array), emits (string), deliverable (concrete output), and verification (repeatable check)
+3. All agents must have: id, name, triggers (array), emits (string)
 4. triggers can include: manual-start, or event names from other agents' emits
 5. Create a sensible flow: agent A emits X, agent B triggers on X, emits Y, etc.
 6. For review loops: make the reviewer emit either 'approved' or 'needs-revision'
@@ -211,8 +208,6 @@ REQUIREMENTS:
 8. Include inline prompts for each agent - keep them clear and actionable
 9. Set max_rounds to 3 for chains with review loops
 10. Set session_prefix to something short and descriptive
-11. Include metadata.generated_chain_contract exactly as {"version":1,"mode":"delivery"|"research","acceptance_criteria":"..."}. Use research only for a genuinely research/analysis-only request; delivery requires an edit_files agent.
-12. The last agent must be a final verifier with final_verifier: true, verifies_acceptance_criteria: true, and a success_assertion tied to metadata.generated_chain_contract.acceptance_criteria. It must verify evidence, not merely report that agents ran.
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;

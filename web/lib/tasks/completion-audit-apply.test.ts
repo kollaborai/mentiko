@@ -437,13 +437,6 @@ describe("applyCompletionAudit", () => {
     const result = await applyCompletionAudit(makeInput(task, audit, {
       auto_run_retries: 99,
       execution_retries: 1,
-      task_run_scope: {
-        version: 1,
-        taskId: "TASK-42",
-        runId: "run-abc",
-        namespaceId: "default",
-        orgId: "default",
-      },
     }));
 
     expect(result.action).toBe("retry_scheduled");
@@ -476,12 +469,6 @@ describe("applyCompletionAudit", () => {
       "TASK-42",
       expect.objectContaining({
         last_run_id: undefined,
-        task_run_scope: undefined,
-        retry_source_run_id: "run-abc",
-        retry_source_task_run_scope: expect.objectContaining({
-          taskId: "TASK-42",
-          runId: "run-abc",
-        }),
         execution_retries: 2,
         lifecycle_phase: "retrying",
         last_audit_verdict: "retry",

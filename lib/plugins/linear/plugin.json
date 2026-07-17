@@ -7,7 +7,7 @@
   "category": "task-provider",
   "builtin": true,
   "events": ["chain-completed", "agent-completed"],
-  "nativeHandler": "linear",
+  "onEventScript": "on-event.sh",
   "configSchema": [
     {
       "key": "api_key",

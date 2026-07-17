@@ -2,51 +2,21 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   buildManagedProcessEnv,
-  expandManagedProcessArgs,
   MANAGED_PROCESS_ENV_WHITELIST,
   PLATFORM_PROCESS_ENV_WHITELIST,
-  resolveManagedDevGlobalRoot,
-  shouldReplaceUnavailableDevContainerRoot,
 } from "../process-manager-env";
 
 describe("process manager environment", () => {
-  it("uses the config.ts local root only when no explicit managed root exists", () => {
-    expect(resolveManagedDevGlobalRoot({}, "/Users/marco")).toBe("/Users/marco/.mentiko");
-    expect(resolveManagedDevGlobalRoot({ MENTIKO_ROOT: "/legacy-root" }, "/Users/marco")).toBe("/legacy-root");
-    expect(resolveManagedDevGlobalRoot({ MENTIKO_GLOBAL_ROOT: "/explicit-root", MENTIKO_ROOT: "/legacy-root" }, "/Users/marco")).toBe("/explicit-root");
-  });
-
-  it("replaces only a nonexistent inherited container root during local dev", () => {
-    expect(shouldReplaceUnavailableDevContainerRoot({ MENTIKO_GLOBAL_ROOT: "/app" }, false)).toBe(true);
-    expect(shouldReplaceUnavailableDevContainerRoot({ MENTIKO_GLOBAL_ROOT: "/app" }, true)).toBe(false);
-    expect(shouldReplaceUnavailableDevContainerRoot({ MENTIKO_GLOBAL_ROOT: "/explicit-root" }, false)).toBe(false);
-  });
-
-  it("expands the configured daemon argument from the same env used by readiness", () => {
-    const sourceEnv = { PTY_DAEMON: "mentiko-local-default" };
-    expect(expandManagedProcessArgs(["daemon", "@$PTY_DAEMON"], sourceEnv)).toEqual([
-      "daemon",
-      "@mentiko-local-default",
-    ]);
-
-    const processes = JSON.parse(readFileSync(join(process.cwd(), "processes.dev.json"), "utf8"));
-    const pty = processes.processes.find((process: { name: string }) => process.name === "pty-mgr");
-    expect(pty.args).toEqual(["daemon", "@$PTY_DAEMON"]);
-  });
-
   it("passes pty manager override variables to managed child processes", () => {
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("MENTIKO_PTY_MGR_BIN");
     expect(MANAGED_PROCESS_ENV_WHITELIST).toContain("PTY_DAEMON");
   });
 
-  it("loads the web-local env file and assigns the typed dev root before spawning managed children", () => {
+  it("loads the web-local env file when run from the web directory", () => {
     const source = readFileSync(join(process.cwd(), "lib/process-manager.ts"), "utf8");
 
     expect(source).toContain("path.join(process.cwd(), '.env.local')");
-    expect(source).toContain("resolveManagedDevGlobalRoot(rootEnvironment, home)");
-    expect(source).toContain("shouldReplaceUnavailableDevContainerRoot(");
-    expect(source).toContain("expandManagedProcessArgs(config.args || [], process.env)");
   });
 
   it("passes tenant transactional email variables to managed child processes", () => {

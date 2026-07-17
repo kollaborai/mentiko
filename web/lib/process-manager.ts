@@ -13,8 +13,8 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
-import { buildManagedProcessEnv, expandManagedProcessArgs, resolveManagedDevGlobalRoot, shouldReplaceUnavailableDevContainerRoot } from './process-manager-env';
-import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
+import { buildManagedProcessEnv } from './process-manager-env';
+import { getKollabMentikoMcpServerEnv } from './kollabor-mcp-server-env';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -27,6 +27,11 @@ interface ManagedProcess {
   lastExitCode: number | null;
   restartTimer: ReturnType<typeof setTimeout> | null;
   stoppedByUser: boolean;
+}
+
+interface McpSettings {
+  servers?: Record<string, unknown>;
+  mcpServers?: Record<string, unknown>;
 }
 
 const IPC_MAX_MSG = 512 * 1024;
@@ -187,7 +192,7 @@ async function waitReady(_name: string, r: ReadinessConfig | undefined): Promise
 
 function spawnChild(config: ProcessConfig): ManagedProcess {
   const env = buildManagedProcessEnv(config);
-  const child: ChildProcess = spawn(config.cmd, expandManagedProcessArgs(config.args || [], process.env), {
+  const child: ChildProcess = spawn(config.cmd, config.args || [], {
     env: env as unknown as NodeJS.ProcessEnv,
     cwd: config.cwd || process.cwd(),
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -691,16 +696,6 @@ async function housekeep() {
   }
 
   const home = os.homedir();
-  const inheritedUnavailableContainerRoot = shouldReplaceUnavailableDevContainerRoot(
-    process.env,
-    fs.existsSync('/app'),
-  );
-  if (isDev && ((!process.env.MENTIKO_GLOBAL_ROOT && !process.env.MENTIKO_ROOT) || inheritedUnavailableContainerRoot)) {
-    const rootEnvironment = inheritedUnavailableContainerRoot
-      ? { ...process.env, MENTIKO_GLOBAL_ROOT: undefined, MENTIKO_ROOT: undefined }
-      : process.env;
-    process.env.MENTIKO_GLOBAL_ROOT = resolveManagedDevGlobalRoot(rootEnvironment, home);
-  }
   const skelDir = '/opt/mentiko/skel';
   if (fs.existsSync(skelDir)) {
     for (const rc of ['.bashrc', '.zshrc']) {
@@ -775,12 +770,32 @@ async function housekeep() {
     process.env.MENTIKO_ORG_ID = process.env.ORG_ID || 'default';
   }
   try {
+    const mcpDir = path.join(os.homedir(), ".kollab", "mcp");
+    fs.mkdirSync(mcpDir, { recursive: true });
+    const settingsPath = path.join(mcpDir, 'mcp_settings.json');
+    let existing: McpSettings = {};
+    if (fs.existsSync(settingsPath)) {
+      try { existing = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
+    }
+    existing.servers = {
+      ...(existing.mcpServers || {}),
+      ...(existing.servers || {}),
+    };
+    delete existing.mcpServers;
     // Prefer the bundled binary in prod, repo shim in dev
     const mcpBin = fs.existsSync('/opt/mentiko/bin/mentiko-mcp')
       ? '/opt/mentiko/bin/mentiko-mcp'
       : path.join(process.cwd(), 'bin', 'mentiko-mcp');
-    const registration = registerKollabMentikoMcpServer({ command: mcpBin });
-    log(`mentiko-mcp: registered at ${registration.path} (cmd=${mcpBin})`);
+    const cmd = mcpBin;
+    existing.servers.mentiko = {
+      type: 'stdio',
+      command: cmd,
+      args: [],
+      env: getKollabMentikoMcpServerEnv(),
+      enabled: true,
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
+    log(`mentiko-mcp: registered at ${settingsPath} (cmd=${cmd})`);
   } catch (e: unknown) {
     logErr(`mentiko-mcp settings write failed: ${errorMessage(e)}`);
   }
