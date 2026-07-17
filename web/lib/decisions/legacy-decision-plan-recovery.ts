@@ -41,7 +41,7 @@ export function recoverLegacyDecisionPlanTask(
   const metadata = taskMetadata(task);
   const decisionId = text(metadata.decision_id);
   const planTaskId = text(metadata.decision_plan_task_id);
-  const legacyMarker = metadata.decision_plan_contract === "legacy_unverifiable";
+  const legacyMarker = metadata.decision_plan_contract === "legacy_unverifiable" || metadata.decision_plan_contract === "regenerating";
   const legacyPause = text(metadata.auto_run_paused_reason)?.startsWith(LEGACY_PLAN_PAUSE_PREFIX) ?? false;
 
   if (!legacyMarker && !metadata.decision_plan_quarantined_at && !legacyPause) {
@@ -91,6 +91,7 @@ export interface ReconcileLegacyDecisionPlansInput {
   namespaceId: string;
   orgId: string;
   workspacePath?: string;
+  decisionId?: string;
   apply?: boolean;
 }
 
@@ -113,9 +114,11 @@ export function reconcileLegacyDecisionPlans(
     .filter((task) => {
       const metadata = taskMetadata(task);
       return metadata.decision_plan_contract === "legacy_unverifiable"
+        || metadata.decision_plan_contract === "regenerating"
         || !!metadata.decision_plan_quarantined_at
         || (text(metadata.auto_run_paused_reason)?.startsWith(LEGACY_PLAN_PAUSE_PREFIX) ?? false);
-    });
+    })
+    .filter((task) => !input.decisionId || taskMetadata(task).decision_id === input.decisionId);
 
   const results = tasks.map((task) => {
     const metadata = taskMetadata(task);

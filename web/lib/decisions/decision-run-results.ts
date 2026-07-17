@@ -11,6 +11,7 @@ import type {
 } from "@/lib/decisions/decision-types";
 import { BadRequest, NotFound } from "@/lib/api-errors";
 import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
+import { reconcileLegacyDecisionPlans } from "@/lib/decisions/legacy-decision-plan-recovery";
 
 export type DecisionRunPhase =
   | "research"
@@ -151,7 +152,18 @@ export async function applyDecisionRunResult({
     guidedFlow.round3.plan = plan.plan;
     guidedFlow.round3.generationJobId = undefined;
     if (runId) guidedFlow.round3.generationRunId = runId;
-    return updateDecision(namespaceId, orgId, decisionId, { guidedFlow }, decisionWs);
+    const updated = await updateDecision(namespaceId, orgId, decisionId, { guidedFlow }, decisionWs);
+    // A regenerated plan has just crossed the v1 contract boundary. Repair
+    // only this decision's quarantined children; no unrelated legacy task tree
+    // is touched, and no title/subtask inference is involved.
+    reconcileLegacyDecisionPlans({
+      namespaceId,
+      orgId,
+      workspacePath: decisionWs,
+      decisionId,
+      apply: true,
+    });
+    return updated;
   }
 
   throw new BadRequest(`Unsupported decision phase: ${phase}`);

@@ -3,6 +3,7 @@ import type { Decision } from "../decisions/decision-types";
 const getDecision = jest.fn();
 const updateDecision = jest.fn();
 const taskUpdate = jest.fn();
+const reconcileLegacyDecisionPlans = jest.fn();
 
 jest.mock("../decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => getDecision(...args),
@@ -11,6 +12,10 @@ jest.mock("../decisions/decision-storage", () => ({
 
 jest.mock("../tasks/task-store", () => ({
   taskUpdate: (...args: unknown[]) => taskUpdate(...args),
+}));
+
+jest.mock("../decisions/legacy-decision-plan-recovery", () => ({
+  reconcileLegacyDecisionPlans: (...args: unknown[]) => reconcileLegacyDecisionPlans(...args),
 }));
 
 const baseDecision: Decision = {
@@ -145,6 +150,13 @@ describe("applyDecisionRunResult", () => {
       }),
       undefined,
     );
+    expect(reconcileLegacyDecisionPlans).toHaveBeenCalledWith({
+      namespaceId: "default",
+      orgId: "default",
+      workspacePath: undefined,
+      decisionId: "decision-1",
+      apply: true,
+    });
   });
 
   test("applies guided questions output and links round 1 to the run", async () => {

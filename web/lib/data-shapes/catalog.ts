@@ -408,8 +408,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{orgRoot}/decisions/{id}.json", "{orgRoot}/projects/{encodedWorkspace}/decisions/{id}.json"],
     assurance: "typed",
     typePaths: ["web/lib/decisions/decision-types.ts"],
-    writers: ["web/lib/decisions/decision-storage.ts", "web/lib/decisions/decision-run-results.ts", "web/lib/decisions/decision-resolution.ts", "web/lib/runs/gdpr-user-sweep.ts"],
-    readers: ["web/lib/decisions/decision-storage.ts", "web/app/api/decisions/[id]/route.ts"],
+    writers: ["web/lib/decisions/decision-storage.ts", "web/lib/decisions/decision-run-results.ts", "web/lib/decisions/decision-resolution.ts", "web/lib/decisions/legacy-decision-plan-regeneration.ts", "web/lib/runs/gdpr-user-sweep.ts"],
+    readers: ["web/lib/decisions/decision-storage.ts", "web/app/api/decisions/[id]/route.ts", "web/lib/decisions/legacy-decision-plan-recovery.ts", "web/lib/decisions/legacy-decision-plan-regeneration.ts"],
     samples: {
       root: "organization",
       patterns: [["decisions", "*.json"], ["projects", "*", "decisions", "*.json"]],
@@ -451,6 +451,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/tasks/reconcile/route.ts",
       "web/lib/decisions/legacy-decision-plan-recovery.ts",
       "web/app/api/tasks/decision-plan-recovery/route.ts",
+      "web/lib/decisions/legacy-decision-plan-regeneration.ts",
+      "web/app/api/tasks/decision-plan-regeneration/route.ts",
     ],
     readers: [
       "web/lib/tasks/task-store.ts",
@@ -461,6 +463,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/app/api/tasks/reconcile/route.ts",
       "web/lib/decisions/legacy-decision-plan-recovery.ts",
       "web/app/api/tasks/decision-plan-recovery/route.ts",
+      "web/lib/decisions/legacy-decision-plan-regeneration.ts",
+      "web/app/api/tasks/decision-plan-regeneration/route.ts",
       "web/app/api/code/tasks-db/route.ts",
     ],
     samples: { root: "namespace", patterns: [["data", "tasks.db"]], format: "sqlite" },
@@ -469,6 +473,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "Typed task attempts, outcome evidence, reconciliation, and auto-run resolve a scoped claim only through task-run-locator. It resolves the declared namespace/org root directly, then verifies run id, task id, and execution provenance. A malformed, missing, or mismatched scoped claim fails closed; it never permits alternate-root scanning or fallback lookup.",
       "Tasks created before task_run_scope retain their existing single request/config-resolved root read. That legacy unscoped behavior is not a fallback for a task that already has a scope claim.",
       "Quarantined legacy decision-plan tasks are repaired only when their own persisted Decision Record now validates the v1 deliverable, verification, and acceptance contract for the recorded decision_plan_task_id. The typed recovery endpoint is dry-run by default; an explicit confirmation either copies that contract and clears the pause or records a visible regeneration-required blocker. It never invents acceptance evidence from task titles, descriptions, or subtasks.",
+      "Typed legacy-plan regeneration is separately explicit and dry-run by default. It groups task rows by decision, requires an approved Decision Record with a persisted selected option, and launches the existing durable guided-plan phase. When the v1 plan result persists, decision-run-results repairs only that decision's matching task rows; a missing or changed selection remains a visible non-autonomous blocker.",
     ],
   }),
   shape({
