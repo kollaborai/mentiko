@@ -748,15 +748,11 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-batch-worker",
-        label: "Launch batch chains and record aggregate completion through the typed worker",
+        label: "Reserve batch run provenance, invoke typed initial bootstrap, and record aggregate launch acceptance through the typed worker",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/batch-runner-cli.ts", "web/app/api/chains/run-batch/route.ts"],
+        paths: ["web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/batch-runner-cli.ts", "web/lib/runner-v2/direct-run.ts", "web/app/api/chains/run-batch/route.ts"],
       },
     ],
-    legacyEquivalent: {
-      summary: "Replaces multi-chain-runner.sh JSON parsing, lifecycle mutation, PID files, and result writes. Shell remains only as the invoked chain runner process boundary.",
-      paths: ["web/lib/runner-v2/batch-runner.ts", "lib/chain-runner.sh"],
-    },
   },
   "task-database": {
     usage: "runner-v2",

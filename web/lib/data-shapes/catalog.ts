@@ -390,7 +390,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "mixed",
     storage: ["{namespaceRoot}/batches/{batchId}/batch.json", "{namespaceRoot}/batches/{batchId}/{chainId}/result.json", "{namespaceRoot}/batches/{batchId}/{chainId}/chain.json"],
     assurance: "typed",
-    typePaths: ["web/lib/runner-v2/batch-run-record.ts", "web/lib/runner-v2/batch-runner.ts"],
+    typePaths: ["web/lib/runner-v2/batch-run-record.ts", "web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/batch-runner-cli.ts", "web/lib/runner-v2/direct-run.ts"],
     writers: ["web/lib/runner-v2/batch-run-record.ts", "web/lib/runner-v2/batch-runner.ts"],
     readers: ["web/lib/runner-v2/batch-run-record.ts", "web/lib/runner-v2/batch-runner.ts", "web/app/api/chains/run-batch/route.ts"],
     samples: { root: "namespace", patterns: [["batches", "*", "batch.json"], ["batches", "*", "*", "result.json"]], format: "json" },

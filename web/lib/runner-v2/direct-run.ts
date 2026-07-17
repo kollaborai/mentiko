@@ -5,7 +5,7 @@ import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
 import { loadNormalizedChainDefinition, type ChainRecord } from "@/lib/runner-v2/chain-contract";
 import { validateChainFile } from "@/lib/runner-v2/chain-validation-cli";
 import { createRunRecord, updateRunJson, updateRunStatus } from "@/lib/runner-v2/run-state";
-import type { RunnerV2LaunchResult } from "@/lib/runner-v2/types";
+import type { RunnerV2LaunchStarted } from "@/lib/runner-v2/types";
 
 /**
  * Typed initial-run creation. `parentRunId` is intentionally an explicit
@@ -18,11 +18,15 @@ export interface DirectRunOptions {
   workspacePath?: string;
   agentId?: string;
   debug: boolean;
+  /** Internal callers may reserve a typed run identity before bootstrap. */
+  runId?: string;
+  /** Internal callers may preserve an invocation-specific goal in run provenance. */
+  goal?: string;
   parentRunId?: string;
   /** Explicit runtime root for an internal typed caller (for example on_complete chaining). */
   runsDir?: string;
 }
-export interface DirectRunResult { runId: string; runDir: string; agentId: string; launch: RunnerV2LaunchResult }
+export interface DirectRunResult { runId: string; runDir: string; agentId: string; launch: RunnerV2LaunchStarted }
 
 function requiredValue(argv: string[], index: number, flag: string): string {
   const value = argv[index + 1];
@@ -67,6 +71,16 @@ function localWorkspace(path?: string): string | undefined {
   return resolved;
 }
 
+/** Resolve a product-owned run root without treating it as an execution workspace. */
+function runtimeRunsDir(path?: string): string {
+  const configured = path ? resolve(path) : config.runsDir;
+  if (!configured) throw new Error("typed direct run requires a runs directory");
+  mkdirSync(configured, { recursive: true, mode: 0o700 });
+  const resolved = realpathSync(configured);
+  if (!statSync(resolved).isDirectory()) throw new Error(`runs directory must be a directory: ${configured}`);
+  return resolved;
+}
+
 export async function runTypedDirect(options: DirectRunOptions): Promise<DirectRunResult> {
   const validation = validateChainFile(options.chainPath, true);
   if (validation.errors.length > 0) throw new Error(validation.errors.join("\n"));
@@ -77,16 +91,18 @@ export async function runTypedDirect(options: DirectRunOptions): Promise<DirectR
   const workspacePath = localWorkspace(options.workspacePath);
   const selected = chainAgent(chain, options.agentId);
   const chainName = typeof chain.name === "string" && chain.name ? chain.name : basename(options.chainPath, ".json");
-  const runsDir = options.runsDir ? localWorkspace(options.runsDir) : config.runsDir;
-  if (!runsDir) throw new Error("typed direct run requires a runs directory");
+  const runsDir = runtimeRunsDir(options.runsDir);
   const run = createRunRecord({
+    runId: options.runId,
     chainName,
-    goal: typeof chain.description === "string" ? chain.description : "",
+    goal: options.goal ?? (typeof chain.description === "string" ? chain.description : ""),
     workspacePath,
     parentRunId: options.parentRunId,
   });
   const runDir = join(runsDir, run.id);
-  mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  // A caller-provided identity is a durable reservation, never permission to
+  // replace an existing run's immutable chain snapshot or provenance.
+  mkdirSync(runDir, { recursive: false, mode: 0o700 });
   const chainPath = join(runDir, "chain.json");
   writeFileSync(chainPath, `${JSON.stringify(chain, null, 2)}\n`, { mode: 0o600 });
   updateRunJson(join(runDir, "run.json"), () => run);

@@ -20,6 +20,7 @@ const pairs = [
   ["audit-ship-cli", "runner-audit-ship"],
   ["notification-dispatcher-cli", "runner-notification-dispatcher"],
   ["completion-contract-cli", "runner-completion-contract"],
+  ["batch-runner-cli", "runner-batch-runner"],
   ["kollabor-mcp-settings-cli", "runner-kollabor-mcp-settings"],
   ["agent-transcript-cli", "runner-agent-transcript"],
   ["agent-profile-cli", "runner-agent-profile"],

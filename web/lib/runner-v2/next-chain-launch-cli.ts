@@ -11,7 +11,6 @@ async function main(): Promise<void> {
     runsDir: input.runsDir,
     debug: false,
   });
-  if (result.launch.support !== "supported") throw new Error(result.launch.reason);
   console.log(JSON.stringify({ status: "launched", runId: result.runId, runDir: result.runDir, agentId: result.agentId, mode: result.launch.mode }));
 }
 

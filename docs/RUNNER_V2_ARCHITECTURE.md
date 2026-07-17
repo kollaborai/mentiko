@@ -89,11 +89,10 @@ planning, locked TypeScript writes to `run.json`, and durable external-effect
 queuing. Independently of each chain launch, the TypeScript background worker
 owns chain-watcher start/status/stop and startup plus periodic watchdog scans.
 
-The supported local direct CLI and scheduled launch paths are typed. Remaining
-legacy shell execution is explicit rather than a fallback: batch workers spawn
-`chain-runner.sh` for each snapshot, typed adapters use it for `next-chain`
-continuations and retries, and direct legacy `chain-runner.sh --parallel`
-still owns that process fan-out. Routed same-run agents use the typed launcher
+The supported local direct CLI, scheduled, and batch launch paths are typed.
+Remaining legacy shell execution is explicit rather than a fallback: typed
+adapters use it for `next-chain` continuations and retries, and direct legacy
+`chain-runner.sh --parallel` still owns that process fan-out. Routed same-run agents use the typed launcher
 and fail closed without consuming the parent event when typed startup cannot be
 durably accepted. The retired watchdog and chain-event-watcher scripts are
 parity references, not active daemons.
@@ -542,8 +541,8 @@ does not depend on this missing merge context.
 ### Some launch boundaries remain shell-owned
 
 Unsupported/non-local direct launch fails at the typed boundary. Remaining
-legacy executable paths are batch worker launches, typed `next-chain`
-continuations, retry dispatch, and direct `chain-runner.sh --parallel` use.
+legacy executable paths are typed `next-chain` continuations, retry dispatch,
+and direct `chain-runner.sh --parallel` use.
 Same-run routed local agents use the typed launcher and full `AgentAttempt`
 startup evidence without a shell fallback.
 
@@ -552,8 +551,8 @@ startup evidence without a shell fallback.
 `default_runner: shell` remains a machine-contract classification because the
 legacy executable paths above still exist. Do not translate that field into a
 claim that the supported direct local CLI or scheduled service launches a shell
-runner; both are typed. Do not claim complete typed orchestration until batch,
-next-chain/retry, and direct legacy parallel execution are removed or migrated.
+runner; both are typed. Do not claim complete typed orchestration until
+next-chain/retry and direct legacy parallel execution are removed or migrated.
 
 ### Historical proof artifacts are not fresh runtime proof
 

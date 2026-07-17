@@ -5,7 +5,7 @@
   "revision_note": "supported local direct and scheduled launches, monitor, completion, and run-summary verdict publication are typed and fail closed; default_runner remains a side-by-side migration classification for explicitly remaining legacy executable paths, not the implementation of bin/mentiko run",
   "migration_mode": "side-by-side",
   "default_runner": "shell",
-  "default_runner_scope": "Migration classification for remaining batch, next-chain, and direct legacy parallel shell execution. Supported local bin/mentiko run, scheduled launches, and agent retry/handler relaunch use typed launch-agent dispatch (runner-v2-launch-agent); error-handling authorizes one fresh occurrence and re-enters the exact existing run, never chain-runner.sh --start.",
+  "default_runner_scope": "Migration classification for remaining next-chain and direct legacy parallel shell execution. Supported local bin/mentiko run, scheduled launches, batch launches, and agent retry/handler relaunch use typed launch-agent dispatch (runner-v2-launch-agent); error-handling authorizes one fresh occurrence and re-enters the exact existing run, never chain-runner.sh --start.",
   "flag": {
     "name": "MENTIKO_RUNNER_V2",
     "enabled_values": [

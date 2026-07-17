@@ -34,7 +34,7 @@ runner-v2 component map and HTTP-to-next-agent lifecycle, see
 │  │                      orchestration layer                             │    │
 │  │  typed direct launch | typed completion entrypoint                   │    │
 │  │  typed event lifecycle | typed chain watcher | typed watchdog        │    │
-│  │  explicit legacy shell: batch, next-chain/retry, direct parallel    │    │
+│  │  explicit legacy shell: next-chain/retry, direct parallel           │    │
 │  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
 │                                  ▼                                          │
@@ -174,8 +174,8 @@ described as a typed owner merely because its persistence calls are typed.
 The supported direct launch creates one typed initial attempt and starts its
 companion monitor. When an agent completes, the typed completion launcher
 processes the handoff and accepts the next same-run target before consuming the
-parent event. The remaining `chain-runner.sh` flows are batch child launch,
-next-chain/retry continuation, and direct legacy parallel invocation.
+parent event. The remaining `chain-runner.sh` flows are next-chain/retry
+continuation and direct legacy parallel invocation.
 
 TypeScript owns every runtime data contract. Shell files under `lib/*.sh` are
 invocation boundaries: they forward primitive arguments into a compiled typed
@@ -205,8 +205,8 @@ Typed owners:
 
 Shell boundaries and remaining executable paths:
 
-- `lib/chain-runner.sh`: remaining executable for batch child launch,
-  next-chain/retry continuation, and direct legacy parallel invocation. It
+- `lib/chain-runner.sh`: remaining executable for next-chain/retry continuation
+  and direct legacy parallel invocation. It
   uses typed contract and record helpers but is not merely a passive adapter.
 - `lib/validate.sh`: 14 lines; invokes `runner-chain-validation.js` only.
 - `lib/run-lib.sh`: forwards every run operation to `runner-run-record.js`
@@ -235,7 +235,7 @@ Flow:
 1. A user, API route, MCP tool, schedule, webhook, or event asks to run a chain.
 2. The launch path writes a run directory and chain snapshot.
 3. Supported local launch validates and resolves the chain through typed
-   direct-run/bootstrap code; legacy batch/continuation/parallel paths still
+   direct-run/bootstrap code; legacy continuation/parallel paths still
    enter `chain-runner.sh`.
 4. The independently supervised typed background worker owns the watchdog and chain watcher; chain startup creates no watcher sessions.
 5. The runner admits the chain through the concurrency cap.
@@ -254,7 +254,7 @@ supported local direct CLI is shell-run.
 Current contract:
 
 - `default_runner` is `shell` only as a migration classification while legacy
-  batch, continuation/retry, and direct parallel paths remain.
+  continuation/retry and direct parallel paths remain.
 - supported local `bin/mentiko run` is typed whether or not
   `MENTIKO_RUNNER_V2` is set; the flag selects the direct web controller branch.
 - completion is unconditionally typed; `MENTIKO_RUNNER_V2_COMPLETION=1` is a

@@ -1,9 +1,7 @@
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
-import { createRunRecordFile } from "@/lib/runs/run-record";
-import { createRunRecord, updateRunStatus } from "@/lib/runner-v2/run-state";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative } from "node:path";
+import { runTypedDirect, type DirectRunResult } from "@/lib/runner-v2/direct-run";
 import {
   type BatchChainResult,
   type BatchMode,
@@ -37,9 +35,13 @@ export interface RunBatchInput {
   batchesDir: string;
   batchId: string;
   runsDir: string;
-  chainRunnerPath: string;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
+  /** Test seam for the same typed initial-bootstrap contract used in production. */
+  launchDirectRun?: (input: {
+    chainPath: string;
+    goal: string;
+    runId: string;
+    runsDir: string;
+  }) => Promise<DirectRunResult>;
 }
 
 export async function prepareBatch(input: PrepareBatchInput): Promise<BatchRunRecord> {
@@ -81,10 +83,9 @@ export async function prepareBatch(input: PrepareBatchInput): Promise<BatchRunRe
 export async function runBatch(input: RunBatchInput): Promise<BatchRunRecord> {
   const initial = readBatchRunRecord(input.batchesDir, input.batchId);
   if (initial.status !== "running") return initial;
-  if (!isAbsolute(input.runsDir) || !isAbsolute(input.chainRunnerPath) || !isAbsolute(input.cwd)) {
+  if (!isAbsolute(input.runsDir)) {
     throw new Error("Batch runner requires absolute configured paths.");
   }
-  if (!existsSync(input.chainRunnerPath)) throw new Error("Configured chain runner is missing.");
 
   const runOne = async (chainId: string) => runBatchChain(input, chainId);
   if (initial.mode === "parallel") {
@@ -149,22 +150,22 @@ export async function markBatchWorkerLaunchFailed(
 }
 
 /**
- * A per-chain startup failure occurs while the batch record lock is held, so
- * the throwing mutation never publishes its claim. Persist a terminal state
- * afterward, unless cancellation won the race.
+ * A typed bootstrap failure follows a durable batch claim. Only that exact
+ * claim may become failed; cancellation and a newer claim win the race.
  */
 async function markBatchChainLaunchFailed(
   batchesDir: string,
   batchId: string,
   chainId: string,
   reason: string,
+  runId?: string,
 ): Promise<BatchRunRecord> {
   return mutateBatchRunRecord(batchesDir, batchId, (current) => {
     if (current.status !== "running") return current;
     const completed = new Date().toISOString();
     let changed = false;
     const chains = current.chains.map((chain) => {
-      if (chain.id !== chainId || chain.status !== "pending") return chain;
+      if (chain.id !== chainId || (chain.status !== "pending" && !(chain.status === "running" && chain.run_id === runId))) return chain;
       changed = true;
       return { ...chain, status: "failed" as const, completed };
     });
@@ -178,7 +179,7 @@ async function markBatchChainLaunchFailed(
 }
 
 async function runBatchChain(input: RunBatchInput, chainId: string): Promise<void> {
-  let claimed: { chain: BatchRunRecord["chains"][number]; runId: string; started: string; child: ReturnType<typeof spawn> } | undefined;
+  let claimed: { chain: BatchRunRecord["chains"][number]; runId: string; started: string } | undefined;
   try {
     await mutateBatchRunRecord(input.batchesDir, input.batchId, (record) => {
       if (record.status !== "running") return record;
@@ -188,56 +189,72 @@ async function runBatchChain(input: RunBatchInput, chainId: string): Promise<voi
         return record;
       }
 
-      const run = createRunRecord({
-        runId: `run-${Date.now()}-${randomBytes(4).toString("hex")}`,
-        chainName: chainId,
-        goal: chain.goal,
-      });
-      createRunRecordFile(input.runsDir, run);
       const started = new Date().toISOString();
-      let child: ReturnType<typeof spawn>;
-      try {
-        child = spawn(input.chainRunnerPath, [chain.file], {
-          cwd: input.cwd,
-          env: { ...input.env, MENTIKO_RUN_ID: run.id },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      } catch (error) {
-        updateRunStatus(joinRunJsonPath(input.runsDir, run.id), "failed", error instanceof Error ? error.message : String(error));
-        throw error;
-      }
-      claimed = { chain, runId: run.id, started, child };
+      const runId = `run-${Date.now()}-${randomBytes(4).toString("hex")}`;
+      // Claim first. The asynchronous typed bootstrap happens after the
+      // record lock is released, so a duplicate detached worker cannot launch
+      // the same snapshot and a cancellation can win before PTY allocation.
+      claimed = { chain, runId, started };
       return {
         ...record,
         chains: record.chains.map((candidate) => candidate.id === chainId
-          ? { ...candidate, run_id: run.id, started, status: "running", ...(child.pid ? { pid: child.pid } : {}) }
+          ? { ...candidate, run_id: runId, started, status: "running" }
           : candidate),
       };
     });
   } catch (error) {
-    // If persistence failed after a synchronous spawn, do not leave its child
-    // running under a record that was never claimed.
-    claimed?.child.kill("SIGTERM");
     const reason = error instanceof Error ? error.message : String(error);
-    await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, reason);
+    await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, reason, claimed?.runId);
     return;
   }
   if (!claimed) return;
-  const { runId, started, child } = claimed;
-  const outcome = await waitForChild(child, () => readBatchRunRecord(input.batchesDir, input.batchId).status === "cancelled");
+  const { runId, started, chain } = claimed;
+  const active = readBatchRunRecord(input.batchesDir, input.batchId);
+  const stillClaimed = active.status === "running"
+    && active.chains.some((candidate) => candidate.id === chainId && candidate.status === "running" && candidate.run_id === runId);
+  if (!stillClaimed) return;
+
+  let launch: DirectRunResult;
+  try {
+    const launchDirectRun = input.launchDirectRun ?? ((options) => runTypedDirect({
+      chainPath: options.chainPath,
+      goal: options.goal,
+      runId: options.runId,
+      runsDir: options.runsDir,
+      debug: false,
+    }));
+    launch = await launchDirectRun({ chainPath: chain.file, goal: chain.goal, runId, runsDir: input.runsDir });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, reason, runId);
+    return;
+  }
+
+  if (launch.runId !== runId) {
+    await markBatchChainLaunchFailed(input.batchesDir, input.batchId, chainId, "Typed batch launch returned a mismatched run identity.", runId);
+    return;
+  }
+
   const completed = new Date().toISOString();
   const duration = Math.max(0, Math.round((Date.parse(completed) - Date.parse(started)) / 1000));
-  const status: BatchChainResult["status"] = outcome.cancelled ? "cancelled" : outcome.code === 0 ? "complete" : "failed";
+  const cancelled = readBatchRunRecord(input.batchesDir, input.batchId).status === "cancelled";
+  const status: BatchChainResult["status"] = cancelled ? "cancelled" : "complete";
   writeBatchChainResult(input.batchesDir, input.batchId, {
     chain_id: chainId,
     run_id: runId,
     status,
-    exit_code: outcome.code,
+    exit_code: 0,
     started,
     completed,
     duration,
-    output: outcome.stdout,
-    error: outcome.error ? `${outcome.stderr}${outcome.stderr ? "\n" : ""}${outcome.error}` : outcome.stderr,
+    output: JSON.stringify({
+      status: "launched",
+      runId: launch.runId,
+      runDir: launch.runDir,
+      agentId: launch.agentId,
+      mode: launch.launch.mode,
+    }),
+    error: "",
   });
   await mutateBatchRunRecord(input.batchesDir, input.batchId, (record) => ({
     ...record,
@@ -245,7 +262,6 @@ async function runBatchChain(input: RunBatchInput, chainId: string): Promise<voi
       ? { ...candidate, status, completed, duration, pid: undefined }
       : candidate),
   }));
-  if (outcome.error) updateRunStatus(joinRunJsonPath(input.runsDir, runId), "failed", outcome.error);
 }
 
 function prepareChainSnapshot(chain: BatchChainInput, goal: string, chainSourceRoot?: string): string {
@@ -287,31 +303,6 @@ function resolveContainedChainSource(file: string, chainSourceRoot: string | und
 
 function parseChainJson(content: string): unknown {
   try { return JSON.parse(content); } catch { throw new Error("Chain file is not valid JSON."); }
-}
-
-function waitForChild(child: ReturnType<typeof spawn>, isCancelled: () => boolean): Promise<{ code: number | null; stdout: string; stderr: string; cancelled: boolean; error?: string }> {
-  return new Promise((resolveWait) => {
-    let stdout = "";
-    let stderr = "";
-    let cancellationSent = false;
-    const timer = setInterval(() => {
-      if (!cancellationSent && isCancelled()) {
-        cancellationSent = true;
-        child.kill("SIGTERM");
-      }
-    }, 100);
-    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
-    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
-    child.once("error", (error) => {
-      clearInterval(timer);
-      resolveWait({ code: null, stdout, stderr, cancelled: cancellationSent, error: error.message });
-    });
-    child.once("close", (code) => { clearInterval(timer); resolveWait({ code, stdout, stderr, cancelled: cancellationSent }); });
-  });
-}
-
-function joinRunJsonPath(runsDir: string, runId: string): string {
-  return join(runsDir, runId, "run.json");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
