@@ -46,6 +46,7 @@ for (const pattern of [/agent_profile_(advisor|select|transcript)_json/, /jq[^\n
     throw new Error(`shell must consume typed profile primitives instead of parsing profile JSON: ${pattern}`);
   }
 }
-if (!runner.includes('chain_contract_resolve "$CHAIN_FILE" "$AGENTS_DIR" "$CONFIG_PROFILES_DIR"')) throw new Error("runner must normalize through typed chain contract");
+if (!runner.includes('exec node "$SCRIPT_DIR/runner-v2-direct-run.js" "$@"')) throw new Error("chain runner compatibility filename must exec the typed direct runner");
+if (/\b(jq|curl|python|sed|awk)\b/.test(runner)) throw new Error("chain runner must not restore a shell parser or launch fallback");
 if (!config.includes("chain_contract_raw_field")) throw new Error("config.sh must delegate legacy chain_config to the typed boundary");
 console.log("PASS: shell chain/profile boundary owns no chain JSON parsing");
