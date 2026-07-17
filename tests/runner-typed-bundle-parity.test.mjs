@@ -19,6 +19,7 @@ const pairs = [
   ["git-integration-cli", "runner-git-integration"],
   ["audit-ship-cli", "runner-audit-ship"],
   ["notification-dispatcher-cli", "runner-notification-dispatcher"],
+  ["kollabor-mcp-settings-cli", "runner-kollabor-mcp-settings"],
   ["agent-transcript-cli", "runner-agent-transcript"],
   ["agent-profile-cli", "runner-agent-profile"],
   ["launch-agent-cli", "runner-v2-launch-agent"],

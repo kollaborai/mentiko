@@ -68,6 +68,25 @@ export function runnerMigrationCoverage(lineage: RunnerContractLineage): RunnerM
  * for each surface and are existence-checked by the catalog test suite.
  */
 export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> = {
+  "kollab-integration-config": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-kollab-mcp-settings",
+        label: "Validate, normalize, and atomically publish the Kollab MCP server registration",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/kollabor-mcp-settings.ts",
+          "web/lib/runner-v2/kollabor-mcp-settings-cli.ts",
+          "web/lib/process-manager.ts",
+        ],
+      },
+    ],
+    legacyEquivalent: {
+      summary: "Replaces the Docker entrypoint inline Node JSON parser and writer. The entrypoint now only invokes the compiled typed CLI.",
+      paths: ["bin/docker-entrypoint.sh"],
+    },
+  },
   "startup-recovery-decision-log": {
     usage: "runner-v2",
     surfaces: [

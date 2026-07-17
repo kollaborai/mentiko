@@ -14,7 +14,7 @@ import type {
   IPCRequest,
 } from './pm-types';
 import { buildManagedProcessEnv } from './process-manager-env';
-import { getKollabMentikoMcpServerEnv } from './kollabor-mcp-server-env';
+import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -27,11 +27,6 @@ interface ManagedProcess {
   lastExitCode: number | null;
   restartTimer: ReturnType<typeof setTimeout> | null;
   stoppedByUser: boolean;
-}
-
-interface McpSettings {
-  servers?: Record<string, unknown>;
-  mcpServers?: Record<string, unknown>;
 }
 
 const IPC_MAX_MSG = 512 * 1024;
@@ -770,32 +765,12 @@ async function housekeep() {
     process.env.MENTIKO_ORG_ID = process.env.ORG_ID || 'default';
   }
   try {
-    const mcpDir = path.join(os.homedir(), ".kollab", "mcp");
-    fs.mkdirSync(mcpDir, { recursive: true });
-    const settingsPath = path.join(mcpDir, 'mcp_settings.json');
-    let existing: McpSettings = {};
-    if (fs.existsSync(settingsPath)) {
-      try { existing = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
-    }
-    existing.servers = {
-      ...(existing.mcpServers || {}),
-      ...(existing.servers || {}),
-    };
-    delete existing.mcpServers;
     // Prefer the bundled binary in prod, repo shim in dev
     const mcpBin = fs.existsSync('/opt/mentiko/bin/mentiko-mcp')
       ? '/opt/mentiko/bin/mentiko-mcp'
       : path.join(process.cwd(), 'bin', 'mentiko-mcp');
-    const cmd = mcpBin;
-    existing.servers.mentiko = {
-      type: 'stdio',
-      command: cmd,
-      args: [],
-      env: getKollabMentikoMcpServerEnv(),
-      enabled: true,
-    };
-    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
-    log(`mentiko-mcp: registered at ${settingsPath} (cmd=${cmd})`);
+    const registration = registerKollabMentikoMcpServer({ command: mcpBin });
+    log(`mentiko-mcp: registered at ${registration.path} (cmd=${mcpBin})`);
   } catch (e: unknown) {
     logErr(`mentiko-mcp settings write failed: ${errorMessage(e)}`);
   }
