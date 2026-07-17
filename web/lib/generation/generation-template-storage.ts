@@ -119,6 +119,23 @@ CHAIN DESIGN PRINCIPLES:
    completion once the acceptance criteria are demonstrably true — not merely
    "specified".
 
+   GENERATED-CHAIN DELIVERY CONTRACT (required for every generated chain):
+   - Include metadata.generated_chain_contract with exactly these fields:
+     {"version":1,"mode":"delivery" or "research","acceptance_criteria":"..."}
+   - Use mode "delivery" for a feature, fix, implementation, or other working
+     output. It requires an agent with edit_files authority. Use mode "research"
+     only for a request whose acceptance criteria are analysis/evidence outputs;
+     do not invent an implementation agent for a genuinely research-only request.
+   - EVERY agent must declare deliverable (the concrete artifact, code change, or
+     analysis it hands off) and verification (the repeatable command, inspection,
+     citation check, or comparison that proves that deliverable exists and is sound).
+   - The LAST agent must be a distinct final acceptance gate. Set
+     final_verifier: true, verifies_acceptance_criteria: true, and success_assertion
+     to the exact evidence-backed condition it will assert. Its prompt must inspect
+     the preceding outputs and the acceptance criteria, record the evidence it used,
+     and refuse to emit success when any criterion is not proven. Do not treat
+     completed sessions, prose claims, or a plan as evidence.
+
    DYNAMIC_PORT_RUNTIME_PROOF (non-negotiable for web/app delivery verification):
    Never assume port 3000 and never treat an already-listening port as proof. If
    runtime verification is needed, pick a free port at verification time, start
@@ -1239,7 +1256,7 @@ Output ONLY valid JSON:
 
 RULES:
 1. Break into 2-4 phases (preparation, execution, validation, rollout)
-2. Use the smallest delivery path that proves the selected option. Do not create bookkeeping tasks such as "document status", "create follow-up task", or "update tracking" unless that record is itself the requested deliverable.
+2. Use the minimal delivery path that proves the selected option. Do not create bookkeeping tasks such as "document status", "create follow-up task", or "update tracking" unless that record is itself the requested deliverable.
 3. Dependencies must not be circular
 4. Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
 5. Each task must be independently completable by one person and must include non-empty deliverable, verification, and acceptance_criteria fields.

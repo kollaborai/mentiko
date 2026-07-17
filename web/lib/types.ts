@@ -244,6 +244,11 @@ export interface Agent {
   status: AgentStatus;
   model?: string;
   tools?: string[];
+  deliverable?: string;
+  verification?: string;
+  final_verifier?: boolean;
+  verifies_acceptance_criteria?: boolean;
+  success_assertion?: string;
   metadata?: Record<string, unknown>;
   created_at?: string;
   updated_at?: string;
@@ -269,6 +274,11 @@ export interface ChainAgent {
   cli?: string;
   cli_args?: string[];
   context?: { workspace?: string; read_first?: string[] };
+  deliverable?: string;
+  verification?: string;
+  final_verifier?: boolean;
+  verifies_acceptance_criteria?: boolean;
+  success_assertion?: string;
 }
 
 export interface AgentRuntimeProfile {

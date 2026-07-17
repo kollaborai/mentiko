@@ -12,6 +12,7 @@ import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
+import { isGeneratedChainContract, validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -172,6 +173,12 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const validation = validateChain(chainForValidation);
   if (!validation.valid) {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
+  }
+  if (isGeneratedChainContract(chain)) {
+    const generatedContractErrors = validateGeneratedChainDeliveryContract(chainForValidation);
+    if (generatedContractErrors.length) {
+      throw new ValidationError("Invalid generated chain delivery contract", { errors: generatedContractErrors });
+    }
   }
 
   const chainDir = orgPath(namespaceId, orgId, "chains", name);

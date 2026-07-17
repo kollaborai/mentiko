@@ -112,12 +112,20 @@ export function buildGenerationPromptFromTaskRecommendation(
     "The chain should break the work into trustworthy agent steps, include verification, and be usable for this task from the task screen.",
   ].filter(Boolean).join("\n\n");
 
+  const generatedChainContract = [
+    "GENERATED-CHAIN CONTRACT: include metadata.generated_chain_contract with version 1, mode delivery or research, and the task acceptance criteria verbatim.",
+    "Every agent must declare a concrete deliverable and repeatable verification. The last agent must be the final verifier and declare final_verifier: true, verifies_acceptance_criteria: true, and an evidence-backed success_assertion. It must reject a result when criteria are not proven.",
+    task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : "The task has no acceptance criteria; do not generate a chain until a verifiable criterion is supplied.",
+  ].join("\n\n");
+
   // Appended even when the recommender already supplied its own
   // generation_prompt — a chain-recommendation output for a feature/task/bug
   // is exactly where this requirement was previously missing. (FEAT-014's
   // chain was born from a chain-recommendation-generated prompt and ended up
   // with 4 read-only agents and zero code.)
-  if (!isDeliverableIssueType(task.issue_type)) return base;
+  if (!isDeliverableIssueType(task.issue_type)) {
+    return [base, generatedChainContract].join("\n\n");
+  }
 
   return [
     base,
@@ -128,6 +136,6 @@ export function buildGenerationPromptFromTaskRecommendation(
       "before reporting completion. A chain made only of analysis, design, or specification agents " +
       "(read_files-only / run_commands-only authorities) does NOT satisfy this task, no matter how " +
       "thorough — the acceptance criteria describe working software, and a spec is not working software.",
-    task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : null,
+    generatedChainContract,
   ].filter(Boolean).join("\n\n");
 }
