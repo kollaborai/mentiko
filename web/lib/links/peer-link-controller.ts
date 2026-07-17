@@ -101,7 +101,12 @@ export async function runPeerLinkController(
 
   const relayProfile = context.relayProfile ? resolveExactProfile(profilesDir, context.relayProfile) : firstProfile;
   const relayCommand = buildAgentProfileCommand({ profilePath: relayProfile.path, interactive: false, namespaceId: context.namespaceId, orgId: context.orgId, purpose: "relay" });
-  const maxRounds = Math.max(1, context.maxRounds || 20);
+  // Legacy link definitions use 0 for an explicit unlimited relay loop. An
+  // omitted value remains the typed safety default, rather than becoming
+  // unlimited through a falsy-value shortcut.
+  const maxRounds = context.maxRounds === 0
+    ? Number.POSITIVE_INFINITY
+    : Math.max(1, context.maxRounds ?? 20);
   let rounds = 0;
   let steerMessage = "";
   try {

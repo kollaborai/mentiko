@@ -129,7 +129,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     ...(safeAgent2Profile ? { agent2Profile: safeAgent2Profile } : {}),
     ...(link.config.agent1_prompt ? { prompt1: link.config.agent1_prompt } : {}),
     ...(link.config.agent2_prompt ? { prompt2: link.config.agent2_prompt } : {}),
-    ...(link.config.max_rounds ? { maxRounds: link.config.max_rounds } : {}),
+    ...(typeof link.config.max_rounds === "number" ? { maxRounds: link.config.max_rounds } : {}),
     ...(link.config.stall_threshold ? { stallThreshold: link.config.stall_threshold } : {}),
   }, null, 2));
   await pty.spawn(managerSession, "node", [join(config.codeRoot, "lib", "runner-peer-link-controller.js"), "--context", contextPath], {

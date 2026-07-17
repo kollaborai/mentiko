@@ -48,4 +48,37 @@ describe("typed peer link controller", () => {
     expect(existsSync(replyPath)).toBe(false);
     expect(sent.some(([session, text]) => session.includes("Two") && text.includes("Also, one more thing: focus on failures"))).toBe(true);
   });
+
+  it("treats explicit maxRounds zero as unlimited without treating an omitted value as unlimited", async () => {
+    const root = mkdtempSync(join(tmpdir(), "peer-link-unlimited-"));
+    const namespaceRoot = join(root, "namespaces", "default");
+    const runsDir = join(namespaceRoot, "runs");
+    const runDir = join(runsDir, "run-unlimited");
+    const profilesDir = join(namespaceRoot, "agent-profiles");
+    mkdirSync(profilesDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(profilesDir, "default.json"), JSON.stringify({ id: "default", name: "Default", cli: "echo", isDefault: true, createdAt: "", updatedAt: "" }));
+    updateRunJson(join(runDir, "run.json"), () => ({
+      ...createRunRecord({ runId: "run-unlimited", chainName: "link", goal: "review" }),
+      type: "link", agents: [{ id: "agent1", name: "One", status: "pending", session: "" }, { id: "agent2", name: "Two", status: "pending", session: "" }],
+    }));
+    const captures = new Map<string, number>();
+    const transport = {
+      spawn: async () => ({}), sendKeys: async () => {}, alive: async () => true, remove: async () => {},
+      capture: async (name: string) => {
+        const count = (captures.get(name) || 0) + 1;
+        captures.set(name, count);
+        return `${name}\nSTATUS:${Math.ceil(count / 4) > 20 ? "DONE" : "CONTINUE"}`;
+      },
+    };
+
+    await runPeerLinkController({
+      runId: "run-unlimited", runDir, runsDir, namespaceId: "default", orgId: "default", managerSession: "link-unlimited",
+      workspacePath: root, task: "review", agent1Name: "One", agent2Name: "Two", maxRounds: 0,
+    }, { transport, sleep: async () => {}, relay: (_command, capture) => capture });
+
+    const run = readRunJson(join(runDir, "run.json"));
+    expect(run).toMatchObject({ status: "completed", rounds: 21 });
+    expect(run.escalations).toBeUndefined();
+  });
 });

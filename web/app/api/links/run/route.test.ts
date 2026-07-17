@@ -11,7 +11,7 @@ jest.mock("@/lib/auth/rbac-auth", () => ({ requirePermission: async () => undefi
 jest.mock("@/lib/auth/auth-bridge", () => ({ getSessionUser: async () => ({ id: "user" }) }));
 jest.mock("@/lib/auth/workspace-auth", () => ({ resolveAuthorizedWorkspacePath: () => "/workspace" }));
 jest.mock("@/lib/links/link-utils", () => ({
-  loadLink: () => ({ id: "link", name: "Typed Link", config: { max_rounds: 2 }, agents: { agent1: {}, agent2: {} } }),
+  loadLink: jest.fn(() => ({ id: "link", name: "Typed Link", config: { max_rounds: 2 }, agents: { agent1: {}, agent2: {} } })),
   resolveLinkAgentName: (_agent: unknown, _namespace: string, _org: string) => "agent",
 }));
 jest.mock("@/lib/api-response", () => ({ withErrorHandling: (handler: unknown) => handler, apiSuccess: (value: unknown) => value }));
@@ -24,6 +24,7 @@ jest.mock("@/lib/links/link-run-runtime", () => ({
 
 import { POST } from "@/app/api/links/run/route";
 const { pty } = jest.requireMock("@/lib/pty/pty-client") as { pty: { spawn: jest.Mock } };
+const { loadLink } = jest.requireMock("@/lib/links/link-utils") as { loadLink: jest.Mock };
 
 describe("POST /api/links/run", () => {
   it("starts the compiled typed peer controller directly in the manager PTY", async () => {
@@ -37,5 +38,14 @@ describe("POST /api/links/run", () => {
     const context = JSON.parse(readFileSync(join(runDir, run, ".internal", "peer-link-controller.json"), "utf8"));
     expect(context).toMatchObject({ task: "Typed Link", workspacePath: "/workspace" });
     expect(existsSync(join(runDir, run, "run.json"))).toBe(true);
+  });
+
+  it("preserves an explicit legacy unlimited max_rounds value in typed controller context", async () => {
+    loadLink.mockReturnValueOnce({ id: "link", name: "Unlimited Link", config: { max_rounds: 0 }, agents: { agent1: {}, agent2: {} } });
+    await POST({ json: async () => ({ linkId: "link" }) } as never);
+    const runDir = join(root, "runs");
+    const runs = require("node:fs").readdirSync(runDir).sort();
+    const context = JSON.parse(readFileSync(join(runDir, runs[runs.length - 1], ".internal", "peer-link-controller.json"), "utf8"));
+    expect(context.maxRounds).toBe(0);
   });
 });
