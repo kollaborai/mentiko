@@ -983,7 +983,13 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-agent-summary-json-gate",
         label: "Require parseable JSON-object agent summaries before accepting typed completion",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
+        paths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-contract-cli.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
+      },
+      {
+        id: "shell-completion-contract-invocation",
+        label: "Forward primitive launch context to the typed completion-contract CLI",
+        owner: "runner-v2",
+        paths: ["lib/chain-runner.sh", "web/lib/runner-v2/completion-contract-cli.ts"],
       },
     ],
     legacyEquivalent: {
