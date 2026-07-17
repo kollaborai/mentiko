@@ -88,7 +88,7 @@ The ledger separately reports live shell execution. `dataShapeShellSources()` co
 
 Catalog tests require every direct `web/lib/runner-v2/*` or runner shell source reference to have lineage, verify the ownership label against current readers and writers, and existence-check every lineage evidence path.
 
-`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **112 shapes** after retiring the dead parallel-group state record. The live UI reads the same API, so inspect it rather than relying on this dated documentation count after future changes.
+`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **114 shapes**. The live UI reads the same API, so inspect it rather than relying on documentation counts after future changes.
 
 A one-time drift repair ran on 2026-07-14 against one developer's local default namespace. Those figures are a dated observation of that machine, not a standing property of the system, and the local namespace has since grown well past the run count sampled below:
 
