@@ -37,6 +37,7 @@ const pairs = [
   ["standalone-agent-launch-cli", "runner-v2-standalone-agent-launch"],
   ["lib/system/audit-cli.ts", "runner-audit"],
   ["lib/system/native-plugin-handler-cli.ts", "runner-native-plugin"],
+  ["lib/links/peer-link-controller-cli.ts", "runner-peer-link-controller"],
 ];
 const standaloneBundles = [
   ["lib/runner-v2/job-worker.ts", "runner-job-worker"],
