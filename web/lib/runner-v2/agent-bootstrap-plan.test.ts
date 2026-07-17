@@ -9,6 +9,8 @@ jest.mock("@/lib/config", () => ({
     codeRoot: "/repo",
     eventsDir: "/project/events",
     stateDir: "/project/state",
+    orgRoot: "/tmp/runner-v2-config-org",
+    agentProfilesDir: "/tmp/runner-v2-config-org/agent-profiles",
   },
   ptyDaemonEnv: () => ({ PTY_DAEMON: "mentiko-test", PTY_MANAGER_DIR: "/repo/.pty-manager" }),
 }));
@@ -85,6 +87,7 @@ describe("runner-v2 agent bootstrap plan", () => {
       MENTIKO_AGENT_EMITS: "draft-ready",
       EVENTS_DIR: join(root, "events"),
       ARTIFACTS_DIR: join(runDir, "artifacts"),
+      AGENT_PROFILES_DIR: profilesDir,
     });
     expect(plan.instructionPath).toBe(join(runDir, "artifacts", "writer-instructions.md"));
     expect(plan.instructionPointer).toContain("You are Mentiko agent: writer.");
@@ -99,6 +102,7 @@ describe("runner-v2 agent bootstrap plan", () => {
     });
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2='1'");
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2_COMPLETION='1'");
+    expect(plan.monitorCommand).toContain(`export AGENT_PROFILES_DIR='${profilesDir}'`);
     expect(plan.monitorCommand).toContain("exec node '/repo/lib/monitor-v2.js'");
     expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
   });
@@ -211,6 +215,35 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.profileId).toBe("workspace-profile");
     expect(plan.profilePath).toBe(join(profilesDir, "workspace-profile.json"));
     expect(plan.runContextExports.MENTIKO_AGENT_PROFILE_PATH).toBe(join(profilesDir, "workspace-profile.json"));
+  });
+
+  it("uses the configured canonical profile root for direct typed launches without an injected org root", () => {
+    const root = tempDir();
+    const runDir = join(root, "runs", "run-direct-profile");
+    const profilesDir = "/tmp/runner-v2-config-org/agent-profiles";
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(profilesDir, { recursive: true });
+    const chainPath = join(runDir, "chain.json");
+    writeJson(join(profilesDir, "direct-profile.json"), {
+      id: "direct-profile",
+      name: "Direct Profile",
+      cli: "node",
+    });
+    writeJson(chainPath, {
+      default_agent_profile: "direct-profile",
+      agents: [{ id: "writer", triggers: ["manual-start"] }],
+    });
+
+    const plan = buildAgentBootstrapPlan({
+      chainPath,
+      runDir,
+      runId: "run-direct-profile",
+      env: { PATH: "/bin" },
+    });
+
+    expect(plan.profileId).toBe("direct-profile");
+    expect(plan.profilePath).toBe(join(profilesDir, "direct-profile.json"));
+    expect(plan.runContextExports.MENTIKO_AGENT_PROFILE_PATH).toBe(join(profilesDir, "direct-profile.json"));
   });
 
   it("fails when a requested profile is missing and no valid fallback exists", () => {
