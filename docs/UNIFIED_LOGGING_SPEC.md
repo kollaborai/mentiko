@@ -34,7 +34,7 @@ what's NOT covered:
                             the typed background worker owns the scheduler loop
   event-emitter.ts          no system.jsonl logging (event file creation)
   event-lifecycle.ts        no system.jsonl logging (lookup/consume/archive)
-  peer-manager (bin)        no logging (link/peer orchestration)
+  typed peer link controller link/peer orchestration logging
 
 ## goal
 
@@ -112,9 +112,9 @@ web/lib/runner-v2/chain-watcher-service.ts, and web/server/background-worker.ts:
 The background worker is the only watcher/watchdog lifecycle owner. Logging
 work must not introduce a shell lifecycle path.
 
-### 7. peer-manager logging
+### 7. typed peer link controller logging
 
-bin/peer-manager:
+web/lib/links/peer-link-controller.ts:
   - link run started (link id, agent pair)
   - relay message forwarded (direction, message length)
   - escalation triggered (reason)
@@ -160,7 +160,7 @@ all logs use the existing system-logger.ts format:
 use the script/module name without extension:
   chain-runner, runner-v2-completion, launch-agent, watchdog,
   reconciler, task-reconciler, scheduler, event-emitter, event-lifecycle,
-  chain-watcher, peer-manager, job-runner, activity-capture,
+  chain-watcher, peer-link-controller, job-runner, activity-capture,
   stop-api, stop-all, run-api
 
 ### level guidelines
@@ -230,7 +230,7 @@ crash a script (e.g. bad jq) and verify the ERR trap fires.
   web/lib/runner-v2/watchdog.ts    typed stalled-run lifecycle logging
   web/lib/runner-v2/chain-watcher-service.ts typed event processing logging
   web/server/background-worker.ts typed service lifecycle logging
-  bin/peer-manager                 link run lifecycle logging
+  web/lib/links/peer-link-controller.ts link run lifecycle logging
   web/lib/schedules/scheduler-service.ts schedule fire logging (the typed
                                    worker owns the scheduler loop; scheduler.sh
                                    is a compatibility surface and needs none)

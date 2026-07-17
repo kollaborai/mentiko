@@ -51,7 +51,7 @@ export const POST = withErrorHandling(async (
     throw new BadRequest("Not a link run");
   }
 
-  // write reply file for peer-manager to consume
+  // write reply file for the typed peer link controller to consume
   mkdirSync(escDir, { recursive: true });
   writeFileSync(join(escDir, "reply.txt"), reply);
 

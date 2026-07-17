@@ -22,7 +22,6 @@ code root (this git checkout):
 /bin/               CLI tools + pty-manager
   mentiko           main CLI entry point
   p -> pty-mgr      pty-manager daemon (session isolation)
-  peer-manager      peer agent orchestration
   peer-chain        chain execution in peer mode
   peer-send         send messages to peer sessions
   validate-artifacts artifact validation

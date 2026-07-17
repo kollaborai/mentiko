@@ -99,7 +99,7 @@ function captureLines(sessionName: string, lines: number): string {
 
 /** extract current round from manager session capture */
 function parseRound(capture: string): number | undefined {
-  // peer-manager logs: "round N: ..."
+  // historical controller logs: "round N: ..."
   const matches = capture.match(/round (\d+)/g);
   if (!matches || matches.length === 0) return undefined;
   const last = matches[matches.length - 1];
@@ -109,7 +109,7 @@ function parseRound(capture: string): number | undefined {
 
 /** extract initiative (task) from manager session capture */
 function parseInitiative(capture: string): string | undefined {
-  // peer-manager logs: "  task:    <task description>"
+  // historical controller logs: "  task:    <task description>"
   const match = capture.match(/task:\s+(.+)/);
   return match ? match[1].trim() : undefined;
 }

@@ -139,7 +139,6 @@ describe("typed Run Record runtime binding", () => {
       "lib/chain-runner.sh",
       "lib/agent-activity-capture.sh",
       "lib/concurrency-cap.sh",
-      "bin/peer-manager",
       "bin/test-relay-prompt",
       "lib/run-record-client.sh",
     ].map((path) => readFileSync(join(codeRoot, path), "utf8")).join("\n");

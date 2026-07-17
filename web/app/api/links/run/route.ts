@@ -1,7 +1,7 @@
 /**
  * POST /api/links/run
  *
- * Run a saved link definition by spawning a peer-manager session.
+ * Run a saved link definition through the typed peer link controller.
  * Adapts the swarm/launch pattern to work with a persisted link config.
  */
 
