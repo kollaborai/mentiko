@@ -114,21 +114,19 @@ describe("data shape catalog", () => {
     expect(queue).toEqual([]);
   });
 
-  it("counts active shell orchestration in the ledger until the default shell runner is retired", () => {
+  it("records parallel-group state as typed after the direct shell parallel mode is retired", () => {
     const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "parallel-group-state");
 
-    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
     expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
       typed: 1,
-      legacy: 1,
-      total: 2,
-      typedPercent: 50,
-      state: "shared",
+      legacy: 0,
+      total: 1,
+      typedPercent: 100,
+      state: "typed",
     });
     expect(dataShapeDirectShellContractSources(shape!)).toEqual([]);
-    expect(dataShapeShellSources(shape!)).toEqual([
-      "lib/chain-runner.sh",
-    ]);
+    expect(dataShapeShellSources(shape!)).toEqual([]);
   });
 
   it("documents task-specific validation for the shared core generation handoff filename", () => {

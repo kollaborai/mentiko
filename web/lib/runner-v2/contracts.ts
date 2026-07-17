@@ -58,11 +58,11 @@ export function validateRunnerV2Contract(contract: RunnerV2Contract): void {
   if (contract.schema_version !== "runner-contract/v1") {
     throw new Error("runner-v2 contract schema_version mismatch");
   }
-  if (contract.migration_mode !== "side-by-side") {
-    throw new Error("runner-v2 contract must stay side-by-side during migration");
+  if (contract.migration_mode !== "typed") {
+    throw new Error("runner-v2 contract must declare typed ownership");
   }
-  if (contract.default_runner !== "shell") {
-    throw new Error("runner-v2 contract cannot change the default runner yet");
+  if (contract.default_runner !== "typed") {
+    throw new Error("runner-v2 contract must use the typed default runner");
   }
   if (contract.flag?.name !== "MENTIKO_RUNNER_V2") {
     throw new Error("runner-v2 contract flag mismatch");

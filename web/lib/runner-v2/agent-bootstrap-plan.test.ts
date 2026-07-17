@@ -67,6 +67,10 @@ describe("runner-v2 agent bootstrap plan", () => {
         PATH: "/bin",
         MENTIKO_RUNNER_V2: "1",
         MENTIKO_RUNNER_V2_COMPLETION: "1",
+        MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
+        MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
+        MENTIKO_AI_GATEWAY_LOCAL_TOKEN: "internal-proxy-token",
+        ANTHROPIC_API_KEY: "must-not-reach-pty",
       },
     });
 
@@ -88,6 +92,9 @@ describe("runner-v2 agent bootstrap plan", () => {
       EVENTS_DIR: join(root, "events"),
       ARTIFACTS_DIR: join(runDir, "artifacts"),
       AGENT_PROFILES_DIR: profilesDir,
+      MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
+      MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
+      MENTIKO_AI_GATEWAY_LOCAL_TOKEN: "internal-proxy-token",
     });
     expect(plan.instructionPath).toBe(join(runDir, "artifacts", "writer-instructions.md"));
     expect(plan.instructionPointer).toContain("You are Mentiko agent: writer.");
@@ -104,6 +111,8 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.monitorCommand).toContain("export MENTIKO_RUNNER_V2_COMPLETION='1'");
     expect(plan.monitorCommand).toContain(`export AGENT_PROFILES_DIR='${profilesDir}'`);
     expect(plan.monitorCommand).toContain("exec node '/repo/lib/monitor-v2.js'");
+    expect(plan.monitorCommand).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN='internal-proxy-token'");
+    expect(plan.monitorCommand).not.toContain("ANTHROPIC_API_KEY");
     expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
   });
 

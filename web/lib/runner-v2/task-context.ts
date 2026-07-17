@@ -242,6 +242,24 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+/** Canonical typed task values for direct runner environment and shell handoff. */
+export function taskContextEnvironment(result: TaskContextResult): Record<string, string> {
+  return {
+    TASK_ID: result.task.id,
+    TASK_TITLE: result.task.title,
+    TASK_DESCRIPTION: result.task.description,
+    TASK_TYPE: result.task.type,
+    TASK_PRIORITY: result.task.priority,
+    TASK_ACCEPTANCE_CRITERIA: result.task.acceptanceCriteria,
+    TASK_DESIGN: result.task.design,
+    TASK_NOTES: result.task.notes,
+    TASK_COMMENTS: result.comments
+      .map((comment) => `  [${comment.createdAt} ${comment.author}] ${comment.text}`)
+      .join("\n"),
+    TASK_CONTEXT: result.context,
+  };
+}
+
 /** Write a shell-safe, 0600, atomically replaced handoff for the invocation boundary. */
 export function writeTaskContextEnv(path: string, result: TaskContextResult): void {
   if (!isAbsolute(path)) throw new Error(`task context env path must be absolute: ${path}`);
@@ -260,20 +278,7 @@ export function writeTaskContextEnv(path: string, result: TaskContextResult): vo
     throw new Error(`task context env parent must be a non-symlink directory: ${parent}`);
   }
 
-  const values: Record<string, string> = {
-    TASK_ID: result.task.id,
-    TASK_TITLE: result.task.title,
-    TASK_DESCRIPTION: result.task.description,
-    TASK_TYPE: result.task.type,
-    TASK_PRIORITY: result.task.priority,
-    TASK_ACCEPTANCE_CRITERIA: result.task.acceptanceCriteria,
-    TASK_DESIGN: result.task.design,
-    TASK_NOTES: result.task.notes,
-    TASK_COMMENTS: result.comments
-      .map((comment) => `  [${comment.createdAt} ${comment.author}] ${comment.text}`)
-      .join("\n"),
-    TASK_CONTEXT: result.context,
-  };
+  const values = taskContextEnvironment(result);
   const body = [
     "# Typed task-context handoff; values are shell-quoted by TypeScript.",
     ...Object.entries(values).map(([key, value]) => `export ${key}=${shellQuote(value)}`),

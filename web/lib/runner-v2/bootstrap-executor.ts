@@ -289,6 +289,7 @@ function buildStartScript(plan: AgentBootstrapPlan): string {
 }
 
 function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2LaunchContext): string {
+  const taskContext = plan.runContextExports.TASK_CONTEXT;
   return [
     `You are: ${plan.agentName}`,
     `Run-ID: ${context.runId}`,
@@ -300,6 +301,7 @@ function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2Lau
     "",
     "Read the chain JSON for your full task context:",
     context.chainPath,
+    ...(taskContext ? ["", "Typed task context:", taskContext] : []),
     "",
     buildTypedCompletionContract(plan),
   ].join("\n");

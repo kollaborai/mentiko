@@ -208,9 +208,9 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-direct-local-snapshot",
-        label: "Validate and materialize the direct local execution snapshot before typed bootstrap",
+        label: "Validate and materialize direct or parent-linked local execution snapshots before typed bootstrap",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "web/lib/runner-v2/next-chain-launch.ts", "web/lib/runner-v2/next-chain-launch-cli.ts", "lib/runner-v2-direct-run.js", "lib/runner-v2-next-chain.js", "bin/mentiko"],
       },
       {
         id: "typed-preallocated-run-snapshot",
@@ -355,7 +355,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         id: "typed-direct-local-bootstrap",
         label: "Start the typed local bootstrap that creates the configured event root before any agent instructions",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/direct-run-cli.ts", "web/lib/runner-v2/next-chain-launch.ts", "web/lib/runner-v2/next-chain-launch-cli.ts", "lib/runner-v2-direct-run.js", "lib/runner-v2-next-chain.js", "bin/mentiko"],
       },
     ],
   },
@@ -403,9 +403,9 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
       {
         id: "typed-direct-local-run-create",
-        label: "Create a pending direct local run under the locked typed Run Record contract before bootstrap",
+        label: "Create a pending direct or parent-linked local run under the locked typed Run Record contract before bootstrap",
         owner: "runner-v2",
-        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "lib/runner-v2-direct-run.js", "bin/mentiko"],
+        paths: ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/direct-run-cli.ts", "web/lib/runner-v2/next-chain-launch.ts", "web/lib/runner-v2/next-chain-launch-cli.ts", "lib/runner-v2-direct-run.js", "lib/runner-v2-next-chain.js", "bin/mentiko"],
       },
       {
         id: "typed-existing-run-preflight",
@@ -859,7 +859,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
     legacyEquivalent: { summary: "Replaces shell jq metric parsing, file initialization, lock ownership, and JSON mutation with a compiled typed metrics owner.", paths: ["lib/metrics.sh"] },
   },
   "parallel-group-state": {
-    usage: "shared",
+    usage: "runner-v2",
     surfaces: [
       {
         id: "typed-parallel-group-contract",
@@ -867,16 +867,10 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/parallel-contract.ts", "web/lib/runner-v2/parallel-contract-cli.ts"],
       },
-      {
-        id: "legacy-shell-parallel-orchestration",
-        label: "Launch, wait for, and reduce the active parallel chain-runner processes",
-        owner: "legacy-shell",
-        paths: ["lib/chain-runner.sh"],
-      },
     ],
     legacyEquivalent: {
-      summary: "TypeScript owns group-state validation and mutation, but the remaining direct legacy parallel mode inside chain-runner still launches and waits for shell child processes. This surface stays shell-owned until that orchestration path is removed or moved to TypeScript.",
-      paths: ["lib/chain-runner.sh"],
+      summary: "Replaces the retired direct --parallel shell mode. Independent chains use typed batch launch and declared branches use typed fan-out routing.",
+      paths: ["web/lib/runner-v2/batch-runner.ts", "web/lib/runner-v2/routing.ts"],
     },
   },
   "session-policy-ledger": {

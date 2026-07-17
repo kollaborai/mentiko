@@ -53,7 +53,12 @@ exec /bin/bash "$@"
 set -euo pipefail
 script="$1"
 name="\${script##*/}"
-if [[ "$name" == "mentiko-cli-schedules.mjs" || "$name" == "runner-manual-monitor.js" || "$name" == "runner-v2-direct-run.js" || "$name" == "runner-v2-standalone-agent-launch.js" ]]; then
+if [[ "$name" == "runner-audit.js" ]]; then
+  # Command auditing is an independent typed side effect; keep dispatch tests
+  # focused on the runtime selected by the CLI command under test.
+  exit 0
+fi
+if [[ "$name" == "mentiko-cli-schedules.mjs" || "$name" == "runner-manual-monitor.js" || "$name" == "runner-v2-direct-run.js" || "$name" == "runner-chain-graph.js" || "$name" == "runner-v2-standalone-agent-launch.js" ]]; then
   printf '%s\n' "node:$*" >> "\${MENTIKO_TEST_CALL_LOG}"
   exit 0
 fi
@@ -189,14 +194,14 @@ test("graphs with no chain file show usage and fail", () => {
   assert(readCalls().length === 0, "no dispatch expected for invalid graph");
 });
 
-test("graphs valid chain through chain-runner with --dry-run", () => {
+test("graphs valid chain through the typed graph runtime without chain-runner", () => {
   clearCalls();
   const res = runMentiko(["graph", CHAIN_FIXTURE]);
   const calls = readCalls();
   assert(res.status === 0, `expected status 0, got ${res.status}`);
   assert(calls.length === 1, `expected one dispatch, got ${calls.length}`);
-  assert(calls[0].includes("chain-runner.sh"), `missing chain-runner dispatch: ${calls[0]}`);
-  assert(calls[0].includes("--dry-run"), `missing --dry-run: ${calls[0]}`);
+  assert(calls[0].includes("runner-chain-graph.js"), `missing typed graph dispatch: ${calls[0]}`);
+  assert(!calls[0].includes("chain-runner.sh"), `shell runner must not be invoked: ${calls[0]}`);
 });
 
 test("dispatches schedule family commands to mentiko-cli-schedules", () => {

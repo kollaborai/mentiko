@@ -36,8 +36,8 @@ export type RunnerV2LaunchResult = RunnerV2LaunchUnsupported | RunnerV2LaunchSta
 
 export interface RunnerV2Contract {
   schema_version: "runner-contract/v1";
-  migration_mode: "side-by-side";
-  default_runner: "shell";
+  migration_mode: "typed";
+  default_runner: "typed";
   flag: {
     name: "MENTIKO_RUNNER_V2";
     enabled_values: string[];
@@ -52,6 +52,7 @@ export interface RunnerV2Contract {
   };
   entrypoints?: {
     completion_reentry?: {
+      current?: string;
       v2?: string;
       fallback?: string;
     };
@@ -67,12 +68,10 @@ export interface RunnerV2Contract {
  * contract behavior can never again be silently skipped during migration.
  */
 export interface ImplementationCoverageEntry {
-  /** covered: typed parity with evidence; gap: named parity blocker; shell-owned: v1 keeps owning it under side-by-side */
-  status: "covered" | "gap" | "shell-owned";
+  /** covered: typed parity with evidence; gap: named parity blocker. */
+  status: "covered" | "gap";
   /** required for covered: file/proof/run evidence */
   evidence?: string;
   /** required for gap: the blocker that must clear before switch */
   blocker?: string;
-  /** required for shell-owned: why the shell keeps owning it */
-  reason?: string;
 }

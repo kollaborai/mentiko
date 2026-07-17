@@ -32,11 +32,12 @@ jest.mock("fs", () => ({
     || path.endsWith("complete-cli.ts")
     || path.endsWith("agent-bootstrap-plan.ts")
     || path.endsWith("adapters.ts")
+    || path.endsWith("routed-launch-plan.ts")
+    || path.endsWith("monitor-live-io.ts")
     || path.endsWith("completion-runner.ts")
     || path.endsWith("executor.ts")
     || path.endsWith("bootstrap-executor.ts")
     || path.endsWith("controller.ts")
-    || path.endsWith("agent-functions.sh")
     || path.endsWith("agent-profile.ts")
     || path.endsWith("chain-runner.sh")
     || path.endsWith("Dockerfile")
@@ -87,8 +88,8 @@ jest.mock("fs", () => ({
         ],
       });
     }
-    if (path.endsWith("agent-functions.sh")) {
-      return "MENTIKO_RUNNER_V2_COMPLETION runner-v2-completion-launch.js";
+    if (path.endsWith("monitor-live-io.ts")) {
+      return "import { launchRunnerV2CompletionPty } from '@/lib/runner-v2/completion-launch'; await launchRunnerV2CompletionPty({ sessionName, chainPath });";
     }
     if (path.endsWith("agent-profile.ts")) {
       return "const SECRET_REFERENCE = /^\\{secret:([^}]+)\\}$/;";
@@ -99,14 +100,17 @@ jest.mock("fs", () => ({
     if (path.endsWith("Dockerfile")) {
       return "runner-v2-complete.js runner-v2-completion-launch.js monitor-v2.js";
     }
-    if (path.endsWith("launch-plan.ts")) {
+    if (path.endsWith("routed-launch-plan.ts")) {
+      return "function runnerInvocation() { return { compiledPath: 'runner-v2-launch-agent.js' }; }";
+    }
+    if (path.endsWith("/launch-plan.ts")) {
       return 'mode: "external-cli"; command: "mentiko"';
     }
     if (path.endsWith("controller.ts")) {
       return "import { startRunnerV2Bootstrap } from '@/lib/runner-v2/bootstrap-executor'; startRunnerV2Bootstrap(context); isExternalWorkspace(context);";
     }
     if (path.endsWith("completion-entrypoint.ts")) {
-      return "const generation = generationImportPlan(run, runDir, env); shellLoopStatePath(runDir); return { decision: 'already-completed' };";
+      return "const generation = generationImportPlan(run, runDir, agent.id, env); restoreLoopMutations(loopMutations); return { decision: 'already-completed' };";
     }
     if (path.endsWith("loop-state.ts")) {
       return "export function shellLoopStatePath() { return 'chain_loop_tracker.txt'; }";
@@ -133,7 +137,7 @@ jest.mock("fs", () => ({
       return 'return { action: "generation-terminal" };';
     }
     if (path.endsWith("agent-bootstrap-plan.ts")) {
-      return "Core generation handoff uses generation-result.json. exec node";
+      return "Core generation handoff uses generation-result.json. exec node MENTIKO_RUNNER_V2_COMPLETION";
     }
     if (path.endsWith("bootstrap-executor.ts")) {
       return "import { classifyCliReadiness } from '@/lib/runner-v2/readiness-policy'; export async function executeLocalBootstrap() { await executor.spawn('name'); classifyCliReadiness({ output: '' }); await waitForBootstrapReadiness(); await startMonitorSession(); }";
@@ -145,7 +149,7 @@ jest.mock("fs", () => ({
       return "import { drainRunnerV2ExternalEffects } from '../lib/runner-v2/external-effects'; setInterval(() => drainRunnerV2ExternalEffects(), 15_000);";
     }
     if (path.endsWith("external-effects.ts")) {
-      return "taskMergeMeta(context.orgId, operation.taskId, fields, context.namespaceId); function runPluginsViaShell() {}";
+      return "taskMergeMeta(context.orgId, operation.taskId, fields, context.namespaceId); dispatchPlugins({ event: operation.event });";
     }
     if (path.endsWith("chain-runner.contract.json")) {
       return JSON.stringify({ owns: ["mock chain-runner own"], invariants: ["mock chain-runner invariant"] });
@@ -168,10 +172,22 @@ jest.mock("fs", () => ({
         invariants: ["mock monitor-v2 invariant", "mock monitor-v2 late-event recovery"],
       });
     }
+    if (path.endsWith("chain-version-control.contract.json")) {
+      return JSON.stringify({ invariants: ["mock chain-version-control invariant"] });
+    }
+    if (path.endsWith("git-integration.contract.json")) {
+      return JSON.stringify({ invariants: ["mock git-integration invariant"] });
+    }
+    if (path.endsWith("audit-ship.contract.json")) {
+      return JSON.stringify({ invariants: ["mock audit-ship invariant"] });
+    }
+    if (path.endsWith("notification-dispatch.contract.json")) {
+      return JSON.stringify({ invariants: ["mock notification-dispatch invariant"] });
+    }
     return JSON.stringify({
       schema_version: "runner-contract/v1",
-      migration_mode: "side-by-side",
-      default_runner: "shell",
+      migration_mode: "typed",
+      default_runner: "typed",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
       completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       generation_completion_contract: {
@@ -185,7 +201,10 @@ jest.mock("fs", () => ({
         handled_operations: ["notification", "webhook", "metadata-webhooks", "task-status", "plugin", "legacy-webhook"],
       },
       entrypoints: {
-        completion_reentry: { v2: "lib/agent-functions.sh -> compiled /opt/mentiko/lib/runner-v2-complete.js when MENTIKO_RUNNER_V2_COMPLETION is enabled" },
+        completion_reentry: {
+          current: "web/lib/runner-v2/completion-launch.ts starts compiled /opt/mentiko/lib/runner-v2-complete.js",
+          v2: "web/lib/runner-v2/completion-entrypoint.ts is the only completion owner",
+        },
       },
       invariants: ["completion re-entry is typed-only and fail-closed when MENTIKO_RUNNER_V2_COMPLETION is enabled"],
       implementation_coverage: {
@@ -210,6 +229,18 @@ jest.mock("fs", () => ({
           "invariant:mock monitor-v2 invariant": { status: "covered", evidence: "mock" },
           "invariant:mock monitor-v2 late-event recovery": { status: "covered", evidence: "mock" },
         },
+        "chain-version-control.contract.json": {
+          "invariant:mock chain-version-control invariant": { status: "covered", evidence: "mock" },
+        },
+        "git-integration.contract.json": {
+          "invariant:mock git-integration invariant": { status: "covered", evidence: "mock" },
+        },
+        "audit-ship.contract.json": {
+          "invariant:mock audit-ship invariant": { status: "covered", evidence: "mock" },
+        },
+        "notification-dispatch.contract.json": {
+          "invariant:mock notification-dispatch invariant": { status: "covered", evidence: "mock" },
+        },
       },
     });
   }),
@@ -218,15 +249,14 @@ jest.mock("fs", () => ({
 describe("runner-v2 switch readiness", () => {
   it("reports ready when runner, monitor-v2, and contract-binding checks pass", () => {
     const report = assessRunnerV2SwitchReadiness();
-
     expect(report.status).toBe("ready");
     expect(report.checks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "contract-side-by-side", status: "pass" }),
+      expect.objectContaining({ id: "contract-typed-default", status: "pass" }),
       expect.objectContaining({ id: "typed-executor-supported", status: "pass" }),
       expect.objectContaining({ id: "external-dispatcher", status: "pass" }),
       expect.objectContaining({ id: "completion-typed-bridge", status: "pass" }),
       expect.objectContaining({ id: "completion-typed-launcher", status: "pass" }),
-      expect.objectContaining({ id: "routed-monitor-flag-carry", status: "pass" }),
+      expect.objectContaining({ id: "typed-monitor-context-carry", status: "pass" }),
       expect.objectContaining({ id: "generation-completion-contract", status: "pass" }),
       expect.objectContaining({ id: "generation-import-entrypoint", status: "pass" }),
       expect.objectContaining({ id: "generation-import-effect", status: "pass" }),
@@ -239,7 +269,7 @@ describe("runner-v2 switch readiness", () => {
       expect.objectContaining({ id: "completion-launcher-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "monitor-runtime-compile", status: "pass" }),
       expect.objectContaining({ id: "typed-bootstrap-monitor-command", status: "pass" }),
-      expect.objectContaining({ id: "routed-monitor-v2-typed-only", status: "pass" }),
+      expect.objectContaining({ id: "typed-routed-launcher", status: "pass" }),
       expect.objectContaining({ id: "typed-profile-secret-filter", status: "pass" }),
       expect.objectContaining({ id: "loop-state-shell-typed-interop", status: "pass" }),
       expect.objectContaining({ id: "completion-dry-run-shell-loop-restore", status: "pass" }),
@@ -272,8 +302,8 @@ describe("runner-v2 switch readiness", () => {
   it("reports every contract line as unbound when the coverage map is empty", () => {
     const bareContract = {
       schema_version: "runner-contract/v1",
-      migration_mode: "side-by-side",
-      default_runner: "shell",
+      migration_mode: "typed",
+      default_runner: "typed",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
       completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       invariants: ["x"],
@@ -281,7 +311,7 @@ describe("runner-v2 switch readiness", () => {
     } as unknown as RunnerV2Contract;
 
     const summaries = assessImplementationContractBinding(bareContract);
-    expect(summaries).toHaveLength(6);
+    expect(summaries).toHaveLength(10);
     for (const summary of summaries) {
       expect(summary.unbound.length).toBeGreaterThan(0);
       expect(summary.covered).toBe(0);
@@ -291,8 +321,8 @@ describe("runner-v2 switch readiness", () => {
   it("flags orphaned coverage keys after a contract line is reworded", () => {
     const contractWithOrphan = {
       schema_version: "runner-contract/v1",
-      migration_mode: "side-by-side",
-      default_runner: "shell",
+      migration_mode: "typed",
+      default_runner: "typed",
       flag: { name: "MENTIKO_RUNNER_V2", enabled_values: ["1"], default: "off", scope: "initial" },
       completion_flag: { name: "MENTIKO_RUNNER_V2_COMPLETION", enabled_values: ["1"], default: "on", scope: "completion" },
       invariants: ["x"],

@@ -31,7 +31,7 @@ architecture philosophy
 =======================
 
 not a loop
-  chain-runner.sh launches ONE initial agent then exits. the next agent
+  the typed direct runner launches ONE initial agent then exits. the next agent
   is selected and durably accepted by the typed completion entrypoint.
   this prevents cascading failures and enables event-driven chaining.
 
@@ -295,24 +295,19 @@ data flow
 1. user starts chain (cli or web ui)
    input: chain.json path, optional --workspace, --task, --start
 
-   chain-runner.sh:
-     -> sources shell boundary libraries (config, agent-functions, etc)
-     -> invokes compiled typed event emitter/lifecycle commands when needed
-     -> invokes typed chain/routing/schedule contracts for definition validation
-     -> resolves executor (claude, codex, aider, kollabor)
-     -> resolves agent profiles (env vars, cli args)
-     -> creates run object (run-{timestamp}/run.json)
-     -> finds starting agent (trigger: "manual-start" or first agent)
-     -> builds profile command (env vars sourced from temp file)
+   runner-v2-direct-run.ts:
+     -> validates and normalizes the chain
+     -> loads typed task context when --task is supplied
+     -> creates run object (run-{timestamp}/run.json) and immutable snapshot
+     -> resolves the initial agent and agent profile
+     -> builds typed PTY, readiness, instruction, and monitor plans
 
 2. agent launch
-   launch_chain_agent function:
-     -> pre-flight: circuit breaker, approval gate
-     -> creates PTY session (transport_new_session)
-     -> writes git-before.txt (for diff capture later)
-     -> sends agent instructions (multi-line via heredoc)
-     -> writes state file (STATE_DIR/{agent-id}.state)
-     -> starts heartbeat api (POST /api/runs/{id}/heartbeat every 60s)
+   typed bootstrap executor:
+     -> performs typed admission and creates the PTY session
+     -> writes typed instruction and startup evidence artifacts
+     -> gates readiness before instruction submission
+     -> starts the typed monitor with the allowlisted run context
      -> creates monitor session (monitor-{session-name})
      -> monitor runs monitor-chain-agent function
 
@@ -497,7 +492,7 @@ quick reference: file locations
 ================================
 
 core orchestration:
-  lib/chain-runner.sh              main orchestrator
+  lib/chain-runner.sh              compatibility filename; execs typed direct runner
   web/lib/runner-v2/completion-entrypoint.ts typed completion owner
   lib/launch-agent.sh              legacy agent launcher
 
@@ -537,7 +532,7 @@ supporting:
   lib/slack-integration.sh         slack notifications
   lib/metrics.sh                   invocation-only metrics boundary; forwards
                                    primitive metric operations to runner-legacy-metrics.js
-  lib/chain-runner.sh              invokes the typed parallel group record while retaining only process launch/wait
+  lib/chain-runner.sh              invocation-only compatibility boundary for typed direct run
   lib/profiler.sh                  collects only live PTY/OS resource samples;
                                    the typed runtime-profiler owns the records
   lib/performance.sh               collects only real PTY process resource values

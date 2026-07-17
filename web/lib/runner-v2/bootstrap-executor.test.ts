@@ -176,7 +176,10 @@ describe("runner-v2 bootstrap executor", () => {
     };
     const runJsonPath = seedRunJson(root);
 
-    await executeLocalBootstrap(plan(root), {
+    const typedPlan = plan(root);
+    typedPlan.runContextExports.TASK_ID = "TASK-12";
+    typedPlan.runContextExports.TASK_CONTEXT = "TASK ID: TASK-12\nTITLE: Typed task";
+    await executeLocalBootstrap(typedPlan, {
       chainPath: join(root, "chain.json"),
       runDir: root,
       runId: "run-1",
@@ -202,6 +205,8 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).toContain(join(root, "artifacts", "writer-summary.md"));
     expect(instructions).toContain("mentiko emit done");
     expect(instructions).toContain("Do NOT hand-write any .event file.");
+    expect(instructions).toContain("Typed task context:");
+    expect(instructions).toContain("TASK ID: TASK-12\nTITLE: Typed task");
     expect(instructions).not.toContain("ensure-event-file");
     expect(instructions).not.toContain("monitor-chain-agent");
     const startScript = readFileSync(join(root, "artifacts", "writer-start.sh"), "utf8");
