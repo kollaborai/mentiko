@@ -9,6 +9,8 @@ import {
   ChartFilled,
 } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useKollaborBarStore } from "@/lib/ui/kollabor-bar-store";
+import { isKollaborBarEnabled } from "@/lib/ai-engine/kollabor-bar-flag";
 
 // 30s between polls -- health API does disk I/O, don't hammer it
 const POLL_INTERVAL = 30_000;
@@ -265,6 +267,20 @@ export function SystemStatusWidget() {
               : "unknown"}
           </span>
         </div>
+        {isKollaborBarEnabled() && !loading && (
+          <button
+            type="button"
+            onClick={() => {
+              // mirror the bar's acceptHint mechanic: prefill + expand, never auto-send
+              const bar = useKollaborBarStore.getState();
+              bar.setInputValue("how's the system doing?");
+              bar.setExpanded(true);
+            }}
+            className="text-[11px] font-medium text-foreground/45 transition-colors hover:text-foreground/80"
+          >
+            ask mentiko
+          </button>
+        )}
         {uptime != null && !loading && (
           <span className="text-[11px] font-medium text-foreground/35 tabular-nums">
             up {formatUptime(uptime)}
