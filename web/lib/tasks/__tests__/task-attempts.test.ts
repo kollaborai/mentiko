@@ -63,6 +63,29 @@ function writeScopedRun(scope: {
   }));
 }
 
+function writeReferencedRun(scope: {
+  namespaceId: string;
+  orgId: string;
+  runId: string;
+}, run: Partial<TaskAttemptRun>) {
+  const runDir = join(
+    mockRoot,
+    "namespaces",
+    scope.namespaceId,
+    ...(scope.orgId === "default" ? [] : ["orgs", scope.orgId]),
+    "runs",
+    scope.runId,
+  );
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, "run.json"), JSON.stringify({
+    ...baseRun({ id: scope.runId, ...run }),
+    id: scope.runId,
+    goal: "Read an explicitly-linked system run.",
+    agents: [],
+    metadata: run.metadata,
+  }));
+}
+
 beforeEach(() => {
   mockRoot = mkdtempSync(join(tmpdir(), "mentiko-task-attempts-"));
   mockResolveLinkRunsDir.mockClear();
@@ -293,6 +316,54 @@ describe("buildTaskAttempts", () => {
         kind: "execution",
         isCurrent: true,
         status: "completed",
+      }),
+    ]);
+    expect(mockResolveLinkRunsDir).not.toHaveBeenCalled();
+  });
+
+  it("keeps an outcome summary visible when an execution scope is persisted", () => {
+    const taskRunScope = {
+      version: 1 as const,
+      taskId: "TASK-1",
+      runId: "run-scoped",
+      namespaceId: "persisted-namespace",
+      orgId: "engineering",
+    };
+    writeScopedRun(taskRunScope);
+    writeReferencedRun({
+      namespaceId: taskRunScope.namespaceId,
+      orgId: taskRunScope.orgId,
+      runId: "run-summary",
+    }, {
+      taskId: undefined,
+      chain: "Run Summary Generation",
+      chainId: "run-summary-generation",
+      started: "2026-06-21T10:15:00.000Z",
+      metadata: {
+        generationKind: "run_summary",
+        taskOutcomeSourceRunId: "run-scoped",
+      },
+    });
+
+    const attempts = listTaskAttempts({
+      namespaceId: "request-namespace",
+      orgId: "default",
+      taskId: "TASK-1",
+      metadata: {
+        last_run_id: "run-scoped",
+        task_outcome_summary_run_id: "run-summary",
+        task_run_scope: taskRunScope,
+      },
+    });
+
+    expect(attempts).toEqual([
+      expect.objectContaining({ runId: "run-scoped", kind: "execution", status: "completed" }),
+      expect.objectContaining({
+        runId: "run-summary",
+        kind: "outcome_summary",
+        status: "completed",
+        source: "merged",
+        sourceRunId: "run-scoped",
       }),
     ]);
     expect(mockResolveLinkRunsDir).not.toHaveBeenCalled();
