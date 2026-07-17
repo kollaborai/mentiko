@@ -441,7 +441,25 @@ describe("POST /api/jobs/[id]/complete", () => {
       result: {
         output: JSON.stringify({
           name: "Generated Chain",
-          agents: [{ id: "agent-a", name: "Agent A", prompt: "Do work" }],
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "research",
+              acceptance_criteria: "Given the evidence is collected, when the verifier checks the citations, then the report is complete.",
+            },
+          },
+          agents: [{
+            id: "agent-a",
+            name: "Agent A",
+            prompt: "Collect and verify the cited evidence.",
+            triggers: ["manual-start"],
+            emits: "evidence-verified",
+            deliverable: "A cited evidence report",
+            verification: "Check every claim against its cited source.",
+            final_verifier: true,
+            verifies_acceptance_criteria: true,
+            success_assertion: "Every cited claim supports the requested report.",
+          }],
         }),
       },
       runId: "run-chain",

@@ -340,10 +340,9 @@ function: launch_chain_agent <agent-id> <round>
    ---------------
    if agent.monitor == true:
    - creates monitor-{session_name} session
-   - runs monitor-chain-agent from agent-functions.sh
-   - watches agent output for AGENT_COMPLETE
-   - handles timeouts and stalls
-   - starts the typed completion launcher when the agent is done
+   - executes compiled lib/monitor-v2.js directly
+   - TypeScript watches completion evidence, handles timeout/stall classification,
+     and starts the typed completion launcher when the agent is done
 
    see [completion-entrypoint.md](./completion-entrypoint.md) for
    what happens after completion.
@@ -366,8 +365,8 @@ phase 6: execution (agent monitor session)
 ============================================
 
 the agent's monitor session (monitor-{session_name}) runs independently.
-this is a PTY session running the monitor-chain-agent function from
-lib/agent-functions.sh (see [agent-functions.md](./agent-functions.md)).
+this is a PTY session executing compiled `lib/monitor-v2.js`; its TypeScript
+owner is `web/lib/runner-v2/monitor.ts` (see [agent-functions.md](./agent-functions.md)).
 
 1. watch for AGENT_COMPLETE
    --------------------------

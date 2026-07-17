@@ -43,14 +43,8 @@ export interface DataShapeDefinition {
   migrationClaim?: MigrationClaim;
 }
 
-/**
- * Direct shell sources that currently own some part of a persisted shape's
- * read/write/type/validation contract. This is the general migration queue;
- * runnerLineage remains the more precise lifecycle-surface model for runner
- * contracts. A shell command invoked by typed code is not listed unless that
- * shell file itself appears as a shape owner in the catalog.
- */
-export function dataShapeShellSources(
+/** Direct shell sources that own a persisted shape's read/write/type/validation contract. */
+export function dataShapeDirectShellContractSources(
   definition: Pick<DataShapeDefinition, "writers" | "readers" | "typePaths" | "validatorPaths">,
 ): string[] {
   return Array.from(new Set([
@@ -59,6 +53,24 @@ export function dataShapeShellSources(
     ...(definition.typePaths ?? []),
     ...(definition.validatorPaths ?? []),
   ].filter((path) => /\.sh$/.test(path)))).sort();
+}
+
+/**
+ * Shell paths that are live in the shape's execution path. This includes a
+ * direct shell data-contract owner and a lineage surface explicitly marked as
+ * legacy-shell. It deliberately excludes historical `legacyEquivalent` paths
+ * and invocation-only shell adapters whose lifecycle remains typed.
+ */
+export function dataShapeShellSources(
+  definition: Pick<DataShapeDefinition, "writers" | "readers" | "typePaths" | "validatorPaths" | "runnerLineage">,
+): string[] {
+  const lineageShellPaths = definition.runnerLineage?.surfaces
+    .filter((surface) => surface.owner === "legacy-shell")
+    .flatMap((surface) => surface.paths) ?? [];
+  return Array.from(new Set([
+    ...dataShapeDirectShellContractSources(definition),
+    ...lineageShellPaths.filter((path) => /\.sh$/.test(path)),
+  ])).sort();
 }
 
 function shape(definition: DataShapeDefinition): DataShapeDefinition {
@@ -92,8 +104,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["{orgRoot}/chains/{chainId}/chain.json", "{orgRoot}/chains/{chainId}/.git-backup/chain.json.{timestamp}", "{runRoot}/{runId}/chain.json (execution snapshot)"],
     assurance: "enforced",
     schemaPath: "lib/schemas/chain.schema.json",
-    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
-    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
+    typePaths: ["web/lib/schemas.ts", "web/lib/types.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts", "web/lib/chains/generated-chain-delivery-contract.ts"],
+    validatorPaths: ["web/lib/validators.ts", "web/app/api/chains/validate/route.ts", "web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/chain-validation-cli.ts", "web/lib/runner-v2/chain-generation-cli.ts", "web/lib/chains/generated-chain-delivery-contract.ts", "web/app/api/chains/save/route.ts", "web/app/api/jobs/[id]/complete/route.ts"],
     writers: [
       "web/app/api/chains/save/route.ts",
       "web/lib/chains/chains-store.ts",
@@ -114,7 +126,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     readers: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
     samples: { root: "organization", patterns: [["chains", "*", "chain.json"]], format: "json" },
-    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback."],
+    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback.", "A chain that declares metadata.generated_chain_contract is validated as typed delivery or research work: every agent must state an observable deliverable and repeatable verification, while the last agent is a final acceptance gate with an evidence-backed success assertion. Delivery chains also require edit_files authority."],
   }),
   shape({
     id: "chain-version-control",
@@ -304,9 +316,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "Physical JSON validation (empty bytes, JSON syntax, object root) is separate from normalized schema and invariant validation.",
       "The list and compare APIs project only stable UI fields from validated records; they do not expose runnerV2 or unknown persistence extensions.",
       "Invalid records and directory/id mismatches are omitted from list reads, never repaired by inventing a missing id.",
-      "Shell command boundaries invoke named operations in the compiled Run Record CLI; they do not parse or mutate run.json.",
+      "Shell command boundaries invoke named operations in the compiled Run Record CLI; they do not parse or mutate run.json. This includes build-summary and write-summary: TypeScript reads agent summary JSON, assigns the run verdict, atomically writes artifacts/run-summary.json, and links that artifact back to run.json.",
       "Current job/run stores resolve through namespace paths in several call sites; default project collapse hides that scope drift.",
-      "For task-linked execution, metadata.task_run_scope is the same immutable v1 claim persisted on the task: { version: 1, taskId, runId, namespaceId, orgId }. Typed readers use that declared scope to locate the record directly and verify identity, task ownership, and execution provenance; they do not scan alternate roots.",
+      "For task-linked execution, metadata.task_run_scope is the same immutable v1 active claim persisted on the task: { version: 1, taskId, runId, namespaceId, orgId }. Typed readers use that declared scope to locate the record directly and verify identity, task ownership, and execution provenance; they do not scan alternate roots. A terminal retry clears this active claim before re-admission and records retry_source_run_id plus retry_source_task_run_scope only when the source scope agrees with that terminal task run.",
     ],
   }),
   shape({
@@ -447,7 +459,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     samples: { root: "namespace", patterns: [["data", "tasks.db"]], format: "sqlite" },
     notes: [
-      "metadata.task_run_scope is the typed v1 task-to-run claim: { version: 1, taskId, runId, namespaceId, orgId }. Manual task launch and auto-run persist the claim before dispatch; the chain-run route records the same immutable scope in run.json metadata.",
+      "metadata.task_run_scope is the typed v1 active task-to-run claim: { version: 1, taskId, runId, namespaceId, orgId }. Manual task launch and auto-run persist the claim before dispatch; the chain-run route records the same immutable scope in run.json metadata. A terminal retry clears task_run_scope and retains retry_source_run_id plus retry_source_task_run_scope only for the verified source execution.",
       "Typed task attempts, outcome evidence, reconciliation, and auto-run resolve a scoped claim only through task-run-locator. It resolves the declared namespace/org root directly, then verifies run id, task id, and execution provenance. A malformed, missing, or mismatched scoped claim fails closed; it never permits alternate-root scanning or fallback lookup.",
       "Tasks created before task_run_scope retain their existing single request/config-resolved root read. That legacy unscoped behavior is not a fallback for a task that already has a scope claim.",
     ],
@@ -594,9 +606,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "key-value",
     storage: ["{runtimeRoot}/state/{normalizedSessionPrefix}_{normalizedRunId}.state"],
     assurance: "typed",
-    typePaths: ["web/lib/runner-v2/agent-state.ts", "web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts"],
+    typePaths: ["web/lib/runner-v2/agent-state.ts", "web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/error-handling-cli.ts", "web/lib/runner-v2/standalone-agent-launch.ts"],
     validatorPaths: ["web/lib/runner-v2/agent-state.ts", "web/lib/runner-v2/error-handling.ts"],
-    writers: ["web/lib/runner-v2/agent-state.ts", "web/lib/runner-v2/error-handling.ts"],
+    writers: ["web/lib/runner-v2/agent-state.ts", "web/lib/runner-v2/error-handling.ts", "web/lib/runner-v2/standalone-agent-launch.ts"],
     readers: [
       "web/lib/runner-v2/agent-state.ts",
       "web/lib/runs/run-state.ts",
@@ -608,6 +620,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/error-handling-cli.ts",
     ],
     samples: { root: "project", patterns: [["state", "*.state"]], format: "key-value" },
+    notes: [
+      "Standalone spec state is created only by the typed standalone-agent-launch owner. The retained lib/launch-agent.sh entrypoint and exported lib/agent-functions.sh new-agent-from-spec function forward primitive arguments to its compiled CLI and do not parse specs or mutate state.",
+    ],
   }),
   shape({
     id: "runner-monitor-state",
@@ -625,13 +640,13 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "{runRoot}/{runId}/monitor/{session}_armed-grace",
     ],
     assurance: "drift-checked",
-    typePaths: ["web/lib/runner-v2/monitor-types.ts", "web/lib/runner-v2/monitor-io.ts", "web/lib/runner-v2/standalone-monitor.ts"],
+    typePaths: ["web/lib/runner-v2/monitor-types.ts", "web/lib/runner-v2/monitor-io.ts", "web/lib/runner-v2/standalone-monitor.ts", "web/lib/runner-v2/standalone-agent-launch.ts"],
     validatorPaths: ["web/lib/runner-v2/monitor-reducer.ts", "web/lib/runner-v2/monitor-io.ts"],
-    writers: ["web/lib/runner-v2/monitor.ts", "web/lib/runner-v2/monitor-live-io.ts", "web/lib/runner-v2/standalone-monitor-cli.ts"],
+    writers: ["web/lib/runner-v2/monitor.ts", "web/lib/runner-v2/monitor-live-io.ts", "web/lib/runner-v2/standalone-monitor-cli.ts", "web/lib/runner-v2/standalone-agent-launch.ts"],
     readers: ["web/lib/runner-v2/monitor.ts", "web/lib/runner-v2/monitor-live-io.ts", "web/lib/runner-v2/monitor-io.ts"],
     samples: { root: "project", patterns: [["runs", "*", "monitor", "*_state"]], format: "key-value" },
     notes: [
-      "Standalone spec launches create a typed run record and store monitor bookkeeping under that run before the monitor starts; they do not write ~/.mentiko_monitor.",
+      "The typed standalone-spec launcher validates the spec, creates the PTY/session state, and starts the typed monitor with explicit runtime roots. The monitor creates a typed run record and stores monitor bookkeeping under that run; no shell launcher owns any of those contracts or writes ~/.mentiko_monitor.",
       "This run-scoped shape is separate from the typed manual-monitor global state. Neither monitor path has a shell fallback.",
     ],
   }),
@@ -898,14 +913,15 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "mixed",
     storage: ["{runRoot}/{runId}/artifacts/*"],
     assurance: "open",
-    typePaths: ["web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
+    typePaths: ["web/lib/runner-v2/completion-contract-cli.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-entrypoint.ts"],
     validatorPaths: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/quality-gate.ts"],
     writers: ["agents", "web/app/api/jobs/[id]/complete/route.ts", "web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/readiness-cli.ts"],
     readers: ["web/lib/runs/job-store.ts", "web/lib/tasks/run-outcome-evidence.ts", "web/lib/event-artifacts/event-artifact-ledger.ts"],
     samples: { root: "project", patterns: [["runs", "*", "artifacts", "*.json"]], format: "json" },
     notes: [
       "Known JSON handoffs coexist with arbitrary code and prose. The catalog observes JSON shapes but does not imply a closed artifact contract.",
-      "Typed bootstrap requires each agent summary artifact to be a JSON object and gives agents a pre-emit JSON.parse check. If a required *-summary.json artifact exists but cannot be parsed, typed completion fails instead of silently routing the completion event.",
+      "The typed completion-contract owner constructs summary requirements and pre-emit JSON.parse checks for typed bootstrap and the remaining shell launch boundary. lib/chain-runner.sh only forwards primitive launch context to its compiled CLI; it does not construct artifact or event handoff instructions.",
+      "If a required *-summary.json artifact exists but cannot be parsed, typed completion fails instead of silently routing the completion event.",
       "The open format is the directory's, not every file in it. Startup recovery writes three typed files here ({agentId}-startup-capture.txt, -startup-readiness.json, -startup-recovery-decisions.jsonl); the decision log carries its own closed contract and is cataloged as startup-recovery-decision-log.",
     ],
   }),
@@ -1008,7 +1024,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     readers: ["web/lib/system/plugin-registry.ts", "web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"],
     samples: { root: "organization", patterns: [["plugins", "registry.json"]], format: "json" },
     sensitive: true,
-    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while built-in nativeHandler declarations route to the compiled typed boundary without a shell fallback. PagerDuty and custom-webhook are typed built-in owners; their deleted shell hooks are not dispatchable."],
+    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while declared built-in nativeHandler entries route to the compiled typed boundary without a shell fallback. PagerDuty, custom-webhook, github-pr, linear, email-digest, and notify-email are typed built-in owners; their deleted shell hooks are not dispatchable. Slack is intentionally outside this migration wave."],
     runnerLineage: {
       usage: "runner-v2",
       surfaces: [
@@ -1016,7 +1032,37 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
         { id: "typed-plugin-dispatch", label: "Resolve enabled hooks, invoke user external commands, and route declared built-ins to compiled typed handlers", owner: "runner-v2", paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"] },
         { id: "typed-pagerduty-native-handler", label: "Build, send, and validate PagerDuty Events API v2 requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
         { id: "typed-custom-webhook-native-handler", label: "Filter, build, and deliver outbound webhook requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-github-pr-native-handler", label: "Probe the external Git branch and build, validate, and dispatch GitHub pull-request API records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-linear-native-handler", label: "Build, validate, and dispatch Linear GraphQL query and issue records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-notify-email-native-handler", label: "Build and dispatch validated internal transactional email requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-email-digest-native-handler", label: "Validate, lock, append, claim, flush, and retire the email-digest JSONL buffer", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
       ],
+    },
+  }),
+  shape({
+    id: "plugin-email-digest-buffer",
+    name: "Plugin Email Digest Buffer",
+    category: "integrations",
+    description: "Configured external JSONL buffer for pending built-in email-digest event summaries.",
+    scope: "external",
+    format: "jsonl",
+    storage: ["{pluginConfig.digest_file or /tmp/mentiko-digest.jsonl}", "{digestFile}.lock", "{digestFile}.dispatch-{uuid}.jsonl (one-shot dispatch claim)"],
+    assurance: "typed",
+    typePaths: ["web/lib/system/native-plugin-handler-cli.ts"],
+    validatorPaths: ["web/lib/system/native-plugin-handler-cli.ts"],
+    writers: ["web/lib/system/native-plugin-handler-cli.ts"],
+    readers: ["web/lib/system/native-plugin-handler-cli.ts"],
+    sensitive: true,
+    notes: ["The typed email-digest native handler requires an absolute configured buffer path, validates every retained JSONL line, serializes access through a private lock, atomically claims a flush by rename, and restores the claim on delivery failure. The email transport is the required internal HTTP boundary; no shell handler owns this buffer."],
+    runnerLineage: {
+      usage: "runner-v2",
+      surfaces: [
+        { id: "typed-email-digest-buffer", label: "Validate, lock, append, atomically claim, flush, and retire configured digest records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+      ],
+      legacyEquivalent: {
+        summary: "Replaces email-digest/on-event.sh JSONL interpolation, jq parsing, threshold mutation, and shell-side buffer truncation.",
+        paths: ["docs/orchestration/contracts/plugin-native-handlers.design.json"],
+      },
     },
   }),
   shape({
@@ -1082,7 +1128,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     writers: ["web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/schedule-contract.ts"],
     readers: ["web/lib/schedules/scheduler-service.ts", "web/lib/runner-v2/schedule-contract.ts"],
     samples: { root: "organization", patterns: [["schedules", "state.json"], ["schedules", "file-trigger-state.json"]], format: "json" },
-    notes: ["The compatibility shell scheduler invokes the typed schedule contract with configured roots and does not parse or mutate runtime state. The live scheduler service and trigger-now route resolve the workspace then start the compiled typed direct-run lifecycle; unsupported workspace definitions fail at that typed boundary and do not fall back to chain-runner."],
+    notes: ["The compatibility shell scheduler invokes the typed schedule contract with configured roots and does not parse or mutate runtime state. Its historical check command fails closed: the supervised TypeScript background worker is the only scheduled-chain admission, lifecycle, and launch owner. The live scheduler service and trigger-now route resolve the workspace then start the compiled typed direct-run lifecycle; unsupported workspace definitions fail at that typed boundary and do not fall back to chain-runner."],
   }),
   shape({
     id: "schedule-execution-history",
@@ -2052,20 +2098,38 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "jsonl",
     storage: ["CLI-specific transcript roots such as ~/.claude/projects/{encodedCwd}/{conversationId}.jsonl"],
     assurance: "open",
-    typePaths: ["web/lib/runs/session-log-resolver.ts", "web/lib/runner-v2/agent-transcript.ts"],
+    typePaths: ["web/lib/runs/session-log-resolver.ts", "web/lib/runs/session-log-resolver-cli.ts", "web/lib/runner-v2/agent-transcript.ts"],
     writers: ["web/app/api/conversations/[id]/route.ts"],
-    readers: ["web/app/api/conversations/[id]/route.ts", "web/lib/runs/session-log-resolver.ts", "web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+    readers: ["web/app/api/conversations/[id]/route.ts", "web/lib/runs/session-log-resolver.ts", "web/lib/runs/session-log-resolver-cli.ts", "web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
     sensitive: true,
     runnerLineage: {
       usage: "runner-v2",
-      surfaces: [{
-        id: "typed-transcript-provenance-reader",
-        label: "Read external transcript JSONL only for identity-bound durable completion evidence",
-        owner: "runner-v2",
-        paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
-      }],
+      surfaces: [
+        {
+          id: "typed-transcript-provenance-reader",
+          label: "Read external transcript JSONL only for identity-bound durable completion evidence",
+          owner: "runner-v2",
+          paths: ["web/lib/runner-v2/agent-transcript.ts", "web/lib/runner-v2/monitor-live-io.ts"],
+        },
+        {
+          id: "typed-session-log-resolution",
+          label: "Validate profile-backed transcript roots, resolve PTY capture UUIDs, and select timestamp-window transcript candidates",
+          owner: "runner-v2",
+          paths: ["web/lib/runs/session-log-resolver.ts", "web/lib/runs/session-log-resolver-cli.ts"],
+        },
+        {
+          id: "shell-session-log-command-boundary",
+          label: "Forward primitive transcript lookup arguments to the compiled typed resolver",
+          owner: "runner-v2",
+          paths: ["lib/session-log-resolver.sh"],
+        },
+      ],
+      legacyEquivalent: {
+        summary: "Replaces session-log-resolver.sh profile/path parsing, PTY capture UUID matching, file birth-time selection, and fallback ordering with a typed resolver. The shell file retains historical function names only as a compiled-CLI invocation boundary.",
+        paths: ["lib/session-log-resolver.sh"],
+      },
     },
-    notes: ["Ownership and schema belong to the external CLI. Mentiko does not mutate the transcript; the typed runner-v2 owner reads assistant text and identity metadata only to establish durable, current-attempt completion evidence, failing closed on decoys or ambiguity."],
+    notes: ["Ownership and schema belong to the external CLI. Mentiko does not mutate the transcript; the typed runner-v2 owner reads assistant text and identity metadata only to establish durable, current-attempt completion evidence, failing closed on decoys or ambiguity.", "The typed session-log resolver owns profile-backed root selection, PTY capture UUID projection, timestamp-window discovery, and newest-file ordering. lib/session-log-resolver.sh only forwards primitive arguments to its compiled CLI and has no shell fallback."],
   }),
   shape({
     id: "teammux-agent-spec",
@@ -2108,11 +2172,11 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     format: "json",
     storage: ["~/.kollab/config.json", "~/.kollab/mcp/mcp_settings.json"],
     assurance: "typed",
-    typePaths: ["web/lib/agents/mentiko-engine-profile.ts", "web/lib/process-manager.ts"],
-    writers: ["web/lib/agents/mentiko-engine-profile.ts", "web/app/api/kollabor/profiles/active/route.ts", "web/app/api/kollabor/setup/mentiko/route.ts", "web/lib/process-manager.ts"],
+    typePaths: ["web/lib/agents/mentiko-engine-profile.ts", "web/lib/kollabor-mcp-settings.ts", "web/lib/runner-v2/kollabor-mcp-settings-cli.ts", "web/lib/process-manager.ts"],
+    writers: ["web/lib/agents/mentiko-engine-profile.ts", "web/app/api/kollabor/profiles/active/route.ts", "web/app/api/kollabor/setup/mentiko/route.ts", "web/lib/kollabor-mcp-settings.ts", "web/lib/process-manager.ts"],
     readers: ["web/app/api/kollabor/profiles/active/route.ts", "web/lib/process-manager.ts"],
     sensitive: true,
-    notes: ["MCP environment entries can contain authentication material; no values are exposed by the catalog."],
+    notes: ["MCP environment entries can contain authentication material; no values are exposed by the catalog.", "The Docker entrypoint is invocation-only: it calls the compiled typed MCP-settings CLI, which validates legacy server maps, normalizes to servers, and atomically publishes the registration without a shell JSON parser or writer."],
   }),
   shape({
     id: "process-manager-config",

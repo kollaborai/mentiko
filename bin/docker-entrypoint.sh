@@ -49,67 +49,7 @@ fi
 # through to the MCP subprocess. If the engine is launched separately, make
 # sure to pass those vars into its environment.
 echo "[entrypoint] registering mentiko-mcp with kollabor-engine..."
-mkdir -p "$HOME/.kollab/mcp"
-node <<'NODE'
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-
-const settingsPath = path.join(os.homedir(), ".kollab", "mcp", "mcp_settings.json");
-
-function serverMap(value, key) {
-  if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${key} must be an object`);
-  }
-  return value;
-}
-
-let settings = {};
-if (fs.existsSync(settingsPath)) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("expected a JSON object");
-    }
-    settings = parsed;
-  } catch (error) {
-    console.error(`[entrypoint] existing MCP settings invalid at ${settingsPath}: ${error.message}`);
-    process.exit(1);
-  }
-}
-
-const port = process.env.PORT || "3000";
-const mcpEnv = {
-  MENTIKO_MCP_TOOL_SCOPE: process.env.MENTIKO_MCP_TOOL_SCOPE || "bar",
-  MENTIKO_WEB_URL: process.env.MENTIKO_WEB_URL || `http://127.0.0.1:${port}`,
-  KOLLABOR_ENGINE_URL: process.env.KOLLABOR_ENGINE_URL || "http://127.0.0.1:7433",
-};
-if (process.env.MENTIKO_INBOX_KEY) {
-  mcpEnv.MENTIKO_INBOX_KEY = process.env.MENTIKO_INBOX_KEY;
-}
-if (process.env.MENTIKO_NAMESPACE_ID) {
-  mcpEnv.MENTIKO_NAMESPACE_ID = process.env.MENTIKO_NAMESPACE_ID;
-}
-if (process.env.MENTIKO_ORG_ID) {
-  mcpEnv.MENTIKO_ORG_ID = process.env.MENTIKO_ORG_ID;
-}
-
-settings.servers = {
-  ...serverMap(settings.mcpServers, "mcpServers"),
-  ...serverMap(settings.servers, "servers"),
-  mentiko: {
-    type: "stdio",
-    command: "/app/bin/mentiko-mcp",
-    args: [],
-    env: mcpEnv,
-    enabled: true,
-  },
-};
-delete settings.mcpServers;
-
-fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-NODE
+node /app/lib/runner-kollabor-mcp-settings.js register --command /app/bin/mentiko-mcp
 
 # 4. start next.js (foreground - main process)
 echo "[entrypoint] starting next.js on port 3000..."

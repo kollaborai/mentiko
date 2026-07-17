@@ -139,6 +139,16 @@ export interface PlanTask {
   assignee?: string;
   priority: number;
   phase: number;
+  /**
+   * The concrete state that makes this task complete. Optional at the stored
+   * shape boundary because older decision records predate this contract; new
+   * generated plans are validated before they can create tasks.
+   */
+  deliverable?: string;
+  /** The repeatable check that proves the deliverable is real. */
+  verification?: string;
+  /** Persisted on the child task so downstream chain generation has a target. */
+  acceptance_criteria?: string;
 }
 
 export interface PlanDependency {

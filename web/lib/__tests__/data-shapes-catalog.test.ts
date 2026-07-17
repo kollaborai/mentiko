@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_SOURCE_EXCLUSIONS,
+  dataShapeDirectShellContractSources,
   dataShapeShellSources,
 } from "@/lib/data-shapes/catalog";
 import {
@@ -63,11 +64,16 @@ describe("data shape catalog", () => {
       ];
       const hasTypedRunner = provenance.some((path) => path.startsWith("web/lib/runner-v2/"));
       const hasShellRunner = provenance.some((path) => runnerShellPath.test(path));
-      if (!hasTypedRunner && !hasShellRunner) continue;
+      const hasLegacyShellExecution = shape.runnerLineage?.surfaces.some((surface) => surface.owner === "legacy-shell") ?? false;
+      if (!hasTypedRunner && !hasShellRunner && !hasLegacyShellExecution) continue;
 
       expect(shape.runnerLineage).toBeDefined();
       expect(shape.runnerLineage?.usage).toBe(
-        hasTypedRunner && hasShellRunner ? "shared" : hasTypedRunner ? "runner-v2" : "legacy-shell",
+        hasTypedRunner && (hasShellRunner || hasLegacyShellExecution)
+          ? "shared"
+          : hasTypedRunner
+            ? "runner-v2"
+            : "legacy-shell",
       );
     }
   });
@@ -102,10 +108,29 @@ describe("data shape catalog", () => {
 
   it("has no documented data shape with a direct shell contract owner", () => {
     const queue = DATA_SHAPE_CATALOG
-      .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
+      .map((shape) => ({ id: shape.id, shell: dataShapeDirectShellContractSources(shape) }))
       .filter((shape) => shape.shell.length > 0);
 
     expect(queue).toEqual([]);
+  });
+
+  it("counts active shell orchestration in the ledger until the default shell runner is retired", () => {
+    const shape = DATA_SHAPE_CATALOG.find((item) => item.id === "parallel-group-state");
+
+    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(runnerMigrationCoverage(shape!.runnerLineage!)).toMatchObject({
+      typed: 1,
+      legacy: 1,
+      total: 2,
+      typedPercent: 50,
+      state: "shared",
+    });
+    expect(dataShapeDirectShellContractSources(shape!)).toEqual([]);
+    expect(dataShapeShellSources(shape!)).toEqual([
+      "lib/chain-runner.sh",
+      "lib/parallel-coordinator.sh",
+      "lib/parallel-launcher.sh",
+    ]);
   });
 
   it("documents task-specific validation for the shared core generation handoff filename", () => {
@@ -264,6 +289,7 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
       "web/lib/runner-v2/direct-run.ts",
+      "web/lib/runner-v2/next-chain-launch-cli.ts",
     ]);
     expect(shape?.readers).toEqual([
       "web/app/api/activity/route.ts",

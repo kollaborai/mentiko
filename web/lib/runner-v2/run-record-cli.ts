@@ -31,8 +31,6 @@ import {
   countRunningRuns,
   deleteRunsOlderThan,
   deleteRunsOwnedByUser,
-  githubErrorBody,
-  githubErrorTitle,
   runCompletedAt,
   runGoal,
   runStatus,
@@ -58,8 +56,6 @@ const COMMANDS = [
   "goal",
   "completed-agents",
   "count-running",
-  "github-error-title",
-  "github-error-body",
   "delete-user-runs",
   "cleanup-old-runs",
   "workspace-path",
@@ -162,25 +158,6 @@ export async function runRunRecordCli(
   if (parsed.command === "completed-agents") {
     rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id"]));
     write(completedAgentLines(runJsonPath));
-    return;
-  }
-
-  if (parsed.command === "github-error-title") {
-    rejectUnexpected(parsed, new Set(["--runs-dir", "--run-id", "--agent-id"]));
-    write(githubErrorTitle(runJsonPath, required(parsed.values, "--agent-id")));
-    return;
-  }
-
-  if (parsed.command === "github-error-body") {
-    rejectUnexpected(parsed, new Set([
-      "--runs-dir", "--run-id", "--agent-id", "--error-message", "--output-file",
-    ]));
-    write(githubErrorBody({
-      runJsonPath,
-      agentId: required(parsed.values, "--agent-id"),
-      errorMessage: present(parsed.values, "--error-message"),
-      outputFile: optional(parsed.values, "--output-file"),
-    }));
     return;
   }
 

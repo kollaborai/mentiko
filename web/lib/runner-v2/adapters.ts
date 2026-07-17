@@ -1015,8 +1015,10 @@ function launchNextChain(
     return undefined;
   }
 
-  const command = `bash ${shellEscape(join(config.codeRoot, "lib", "chain-runner.sh"))} ${shellEscape(identity.path)}`;
   const runsDir = context.runsDir || dirname(dirname(context.runJsonPath));
+  const launcherPath = join(config.codeRoot, "lib", "runner-v2-next-chain.js");
+  const launcherArgs = [identity.path, "--parent-run-id", operation.parentRunId, "--runs-dir", runsDir];
+  const command = `node ${[launcherPath, ...launcherArgs].map(shellEscape).join(" ")}`;
   const ledgerPath = join(context.stateDir, "next-chain.jsonl");
   const claimPath = join(context.stateDir, "next-chain-claims", `${nextChainOperationKey(operation.parentRunId, identity)}.claim`);
   return withExclusiveFileClaim(claimPath, () => {
@@ -1026,9 +1028,10 @@ function launchNextChain(
       return { command };
     }
 
-    // The shell runner remains an explicit launch boundary. Acceptance is the
-    // child run.json, not the process exit or an audit line, so a crash after
-    // child creation is recoverable by the preflight above without relaunch.
+    // The compiled typed launcher owns child-run materialization and bootstrap.
+    // Acceptance is the child run.json, not the process exit or an audit line,
+    // so a crash after child creation is recoverable by the preflight above
+    // without relaunch.
     let logFd: number | undefined;
     try {
       logFd = openSync(join(dirname(context.runJsonPath), "launches.log"), "a");
@@ -1041,14 +1044,12 @@ function launchNextChain(
     delete nextChainEnv.RUN_ID;
     delete nextChainEnv.MENTIKO_RUN_DIR;
     delete nextChainEnv.RUN_DIR;
-    const child = spawnSync("/bin/bash", ["-lc", command], {
+    const child = spawnSync("node", [launcherPath, ...launcherArgs], {
       timeout: positiveInteger(process.env.MENTIKO_NEXT_CHAIN_ACCEPT_TIMEOUT_MS, DEFAULT_LAUNCH_ACCEPT_TIMEOUT_MS),
       killSignal: "SIGTERM",
       stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
       env: {
         ...nextChainEnv,
-        RUNS_DIR: runsDir,
-        MENTIKO_PARENT_RUN_ID: operation.parentRunId,
       },
     });
     if (logFd !== undefined) closeSync(logFd);
@@ -1090,8 +1091,8 @@ function resolveNextChainIdentity(chainName: string, context: AdapterContext): N
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as { id?: unknown; name?: unknown };
   } catch {
-    // The explicit shell boundary will report malformed chain content. Identity
-    // still uses the resolved path and requested name for stable replay.
+    // The typed launcher will report malformed chain content. Identity still
+    // uses the resolved path and requested name for stable replay.
   }
   const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : chainName;
   const chainId = typeof parsed.id === "string" && parsed.id.trim() ? parsed.id.trim() : undefined;

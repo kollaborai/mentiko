@@ -88,6 +88,8 @@ design docs (rationale + migration plan, not enforced):
   - chain-version-control.design.json: typed ownership of chain version,
     metadata, snapshot, rollback, and comparison records; external `diff`
     remains the only child-process behavior.
+  - plugin-native-handlers.design.json: typed ownership of the non-Slack
+    built-in GitHub PR, Linear, email notification, and email digest handlers.
 
 proof artifacts (emitted by live runs, consumed by switch-readiness.ts):
   - runner-v2-runtime-proof.json: MENTIKO_RUNNER_V2 live launch proof.

@@ -536,6 +536,15 @@ RUN if [ -f /build/web/lib/runner-v2/runtime-metrics-cli.ts ]; then \
         --outfile=/context/lib/runner-runtime-metrics.js; \
     fi
 
+# compile typed external transcript path/provenance resolution for legacy shell callers.
+RUN if [ -f /build/web/lib/runs/session-log-resolver-cli.ts ]; then \
+      echo "=== compiling typed session log resolver ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runs/session-log-resolver-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-session-log-resolver.js; \
+    fi
+
 # compile process-manager.ts (tsc — needs same anchor; use relative paths
 # from web/ so tsconfig.json auto-discovery picks up web/tsconfig.json)
 RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-manager.js ]; then \

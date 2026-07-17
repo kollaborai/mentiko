@@ -5,8 +5,7 @@
  * Tests cron expression validation, schedule reading from chain.json,
  * state tracking (get/update schedule state), enable/disable toggles,
  * lock-based running checks, should_run_chain logic, mark_run lifecycle,
- * cmd_check dispatch, cmd_list output, and error handling for missing
- * chain files.
+ * cmd_list output, and typed-worker ownership of scheduled execution.
  *
  * Each test sources scheduler.sh in a fresh bash child process with a
  * tmp directory so filesystem state is isolated.
@@ -554,21 +553,22 @@ test("mark_run delegates to mark_run_end", () => {
 });
 
 // -------------------------------------------------------------------
-// 11. cmd_check: error handling for missing chain
+// 11. cmd_check: retired shell orchestration
 // -------------------------------------------------------------------
 
-test("cmd_check errors on missing chain file", () => {
+test("cmd_check fails closed because the typed background worker owns scheduled execution", () => {
   resetTmp();
   const result = runSchedulerFail('cmd_check "/nonexistent/chain.json"');
   assert(result !== null, "expected failure");
-  assertContains(result.stdout, "not found", "missing file message");
+  assertContains(result.stderr, "typed background worker owns scheduled-chain execution", "typed owner message");
 });
 
-test("cmd_check reports no schedule when schedule is absent", () => {
+test("cmd_check does not inspect an unscheduled chain in shell", () => {
   resetTmp();
   const chainPath = writeChain("check-no-sched", {});
-  const out = runScheduler(`cmd_check "${chainPath}"`);
-  assertContains(out, "no schedule configured", "no schedule message");
+  const result = runSchedulerFail(`cmd_check "${chainPath}"`);
+  assert(result !== null, "expected failure");
+  assertContains(result.stderr, "typed background worker owns scheduled-chain execution", "typed owner message");
 });
 
 // -------------------------------------------------------------------
@@ -715,11 +715,11 @@ test("scheduler.sh shows usage for unknown command", () => {
 // 16. error handling: missing chain/workspace
 // -------------------------------------------------------------------
 
-test("cmd_check handles chain file that disappears mid-run", () => {
+test("cmd_check does not resolve a disappearing chain path in shell", () => {
   resetTmp();
   const result = runSchedulerFail('cmd_check "/tmp/no-such-chain-' + process.pid + '.json"');
   assert(result !== null, "expected failure");
-  assertContains(result.stdout, "not found", "missing file error");
+  assertContains(result.stderr, "typed background worker owns scheduled-chain execution", "typed owner message");
   assertEqual(String(result.status), "1", "exit code 1");
 });
 
