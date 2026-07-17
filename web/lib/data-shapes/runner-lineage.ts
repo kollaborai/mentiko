@@ -1156,7 +1156,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       },
     ],
     legacyEquivalent: {
-      summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records.",
+      summary: "The shell scheduler is an invocation-only compatibility boundary over the typed schedule contract; it does not parse or mutate schedule records. Its former check command fails closed so only the supervised TypeScript background worker can admit, transition, and launch a scheduled chain.",
       paths: ["lib/scheduler.sh"],
     },
   },
