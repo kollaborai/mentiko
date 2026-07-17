@@ -322,9 +322,9 @@ RUN if [ -f /build/web/lib/runner-v2/teammux-bridge-cli.ts ]; then \
         --outfile=/context/lib/runner-teammux-bridge.js; \
     fi
 
-# compile the typed audit ship boundary. The legacy shell entrypoint only
-# forwards stdin; entry parsing, S3 key derivation, rclone upload, retry backoff,
-# and failure-record construction stay in the compiled TypeScript owner.
+# compile the typed audit shipper launched directly by the audit writer. Entry
+# parsing, S3 key derivation, rclone upload, retry backoff, and failure-record
+# construction stay in the compiled TypeScript owner.
 RUN if [ -f /build/web/lib/runner-v2/audit-ship-cli.ts ]; then \
       echo "=== compiling typed audit ship boundary ===" && \
       cd /build/web && \

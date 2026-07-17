@@ -75,8 +75,8 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     rollback, and comparison ownership in the typed runtime. The external
     diff command remains the only child-process product behavior.
   - audit-ship.contract.json: typed raw/normalized audit-entry validation,
-    remote-key derivation, rclone retry, and failure-breadcrumb ownership for
-    lib/audit-ship.sh.
+    remote-key derivation, rclone retry, and failure-breadcrumb ownership;
+    the audit writer launches its compiled owner directly.
   - notification-dispatch.contract.json: typed notification envelope,
     chain-started mapping, response validation, and HTTP dispatch ownership for
     lib/notification-dispatcher.sh.

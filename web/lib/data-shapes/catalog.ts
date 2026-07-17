@@ -1761,7 +1761,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     sensitive: true,
     notes: [
       "The typed owner validates the raw JSONL object before deriving the normalized remote key and failure record; malformed input never becomes an invented audit object.",
-      "lib/audit-ship.sh is an invocation-only boundary. rclone remains the required external storage CLI, while retries, path resolution, and JSON serialization stay typed.",
+      "The audit writer launches the compiled typed shipper directly. rclone remains the required external storage CLI, while retries, path resolution, and JSON serialization stay typed.",
     ],
   }),
   shape({

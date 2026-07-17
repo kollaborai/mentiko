@@ -238,10 +238,6 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       owner: "runner-v2",
       paths: ["web/lib/runner-v2/audit-ship.ts", "web/lib/runner-v2/audit-ship-cli.ts", "lib/runner-audit-ship.js"],
     }],
-    legacyEquivalent: {
-      summary: "Replaces audit-ship.sh jq/date/cut parsing, key derivation, retry orchestration, and failure JSON construction; rclone remains the required external CLI.",
-      paths: ["lib/audit-ship.sh"],
-    },
   },
   "notification-dispatch-envelope": {
     usage: "runner-v2",

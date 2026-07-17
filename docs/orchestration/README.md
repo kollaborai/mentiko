@@ -104,13 +104,13 @@ the production image compiles this boundary to `lib/runner-teammux-bridge.js`.
 typed audit shipping and notification dispatch
 ----------------------------------------------
 
-`lib/audit-ship.sh` and `lib/notification-dispatcher.sh` are invocation-only
-boundaries. `web/lib/runner-v2/audit-ship.ts` validates raw JSONL before
+`lib/notification-dispatcher.sh` is an invocation-only boundary. The audit
+writer launches `lib/runner-audit-ship.js` directly; `web/lib/runner-v2/audit-ship.ts` validates raw JSONL before
 normalizing audit identity/timestamps, derives the external object key, owns
 rclone retry/failure records, and never turns malformed input into an invented
 audit object. `web/lib/runner-v2/notification-dispatcher.ts` owns the typed
 request/response envelope, the `chain-started` event mapping, event-specific
-messages, and malformed-response handling. The shell files contain no JSON,
+messages, and malformed-response handling. The notification shell file contains no JSON,
 HTTP, retry, or fallback logic. Enforceable ownership is recorded in
 `docs/orchestration/contracts/audit-ship.contract.json` and
 `docs/orchestration/contracts/notification-dispatch.contract.json`.
