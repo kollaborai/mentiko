@@ -195,7 +195,7 @@ describe("data shape catalog", () => {
     expect(shape?.runnerLineage?.usage).toBe("shared");
     expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "typed-pty-transport-owner" }),
-      expect.objectContaining({ id: "shell-pty-command-boundary" }),
+      expect.objectContaining({ id: "typed-pty-command-boundary" }),
     ]));
   });
 

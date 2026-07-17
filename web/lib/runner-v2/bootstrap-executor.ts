@@ -652,7 +652,7 @@ function readinessTimeoutMs(plan: AgentBootstrapPlan): number {
 
 function readinessPollMs(plan: AgentBootstrapPlan): number {
   const configured = Number(envValue(plan, "MENTIKO_CLI_READY_POLL"));
-  // v1 default: MENTIKO_CLI_READY_POLL seconds, 2s (lib/chain-runner.sh wait_for_profile_readiness)
+  // Historical v1 default: MENTIKO_CLI_READY_POLL seconds, 2s. Typed bootstrap owns polling now.
   return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 2000;
 }
 

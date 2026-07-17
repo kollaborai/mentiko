@@ -8,8 +8,8 @@ import {
 
 // Driver for the typed chain monitor. Owns the poll loop, the durable state
 // files, and the side effects; delegates every decision to classifyMonitorTick.
-// I/O is injected so the loop is deterministic in tests. Mirrors the control flow
-// of lib/agent-functions.sh monitor-chain-agent (:954-1234).
+// I/O is injected so the loop is deterministic in tests. Its decision behavior
+// preserves the documented pre-cutover monitor invariants without reusing that shell owner.
 
 export type MonitorExitReason =
   | "session-gone"
