@@ -18,6 +18,7 @@ import {
 
 const childFixture = join(__dirname, "test-support", "file-claim-child.fixture.ts");
 const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+const fixtureChildren = new Set<ChildProcess>();
 
 function seedStaleClaim(claimDir: string): void {
   mkdirSync(claimDir);
@@ -28,9 +29,10 @@ function seedStaleClaim(claimDir: string): void {
 
 function spawnFixture(args: string[]): ChildProcess {
   const [mode, claimDir, artifactPath, gatePath] = args;
-  return spawn(process.execPath, [
+  const child = spawn(process.execPath, [
     jestBin,
     "--runInBand",
+    "--forceExit",
     "--testMatch",
     "**/file-claim-child.fixture.ts",
     "--runTestsByPath",
@@ -46,6 +48,10 @@ function spawnFixture(args: string[]): ChildProcess {
       FILE_CLAIM_CHILD_GATE: gatePath,
     },
   });
+  fixtureChildren.add(child);
+  child.once("exit", () => fixtureChildren.delete(child));
+  child.once("error", () => fixtureChildren.delete(child));
+  return child;
 }
 
 async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
@@ -57,13 +63,35 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
 }
 
 function waitForExit(child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
   return new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
 }
 
+async function terminateFixture(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = waitForExit(child);
+  child.kill("SIGTERM");
+  const settled = await Promise.race([
+    exited.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+  ]);
+  if (!settled && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await exited;
+  }
+}
+
 describe("exclusive file claim", () => {
+  afterEach(async () => {
+    await Promise.all([...fixtureChildren].map(terminateFixture));
+    expect(fixtureChildren.size).toBe(0);
+  });
+
   it("lets only one stale-claim contender retire and acquire the claim", () => {
     const root = mkdtempSync(join(tmpdir(), "runner-v2-file-claim-"));
     const claimDir = join(root, "delivery.claim");

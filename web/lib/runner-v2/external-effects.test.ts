@@ -58,6 +58,7 @@ const externalEffectsChildFixture = join(
   "external-effects-child.fixture.ts",
 );
 const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+const fixtureChildren = new Set<ChildProcess>();
 
 function spawnExternalEffectsFixture(input: {
   mode: "hold" | "enqueue";
@@ -66,9 +67,10 @@ function spawnExternalEffectsFixture(input: {
   gatePath?: string;
   effectId?: string;
 }): ChildProcess {
-  return spawn(process.execPath, [
+  const child = spawn(process.execPath, [
     jestBin,
     "--runInBand",
+    "--forceExit",
     "--testMatch",
     "**/external-effects-child.fixture.ts",
     "--runTestsByPath",
@@ -85,6 +87,10 @@ function spawnExternalEffectsFixture(input: {
       EXTERNAL_EFFECTS_CHILD_ID: input.effectId || "",
     },
   });
+  fixtureChildren.add(child);
+  child.once("exit", () => fixtureChildren.delete(child));
+  child.once("error", () => fixtureChildren.delete(child));
+  return child;
 }
 
 async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
@@ -96,13 +102,33 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
 }
 
 function waitForExit(child: ChildProcess): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
   return new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code));
   });
 }
 
+async function terminateFixture(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = waitForExit(child);
+  child.kill("SIGTERM");
+  const settled = await Promise.race([
+    exited.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+  ]);
+  if (!settled && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await exited;
+  }
+}
+
 describe("runner-v2 external effects dispatcher", () => {
+  afterEach(async () => {
+    await Promise.all([...fixtureChildren].map(terminateFixture));
+    expect(fixtureChildren.size).toBe(0);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     (taskClaimMetadataKeyIfUnset as jest.Mock).mockReturnValue(true);
