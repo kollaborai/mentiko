@@ -149,7 +149,6 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     samples: { root: "organization", patterns: [["chains", "*", "versions", "v*", "metadata.json"]], format: "json" },
     notes: [
       "The typed owner validates semver, chain/metadata JSON objects, version-history entries, and agent records before mutation; current-chain and metadata-history JSON publication uses an atomic rename, while snapshot and rollback backup copies remain explicit copy operations.",
-      "lib/version-control.sh is an invocation-only adapter. It forwards primitive operation arguments to lib/runner-version-control.js and owns no JSON parsing, serialization, path resolution, or fallback behavior.",
       "The diff operation invokes the external diff CLI as the required product behavior; all version selection and path resolution remain typed.",
       "The ownership and invariants are recorded in docs/orchestration/contracts/chain-version-control.design.json.",
     ],

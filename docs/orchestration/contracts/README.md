@@ -72,7 +72,7 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     for lib/git-integration.sh. Git remains the required external CLI; the shell
     file is only a primitive invocation boundary.
   - chain-version-control.contract.json: typed semver, snapshot, metadata,
-    rollback, and comparison ownership for lib/version-control.sh. The external
+    rollback, and comparison ownership in the typed runtime. The external
     diff command remains the only child-process product behavior.
   - audit-ship.contract.json: typed raw/normalized audit-entry validation,
     remote-key derivation, rclone retry, and failure-breadcrumb ownership for

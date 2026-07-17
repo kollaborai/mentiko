@@ -265,17 +265,7 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
         owner: "runner-v2",
         paths: ["web/lib/runner-v2/version-control.ts", "web/lib/runner-v2/version-control-cli.ts"],
       },
-      {
-        id: "typed-chain-version-shell-boundary",
-        label: "Forward legacy version-control function calls to the compiled typed owner",
-        owner: "runner-v2",
-        paths: ["lib/version-control.sh"],
-      },
     ],
-    legacyEquivalent: {
-      summary: "Replaces version-control.sh jq/sed/loop JSON parsing, metadata serialization, path resolution, rollback mutation, and agent comparison with a compiled TypeScript contract; the external diff CLI remains the only child-process product boundary.",
-      paths: ["lib/version-control.sh", "tests/version-control.test.mjs"],
-    },
   },
   "git-integration-projection": {
     usage: "runner-v2",

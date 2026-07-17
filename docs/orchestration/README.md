@@ -66,14 +66,13 @@ fallback. The production image compiles this contract to
 typed chain version control
 ---------------------------
 
-`lib/version-control.sh` is an invocation-only legacy boundary. The compiled
+The compiled
 `web/lib/runner-v2/version-control.ts` contract owns semver validation, chain
 version/metadata JSON parsing, snapshot creation, version listing, rollback
 backups, agent comparison, and all version-path resolution. Its CLI is
 `web/lib/runner-v2/version-control-cli.ts`, compiled in production to
 `lib/runner-version-control.js`. The external `diff` command remains the sole
-child-process product behavior for version diffs; shell does not parse JSON,
-serialize metadata, or provide a fallback. Ownership details live in
+child-process product behavior for version diffs. Ownership details live in
 `docs/orchestration/contracts/chain-version-control.design.json`.
 
 typed git projections
@@ -504,7 +503,6 @@ libraries:
   web/lib/runner-v2/routing-contract.ts typed branch/fan/error/timeout contract
   lib/routing-lib.sh               invocation-only routing compatibility boundary
   web/lib/runner-v2/version-control.ts typed chain version/metadata contract
-  lib/version-control.sh            invocation-only version-control boundary
   web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation
   lib/config.sh                    path resolution
   web/lib/runner-v2/activity-capture.ts typed artifact/provenance capture
