@@ -13,8 +13,9 @@ import type {
   ProcessConfig, ProcessesFile, ReadinessConfig,
   IPCRequest,
 } from './pm-types';
-import { buildManagedProcessEnv } from './process-manager-env';
+import { applyDevelopmentEnvLayers, buildManagedProcessEnv } from './process-manager-env';
 import { registerKollabMentikoMcpServer } from './kollabor-mcp-settings';
+import { parseEnvContent } from './system/dev-environment-checks';
 
 interface ManagedProcess {
   config: ProcessConfig;
@@ -659,35 +660,24 @@ async function housekeep() {
   if (!process.env.PATH?.includes('/opt/mentiko/bin'))
     process.env.PATH = `/opt/mentiko/bin:${process.env.PATH || ''}`;
 
-  // Dev: load web/.env.local into process.env BEFORE any env-sensitive code
-  // runs. next.js auto-loads it for its own process, but process-manager runs
-  // first and its env (whitelisted) is what children inherit. Without this,
-  // values set in .env.local lose to any defaults we generate below.
+  // Dev: root .env owns the local data root while web/.env.local owns Next.js
+  // settings. The supervisor must load both before spawning its whitelisted
+  // children; Next.js only loads the latter itself. This is intentionally
+  // development-only, so production still requires container/operator env.
   if (isDev) {
-    const envFile = [
-      path.join(process.cwd(), '.env.local'),
-      path.join(process.cwd(), 'web', '.env.local'),
-    ].find(candidate => fs.existsSync(candidate));
-    if (envFile) {
-      try {
-        const content = fs.readFileSync(envFile, 'utf-8');
-        for (const line of content.split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const eq = trimmed.indexOf('=');
-          if (eq < 1) continue;
-          const key = trimmed.slice(0, eq).trim();
-          let value = trimmed.slice(eq + 1).trim();
-          if (
-            (value.startsWith('"') && value.endsWith('"')) ||
-            (value.startsWith("'") && value.endsWith("'"))
-          ) {
-            value = value.slice(1, -1);
-          }
-          if (!process.env[key]) process.env[key] = value;
-        }
-      } catch {} // non-fatal
-    }
+    const cwd = process.cwd();
+    const rootEnv = path.basename(cwd) === 'web'
+      ? path.join(cwd, '..', '.env')
+      : path.join(cwd, '.env');
+    const webEnv = path.basename(cwd) === 'web'
+      ? path.join(cwd, '.env.local')
+      : path.join(cwd, 'web', '.env.local');
+    try {
+      const layers = [rootEnv, webEnv]
+        .filter(candidate => fs.existsSync(candidate))
+        .map(candidate => parseEnvContent(fs.readFileSync(candidate, 'utf-8')));
+      applyDevelopmentEnvLayers(process.env, layers);
+    } catch {} // non-fatal: missing optional dev env files are valid
   }
 
   const home = os.homedir();

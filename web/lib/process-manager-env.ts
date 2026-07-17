@@ -55,6 +55,24 @@ export const PLATFORM_PROCESS_ENV_WHITELIST = [
 
 type EnvSource = Record<string, string | undefined>;
 
+/**
+ * Apply development-only env-file layers without allowing either file to
+ * replace an environment variable explicitly supplied to the supervisor.
+ * Later files intentionally win over earlier files, so web/.env.local can
+ * refine repository-root .env for local Next.js development.
+ */
+export function applyDevelopmentEnvLayers(
+  target: NodeJS.ProcessEnv,
+  layers: Array<Record<string, string>>,
+): void {
+  const inherited = new Set(Object.keys(target));
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      if (!inherited.has(key)) target[key] = value;
+    }
+  }
+}
+
 function expandEnvValue(value: string, sourceEnv: EnvSource) {
   return value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => sourceEnv[name] || "");
 }
