@@ -587,6 +587,4 @@ related docs
 [../architecture.md](../architecture.md)       - system-wide architecture
 # Typed readiness boundary
 
-`lib/cli-readiness-enhanced.sh` is an invocation-only adapter. `web/lib/runner-v2/readiness-cli.ts` owns PTY readiness polling, capture classification, fail-closed behavior, and terminal outcome codes; it invokes the configured PTY command as the required external product boundary.
-
-The legacy `wait_for_profile_readiness` entrypoint delegates the same typed command with the bounded startup-recovery budget and artifact directory. Advisor selection, decision validation, key translation, retry application, and recovery audit records are owned by `readiness-cli.ts`; the shell only applies the resulting run/agent lifecycle state.
+`web/lib/runner-v2/readiness-cli.ts` owns PTY readiness polling, capture classification, fail-closed behavior, terminal outcome codes, and bounded startup recovery. It invokes the configured PTY command as the required external product boundary; the unused shell adapter has been retired.
