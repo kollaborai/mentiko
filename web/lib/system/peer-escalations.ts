@@ -127,3 +127,11 @@ export function isPendingReply(session_id: string): boolean {
   const last = history[history.length - 1];
   return !last.human_reply && !existsSync(replyFile(session_id));
 }
+
+/** Active sessions whose latest escalation is still waiting on a human reply. */
+export function listPendingEscalations(): { sessionId: string; task: string; startedAt: string }[] {
+  const reg = readRegistry();
+  return Object.entries(reg.sessions)
+    .filter(([sessionId, entry]) => entry.status === "active" && isPendingReply(sessionId))
+    .map(([sessionId, entry]) => ({ sessionId, task: entry.task, startedAt: entry.started_at }));
+}
