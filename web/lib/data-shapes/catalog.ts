@@ -1009,7 +1009,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     readers: ["web/lib/system/plugin-registry.ts", "web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"],
     samples: { root: "organization", patterns: [["plugins", "registry.json"]], format: "json" },
     sensitive: true,
-    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while built-in nativeHandler declarations route to the compiled typed boundary without a shell fallback. PagerDuty and custom-webhook are typed built-in owners; their deleted shell hooks are not dispatchable."],
+    notes: ["Malformed registry bytes and malformed manifests fail closed; user hook paths are confined to the discovered plugin directory before external invocation, while declared built-in nativeHandler entries route to the compiled typed boundary without a shell fallback. PagerDuty, custom-webhook, github-pr, linear, email-digest, and notify-email are typed built-in owners; their deleted shell hooks are not dispatchable. Slack is intentionally outside this migration wave."],
     runnerLineage: {
       usage: "runner-v2",
       surfaces: [
@@ -1017,7 +1017,37 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
         { id: "typed-plugin-dispatch", label: "Resolve enabled hooks, invoke user external commands, and route declared built-ins to compiled typed handlers", owner: "runner-v2", paths: ["web/lib/system/plugin-dispatch.ts", "web/lib/runner-v2/external-effects.ts"] },
         { id: "typed-pagerduty-native-handler", label: "Build, send, and validate PagerDuty Events API v2 requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
         { id: "typed-custom-webhook-native-handler", label: "Filter, build, and deliver outbound webhook requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-github-pr-native-handler", label: "Probe the external Git branch and build, validate, and dispatch GitHub pull-request API records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-linear-native-handler", label: "Build, validate, and dispatch Linear GraphQL query and issue records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-notify-email-native-handler", label: "Build and dispatch validated internal transactional email requests", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+        { id: "typed-email-digest-native-handler", label: "Validate, lock, append, claim, flush, and retire the email-digest JSONL buffer", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
       ],
+    },
+  }),
+  shape({
+    id: "plugin-email-digest-buffer",
+    name: "Plugin Email Digest Buffer",
+    category: "integrations",
+    description: "Configured external JSONL buffer for pending built-in email-digest event summaries.",
+    scope: "external",
+    format: "jsonl",
+    storage: ["{pluginConfig.digest_file or /tmp/mentiko-digest.jsonl}", "{digestFile}.lock", "{digestFile}.dispatch-{uuid}.jsonl (one-shot dispatch claim)"],
+    assurance: "typed",
+    typePaths: ["web/lib/system/native-plugin-handler-cli.ts"],
+    validatorPaths: ["web/lib/system/native-plugin-handler-cli.ts"],
+    writers: ["web/lib/system/native-plugin-handler-cli.ts"],
+    readers: ["web/lib/system/native-plugin-handler-cli.ts"],
+    sensitive: true,
+    notes: ["The typed email-digest native handler requires an absolute configured buffer path, validates every retained JSONL line, serializes access through a private lock, atomically claims a flush by rename, and restores the claim on delivery failure. The email transport is the required internal HTTP boundary; no shell handler owns this buffer."],
+    runnerLineage: {
+      usage: "runner-v2",
+      surfaces: [
+        { id: "typed-email-digest-buffer", label: "Validate, lock, append, atomically claim, flush, and retire configured digest records", owner: "runner-v2", paths: ["web/lib/system/native-plugin-handler-cli.ts"] },
+      ],
+      legacyEquivalent: {
+        summary: "Replaces email-digest/on-event.sh JSONL interpolation, jq parsing, threshold mutation, and shell-side buffer truncation.",
+        paths: ["docs/orchestration/contracts/plugin-native-handlers.design.json"],
+      },
     },
   }),
   shape({
