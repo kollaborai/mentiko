@@ -1,8 +1,8 @@
 # api route auth coverage (as of 2026-07-14)
 
 ## summary
-- total routes: 353
-- authenticated: 336   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
+- total routes: 357
+- authenticated: 341   (doc mechanically matches disk via scripts/check-auth-coverage.mjs)
 - public-by-design: 17
 - unclear (needs human review): 0
 - likely bug (probably accidentally public): 0
@@ -207,6 +207,7 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/ops/meta/docs/route.ts
 - mentiko-mcp/ops/meta/nav/route.ts
 - mentiko-mcp/ops/meta/settings/route.ts
+- mentiko-mcp/ops/monitor/status/route.ts
 - mentiko-mcp/ops/notifications/prefs/route.ts
 - mentiko-mcp/ops/notify/route.ts
 - mentiko-mcp/ops/runtime/route.ts
@@ -226,6 +227,8 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - mentiko-mcp/stream/route.ts
 - metrics/route.ts
 - metrics/endpoints/route.ts
+- monitor/prompts/route.ts
+- monitor/status/route.ts
 - notifications/[id]/route.ts
 - notifications/dispatch/route.ts
 - notifications/preferences/route.ts
@@ -318,6 +321,8 @@ Routes with explicit auth checks via `checkAuth`, `getServerSession`, `requirePe
 - tasks/auto-run/route.ts
 - tasks/bulk/route.ts
 - tasks/create/route.ts
+- tasks/decision-plan-recovery/route.ts
+- tasks/decision-plan-regeneration/route.ts
 - tasks/deps/route.ts
 - tasks/epics/route.ts
 - tasks/generate/route.ts
