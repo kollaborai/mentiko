@@ -122,6 +122,16 @@ RUN if [ -f /build/web/lib/runner-v2/complete-cli.ts ]; then \
         --outfile=/context/lib/runner-v2-complete.js; \
     fi
 
+# compile the typed completion-contract builder used by the compatibility
+# boundary. Shell forwards primitive paths and never derives this contract.
+RUN if [ -f /build/web/lib/runner-v2/completion-contract-cli.ts ]; then \
+      echo "=== compiling typed completion contract ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/completion-contract-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-completion-contract.js; \
+    fi
+
 # compile the typed completion PTY launcher. It transfers the allowlisted
 # environment through a private one-shot file, keeping secrets out of PTY argv.
 RUN if [ -f /build/web/lib/runner-v2/completion-launch-cli.ts ]; then \
@@ -182,6 +192,24 @@ RUN if [ -f /build/web/lib/runner-v2/monitor-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/monitor-cli.ts \
         --bundle --platform=node --target=node20 \
         --outfile=/context/lib/monitor-v2.js; \
+    fi
+
+# compile standalone-spec monitor/launch paths. The compatibility scripts only
+# forward argv; PTY allocation, monitor state, and lifecycle writes stay typed.
+RUN if [ -f /build/web/lib/runner-v2/standalone-monitor-cli.ts ]; then \
+      echo "=== compiling typed standalone monitor ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/standalone-monitor-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-standalone-monitor.js; \
+    fi
+
+RUN if [ -f /build/web/lib/runner-v2/standalone-agent-launch-cli.ts ]; then \
+      echo "=== compiling typed standalone agent launcher ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/standalone-agent-launch-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-v2-standalone-agent-launch.js; \
     fi
 
 # compile the manual profile-aware monitor. The CLI owns its state, profile
@@ -349,6 +377,16 @@ RUN if [ -f /build/web/lib/runner-v2/job-worker.ts ]; then \
         --outfile=/context/lib/runner-job-worker.js; \
     fi
 
+# compile the typed PTY transport adapter. session-transport.sh may invoke the
+# external pty manager, but daemon/session queries and names remain typed.
+RUN if [ -f /build/web/lib/pty/pty-transport-cli.ts ]; then \
+      echo "=== compiling typed PTY transport ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/pty/pty-transport-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-pty-transport.js; \
+    fi
+
 # compile the typed generation payload resolver/importer. The command boundary
 # may call the completion API, but artifact, event, and transcript parsing stay
 # in the TypeScript-owned resolver.
@@ -377,6 +415,26 @@ RUN if [ -f /build/web/lib/runner-v2/agent-profile-cli.ts ]; then \
       npx --yes esbuild /build/web/lib/runner-v2/agent-profile-cli.ts \
         --bundle --platform=node --target=node20 \
       --outfile=/context/lib/runner-agent-profile.js; \
+    fi
+
+# compile typed transcript identity/provenance resolution. Shell callers only
+# pass capture and primitive identity inputs; they do not scan profile paths.
+RUN if [ -f /build/web/lib/runner-v2/agent-transcript-cli.ts ]; then \
+      echo "=== compiling typed agent transcript resolver ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/agent-transcript-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-agent-transcript.js; \
+    fi
+
+# compile the canonical typed Kollabor MCP-settings writer used at container
+# boot. docker-entrypoint invokes it but must not parse or mutate JSON itself.
+RUN if [ -f /build/web/lib/runner-v2/kollabor-mcp-settings-cli.ts ]; then \
+      echo "=== compiling typed Kollabor MCP settings ===" && \
+      cd /build/web && \
+      npx --yes esbuild /build/web/lib/runner-v2/kollabor-mcp-settings-cli.ts \
+        --bundle --platform=node --target=node20 \
+        --outfile=/context/lib/runner-kollabor-mcp-settings.js; \
     fi
 
 RUN if [ -f /build/web/lib/runner-v2/readiness-cli.ts ]; then \
@@ -570,12 +628,13 @@ RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-m
       cd /build/web && \
       npx --yes tsc --outDir /tmp/pm-out --skipLibCheck --esModuleInterop \
         --module commonjs --target es2022 --moduleResolution node \
-        lib/pm-types.ts lib/kollabor-mcp-server-env.ts \
+        lib/pm-types.ts lib/kollabor-mcp-server-env.ts lib/kollabor-mcp-settings.ts \
         lib/process-manager-env.ts lib/process-manager.ts && \
       cp /tmp/pm-out/process-manager.js /context/lib/process-manager.js && \
       cp /tmp/pm-out/process-manager-env.js /context/lib/process-manager-env.js && \
       cp /tmp/pm-out/pm-types.js /context/lib/pm-types.js && \
       cp /tmp/pm-out/kollabor-mcp-server-env.js /context/lib/kollabor-mcp-server-env.js && \
+      cp /tmp/pm-out/kollabor-mcp-settings.js /context/lib/kollabor-mcp-settings.js && \
       rm -rf /tmp/pm-out; \
     fi
 
