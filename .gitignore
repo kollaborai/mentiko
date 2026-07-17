@@ -69,7 +69,7 @@ agents/ratings.json
 # monitor state
 .mentiko_monitor/
 
-# peer-swarm runtime artifacts
+# peer collaboration runtime artifacts
 **/peer-output/
 **/lib/peer-hook.sh
 *.orig

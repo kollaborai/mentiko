@@ -2,8 +2,7 @@
 /**
  * bin/peer-* tools combined tests
  *
- * Tests arg validation and early error paths for:
- * peer-send, peer-watch, peer-swarm, peer-swarm-watch
+ * Tests argument validation and early error paths for peer-send.
  */
 
 import { execFileSync } from "child_process";
@@ -102,87 +101,6 @@ test("peer-send: errors when message is empty", () => {
   const r = runScriptFail(join(REPO_ROOT, "bin", "peer-send"), [], { CLAUDE_PEER: "test-peer" });
   assert(r !== null, "expected failure");
   assert(r.stdout.includes("usage:"), `missing usage: ${r.stdout}`);
-});
-
-// ── peer-watch tests ──
-
-test("peer-watch: errors when no session provided", () => {
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-watch"), []);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("usage:"), `missing usage: ${r.stdout}`);
-});
-
-test("peer-watch: errors when session not found", () => {
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-watch"), ["nonexistent-session"]);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("not found") || r.stderr.includes("not found"),
-    `missing not found: ${r.stdout}${r.stderr}`);
-});
-
-// ── peer-swarm tests ──
-
-test("peer-swarm: shows help with --help", () => {
-  const out = runScript(join(REPO_ROOT, "bin", "peer-swarm"), ["--help"]);
-  assert(out.includes("usage:"), `missing usage: ${out}`);
-  assert(out.includes("--profile"), `missing --profile: ${out}`);
-  assert(out.includes("--watch"), `missing --watch: ${out}`);
-});
-
-test("peer-swarm: errors when no task provided", () => {
-  setupNamespace();
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm"), []);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("task required"), `missing error: ${r.stdout}`);
-});
-
-test("peer-swarm: errors when no profile found", () => {
-  setupNamespace();
-  // No profile written
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm"), ["build the thing"]);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("no agent profile found"), `missing error: ${r.stdout}`);
-});
-
-test("peer-swarm: errors when specified profile not found", () => {
-  setupNamespace();
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm"), [
-    "build the thing", "--profile", "nonexistent"
-  ]);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("not found"), `missing error: ${r.stdout}`);
-});
-
-test("peer-swarm: outputs session names as JSON after profile resolution", () => {
-  const nsRoot = setupNamespace();
-  writeProfile(nsRoot, "default-profile");
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm"), ["test task"]);
-  const combined = (r?.stdout || "") + (r?.stderr || "");
-  // Should get past profile check and output session names before pty-mgr fails
-  if (combined.includes("sessionA")) {
-    const jsonMatch = combined.match(/\{"sessionA":"[^"]+","sessionB":"[^"]+"\}/);
-    assert(jsonMatch, "should output session names as JSON");
-  }
-});
-
-// ── peer-swarm-watch tests ──
-
-test("peer-swarm-watch: errors when no sessions provided", () => {
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm-watch"), []);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("usage:"), `missing usage: ${r.stdout}`);
-});
-
-test("peer-swarm-watch: errors when only one session provided", () => {
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm-watch"), ["session-a"]);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("usage:"), `missing usage: ${r.stdout}`);
-});
-
-test("peer-swarm-watch: errors when sessions not found", () => {
-  const r = runScriptFail(join(REPO_ROOT, "bin", "peer-swarm-watch"), ["a", "b"]);
-  assert(r !== null, "expected failure");
-  assert(r.stdout.includes("not found") || r.stderr.includes("not found"),
-    `missing not found: ${r.stdout}${r.stderr}`);
 });
 
 // ── Run ──

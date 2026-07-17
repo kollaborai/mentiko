@@ -261,15 +261,6 @@ peer-send
   send a message to a specific peer session. cleans via haiku
   before delivery.
 
-peer-watch
-  monitor a session for screen stabilization then forward to peer.
-
-peer-swarm
-  deprecated. use peer-manager directly or /links web UI.
-
-peer-swarm-watch
-  deprecated. use /links page to monitor active runs.
-
 
 ## session naming
 
