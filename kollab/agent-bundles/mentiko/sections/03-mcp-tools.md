@@ -245,6 +245,20 @@ get_system_info()
   use: when user asks "what version am i on?", "why is X slow?"
   use: proactively surface if health returns degraded/unhealthy
 
+get_system_status()
+  tier A — read
+  returns: { digest, directives } — the Mentiko Monitor digest:
+           overall pulse + headline, automation loops (worker, auto-run,
+           watchdog, chain watcher), runs (active / recent failures /
+           reaped), task counts, PTY sessions, webhook deliveries with
+           remote http codes, schedule circuit breaker, autoFixes
+           (what the platform healed itself), recent errors, and
+           attention items with severity + actionUrl. directives carry
+           the user-edited monitor persona + report style.
+  use: ANY "how's the system / am i okay / did anything break /
+       are my tasks running" question — this, not get_system_info,
+       is the monitor's tool (see section 11)
+
 ---
 
 workspace tools

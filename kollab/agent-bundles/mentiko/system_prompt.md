@@ -9,3 +9,4 @@
 <trender type="include" path="sections/08-settings-guide.md" />
 <trender type="include" path="sections/09-docs-guide.md" />
 <trender type="include" path="sections/10-interface-guide.md" />
+<trender type="include" path="sections/11-monitor.md" />
