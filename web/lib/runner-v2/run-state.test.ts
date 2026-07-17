@@ -129,6 +129,57 @@ describe("runner-v2 run-state", () => {
     });
   });
 
+  it("allows a real session registration to supersede a provisional watchdog stop", () => {
+    const file = runPath();
+    const run = createRunRecord({ runId: "run-watchdog-race", chainName: "chain", goal: "goal" });
+    updateRunJson(file, () => ({
+      ...run,
+      status: "stopped",
+      completed: "2026-07-15T00:00:00.000Z",
+      status_message: "watchdog: no live agent session",
+      runnerV2: {
+        watchdog: {
+          status: "stalled",
+          detectedAt: "2026-07-15T00:00:00.000Z",
+          runId: "run-watchdog-race",
+          reason: "no live agent session",
+        },
+      },
+    }));
+
+    const updated = addRunSession(file, "writer-race", "writer", "Writer");
+
+    expect(updated).toMatchObject({
+      status: "running",
+      sessions: ["writer-race"],
+      agents: [expect.objectContaining({ id: "writer", session: "writer-race", status: "running" })],
+    });
+    expect(updated.completed).toBeUndefined();
+    expect(updated.status_message).toBeUndefined();
+    expect(updated.runnerV2 || {}).not.toHaveProperty("watchdog");
+  });
+
+  it("does not revive a watchdog stop after terminal effects begin", () => {
+    const file = runPath();
+    const run = createRunRecord({ runId: "run-watchdog-final", chainName: "chain", goal: "goal" });
+    updateRunJson(file, () => ({
+      ...run,
+      status: "stopped",
+      runnerV2: {
+        watchdog: {
+          status: "stalled",
+          detectedAt: "2026-07-15T00:00:00.000Z",
+          runId: "run-watchdog-final",
+          reason: "no live agent session",
+          eventEmittedAt: "2026-07-15T00:00:01.000Z",
+        },
+      },
+    }));
+
+    expect(() => addRunSession(file, "writer-final", "writer", "Writer"))
+      .toThrow("run run-watchdog-final is terminal (stopped)");
+  });
+
   it("uses complete for agent success and sets completed only for terminal agent states", () => {
     const file = runPath();
     const run = createRunRecord({ chainName: "chain", goal: "goal" });

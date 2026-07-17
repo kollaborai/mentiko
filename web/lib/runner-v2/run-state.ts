@@ -124,7 +124,13 @@ export function addRunSession(
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
-    if (TERMINAL_RUN_STATUSES.has(current.status)) {
+    // A watchdog stop is deliberately provisional until the watchdog has
+    // emitted an event, queued an effect, or dispatched a hook. A PTY can
+    // finish registering between its pre-mutation daemon read and final
+    // recheck; that real registration must win without reviving any
+    // externally-observed terminal run.
+    const revivableWatchdogStop = isRevivableWatchdogStop(current);
+    if (TERMINAL_RUN_STATUSES.has(current.status) && !revivableWatchdogStop) {
       throw new TerminalRunRevivalError(
         `cannot add session ${sessionName}: run ${current.id} is terminal (${current.status})`,
       );
@@ -137,12 +143,16 @@ export function addRunSession(
       name: agentName,
       session: sessionName,
       status: "running",
+      completed: undefined,
       started: (existing >= 0 ? agents[existing].started : undefined) || nowIso(now),
     };
     if (existing >= 0) agents[existing] = nextAgent;
     else agents.push(nextAgent);
 
     const runnerV2 = clearPendingHandoffAgent(current.runnerV2, agentId);
+    if (revivableWatchdogStop && runnerV2) {
+      delete runnerV2.watchdog;
+    }
     return {
       ...current,
       status: "running",
@@ -153,6 +163,17 @@ export function addRunSession(
       agents,
     };
   });
+}
+
+function isRevivableWatchdogStop(run: RunRecord): boolean {
+  if (run.status !== "stopped" || !run.runnerV2 || typeof run.runnerV2 !== "object") return false;
+  const watchdog = (run.runnerV2 as Record<string, unknown>).watchdog;
+  if (!watchdog || typeof watchdog !== "object" || Array.isArray(watchdog)) return false;
+  const marker = watchdog as Record<string, unknown>;
+  return marker.status === "stalled"
+    && !marker.eventEmittedAt
+    && !marker.externalEffectsQueuedAt
+    && !marker.hooksDispatchedAt;
 }
 
 export function updateRunAgent(

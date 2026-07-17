@@ -31,7 +31,7 @@ architecture philosophy
 =======================
 
 not a loop
-  the typed direct runner launches ONE initial agent then exits. the next agent
+  chain-runner.sh launches ONE initial agent then exits. the next agent
   is selected and durably accepted by the typed completion entrypoint.
   this prevents cascading failures and enables event-driven chaining.
 
@@ -150,18 +150,18 @@ execution layer
   called by: monitor session when AGENT_COMPLETE detected.
 
 [agent-functions.md](./agent-functions.md)
-  thin shell boundary for direct external PTY transport plus typed standalone
-  and manual-monitor invocation. It is not sourced by the typed chain runner.
+  function library for PTY session management. sourced by
+  chain-runner.sh and other tools.
 
   key functions:
-    - new_pty_session          direct external PTY creation
+    - new-agent-session        create PTY + launch agent
+    - monitor-chain-agent      watch for AGENT_COMPLETE
+    - monitor-with-ai          legacy monitor (grep-based)
     - send-message             interactive agent communication
     - peek-session             view session output
-    - new-agent-from-spec      typed standalone-launch forwarding boundary
-    - mentiko-monitor          typed manual-monitor forwarding boundary
 
-  There is no generic shell agent launcher or shell monitor. Typed launch and
-  monitor owners validate lifecycle input and fail closed before touching PTYs.
+  monitor diagnostics delegate canonical runner-event bytes and filenames to
+  the typed event emitter. they never manufacture a missing success handoff.
 
 background service layer
 ------------------------
@@ -295,21 +295,26 @@ data flow
 1. user starts chain (cli or web ui)
    input: chain.json path, optional --workspace, --task, --start
 
-   runner-v2-direct-run.ts:
-     -> validates and normalizes the chain
-     -> loads typed task context when --task is supplied
-     -> creates run object (run-{timestamp}/run.json) and immutable snapshot
-     -> resolves the initial agent and agent profile
-     -> builds typed PTY, readiness, instruction, and monitor plans
+   chain-runner.sh:
+     -> sources shell boundary libraries (config, agent-functions, etc)
+     -> invokes compiled typed event emitter/lifecycle commands when needed
+     -> invokes typed chain/routing/schedule contracts for definition validation
+     -> resolves executor (claude, codex, aider, kollabor)
+     -> resolves agent profiles (env vars, cli args)
+     -> creates run object (run-{timestamp}/run.json)
+     -> finds starting agent (trigger: "manual-start" or first agent)
+     -> builds profile command (env vars sourced from temp file)
 
 2. agent launch
-   typed bootstrap executor:
-     -> performs typed admission and creates the PTY session
-     -> writes typed instruction and startup evidence artifacts
-     -> gates readiness before instruction submission
-     -> starts the typed monitor with the allowlisted run context
+   launch_chain_agent function:
+     -> pre-flight: circuit breaker, approval gate
+     -> creates PTY session (transport_new_session)
+     -> writes git-before.txt (for diff capture later)
+     -> sends agent instructions (multi-line via heredoc)
+     -> writes state file (STATE_DIR/{agent-id}.state)
+     -> starts heartbeat api (POST /api/runs/{id}/heartbeat every 60s)
      -> creates monitor session (monitor-{session-name})
-    -> monitor runs compiled monitor-v2 with the allowlisted run context
+     -> monitor runs monitor-chain-agent function
 
 3. agent execution (in agent PTY session)
    agent runs:
@@ -317,7 +322,7 @@ data flow
      -> performs work (writes code, runs commands, etc)
      -> writes AGENT_COMPLETE to output when done
 
-   monitor session (typed monitor only):
+   monitor session (typed monitor by default; shell monitor only when selected):
      -> watches agent output for "AGENT_COMPLETE"
      -> handles timeout (agent.timeout config)
      -> handles stall detection (no output for N intervals)
@@ -475,7 +480,7 @@ two "watchers", different purposes:
 
   monitor session (per-agent)
     - monitor-{session-name} PTY session
-    - runs the compiled typed monitor
+    - runs monitor-chain-agent function
     - watches ONE agent's output for AGENT_COMPLETE
     - handles timeout and stall detection for that agent
     - starts the typed completion launcher when the agent is done
@@ -492,9 +497,9 @@ quick reference: file locations
 ================================
 
 core orchestration:
-  lib/chain-runner.sh              compatibility filename; execs typed direct runner
+  lib/chain-runner.sh              main orchestrator
   web/lib/runner-v2/completion-entrypoint.ts typed completion owner
-  lib/launch-agent.sh              standalone-spec compatibility forwarding boundary
+  lib/launch-agent.sh              legacy agent launcher
 
 libraries:
   lib/agent-functions.sh           PTY session functions
@@ -532,7 +537,8 @@ supporting:
   lib/slack-integration.sh         slack notifications
   lib/metrics.sh                   invocation-only metrics boundary; forwards
                                    primitive metric operations to runner-legacy-metrics.js
-  lib/chain-runner.sh              invocation-only compatibility boundary for typed direct run
+  lib/parallel-launcher.sh         external parallel agent process boundary; typed group records live in runner-v2
+  lib/chain-runner.sh              invokes the typed parallel group record while retaining only process launch/wait
   lib/profiler.sh                  collects only live PTY/OS resource samples;
                                    the typed runtime-profiler owns the records
   lib/performance.sh               collects only real PTY process resource values

@@ -203,7 +203,8 @@ export function createAgentAttempt(input: {
 
 /**
  * Adopt an attempt for an agent whose startup lifecycle ran outside the typed
- * runtime (for example, a pre-cutover routed/relaunched agent). The typed runtime never observed
+ * runtime (routed/relaunched agents launched by shell chain-runner.sh, which
+ * the typed completion bridge itself fires). The typed runtime never observed
  * lease/PTY/spawn phases for these agents, so the record is created directly
  * at instructions_submitted — the earliest phase supported by completion-time
  * evidence (the agent ran and reached its completion handoff) — with a single

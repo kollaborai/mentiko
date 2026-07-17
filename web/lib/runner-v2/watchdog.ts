@@ -222,7 +222,7 @@ export async function runTypedWatchdogScan(
     const postMutationRun = readRunJson(scopedRun.runJsonPath);
     if (hasLiveRunSession(postMutationRun, postMutationSessions)) {
       deferredRunIds.add(terminalized.run.id);
-      if (!rollbackWatchdogTerminalization(scopedRun.runJsonPath, terminalized)) {
+      if (!rollbackWatchdogTerminalization(scopedRun.runJsonPath, terminalized, true)) {
         result.errors.push(
           `skipped ${terminalized.run.id}: live PTY appeared and watchdog transition changed before rollback`,
         );
@@ -434,6 +434,7 @@ function terminalizeIfStillStalled(
 function rollbackWatchdogTerminalization(
   runJsonPath: string,
   transition: TerminalizeResult,
+  acceptConcurrentReactivation = false,
 ): boolean {
   if (!transition.previousRun) return false;
   let rolledBack = false;
@@ -442,6 +443,18 @@ function rollbackWatchdogTerminalization(
     const currentMarker = watchdogMarker(current);
     const transitionMarker = watchdogMarker(transition.run);
     if (!currentMarker || JSON.stringify(currentMarker) !== JSON.stringify(transitionMarker)) {
+      // addRunSession atomically clears a still-provisional watchdog marker
+      // when a live PTY wins this race. The final daemon recheck is already
+      // authoritative in this call path, so that durable reactivation is the
+      // successful rollback state rather than a transition conflict.
+      if (
+        acceptConcurrentReactivation
+        && current.status === "running"
+        && current.completed === undefined
+        && current.status_message === undefined
+      ) {
+        rolledBack = true;
+      }
       return current;
     }
     const previous = transition.previousRun!;

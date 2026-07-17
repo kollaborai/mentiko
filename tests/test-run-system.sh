@@ -108,7 +108,7 @@ echo "test: create-run"
 RUN_ID=$(create-run "$TEST_CHAIN_FILE" "test goal")
 
 # check run-id format
-if [[ "$RUN_ID" =~ ^run-[0-9]+-[a-f0-9]+$ ]]; then
+if [[ "$RUN_ID" =~ ^run-[0-9]+$ ]]; then
     echo "  [PASS] run-id format correct"
     ((TESTS_PASSED++)) || true
 else
@@ -126,8 +126,33 @@ assert_exists "$RUN_FILE" "run.json created"
 # check run.json content
 assert_json_eq ".id" "$RUN_ID" "$RUN_FILE" "run.json has correct id"
 assert_json_eq ".chain" "test-chain" "$RUN_FILE" "run.json has correct chain"
-assert_json_eq ".status" "pending" "$RUN_FILE" "run.json initial status is pending"
+assert_json_eq ".status" "running" "$RUN_FILE" "run.json initial status is running"
 assert_json_eq ".goal" "test goal" "$RUN_FILE" "run.json has correct goal"
+
+echo ""
+
+# -------------------------------------------------------------------
+# test: update-run-status
+# -------------------------------------------------------------------
+
+echo "test: update-run-status"
+
+update-run-status "$RUN_ID" "completed"
+assert_json_eq ".status" "completed" "$RUN_FILE" "status updated to completed"
+
+# check completed timestamp was set
+COMPLETED=$(jq -r '.completed' "$RUN_FILE")
+if [[ -n "$COMPLETED" && "$COMPLETED" != "null" ]]; then
+    echo "  [PASS] completed timestamp set"
+    ((TESTS_PASSED++)) || true
+else
+    echo "  [FAIL] completed timestamp not set"
+    ((TESTS_FAILED++)) || true
+fi
+
+update-run-status "$RUN_ID" "failed" "test error message"
+assert_json_eq ".status" "failed" "$RUN_FILE" "status updated to failed"
+assert_json_eq ".status_message" "test error message" "$RUN_FILE" "status message set"
 
 echo ""
 
@@ -172,31 +197,6 @@ assert_json_eq ".agents[1].status" "running" "$RUN_FILE" "other agent unchanged"
 echo ""
 
 # -------------------------------------------------------------------
-# test: update-run-status
-# -------------------------------------------------------------------
-
-echo "test: update-run-status"
-
-update-run-status "$RUN_ID" "completed"
-assert_json_eq ".status" "completed" "$RUN_FILE" "status updated to completed"
-
-# check completed timestamp was set
-COMPLETED=$(jq -r '.completed' "$RUN_FILE")
-if [[ -n "$COMPLETED" && "$COMPLETED" != "null" ]]; then
-    echo "  [PASS] completed timestamp set"
-    ((TESTS_PASSED++)) || true
-else
-    echo "  [FAIL] completed timestamp not set"
-    ((TESTS_FAILED++)) || true
-fi
-
-update-run-status "$RUN_ID" "failed" "test error message"
-assert_json_eq ".status" "failed" "$RUN_FILE" "status updated to failed"
-assert_json_eq ".status_message" "test error message" "$RUN_FILE" "status message set"
-
-echo ""
-
-# -------------------------------------------------------------------
 # test: get-run
 # -------------------------------------------------------------------
 
@@ -207,8 +207,8 @@ RUN_ID_FROM_GET=$(echo "$RUN_JSON" | jq -r '.id')
 assert_eq "$RUN_ID" "$RUN_ID_FROM_GET" "get-run returns correct run"
 
 # test non-existent run
-NON_EXIST=$(get-run "run-nonexistent" 2>&1 || true)
-if [[ "$NON_EXIST" =~ "runner run record failed" ]]; then
+NON_EXIST=$(get-run "run-nonexistent" || true)
+if [[ "$NON_EXIST" =~ "error" ]]; then
     echo "  [PASS] get-run returns error for non-existent"
     ((TESTS_PASSED++)) || true
 else

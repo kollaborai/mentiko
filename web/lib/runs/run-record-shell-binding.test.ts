@@ -52,51 +52,6 @@ describe("typed Run Record runtime binding", () => {
     });
   });
 
-  it("keeps shell run-summary commands as typed bundle invocations", () => {
-    const root = mkdtempSync(join(tmpdir(), "runner-run-record-summary-shell-"));
-    const runsDir = join(root, "runs");
-    const chainPath = join(root, "chain.json");
-    writeFileSync(chainPath, '{"name":"summary-chain"}\n');
-    const environment = { ...process.env, MENTIKO_CODE_ROOT: codeRoot, MENTIKO_GLOBAL_ROOT: root, RUNS_DIR: runsDir };
-    const created = spawnSync(process.execPath, [
-      compiledRunRecord, "create", "--runs-dir", runsDir,
-      "--chain-file", chainPath, "--goal", "prove shell summary boundary",
-    ], { encoding: "utf8", env: environment });
-    expect(created.status).toBe(0);
-    const runId = created.stdout.trim();
-    const completed = spawnSync(process.execPath, [
-      compiledRunRecord, "set-status", "--runs-dir", runsDir, "--run-id", runId, "--status", "completed",
-    ], { encoding: "utf8", env: environment });
-    expect(completed.status).toBe(0);
-    const artifactsDir = join(runsDir, runId, "artifacts");
-    mkdirSync(artifactsDir, { recursive: true });
-    writeFileSync(join(artifactsDir, "writer-summary.json"), JSON.stringify({
-      status: "complete",
-      executiveSummary: "Typed summary verdict.",
-    }));
-
-    const result = spawnSync("bash", ["-lc", `
-      source ${JSON.stringify(join(codeRoot, "lib", "config.sh"))}
-      source ${JSON.stringify(join(codeRoot, "lib", "run-record-client.sh"))}
-      source ${JSON.stringify(join(codeRoot, "lib", "run-lib.sh"))}
-      RUNS_DIR=${JSON.stringify(runsDir)}
-      build-run-summary-json ${JSON.stringify(runId)}
-      write-run-summary-artifact ${JSON.stringify(runId)}
-    `], { encoding: "utf8", env: environment });
-
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout.split("\n")[0])).toMatchObject({
-      run_id: runId,
-      outcome: "complete",
-      decision_required: false,
-    });
-    expect(JSON.parse(result.stdout.split("\n")[1])).toMatchObject({
-      outcome: "complete",
-      summary: "Typed summary verdict.",
-    });
-    expect(existsSync(join(artifactsDir, "run-summary.json"))).toBe(true);
-  });
-
   it("fails closed when the compiled bundle is absent", () => {
     const missingRoot = mkdtempSync(join(tmpdir(), "runner-run-record-missing-"));
     const result = spawnSync("bash", ["-lc", `
@@ -137,12 +92,40 @@ describe("typed Run Record runtime binding", () => {
     expect(existsSync(runDir)).toBe(false);
   });
 
+  it("builds a GitHub error report through the typed Run Record query when sourced standalone", () => {
+    const root = mkdtempSync(join(tmpdir(), "runner-run-record-github-"));
+    const runsDir = join(root, "runs");
+    const captureDir = join(root, "capture");
+    mkdirSync(captureDir);
+    const environment = { ...process.env, MENTIKO_CODE_ROOT: codeRoot, MENTIKO_GLOBAL_ROOT: root, RUNS_DIR: runsDir };
+    const created = spawnSync(process.execPath, [
+      compiledRunRecord, "create", "--runs-dir", runsDir,
+      "--run-id", "run-1", "--chain", "github-chain", "--goal", "report typed context",
+    ], { encoding: "utf8", env: environment });
+    expect(created.status).toBe(0);
+
+    const result = spawnSync("bash", ["-lc", `
+      source ${JSON.stringify(join(codeRoot, "lib", "github-integration.sh"))}
+      github-get-token() { printf token; }
+      github-create-issue() {
+        printf '%s' "$2" > ${JSON.stringify(join(captureDir, "title"))}
+        printf '%s' "$3" > ${JSON.stringify(join(captureDir, "body"))}
+      }
+      github-agent-error-issue owner/repo run-1 writer 'startup failed'
+    `], { encoding: "utf8", env: environment });
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(captureDir, "title"), "utf8")).toBe("Agent Error: writer failed in github-chain");
+    expect(readFileSync(join(captureDir, "body"), "utf8")).toContain("report typed context");
+    expect(readFileSync(join(captureDir, "body"), "utf8")).toContain("startup failed");
+  });
+
   it("leaves shell callers as semantic invocations with no Run Record parser or writer", () => {
     const sources = [
       "lib/run-lib.sh",
       "lib/chain-runner.sh",
       "lib/agent-activity-capture.sh",
       "lib/concurrency-cap.sh",
+      "lib/github-integration.sh",
       "lib/gdpr-sweep.sh",
       "bin/peer-manager",
       "bin/test-relay-prompt",

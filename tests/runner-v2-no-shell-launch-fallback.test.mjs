@@ -14,12 +14,12 @@ for (const [name, source, forbidden] of [
   ["controller", controller, /buildRunnerV2LaunchPlan|\/bin\/zsh|shell fallback/],
   ["agent-bootstrap-plan", bootstrapPlan, /monitor-chain-agent|MENTIKO_MONITOR_V2|npx tsx|_monitor_v2_status/],
   ["runner-v2 chain service", runService, /runnerV2Launch\.fallbackAllowed/],
-  ["chain-runner compatibility boundary", shellRunner, /source |function |\bjq\b|--parallel|monitor-chain-agent|npx tsx/],
+  ["routed chain runner monitor", shellRunner, /MENTIKO_MONITOR_V2|monitor-chain-agent '\$\{session_name\}'|npx tsx lib\/runner-v2\/monitor-cli\.ts/],
 ]) {
   if (forbidden.test(source)) throw new Error(`${name} retains a shell compatibility launch fallback`);
 }
 if (!launchPlan.includes('mode: "external-cli"')) throw new Error("external workspace dispatch must be explicit");
 if (!controller.includes("isExternalWorkspace(context)")) throw new Error("controller must contain the explicit non-local boundary");
 if (!bootstrapPlan.includes("exec node")) throw new Error("typed bootstrap monitor must execute the compiled typed command");
-if (!shellRunner.includes('exec node "$SCRIPT_DIR/runner-v2-direct-run.js" "$@"')) throw new Error("compatibility filename must immediately enter the compiled typed direct runner");
+if (!shellRunner.includes('exec node "\\$_monitor_v2_script"')) throw new Error("routed monitors must execute the compiled typed command");
 console.log("PASS: runner-v2 local launch has no shell fallback");

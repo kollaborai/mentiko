@@ -513,6 +513,7 @@ describe("typed runner watchdog", () => {
 
     const stored = JSON.parse(readFileSync(runPath, "utf8"));
     expect(result.stalled).toEqual([]);
+    expect(result.errors).toEqual([]);
     expect(stored).toMatchObject({
       status: "running",
       sessions: ["writer-reborn"],

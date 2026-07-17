@@ -152,7 +152,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/chains/validate` | Validate chain schema, triggers, circular deps | chain.schema.json + filesystem validation | checkAuth | Yes | chains/new | |
 | GET | `/api/chains/status` | Get agent states and sessions for a run | Filesystem: stateDir, runsDir + pty.list() | checkAuth | Yes | conversations page, conversations/[id] | |
 | POST | `/api/chains/recommend` | Recommend existing chain or suggest generation | getAllChains + buildChainSummary + job pipeline (createJob) | checkAuth | No | (not used in web/) | expects complex task object |
-| POST | `/api/chains/run` | Execute chain through the typed direct/bootstrap runner | Typed run snapshot + typed detached direct CLI/controller | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | Local direct runs only; unsupported workspace definitions fail closed |
+| POST | `/api/chains/run` | Execute chain (spawn detached process) | Filesystem: runsDir + chain-runner.sh spawn | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | executor, runId params not documented |
 | POST | `/api/chains/run-batch` | Run multiple chains in parallel/sequential mode | Typed batch record + typed detached batch worker | checkAuth | Yes | batch-runner | |
 | GET | `/api/chains/run-batch` | List batches or get specific batch status | Filesystem: batches/ | checkAuth | Yes | batch-runner | |
 | DELETE | `/api/chains/run-batch` | Request batch cancellation; its typed worker terminates only the child it owns | Typed batch record + typed worker-owned child process | checkAuth | Yes | batch-runner | |
@@ -233,7 +233,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | GET | `/api/schedules` | List schedules (chains with cron config) | Filesystem: chainsDir scan for config.schedule | checkAuth | Yes | schedule-list | |
 | PUT | `/api/schedules` | Enable/disable schedule | Filesystem: schedulesDir/{chainId}.status | checkAuth | Yes | schedule-list (toggle), schedule-manager | |
 | PATCH | `/api/schedules` | Update schedule expression or workspace | Filesystem: chains/{id}/chain.json + workspace-map.json | checkAuth | Yes | schedule-manager, schedules page | |
-| POST | `/api/schedules` | Trigger scheduled chain now | Typed schedule service and typed chain launch | checkAuth | Yes | schedule-list (run now) | No shell scheduler or chain-runner ownership |
+| POST | `/api/schedules` | Trigger scheduled chain now | chain-runner.sh spawn | checkAuth | Yes | schedule-list (run now) | |
 | DELETE | `/api/schedules` | Snooze or unsnooze a schedule | Filesystem: schedulesDir/{chainId}.snooze | checkAuth | Yes | schedule-list (snooze/unsnooze) | |
 | POST | `/api/schedules/next` | Calculate next run time for cron expression | python croniter | checkAuth | Yes | schedule-manager | |
 | POST | `/api/schedules/run` | Trigger immediate run of schedule | chainsDir + internal fetch to /api/chains/run | checkAuth | No | (uses /api/chains/run instead) | |

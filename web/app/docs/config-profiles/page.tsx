@@ -29,7 +29,7 @@ export default function ConfigProfilesDocPage() {
         <p className="text-xs text-foreground/60 leading-relaxed mb-3">
           The CLI entry point is <code className="text-foreground/70 bg-muted px-1 rounded">./bin/mentiko</code>.
         </p>
-        <CodeBlock>{`mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--dry-run] [--debug]
+        <CodeBlock>{`mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
 mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
 mentiko launch <spec-file> [--monitor]
 mentiko validate <chain.json> [--strict]
@@ -45,9 +45,6 @@ mentiko init [directory]
 mentiko monitor <session-name> "end state" [profile] [interval]
 mentiko audit [summary|export-json|export-csv|query|archive|clear]
 mentiko seed`}</CodeBlock>
-        <p className="text-xs text-foreground/60 leading-relaxed">
-          <code className="text-foreground/70 bg-muted px-1 rounded">--parallel</code> is retired. Use the typed batch API for independent chains or declared fan-out branches inside one chain. Direct runs support local workspaces; unsupported SSH or Docker direct definitions fail before a run or PTY is created.
-        </p>
       </section>
 
       <section className="mb-6">

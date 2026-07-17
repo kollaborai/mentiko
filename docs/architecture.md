@@ -34,7 +34,7 @@ runner-v2 component map and HTTP-to-next-agent lifecycle, see
 │  │                      orchestration layer                             │    │
 │  │  typed direct launch | typed completion entrypoint                   │    │
 │  │  typed event lifecycle | typed chain watcher | typed watchdog        │    │
-│  │  shell only invokes required external CLIs or typed compatibility    │    │
+│  │  explicit legacy shell: batch, next-chain/retry, direct parallel    │    │
 │  └───────────────────────────────┬─────────────────────────────────────┘    │
 │                                  │                                          │
 │                                  ▼                                          │
@@ -64,15 +64,15 @@ The runtime truth is code, contracts, and observed state, in that order:
 - `web/lib/runs/chain-run-service.ts` prepares run state and spawns the chain
   entrypoint through `/bin/zsh -lc`; that entrypoint is typed for supported
   local direct launch.
-- `docs/orchestration/contracts/runner-v2-contract.json` declares typed
-  ownership and `default_runner: typed`; the direct CLI and compatibility
-  filename enter the same typed runner.
+- `docs/orchestration/contracts/runner-v2-contract.json` keeps runner-v2
+  side-by-side; its `default_runner: shell` field classifies remaining legacy
+  executable paths and does not override the direct CLI implementation.
 - `web/processes.dev.json` and `web/processes.json` describe the supervised
   platform processes, not the chain engine itself.
 
-Do not treat stale references to `lib/chain-runner.mjs` as current.
-`lib/chain-runner.sh` remains only as a compatibility filename and immediately
-execs the compiled typed direct-run CLI.
+Do not treat stale references to `lib/chain-runner.mjs` as current. The active
+legacy shell executable is `lib/chain-runner.sh`, but it is no longer the
+supported local direct CLI path.
 
 ## entrypoints
 
@@ -91,11 +91,10 @@ Important flags:
 - `--start <agent-id>`: resumes or starts at a specific agent.
 - `--debug`: enables step-through debug behavior.
 
-`mentiko run` supports `--task` and a no-side-effect `--dry-run` through the
-typed direct runner. It rejects retired `--parallel` with a directed error;
-use typed batch for independent chains or declared typed fan-out branches.
-`mentiko graph <chain.json>` is a typed validation-and-render diagnostic. It
-does not create a run or start a PTY.
+`mentiko run` rejects `--task`, `--parallel`, and `--dry-run`; those are legacy
+shell-runner modes and must use their dedicated migration path rather than a
+silent fallback. `mentiko graph <chain.json>` remains the diagnostic graph
+command and currently invokes the legacy shell runner in dry-run mode.
 
 `bin/mentiko` also exposes session helpers (`list`, `peek`, `send`, `kill`),
 chain generation, validation, graph preview, schedule/application CLI helpers,
@@ -175,8 +174,8 @@ described as a typed owner merely because its persistence calls are typed.
 The supported direct launch creates one typed initial attempt and starts its
 companion monitor. When an agent completes, the typed completion launcher
 processes the handoff and accepts the next same-run target before consuming the
-parent event. The `chain-runner.sh` filename immediately execs the typed direct
-runner and owns no continuation or parallel execution.
+parent event. The remaining `chain-runner.sh` flows are batch child launch,
+next-chain/retry continuation, and direct legacy parallel invocation.
 
 TypeScript owns every runtime data contract. Shell files under `lib/*.sh` are
 invocation boundaries: they forward primitive arguments into a compiled typed
@@ -206,8 +205,9 @@ Typed owners:
 
 Shell boundaries and remaining executable paths:
 
-- `lib/chain-runner.sh`: compatibility filename that immediately execs the
-  compiled typed direct-run CLI. It owns no data contract or orchestration.
+- `lib/chain-runner.sh`: remaining executable for batch child launch,
+  next-chain/retry continuation, and direct legacy parallel invocation. It
+  uses typed contract and record helpers but is not merely a passive adapter.
 - `lib/validate.sh`: 14 lines; invokes `runner-chain-validation.js` only.
 - `lib/run-lib.sh`: forwards every run operation to `runner-run-record.js`
   through the single `_run_record_cli` seam in `lib/run-record-client.sh`.
@@ -234,8 +234,9 @@ Flow:
 
 1. A user, API route, MCP tool, schedule, webhook, or event asks to run a chain.
 2. The launch path writes a run directory and chain snapshot.
-3. Every supported launch validates and resolves its chain through typed
-   direct-run/bootstrap code. The compatibility filename enters that same CLI.
+3. Supported local launch validates and resolves the chain through typed
+   direct-run/bootstrap code; legacy batch/continuation/parallel paths still
+   enter `chain-runner.sh`.
 4. The independently supervised typed background worker owns the watchdog and chain watcher; chain startup creates no watcher sessions.
 5. The runner admits the chain through the concurrency cap.
 6. The runner starts exactly the selected agent or agent set in PTY sessions.
@@ -246,13 +247,14 @@ Flow:
 
 ## runner-v2 boundary
 
-Runner-v2 declares the typed default runner. A shell filename can remain only
-as an immediate exec boundary for the compiled typed entrypoint.
+Runner-v2 remains a side-by-side migration. The machine contract's shell
+default classifies remaining legacy executable paths; it does not mean the
+supported local direct CLI is shell-run.
 
 Current contract:
 
-- `default_runner` is `typed`; typed batch and declared fan-out replace legacy
-  parallel process orchestration.
+- `default_runner` is `shell` only as a migration classification while legacy
+  batch, continuation/retry, and direct parallel paths remain.
 - supported local `bin/mentiko run` is typed whether or not
   `MENTIKO_RUNNER_V2` is set; the flag selects the direct web controller branch.
 - completion is unconditionally typed; `MENTIKO_RUNNER_V2_COMPLETION=1` is a
@@ -276,9 +278,9 @@ startChainRun
     -> runner-v2-direct-run.js for supported local launch
 ```
 
-The migration invariant is explicit: no typed launch failure falls back to a
-shell orchestrator. The `chain-runner.sh` compatibility filename itself is an
-immediate exec into the compiled typed direct-run CLI.
+The migration invariant is explicit: no typed launch failure falls back to
+`chain-runner.sh`. Remaining shell executable paths are separately named and
+must be migrated deliberately.
 
 ## execution layer
 

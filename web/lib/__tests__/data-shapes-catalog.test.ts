@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_SOURCE_EXCLUSIONS,
-  dataShapeDirectShellContractSources,
   dataShapeShellSources,
 } from "@/lib/data-shapes/catalog";
 import {
@@ -64,16 +63,11 @@ describe("data shape catalog", () => {
       ];
       const hasTypedRunner = provenance.some((path) => path.startsWith("web/lib/runner-v2/"));
       const hasShellRunner = provenance.some((path) => runnerShellPath.test(path));
-      const hasLegacyShellExecution = shape.runnerLineage?.surfaces.some((surface) => surface.owner === "legacy-shell") ?? false;
-      if (!hasTypedRunner && !hasShellRunner && !hasLegacyShellExecution) continue;
+      if (!hasTypedRunner && !hasShellRunner) continue;
 
       expect(shape.runnerLineage).toBeDefined();
       expect(shape.runnerLineage?.usage).toBe(
-        hasTypedRunner && (hasShellRunner || hasLegacyShellExecution)
-          ? "shared"
-          : hasTypedRunner
-            ? "runner-v2"
-            : "legacy-shell",
+        hasTypedRunner && hasShellRunner ? "shared" : hasTypedRunner ? "runner-v2" : "legacy-shell",
       );
     }
   });
@@ -107,14 +101,6 @@ describe("data shape catalog", () => {
   });
 
   it("has no documented data shape with a direct shell contract owner", () => {
-    const queue = DATA_SHAPE_CATALOG
-      .map((shape) => ({ id: shape.id, shell: dataShapeDirectShellContractSources(shape) }))
-      .filter((shape) => shape.shell.length > 0);
-
-    expect(queue).toEqual([]);
-  });
-
-  it("has no documented live shell lifecycle owner after parallel retirement", () => {
     const queue = DATA_SHAPE_CATALOG
       .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
       .filter((shape) => shape.shell.length > 0);
@@ -195,7 +181,7 @@ describe("data shape catalog", () => {
     expect(shape?.runnerLineage?.usage).toBe("shared");
     expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "typed-pty-transport-owner" }),
-      expect.objectContaining({ id: "typed-pty-command-boundary" }),
+      expect.objectContaining({ id: "shell-pty-command-boundary" }),
     ]));
   });
 
@@ -278,7 +264,6 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
       "web/lib/runner-v2/direct-run.ts",
-      "web/lib/runner-v2/next-chain-launch-cli.ts",
     ]);
     expect(shape?.readers).toEqual([
       "web/app/api/activity/route.ts",

@@ -13,7 +13,6 @@ import {
   assertNoDuplicateTaskRunLocations,
   locateTaskRun,
   parseTaskRunScope,
-  releaseTaskRunScopeForRetry,
   resolveTaskRunLocation,
   verifyTaskRunRecord,
 } from "./task-run-locator";
@@ -85,29 +84,6 @@ describe("task run locator", () => {
   it("rejects malformed persisted scope values before any path is resolved", () => {
     expect(() => parseTaskRunScope(null)).toThrow("Task run scope must be an object");
     expect(() => parseTaskRunScope({ ...scope(), runId: "not-a-run" })).toThrow("runId is invalid");
-  });
-
-  it("releases the active retry claim while retaining only verified source provenance", () => {
-    const metadata = releaseTaskRunScopeForRetry({
-      task_run_scope: scope(),
-      last_run_id: "run-task-059",
-      last_run_status: "failed",
-    }, { taskId: "TASK-059", sourceRunId: "run-task-059" });
-
-    expect(metadata).toMatchObject({
-      task_run_scope: undefined,
-      retry_source_run_id: "run-task-059",
-      retry_source_task_run_scope: scope(),
-    });
-
-    const malformed = releaseTaskRunScopeForRetry({
-      task_run_scope: { version: 2 },
-    }, { taskId: "TASK-059", sourceRunId: "run-task-059" });
-    expect(malformed).toMatchObject({
-      task_run_scope: undefined,
-      retry_source_run_id: "run-task-059",
-      retry_source_task_run_scope: undefined,
-    });
   });
 
   it("reads only the run at its persisted scope and validates task ownership", () => {

@@ -113,8 +113,9 @@ export function resolveDispatchEndpoint(env: Record<string, string | undefined>)
   const explicit = stringValue(env.MENTIKO_DISPATCH_ENDPOINT);
   if (explicit) return explicit;
   // BETTER_AUTH_URL wins over MENTIKO_WEB_URL before the localhost fallback,
-  // mirroring the precedence the typed owner replaced. Typed callers may pass
-  // an explicit endpoint; this env path serves callers using inherited config.
+  // mirroring the shell boundary the typed owner replaced. chain-runner.sh forwards
+  // the resolved endpoint as an explicit --endpoint primitive, so this env path
+  // only serves callers that still rely on the inherited environment.
   const baseUrl =
     stringValue(env.BETTER_AUTH_URL) ||
     stringValue(env.MENTIKO_WEB_URL) ||

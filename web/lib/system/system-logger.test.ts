@@ -1,10 +1,6 @@
 import { LOG_LEVELS, normalizeSystemLogSubmission } from "@/lib/system/system-logger";
 import { resolveSystemLogEndpoint } from "@/lib/system/system-log-cli";
 
-function testEnvironment(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessEnv {
-  return { NODE_ENV: "test", ...overrides };
-}
-
 describe("system log submission normalization", () => {
   it("accepts each supported level", () => {
     for (const level of LOG_LEVELS) {
@@ -47,16 +43,16 @@ describe("system log submission normalization", () => {
 
 describe("system log endpoint resolution", () => {
   it("prefers WEB_PORT, then PORT, then the default", () => {
-    expect(resolveSystemLogEndpoint(testEnvironment({ WEB_PORT: "3200" })))
+    expect(resolveSystemLogEndpoint({ WEB_PORT: "3200" } as NodeJS.ProcessEnv))
       .toBe("http://localhost:3200/api/system/logs");
-    expect(resolveSystemLogEndpoint(testEnvironment({ PORT: "3201" })))
+    expect(resolveSystemLogEndpoint({ PORT: "3201" } as NodeJS.ProcessEnv))
       .toBe("http://localhost:3201/api/system/logs");
-    expect(resolveSystemLogEndpoint(testEnvironment()))
+    expect(resolveSystemLogEndpoint({} as NodeJS.ProcessEnv))
       .toBe("http://localhost:3000/api/system/logs");
   });
 
   it("lets an explicit web URL win over port derivation", () => {
-    expect(resolveSystemLogEndpoint(testEnvironment({ MENTIKO_WEB_URL: "http://web:3000", PORT: "9" })))
+    expect(resolveSystemLogEndpoint({ MENTIKO_WEB_URL: "http://web:3000", PORT: "9" } as NodeJS.ProcessEnv))
       .toBe("http://web:3000/api/system/logs");
   });
 });

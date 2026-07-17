@@ -18,11 +18,10 @@ const layers = [
   {
     icon: TerminalIcon,
     name: "Orchestration Layer",
-    description: "typed execution, lifecycle, and background services",
+    description: "shell chain boundaries + TypeScript background services",
     items: [
-      { label: "runner-v2", desc: "typed direct, batch, graph, and routed chain execution" },
-      { label: "chain-runner.sh", desc: "compatibility filename that immediately execs the typed direct runner" },
-      { label: "agent-functions.sh", desc: "thin PTY transport and standalone/manual-monitor boundaries" },
+      { label: "chain-runner.sh", desc: "main orchestrator, reads chain.json, spawns agents" },
+      { label: "launch-agent.sh", desc: "creates pty session, invokes ai cli" },
       { label: "event-lifecycle.ts", desc: "strict event lookup, processed mutation, and scoped archival" },
       { label: "background-worker.ts", desc: "owns typed chain watcher and watchdog lifecycle" },
       { label: "runtime workers", desc: "runner-job-worker.js, pty-manager.mjs, chain-generator.mjs" },
@@ -160,8 +159,8 @@ ui → orchestration → execution → data
 {namespaceExample}
         </div>
         <p className="text-xs text-foreground/50 leading-relaxed mt-3">
-          namespace resolution: the CLI and typed run services resolve NAMESPACE_ID into the
-          scoped runtime roots before any run, event, or PTY is created.
+          namespace resolution: cli reads NAMESPACE_ID env, web api reads from session cookie,
+          chain-runner.sh passes to all sub-scripts.
         </p>
       </section>
 

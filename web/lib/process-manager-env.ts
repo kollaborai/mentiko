@@ -1,4 +1,3 @@
-import { join } from "path";
 import type { ProcessConfig } from "./pm-types";
 
 export const MANAGED_PROCESS_ENV_WHITELIST = [
@@ -56,40 +55,8 @@ export const PLATFORM_PROCESS_ENV_WHITELIST = [
 
 type EnvSource = Record<string, string | undefined>;
 
-/**
- * Development processes need an explicit root because their child
- * environments are allow-listed. This mirrors config.ts's local default,
- * while production intentionally remains responsible for providing a root.
- */
-export function resolveManagedDevGlobalRoot(
-  environment: EnvSource,
-  home: string,
-): string {
-  return environment.MENTIKO_GLOBAL_ROOT || environment.MENTIKO_ROOT || join(home, ".mentiko");
-}
-
-/**
- * A local supervisor can inherit `/app` from a long-lived container-oriented
- * terminal daemon. Treat only a missing `/app` as that stale transport value;
- * every other explicit root remains authoritative.
- */
-export function shouldReplaceUnavailableDevContainerRoot(
-  environment: EnvSource,
-  appRootExists: boolean,
-): boolean {
-  return environment.MENTIKO_GLOBAL_ROOT === "/app" && !appRootExists;
-}
-
 function expandEnvValue(value: string, sourceEnv: EnvSource) {
   return value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => sourceEnv[name] || "");
-}
-
-/** Expand explicit process-config arguments from the supervisor environment. */
-export function expandManagedProcessArgs(
-  args: readonly string[],
-  sourceEnv: EnvSource = process.env,
-): string[] {
-  return args.map((arg) => expandEnvValue(arg, sourceEnv));
 }
 
 function copyWhitelistedEnv(

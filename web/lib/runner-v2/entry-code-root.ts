@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "path";
  *
  * The completion bridge runs in a PTY session whose cwd is inside the DATA root
  * (~/.mentiko/...), so config's parent-of-cwd fallback resolves codeRoot to the
- * data tree and every typed launch path comes out wrong. Entry scripts
+ * data tree and every chain-runner.sh launch path comes out wrong. Entry scripts
  * know where they live on disk regardless of cwd, so they anchor from __dirname:
  *   dev ts-node entry  codeRoot/web/scripts  -> 2 hops
  *   dev TS module      codeRoot/web/lib/runner-v2 -> 3 hops

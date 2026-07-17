@@ -5,7 +5,6 @@
 // retry cap so audit-driven retries can't loop forever.
 
 import { taskAddDep, taskClose, taskGet, taskUpdate, taskMergeMeta, taskAddComment, taskList, taskRemoveDep } from "@/lib/tasks/task-store";
-import { releaseTaskRunScopeForRetry } from "@/lib/tasks/task-run-locator";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { updateDecision } from "@/lib/decisions/decision-storage";
@@ -586,18 +585,15 @@ export async function applyCompletionAudit(
     }
 
     taskMergeMeta(orgId, task.id, {
-      ...releaseTaskRunScopeForRetry({
-        ...metadata,
-        ...lifecycleMetadata(state),
-        last_audit_verdict: "retry",
-        last_run_status: "retry_requested",
-        last_run_id: undefined,
-        last_run_decision_required: false,
-        reopened_reason: audit.reason,
-        completion_audit_run_id: runId,
-        completion_audit_apply_status: "applied",
-        ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
-      }, { taskId: task.id, sourceRunId: runId }),
+      ...lifecycleMetadata(state),
+      last_audit_verdict: "retry",
+      last_run_status: "retry_requested",
+      last_run_id: undefined,
+      last_run_decision_required: false,
+      reopened_reason: audit.reason,
+      completion_audit_run_id: runId,
+      completion_audit_apply_status: "applied",
+      ...(runFingerprint ? { completion_audit_run_fingerprint: runFingerprint } : {}),
     }, namespaceId);
 
     return { action: "retry_scheduled", detail: audit.reason };
