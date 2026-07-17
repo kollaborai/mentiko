@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { ProcessConfig } from "./pm-types";
 
 export const MANAGED_PROCESS_ENV_WHITELIST = [
@@ -56,25 +57,27 @@ export const PLATFORM_PROCESS_ENV_WHITELIST = [
 type EnvSource = Record<string, string | undefined>;
 
 /**
- * Apply development-only env-file layers without allowing either file to
- * replace an environment variable explicitly supplied to the supervisor.
- * Later files intentionally win over earlier files, so web/.env.local can
- * refine repository-root .env for local Next.js development.
+ * Development processes need an explicit root because their child
+ * environments are allow-listed. This mirrors config.ts's local default,
+ * while production intentionally remains responsible for providing a root.
  */
-export function applyDevelopmentEnvLayers(
-  target: NodeJS.ProcessEnv,
-  layers: Array<Record<string, string>>,
-): void {
-  const inherited = new Set(Object.keys(target));
-  for (const layer of layers) {
-    for (const [key, value] of Object.entries(layer)) {
-      if (!inherited.has(key)) target[key] = value;
-    }
-  }
+export function resolveManagedDevGlobalRoot(
+  environment: EnvSource,
+  home: string,
+): string {
+  return environment.MENTIKO_GLOBAL_ROOT || environment.MENTIKO_ROOT || join(home, ".mentiko");
 }
 
 function expandEnvValue(value: string, sourceEnv: EnvSource) {
   return value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => sourceEnv[name] || "");
+}
+
+/** Expand explicit process-config arguments from the supervisor environment. */
+export function expandManagedProcessArgs(
+  args: readonly string[],
+  sourceEnv: EnvSource = process.env,
+): string[] {
+  return args.map((arg) => expandEnvValue(arg, sourceEnv));
 }
 
 function copyWhitelistedEnv(
