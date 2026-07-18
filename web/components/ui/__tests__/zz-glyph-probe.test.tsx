@@ -1,17 +1,15 @@
 import { render } from "@testing-library/react";
-import { Code1Filled, CommandSquareFilled } from "@aliimam/icons";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
 
-const d = (ui: React.ReactElement) =>
-  [...render(ui).container.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("|");
+// @aliimam/icons is served by a mandatory global manual mock (__mocks__/@aliimam/icons.js);
+// the real package is ESM-only with a broken CJS main and cannot be resolved by jest, and the
+// mock renders path-less svgs so glyph geometry can't be compared. The mock instead stamps each
+// icon with data-testid="icon-<ExportName>", so we assert component identity: the shared
+// TerminalIcon primitive must render Code1Filled, not the accidentally-swept-in CommandSquareFilled.
+const glyph = (ui: React.ReactElement) =>
+  render(ui).container.querySelector("svg")?.getAttribute("data-testid");
 
-it("nav TerminalIcon glyph identity", () => {
-  const actual = d(<TerminalIcon />);
-  console.log("TerminalIcon        :", actual.slice(0, 60));
-  console.log("Code1Filled         :", d(<Code1Filled />).slice(0, 60));
-  console.log("CommandSquareFilled :", d(<CommandSquareFilled />).slice(0, 60));
-  console.log("matches Code1Filled?        ", actual === d(<Code1Filled />));
-  console.log("matches CommandSquareFilled?", actual === d(<CommandSquareFilled />));
-  expect(actual).toBe(d(<Code1Filled />));
-  expect(actual).not.toBe(d(<CommandSquareFilled />));
+it("nav TerminalIcon renders the Code1Filled glyph, not CommandSquareFilled", () => {
+  expect(glyph(<TerminalIcon />)).toBe("icon-Code1Filled");
+  expect(glyph(<TerminalIcon />)).not.toBe("icon-CommandSquareFilled");
 });

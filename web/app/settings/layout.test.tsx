@@ -43,6 +43,7 @@ jest.mock("@aliimam/icons", () => {
     MessageQuestionFilled: Icon,
     NotificationFilled: Icon,
     PeopleFilled: Icon,
+    RadarFilled: Icon,
     SecurityFilled: Icon,
     Setting2Filled: Icon,
     ShieldTickFilled: Icon,

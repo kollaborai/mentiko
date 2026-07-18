@@ -90,6 +90,8 @@ jest.mock('@aliimam/icons', () => {
     PeopleFilled: icon('people'),
     DocumentTextFilled: icon('document-text'),
     CommandSquareFilled: icon('command-square'),
+    Code1Filled: icon('code1'),
+    RadarFilled: icon('radar'),
     ChartFilled: icon('chart'),
     ActivityFilled: icon('activity'),
     TrendUpFilled: icon('trend-up'),
