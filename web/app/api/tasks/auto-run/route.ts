@@ -27,6 +27,7 @@ import {
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
 import { getWorkspace, listWorkspaces, resolveAutoRun } from "@/lib/workspaces/workspace-storage";
@@ -589,12 +590,13 @@ function parseTaskMetadata(
 ): Record<string, unknown> {
   const metadata = task?.metadata;
   if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-    return metadata as Record<string, unknown>;
+    return normalizeTaskChainBindingMetadata(metadata as Record<string, unknown>);
   }
   if (typeof metadata === "string") {
     try {
       const parsed = JSON.parse(metadata);
-      return asPlainObject(parsed) ?? {};
+      const record = asPlainObject(parsed);
+      return record ? normalizeTaskChainBindingMetadata(record) : {};
     } catch {
       return {};
     }
