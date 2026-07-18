@@ -4,9 +4,34 @@
 
 const mockGetDecision = jest.fn();
 const mockUpdateDecision = jest.fn();
+let resolutionLockTail = Promise.resolve();
+const mockWithDecisionResolutionLock = jest.fn(
+  async (
+    _namespaceId: string,
+    _orgId: string,
+    _decisionId: string,
+    _workspacePath: string | undefined,
+    fn: () => Promise<unknown>,
+  ) => {
+    const previous = resolutionLockTail;
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    resolutionLockTail = current;
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  },
+);
 jest.mock("@/lib/decisions/decision-storage", () => ({
   getDecision: (...args: unknown[]) => mockGetDecision(...args),
   updateDecision: (...args: unknown[]) => mockUpdateDecision(...args),
+  withDecisionResolutionLock: (...args: unknown[]) =>
+    mockWithDecisionResolutionLock(
+      ...args as [string, string, string, string | undefined, () => Promise<unknown>],
+    ),
 }));
 
 const mockTaskCreate = jest.fn();
@@ -85,6 +110,9 @@ function makeDecision() {
               subtasks: ["return labels", "return paths"],
               priority: 1,
               phase: 1,
+              deliverable: "Implemented the directory listing API",
+              verification: "Run the directory API focused test",
+              acceptance_criteria: "Directory API focused test passes.",
             },
             {
               id: "plan-2",
@@ -93,6 +121,9 @@ function makeDecision() {
               subtasks: [],
               priority: 1,
               phase: 2,
+              deliverable: "Wired the header dropdown to switch roots",
+              verification: "Run the editor dropdown focused test",
+              acceptance_criteria: "Editor dropdown focused test passes.",
             },
           ],
           dependencies: [{ from: "plan-1", to: "plan-2" }],
@@ -105,6 +136,7 @@ function makeDecision() {
 describe("resolveDecisionToTasks", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resolutionLockTail = Promise.resolve();
     mockGetDecision.mockReturnValue(makeDecision());
     mockTaskCreate
       .mockReturnValueOnce({ id: "EPIC-001" })
