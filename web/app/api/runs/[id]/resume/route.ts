@@ -27,6 +27,8 @@ import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { hasCompletedTrigger, type RoutingAgent } from "@/lib/runner-v2/routing";
 import { NotFound, Conflict, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
+import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
+import { terminateRunProcess } from "@/lib/runs/run-process";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +39,8 @@ interface RunAgent {
   session?: string;
   started?: string;
   completed?: string;
+  blockedReason?: string;
+  lastMessage?: string;
 }
 
 interface RunJson {
@@ -105,13 +109,12 @@ export const POST = withErrorHandling(async (
     throw new Conflict("All agents already completed");
   }
 
-  // kill any stale sessions from the previous attempt
-  const staleSessions = run.agents
-    .filter((a) => a.session && a.status !== "complete")
-    .map((a) => a.session!)
-    .filter(Boolean);
+  // stop any leftover chain-runner process before touching PTYs or relaunching.
+  await terminateRunProcess(runId);
 
-  await Promise.allSettled(staleSessions.map((s) => pty.kill(s)));
+  // remove stale agent + typed-attempt PTY sessions from the previous attempt
+  const staleSessions = collectStaleRunSessionNames(run);
+  await Promise.allSettled(staleSessions.map((s) => pty.remove(s)));
 
   // build a trigger-aware view so we resume the actual frontier — a pending agent
   // whose trigger event was already produced — rather than the first pending agent
@@ -157,12 +160,17 @@ export const POST = withErrorHandling(async (
     agent.session = "";
     delete agent.started;
     delete agent.completed;
+    delete agent.blockedReason;
+    delete agent.lastMessage;
   }
 
   // update run status + grace period for reconciler
   run.status = "running";
   run.resumedAt = new Date().toISOString();
   delete run.completed;
+  delete run.blockedReason;
+  delete run.blockedAt;
+  delete run.status_message;
 
   writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
 

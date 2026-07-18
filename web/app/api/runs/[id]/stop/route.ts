@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
-import { spawn } from "child_process";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { pty } from "@/lib/pty/pty-client";
@@ -11,21 +10,13 @@ import { NotFound, BadRequest, Unauthorized } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { isNonExecutionRun } from "@/lib/runs/run-provenance";
+import { collectStaleRunSessionNames } from "@/lib/runs/stale-run-sessions";
+import { terminateRunProcess } from "@/lib/runs/run-process";
 
 export const dynamic = "force-dynamic";
 
 // runId format is "run-<digits>" — enforce to prevent any downstream abuse.
 const RUN_ID_RE = /^run-[A-Za-z0-9_-]+$/;
-
-// spawn pkill with pattern as an argv entry, not a shell string. no shell = no injection.
-function pkillPattern(pattern: string): Promise<void> {
-  return new Promise((resolve) => {
-    const child = spawn("pkill", ["-f", pattern], { stdio: "ignore" });
-    // pkill exits 1 when no processes match; don't treat that as an error.
-    child.on("exit", () => resolve());
-    child.on("error", () => resolve());
-  });
-}
 
 export const POST = withErrorHandling(async (
   req: Request,
@@ -58,20 +49,15 @@ export const POST = withErrorHandling(async (
   }
 
   const run = JSON.parse(readFileSync(runJsonPath, "utf-8"));
-  const wasRunning = run.status === "running" || run.status === "pending" || run.status === "blocked";
 
-  // kill agent PTY sessions (safe even if already dead)
-  const sessions: string[] = (run.agents || [])
-    .map((a: { session?: string }) => a.session)
-    .filter(Boolean);
+  // remove agent + typed-attempt PTY sessions (safe even if already dead)
+  const staleSessions = collectStaleRunSessionNames(run);
+  await Promise.allSettled(staleSessions.map((name) => pty.remove(name)));
 
-  await Promise.allSettled(sessions.map((name: string) => pty.kill(name)));
-
-  // kill chain-runner process if run was active
-  if (wasRunning) {
-    await pkillPattern(`AGENT_CHAIN_RUN_ID=${runId}`);
-    await pkillPattern(runId);
-  }
+  // stop the chain-runner process even if the persisted run is already
+  // terminal — a crashed run can leave the process alive despite run.json
+  // saying otherwise.
+  await terminateRunProcess(runId);
 
   // always update run + agent statuses
   let changed = false;
