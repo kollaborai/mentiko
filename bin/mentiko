@@ -68,7 +68,12 @@ case "$CMD" in
         ;;
 
     graph)
-        exec node "$LIB_DIR/runner-chain-graph.js" "$@"
+        CHAIN="${1:-}"
+        if [[ -z "$CHAIN" || ! -f "$CHAIN" ]]; then
+            echo "usage: mentiko graph <chain.json>"
+            exit 1
+        fi
+        bash "$LIB_DIR/chain-runner.sh" "$CHAIN" --dry-run
         ;;
 
     seed)
@@ -105,7 +110,7 @@ case "$CMD" in
     # -------------------------------------------------------------------
 
     launch)
-        exec node "$LIB_DIR/runner-v2-standalone-agent-launch.js" "$@"
+        bash "$LIB_DIR/launch-agent.sh" "$@"
         ;;
 
     peek)
@@ -391,7 +396,7 @@ EOF
 mentiko - AI agent chain orchestration
 
 usage:
-  mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--dry-run] [--debug]
+  mentiko run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel agent1 agent2...] [--dry-run] [--debug]
   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
   mentiko launch <spec-file> [--monitor]
   mentiko validate <chain.json> [--strict]
