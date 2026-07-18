@@ -12,6 +12,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { exec } from "child_process";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -22,8 +23,7 @@ import { execAuditLog } from "@/lib/api/audit-exec";
 import { shredDEK } from "@/lib/auth/user-crypto";
 import config from "@/lib/config";
 import { join } from "path";
-import { mkdirSync, writeFileSync } from "fs";
-import { scheduleGdprUserSweep } from "@/lib/runs/gdpr-user-sweep";
+import { mkdirSync, writeFileSync, existsSync } from "fs";
 
 export const dynamic = "force-dynamic";
 
@@ -116,10 +116,17 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
-  // step 5: schedule typed filesystem sweep (background, non-blocking)
+  // step 5: schedule filesystem sweep (background, non-blocking)
   try {
-    const namespaceRoot = join(config.globalRoot, "namespaces", namespaceId);
-    scheduleGdprUserSweep(namespaceRoot, userId);
+    const sweepScript = join(config.root, "lib", "gdpr-sweep.sh");
+    if (existsSync(sweepScript)) {
+      exec(`bash "${sweepScript}" "${userId}" "${namespaceId}" "${orgId}"`, {
+        cwd: config.root,
+        timeout: 300000,
+      }, (err: Error | null) => {
+        if (err) console.error("[gdpr] filesystem sweep failed:", err.message);
+      });
+    }
   } catch (err) {
     console.error("[gdpr] sweep launch failed:", err);
     stepErrors.push("sweep_launch_failed");
