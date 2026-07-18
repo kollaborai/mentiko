@@ -1,22 +1,6 @@
-# Typed chain execution flow
+# chain-runner.sh execution flow
 
-`lib/chain-runner.sh` is no longer an orchestration engine. It is a
-compatibility filename that immediately execs `lib/runner-v2-direct-run.js`.
-The compiled TypeScript direct runner owns parsing, validation, immutable run
-snapshots, local PTY startup, readiness, instruction delivery, monitor startup,
-and lifecycle state. `--parallel` is retired; use typed batch launches for
-independent chains or declared typed fan-out branches inside a chain.
-
-The active supported paths are typed direct, task-bound, dry-run, batch,
-chained, retry, graph, standalone-spec, monitor, completion, watchdog, and
-reconciliation paths. A typed boundary failure fails closed; it never delegates
-back to this filename or another shell lifecycle path. Direct runs currently
-support local workspaces only; unsupported SSH/Docker direct definitions fail
-before run or PTY creation.
-
-The detailed shell-era phase narrative below is retained as migration history.
-It is not a current owner map; consult `docs/RUNNER_V2_ARCHITECTURE.md` and
-`docs/orchestration/contracts/runner-v2-contract.json` for current ownership.
+complete breakdown of how chain-runner.sh orchestrates agent chains.
 
 see also:
   - [watchdog.md](./watchdog.md) - stalled run detection
@@ -25,9 +9,8 @@ see also:
 overview
 ========
 
-Historically, chain-runner.sh read chain.json, resolved agents, created PTY
-sessions, and managed execution flow. Those responsibilities now belong to the
-typed direct runner and its typed continuation services.
+chain-runner.sh is the main orchestration engine that reads chain.json,
+resolves agents, creates PTY sessions, and manages execution flow.
 
 it is NOT a loop - it launches one agent, then exits.
 the next agent is selected and durably accepted by the typed completion entrypoint.
@@ -86,7 +69,7 @@ options:
   --workspace <path>     override project_root (useful for multi-repo workflows)
   --task <id>            load task context from task store (populates {TASK_*} placeholders)
   --start <agent-id>     start from specific agent (skip to this agent)
-  --parallel <ids...>    RETIRED — use typed batch or declared fan-out branches
+  --parallel <ids...>    launch multiple agents in parallel
   --dry-run              validate chain and show graph without executing
   --debug                enable step-through debug mode
 
@@ -353,13 +336,14 @@ function: launch_chain_agent <agent-id> <round>
    every 60 seconds while state file says "running"
    exits when status changes or 404 (run deleted)
 
-11. historical monitor-start stage
+11. start monitor
    ---------------
    if agent.monitor == true:
    - creates monitor-{session_name} session
-   - executes compiled lib/monitor-v2.js directly
-   - TypeScript watches completion evidence, handles timeout/stall classification,
-     and starts the typed completion launcher when the agent is done
+   - runs monitor-chain-agent from agent-functions.sh
+   - watches agent output for AGENT_COMPLETE
+   - handles timeouts and stalls
+   - starts the typed completion launcher when the agent is done
 
    see [completion-entrypoint.md](./completion-entrypoint.md) for
    what happens after completion.
@@ -382,8 +366,8 @@ phase 6: execution (agent monitor session)
 ============================================
 
 the agent's monitor session (monitor-{session_name}) runs independently.
-this is a PTY session executing compiled `lib/monitor-v2.js`; its TypeScript
-owner is `web/lib/runner-v2/monitor.ts` (see [agent-functions.md](./agent-functions.md)).
+this is a PTY session running the monitor-chain-agent function from
+lib/agent-functions.sh (see [agent-functions.md](./agent-functions.md)).
 
 1. watch for AGENT_COMPLETE
    --------------------------
@@ -549,7 +533,7 @@ notifications:
 key files involved
 ==================
 
-  lib/chain-runner.sh           compatibility filename; execs typed direct runner
+lib/chain-runner.sh           main orchestrator (this file)
 web/lib/runner-v2/completion-entrypoint.ts  completion owner (see [completion-entrypoint.md](./completion-entrypoint.md))
 lib/agent-functions.sh        function library (see [agent-functions.md](./agent-functions.md))
 web/lib/runner-v2/agent-profile.ts typed profile validation, resolution, and command compilation

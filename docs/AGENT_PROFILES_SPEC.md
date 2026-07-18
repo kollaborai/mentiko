@@ -2,10 +2,9 @@
 # reviewed by 2 independent agents, updated with all feedback
 
 > Current runtime ownership is `web/lib/runner-v2/agent-profile.ts` and its
-> compiled `runner-agent-profile.js` boundary. Typed launch resolves profiles,
-> validates them, and compiles the command before PTY startup. The historical
-> shell snippets and implementation phases below are retained as design history
-> only; `lib/agent-profile.sh` is retired and must not be restored.
+> compiled `runner-agent-profile.js` boundary. The historical shell snippets
+> below are retained as design history only; `lib/agent-profile.sh` is retired
+> and must not be restored.
 
 ## Overview
 
@@ -152,10 +151,10 @@ Highest priority wins:
 5. Namespace default    the profile with isDefault=true
 ```
 
-Workspace resolution is typed: the profile resolver matches the authorized
-workspace path to `workspaces.json` and returns that workspace's
-`default_agent_profile` if set. This lets different workspaces use different
-default profiles without per-chain configuration.
+Workspace resolution: chain-runner.sh reads `workspaces.json`, matches
+`CHAIN_PROJECT_ROOT` against workspace `.path` fields, and returns the
+workspace's `default_agent_profile` if set. This lets different workspaces
+use different default profiles without per-chain configuration.
 
 **Gateway coexistence rule**: if an agent has BOTH `agent_profile` AND `gateway`
 set, the agent_profile determines the CLI binary and flags. The gateway still
@@ -283,17 +282,16 @@ Both fields optional, fully backward compatible.
 - Mark deprecated (but still accept): `config.cli`, `config.cli_args`,
   per-agent `cli`, `cli_args`
 
-### Historical Deprecation & Migration
+### Deprecation & Migration
 - Old inline CLI config continues to work as fallback (no auto-migrate)
-- Historical shell fallback notes below do not describe current behavior.
-  A missing or malformed selected profile fails at the typed launch boundary;
-  no shell launcher reconstructs a command.
+- chain-runner.sh falls back to `config.cli` if no profile resolves — but
+  logs a deprecation warning to stderr
 - A chain scanner (Phase E) reports all chains using inline CLI config
 - No auto-migration script — user must do it explicitly
 
 ---
 
-## Historical Bash Launcher Design
+## Bash Launcher Changes
 
 ### New function: `resolve_agent_profile()`
 
@@ -536,7 +534,7 @@ Profiles", and is registered in the settings route table at
 - C5: Zero-state gate + pre-run override section on Goal tab
 - C6: Settings nav entry (shipped as "Agent Configs"; see Sidebar Nav Update above)
 
-### Historical Phase D — Bash Integration (after A)
+### Phase D — Bash Integration (after A)
 - D1: `lib/chain-runner.sh` — resolve_agent_profile + build_profile_command
       + find_default_profile + legacy fallback with deprecation warning
 
@@ -557,8 +555,7 @@ config-profiles/model → DEPRECATED. Same treatment as execution.
 
 config-profiles/workspace → ALREADY MIGRATED to workspaces.json.
 
-config-profiles/gateway → KEEP. The typed launch planner applies gateway
-configuration; `chain-runner.sh` has no routing ownership.
+config-profiles/gateway → KEEP. Still used by chain-runner.sh for routing.
 
 config-profiles/retry → KEEP for now. Not in scope of this spec.
 

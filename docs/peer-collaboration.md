@@ -82,7 +82,7 @@ link run (runtime):
     workspaceId?, started, completed?
     status: "running" | "completed" | "failed" | "stopped" | "stalled"
     mode: LinkMode
-    managerSession   - PTY session name for the typed peer link controller
+    managerSession   - PTY session name for peer-manager
     agents: [LinkRunAgent, LinkRunAgent]
     escalations: LinkEscalation[]
   }
@@ -114,7 +114,7 @@ sits between the two agents and:
 4. haiku extracts the agent's actual response, strips terminal chrome
 5. haiku rewrites the message in first person as a human project lead
 6. haiku appends a status line: STATUS:DONE, STATUS:CONTINUE, or STATUS:ESCALATE
-7. the typed peer link controller reads the status and forwards the cleaned message to the other agent
+7. peer-manager reads the status, forwards the cleaned message to the other agent
 
 relay prompt personality:
 - direct, no bullshit, forward-looking directives only
@@ -131,10 +131,10 @@ relay sessions are stored as JSONL and viewable in the moderator debug tab.
 each round follows this pattern:
 
   1. agent 1 receives message (from human or relay)
-  2. agent 1 works (the typed controller waits for terminal stability)
+  2. agent 1 works (peer-manager waits for terminal stability)
   3. moderator captures agent 1 output, relays to agent 2
   4. agent 2 receives relayed message
-  5. agent 2 works (the typed controller waits for terminal stability)
+  5. agent 2 works (peer-manager waits for terminal stability)
   6. moderator captures agent 2 output, relays to agent 1
   7. round counter increments
   8. check termination: STATUS:DONE? max_rounds? ESCALATE? STALL?
@@ -153,13 +153,13 @@ triggers:
   MAX_ROUNDS      - hit max_rounds limit (if > 0)
 
 flow:
-  1. the typed controller records the escalation
+  1. peer-manager generates a haiku summary of the disagreement
   2. POST /api/links/runs/{runId}/escalate (creates escalation record)
   3. telegram notification sent (if configured)
-  4. the controller reads a reply file before the next relay
+  4. peer-manager blocks waiting for reply file
   5. human replies via web UI or telegram
   6. POST /api/links/runs/{runId}/reply writes reply.txt
-  7. the controller reads the reply and injects non-continue guidance into the next relay
+  7. peer-manager reads reply, injects as steering message
   8. collaboration resumes
 
 reply behavior:
@@ -224,23 +224,34 @@ link run detail (within /runs or /links):
   actions: rerun, stop, delete
 
 
-## launch
+## cli usage
 
-Create a saved link, then start it through the authenticated API or Links UI:
+basic:
+  bin/peer-manager "write a fibonacci function in python"
 
-  POST /api/links/run
-  { "linkId": "security-review" }
+with named agents and profiles:
+  bin/peer-manager "review the auth middleware" \
+    --name1 "architect" \
+    --name2 "security-reviewer" \
+    --prompt1 "you are a senior architect" \
+    --prompt2 "you are a security expert" \
+    --profile1 claude-opus \
+    --profile2 claude-sonnet \
+    --rounds 10 \
+    --stall-threshold 3
 
-The saved link supplies the peer names, profiles, prompts, maximum rounds, and
-relay profile. The response includes the generated run ID and manager session.
+with a specific manager session:
+  bin/peer-manager "debug the race condition" \
+    --session my-debug-session \
+    --relay-profile haiku-relay
 
 
-## runtime controller
+## binary reference
 
-`POST /api/links/run` starts the typed peer link controller. It spawns both
-peer PTYs, manages the relay loop, persists output and meeting state, consumes
-human steering replies, and finalizes the link run. There is no standalone
-`peer-manager` shell entrypoint.
+peer-manager
+  main orchestrator. spawns both agents, manages relay loop,
+  handles escalation, tracks rounds. this is the entry point
+  for both CLI and web-launched link runs.
 
 peer-chain
   connects two pre-existing agent sessions together.
@@ -250,11 +261,21 @@ peer-send
   send a message to a specific peer session. cleans via haiku
   before delivery.
 
+peer-watch
+  monitor a session for screen stabilization then forward to peer.
+
+peer-swarm
+  deprecated. use peer-manager directly or /links web UI.
+
+peer-swarm-watch
+  deprecated. use /links page to monitor active runs.
+
 
 ## session naming
 
 sessions are prefixed for identification:
-  link-{id}                     typed controller manager session
+  link-run-{timestamp}          manager session (web-launched)
+  manager-{id}                  manager session (cli-launched)
   peer-1-link-run-{timestamp}   agent 1
   peer-2-link-run-{timestamp}   agent 2
 
@@ -272,7 +293,7 @@ peer output files:
 
 escalation data:
   {projectRoot}/peer-escalations/{managerSession}/
-    reply.txt           human reply (consumed by the typed controller)
+    reply.txt           human reply (consumed by peer-manager)
     meeting.json        run metadata (peers, round, started)
     escalation-{n}.json escalation event snapshots
     history.json        full escalation event log
@@ -296,11 +317,11 @@ generation:
   POST   /api/links/generate/apply    apply generated link (create agents + save)
 
 execution:
-  POST   /api/links/run               launch link run (starts typed controller)
+  POST   /api/links/run               launch link run (spawns peer-manager)
   POST   /api/links/runs/{runId}/stop  stop all sessions for run
 
 escalation:
-  POST   /api/links/runs/{runId}/escalate     report escalation (from typed controller)
+  POST   /api/links/runs/{runId}/escalate     report escalation (from peer-manager)
   POST   /api/links/runs/{runId}/reply        submit human reply
   GET    /api/links/runs/{runId}/escalations  get escalation list + pending status
 
@@ -323,11 +344,11 @@ relay not extracting properly:
 
 escalation not firing:
   - verify stall_threshold > 0 in link config
-  - check the typed controller's persisted run and peer output for STATUS line detection
+  - check peer-manager logs for STATUS line detection
   - ensure escalation API route is reachable (localhost:3000)
 
 communication stuck:
-  - the typed controller may be waiting for screen stabilization
+  - peer-manager may be waiting for screen stabilization
   - check if agent is still producing output (hash not settling)
   - try stopping and restarting with a clearer prompt
 

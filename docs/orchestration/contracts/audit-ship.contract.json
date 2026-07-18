@@ -3,6 +3,7 @@
   "owner": "web/lib/runner-v2/audit-ship.ts",
   "cli": "web/lib/runner-v2/audit-ship-cli.ts",
   "compiled": "lib/runner-audit-ship.js",
+  "legacy_boundary": "lib/audit-ship.sh",
   "owns": [
     "raw JSONL audit-entry decoding and object validation",
     "normalized audit identity and timestamp validation",
@@ -11,12 +12,12 @@
   ],
   "invariants": [
     "malformed raw input fails closed and never becomes an invented audit object",
-    "the audit writer invokes the compiled owner directly with stdin and never parses or serializes remote-ship JSON",
+    "the shell boundary forwards stdin to the compiled owner and never parses or serializes JSON",
     "rclone remains the required external object-storage CLI",
     "remote shipping failures append a durable failure breadcrumb but never block the audit writer"
   ],
   "external_processes": {
     "rclone": "rclone copyto <local-entry> :s3:<bucket>/<remote-key>"
   },
-  "entrypoint": "web/lib/system/audit-log.ts launches lib/runner-audit-ship.js directly"
+  "deletion_gate": "remove lib/audit-ship.sh once web/lib/system/audit-log.ts launches lib/runner-audit-ship.js directly and no shell entrypoint remains required"
 }

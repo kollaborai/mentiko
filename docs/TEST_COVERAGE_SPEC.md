@@ -1,10 +1,4 @@
-# Coverage Spec — Historical Runtime Inventory
-
-> This is a historical inventory, not the current runner ownership ledger.
-> Current typed direct, batch, graph, chained, retry, standalone, monitor,
-> completion, watcher, watchdog, and reconciliation coverage is recorded in
-> `docs/orchestration/contracts/runner-v2-contract.json` and targeted runner-v2
-> tests. Shell boundaries are tested only to prove they do not regain contracts.
+coverage spec: runtime/node scripts unit test plan
 
 goal
 test every runtime Node/TypeScript entry point in this codebase.
@@ -41,7 +35,7 @@ bin
 ☐ [agent-3] bin/validate-artifacts
 
 lib
-☑ lib/chain-runner.mjs — RETIRED. Production chains run through typed direct/bootstrap and continuation services; `lib/chain-runner.sh` is only a compatibility exec boundary.
+☑ lib/chain-runner.mjs — RETIRED (moved to .trash; production chains run via bash lib/chain-runner.sh)
 ☑ lib/job-runner.mjs — RETIRED (deleted in ef34d30). Replaced by the typed
   worker web/lib/runner-v2/job-worker.ts, bundled as lib/runner-job-worker.js.
   Covered by tests/job-runner.test.mjs (black-box child-process tests over

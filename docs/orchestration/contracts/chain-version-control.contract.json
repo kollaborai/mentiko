@@ -3,6 +3,7 @@
   "owner": "web/lib/runner-v2/version-control.ts",
   "cli": "web/lib/runner-v2/version-control-cli.ts",
   "compiled": "lib/runner-version-control.js",
+  "legacy_boundary": "lib/version-control.sh",
   "owns": [
     "semver parsing, validation, formatting, and increment selection",
     "chain.json and metadata.json parsing and normalized version-path resolution",
@@ -10,7 +11,7 @@
     "version listing, rollback backup/restore, and typed agent comparison"
   ],
   "invariants": [
-    "all version-control contract parsing and mutation is typed",
+    "the shell boundary forwards primitive arguments and never parses or serializes JSON",
     "invalid JSON and malformed version-history records fail closed rather than selecting a shell fallback",
     "current-chain and metadata-history JSON publication uses a temporary file and atomic rename; snapshot and rollback backup copies remain explicit copy operations",
     "the external diff command is the only child-process behavior retained by the typed contract"
