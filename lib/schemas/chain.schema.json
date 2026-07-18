@@ -146,33 +146,6 @@
           "type": "object",
           "description": "Third-party integration configuration",
           "properties": {
-            "github": {
-              "type": "object",
-              "description": "GitHub integration - create issues on errors",
-              "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": false
-                },
-                "token": {
-                  "type": "string",
-                  "description": "GitHub personal access token"
-                },
-                "owner": {
-                  "type": "string",
-                  "description": "Repository owner/org"
-                },
-                "repo": {
-                  "type": "string",
-                  "description": "Repository name"
-                },
-                "labels": {
-                  "type": "array",
-                  "items": { "type": "string" },
-                  "description": "Labels to add to created issues"
-                }
-              }
-            },
             "teams": {
               "type": "object",
               "description": "Microsoft Teams integration - send webhook notifications",
@@ -375,6 +348,26 @@
               "emits": {
                 "type": "string",
                 "description": "Event emitted on completion"
+              },
+              "deliverable": {
+                "type": "string",
+                "description": "Concrete output this generated-chain agent hands off"
+              },
+              "verification": {
+                "type": "string",
+                "description": "Repeatable check for the declared deliverable"
+              },
+              "final_verifier": {
+                "type": "boolean",
+                "description": "Marks the terminal acceptance gate in a generated chain"
+              },
+              "verifies_acceptance_criteria": {
+                "type": "boolean",
+                "description": "States that the final verifier evaluates task acceptance criteria"
+              },
+              "success_assertion": {
+                "type": "string",
+                "description": "Evidence-backed success condition asserted by the final verifier"
               },
               "monitor": {
                 "type": "boolean",

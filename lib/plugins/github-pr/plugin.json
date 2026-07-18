@@ -7,7 +7,7 @@
   "category": "ci-cd",
   "builtin": true,
   "events": ["chain-completed"],
-  "onEventScript": "on-event.sh",
+  "nativeHandler": "github-pr",
   "configSchema": [
     {
       "key": "token",
