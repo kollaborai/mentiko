@@ -1,8 +1,8 @@
 {
   "schema_version": "runner-contract/v1",
-  "source_files": ["lib/chain-runner.sh", "lib/cli-readiness.sh"],
-  "role": "one-step chain launch/admission/state writer",
-  "entrypoint": "chain-runner.sh <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--parallel <ids...>] [--dry-run] [--debug]",
+  "source_files": ["web/lib/runner-v2/direct-run.ts", "web/lib/runner-v2/bootstrap-executor.ts", "lib/chain-runner.sh"],
+  "role": "typed direct chain launch/admission/state writer; shell compatibility filename only",
+  "entrypoint": "runner-v2-direct-run <chain.json> [--workspace <path>] [--task <id>] [--start <agent-id>] [--dry-run] [--debug]; chain-runner.sh immediately execs that CLI",
   "owns": [
     "chain json validation and agent ref resolution",
     "run creation or run reuse",
@@ -12,6 +12,8 @@
     "startup readiness before instruction submission"
   ],
   "does_not_own": [
+    "shell lifecycle ownership",
+    "parallel process fan-out (--parallel is retired)",
     "full chain completion",
     "branch routing after an agent emits",
     "fan-in/fan-out resolution after completion",
@@ -23,7 +25,6 @@
     "AGENT_CHAIN_RUN_ID",
     "RUN_ID",
     "MENTIKO_PARENT_RUN_ID",
-    "MENTIKO_CLI",
     "MENTIKO_GLOBAL_ROOT",
     "MENTIKO_CODE_ROOT",
     "MENTIKO_PROJECT_ROOT",
@@ -41,42 +42,31 @@
     "MENTIKO_SESSION_ID",
     "MENTIKO_SESSION_TOKEN",
     "MENTIKO_WEB_URL",
-    "MENTIKO_MONITOR_MAX_NUDGES",
-    "MENTIKO_ADVISOR_STALE_COUNT",
-    "MENTIKO_MONITOR_MAX_STALE",
-    "MENTIKO_CAP_DISABLED",
-    "MENTIKO_CAP_MAX_WAIT_SECS",
-    "MENTIKO_CLI_READY_TIMEOUT",
-    "MENTIKO_CLI_READY_POLL",
-    "MENTIKO_READINESS_FAIL_CLOSED",
-    "MENTIKO_STARTUP_RECOVERY",
-    "MENTIKO_STARTUP_RECOVERY_MAX",
     "MENTIKO_RUNNER_V2",
     "MENTIKO_RUNNER_V2_COMPLETION"
   ],
   "run_json": {
-    "cli_created_status": "pending",
-    "web_created_status": "running or pending",
-    "cap_admission": "pending -> running or blocked",
-    "add_run_session": "promotes run to running and upserts agent session",
-    "startup_failure": "marks agent/run failed or blocked without sending instructions"
+    "typed_created_status": "pending",
+    "typed_cap_admission": "pending -> running or blocked",
+    "typed_session_start": "promotes run to running and upserts agent session",
+    "typed_startup_failure": "marks agent/run failed or blocked without sending instructions"
   },
   "session_contract": {
-    "agent_session": "remove existing session, transport_new_session, send start script",
-    "monitor_session": "monitor-<agent-session>; mon_script exports the explicit run context used by the typed completion launcher, which transfers its allowlisted values through a private one-shot 0600 file because the PTY daemon intentionally filters spawn env",
-    "instructions": "write artifact instructions file and send short pointer to TUI",
+    "agent_session": "typed PTY transport starts the configured agent with an explicit run context",
+    "monitor_session": "typed bootstrap starts monitor-<agent-session> with an allowlisted run context",
+    "instructions": "typed bootstrap writes artifact instructions and sends a short pointer to the TUI",
     "readiness": {
-      "gate": "wait_for_profile_readiness (lib/chain-runner.sh) classifying via cli_readiness_check (lib/cli-readiness.sh); must pass before task instructions are sent",
+      "gate": "typed bootstrap readiness policy must pass before task instructions are sent",
       "statuses": ["ready", "blocked", "recover", "retry", "no_ready_signal", "unknown"],
-      "classification_order": "blocked_patterns, recoverable_patterns, retry_patterns, ready_patterns; first enabled match wins; text = literal substring (grep -F), regex = case-insensitive ERE (grep -Ei)",
-      "legacy_default": "flag off is permissive: readiness disabled, unknown, or no ready_patterns proceeds, so pattern catalogs roll out profile-by-profile without changing behavior",
-      "fail_closed": "MENTIKO_READINESS_FAIL_CLOSED=1: disabled policy or zero ready_patterns is no_ready_signal (never inject); unknown keeps polling and blocks at the deadline",
+      "classification_order": "blocked_patterns, recoverable_patterns, retry_patterns, ready_patterns; first enabled match wins",
+      "typed_default": "the typed readiness policy determines whether disabled, unknown, or zero ready_patterns can proceed",
+      "fail_closed": "unknown keeps polling and blocks at the deadline when the typed policy requires readiness",
       "knobs": "MENTIKO_CLI_READY_TIMEOUT default 90s, MENTIKO_CLI_READY_POLL default 2s",
-      "startup_recovery": "bounded advisor recovery for blocked/recover/retry (MENTIKO_STARTUP_RECOVERY default on, MENTIKO_STARTUP_RECOVERY_MAX default 2 actions per startup); no_ready_signal escalates immediately (config error the advisor cannot fix)",
-      "terminal_effects": "write <agent>-startup-capture.txt + <agent>-startup-readiness.json (+ <agent>-startup-recovery-prompt.txt), mark state file and run agent blocked, send no instructions, leave the session alive",
-      "exited": "session with no active command classifies exited; agent/run marked failed (CLI exited before instructions were sent)"
+      "startup_recovery": "typed startup recovery is bounded for blocked/recover/retry; no_ready_signal escalates immediately",
+      "terminal_effects": "write typed startup evidence, mark the run agent blocked, send no instructions, and leave actionable sessions available",
+      "exited": "a session with no active command is failed before instructions are sent"
     },
-    "local_remote_split": "local, ssh, and docker launch paths remain distinct"
+    "local_remote_split": "typed direct launch supports local workspaces; SSH and Docker fail closed until their typed owner is selected"
   },
   "invariants": [
     "run ids stay run-<millis>-<hex>",

@@ -1,4 +1,9 @@
-# Config Profiles System - Implementation Spec
+# Config Profiles System - Historical Implementation Spec
+
+> This document records the original config-profile design. Current execution
+> ownership is typed: direct, batch, graph, chained, retry, and standalone
+> launch paths validate their runtime inputs in TypeScript and fail closed.
+> The shell resolver examples below are historical and must not be restored.
 
 ## Context
 Chain/agent config is currently inline in chain.json. No way to reuse configs across chains. Settings page is user preferences, not agent config. This adds named config profiles that can be saved and assigned to chains or agents.
@@ -181,7 +186,7 @@ async function resolveChainProfiles(chain: Chain, namespaceRoot: string): Promis
 
 Resolution: inline field > profile assigned > defaults
 
-## Bash Resolver (lib/chain-runner.sh)
+## Historical Bash Resolver (lib/chain-runner.sh)
 
 Add `resolve_config_profiles()` function after gateway loading (~line 107).
 
@@ -242,7 +247,7 @@ Add: `NAMESPACE_ID="${NAMESPACE_ID:-default}"` at top of chain-runner.sh.
 - PhaseBResolve: web/lib/profile-resolver.ts
 - PhaseCEditor: web/components/settings/config-profile-editor.tsx
 - PhaseCSelector: web/components/shared/profile-selector.tsx
-- PhaseDResolver: lib/chain-runner.sh bash resolver
+- Historical PhaseDResolver: lib/chain-runner.sh bash resolver
 
 ### Round 3 - Integration (parallel, after round 2):
 - PhaseCSettings: add Config Profiles tab to settings page
@@ -254,7 +259,8 @@ Add: `NAMESPACE_ID="${NAMESPACE_ID:-default}"` at top of chain-runner.sh.
 
 ## Gotchas
 1. /api/profiles collision - use /api/config-profiles, don't touch existing route
-2. chain-runner.sh needs AGENT_CHAIN_ROOT and NAMESPACE_ID env vars for profile paths
+2. Historical shell resolver notes are not a runtime contract; typed path
+   resolution owns profile paths and namespace scope.
 3. ProfilesListResponse in types.ts (line 751) is for AgentProfile[] perf data - don't rename
 4. Profile names are filenames - enforce slug format, reject slashes/dots/spaces
 5. visual-editor.tsx vs chains/new/page.tsx - check which one is active editor

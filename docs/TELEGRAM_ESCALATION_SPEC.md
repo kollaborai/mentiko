@@ -1,6 +1,6 @@
 # Telegram Escalation Bot — Spec
 
-peer-manager sessions can deadlock. two agents loop, neither advances.
+The typed peer link controller can observe deadlocked peer sessions. Two agents can loop and neither advances.
 this spec defines how escalations get routed to a human via Telegram,
 how the human replies, and how that reply gets injected back into the session.
 
@@ -21,9 +21,10 @@ screen capture. the loop/deadlock pattern is detectable from content alone
 costs one extra token in the prompt and zero new infrastructure on the bash side.
 consecutive-CONTINUE is a cheap counter already implicit in the loop.
 
-**who calls Telegram:** the Next.js web server. bash signals escalation via
-a local web API call. the web server authenticates with Telegram, logs history,
-and handles the async reply webhook. bash stays dumb — write file, poll file.
+**who calls Telegram:** the Next.js web server. The typed controller records
+escalation state through the local API and consumes the reply file before the
+next relay. The web server authenticates with Telegram, logs history, and
+handles the async reply webhook.
 
 **session lookup:** JSON registry file at
 `$NAMESPACE_ROOT/peer-escalations/registry.json`.
@@ -68,8 +69,8 @@ $NAMESPACE_ROOT/
 ### reply.txt
 
 single-line or multi-line text. presence of this file = reply received.
-bash polls for existence with `inotifywait` or a sleep loop.
-bash deletes the file after reading it to reset for next escalation.
+The typed controller checks existence between relays and deletes the file only
+after preserving non-continue guidance for the next relay.
 
 ### history.json schema
 
@@ -101,7 +102,12 @@ sequence number within the session (1-indexed).
 
 ---
 
-## bash changes (bin/peer-manager)
+## retired shell design
+
+The bash implementation below is historical only. The current owner is
+`web/lib/links/peer-link-controller.ts`; no `bin/peer-manager` entrypoint
+exists. Keep the historical notes only to explain the original escalation
+semantics while the typed controller reaches full escalation parity.
 
 ### 1. extend haiku prompt — add STATUS:ESCALATE
 

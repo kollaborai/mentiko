@@ -152,7 +152,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | POST | `/api/chains/validate` | Validate chain schema, triggers, circular deps | chain.schema.json + filesystem validation | checkAuth | Yes | chains/new | |
 | GET | `/api/chains/status` | Get agent states and sessions for a run | Filesystem: stateDir, runsDir + pty.list() | checkAuth | Yes | conversations page, conversations/[id] | |
 | POST | `/api/chains/recommend` | Recommend existing chain or suggest generation | getAllChains + buildChainSummary + job pipeline (createJob) | checkAuth | No | (not used in web/) | expects complex task object |
-| POST | `/api/chains/run` | Execute chain (spawn detached process) | Filesystem: runsDir + chain-runner.sh spawn | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | executor, runId params not documented |
+| POST | `/api/chains/run` | Execute chain through the typed direct/bootstrap runner | Typed run snapshot + typed detached direct CLI/controller | manage_chains | Yes | hooks/use-runs, chains page, chains/[id]/run, chains/[id]/edit, test-run-panel, schedule-manager, various API routes | Local direct runs only; unsupported workspace definitions fail closed |
 | POST | `/api/chains/run-batch` | Run multiple chains in parallel/sequential mode | Typed batch record + typed detached batch worker | checkAuth | Yes | batch-runner | |
 | GET | `/api/chains/run-batch` | List batches or get specific batch status | Filesystem: batches/ | checkAuth | Yes | batch-runner | |
 | DELETE | `/api/chains/run-batch` | Request batch cancellation; its typed worker terminates only the child it owns | Typed batch record + typed worker-owned child process | checkAuth | Yes | batch-runner | |
@@ -233,7 +233,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | GET | `/api/schedules` | List schedules (chains with cron config) | Filesystem: chainsDir scan for config.schedule | checkAuth | Yes | schedule-list | |
 | PUT | `/api/schedules` | Enable/disable schedule | Filesystem: schedulesDir/{chainId}.status | checkAuth | Yes | schedule-list (toggle), schedule-manager | |
 | PATCH | `/api/schedules` | Update schedule expression or workspace | Filesystem: chains/{id}/chain.json + workspace-map.json | checkAuth | Yes | schedule-manager, schedules page | |
-| POST | `/api/schedules` | Trigger scheduled chain now | chain-runner.sh spawn | checkAuth | Yes | schedule-list (run now) | |
+| POST | `/api/schedules` | Trigger scheduled chain now | Typed schedule service and typed chain launch | checkAuth | Yes | schedule-list (run now) | No shell scheduler or chain-runner ownership |
 | DELETE | `/api/schedules` | Snooze or unsnooze a schedule | Filesystem: schedulesDir/{chainId}.snooze | checkAuth | Yes | schedule-list (snooze/unsnooze) | |
 | POST | `/api/schedules/next` | Calculate next run time for cron expression | python croniter | checkAuth | Yes | schedule-manager | |
 | POST | `/api/schedules/run` | Trigger immediate run of schedule | chainsDir + internal fetch to /api/chains/run | checkAuth | No | (uses /api/chains/run instead) | |
@@ -332,7 +332,7 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 
 | Method | Path | Purpose | Data Source | Auth | Used? | Screen/Component | Notes |
 |--------|------|---------|-------------|------|-------|------------------|-------|
-| POST | `/api/swarm/launch` | ~~Launch peer swarm~~ use POST `/api/links/runs` | bin/peer-manager, bin/p | None | No | (deprecated) | AI execution risk, no auth |
+| POST | `/api/swarm/launch` | ~~Launch peer swarm~~ use POST `/api/links/runs` | typed peer link controller, bin/p | None | No | (deprecated) | AI execution risk, no auth |
 | POST | `/api/swarm/stop` | ~~Stop peer swarm~~ use POST `/api/links/runs/{runId}/stop` | bin/p | None | No | (deprecated) | AI execution risk, no auth |
 | POST | `/api/swarm/[session]/reply` | ~~Reply to peer escalation~~ use POST `/api/links/runs/{runId}/reply` | File: swarm/{session}/reply.txt | None | No | (deprecated) | |
 | POST | `/api/swarm/[session]/escalate` | ~~Report peer escalation~~ use POST `/api/links/runs/{runId}/escalations` | File: swarm/{session}/history.jsonl, Anthropic API, Telegram | None | No | (no UI caller) | |
@@ -348,11 +348,11 @@ Both patterns are intentional architectural choices, not discrepancies. The retr
 | GET | `/api/links/{id}` | Get link definition | Filesystem: {linksDir}/{id}/link.json | x-namespace-id | Yes | links page | |
 | POST | `/api/links/save` | Create or update link | Filesystem: {linksDir}/{id}/link.json | x-namespace-id | Yes | links page | |
 | DELETE | `/api/links/{id}` | Delete link | Filesystem: {linksDir}/{id}/ | x-namespace-id | Yes | links page | |
-| POST | `/api/links/run` | Launch link run (manager + 2 peers) | bin/peer-manager, bin/p | None | Yes | links page | Returns runId, AI execution risk |
+| POST | `/api/links/run` | Launch link run (controller + 2 peers) | typed peer link controller, bin/p | None | Yes | links page | Returns runId, AI execution risk |
 | POST | `/api/links/generate` | Start AI generation of link (async job) | job pipeline (createJob) | x-namespace-id | Yes | links page | Returns jobId for polling |
 | POST | `/api/links/generate/apply` | Apply generated link (create agents + save) | Filesystem: {linksDir}, {agentsDir} | x-namespace-id | Yes | links page | Creates agents from generation output |
 | POST | `/api/links/runs/{runId}/stop` | Stop link run sessions | bin/p | None | Yes | links page, run-detail-panel | Kills all PTY sessions |
-| POST | `/api/links/runs/{runId}/escalate` | Report peer escalation (trigger notification) | File: peer-escalations, Anthropic API, Telegram | None | No | link-run-timeline | Called by peer-manager |
+| POST | `/api/links/runs/{runId}/escalate` | Report peer escalation (trigger notification) | File: peer-escalations, Anthropic API, Telegram | None | No | link-run-timeline | Called by the typed controller |
 | GET | `/api/links/runs/{runId}/escalations` | Get escalation history + pending status | File: peer-escalations/{session}/history.json | None | Yes | link-run-timeline | |
 | POST | `/api/links/runs/{runId}/reply` | Reply to peer escalation (human steering) | File: peer-escalations/{session}/reply.txt | None | Yes | link-run-timeline | |
 | GET | `/api/links/runs/{runId}/transcript` | Get link run transcript | File: peer-output/{session}-r{round}.txt | None | Yes | link-run-timeline | Parses round-tagged output files |
@@ -435,7 +435,7 @@ Response:
 
 ### POST /api/links/runs/{runId}/escalate - Report Escalation
 
-Called by peer-manager when agents are stuck. Triggers Telegram notification if configured.
+Called by the typed peer link controller when agents are stuck. Triggers Telegram notification if configured.
 
 Request:
 ```json
@@ -484,7 +484,7 @@ Response:
 
 ### POST /api/links/runs/{runId}/reply - Reply to Escalation
 
-Human provides guidance text. Writes to reply.txt for peer-manager to consume.
+Human provides guidance text. Writes to reply.txt for the typed controller to consume and relay to the next peer.
 
 Request:
 ```json

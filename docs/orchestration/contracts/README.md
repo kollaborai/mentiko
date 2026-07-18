@@ -6,7 +6,9 @@ rules:
   - contracts describe actual runtime behavior, not aspirational schemas.
   - each ownership migration from shell to typescript needs a matching contract entry and binding evidence.
   - runner-v2 may only become default after parity tests cover the contract.
-  - every contract change should name the shell file and function it came from.
+  - migration-history evidence may name the shell file/function it replaced;
+    current ownership must name the typed owner and must not imply that a
+    compatibility filename still owns lifecycle work.
 
 ## naming convention (read this before adding a file)
 
@@ -49,15 +51,15 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
   - runner-v2-contract.json: cross-cutting launch, monitor, watcher, watchdog,
     run.json, and event-file invariants for the first side-by-side v2 pass;
     `implementation_coverage` binds the per-implementation contracts below.
-  - chain-runner.contract.json: launch/admission/session/startup contract for
-    lib/chain-runner.sh.
+  - chain-runner.contract.json: typed direct launch/admission/session/startup
+    contract. `lib/chain-runner.sh` is an invocation-only compatibility exec.
   - completion-entrypoint.contract.json: typed completion, strict event
     ownership, durable route acceptance, artifact, and terminal-state contract.
-  - monitor.contract.json: v1 monitor latch, idle, advisor, and diagnostics
-    contract for lib/agent-functions.sh and lib/monitor-completion.sh. the
-    behavior of record the typed monitor port must preserve.
-  - monitor-v2.contract.json: enforceable owns/invariants for the TYPED chain
-    monitor (web/lib/runner-v2/monitor*.ts), porting monitor-chain-agent.
+  - monitor.contract.json: typed monitor latch, idle, advisor, diagnostics,
+    and session-cleanup contract. `agent-functions.sh` is only the manual
+    monitor forwarding boundary and has no chain-monitor behavior.
+  - monitor-v2.contract.json: enforceable owns/invariants for the typed chain
+    monitor (web/lib/runner-v2/monitor*.ts). The shell monitor is retired.
   - run-event.contract.json: run.json mutation plus runner-event contract. typed
     code owns canonical emission, strict scans, completion lookup, processed
     mutation, and scoped archive lifecycle. shell process boundaries invoke the
@@ -70,24 +72,26 @@ enforceable contracts (loaded by contracts.ts, bound by the switch gate):
     for lib/git-integration.sh. Git remains the required external CLI; the shell
     file is only a primitive invocation boundary.
   - chain-version-control.contract.json: typed semver, snapshot, metadata,
-    rollback, and comparison ownership for lib/version-control.sh. The external
+    rollback, and comparison ownership in the typed runtime. The external
     diff command remains the only child-process product behavior.
   - audit-ship.contract.json: typed raw/normalized audit-entry validation,
-    remote-key derivation, rclone retry, and failure-breadcrumb ownership for
-    lib/audit-ship.sh.
+    remote-key derivation, rclone retry, and failure-breadcrumb ownership;
+    the audit writer launches its compiled owner directly.
   - notification-dispatch.contract.json: typed notification envelope,
     chain-started mapping, response validation, and HTTP dispatch ownership for
     lib/notification-dispatcher.sh.
 
 design docs (rationale + migration plan, not enforced):
-  - monitor-v2.design.json: why the shell monitor is being ported to typescript
-    (the TASK-093 liveness split-brain), the migration plan, entrypoints, and the
-    shell-monitor deletion gate. pairs with monitor-v2.contract.json above.
+  - monitor-v2.design.json: historical rationale for the former shell-monitor
+    migration (the TASK-093 liveness split-brain). It is not a current owner
+    map; pairs with monitor-v2.contract.json above.
   - teammux-bridge.design.json: typed ownership of external team-mux agent/spec
     and memory records, with the shell invocation boundary and deletion gate.
   - chain-version-control.design.json: typed ownership of chain version,
     metadata, snapshot, rollback, and comparison records; external `diff`
     remains the only child-process behavior.
+  - plugin-native-handlers.design.json: typed ownership of the non-Slack
+    built-in GitHub PR, Linear, email notification, and email digest handlers.
 
 proof artifacts (emitted by live runs, consumed by switch-readiness.ts):
   - runner-v2-runtime-proof.json: MENTIKO_RUNNER_V2 live launch proof.

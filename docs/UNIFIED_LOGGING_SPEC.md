@@ -1,4 +1,4 @@
-# unified logging spec
+# Unified Logging — Historical Shell-Era Spec
 
 This spec began as a shell-era incident note. The shell completion handler it
 mentions was subsequently deleted; current completion logging belongs in
@@ -13,13 +13,12 @@ we added `_sys_log` (bash) and `writeLog` (ts) to some stop/cancel paths. A
 pre-cutover shell completion ERR trap historically exposed a crash that had
 been silently killing chain handoffs.
 
-what's covered now:
+what's covered in the typed runner now:
   completion-entrypoint.ts  typed completion and adapter diagnostics
-  chain-runner.sh           ERR trap (reports src_file:src_line), run created,
-                            agent launched, monitor started, stop paths
-                            (circuit breaker, approval)
+  direct-run.ts + bootstrap-executor.ts typed run creation, PTY launch,
+                            readiness, and instruction delivery
   run-reconciler.ts         orphaned run cleanup, grace period skips
-  launch-agent.sh           ERR trap, session created, prompt injected
+  standalone-agent-launch.ts typed standalone session and prompt lifecycle
   runner-v2/job-worker.ts   job started/completed/failed (via POST /api/system/logs)
   /api/runs/[id]/stop       user stop
   /api/runs/[id] DELETE     user cancel
@@ -35,7 +34,7 @@ what's NOT covered:
                             the typed background worker owns the scheduler loop
   event-emitter.ts          no system.jsonl logging (event file creation)
   event-lifecycle.ts        no system.jsonl logging (lookup/consume/archive)
-  peer-manager (bin)        no logging (link/peer orchestration)
+  typed peer link controller link/peer orchestration logging
 
 ## goal
 
@@ -45,7 +44,7 @@ needing to ssh in and grep through terminal output.
 
 ## requirements
 
-### 1. ERR traps in all bash scripts
+### Historical 1. ERR traps in bash scripts
 
 add to the top of every orchestration script (after sourcing run-lib.sh):
 
@@ -66,9 +65,9 @@ Note: a bare `$LINENO` in an ERR trap reports the trap's own line, not the
 failing one. chain-runner.sh resolves the real source file and line; copy that
 pattern rather than the snippet above.
 
-### 2. phase breadcrumbs in chain-runner.sh
+### Historical 2. phase breadcrumbs in chain-runner.sh
 
-chain-runner.sh is the main orchestrator. _sys_log coverage:
+The following describes the retired shell orchestrator, not a current owner:
   - run creation (run ID, chain name, workspace)     DONE
   - each agent launch (agent id, session name)       DONE
   - agent monitor start                              DONE
@@ -77,7 +76,7 @@ chain-runner.sh is the main orchestrator. _sys_log coverage:
 
 level: "info" for normal flow, "warn" for stops, "error" for crashes
 
-### 3. launch-agent.sh logging
+### Historical 3. launch-agent.sh logging
 
 log when:
   - agent PTY session created (session name, agent id, cli binary)  DONE
@@ -94,10 +93,10 @@ log when:
 
 ### 5. chain-runner.mjs logging — RETIRED, do not implement
 
-chain-runner.mjs has been retired (moved to .trash). Production chains run
-exclusively through bash lib/chain-runner.sh — every entry point (web /api/chains/run,
-MCP, scheduler, webhooks, resume) spawns it via `mentiko run`. There is no node chain
-runner to add logging to. Logging work belongs in chain-runner.sh (section 1).
+chain-runner.mjs has been retired. Production chains use the compiled typed
+direct/bootstrap and continuation services; `lib/chain-runner.sh` is only a
+compatibility exec filename. Logging work belongs in typed services, not a
+shell lifecycle path.
 
 ### 6. event system logging
 
@@ -113,9 +112,9 @@ web/lib/runner-v2/chain-watcher-service.ts, and web/server/background-worker.ts:
 The background worker is the only watcher/watchdog lifecycle owner. Logging
 work must not introduce a shell lifecycle path.
 
-### 7. peer-manager logging
+### 7. typed peer link controller logging
 
-bin/peer-manager:
+web/lib/links/peer-link-controller.ts:
   - link run started (link id, agent pair)
   - relay message forwarded (direction, message length)
   - escalation triggered (reason)
@@ -161,7 +160,7 @@ all logs use the existing system-logger.ts format:
 use the script/module name without extension:
   chain-runner, runner-v2-completion, launch-agent, watchdog,
   reconciler, task-reconciler, scheduler, event-emitter, event-lifecycle,
-  chain-watcher, peer-manager, job-runner, activity-capture,
+  chain-watcher, peer-link-controller, job-runner, activity-capture,
   stop-api, stop-all, run-api
 
 ### level guidelines
@@ -231,10 +230,12 @@ crash a script (e.g. bad jq) and verify the ERR trap fires.
   web/lib/runner-v2/watchdog.ts    typed stalled-run lifecycle logging
   web/lib/runner-v2/chain-watcher-service.ts typed event processing logging
   web/server/background-worker.ts typed service lifecycle logging
-  bin/peer-manager                 link run lifecycle logging
+  web/lib/links/peer-link-controller.ts link run lifecycle logging
   web/lib/schedules/scheduler-service.ts schedule fire logging (the typed
                                    worker owns the scheduler loop; scheduler.sh
                                    is a compatibility surface and needs none)
 
-done: lib/chain-runner.sh (ERR trap + breadcrumbs), lib/launch-agent.sh (agent
-spawn), web/lib/runner-v2/job-worker.ts (job lifecycle).
+Historical completion notes above do not establish current ownership. Current
+runtime owners are direct-run/bootstrap-executor, monitor-v2,
+completion-entrypoint, the background worker, and typed external-effects
+dispatch.
