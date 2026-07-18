@@ -7,7 +7,7 @@
   "category": "notification",
   "builtin": true,
   "events": ["chain-completed", "chain-stopped"],
-  "nativeHandler": "notify-email",
+  "onEventScript": "on-event.sh",
   "configSchema": [
     {
       "key": "to",
