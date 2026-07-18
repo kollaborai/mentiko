@@ -22,6 +22,8 @@ const startGenerationJob = jest.fn();
 const createDecision = jest.fn();
 const updateDecision = jest.fn();
 const taskCreate = jest.fn();
+const taskGet = jest.fn();
+const listWorkspaces = jest.fn();
 const resolveTaskAutoRunDefault = jest.fn();
 
 jest.mock("@/lib/auth/api-auth", () => ({ checkAuth: (...a: unknown[]) => checkAuth(...a) }));
@@ -48,7 +50,17 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
   createDecision: (...a: unknown[]) => createDecision(...a),
   updateDecision: (...a: unknown[]) => updateDecision(...a),
 }));
-jest.mock("@/lib/tasks/task-store", () => ({ taskCreate: (...a: unknown[]) => taskCreate(...a) }));
+jest.mock("@/lib/tasks/task-store", () => ({
+  taskCreate: (...a: unknown[]) => taskCreate(...a),
+  taskGet: (...a: unknown[]) => taskGet(...a),
+}));
+// createTaskDecision (real, via task-decision-link.ts) resolves the parent
+// task's workspace scope through taskGet + listWorkspaces before creating
+// the decision task -- mock both so decision mode doesn't hit the real
+// task store / workspace file storage.
+jest.mock("@/lib/workspaces/workspace-storage", () => ({
+  listWorkspaces: (...a: unknown[]) => listWorkspaces(...a),
+}));
 
 import { POST } from "./route";
 
@@ -81,6 +93,10 @@ describe("POST /api/tasks/generate", () => {
       id: "decision-1", status: "intake", prompt: "x", options: [], ...(updates as object),
     }));
     taskCreate.mockReturnValue({ id: "DEC-001", parent_id: null, issue_type: "decision" });
+    taskGet.mockImplementation((_orgId: unknown, id: string) => (
+      id === "EPIC-008" ? { id, workspace_id: "/repo", issue_type: "epic", parent_id: null, metadata: {} } : null
+    ));
+    listWorkspaces.mockReturnValue([{ id: "repo", path: "/repo" }]);
   });
 
   it("task mode starts a generation job — no pre-flight decision routing (agent gates async)", async () => {
