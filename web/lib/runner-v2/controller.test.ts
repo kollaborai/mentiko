@@ -48,11 +48,11 @@ describe("runner-v2 controller", () => {
     }));
   });
 
-  it("starts typed bootstrap without spawning shell --start while the contract uses typed as default", async () => {
+  it("starts typed bootstrap without spawning shell --start while the contract keeps shell as default", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -81,8 +81,8 @@ describe("runner-v2 controller", () => {
   it("returns unsupported when typed bootstrap cannot resolve an agent", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -120,8 +120,8 @@ describe("runner-v2 controller", () => {
   it("refuses to run if the contract tries to change the default runner", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "shell" as "typed",
+      migration_mode: "side-by-side",
+      default_runner: "runner-v2" as "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -133,15 +133,15 @@ describe("runner-v2 controller", () => {
 
     await expect(startRunnerV2Launch(launchContext())).resolves.toEqual({
       support: "unsupported",
-      reason: "contract does not declare the typed default runner",
+      reason: "contract changed default runner before parity gate",
     });
   });
 
   it("uses the direct product CLI only for a non-local workspace", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -169,8 +169,8 @@ describe("runner-v2 controller", () => {
   it("fails closed for local unsupported planning even when bootstrap permits an old fallback", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -196,8 +196,8 @@ describe("runner-v2 controller", () => {
   it("does not shell fallback when typed bootstrap reports a partial mutation failure", async () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -223,8 +223,8 @@ describe("runner-v2 controller", () => {
   it("exposes typed-plan support without spawning shell-compat", () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "typed",
+      migration_mode: "side-by-side",
+      default_runner: "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -244,8 +244,8 @@ describe("runner-v2 controller", () => {
   it("blocks typed-plan support if the contract default drifts", () => {
     mockLoadContract.mockReturnValue({
       schema_version: "runner-contract/v1",
-      migration_mode: "typed",
-      default_runner: "shell" as "typed",
+      migration_mode: "side-by-side",
+      default_runner: "runner-v2" as "shell",
       flag: {
         name: "MENTIKO_RUNNER_V2",
         enabled_values: ["1"],
@@ -257,7 +257,7 @@ describe("runner-v2 controller", () => {
 
     expect(getRunnerV2TypedExecutorSupport()).toEqual({
       support: "unsupported",
-      reason: "typed executor requires the typed default-runner contract",
+      reason: "typed executor cannot run after default runner contract drift",
     });
   });
 });

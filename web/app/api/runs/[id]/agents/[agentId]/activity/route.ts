@@ -261,7 +261,7 @@ export const GET = withErrorHandling(async (
     }));
 
   // fallback: when no conversations captured in artifacts, resolve from session logs
-  // this handles link runs where peer execution did not capture JSONL paths
+  // this handles link runs where peer-manager may not have captured JSONL paths
   if (conversations.length === 0) {
     const runJson = safeJson<{
       started?: string;

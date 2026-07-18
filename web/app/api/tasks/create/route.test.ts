@@ -58,11 +58,9 @@ describe("POST /api/tasks/create auto-run defaults", () => {
     mockResolveTaskAutoRunDefault.mockReturnValue(true);
     mockValidateChainId.mockReturnValue({ valid: true, chainName: "Build Chain" });
     mockBuildChainMetadata.mockImplementation((chainId: string, chainName: string, autoRun: boolean) => ({
-      chainBinding: {
-        chain_id: chainId,
-        chain_name: chainName,
-        auto_run: autoRun,
-      },
+      chain_id: chainId,
+      chain_name: chainName,
+      auto_run: autoRun,
     }));
     mockTaskCreate.mockReturnValue({ id: "TASK-001", title: "New task" });
   });
@@ -111,14 +109,5 @@ describe("POST /api/tasks/create auto-run defaults", () => {
       explicitAutoRun: false,
     });
     expect(mockBuildChainMetadata).toHaveBeenCalledWith("build-chain", "Build Chain", false);
-    expect(mockTaskCreate).toHaveBeenCalledWith(
-      "default",
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          chainBinding: { chain_id: "build-chain", chain_name: "Build Chain", auto_run: false },
-        }),
-      }),
-      "default",
-    );
   });
 });

@@ -225,11 +225,12 @@ describe("typed runner-event producer contract", () => {
     })).toBe("current-run.event");
   });
 
-  it("the typed monitor diagnostic emitter writes strict six-field events with structured data", () => {
-    const eventsDir = makeEventsDir();
-    execFileSync(process.execPath, [EMITTER, "diagnostic", "--scope", "run", "--event", "agent-timeout", "--source", "monitor", "--run-id", "run-monitor-1", "--agent", "researcher", "--reason", "no progress", "--stale-count", "5"], {
-      cwd: CODE_ROOT, env: isolatedEnvironment(eventsDir), encoding: "utf8",
-    });
+  it("monitor diagnostics emit strict six-field events with structured data", () => {
+    const eventsDir = runBash(
+      `${shellFunction("_monitor_emit_diagnostic_event", AGENT_FUNCTIONS)}
+       _monitor_emit_diagnostic_event "agent-timeout" "researcher" "no progress" "5" >/dev/null`,
+      { MENTIKO_RUN_ID: "run-monitor-1", RUN_ID: "run-monitor-1" },
+    );
     const result = emittedEvent(eventsDir);
 
     expect(result.filename).toMatch(/^\d{8}T\d{6}-run-monitor-1-researcher-agent-timeout\.event$/);
@@ -335,12 +336,16 @@ describe("typed runner-event producer contract", () => {
   });
 
   it("archives a real typed diagnostic by its top-level agent ownership field", () => {
-    const eventsDir = makeEventsDir();
-    for (const agent of ["researcher", "reviewer"]) {
-      execFileSync(process.execPath, [EMITTER, "diagnostic", "--scope", "run", "--event", "agent-timeout", "--source", "monitor", "--run-id", "run-archive-1", "--agent", agent, "--reason", "no progress", "--stale-count", "5"], { cwd: CODE_ROOT, env: isolatedEnvironment(eventsDir), encoding: "utf8" });
-    }
-    execFileSync(process.execPath, [EMITTER, "emit", "--scope", "run", "--event", "research-complete", "--source", "researcher", "--run-id", "run-archive-1", "--data", "done"], { cwd: CODE_ROOT, env: isolatedEnvironment(eventsDir), encoding: "utf8" });
-    execFileSync(process.execPath, [LIFECYCLE, "consume", "--events-dir", eventsDir, "--run-id", "run-archive-1", "--source", "researcher", "--triggered", join(eventsDir, "run-archive-1-researcher-research-complete.event"), "--all-agent-id", "researcher", "--all-agent-id", "reviewer", "--output", "json"], { cwd: CODE_ROOT, env: isolatedEnvironment(eventsDir), encoding: "utf8" });
+    const eventsDir = runBash(
+      `${shellFunction("_monitor_emit_diagnostic_event", AGENT_FUNCTIONS)}
+       _monitor_emit_diagnostic_event "agent-timeout" "researcher" "no progress" "5" >/dev/null
+       _monitor_emit_diagnostic_event "agent-timeout" "reviewer" "no progress" "5" >/dev/null
+       node ${q(EMITTER)} emit --scope run --event research-complete --source researcher --run-id run-archive-1 --data done >/dev/null
+       node ${q(LIFECYCLE)} consume --events-dir "$EVENTS_DIR" --run-id run-archive-1 --source researcher \
+         --triggered "$EVENTS_DIR/run-archive-1-researcher-research-complete.event" \
+         --all-agent-id researcher --all-agent-id reviewer --output json >/dev/null`,
+      { MENTIKO_RUN_ID: "run-archive-1", RUN_ID: "run-archive-1" },
+    );
     const archived = readdirSync(join(eventsDir, "archive"));
     const remaining = readdirSync(eventsDir).filter((file) => file.endsWith(".event"));
 
@@ -353,30 +358,31 @@ describe("typed runner-event producer contract", () => {
     )).processed).toBe(true);
   });
 
-  it("keeps shell producers as invocation-only entrypoints and removes the shell monitor owner", () => {
+  it("keeps shell producers as invocation-only entrypoints", () => {
     const runLibEmitter = sourceFunction("emit-runner-event", RUN_LIB);
+    const monitorDiagnostic = sourceFunction("_monitor_emit_diagnostic_event", AGENT_FUNCTIONS);
 
-    for (const producer of [runLibEmitter]) {
+    for (const producer of [runLibEmitter, monitorDiagnostic]) {
       expect(producer).toContain("runner-event-emitter.js");
       expect(producer).not.toMatch(/printf ['\"]event:/);
       expect(producer).not.toMatch(/cat\s*>[^\n]*\.event/);
       expect(producer).not.toMatch(/event_file=.*\.event/);
     }
-    const agentFunctions = readFileSync(AGENT_FUNCTIONS, "utf8");
-    expect(agentFunctions).not.toMatch(/monitor-chain-agent|monitor-with-ai|agent-completion-latched|_monitor_emit_diagnostic_event/);
+    expect(readFileSync(AGENT_FUNCTIONS, "utf8")).not.toContain("ensure-event-file");
 
     const smokeProducer = sourceFunction("writeEvent", AI_GATEWAY_SMOKE_AGENT);
     expect(smokeProducer).toContain("runner-event-emitter.js");
     expect(smokeProducer).not.toMatch(/writeFileSync|event:|source:|run_id:|processed:|data:/);
   });
 
-  it("keeps the compatibility chain filename out of monitor ownership", () => {
+  it("binds every shell monitor completion to the typed entrypoint", () => {
     const source = readFileSync(AGENT_FUNCTIONS, "utf8");
-    const chainRunner = readFileSync(join(LIB, "chain-runner.sh"), "utf8");
-    expect(source).not.toMatch(/monitor-chain-agent|monitor-with-ai|chain-runner-complete\.sh|complete-agent\.sh/);
-    expect(chainRunner).toContain('exec node "$SCRIPT_DIR/runner-v2-direct-run.js"');
-    expect(chainRunner).not.toContain("monitor-v2.js");
-    expect(chainRunner).not.toContain("monitor-chain-agent");
+    expect(source).toContain("runner-v2-completion-launch.js");
+    expect(source).not.toContain("runner-v2-completion-launch.cjs");
+    expect(source).toContain("no shell completion fallback exists");
+    expect(source).not.toContain("chain-runner-complete.sh");
+    expect(source).not.toContain("complete-agent.sh");
+    expect(source).not.toContain("nohup bash");
   });
 
   it("compiles the typed emitter into the tenant runtime image", () => {

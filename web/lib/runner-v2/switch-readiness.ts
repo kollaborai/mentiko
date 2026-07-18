@@ -26,23 +26,18 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   try {
     const contract = loadRunnerV2Contract();
     checks.push({
-      id: "contract-typed-default",
-      status: contract.migration_mode === "typed" && contract.default_runner === "typed" ? "pass" : "fail",
+      id: "contract-side-by-side",
+      status: contract.migration_mode === "side-by-side" && contract.default_runner === "shell" ? "pass" : "fail",
       evidence: `migration_mode=${contract.migration_mode}; default_runner=${contract.default_runner}`,
-      blocker: contract.default_runner === "typed" ? undefined : "contract must declare the typed default runner",
+      blocker: contract.default_runner === "shell" ? undefined : "contract default runner changed before readiness gate",
     });
-    const completionReentry = contract.entrypoints?.completion_reentry;
     checks.push({
       id: "completion-typed-bridge",
-      status: completionReentry?.current?.includes("completion-launch.ts")
-        && completionReentry.current.includes("runner-v2-complete.js")
-        && completionReentry?.v2?.includes("completion-entrypoint.ts") ? "pass" : "fail",
+      status: contract.entrypoints?.completion_reentry?.v2?.includes("runner-v2-complete.js") ? "pass" : "fail",
       evidence: `completion_reentry.v2=${contract.entrypoints?.completion_reentry?.v2 || "unknown"}`,
-      blocker: completionReentry?.current?.includes("completion-launch.ts")
-        && completionReentry.current.includes("runner-v2-complete.js")
-        && completionReentry?.v2?.includes("completion-entrypoint.ts")
+      blocker: contract.entrypoints?.completion_reentry?.v2?.includes("runner-v2-complete.js")
         ? undefined
-        : "typed completion launcher and compiled completion bridge are not documented in the contract",
+        : "compiled typed completion re-entry bridge is not documented in the contract",
     });
     checks.push({
       id: "completion-flag-contract",
@@ -101,15 +96,15 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   checks.push(fileCheck("typed-bootstrap-executor", join(config.codeRoot, "web/lib/runner-v2/bootstrap-executor.ts")));
   checks.push(sourceContainsCheck(
     "completion-typed-launcher",
-    join(config.codeRoot, "web/lib/runner-v2/monitor-live-io.ts"),
-    "launchRunnerV2CompletionPty",
-    "typed monitor does not invoke the typed completion launcher",
+    join(config.codeRoot, "lib/agent-functions.sh"),
+    "runner-v2-completion-launch.js",
+    "shell monitor handoff does not invoke the unconditional typed completion launcher",
   ));
   checks.push(sourceContainsCheck(
-    "typed-monitor-context-carry",
-    join(config.codeRoot, "web/lib/runner-v2/agent-bootstrap-plan.ts"),
-    "MENTIKO_RUNNER_V2_COMPLETION",
-    "typed bootstrap monitor context does not carry the typed completion marker",
+    "routed-monitor-flag-carry",
+    join(config.codeRoot, "lib/chain-runner.sh"),
+    'export MENTIKO_RUNNER_V2_COMPLETION="1"',
+    "shell chain-runner monitors do not carry runner-v2 completion flags, so routed/relaunched agents always complete through the v1 handler",
   ));
   checks.push(sourceContainsCheck(
     "external-drain-wired",
@@ -126,7 +121,7 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   checks.push(sourceContainsCheck(
     "external-dispatch-plugins",
     join(config.codeRoot, "web/lib/runner-v2/external-effects.ts"),
-    "dispatchPlugins",
+    "runPluginsViaShell",
     "typed external dispatcher does not deliver plugin events",
   ));
   checks.push(sourceContainsCheck(
@@ -154,10 +149,10 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
     "typed bootstrap monitor command does not invoke compiled monitor-v2",
   ));
   checks.push(sourceContainsCheck(
-    "typed-routed-launcher",
-    join(config.codeRoot, "web/lib/runner-v2/routed-launch-plan.ts"),
-    "runner-v2-launch-agent.js",
-    "typed completion routing does not use the compiled typed launch-agent",
+    "routed-monitor-v2-typed-only",
+    join(config.codeRoot, "lib/chain-runner.sh"),
+    "exec node \"\\$_monitor_v2_script\"",
+    "shell chain-runner routed monitors do not invoke compiled monitor-v2 directly",
   ));
   checks.push(sourceContainsCheck(
     "typed-profile-secret-filter",
@@ -174,7 +169,7 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   checks.push(sourceContainsCheck(
     "generation-import-entrypoint",
     join(config.codeRoot, "web/lib/runner-v2/completion-entrypoint.ts"),
-    "generationImportPlan(run, runDir, agent.id, env)",
+    "generationImportPlan(run, runDir, env)",
     "typed completion entrypoint does not wire generation import planning",
   ));
   checks.push(sourceContainsCheck(
@@ -204,7 +199,7 @@ export function assessRunnerV2SwitchReadiness(): SwitchReadinessReport {
   checks.push(sourceContainsCheck(
     "completion-dry-run-shell-loop-restore",
     join(config.codeRoot, "web/lib/runner-v2/completion-entrypoint.ts"),
-    "restoreLoopMutations",
+    "shellLoopStatePath",
     "typed completion dry-run/failure restore does not cover the shell loop tracker",
   ));
   checks.push(sourceContainsCheck(

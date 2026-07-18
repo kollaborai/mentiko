@@ -101,7 +101,7 @@ describe("link-run-runtime", () => {
     expect(validateLinkRunId("run-123/../../x")).toBe(false);
   });
 
-  it("resolves live typed-controller reply paths under the request namespace", () => {
+  it("resolves live peer-manager reply paths under the request namespace", () => {
     expect(normalizePeerSessionId("link-mh1z")).toBe("link-mh1z");
     expect(normalizePeerSessionId("../link-mh1z")).toBeNull();
     expect(resolvePeerOutputDir("acme")).toBe("/data/namespaces/acme/peer-output");

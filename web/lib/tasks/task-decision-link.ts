@@ -16,7 +16,6 @@ import {
 import type { Decision } from "@/lib/decisions/decision-types";
 import type { TaskRecord } from "@/lib/tasks/task-store-types";
 import { buildDecisionPromptFromTaskPrompt } from "@/lib/tasks/task-decision-routing";
-import { listWorkspaces } from "@/lib/workspaces/workspace-storage";
 
 interface CreateTaskDecisionInput {
   namespaceId: string;
@@ -54,39 +53,6 @@ function metadataRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-/**
- * A completion-audit decision inherits its scope from the task it gates. Task
- * writers have historically stored either a workspace id or its filesystem
- * path, so normalize a known workspace id to the canonical path before the
- * decision file, task row, and auto-approval policy observe it. Do not invent
- * scope for an unknown id: namespace-level decisions must keep their human
- * gate rather than borrowing an unrelated workspace's policy.
- */
-function resolveDecisionWorkspacePath(input: CreateTaskDecisionInput): string | undefined {
-  const parentTask = input.parentTaskId
-    ? taskGet(input.orgId, input.parentTaskId, input.namespaceId)
-    : null;
-  const parentMetadata = metadataRecord(parentTask?.metadata);
-  const candidates = [
-    input.workspacePath,
-    parentTask?.workspace_id ?? undefined,
-    typeof parentMetadata.workspace_path === "string" ? parentMetadata.workspace_path : undefined,
-    typeof parentMetadata.workspace_id === "string" ? parentMetadata.workspace_id : undefined,
-  ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
-
-  if (candidates.length === 0) return undefined;
-
-  const workspaces = listWorkspaces(input.namespaceId, input.orgId);
-  for (const candidate of candidates) {
-    const workspace = workspaces.find((item) => item.id === candidate || item.path === candidate);
-    if (workspace) return workspace.path;
-  }
-
-  // An explicit request path and a task's path-shaped workspace id are already
-  // authoritative. An opaque unknown workspace id is deliberately not.
-  return candidates.find((candidate) => candidate === input.workspacePath || candidate.includes("/"));
 }
 
 function stableGateClaimKey(input: CreateTaskDecisionInput): string | undefined {
@@ -137,15 +103,12 @@ async function findExistingStableDecisionGate(
   // The task row is the durable first side effect. If a previous attempt created it
   // and then died before linking the decision, repair that link instead of creating a
   // second gate for the same source fingerprint.
-  const linked = decision.taskId === task.id
-    && decision.parentTaskId === input.parentTaskId
-    && (!input.workspacePath || decision.workspacePath === input.workspacePath);
+  const linked = decision.taskId === task.id && decision.parentTaskId === input.parentTaskId;
   const repaired = linked
     ? decision
     : await updateDecision(input.namespaceId, input.orgId, decision.id, {
         taskId: task.id,
         parentTaskId: input.parentTaskId,
-        ...(input.workspacePath && !decision.workspacePath ? { workspacePath: input.workspacePath } : {}),
       }, input.workspacePath);
   return { decision: repaired, task };
 }
@@ -222,23 +185,12 @@ export async function createTaskDecision({
   runFingerprint,
   generationJobId,
 }: CreateTaskDecisionInput): Promise<CreateTaskDecisionResult> {
-  const canonicalWorkspacePath = resolveDecisionWorkspacePath({
-    namespaceId,
-    orgId,
-    prompt,
-    source,
-    workspacePath,
-    parentTaskId,
-    sourceRunId,
-    runFingerprint,
-    generationJobId,
-  });
   const input = {
     namespaceId,
     orgId,
     prompt,
     source,
-    workspacePath: canonicalWorkspacePath,
+    workspacePath,
     parentTaskId,
     sourceRunId,
     runFingerprint,
@@ -260,7 +212,7 @@ export async function createTaskDecision({
     : titleFromDecisionPrompt(prompt);
 
   const taskFields = (decision: Decision) => ({
-    workspace_id: canonicalWorkspacePath,
+    workspace_id: workspacePath,
     title,
     description: decisionPrompt,
     issue_type: "decision" as const,
@@ -290,7 +242,7 @@ export async function createTaskDecision({
     const deterministicId = generationJobId
       ? deterministicGenerationDecisionId(namespaceId, orgId, generationJobId)
       : undefined;
-    const decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source, id: deterministicId }, canonicalWorkspacePath);
+    const decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source, id: deterministicId }, workspacePath);
     let task: TaskRecord;
     try {
       task = taskCreate(orgId, taskFields(decision), namespaceId);
@@ -304,7 +256,7 @@ export async function createTaskDecision({
       orgId,
       decision.id,
       { title, taskId: task.id },
-      canonicalWorkspacePath,
+      workspacePath,
     );
     return { decision: updatedDecision, task };
   }
@@ -338,11 +290,11 @@ export async function createTaskDecision({
   }
 
   let decision = typeof ledger?.decisionId === "string"
-    ? getDecision(namespaceId, orgId, ledger.decisionId, canonicalWorkspacePath)
+    ? getDecision(namespaceId, orgId, ledger.decisionId, workspacePath)
     : null;
   let createdDecision = false;
   if (!decision) {
-    decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source }, canonicalWorkspacePath);
+    decision = createDecision(namespaceId, orgId, { prompt: decisionPrompt, source }, workspacePath);
     createdDecision = true;
     try {
       // This write is the recovery boundary for createDecision -> taskCreate. A retry
@@ -354,7 +306,7 @@ export async function createTaskDecision({
       ledger = stableGateLedger(input, claimKey);
     } catch (error) {
       // Without the durable decision id, keeping this newly-created file would orphan it.
-      try { deleteDecision(namespaceId, orgId, decision.id, canonicalWorkspacePath); } catch { /* best effort */ }
+      try { deleteDecision(namespaceId, orgId, decision.id, workspacePath); } catch { /* best effort */ }
       releaseStableGateClaim(input, claimKey);
       throw error;
     }
@@ -406,7 +358,7 @@ export async function createTaskDecision({
       // created in this attempt rather than leave an orphan that a retry could duplicate.
       try { taskDelete(orgId, task.id, namespaceId); } catch { /* best effort */ }
       if (createdDecision) {
-        try { deleteDecision(namespaceId, orgId, decision.id, canonicalWorkspacePath); } catch { /* best effort */ }
+        try { deleteDecision(namespaceId, orgId, decision.id, workspacePath); } catch { /* best effort */ }
         releaseStableGateClaim(input, claimKey);
       }
       throw error;
@@ -425,7 +377,7 @@ export async function createTaskDecision({
         taskId: task.id,
         ...(parentTaskId ? { parentTaskId } : {}),
       },
-      canonicalWorkspacePath,
+      workspacePath,
     );
 
     releaseStableGateClaim(input, claimKey);

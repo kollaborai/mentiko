@@ -16,13 +16,6 @@ import { orgPath } from "@/lib/config";
 export const TASK_RUN_SCOPE_METADATA_KEY = "task_run_scope" as const;
 
 /**
- * Historical provenance for the terminal execution that a retry replaced.
- * Unlike task_run_scope, this is never an active admission claim.
- */
-export const TASK_RETRY_SOURCE_RUN_ID_METADATA_KEY = "retry_source_run_id" as const;
-export const TASK_RETRY_SOURCE_SCOPE_METADATA_KEY = "retry_source_task_run_scope" as const;
-
-/**
  * Durable task-to-run location. Persist this alongside the task's claimed run
  * so every reader uses the same namespace/org root that created the run.
  */
@@ -86,37 +79,6 @@ export class DuplicateTaskRunLocationError extends Error {
 
 export function createTaskRunScope(input: TaskRunScope): TaskRunScope {
   return parseTaskRunScope(input);
-}
-
-/**
- * Release the active task->run claim when a terminal execution is scheduled
- * for retry. The source remains traceable, but cannot block the next attempt.
- *
- * Callers have already established that sourceRunId is the terminal run they
- * are reducing. We retain the full scoped location only when it agrees with
- * that source and this task; malformed claims are cleared rather than being
- * promoted into retry provenance.
- */
-export function releaseTaskRunScopeForRetry(
-  metadata: Record<string, unknown>,
-  input: { taskId: string; sourceRunId: string },
-): Record<string, unknown> {
-  let sourceScope: TaskRunScope | undefined;
-  try {
-    const activeScope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
-    if (activeScope.taskId === input.taskId && activeScope.runId === input.sourceRunId) {
-      sourceScope = activeScope;
-    }
-  } catch {
-    // A retry must release a malformed active claim too. It is not provenance.
-  }
-
-  return {
-    ...metadata,
-    [TASK_RUN_SCOPE_METADATA_KEY]: undefined,
-    [TASK_RETRY_SOURCE_RUN_ID_METADATA_KEY]: input.sourceRunId,
-    [TASK_RETRY_SOURCE_SCOPE_METADATA_KEY]: sourceScope,
-  };
 }
 
 /** Parse an untrusted persisted JSON value into the immutable scope contract. */

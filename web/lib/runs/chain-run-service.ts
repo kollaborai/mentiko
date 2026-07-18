@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------
-// chain-run-service.ts — Start a typed mentiko chain run.
+// chain-run-service.ts — Start a mentiko chain run (spawn mentiko CLI).
 // -------------------------------------------------------------------
 // This service validates input, creates the run directory, writes
 // chain.json + run.json, and spawns the mentiko CLI in a detached
@@ -18,11 +18,12 @@
 // directory.
 // -------------------------------------------------------------------
 
+import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { execAuditLog } from "@/lib/api/audit-exec";
+import { execAuditLog, shellEscape } from "@/lib/api/audit-exec";
 import { getSessionUser, type SessionUser } from "@/lib/auth/auth-bridge";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { getProfile, listProfiles } from "@/lib/agents/agent-profile-storage";
@@ -36,6 +37,7 @@ import { BadRequest, Conflict, Forbidden } from "@/lib/api-errors";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
+import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
 import { runSyntheticRunnerV2Probe, runSyntheticRunnerV2ProbeWithDispatch } from "@/lib/runner-v2/probe";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
@@ -46,6 +48,7 @@ import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
+const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
 // Collision-proof run id (engine bug #20). `run-${Date.now()}` alone is epoch-millis,
@@ -443,6 +446,14 @@ export async function startChainRun({
     source: "web",
   }, ip).catch(() => {});
 
+  const binPath = resolve(AGENT_CHAIN_BIN);
+  const debugFlag = debug ? " --debug" : "";
+  const wsFlag = authorizedWorkspacePath
+    ? ` --workspace ${shellEscape(authorizedWorkspacePath)}`
+    : "";
+  const taskFlag = taskId && typeof taskId === "string"
+    ? ` --task ${shellEscape(taskId)}`
+    : "";
   const executionTaskId = typeof taskId === "string" ? taskId : undefined;
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "w");
@@ -489,7 +500,7 @@ export async function startChainRun({
       : {}),
   });
 
-  if (runMetadata?.runnerV2Probe === true) {
+  if (isRunnerV2Enabled(childEnv) && runMetadata?.runnerV2Probe === true) {
     const probeInput = {
       runDir: join(runDir, "runner-v2-probe"),
       eventsDir: config.eventsDir,
@@ -518,26 +529,39 @@ export async function startChainRun({
     };
   }
 
-  const runnerV2Launch = await startRunnerV2Launch({
-    chainPath: validatedChainPath,
-    runDir,
-    runId,
-    chainId: runObject.chainId as string,
-    chainName: validChainName,
-    workspacePath: authorizedWorkspacePath,
-    taskId: executionTaskId,
-    debug,
-    logFd,
-    cwd: config.codeRoot,
-    env: childEnv,
-  });
+  const runnerV2Launch = isRunnerV2Enabled(childEnv)
+    ? await startRunnerV2Launch({
+      chainPath: validatedChainPath,
+      runDir,
+      runId,
+      chainId: runObject.chainId as string,
+      chainName: validChainName,
+      workspacePath: authorizedWorkspacePath,
+      taskId: executionTaskId,
+      debug,
+      logFd,
+      cwd: config.codeRoot,
+      env: childEnv,
+    })
+    : null;
 
-  if (runnerV2Launch.support === "unsupported") {
+  if (runnerV2Launch?.support === "unsupported") {
     closeSync(logFd);
     throw new Error(runnerV2Launch.reason);
   }
 
-  const child = runnerV2Launch.child;
+  const child = runnerV2Launch?.support === "supported"
+    ? null
+    : spawn(
+        "/bin/zsh",
+        ["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}${wsFlag}${taskFlag}${debugFlag}`],
+        {
+          cwd: config.codeRoot,
+          detached: true,
+          stdio: ["ignore", logFd, logFd],
+          env: childEnv,
+        }
+      );
 
   if (child) {
     child.unref();

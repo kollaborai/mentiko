@@ -148,7 +148,7 @@ async function startMinimalRun(runId: string, metadata?: Record<string, unknown>
         description: "test chain",
         version: "1.0.0",
         config: { cli: "codex", monitor: true },
-        agents: [{ id: "agent-a", name: "Agent A", prompt: "do it", emits: "done", triggers: ["manual-start"] }],
+        agents: [{ id: "agent-a", name: "Agent A", prompt: "do it", emits: "done", triggers: [] }],
       },
       userPrompt: "ship it",
       ...(metadata ? { metadata } : {}),
@@ -159,7 +159,6 @@ async function startMinimalRun(runId: string, metadata?: Record<string, unknown>
 describe("chain-run-service runner-v2 guard", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockIsRunnerV2Enabled.mockImplementation((env) => env?.MENTIKO_RUNNER_V2 === "1");
     currentRunsDir = mkdtempSync(join(tmpdir(), "mentiko-runner-v2-runs-"));
     globalThis.__MENTIKO_CHAIN_RUN_EVENTS_DIR__ = join(currentRunsDir, "events");
     const { resolveLinkRunsDir } = await import("@/lib/links/link-run-runtime");
@@ -199,24 +198,32 @@ describe("chain-run-service runner-v2 guard", () => {
       }
       return { status: 0, pid: 4321, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>;
     });
-    mockStartRunnerV2Launch.mockResolvedValue({ support: "supported", mode: "typed-plan" });
   });
 
-  it("uses the typed launch path even when the retired flag is off", async () => {
+  it("uses the normal shell path and never calls runner-v2 when the flag is off", async () => {
     mockIsRunnerV2Enabled.mockReturnValue(false);
 
     await startMinimalRun("run-flag-off");
 
-    expect(mockStartRunnerV2Launch).toHaveBeenCalledWith(expect.objectContaining({
-      runId: "run-flag-off",
-      cwd: "/repo",
-      env: expect.objectContaining({ MENTIKO_RUN_ID: "run-flag-off" }),
-    }));
-    expect(mockIsRunnerV2Enabled).not.toHaveBeenCalled();
-    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockStartRunnerV2Launch).not.toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "/bin/zsh",
+      ["-lc", expect.stringContaining("/repo/bin/mentiko run")],
+      expect.objectContaining({
+        cwd: "/repo",
+        detached: true,
+        env: expect.objectContaining({
+          MENTIKO_RUN_ID: "run-flag-off",
+          NAMESPACE_ID: "default",
+          ORG_ID: "default",
+        }),
+      }),
+    );
   });
 
   it("fails closed when runner-v2 reports unsupported before any typed side effects", async () => {
+    mockIsRunnerV2Enabled.mockReturnValue(true);
     mockStartRunnerV2Launch.mockResolvedValue({
       support: "unsupported",
       reason: "runner-v2 contract must define invariants",
@@ -238,6 +245,7 @@ describe("chain-run-service runner-v2 guard", () => {
   it("uses runner-v2 and avoids fallback shell spawn when the flag is on and supported", async () => {
     const child = new EventEmitter() as EventEmitter & { unref: jest.Mock };
     child.unref = jest.fn();
+    mockIsRunnerV2Enabled.mockReturnValue(true);
     mockStartRunnerV2Launch.mockResolvedValue({
       support: "supported",
       mode: "typed-plan",
@@ -256,7 +264,8 @@ describe("chain-run-service runner-v2 guard", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("does not fallback to shell when typed bootstrap fails", async () => {
+  it("does not fallback to shell when runner-v2 fails after mutating typed bootstrap", async () => {
+    mockIsRunnerV2Enabled.mockReturnValue(true);
     mockStartRunnerV2Launch.mockResolvedValue({
       support: "unsupported",
       reason: "runner-v2 typed bootstrap timed out waiting for agent CLI readiness",
@@ -270,8 +279,8 @@ describe("chain-run-service runner-v2 guard", () => {
   });
 
   it("runs the typed dry-run probe through the service when explicitly requested", async () => {
-    const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
+    mockIsRunnerV2Enabled.mockReturnValue(true);
+
     await startMinimalRun("run-v2-probe", { runnerV2Probe: true });
 
     expect(mockStartRunnerV2Launch).not.toHaveBeenCalled();
@@ -297,8 +306,8 @@ describe("chain-run-service runner-v2 guard", () => {
   });
 
   it("runs the typed live probe through the service only with explicit live metadata", async () => {
-    const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
+    mockIsRunnerV2Enabled.mockReturnValue(true);
+
     await startMinimalRun("run-v2-live-probe", {
       runnerV2Probe: true,
       runnerV2ProbeMode: "live",
@@ -332,8 +341,8 @@ describe("chain-run-service runner-v2 guard", () => {
   });
 
   it("runs the typed live probe with external-effects dispatch only when explicitly requested", async () => {
-    const { buildChildEnv } = await import("@/lib/runs/child-env");
-    (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));
+    mockIsRunnerV2Enabled.mockReturnValue(true);
+
     await startMinimalRun("run-v2-live-dispatch-probe", {
       runnerV2Probe: true,
       runnerV2ProbeMode: "live",

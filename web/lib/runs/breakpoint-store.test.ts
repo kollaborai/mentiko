@@ -96,12 +96,9 @@ describe("typed breakpoint record store", () => {
     }
   });
 
-  it("keeps breakpoint ownership entirely in the typed CLI", () => {
+  it("leaves chain-runner with only the typed breakpoint invocation boundary", () => {
     const source = readFileSync(join(process.cwd(), "..", "lib", "chain-runner.sh"), "utf8");
-    const typedCli = readFileSync(join(process.cwd(), "lib", "runner-v2", "breakpoint-cli.ts"), "utf8");
-    expect(typedCli).toContain("runBreakpointCli");
-    expect(source).toContain("runner-v2-direct-run.js");
-    expect(source).not.toContain("runner-breakpoint.js");
+    expect(source).toContain("runner-breakpoint.js");
     expect(source).not.toMatch(/jq[^\n]*bp_file|breakpoint_file\(\)/);
   });
 });

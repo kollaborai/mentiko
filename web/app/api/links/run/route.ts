@@ -1,17 +1,17 @@
 /**
  * POST /api/links/run
  *
- * Run a saved link definition through the typed peer link controller.
+ * Run a saved link definition by spawning a peer-manager session.
  * Adapts the swarm/launch pattern to work with a persisted link config.
  */
 
 import { NextRequest } from "next/server";
+import { execFileSync } from "node:child_process";
 import { join } from "path";
 import { writeFileSync, mkdirSync } from "fs";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { orgPath } from "@/lib/config";
 import config from "@/lib/config";
-import { pty } from "@/lib/pty/pty-client";
 import { requirePermission } from "@/lib/auth/rbac-auth";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { loadLink, resolveLinkAgentName } from "@/lib/links/link-utils";
@@ -20,9 +20,11 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import {
   buildLinkRunEnv,
+  buildShellSetup,
   normalizeLinkId,
   resolveLinkRunPaths,
   resolveLinkRunSecret,
+  shellQuote,
 } from "@/lib/links/link-run-runtime";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +62,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new NotFound("Link", safeLinkId);
   }
 
+  const pBin = join(config.binDir, "p");
+  const scriptPath = join(config.binDir, "peer-manager");
   const safeRelayProfile = relayProfile ? normalizeLinkId(relayProfile) : null;
   const requestedAgent1Profile = agent1Profile || link.agents.agent1.agent_profile;
   const requestedAgent2Profile = agent2Profile || link.agents.agent2.agent_profile;
@@ -113,28 +117,89 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   writeFileSync(join(runDir, "run.json"), JSON.stringify(runObject, null, 2));
 
   const authSecret = resolveLinkRunSecret();
+
+  // spawn manager session via pty-manager
+  try {
+    execFileSync(pBin, ["spawn", managerSession], {
+      cwd: config.codeRoot,
+      stdio: "pipe",
+    });
+  } catch {
+    try {
+      execFileSync(pBin, ["daemon"], { cwd: config.codeRoot, stdio: "pipe" });
+    } catch {}
+    execFileSync(pBin, ["spawn", managerSession], {
+      cwd: config.codeRoot,
+      stdio: "pipe",
+    });
+  }
+
+  // set up env in a single command to avoid timing issues between p send calls
+  const envSetup = buildShellSetup(
+    buildLinkRunEnv({
+      namespaceId,
+      orgId,
+      runId,
+      runsDir,
+      workspacePath: workspacePath || undefined,
+      authSecret,
+    }),
+    workspacePath || undefined
+  );
+
+  execFileSync(pBin, ["send", managerSession, envSetup], {
+    cwd: config.codeRoot,
+    stdio: "pipe",
+  });
+
+  // small delay to ensure env is applied before peer-manager starts
+  execFileSync("sleep", ["1"], { stdio: "pipe" });
+
+  // build peer-manager command from link config
   const effectiveGoal = specFile
     ? `${goalOverride || link.config.leading_prompt || link.name}\n\nSpec file: ${specFile}`
     : goalOverride || link.config.leading_prompt || link.name;
-  const internalDir = join(runDir, ".internal");
-  mkdirSync(internalDir, { recursive: true });
-  const contextPath = join(internalDir, "peer-link-controller.json");
-  writeFileSync(contextPath, JSON.stringify({
-    runId, runDir, runsDir, namespaceId, orgId, managerSession,
-    workspacePath: workspacePath || config.codeRoot,
-    task: effectiveGoal,
-    agent1Name, agent2Name,
-    ...(safeRelayProfile ? { relayProfile: safeRelayProfile } : {}),
-    ...(safeAgent1Profile ? { agent1Profile: safeAgent1Profile } : {}),
-    ...(safeAgent2Profile ? { agent2Profile: safeAgent2Profile } : {}),
-    ...(link.config.agent1_prompt ? { prompt1: link.config.agent1_prompt } : {}),
-    ...(link.config.agent2_prompt ? { prompt2: link.config.agent2_prompt } : {}),
-    ...(typeof link.config.max_rounds === "number" ? { maxRounds: link.config.max_rounds } : {}),
-    ...(link.config.stall_threshold ? { stallThreshold: link.config.stall_threshold } : {}),
-  }, null, 2));
-  await pty.spawn(managerSession, "node", [join(config.codeRoot, "lib", "runner-peer-link-controller.js"), "--context", contextPath], {
-    cwd: workspacePath || config.codeRoot,
-    env: buildLinkRunEnv({ namespaceId, orgId, runId, runsDir, workspacePath: workspacePath || undefined, authSecret }),
+  const leadingPrompt = effectiveGoal;
+  const cmdParts: string[] = [
+    shellQuote(scriptPath),
+    shellQuote(leadingPrompt),
+    `--session ${shellQuote(managerSession)}`,
+  ];
+
+  if (link.config.agent1_prompt) {
+    cmdParts.push(`--prompt1 ${shellQuote(link.config.agent1_prompt)}`);
+  }
+  if (link.config.agent2_prompt) {
+    cmdParts.push(`--prompt2 ${shellQuote(link.config.agent2_prompt)}`);
+  }
+  if (link.config.max_rounds && link.config.max_rounds > 0) {
+    cmdParts.push(`--rounds ${link.config.max_rounds}`);
+  }
+  if (link.config.stall_threshold && link.config.stall_threshold > 0) {
+    cmdParts.push(`--stall-threshold ${link.config.stall_threshold}`);
+  }
+  if (safeRelayProfile) {
+    cmdParts.push(`--relay-profile ${shellQuote(safeRelayProfile)}`);
+  }
+  // per-agent profile overrides (UI override > link definition > default)
+  if (safeAgent1Profile) {
+    cmdParts.push(`--profile1 ${shellQuote(safeAgent1Profile)}`);
+  }
+  if (safeAgent2Profile) {
+    cmdParts.push(`--profile2 ${shellQuote(safeAgent2Profile)}`);
+  }
+  if (agent1Name && agent1Name !== "unnamed") {
+    cmdParts.push(`--name1 ${shellQuote(agent1Name)}`);
+  }
+  if (agent2Name && agent2Name !== "unnamed") {
+    cmdParts.push(`--name2 ${shellQuote(agent2Name)}`);
+  }
+
+  const managerCmd = cmdParts.join(" ");
+
+  execFileSync(pBin, ["send", managerSession, managerCmd], {
+    cwd: config.codeRoot,
+    stdio: "pipe",
   });
 
   return apiSuccess({

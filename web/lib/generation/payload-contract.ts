@@ -5,7 +5,7 @@
 // source only for bare-node consumers that cannot execute TypeScript.
 
 /** Generation kinds the payload contract knows how to validate + normalize. */
-export type GenerationKind = "task" | "chain_generation" | "chain_recommendation" | "run_summary";
+export type GenerationKind = "task" | "chain_generation" | "chain_recommendation";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -42,18 +42,6 @@ export function isPayloadCompatibleWithKind(obj: unknown, kind: string): boolean
         recommendation.rationale
     );
   }
-  if (kind === "run_summary") {
-    // A run-summary artifact is both the user-visible outcome record and the
-    // completion-audit handoff. Do not let an arbitrary JSON artifact reopen
-    // a failed summary import: it must contain the narrative payload plus the
-    // auditor's structured verdict.
-    const audit = isJsonRecord(obj.audit) ? obj.audit : undefined;
-    return typeof obj.headline === "string"
-      && typeof obj.narrative === "string"
-      && typeof obj.outcome === "string"
-      && typeof audit?.verdict === "string"
-      && typeof audit.reason === "string";
-  }
   return true;
 }
 
@@ -78,8 +66,6 @@ export function jobTypeToGenerationKind(jobType: string): GenerationKind | "" {
       return "chain_generation";
     case "task":
       return "task";
-    case "task_run_summary":
-      return "run_summary";
     default:
       return "";
   }

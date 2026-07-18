@@ -88,14 +88,8 @@ const planFlow = {
       plan: {
         summary: "Plan summary",
         tasks: [
-          {
-            id: "t1", title: "Task one", description: "d1", priority: 1, phase: 1,
-            deliverable: "Implemented first change", verification: "Run first focused test", acceptance_criteria: "First focused test passes.",
-          },
-          {
-            id: "t2", title: "Task two", description: "d2", priority: 2, phase: 2,
-            deliverable: "Implemented second change", verification: "Run second focused test", acceptance_criteria: "Second focused test passes.",
-          },
+          { id: "t1", title: "Task one", description: "d1", priority: 1, phase: 1 },
+          { id: "t2", title: "Task two", description: "d2", priority: 2, phase: 2 },
         ],
         dependencies: [{ from: "t1", to: "t2" }],
       },
@@ -191,15 +185,6 @@ describe("resolveDecisionToTasks parenting", () => {
     const tasks = created.filter((f) => f.issue_type === "task");
     expect(tasks).toHaveLength(2);
     expect(tasks.every((f) => f.parent_id === "FEAT-019")).toBe(true);
-    expect(tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        acceptance_criteria: expect.stringContaining("First focused test passes."),
-        metadata: expect.objectContaining({
-          decision_plan_deliverable: "Implemented first change",
-          decision_plan_verification: "Run first focused test",
-        }),
-      }),
-    ]));
     // the returned epic id is the existing parent
     expect(res.taskId).toBe("FEAT-019");
     // the decision's own subtask is closed out
@@ -246,31 +231,6 @@ describe("resolveDecisionToTasks parenting", () => {
     expect(created[0].issue_type).toBe("task");
     expect(created[0].parent_id).toBe("FEAT-019");
     expect(res.taskId).toBe("FEAT-019");
-  });
-
-  it("rejects an old generated plan that has no deliverable or verification instead of creating unverifiable work", async () => {
-    const invalidPlan = {
-      ...planFlow,
-      guidedFlow: {
-        ...planFlow.guidedFlow,
-        round3: {
-          ...planFlow.guidedFlow.round3,
-          plan: {
-            ...planFlow.guidedFlow.round3.plan,
-            tasks: [{ id: "old", title: "Document status", description: "Write an update", priority: 2, phase: 1 }],
-          },
-        },
-      },
-    };
-    getDecision.mockReturnValue(makeDecision(invalidPlan));
-
-    await expect(resolveDecisionToTasks({
-      namespaceId: "default",
-      orgId: "default",
-      decisionId: "DEC-1",
-      selectedOptionId: "opt-a",
-    })).rejects.toThrow("requires a concrete deliverable");
-    expect(taskCreate).not.toHaveBeenCalled();
   });
 
   it("A1: parent is a feature under an epic → generated tasks land under the EPIC ancestor, not the feature", async () => {

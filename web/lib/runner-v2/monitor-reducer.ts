@@ -9,8 +9,8 @@ import {
 } from "@/lib/runner-v2/monitor-types";
 
 /**
- * Pure decision for one monitor poll tick. Preserves the documented pre-cutover
- * monitor decision matrix under the typed monitor owner:
+ * Pure decision for one monitor poll tick. Mirrors lib/agent-functions.sh
+ * monitor-chain-agent (:980-1233) branch-for-branch:
  *
  *   1. session gone            -> session-gone
  *   2. local process gone      -> died           (dead != succeeded; driver runs

@@ -4,10 +4,8 @@ import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import {
   locateTaskRun,
   parseTaskRunScope,
-  resolveTaskRunLocation,
   TaskRunScopeError,
 } from "./task-run-locator";
-import { readRunRecordAt } from "@/lib/runs/run-record";
 import type {
   TaskAttempt,
   TaskAttemptCategory,
@@ -125,29 +123,6 @@ function duplicateOutcomeSummaryRunIds(metadata: Record<string, unknown>): Set<s
 function persistedTaskRunScope(metadata: Record<string, unknown>) {
   if (!("task_run_scope" in metadata)) return undefined;
   return parseTaskRunScope(metadata.task_run_scope);
-}
-
-/**
- * An active task scope is authoritative for the execution run, but it must not
- * hide explicitly-linked system runs (most importantly its outcome-summary).
- * Resolve those IDs directly under the same persisted root; never fall back to
- * scanning the caller's root or infer a run from a neighboring directory.
- */
-function referencedRunsAtScope(
-  metadata: Record<string, unknown>,
-  scopedRunId: string,
-  runsDir: string,
-): TaskAttemptRun[] {
-  const runs: TaskAttemptRun[] = [];
-  for (const runId of metadataRunRefs(metadata).keys()) {
-    if (runId === scopedRunId) continue;
-    try {
-      runs.push(readRunRecordAt(runsDir, runId));
-    } catch {
-      // Keep the unresolved metadata reference visible as a missing attempt.
-    }
-  }
-  return runs;
 }
 
 function toAttempt(
@@ -292,12 +267,7 @@ export function listTaskAttempts({
       );
     }
     const located = locateTaskRun(persistedScope);
-    const { runsDir } = resolveTaskRunLocation(persistedScope);
-    return buildTaskAttempts({
-      taskId,
-      metadata: metadataRecord,
-      runs: [located.run, ...referencedRunsAtScope(metadataRecord, located.run.id, runsDir)],
-    });
+    return buildTaskAttempts({ taskId, metadata: metadataRecord, runs: [located.run] });
   }
 
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);

@@ -27,6 +27,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const BATCH_RUNNER = join(config.libDir, "runner-batch-runner.js");
+const CHAIN_RUNNER = join(config.libDir, "chain-runner.sh");
 
 interface BatchRequest {
   chains: BatchChainInput[];
@@ -74,7 +75,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const body = await request.json() as BatchRequest;
 
   const workerPath = resolve(BATCH_RUNNER);
-  if (!existsSync(workerPath)) {
+  const chainRunnerPath = resolve(CHAIN_RUNNER);
+  if (!existsSync(workerPath) || !existsSync(chainRunnerPath)) {
     throw new BadRequest("Typed batch runner is unavailable", { field: "runner" });
   }
   const root = batchesDir(namespaceId);
@@ -106,6 +108,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       "--batches-dir", root,
       "--batch-id", record.id,
       "--runs-dir", runsDir,
+      "--chain-runner", chainRunnerPath,
+      "--cwd", config.codeRoot,
     ], {
       cwd: config.codeRoot,
       env,
@@ -124,7 +128,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   return apiSuccess({ success: true, batchId: record.id, mode: record.mode, chains: record.chains.length, status: record.status });
 });
 
-// DELETE /api/chains/run-batch - request cancellation before a typed launch is accepted.
+// DELETE /api/chains/run-batch - request cancellation; only the typed worker kills its owned child.
 export const DELETE = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) throw new Unauthorized();
   const batchId = new URL(request.url).searchParams.get("id");

@@ -33,10 +33,8 @@ jest.mock("@/lib/tasks/task-store", () => ({
 }));
 
 const mockStartTaskOutcomeAudit = jest.fn().mockResolvedValue({ status: "started" });
-const mockRecoverTaskOutcomeAudit = jest.fn().mockResolvedValue({ status: "not_recoverable" });
 jest.mock("@/lib/tasks/task-outcome-audit", () => ({
   startTaskOutcomeAudit: (...args: unknown[]) => mockStartTaskOutcomeAudit(...args),
-  recoverTaskOutcomeAudit: (...args: unknown[]) => mockRecoverTaskOutcomeAudit(...args),
 }));
 
 const mockApplyCompletionAudit = jest.fn().mockResolvedValue({ action: "closed" });
@@ -225,41 +223,6 @@ describe("GET /api/tasks/reconcile", () => {
       },
       "default",
     );
-  });
-
-  it("recovers a failed summary import instead of leaving the task summarizing", async () => {
-    mockTaskList.mockReturnValue([
-      {
-        id: "TASK-107",
-        title: "Verify MCP connectivity",
-        status: "open",
-        metadata: {
-          lifecycle_phase: "summarizing",
-          task_outcome_summary_status: "running",
-          task_outcome_summary_job_id: "job-summary-failed",
-        },
-      },
-    ]);
-    mockRecoverTaskOutcomeAudit.mockResolvedValueOnce({
-      status: "recovered",
-      jobId: "job-summary-failed",
-      sourceRunId: "run-execution",
-    });
-
-    const res = await GET(makeRequest() as never);
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(mockRecoverTaskOutcomeAudit).toHaveBeenCalledWith(expect.objectContaining({
-      taskId: "TASK-107",
-      namespaceId: "default",
-      orgId: "default",
-    }));
-    expect(body.data.results).toContainEqual(expect.objectContaining({
-      taskId: "TASK-107",
-      runId: "run-execution",
-      newStatus: "summary_recovered",
-    }));
   });
 
   it("repairs decision run pollution instead of auto-closing the task", async () => {
@@ -847,8 +810,6 @@ describe("GET /api/tasks/reconcile", () => {
           auto_run: true,
           last_run_id: undefined,
           last_run_status: "retry_requested",
-          task_run_scope: undefined,
-          retry_source_run_id: "run-exec",
           auto_run_retries: 99,
           execution_retries: 1,
           lifecycle_phase: "retrying",

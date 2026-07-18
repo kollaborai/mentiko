@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 /**
  * Typed owner of the remote audit-log shipper data contract.
  *
- * The former shell predecessor parsed the JSONL audit entry with
+ * The shell predecessor (lib/audit-ship.sh) parsed the JSONL audit entry with
  * jq, derived the object-storage key, substituted the namespace, parsed the S3
  * URL, orchestrated the rclone upload with retry backoff, and built the failure
  * breadcrumb — all in shell. This module owns every one of those records and

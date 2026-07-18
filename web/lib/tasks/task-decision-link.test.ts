@@ -18,7 +18,6 @@ const taskClaimMetadataKeyIfUnset = jest.fn();
 const taskGet = jest.fn();
 const taskList = jest.fn();
 const taskUpdate = jest.fn();
-const listWorkspaces = jest.fn();
 
 jest.mock("@/lib/decisions/decision-storage", () => ({
   createDecision: (...a: unknown[]) => createDecision(...a),
@@ -36,22 +35,15 @@ jest.mock("@/lib/tasks/task-store", () => ({
   taskUpdate: (...a: unknown[]) => taskUpdate(...a),
 }));
 
-jest.mock("@/lib/workspaces/workspace-storage", () => ({
-  listWorkspaces: (...a: unknown[]) => listWorkspaces(...a),
-}));
-
 import { createTaskDecision } from "./task-decision-link";
 
 let parentMetadata: Record<string, unknown>;
 let createdTasks: Map<string, Record<string, unknown>>;
-let parentWorkspaceId: string | null;
 
 beforeEach(() => {
   jest.clearAllMocks();
   parentMetadata = {};
   createdTasks = new Map();
-  parentWorkspaceId = null;
-  listWorkspaces.mockReturnValue([]);
   createDecision.mockReturnValue({ id: "dec-1", status: "intake" });
   getDecision.mockReturnValue(null);
   taskCreate.mockImplementation((_orgId: unknown, fields: Record<string, unknown>) => {
@@ -67,9 +59,7 @@ beforeEach(() => {
     },
   );
   taskGet.mockImplementation((_orgId: unknown, id: string) => {
-    if (id.startsWith("TASK-") || id.startsWith("FEAT-")) {
-      return { id, metadata: parentMetadata, workspace_id: parentWorkspaceId };
-    }
+    if (id.startsWith("TASK-") || id.startsWith("FEAT-")) return { id, metadata: parentMetadata };
     return createdTasks.get(id) ?? null;
   });
   taskList.mockImplementation(() => Array.from(createdTasks.values()));
@@ -118,31 +108,6 @@ describe("createTaskDecision prompt framing", () => {
       decision_parent_task_id: "FEAT-019",
       completion_audit_source_run_id: "run-source",
       completion_audit_run_fingerprint: "completed:f1",
-    }));
-  });
-
-  it("completion-audit: carries the parent task's workspace id as the canonical decision path", async () => {
-    parentWorkspaceId = "synthyo";
-    listWorkspaces.mockReturnValue([{ id: "synthyo", path: "/Users/malmazan/dev/synthyo" }]);
-
-    await createTaskDecision({
-      namespaceId: "default",
-      orgId: "default",
-      prompt: "A completed run needs a decision.",
-      source: "completion-audit",
-      parentTaskId: "TASK-162",
-      sourceRunId: "run-162",
-      runFingerprint: "completed:162",
-    });
-
-    expect(createDecision).toHaveBeenCalledWith(
-      "default",
-      "default",
-      expect.objectContaining({ source: "completion-audit" }),
-      "/Users/malmazan/dev/synthyo",
-    );
-    expect(taskCreate.mock.calls[0][1]).toEqual(expect.objectContaining({
-      workspace_id: "/Users/malmazan/dev/synthyo",
     }));
   });
 

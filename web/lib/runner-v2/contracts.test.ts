@@ -3,8 +3,8 @@ import type { RunnerV2Contract } from "@/lib/runner-v2/types";
 
 const baseContract: RunnerV2Contract = {
   schema_version: "runner-contract/v1",
-  migration_mode: "typed",
-  default_runner: "typed",
+  migration_mode: "side-by-side",
+  default_runner: "shell",
   flag: {
     name: "MENTIKO_RUNNER_V2",
     enabled_values: ["1", "true", "yes", "on"],
@@ -21,14 +21,14 @@ const baseContract: RunnerV2Contract = {
 };
 
 describe("runner-v2 contract validation", () => {
-  it("accepts the typed-default contract", () => {
+  it("accepts the side-by-side shell-default contract", () => {
     expect(() => validateRunnerV2Contract(baseContract)).not.toThrow();
   });
 
   it("blocks changing the default runner inside the contract", () => {
     expect(() => validateRunnerV2Contract({
       ...baseContract,
-      default_runner: "shell" as "typed",
+      default_runner: "runner-v2" as "shell",
     })).toThrow("default runner");
   });
 
