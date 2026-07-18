@@ -14,6 +14,13 @@ function tempRoot(): string {
 const validChain = {
   name: "generated-demo",
   description: "generated chain",
+  metadata: {
+    generated_chain_contract: {
+      version: 1,
+      mode: "delivery",
+      acceptance_criteria: "Given a draft is requested, when the verifier checks it, then the approved draft exists and meets the brief.",
+    },
+  },
   agents: [
     {
       id: "writer",
@@ -21,6 +28,9 @@ const validChain = {
       triggers: ["manual-start"],
       emits: "draft-ready",
       prompt: "Write a draft",
+      authorities: { can: ["edit_files"], needs_approval: [] },
+      deliverable: "The requested draft in the workspace",
+      verification: "Read the saved draft and compare it to the brief.",
     },
     {
       id: "reviewer",
@@ -29,6 +39,11 @@ const validChain = {
       emits: "approved",
       spec: "specs/reviewer.md",
       role: "Review the draft",
+      deliverable: "A verdict with evidence against the brief",
+      verification: "Inspect the draft and compare every acceptance condition.",
+      final_verifier: true,
+      verifies_acceptance_criteria: true,
+      success_assertion: "The draft exists and satisfies every acceptance condition.",
     },
   ],
   config: { session_prefix: "demo" },
@@ -90,6 +105,13 @@ describe("typed chain generation contract", () => {
       { runExternalCli: () => JSON.stringify(validChain) },
       { ...process.env, DEFAULT_CLI: "test-cli" },
     )).toThrow("non-symlink directory");
+  });
+
+  it("rejects activity-only generated chains without a verifier contract", () => {
+    expect(() => validateGeneratedChain({
+      name: "activity-only",
+      agents: [{ id: "observer", name: "Observer", triggers: ["manual-start"], emits: "observed" }],
+    })).toThrow(/generated chain delivery contract invalid/);
   });
 
   it("fails closed when no configured external CLI exists", () => {

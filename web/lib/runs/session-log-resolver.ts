@@ -5,6 +5,8 @@
  * AgentProfile.log_path overrides the default.
  */
 
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, readdirSync, statSync } from "node:fs";
 import path from "path";
 import { homedir } from "os";
 import { getBundleProviderForTool } from "../agents/agent-provider-catalog";
@@ -13,16 +15,114 @@ import type { AgentProfileProvider } from "../types";
 
 /** Encode a working directory into a CLI-specific slug */
 export function encodeCwdSlug(cli: string, cwd: string): string {
+  if (cli.startsWith("kollab")) {
+    return cwd.replace(/^\//, "").replace(/\//g, "_");
+  }
   switch (cli) {
     case "claude":
     case "claude-code":
-    case "kollab":
       // claude code replaces both / and . with - to form the project slug
       return cwd.replace(/[\/.]/g, "-");
     case "codex":
       return "";
     default:
       return cwd.replace(/[\/.]/g, "-");
+  }
+}
+
+const TRANSCRIPT_UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const CONVERSATION_WINDOW_SECONDS = 30;
+
+/**
+ * Resolve a transcript directory from a validated profile. Profiles without an
+ * explicit log_path intentionally degrade capture rather than guessing a
+ * provider directory.
+ */
+export function resolveProfileLogDir(profile: { cli: string; log_path?: string }, cwd: string): string {
+  if (!profile.log_path?.trim()) return "";
+  return resolveLogDir(profile.cli, cwd, profile.log_path);
+}
+
+/** Map a PTY capture UUID onto the configured transcript root. */
+export function resolveSessionLog(logDir: string, session: string, ptyBinary: string): string {
+  if (!isDirectory(logDir) || !session || !ptyBinary) return "";
+  const capture = spawnSync(ptyBinary, ["capture", session, "100"], {
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  const uuid = (capture.stdout ?? "").match(TRANSCRIPT_UUID)?.[0];
+  if (!uuid) return "";
+  const candidate = path.join(logDir, `${uuid}.jsonl`);
+  return isRegularFile(candidate) ? candidate : "";
+}
+
+/**
+ * Find transcript JSONL files created in the historical +/- 30 second window.
+ * When no file falls in that window, return the newest regular JSONL just as
+ * the prior shell contract did. No provider root is guessed here.
+ */
+export function findConversationFiles(logDir: string, startedAtEpoch: number, cli = "claude"): string[] {
+  if (!isDirectory(logDir) || !Number.isFinite(startedAtEpoch) || startedAtEpoch <= 0) return [];
+  const dateRoot = cli === "codex" ? codexDateRoot(logDir, startedAtEpoch) : logDir;
+  const searchRoot = isDirectory(dateRoot) ? dateRoot : logDir;
+  const files = listJsonlFiles(searchRoot, 2);
+  const matched = files.filter((file) => {
+    const birth = fileBirthEpoch(file);
+    return birth >= startedAtEpoch - CONVERSATION_WINDOW_SECONDS
+      && birth <= startedAtEpoch + CONVERSATION_WINDOW_SECONDS;
+  });
+  if (matched.length) return matched;
+  const newest = files
+    .map((file) => ({ file, birth: fileBirthEpoch(file) }))
+    .sort((left, right) => right.birth - left.birth || left.file.localeCompare(right.file))[0];
+  return newest ? [newest.file] : [];
+}
+
+export function fileBirthEpoch(file: string): number {
+  try {
+    const stat = statSync(file);
+    const birth = Math.floor(stat.birthtimeMs / 1000);
+    if (Number.isFinite(birth) && birth > 0) return birth;
+    const modified = Math.floor(stat.mtimeMs / 1000);
+    return Number.isFinite(modified) && modified > 0 ? modified : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function codexDateRoot(logDir: string, epoch: number): string {
+  const date = new Date(epoch * 1000);
+  const part = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join(path.sep);
+  return path.join(logDir, part);
+}
+
+function listJsonlFiles(root: string, depth: number): string[] {
+  if (depth < 0 || !isDirectory(root)) return [];
+  try {
+    return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+      const candidate = path.join(root, entry.name);
+      if (entry.isDirectory()) return depth > 1 ? listJsonlFiles(candidate, depth - 1) : [];
+      return entry.isFile() && entry.name.endsWith(".jsonl") && isRegularFile(candidate) ? [candidate] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function isDirectory(candidate: string): boolean {
+  try {
+    return existsSync(candidate) && lstatSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isRegularFile(candidate: string): boolean {
+  try {
+    return lstatSync(candidate).isFile();
+  } catch {
+    return false;
   }
 }
 

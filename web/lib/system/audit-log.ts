@@ -223,9 +223,9 @@ export function clearAuditLog(namespaceId = config.namespaceId): void {
 
 function shipAuditEntry(entry: string, paths: AuditPaths, namespaceId: string): Promise<void> {
   if (!process.env.AUDIT_REMOTE_URL) return Promise.resolve();
-  const shipper = join(config.codeRoot, "lib", "audit-ship.sh");
+  const shipper = join(config.codeRoot, "lib", "runner-audit-ship.js");
   if (!existsSync(shipper)) return Promise.reject(new Error(`Audit shipper is missing: ${shipper}`));
-  const child = spawn("bash", [shipper], {
+  const child = spawn(process.execPath, [shipper, "ship"], {
     detached: true,
     stdio: ["pipe", "ignore", "ignore"],
     env: {

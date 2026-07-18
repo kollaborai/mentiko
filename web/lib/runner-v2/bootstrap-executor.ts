@@ -345,6 +345,7 @@ function buildStartScript(plan: AgentBootstrapPlan): string {
 }
 
 function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2LaunchContext): string {
+  const taskContext = plan.runContextExports.TASK_CONTEXT;
   return [
     `You are: ${plan.agentName}`,
     `Run-ID: ${context.runId}`,
@@ -356,6 +357,7 @@ function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2Lau
     "",
     "Read the chain JSON for your full task context:",
     context.chainPath,
+    ...(taskContext ? ["", "Typed task context:", taskContext] : []),
     "",
     buildTypedCompletionContract(plan),
   ].join("\n");
@@ -706,7 +708,7 @@ function readinessTimeoutMs(plan: AgentBootstrapPlan): number {
 
 function readinessPollMs(plan: AgentBootstrapPlan): number {
   const configured = Number(envValue(plan, "MENTIKO_CLI_READY_POLL"));
-  // v1 default: MENTIKO_CLI_READY_POLL seconds, 2s (lib/chain-runner.sh wait_for_profile_readiness)
+  // Historical v1 default: MENTIKO_CLI_READY_POLL seconds, 2s. Typed bootstrap owns polling now.
   return Number.isFinite(configured) && configured > 0 ? configured * 1000 : 2000;
 }
 

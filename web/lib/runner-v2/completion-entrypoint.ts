@@ -120,12 +120,11 @@ export function runRunnerV2CompletionEntrypoint(
   const onLoopMutation: LoopMutationObserver = (mutation) => { loopMutationJournal.push(mutation); };
 
   try {
-  // routed/relaunched agents (launched by shell chain-runner.sh, including
-  // launches the typed bridge itself fired) have no AgentAttempt record —
+  // Pre-cutover routed/relaunched agents can have no AgentAttempt record —
   // only the typed bootstrap creates them. Adopt one now so this completion
   // produces the same typed lifecycle evidence as bootstrap-launched agents.
   // Placed after the snapshot: a dry run or an unsupported/failed pipeline
-  // restores the snapshot, so the shell fallback never sees a half-typed record.
+  // restores the snapshot, so no caller sees a half-typed record.
   const completionAttempt = adoptAgentAttemptForCompletion({
     runJsonPath,
     runId,

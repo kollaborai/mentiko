@@ -5,6 +5,8 @@
 const getTemplate = jest.fn();
 const createJob = jest.fn();
 const listJobs = jest.fn();
+const getJob = jest.fn();
+const updateJob = jest.fn();
 const taskGet = jest.fn();
 const taskUpdate = jest.fn();
 const currentRunTerminalFingerprint = jest.fn();
@@ -28,6 +30,15 @@ jest.mock("@/lib/system/template-resolver", () => ({
 jest.mock("@/lib/runs/job-store", () => ({
   createJob: (...args: unknown[]) => createJob(...args),
   listJobs: (...args: unknown[]) => listJobs(...args),
+  getJob: (...args: unknown[]) => getJob(...args),
+  updateJob: (...args: unknown[]) => updateJob(...args),
+}));
+
+const existsSync = jest.fn();
+const readFileSync = jest.fn();
+jest.mock("node:fs", () => ({
+  existsSync: (...args: unknown[]) => existsSync(...args),
+  readFileSync: (...args: unknown[]) => readFileSync(...args),
 }));
 
 jest.mock("@/lib/tasks/task-store", () => ({
@@ -45,6 +56,7 @@ jest.mock("@/lib/tasks/run-outcome-evidence", () => ({
     "completed", "complete", "blocked", "failed", "stopped", "deleted", "unknown", "cancelled",
   ].includes(status),
   isOutcomeSummaryExecutionSource: (...args: unknown[]) => isOutcomeSummaryExecutionSource(...args),
+  outcomeSummarySourceEligibility: () => ({ eligible: true, fingerprint: "completed:f1" }),
   metadataRecord: (metadata: unknown) => (
     metadata && typeof metadata === "object" && !Array.isArray(metadata)
       ? metadata as Record<string, unknown>
@@ -56,13 +68,43 @@ jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => startGenerationChainRun(...args),
 }));
 
-import { startTaskOutcomeAudit } from "./task-outcome-audit";
+const isPayloadCompatibleWithKind = jest.fn();
+jest.mock("@/lib/generation/payload-contract", () => ({
+  isPayloadCompatibleWithKind: (...args: unknown[]) => isPayloadCompatibleWithKind(...args),
+}));
+
+const extractCompletionAudit = jest.fn();
+jest.mock("@/lib/tasks/completion-audit-schema", () => ({
+  extractCompletionAudit: (...args: unknown[]) => extractCompletionAudit(...args),
+}));
+
+const enforceDeliveryGate = jest.fn();
+jest.mock("@/lib/tasks/completion-audit-delivery-gate", () => ({
+  enforceDeliveryGate: (...args: unknown[]) => enforceDeliveryGate(...args),
+}));
+
+const applyCompletionAudit = jest.fn();
+jest.mock("@/lib/tasks/completion-audit-apply", () => ({
+  applyCompletionAudit: (...args: unknown[]) => applyCompletionAudit(...args),
+}));
+
+jest.mock("@/lib/links/link-run-runtime", () => ({
+  resolveLinkRunPaths: () => ({ runDir: "/tmp/run-summary" }),
+}));
+
+import { recoverTaskOutcomeAudit, startTaskOutcomeAudit } from "./task-outcome-audit";
 
 beforeEach(() => {
   jest.clearAllMocks();
   getTemplate.mockReturnValue({ content: "COMPLETION AUDIT\n{{WORKSPACE_CONTEXT}}" });
   createJob.mockReturnValue({ id: "job-audit" });
   listJobs.mockReturnValue([]);
+  getJob.mockReturnValue(null);
+  existsSync.mockReturnValue(false);
+  isPayloadCompatibleWithKind.mockReturnValue(true);
+  extractCompletionAudit.mockReturnValue({ verdict: "close", reason: "verified" });
+  enforceDeliveryGate.mockImplementation((audit) => audit);
+  applyCompletionAudit.mockResolvedValue({ action: "closed" });
   currentRunTerminalFingerprint.mockReturnValue("completed:f1");
   currentRunStatus.mockReturnValue("completed");
   currentRunSummary.mockReturnValue({ status: "failed" });
@@ -404,5 +446,100 @@ describe("startTaskOutcomeAudit", () => {
       },
       "default",
     );
+  });
+});
+
+describe("recoverTaskOutcomeAudit", () => {
+  it("imports only the failed job's validated artifact and applies its audit", async () => {
+    const task = {
+      id: "TASK-107",
+      title: "Verify MCP connectivity",
+      issue_type: "task",
+      status: "open",
+      workspace_id: "/repo/synthyo",
+      metadata: {
+        lifecycle_phase: "summarizing",
+        task_outcome_summary_status: "running",
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_source_run_id: "run-execution",
+        task_run_scope: { version: 1, taskId: "TASK-107", runId: "run-execution", namespaceId: "default", orgId: "default" },
+      },
+    };
+    taskGet.mockReturnValue(task);
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+    });
+    existsSync.mockReturnValue(true);
+    const payload = {
+      headline: "Connectivity restored",
+      narrative: "All checks passed.",
+      outcome: "complete",
+      audit: { verdict: "close", reason: "all checks passed" },
+    };
+    readFileSync.mockReturnValue(JSON.stringify(payload));
+    enforceDeliveryGate.mockReturnValue(payload.audit);
+
+    const result = await recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    });
+
+    expect(result).toEqual({ status: "recovered", jobId: "job-summary", sourceRunId: "run-execution" });
+    expect(updateJob).toHaveBeenCalledWith("job-summary", expect.objectContaining({
+      status: "complete",
+      result: { output: JSON.stringify(payload) },
+      error: undefined,
+    }), "default");
+    expect(taskUpdate).toHaveBeenCalledWith("default", "TASK-107", {
+      metadata: expect.objectContaining({
+        task_outcome_summary_status: "complete",
+        task_outcome_summary: payload,
+        task_outcome_summary_error: undefined,
+      }),
+    }, "default");
+    expect(applyCompletionAudit).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-execution",
+      runFingerprint: "completed:f1",
+      audit: payload.audit,
+    }));
+  });
+
+  it("does not mutate when the failed summary artifact is not a valid audit payload", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-107",
+      metadata: {
+        task_outcome_summary_job_id: "job-summary",
+        task_outcome_summary_source_run_id: "run-execution",
+      },
+    });
+    getJob.mockReturnValue({
+      id: "job-summary",
+      type: "task_run_summary",
+      status: "failed",
+      taskId: "TASK-107",
+      runId: "run-summary",
+      input: { sourceRunId: "run-execution" },
+    });
+    existsSync.mockReturnValue(true);
+    readFileSync.mockReturnValue("{}");
+    isPayloadCompatibleWithKind.mockReturnValue(false);
+
+    await expect(recoverTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-107",
+    })).resolves.toEqual({ status: "not_recoverable" });
+    expect(updateJob).not.toHaveBeenCalled();
+    expect(taskUpdate).not.toHaveBeenCalled();
+    expect(applyCompletionAudit).not.toHaveBeenCalled();
   });
 });

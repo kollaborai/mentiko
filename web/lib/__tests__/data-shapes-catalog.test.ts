@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   DATA_SHAPE_CATALOG,
   DATA_SHAPE_SOURCE_EXCLUSIONS,
+  dataShapeDirectShellContractSources,
   dataShapeShellSources,
 } from "@/lib/data-shapes/catalog";
 import {
@@ -52,8 +53,6 @@ describe("data shape catalog", () => {
   });
 
   it("maps every direct runner source to explicit, internally consistent lineage", () => {
-    const runnerShellPath = /^lib\/(?:agent-functions|agent-profile|chain-event-watcher|chain-runner|config|error-handling|routing-lib|run-lib|retry-utils)\.sh$/;
-
     for (const shape of DATA_SHAPE_CATALOG) {
       const provenance = [
         ...(shape.typePaths ?? []),
@@ -62,12 +61,16 @@ describe("data shape catalog", () => {
         ...shape.readers,
       ];
       const hasTypedRunner = provenance.some((path) => path.startsWith("web/lib/runner-v2/"));
-      const hasShellRunner = provenance.some((path) => runnerShellPath.test(path));
-      if (!hasTypedRunner && !hasShellRunner) continue;
+      const hasLegacyShellExecution = shape.runnerLineage?.surfaces.some((surface) => surface.owner === "legacy-shell") ?? false;
+      if (!hasTypedRunner && !hasLegacyShellExecution) continue;
 
       expect(shape.runnerLineage).toBeDefined();
       expect(shape.runnerLineage?.usage).toBe(
-        hasTypedRunner && hasShellRunner ? "shared" : hasTypedRunner ? "runner-v2" : "legacy-shell",
+        hasTypedRunner && hasLegacyShellExecution
+          ? "shared"
+          : hasTypedRunner
+            ? "runner-v2"
+            : "legacy-shell",
       );
     }
   });
@@ -101,6 +104,14 @@ describe("data shape catalog", () => {
   });
 
   it("has no documented data shape with a direct shell contract owner", () => {
+    const queue = DATA_SHAPE_CATALOG
+      .map((shape) => ({ id: shape.id, shell: dataShapeDirectShellContractSources(shape) }))
+      .filter((shape) => shape.shell.length > 0);
+
+    expect(queue).toEqual([]);
+  });
+
+  it("has no documented live shell lifecycle owner after parallel retirement", () => {
     const queue = DATA_SHAPE_CATALOG
       .map((shape) => ({ id: shape.id, shell: dataShapeShellSources(shape) }))
       .filter((shape) => shape.shell.length > 0);
@@ -178,10 +189,10 @@ describe("data shape catalog", () => {
       readers: ["web/lib/pty/pty-client.ts", "web/lib/pty/pty-transport-cli.ts"],
     });
     expect(shape?.notes?.join(" ")).toMatch(/does not independently derive/i);
-    expect(shape?.runnerLineage?.usage).toBe("shared");
+    expect(shape?.runnerLineage?.usage).toBe("runner-v2");
     expect(shape?.runnerLineage?.surfaces).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "typed-pty-transport-owner" }),
-      expect.objectContaining({ id: "shell-pty-command-boundary" }),
+      expect.objectContaining({ id: "typed-pty-command-boundary" }),
     ]));
   });
 
@@ -264,6 +275,7 @@ describe("data shape catalog", () => {
       "web/lib/runner-v2/probe.ts",
       "web/lib/runner-v2/watchdog.ts",
       "web/lib/runner-v2/direct-run.ts",
+      "web/lib/runner-v2/next-chain-launch-cli.ts",
     ]);
     expect(shape?.readers).toEqual([
       "web/app/api/activity/route.ts",

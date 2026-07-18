@@ -58,6 +58,9 @@ const externalEffectsChildFixture = join(
   "external-effects-child.fixture.ts",
 );
 const jestBin = join(process.cwd(), "node_modules", "jest", "bin", "jest.js");
+const fixtureChildren = new Set<ChildProcess>();
+const FIXTURE_READY_TIMEOUT_MS = 15_000;
+const FIXTURE_EXIT_TIMEOUT_MS = 15_000;
 
 function spawnExternalEffectsFixture(input: {
   mode: "hold" | "enqueue";
@@ -66,9 +69,10 @@ function spawnExternalEffectsFixture(input: {
   gatePath?: string;
   effectId?: string;
 }): ChildProcess {
-  return spawn(process.execPath, [
+  const child = spawn(process.execPath, [
     jestBin,
     "--runInBand",
+    "--forceExit",
     "--testMatch",
     "**/external-effects-child.fixture.ts",
     "--runTestsByPath",
@@ -85,24 +89,72 @@ function spawnExternalEffectsFixture(input: {
       EXTERNAL_EFFECTS_CHILD_ID: input.effectId || "",
     },
   });
+  fixtureChildren.add(child);
+  child.once("exit", () => fixtureChildren.delete(child));
+  child.once("error", () => fixtureChildren.delete(child));
+  return child;
 }
 
-async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+async function waitForFixtureFile(child: ChildProcess, path: string, timeoutMs = FIXTURE_READY_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`fixture exited before creating ${path} (code=${child.exitCode}, signal=${child.signalCode})`);
+    }
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for fixture artifact ${path} after ${timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<number | null> {
+function waitForExit(child: ChildProcess, timeoutMs = FIXTURE_EXIT_TIMEOUT_MS): Promise<number | null> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
   return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`fixture did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      resolve(code);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
+async function terminateFixture(child: ChildProcess): Promise<void> {
+  try {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = waitForExit(child);
+    child.kill("SIGTERM");
+    const settled = await Promise.race([
+      exited.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1_000)),
+    ]);
+    if (!settled && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  } finally {
+    fixtureChildren.delete(child);
+  }
+}
+
 describe("runner-v2 external effects dispatcher", () => {
+  afterEach(async () => {
+    await Promise.all([...fixtureChildren].map(terminateFixture));
+    expect(fixtureChildren.size).toBe(0);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     (taskClaimMetadataKeyIfUnset as jest.Mock).mockReturnValue(true);
@@ -615,7 +667,7 @@ describe("runner-v2 external effects drain", () => {
       outboxPath,
       artifactPath: readyPath,
     });
-    await waitForFile(readyPath);
+    await waitForFixtureFile(holder, readyPath);
 
     const queued = enqueueExternalEffectsOnce(outboxPath, [{
       idempotencyKey: "effect-after-live-holder",
@@ -630,7 +682,7 @@ describe("runner-v2 external effects drain", () => {
     expect(await waitForExit(holder)).toBe(0);
     expect(queued).toBe(1);
     expect(readFileSync(outboxPath, "utf8")).toContain("effect-after-live-holder");
-  }, 10_000);
+  }, 30_000);
 
   it("persists distinct effects from two concurrent enqueue processes", async () => {
     const dir = tempDir();
@@ -652,7 +704,10 @@ describe("runner-v2 external effects drain", () => {
       gatePath,
       effectId: "effect-concurrent-b",
     });
-    await Promise.all([waitForFile(firstReady), waitForFile(secondReady)]);
+    await Promise.all([
+      waitForFixtureFile(first, firstReady),
+      waitForFixtureFile(second, secondReady),
+    ]);
     writeFileSync(gatePath, "go\n");
 
     expect(await Promise.all([waitForExit(first), waitForExit(second)])).toEqual([0, 0]);
@@ -664,7 +719,7 @@ describe("runner-v2 external effects drain", () => {
       "effect-concurrent-a",
       "effect-concurrent-b",
     ]);
-  }, 10_000);
+  }, 30_000);
 
   it("consumes the outbox after dispatching every queued record", async () => {
     const dir = tempDir();

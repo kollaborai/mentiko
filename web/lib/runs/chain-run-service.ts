@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------
-// chain-run-service.ts — Start a mentiko chain run (spawn mentiko CLI).
+// chain-run-service.ts — Start a typed mentiko chain run.
 // -------------------------------------------------------------------
 // This service validates input, creates the run directory, writes
 // chain.json + run.json, and spawns the mentiko CLI in a detached
@@ -18,12 +18,11 @@
 // directory.
 // -------------------------------------------------------------------
 
-import { spawn } from "child_process";
 import { randomBytes } from "crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
-import { execAuditLog, shellEscape } from "@/lib/api/audit-exec";
+import { execAuditLog } from "@/lib/api/audit-exec";
 import { getSessionUser, type SessionUser } from "@/lib/auth/auth-bridge";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { getProfile, listProfiles } from "@/lib/agents/agent-profile-storage";
@@ -31,13 +30,13 @@ import { getSecretsEnvVars, resolveProfileEnvVars } from "@/lib/secrets/secrets-
 import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage";
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
+import { validateChain } from "@/lib/validators";
 import { resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
-import { BadRequest, Conflict, Forbidden } from "@/lib/api-errors";
+import { BadRequest, Conflict, Forbidden, ValidationError } from "@/lib/api-errors";
 import { createNotification } from "@/lib/notifications/notification-server";
 import { buildChildEnv } from "@/lib/runs/child-env";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
-import { isRunnerV2Enabled } from "@/lib/runner-v2/flags";
 import { startRunnerV2Launch } from "@/lib/runner-v2/controller";
 import { runSyntheticRunnerV2Probe, runSyntheticRunnerV2ProbeWithDispatch } from "@/lib/runner-v2/probe";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
@@ -48,7 +47,6 @@ import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
-const AGENT_CHAIN_BIN = join(config.binDir, "mentiko");
 const SAFE_RUN_ID_RE = /^run-[A-Za-z0-9_-]{1,120}$/;
 
 // Collision-proof run id (engine bug #20). `run-${Date.now()}` alone is epoch-millis,
@@ -105,6 +103,19 @@ export interface StartChainRunResult {
   runId: string;
   chainId: string;
   status: "started";
+}
+
+/**
+ * A run stores an immutable chain snapshot, so reject an invalid effective
+ * definition before creating that snapshot or spawning the CLI. This is after
+ * reference resolution and runtime-profile application because those are the
+ * exact fields the runner receives.
+ */
+export function assertRunnableChainDefinition(chain: Chain): void {
+  const validation = validateChain(chain);
+  if (!validation.valid) {
+    throw new ValidationError("Invalid chain", { errors: validation.errors });
+  }
 }
 
 function validateChainId(name: string): string {
@@ -326,6 +337,7 @@ export async function startChainRun({
     ? getProfile(namespaceId, orgId, effectiveAgentProfileId)
     : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
+  assertRunnableChainDefinition(runChain);
 
   const runId = body.runId && typeof body.runId === "string"
     ? validateRunId(body.runId)
@@ -446,14 +458,6 @@ export async function startChainRun({
     source: "web",
   }, ip).catch(() => {});
 
-  const binPath = resolve(AGENT_CHAIN_BIN);
-  const debugFlag = debug ? " --debug" : "";
-  const wsFlag = authorizedWorkspacePath
-    ? ` --workspace ${shellEscape(authorizedWorkspacePath)}`
-    : "";
-  const taskFlag = taskId && typeof taskId === "string"
-    ? ` --task ${shellEscape(taskId)}`
-    : "";
   const executionTaskId = typeof taskId === "string" ? taskId : undefined;
   const logPath = join(runDir, "output.log");
   const logFd = openSync(logPath, "w");
@@ -500,7 +504,7 @@ export async function startChainRun({
       : {}),
   });
 
-  if (isRunnerV2Enabled(childEnv) && runMetadata?.runnerV2Probe === true) {
+  if (runMetadata?.runnerV2Probe === true) {
     const probeInput = {
       runDir: join(runDir, "runner-v2-probe"),
       eventsDir: config.eventsDir,
@@ -529,39 +533,26 @@ export async function startChainRun({
     };
   }
 
-  const runnerV2Launch = isRunnerV2Enabled(childEnv)
-    ? await startRunnerV2Launch({
-      chainPath: validatedChainPath,
-      runDir,
-      runId,
-      chainId: runObject.chainId as string,
-      chainName: validChainName,
-      workspacePath: authorizedWorkspacePath,
-      taskId: executionTaskId,
-      debug,
-      logFd,
-      cwd: config.codeRoot,
-      env: childEnv,
-    })
-    : null;
+  const runnerV2Launch = await startRunnerV2Launch({
+    chainPath: validatedChainPath,
+    runDir,
+    runId,
+    chainId: runObject.chainId as string,
+    chainName: validChainName,
+    workspacePath: authorizedWorkspacePath,
+    taskId: executionTaskId,
+    debug,
+    logFd,
+    cwd: config.codeRoot,
+    env: childEnv,
+  });
 
-  if (runnerV2Launch?.support === "unsupported") {
+  if (runnerV2Launch.support === "unsupported") {
     closeSync(logFd);
     throw new Error(runnerV2Launch.reason);
   }
 
-  const child = runnerV2Launch?.support === "supported"
-    ? null
-    : spawn(
-        "/bin/zsh",
-        ["-lc", `${shellEscape(binPath)} run ${shellEscape(validatedChainPath)}${wsFlag}${taskFlag}${debugFlag}`],
-        {
-          cwd: config.codeRoot,
-          detached: true,
-          stdio: ["ignore", logFd, logFd],
-          env: childEnv,
-        }
-      );
+  const child = runnerV2Launch.child;
 
   if (child) {
     child.unref();

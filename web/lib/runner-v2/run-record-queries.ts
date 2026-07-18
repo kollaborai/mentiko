@@ -1,6 +1,5 @@
 import {
   existsSync,
-  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -12,6 +11,13 @@ import {
   readRunRecordAt,
   type RunRecord,
 } from "@/lib/runs/run-record";
+import {
+  isTerminalAgentAttemptPhase,
+  type AgentAttemptPhase,
+} from "@/lib/runner-v2/agent-attempt";
+
+const invalidActiveSessionSelections = new WeakSet<Set<string>>();
+const TERMINAL_RUN_STATUSES = new Set(["failed", "stopped", "completed", "cancelled"]);
 
 export function runGoal(runJsonPath: string): string {
   return readExpectedRun(runJsonPath).goal;
@@ -55,47 +61,57 @@ export function countRunningRuns(runsDir: string, excludeRunId?: string): number
     .length;
 }
 
-export function githubErrorTitle(runJsonPath: string, agentId: string): string {
-  const run = readExpectedRun(runJsonPath);
-  return `Agent Error: ${agentId} failed in ${run.chain || "unknown"}`;
+/**
+ * Select PTY identities owned by persisted runner records. Interactive project
+ * terminals share the daemon, but they are not agent leases and must not
+ * consume the execution cap.
+ *
+ * Terminal and pending records remain relevant: their persisted PTY may still
+ * be alive while cleanup or admission recovery is in progress. Corrupt records
+ * fail the selection closed through activeRunAgentSessionNamesScanInvalid.
+ */
+export function activeRunAgentSessionNames(runsDir: string): Set<string> {
+  const canonicalRunsDir = canonicalizeRunsDir(runsDir);
+  if (!existsSync(canonicalRunsDir)) return new Set();
+  const names = new Set<string>();
+  for (const entry of readdirSync(canonicalRunsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !isRunId(entry.name)) continue;
+    let run: RunRecord;
+    try {
+      run = readRunRecordAt(canonicalRunsDir, entry.name);
+    } catch {
+      invalidActiveSessionSelections.add(names);
+      break;
+    }
+
+    const terminalRun = TERMINAL_RUN_STATUSES.has(run.status);
+    for (const agent of run.agents) {
+      if (agent.session) names.add(agent.session);
+    }
+
+    const runnerV2 = run.runnerV2;
+    if (!runnerV2 || typeof runnerV2 !== "object" || Array.isArray(runnerV2)) continue;
+    const attempts = (runnerV2 as Record<string, unknown>).attempts;
+    if (!Array.isArray(attempts)) continue;
+    for (const candidate of attempts) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+      const attempt = candidate as Record<string, unknown>;
+      if (attempt.runId !== run.id) continue;
+      if (typeof attempt.phase !== "string") continue;
+      if (!terminalRun && isTerminalAgentAttemptPhase(attempt.phase as AgentAttemptPhase)) continue;
+      if (typeof attempt.leaseId === "string" && attempt.leaseId) names.add(attempt.leaseId);
+      const evidence = attempt.processEvidence;
+      if (evidence && typeof evidence === "object" && !Array.isArray(evidence)) {
+        const ptySessionId = (evidence as Record<string, unknown>).ptySessionId;
+        if (typeof ptySessionId === "string" && ptySessionId) names.add(ptySessionId);
+      }
+    }
+  }
+  return names;
 }
 
-export function githubErrorBody(input: {
-  runJsonPath: string;
-  agentId: string;
-  errorMessage: string;
-  outputFile?: string;
-  now?: Date;
-}): string {
-  const run = readExpectedRun(input.runJsonPath);
-  const output = input.outputFile && existsSync(input.outputFile)
-    ? tailLines(readFileSync(input.outputFile, "utf8"), 100)
-    : "";
-  const outputSection = output
-    ? `\n\n## Agent Output (last 100 lines)\n${escapeMarkdownCode(output)}`
-    : "";
-  return [
-    "## Agent Error Report",
-    "",
-    `**Run ID:** \`${run.id}\``,
-    `**Agent:** \`${input.agentId}\``,
-    `**Chain:** ${run.chain || "unknown"}`,
-    `**Status:** ${run.status || "unknown"}`,
-    `**Started:** ${run.started || "unknown"}`,
-    "",
-    "## Goal",
-    run.goal || "no goal",
-    "",
-    "## Error",
-    `${escapeMarkdownCode(input.errorMessage)}${outputSection}`,
-    "",
-    "## Run Info",
-    Object.entries(run).map(([key, value]) => `- **${key}:** ${displayValue(value)}`).join("\n"),
-    "",
-    "---",
-    "Created by mentiko github integration",
-    `Timestamp: ${(input.now || new Date()).toISOString()}`,
-  ].join("\n");
+export function activeRunAgentSessionNamesScanInvalid(names: Set<string>): boolean {
+  return invalidActiveSessionSelections.has(names);
 }
 
 export function deleteRunsOwnedByUser(runsDir: string, userId: string): string[] {
@@ -145,17 +161,4 @@ export function deleteRunsOlderThan(
 function readExpectedRun(runJsonPath: string): RunRecord {
   const runId = basename(dirname(runJsonPath));
   return readRunRecordAt(dirname(dirname(runJsonPath)), runId);
-}
-
-function tailLines(value: string, count: number): string {
-  return value.split("\n").slice(-count).join("\n");
-}
-
-function escapeMarkdownCode(value: string): string {
-  return value.replace(/`/g, "\\`").replace(/\\/g, "\\\\");
-}
-
-function displayValue(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
 }

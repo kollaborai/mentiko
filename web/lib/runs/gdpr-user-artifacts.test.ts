@@ -2,22 +2,13 @@
  * @jest-environment node
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-// GDPR per-user artifact ownership is owned by lib/gdpr-user-artifacts.mjs.
-// The shell boundary lib/gdpr-sweep.sh forwards the namespace root and user id
-// and no longer greps raw JSON.
-
-const modulePath = fileURLToPath(new URL("../../../lib/gdpr-user-artifacts.mjs", import.meta.url));
-const shellPath = fileURLToPath(new URL("../../../lib/gdpr-sweep.sh", import.meta.url));
-
-async function loadModule() {
-  return import(modulePath);
-}
+import {
+  chainOwnedByUser,
+  sweepGdprUserData,
+} from "@/lib/runs/gdpr-user-sweep";
 
 function seedNamespace(root: string): string {
   const ns = join(root, "namespaces", "default");
@@ -36,26 +27,32 @@ function seedNamespace(root: string): string {
 }
 
 describe("typed GDPR user-artifact ownership", () => {
-  it("removes only the user's chains, conversations, and decisions", async () => {
-    const { sweepUserArtifacts } = await loadModule();
+  it("removes only the user's chains, conversations, decisions, and runs", () => {
     const root = mkdtempSync(join(tmpdir(), "gdpr-"));
     try {
       const ns = seedNamespace(root);
-      const removed: string[] = sweepUserArtifacts(ns, "u1");
+      const ownedRun = join(ns, "runs", "run-1784102007562-bb990ff5");
+      mkdirSync(ownedRun, { recursive: true });
+      writeFileSync(join(ownedRun, "run.json"), JSON.stringify({
+        id: "run-1784102007562-bb990ff5", chain: "gdpr", goal: "erase", started: "2026-07-15T00:00:00Z", status: "completed", agents: [], user_id: "u1",
+      }));
+      const result = sweepGdprUserData(ns, "u1");
+      const removed = result.artifactPaths;
       expect(removed).toHaveLength(3);
+      expect(result.runPaths).toEqual([expect.stringMatching(/\/runs\/run-1784102007562-bb990ff5$/)]);
       expect(existsSync(join(ns, "chains", "c-own"))).toBe(false);
       expect(existsSync(join(ns, "chains", "c-other"))).toBe(true);
       expect(existsSync(join(ns, "conversations", "mixed.jsonl"))).toBe(false);
       expect(existsSync(join(ns, "conversations", "other.jsonl"))).toBe(true);
       expect(existsSync(join(ns, "decisions", "d1.json"))).toBe(false);
       expect(existsSync(join(ns, "decisions", "d2.json"))).toBe(true);
+      expect(existsSync(ownedRun)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("does not false-positive on a non-ownership field that mentions the user id", async () => {
-    const { chainOwnedByUser } = await loadModule();
+  it("does not false-positive on a non-ownership field that mentions the user id", () => {
     const root = mkdtempSync(join(tmpdir(), "gdpr-fp-"));
     try {
       const file = join(root, "chain.json");
@@ -67,37 +64,4 @@ describe("typed GDPR user-artifact ownership", () => {
     }
   });
 
-  it("supports a dry run that detects without deleting", async () => {
-    const { sweepUserArtifacts } = await loadModule();
-    const root = mkdtempSync(join(tmpdir(), "gdpr-dry-"));
-    try {
-      const ns = seedNamespace(root);
-      const removed: string[] = sweepUserArtifacts(ns, "u1", { dryRun: true });
-      expect(removed).toHaveLength(3);
-      expect(existsSync(join(ns, "chains", "c-own"))).toBe(true);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("runs as a CLI and prints the removal log", () => {
-    const root = mkdtempSync(join(tmpdir(), "gdpr-cli-"));
-    try {
-      const ns = seedNamespace(root);
-      const out = execFileSync("node", [modulePath, "sweep", "--ns-root", ns, "--user-id", "u1"], { encoding: "utf8" });
-      expect(out).toContain("[gdpr-sweep] removing chain:");
-      expect(out).toContain("[gdpr-sweep] removing decision:");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("leaves the shell boundary free of raw-JSON ownership grep", () => {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const shell = readFileSync(shellPath, "utf8");
-    expect(shell).toContain("gdpr-user-artifacts.mjs");
-    expect(shell).not.toMatch(/grep -q "\\?"created_by/);
-    expect(shell).not.toContain('"user_id":\\"');
-    expect(shell).not.toContain('"userId":\\"');
-  });
 });
