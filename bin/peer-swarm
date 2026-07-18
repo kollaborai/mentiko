@@ -1,0 +1,207 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MENTIKO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/../lib/config.sh"
+source "$SCRIPT_DIR/../lib/agent-profile-client.sh"
+
+# cross-platform md5 (macOS md5 -q vs Linux md5sum)
+_md5() { if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi; }
+
+# show usage if --help
+if [[ "${1:-}" == "--help" ]]; then
+  echo "  usage: peer-swarm <task> [--profile <id>] [--watch]"
+  echo "         peer-swarm <task> <session-a> <session-b> [--profile <id>] [--watch]"
+  echo ""
+  echo "  options:"
+  echo "    --profile  agent profile id (default: namespace default)"
+  echo "    --watch    show live side-by-side output after spawning"
+  echo ""
+  exit 0
+fi
+
+# parse args
+TASK=""
+SESSION_A=""
+SESSION_B=""
+WATCH_MODE="false"
+PROFILE_ID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --watch)
+      WATCH_MODE="true"
+      shift
+      ;;
+    --profile)
+      PROFILE_ID="${2:-}"
+      shift 2
+      ;;
+    *)
+      if [[ -z "$TASK" ]]; then
+        TASK="$1"
+      elif [[ -z "$SESSION_A" ]]; then
+        SESSION_A="$1"
+      elif [[ -z "$SESSION_B" ]]; then
+        SESSION_B="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$TASK" ]]; then
+  echo "  error: task required"
+  echo "  usage: peer-swarm <task> [--profile <id>] [--watch]"
+  exit 1
+fi
+
+# resolve profile: --profile flag > namespace default
+if [[ -z "$PROFILE_ID" ]]; then
+    PROFILE_JSON=$(agent_profile_default_json "$AGENT_PROFILES_DIR") || exit 1
+else
+    PROFILE_JSON=$(agent_profile_select_json "$AGENT_PROFILES_DIR" "$PROFILE_ID") || exit 1
+fi
+
+PROFILE_ID=$(printf '%s' "$PROFILE_JSON" | jq -r '.id // empty')
+PROFILE_FILE=$(printf '%s' "$PROFILE_JSON" | jq -r '.path // empty')
+PROFILE_NAME=$(printf '%s' "$PROFILE_JSON" | jq -r '.name // empty')
+if [[ -z "$PROFILE_ID" || -z "$PROFILE_FILE" ]]; then
+    echo "  error: no agent profile found"
+    echo "  set a default profile in settings or pass --profile <id>"
+    exit 1
+fi
+
+CLI_CMD=$(agent_profile_command "$PROFILE_FILE" true "${NAMESPACE_ID:-default}" "${ORG_ID:-default}") || exit 1
+echo "  profile: $PROFILE_NAME ($PROFILE_ID)"
+
+DATE_SUFFIX=$(date +%Y%m%d-%H%M%S)
+
+# generate session names if not provided
+SESSION_A="${SESSION_A:-agent-alpha-${DATE_SUFFIX}}"
+SESSION_B="${SESSION_B:-agent-beta-${DATE_SUFFIX}}"
+
+# output session names immediately
+echo "{\"sessionA\":\"$SESSION_A\",\"sessionB\":\"$SESSION_B\"}"
+
+PROMPT_A="
+You are Agent Alpha. You are working with Agent Beta to complete this task:
+
+TASK: $TASK
+
+COORDINATION PROTOCOL:
+1. DO NOT start working yet. First, confirm to Beta that you are ready and waiting for them.
+2. Beta will respond when they are ready.
+3. Once both confirm readiness, YOU go first - start working on the task.
+4. When you complete your portion, respond to Beta with:
+   - What you accomplished
+   - What you need them to do next
+   - Any questions or blockers
+5. After sending your message to Beta, STOP. Wait for their response.
+6. When Beta responds, continue from where they left off.
+7. Repeat until task is complete.
+
+IMPORTANT:
+- Be concise. Beta can see your full output.
+- If Beta asks questions, answer them directly.
+- If Beta says they're not ready, wait.
+- Coordinate who does what to avoid duplicate work.
+
+Begin by confirming you are ready and waiting for Beta.
+"
+
+PROMPT_B="
+You are Agent Beta. You are working with Agent Alpha to complete this task:
+
+TASK: $TASK
+
+COORDINATION PROTOCOL:
+1. DO NOT start working yet. First, confirm to Alpha that you are ready and waiting for them.
+2. Alpha will respond when they are ready.
+3. Alpha goes FIRST. Wait for Alpha to complete their portion.
+4. When Alpha sends you work, respond with:
+   - What you will do based on their output
+   - Any questions you have
+   - When you're done, what you accomplished and what Alpha should do next
+5. After sending your message to Alpha, STOP. Wait for their response.
+6. When Alpha responds, continue from where they left off.
+7. Repeat until task is complete.
+
+IMPORTANT:
+- Be concise. Alpha can see your full output.
+- If Alpha asks questions, answer them directly.
+- If Alpha says they're not ready, wait.
+- Let Alpha lead - they go first.
+
+Begin by confirming you are ready and waiting for Alpha.
+"
+
+echo "  spawning swarm..."
+
+if ! "$BIN_DIR/p" status >/dev/null 2>&1; then
+  "$BIN_DIR/p" daemon >/dev/null 2>&1
+  sleep 1
+fi
+
+"$BIN_DIR/p" config screen 50x35 >/dev/null 2>&1
+
+# spawn agents (bash sessions with peer env vars, CLAUDECODE unset for nesting)
+"$BIN_DIR/p" spawn "$SESSION_A" env CLAUDE_PEER="$SESSION_B" CLAUDE_ID="$SESSION_A" CLAUDE_ROLE="alpha" CLAUDECODE="" bash
+sleep 1
+"$BIN_DIR/p" spawn "$SESSION_B" env CLAUDE_PEER="$SESSION_A" CLAUDE_ID="$SESSION_B" CLAUDE_ROLE="beta" CLAUDECODE="" bash
+sleep 1
+
+# wait_for_cli: poll session screen until it changes from bare bash
+# CLI-agnostic: just checks that the screen is no longer a bash prompt
+wait_for_cli() {
+    local session="$1"
+    local max_wait=30
+    local elapsed=0
+    # snapshot the screen right after sending the command
+    local baseline=$("$BIN_DIR/p" capture "$session" 10 2>/dev/null | _md5)
+    sleep 2
+    while [[ $elapsed -lt $max_wait ]]; do
+        local current=$("$BIN_DIR/p" capture "$session" 10 2>/dev/null | _md5)
+        if [[ "$current" != "$baseline" ]]; then
+            # screen changed - CLI is loading or ready
+            # give it another moment to fully initialize
+            sleep 2
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    echo "  warning: $session CLI not detected after ${max_wait}s" >&2
+    return 1
+}
+
+# start CLI from agent profile (includes env exports, pre_exec, flags)
+"$BIN_DIR/p" send "$SESSION_A" "$CLI_CMD"
+"$BIN_DIR/p" send "$SESSION_B" "$CLI_CMD"
+
+# wait for both CLIs to be ready before sending prompts
+echo "  waiting for CLI to start..."
+wait_for_cli "$SESSION_A" || { echo "  error: alpha CLI failed to start"; exit 1; }
+wait_for_cli "$SESSION_B" || { echo "  error: beta CLI failed to start"; exit 1; }
+echo "  both agents ready"
+
+# send prompts (single string per agent, then enter to submit)
+"$BIN_DIR/p" send "$SESSION_A" "$PROMPT_A"
+sleep 1
+"$BIN_DIR/p" send "$SESSION_A" ""
+"$BIN_DIR/p" send "$SESSION_B" "$PROMPT_B"
+sleep 1
+"$BIN_DIR/p" send "$SESSION_B" ""
+
+# spawn watchers in background
+"$SCRIPT_DIR/peer-watch" "$SESSION_A" "$SESSION_B" >/dev/null 2>&1 &
+"$SCRIPT_DIR/peer-watch" "$SESSION_B" "$SESSION_A" >/dev/null 2>&1 &
+
+echo "  agents started: $SESSION_A | $SESSION_B"
+
+# watch mode
+if [[ "$WATCH_MODE" == "true" ]]; then
+  sleep 2
+  exec "$SCRIPT_DIR/peer-swarm-watch" "$SESSION_A" "$SESSION_B"
+fi
