@@ -3,6 +3,8 @@ import {
   DEFAULT_RECOMMEND_TEMPLATE,
   DEFAULT_TASK_TEMPLATE,
   DEFAULT_TASK_RUN_SUMMARY_TEMPLATE,
+  DEFAULT_GUIDED_PLAN_TEMPLATE,
+  DEFAULT_FAILURE_TRIAGE_TEMPLATE,
 } from "@/lib/generation/generation-template-storage";
 
 describe("DEFAULT_CHAIN_TEMPLATE", () => {
@@ -63,5 +65,37 @@ describe("DEFAULT_TASK_RUN_SUMMARY_TEMPLATE", () => {
     expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain(
       "never claim an artifact or piece of evidence is MISSING without citing the exact"
     );
+  });
+
+  it("closes on stale-but-proven criteria instead of opening a moot decision gate (TASK-010)", () => {
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("MOOT CRITERIA CLOSE RULE");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("TASK-010");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain(
+      "This is NOT \"unsure\" under rule (b)"
+    );
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("Inverse guard:");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain(
+      "this rule does not apply and rule (b) governs"
+    );
+  });
+});
+
+describe("criteria-authoring templates require observable end-state acceptance criteria", () => {
+  it("task_generation instructs against volatile source specifics", () => {
+    expect(DEFAULT_TASK_TEMPLATE).toContain("OBSERVABLE_END_STATE_CRITERIA");
+    expect(DEFAULT_TASK_TEMPLATE).toContain("no line numbers");
+    expect(DEFAULT_TASK_TEMPLATE).toContain(
+      "attempt is defined before first use in the retry path of base_scraper.py"
+    );
+  });
+
+  it("decision_guided_plan instructs against volatile source specifics", () => {
+    expect(DEFAULT_GUIDED_PLAN_TEMPLATE).toContain("OBSERVABLE_END_STATE_CRITERIA");
+    expect(DEFAULT_GUIDED_PLAN_TEMPLATE).toContain("no line numbers");
+  });
+
+  it("failure_triage instructs against volatile source specifics", () => {
+    expect(DEFAULT_FAILURE_TRIAGE_TEMPLATE).toContain("OBSERVABLE_END_STATE_CRITERIA");
+    expect(DEFAULT_FAILURE_TRIAGE_TEMPLATE).toContain("no line numbers");
   });
 });

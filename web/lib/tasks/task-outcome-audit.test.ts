@@ -362,7 +362,28 @@ describe("startTaskOutcomeAudit", () => {
     expect(jobInput.prompt).not.toContain("stale stored copy");
   });
 
-  it("keeps a stored template that already has both markers instead of falling back", async () => {
+  it("falls back to the default template when the stored copy predates the MOOT CRITERIA CLOSE RULE upgrade", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-062",
+      title: "Legacy task",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-legacy2" },
+    });
+    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT stale stored copy {{TASK_DATA}}" });
+
+    await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-062",
+    });
+
+    const jobInput = createJob.mock.calls[0][1] as { prompt: string };
+    expect(jobInput.prompt).not.toContain("stale stored copy");
+  });
+
+  it("keeps a stored template that already has all three markers instead of falling back", async () => {
     taskGet.mockReturnValue({
       id: "TASK-061",
       title: "Current task",
@@ -370,7 +391,7 @@ describe("startTaskOutcomeAudit", () => {
       issue_type: "task",
       metadata: { last_run_id: "run-current" },
     });
-    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT custom copy {{TASK_DATA}}" });
+    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT MOOT CRITERIA CLOSE RULE custom copy {{TASK_DATA}}" });
 
     await startTaskOutcomeAudit({
       request: {} as Request,

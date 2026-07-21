@@ -348,6 +348,13 @@ TASK DESIGN PRINCIPLES (apply only when route is "task"):
    - "Given a logged-in user, when they log out, then the session cookie is cleared and they are redirected to /login"
    - "Given an invalid or expired token, when authentication fails, then the user sees a clear error with a retry option"
 
+   OBSERVABLE_END_STATE_CRITERIA (required): describe end-states and behaviors, never volatile source
+   specifics that a later refactor can invalidate -- no line numbers, no "line N shows X", no transient
+   values. Reference stable identifiers instead: function/symbol names, file paths, described behavior, or
+   test outcomes, so the criterion still holds after the code around it changes.
+   BAD:  "line 108 shows wait_time=... with attempt undefined"
+   GOOD: "attempt is defined before first use in the retry path of base_scraper.py"
+
 5. SUBTASKS — for epics, sequence the work properly
    - Each subtask completable in 1-3 days
    - Order: foundation → data layer → API → UI → testing → deployment
@@ -1261,9 +1268,16 @@ RULES:
 4. Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
 5. Each task must be independently completable by one person and must include non-empty deliverable, verification, and acceptance_criteria fields.
 6. The deliverable field must name an observable output or changed state. The verification field must name a repeatable command, test, inspection, or assertion with an expected result. Do not use vague phrases such as "ensure it works".
-7. Include verification/testing in the task that owns the change when possible; do not pad the plan with process-only validation tasks.
-8. Task titles should be imperative: "Set up X" not "X setup"
-9. Phase 1 should be the smallest possible step that proves the
+7. OBSERVABLE_END_STATE_CRITERIA (required): acceptance_criteria must describe observable end-states and
+   behaviors, never volatile source specifics that a later refactor can invalidate -- no line numbers, no
+   "line N shows X", no transient values. Reference stable identifiers instead: function/symbol names, file
+   paths, described behavior, or test outcomes, so the criterion still holds after the code around it
+   changes.
+   BAD:  "line 108 shows wait_time=... with attempt undefined"
+   GOOD: "attempt is defined before first use in the retry path of base_scraper.py"
+8. Include verification/testing in the task that owns the change when possible; do not pad the plan with process-only validation tasks.
+9. Task titles should be imperative: "Set up X" not "X setup"
+10. Phase 1 should be the smallest possible step that proves the
    approach works (de-risk early)
 
 EXAMPLE (for "SQLite with WAL mode" option):
@@ -1768,9 +1782,20 @@ You are also the auditor of record for this task. Decide exactly one verdict in 
 Audit rules:
 a. Judge against the ACCEPTANCE CRITERIA in TASK DATA, not against whether the run merely finished.
 b. Be conservative: if you are unsure whether the work is correct, choose "decision", never "close".
-c. Only choose "retry" when the fix is a re-run with clearer guidance — not when a human judgment call is required.
-d. audit.reason is always required and must justify the verdict from the evidence.
-e. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-014): if TASK DATA's type is
+c. MOOT CRITERIA CLOSE RULE (stale specifics, proven end-state — see TASK-010): acceptance criteria
+   sometimes pin to specifics a later commit changed or removed — an exact line number, a file path that
+   moved, a value only true at task-creation time. When that has happened, check whether the END-STATE the
+   criteria actually describe is already true, verified with concrete evidence you can cite (the current
+   code/file contents at specific paths you actually read — not agent prose, not a run summary's claim). If
+   it is, the verdict is "close": set audit.reason to state plainly that the criteria's specifics were
+   stale, what changed, and the exact evidence (path and what it shows) proving the end-state holds now.
+   This is NOT "unsure" under rule (b) — rule (b)'s if-unsure-choose-decision is about doubt over whether
+   the OUTCOME is true, not about criteria whose wording drifted while the outcome is proven. Inverse guard:
+   if the end-state cannot be verified with concrete cited evidence, or the work is incomplete or wrong,
+   this rule does not apply and rule (b) governs.
+d. Only choose "retry" when the fix is a re-run with clearer guidance — not when a human judgment call is required.
+e. audit.reason is always required and must justify the verdict from the evidence.
+f. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-014): if TASK DATA's type is
    "feature", "task", or "bug", the acceptance criteria describe working software, not a document. Before
    choosing "close", check RUN SUMMARY / RUN ARTIFACTS for evidence that real code files were written or
    modified (not just markdown/spec/plan artifacts, and not just a "here is the implementation plan for the
@@ -1780,7 +1805,7 @@ e. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-
    as "close", the platform independently verifies that at least one agent in the chain had file-write
    authority and will downgrade to "decision" if not — so there is no advantage to rating a spec-only run as
    "close"; it will not stick.
-f. CITATION DISCIPLINE: never claim an artifact or piece of evidence is MISSING without citing the exact
+g. CITATION DISCIPLINE: never claim an artifact or piece of evidence is MISSING without citing the exact
    absolute path you checked (join artifactsRoot with the artifact's path, or use its absolutePath — see
    RUN ARTIFACTS). If you did not check a specific path under ARTIFACTS ROOT, do not claim it is missing.
 
@@ -1833,9 +1858,15 @@ OUTPUT REQUIREMENTS:
     }
   ]
 }
-3. Create at most 3 subtasks.
-4. Preserve the original failure evidence. Do not claim the run succeeded.
-5. Do not start chains, create tasks, or call APIs. The runner will store this as a draft artifact for human review.`;
+3. OBSERVABLE_END_STATE_CRITERIA (required): acceptance_criteria must describe observable end-states and
+   behaviors, never volatile source specifics pulled from the failure log -- no line numbers, no
+   "line N shows X", no transient values. Reference stable identifiers instead: function/symbol names, file
+   paths, described behavior, or test outcomes, so the criterion still holds after the code changes.
+   BAD:  "line 108 shows wait_time=... with attempt undefined"
+   GOOD: "attempt is defined before first use in the retry path of base_scraper.py"
+4. Create at most 3 subtasks.
+5. Preserve the original failure evidence. Do not claim the run succeeded.
+6. Do not start chains, create tasks, or call APIs. The runner will store this as a draft artifact for human review.`;
 
 export function getDefaultTemplates(): GenerationTemplate[] {
   const now = new Date().toISOString();

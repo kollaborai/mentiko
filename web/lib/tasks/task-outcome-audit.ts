@@ -246,9 +246,10 @@ export async function startTaskOutcomeAudit(
 
   const template = getTemplate(namespaceId, orgId, "task_run_summary");
   // Guarantee the auditor verdict instructions even if a stored namespace copy
-  // predates the completion-audit upgrade, or predates the ARTIFACTS ROOT /
-  // citation-discipline upgrade that fixed the self-locating-evidence bug.
-  const templateContent = template.content.includes("COMPLETION AUDIT") && template.content.includes("ARTIFACTS ROOT")
+  // predates the completion-audit upgrade, the ARTIFACTS ROOT / citation-discipline
+  // upgrade that fixed the self-locating-evidence bug, or the moot-criteria close
+  // rule that fixed the TASK-010 wasted-decision-gate bug.
+  const templateContent = template.content.includes("COMPLETION AUDIT") && template.content.includes("ARTIFACTS ROOT") && template.content.includes("MOOT CRITERIA CLOSE RULE")
     ? template.content
     : DEFAULT_TASK_RUN_SUMMARY_TEMPLATE;
   const prompt = resolveTemplate(templateContent, {

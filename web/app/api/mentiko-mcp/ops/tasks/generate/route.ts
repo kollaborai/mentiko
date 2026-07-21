@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationJob } from "@/lib/generation/generation-chain-dispatch";
@@ -89,7 +90,7 @@ export async function POST(req: Request) {
 
   const schema = getTaskSchema();
   const template = getTemplate(namespaceId, orgId, "task_generation");
-  const generationPrompt = resolveTemplate(template.content, {
+  const generationPrompt = resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
     USER_PROMPT: prompt,
     SCHEMA: schema,
     WORKSPACE_CONTEXT: workspaceContext,

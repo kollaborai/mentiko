@@ -4,6 +4,7 @@ import { enforceGuestWrites } from "@/lib/middleware";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
@@ -76,7 +77,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const schema = getTaskSchema();
   const template = getTemplate(namespaceId, orgId, "task_generation");
-  const generationPrompt = resolveTemplate(template.content, {
+  const generationPrompt = resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
     USER_PROMPT: trimmedPrompt,
     SCHEMA: schema,
     WORKSPACE_CONTEXT: workspaceContext,

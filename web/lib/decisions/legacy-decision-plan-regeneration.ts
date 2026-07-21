@@ -3,6 +3,7 @@ import { startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-adv
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
 import { buildDecisionContext, buildPreferenceText } from "@/lib/decisions/decision-context";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { taskList, taskUpdate } from "@/lib/tasks/task-store";
 import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
@@ -77,7 +78,7 @@ function legacyTaskReconciliationPrompt(tasks: TaskRecord[]): string {
 
 function planPrompt(namespaceId: string, orgId: string, decision: Decision, option: Option | TailoredOption, legacyTasks: TaskRecord[]): string {
   const template = getTemplate(namespaceId, orgId, "decision_guided_plan");
-  return resolveTemplate(template.content, {
+  return resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
     DECISION_CONTEXT: buildDecisionContext(decision),
     SELECTED_OPTION: `${option.letter}. ${option.name}: ${option.description}\nEffort: ${option.effort}\nRisk: ${option.risk}\nPros: ${option.pros.join(", ")}\nCons: ${option.cons.join(", ")}`,
     USER_PREFERENCES: buildPreferenceText(decision.guidedFlow as GuidedFlow),
