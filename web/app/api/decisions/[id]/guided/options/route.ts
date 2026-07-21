@@ -13,7 +13,12 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
-import { isDecisionGenerationPointerDead, startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
+import {
+  isCompletedRunAwaitingDecisionImport,
+  isDecisionGenerationPointerDead,
+  startDurableDecisionPhaseOnce,
+  triggerDecisionImportReplay,
+} from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +91,19 @@ export const POST = withErrorHandling(async (
       jobId: guidedFlow.round2.generationJobId,
     });
     if (!dead) {
+      // The pointed-at run may have completed without ever importing its
+      // result (crash after write, mistyped decision id). Replay the import
+      // instead of reporting already_generating forever.
+      if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, guidedFlow.round2.generationRunId)) {
+        triggerDecisionImportReplay({
+          namespaceId,
+          orgId,
+          decisionId: id,
+          phase: "options",
+          runId: guidedFlow.round2.generationRunId!,
+          workspacePath,
+        });
+      }
       return apiSuccess({
         runId: guidedFlow.round2.generationRunId,
         jobId: guidedFlow.round2.generationJobId,

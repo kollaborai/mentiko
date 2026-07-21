@@ -55,6 +55,9 @@ jest.mock("@/lib/links/link-run-runtime", () => ({
   resolveLinkRunsDir: (...args: unknown[]) => resolveLinkRunsDir(...args),
 }));
 jest.mock("@/lib/runs/job-store", () => ({ getJob: (...args: unknown[]) => getJob(...args) }));
+jest.mock("@/lib/auth/internal-api-auth", () => ({
+  resolveInternalAuthSecret: jest.fn(() => "derived-decision-import-secret"),
+}));
 jest.mock("@/lib/api-response", () => ({
   withErrorHandling: <T extends (...args: never[]) => unknown>(handler: T) => handler,
   apiSuccess: (data: unknown) => ({ status: 200, json: async () => ({ success: true, data }) }),
@@ -280,6 +283,44 @@ describe("POST /api/decisions/[id]/guided/plan", () => {
 
     expect(startDecisionChainRun).not.toHaveBeenCalled();
     expect(payload).toMatchObject({ runId: "run-plan-live", status: "already_generating" });
+  });
+
+  it("replays the import instead of relaunching when the pointed-at plan run completed but its result was never imported (DEC-005 wedge)", async () => {
+    storedDecision = {
+      ...baseDecision("dec-plan-lost-import"),
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "complete", questions: [], answers: [] },
+        round2: {
+          status: "ready",
+          tailoredOptions: [option("option-a", "A"), option("option-b", "B")],
+          selectedOptionId: "option-b",
+        },
+        round3: { status: "generating", generationRunId: "run-plan-completed-lost-import" },
+      },
+    } as never;
+    const runDir = join(runsDir, "run-plan-completed-lost-import");
+    mkdirSync(join(runDir, "artifacts"), { recursive: true });
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({ id: "run-plan-completed-lost-import", status: "completed" }));
+    writeFileSync(join(runDir, "artifacts", "decision-result.json"), JSON.stringify({ summary: "s", tasks: [], dependencies: [] }));
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+
+    const response = await POST(request("option-b"), { params: Promise.resolve({ id: "dec-plan-lost-import" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    // Still reports already_generating -- the generation itself did happen --
+    // but a replayed import request has been fired so the round can advance
+    // on the next poll instead of staying wedged forever.
+    expect(payload).toMatchObject({ runId: "run-plan-completed-lost-import", status: "already_generating" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/decisions/dec-plan-lost-import/import");
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      phase: "plan",
+      runId: "run-plan-completed-lost-import",
+      selectedOptionId: "option-b",
+    });
   });
 
   it("refuses a completed legacy plan that cannot prove each generated task", async () => {

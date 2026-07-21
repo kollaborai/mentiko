@@ -12,6 +12,7 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { applyDecisionRunResult } from "@/lib/decisions/decision-run-results";
 import { taskUpdate } from "@/lib/tasks/task-store";
+import { isCompletedRunAwaitingDecisionImport, triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +88,37 @@ export const GET = withErrorHandling(async (
         activeJobId: undefined,
       }, workspacePath);
       return apiSuccess({ decision: updated });
+    }
+  }
+
+  // Guided-round self-heal: this GET is the surface the guided-flow UI polls
+  // every ~2s while a spinner is up (pollDecisionUntil), not the guided/*
+  // POST routes -- they fire once to start a round, then the client watches
+  // this endpoint for the round to advance. If the pointed-at run completed
+  // but its import never landed (crash after write, mistyped decision id),
+  // nudge it here instead of leaving the user staring at a stuck spinner
+  // until they manually retry.
+  const gf = decision.guidedFlow;
+  if (gf) {
+    if (gf.round1.status === "in_progress" && gf.round1.questions.length === 0 &&
+      isCompletedRunAwaitingDecisionImport(nsId, orgId, gf.round1.generationRunId)) {
+      triggerDecisionImportReplay({
+        namespaceId: nsId, orgId, decisionId: id, phase: "questions",
+        runId: gf.round1.generationRunId!, workspacePath,
+      });
+    } else if (gf.round2.status === "generating" &&
+      isCompletedRunAwaitingDecisionImport(nsId, orgId, gf.round2.generationRunId)) {
+      triggerDecisionImportReplay({
+        namespaceId: nsId, orgId, decisionId: id, phase: "options",
+        runId: gf.round2.generationRunId!, workspacePath,
+      });
+    } else if (gf.round3.status === "generating" && gf.round2.selectedOptionId &&
+      isCompletedRunAwaitingDecisionImport(nsId, orgId, gf.round3.generationRunId)) {
+      triggerDecisionImportReplay({
+        namespaceId: nsId, orgId, decisionId: id, phase: "plan",
+        runId: gf.round3.generationRunId!, workspacePath,
+        selectedOptionId: gf.round2.selectedOptionId,
+      });
     }
   }
 

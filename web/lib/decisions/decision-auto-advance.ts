@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { join } from "node:path";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { getJob } from "@/lib/runs/job-store";
+import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 
 type DecisionPhaseStart<T, R> = {
   started: T;
@@ -348,9 +349,16 @@ function internalDecisionPost(
   path: string,
   workspacePath?: string,
   body?: unknown,
+  // Route-specific auth override. Most internal nudges hit routes guarded by
+  // checkAuth's service-secret bypass (raw BETTER_AUTH_SECRET); the import
+  // route guards with requireInternalAuth("decision-import"), which needs the
+  // HMAC-derived token instead -- callers targeting it must pass one.
+  authToken?: string,
+  baseUrl?: string,
 ): void {
   const port = process.env.WEB_PORT || process.env.PORT || 3000;
-  const secret = process.env.BETTER_AUTH_SECRET || "";
+  const secret = authToken ?? (process.env.BETTER_AUTH_SECRET || "");
+  const origin = baseUrl || `http://localhost:${port}`;
   const qs = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : "";
   const key = `${namespaceId}:${orgId}:${path}:${workspacePath ?? ""}:${JSON.stringify(body ?? {})}`;
   if (inFlightDecisionNudges.has(key)) return;
@@ -361,7 +369,7 @@ function internalDecisionPost(
     let lastError: Error | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(`http://localhost:${port}${path}${qs}`, {
+        const response = await fetch(`${origin}${path}${qs}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -391,6 +399,76 @@ function internalDecisionPost(
   });
 }
 
+/**
+ * A generation pointer that is not dead (isDecisionGenerationPointerDead ==
+ * false) can still be permanently stuck: the pointed-at run completed and
+ * wrote its artifact, but the import that should have applied it never
+ * landed (crash between completion and import, or a caller that typed the
+ * wrong decision id). Detect exactly that gap so callers can replay the
+ * import instead of reporting "already_generating" forever.
+ */
+export function isCompletedRunAwaitingDecisionImport(
+  namespaceId: string,
+  orgId: string,
+  runId: string | undefined,
+): boolean {
+  if (!runId) return false;
+  const runDir = join(resolveLinkRunsDir(namespaceId, orgId), runId);
+  try {
+    const run = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8")) as { status?: unknown };
+    if (run.status !== "completed") return false;
+  } catch {
+    return false;
+  }
+  return existsSync(join(runDir, "artifacts", "decision-result.json"));
+}
+
+function readRunScopedDecisionImportToken(runDir: string): string {
+  try {
+    return readFileSync(join(runDir, ".internal", "decision-import-token"), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Replay the import for a completed-but-unimported decision phase run. Reuses
+ * the exact route the CLI's `mentiko decision import` hits and the same
+ * requireInternalAuth("decision-import") derived token it authenticates
+ * with -- no new auth path. `runDir`, when supplied, lets an out-of-process
+ * caller (the typed completion entrypoint, which may not share this
+ * process's BETTER_AUTH_SECRET) read the durable per-run token that
+ * chain-run-service.ts already writes for the CLI to use, instead of trusting
+ * env inheritance.
+ */
+export function triggerDecisionImportReplay(input: {
+  namespaceId: string;
+  orgId: string;
+  decisionId: string;
+  phase: string;
+  runId: string;
+  workspacePath?: string;
+  selectedOptionId?: string;
+  runDir?: string;
+  webUrl?: string;
+}): void {
+  const token = (input.runDir && readRunScopedDecisionImportToken(input.runDir))
+    || resolveInternalAuthSecret("decision-import");
+  internalDecisionPost(
+    input.namespaceId,
+    input.orgId,
+    `/api/decisions/${input.decisionId}/import`,
+    input.workspacePath,
+    {
+      phase: input.phase,
+      runId: input.runId,
+      ...(input.selectedOptionId ? { selectedOptionId: input.selectedOptionId } : {}),
+    },
+    token,
+    input.webUrl,
+  );
+}
+
 function decisionAutoApprovalEnabled(namespaceId: string, orgId: string, decision: Decision): boolean {
   if (!decision.workspacePath) return false;
   const workspace = listWorkspaces(namespaceId, orgId).find(
@@ -418,43 +496,60 @@ export function advanceDecisionAfterPhase(input: {
   // run would otherwise freeze the round forever. Re-post to the SAME phase
   // route rather than relaunching here -- the durable lease, staleness check,
   // and relaunch all stay in the one place the routes already own.
-  if (
-    gf?.round1.status === "in_progress" &&
-    gf.round1.questions.length === 0 &&
-    isDecisionGenerationPointerDead(namespaceId, orgId, {
-      runId: gf.round1.generationRunId,
-      jobId: gf.round1.generationJobId,
-    })
-  ) {
-    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);
-    return;
+  //
+  // A pointer that is NOT dead can still be stuck a different way: the run
+  // completed and wrote its artifact, but nothing ever imported it (the agent
+  // crashed after writing decision-result.json, mistyped the decision id, or
+  // the completion-driven import failed). Replay the import for that case
+  // instead of no-opping forever.
+  if (gf?.round1.status === "in_progress" && gf.round1.questions.length === 0) {
+    const pointer = { runId: gf.round1.generationRunId, jobId: gf.round1.generationJobId };
+    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
+      internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);
+      return;
+    }
+    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
+      triggerDecisionImportReplay({
+        namespaceId, orgId, decisionId: decision.id, phase: "questions",
+        runId: pointer.runId!, workspacePath: ws,
+      });
+      return;
+    }
   }
-  if (
-    gf?.round2.status === "generating" &&
-    isDecisionGenerationPointerDead(namespaceId, orgId, {
-      runId: gf.round2.generationRunId,
-      jobId: gf.round2.generationJobId,
-    })
-  ) {
-    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws);
-    return;
+  if (gf?.round2.status === "generating") {
+    const pointer = { runId: gf.round2.generationRunId, jobId: gf.round2.generationJobId };
+    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
+      internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws);
+      return;
+    }
+    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
+      triggerDecisionImportReplay({
+        namespaceId, orgId, decisionId: decision.id, phase: "options",
+        runId: pointer.runId!, workspacePath: ws,
+      });
+      return;
+    }
   }
-  if (
-    gf?.round3.status === "generating" &&
-    gf.round2.selectedOptionId &&
-    isDecisionGenerationPointerDead(namespaceId, orgId, {
-      runId: gf.round3.generationRunId,
-      jobId: gf.round3.generationJobId,
-    })
-  ) {
-    internalDecisionPost(
-      namespaceId,
-      orgId,
-      `/api/decisions/${decision.id}/guided/plan`,
-      ws,
-      { selectedOptionId: gf.round2.selectedOptionId },
-    );
-    return;
+  if (gf?.round3.status === "generating" && gf.round2.selectedOptionId) {
+    const pointer = { runId: gf.round3.generationRunId, jobId: gf.round3.generationJobId };
+    const selectedOptionId = gf.round2.selectedOptionId;
+    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
+      internalDecisionPost(
+        namespaceId,
+        orgId,
+        `/api/decisions/${decision.id}/guided/plan`,
+        ws,
+        { selectedOptionId },
+      );
+      return;
+    }
+    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
+      triggerDecisionImportReplay({
+        namespaceId, orgId, decisionId: decision.id, phase: "plan",
+        runId: pointer.runId!, workspacePath: ws, selectedOptionId,
+      });
+      return;
+    }
   }
 
   if (decision.status === "briefed" && (!gf || !gf.round1 || gf.round1.status === "pending")) {

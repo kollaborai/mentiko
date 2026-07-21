@@ -4,6 +4,7 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
 import { getWorkspacePath } from "@/lib/workspaces/workspace-params";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
+import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { getJob } from "@/lib/runs/job-store";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
@@ -13,7 +14,12 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
-import { isDecisionGenerationPointerDead, startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
+import {
+  isCompletedRunAwaitingDecisionImport,
+  isDecisionGenerationPointerDead,
+  startDurableDecisionPhaseOnce,
+  triggerDecisionImportReplay,
+} from "@/lib/decisions/decision-auto-advance";
 import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +96,20 @@ export const POST = withErrorHandling(async (
       jobId: guidedFlow.round3.generationJobId,
     });
     if (!dead) {
+      // The pointed-at run may have completed without ever importing its
+      // result (crash after write, mistyped decision id). Replay the import
+      // instead of reporting already_generating forever.
+      if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, guidedFlow.round3.generationRunId)) {
+        triggerDecisionImportReplay({
+          namespaceId,
+          orgId,
+          decisionId: id,
+          phase: "plan",
+          runId: guidedFlow.round3.generationRunId!,
+          workspacePath,
+          selectedOptionId: selectedId,
+        });
+      }
       return apiSuccess({
         runId: guidedFlow.round3.generationRunId,
         jobId: guidedFlow.round3.generationJobId,
@@ -117,7 +137,7 @@ export const POST = withErrorHandling(async (
       const contextParts = [buildDecisionContext(decision), workspaceContext].filter(Boolean).join("\n\n");
       const preferenceText = buildPreferenceText(guidedFlow);
       const template = getTemplate(namespaceId, orgId, "decision_guided_plan");
-      const prompt = resolveTemplate(template.content, {
+      const prompt = resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
         DECISION_CONTEXT: contextParts,
         SELECTED_OPTION: `${selectedOption.letter}. ${selectedOption.name}: ${selectedOption.description}\nEffort: ${selectedOption.effort}\nRisk: ${selectedOption.risk}\nPros: ${selectedOption.pros.join(", ")}\nCons: ${selectedOption.cons.join(", ")}`,
         USER_PREFERENCES: preferenceText,

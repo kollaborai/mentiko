@@ -957,6 +957,84 @@ describe("runner-v2 completion entrypoint", () => {
     expect(outbox.some((record) => record.operation?.event === "agent-failed")).toBe(true);
   });
 
+  describe("decision import on completion", () => {
+    const originalFetch = global.fetch;
+    const originalSecret = process.env.BETTER_AUTH_SECRET;
+
+    beforeEach(() => {
+      process.env.BETTER_AUTH_SECRET = "test-completion-secret";
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      if (originalSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+      else process.env.BETTER_AUTH_SECRET = originalSecret;
+    });
+
+    it("triggers the decision import when a decision-phase run completes with an unimported result", async () => {
+      const root = tempRoot();
+      const fixture = seedRoutedRun(root, {
+        runMetadata: {
+          decisionId: "decision-completion-1",
+          decisionPhase: "plan",
+          selectedOptionId: "opt-a",
+          workspacePath: "/ws/repo",
+        },
+      });
+      mkdirSync(join(fixture.runDir, "artifacts"), { recursive: true });
+      writeJson(join(fixture.runDir, "artifacts", "decision-result.json"), { summary: "s", tasks: [], dependencies: [] });
+      emitVerifierEvent(fixture.eventsDir);
+      const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+      global.fetch = fetchMock;
+
+      const result = runRunnerV2CompletionEntrypoint({
+        sessionName: "verifier-run-123",
+        chainPath: fixture.chainPath,
+        env: routedEnv(fixture),
+        now: new Date("2026-07-04T00:00:00.000Z"),
+      });
+      expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
+      // The completion path fires the import as an unawaited side effect; let
+      // its microtask run before asserting on it.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(result.decision).toBe("route");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain("/api/decisions/decision-completion-1/import");
+      expect(JSON.parse(init.body)).toEqual({
+        phase: "plan",
+        runId: "run-123",
+        selectedOptionId: "opt-a",
+      });
+    });
+
+    it("does not trigger a decision import when a completed run carries no decision metadata", async () => {
+      const root = tempRoot();
+      const fixture = seedRoutedRun(root);
+      // Same artifact present as the positive case above -- proves the metadata
+      // gate, not artifact absence, is what suppresses the trigger here.
+      mkdirSync(join(fixture.runDir, "artifacts"), { recursive: true });
+      writeJson(join(fixture.runDir, "artifacts", "decision-result.json"), { summary: "s", tasks: [], dependencies: [] });
+      emitVerifierEvent(fixture.eventsDir);
+      const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+      global.fetch = fetchMock;
+
+      runRunnerV2CompletionEntrypoint({
+        sessionName: "verifier-run-123",
+        chainPath: fixture.chainPath,
+        env: routedEnv(fixture),
+        now: new Date("2026-07-04T00:00:00.000Z"),
+      });
+      expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("adopts and fails the typed attempt when a routed agent completes without its event", () => {
     const root = tempRoot();
     const fixture = seedRoutedRun(root);

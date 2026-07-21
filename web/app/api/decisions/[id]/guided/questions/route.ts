@@ -17,10 +17,12 @@ import {
   acquireDurableDecisionPhaseClaim,
   decisionPhaseKey,
   findDurableDecisionPhaseRun,
+  isCompletedRunAwaitingDecisionImport,
   isDecisionGenerationPointerDead,
   recordDurableDecisionPhaseRun,
   releaseDurableDecisionPhaseClaim,
   startDecisionPhaseOnce,
+  triggerDecisionImportReplay,
 } from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
@@ -89,6 +91,19 @@ export const POST = withErrorHandling(async (
       jobId: existingRound1.generationJobId,
     });
     if (!dead) {
+      // The pointed-at run may have completed without ever importing its
+      // result (crash after write, mistyped decision id). Replay the import
+      // instead of reporting already_generating forever.
+      if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, existingRound1.generationRunId)) {
+        triggerDecisionImportReplay({
+          namespaceId,
+          orgId,
+          decisionId: id,
+          phase: "questions",
+          runId: existingRound1.generationRunId!,
+          workspacePath,
+        });
+      }
       return apiSuccess({ status: "already_generating", decision });
     }
     // The prior deck run died before producing questions and nothing else would

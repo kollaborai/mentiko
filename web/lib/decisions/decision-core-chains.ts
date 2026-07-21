@@ -17,7 +17,7 @@ export const DECISION_CORE_CHAIN_IDS = [
 
 export type DecisionCoreChainId = typeof DECISION_CORE_CHAIN_IDS[number];
 
-const DECISION_CORE_CHAIN_VERSION = "1.0.5";
+const DECISION_CORE_CHAIN_VERSION = "1.0.6";
 
 interface CoreChainDefinition {
   id: DecisionCoreChainId;
@@ -33,8 +33,9 @@ function importInstructions(phase: string): string {
     "Write ONLY the final JSON payload to:",
     "  $ARTIFACTS_DIR/decision-result.json",
     "",
-    "Then import it into Mentiko with:",
-    `  mentiko decision import "$ARTIFACTS_DIR/decision-result.json" --decision "$MENTIKO_DECISION_ID" --phase ${phase} --run "$MENTIKO_RUN_ID"`,
+    "Then import it into Mentiko with exactly this command -- copy it verbatim, do not",
+    "retype the run id or any other value from earlier in this prompt:",
+    `  mentiko decision import "$ARTIFACTS_DIR/decision-result.json" --phase ${phase} --run "$MENTIKO_RUN_ID"`,
     "",
     "The Mentiko CLI is already on PATH as mentiko. Use mentiko, not ./bin/mentiko.",
     "",

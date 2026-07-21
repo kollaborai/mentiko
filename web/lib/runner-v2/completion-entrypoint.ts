@@ -22,6 +22,7 @@ import type { RoutingChain } from "@/lib/runner-v2/routing";
 import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
+import { triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advance";
 import config from "@/lib/config";
 
 export interface RunnerV2CompletionEntrypointInput {
@@ -309,6 +310,23 @@ export function runRunnerV2CompletionEntrypoint(
       onRunMutation,
     });
 
+    if (!input.dryRun && runBecameCompletedInPlan(plan)) {
+      // Delivery must not depend on the agent correctly composing the CLI import
+      // call (it can crash right after writing the artifact, or never get the
+      // chance). Trigger the import as soon as this run's own completion marks it
+      // done; the guided-route/GET self-heal in decision-auto-advance.ts is the
+      // backstop for whatever slips through this (e.g. the process dying before
+      // the fire-and-forget POST lands).
+      maybeTriggerDecisionImportOnCompletion({
+        namespaceId: env.NAMESPACE_ID || "default",
+        orgId: env.ORG_ID || "default",
+        metadata: run.metadata,
+        runId,
+        runDir,
+        webUrl: env.MENTIKO_WEB_URL,
+      });
+    }
+
     if (input.dryRun) {
       restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
     } else if (pipeline.decision.action !== "await-liveness") {
@@ -358,6 +376,56 @@ export function runRunnerV2CompletionEntrypoint(
     }
     throw error;
   }
+}
+
+/** True exactly when this completion's plan carries the run to terminal "completed". */
+function runBecameCompletedInPlan(plan: TypedExecutorPlan): boolean {
+  return plan.effects.some((effect) =>
+    effect.type === "terminal" || (effect.type === "run-terminal" && effect.status === "completed"));
+}
+
+/**
+ * Decision guided-round chains (Decision Guided Questions/Options/Plan) complete
+ * like any other run, but the human-visible progress depends on the agent's own
+ * `mentiko decision import` call landing afterward. That call can be skipped or
+ * mistyped. Fire it ourselves as soon as this run's completion is durable so
+ * delivery never depends solely on the agent's last shell command succeeding.
+ * completion-entrypoint.ts runs out-of-process (spawned by `mentiko complete`,
+ * not necessarily inside the Next.js server), so prefer the durable per-run
+ * token chain-run-service.ts already wrote for the CLI over recomputing one
+ * from this process's own env.
+ */
+function maybeTriggerDecisionImportOnCompletion(input: {
+  namespaceId: string;
+  orgId: string;
+  metadata: RunRecord["metadata"];
+  runId: string;
+  runDir: string;
+  webUrl?: string;
+}): void {
+  const decisionId = typeof input.metadata?.decisionId === "string" ? input.metadata.decisionId : undefined;
+  const phase = typeof input.metadata?.decisionPhase === "string" ? input.metadata.decisionPhase : undefined;
+  if (!decisionId || !phase) return;
+  if (!existsSync(join(input.runDir, "artifacts", "decision-result.json"))) return;
+
+  const selectedOptionId = typeof input.metadata?.selectedOptionId === "string"
+    ? input.metadata.selectedOptionId
+    : undefined;
+  const workspacePath = typeof input.metadata?.workspacePath === "string"
+    ? input.metadata.workspacePath
+    : undefined;
+
+  triggerDecisionImportReplay({
+    namespaceId: input.namespaceId,
+    orgId: input.orgId,
+    decisionId,
+    phase,
+    runId: input.runId,
+    workspacePath,
+    selectedOptionId,
+    runDir: input.runDir,
+    webUrl: input.webUrl,
+  });
 }
 
 function alreadyCompletedGeneration(

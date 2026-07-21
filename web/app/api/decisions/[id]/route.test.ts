@@ -76,6 +76,10 @@ jest.mock("node:fs", () => ({
   readFileSync: (...args: unknown[]) => readFileSync(...args),
 }));
 
+jest.mock("@/lib/auth/internal-api-auth", () => ({
+  resolveInternalAuthSecret: jest.fn(() => "derived-decision-import-secret"),
+}));
+
 import { DELETE, GET, PATCH } from "./route";
 
 function makeRequest(body?: Record<string, unknown>): Parameters<typeof GET>[0] {
@@ -152,6 +156,53 @@ describe("GET /api/decisions/[id]", () => {
         },
       },
     });
+  });
+
+  test("nudges a completed-but-unimported guided round without blocking the response (this is the surface the guided-flow UI actually polls)", async () => {
+    const originalFetch = global.fetch;
+    const decision = {
+      id: "decision-2",
+      status: "briefed",
+      prompt: "choose a path",
+      title: "choose a path",
+      options: [{ id: "opt-a" }],
+      guidedFlow: {
+        currentRound: 2,
+        round1: { status: "complete", questions: [], answers: [] },
+        round2: { status: "ready", tailoredOptions: [], selectedOptionId: "opt-a" },
+        round3: { status: "generating", generationRunId: "run-plan-lost" },
+      },
+    };
+    getDecision.mockReturnValue(decision);
+    existsSync.mockReturnValue(true);
+    readFileSync.mockImplementation((path: string) => {
+      if (path.endsWith("run.json")) return JSON.stringify({ status: "completed" });
+      if (path.endsWith("decision-result.json")) return JSON.stringify({});
+      throw new Error(`unexpected read: ${path}`);
+    });
+    const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock;
+
+    try {
+      const res = await GET(makeRequest(), { params: Promise.resolve({ id: "decision-2" }) });
+      expect(res.status).toBe(200);
+      // The response returns the still-stale decision (fire-and-forget, not
+      // synchronous like the research stale-check above) -- let the nudge's
+      // microtask run before asserting on it.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain("/api/decisions/decision-2/import");
+      expect(JSON.parse(init.body)).toEqual({
+        phase: "plan",
+        runId: "run-plan-lost",
+        selectedOptionId: "opt-a",
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 
