@@ -1746,7 +1746,12 @@ WORKSPACE CONTEXT:
 Based on the data above, produce a concise but useful outcome summary.
 
 RULES:
-1. Be specific and factual. Use only the provided task/run/artifact data.
+1. Be specific and factual. RUN ARTIFACTS carries an absolute ARTIFACTS ROOT (artifactsRoot) and the
+   exact source run id (sourceRunId) for this execution run — every disk[] entry's absolutePath is
+   anchored under that root. You MAY read files directly under that ARTIFACTS ROOT to verify evidence
+   (e.g. open a summary .md for detail); you must not invent anything beyond the provided task/run/
+   artifact data and the contents of those files. Never resolve a relative artifact path against your
+   own working directory — always join it onto the given ARTIFACTS ROOT, or use absolutePath as-is.
 2. Do not invent files, edits, errors, costs, agents, or acceptance proof.
 3. The headline should be one sentence that captures the most important outcome.
 4. The narrative should explain what happened, why it matters, and whether the user can move forward.
@@ -1775,6 +1780,9 @@ e. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-
    as "close", the platform independently verifies that at least one agent in the chain had file-write
    authority and will downgrade to "decision" if not — so there is no advantage to rating a spec-only run as
    "close"; it will not stick.
+f. CITATION DISCIPLINE: never claim an artifact or piece of evidence is MISSING without citing the exact
+   absolute path you checked (join artifactsRoot with the artifact's path, or use its absolutePath — see
+   RUN ARTIFACTS). If you did not check a specific path under ARTIFACTS ROOT, do not claim it is missing.
 
 OUTPUT FORMAT:
 Output ONLY valid JSON matching this schema:

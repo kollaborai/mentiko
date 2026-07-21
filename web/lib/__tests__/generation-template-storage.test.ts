@@ -51,4 +51,17 @@ describe("DEFAULT_TASK_RUN_SUMMARY_TEMPLATE", () => {
     expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain('"improvement_signals"');
     expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("Do not invent files, edits, errors, costs, agents, or acceptance proof");
   });
+
+  it("does not contradict the audit rule's evidence check: rule 1 permits reading files under the given artifacts root", () => {
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("ARTIFACTS ROOT");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("You MAY read files directly under that ARTIFACTS ROOT");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("Never resolve a relative artifact path against your");
+  });
+
+  it("requires citing the exact absolute path before claiming evidence is missing", () => {
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("CITATION DISCIPLINE");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain(
+      "never claim an artifact or piece of evidence is MISSING without citing the exact"
+    );
+  });
 });

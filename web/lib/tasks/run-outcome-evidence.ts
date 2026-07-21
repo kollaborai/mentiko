@@ -10,6 +10,7 @@ import {
 
 export interface RunArtifactEvidence {
   path: string;
+  absolutePath: string;
   name: string;
   size: number;
   modifiedAt: string;
@@ -181,6 +182,67 @@ export function isOutcomeSummaryExecutionSource(
   return !isNonExecutionRun(run);
 }
 
+// Chains never write artifacts/run-summary.json; the real evidence lives in the
+// per-agent `<agentId>-summary.json` files and generation-result.json that agents
+// actually produce. Bounded so a chatty agent summary can't blow up the prompt.
+const AGGREGATE_SUMMARY_SUFFIX = "-summary.json";
+const MAX_AGGREGATED_SUMMARY_FILES = 20;
+const MAX_AGGREGATED_FIELD_CHARS = 4000;
+
+function truncateForPrompt(value: unknown, depth = 0): unknown {
+  if (depth > 6) return "[truncated: nesting too deep]";
+  if (typeof value === "string") {
+    return value.length > MAX_AGGREGATED_FIELD_CHARS
+      ? `${value.slice(0, MAX_AGGREGATED_FIELD_CHARS)}...[truncated]`
+      : value;
+  }
+  if (Array.isArray(value)) return value.slice(0, 50).map((entry) => truncateForPrompt(entry, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = truncateForPrompt(entry, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+function aggregatedRunSummary(runDir: string): unknown {
+  const artifactsDir = join(runDir, "artifacts");
+  if (!existsSync(artifactsDir)) return null;
+  let names: string[];
+  try {
+    names = readdirSync(artifactsDir).filter(
+      (name) => name.endsWith(AGGREGATE_SUMMARY_SUFFIX) && name !== "run-summary.json",
+    );
+  } catch {
+    return null;
+  }
+  const generationResult = readJsonFile(join(artifactsDir, "generation-result.json"));
+  if (names.length === 0 && generationResult === null) return null;
+
+  // The final-verifier summary is the acceptance evidence; keep it first so it
+  // never falls off the cap.
+  names.sort((a, b) => {
+    const aFinal = a.startsWith("final-verifier-") ? 0 : 1;
+    const bFinal = b.startsWith("final-verifier-") ? 0 : 1;
+    return aFinal !== bFinal ? aFinal - bFinal : a.localeCompare(b);
+  });
+
+  const agentSummaries: Record<string, unknown> = {};
+  for (const name of names.slice(0, MAX_AGGREGATED_SUMMARY_FILES)) {
+    const parsed = readJsonFile(join(artifactsDir, name));
+    if (parsed !== null) agentSummaries[name] = truncateForPrompt(parsed);
+  }
+  if (Object.keys(agentSummaries).length === 0 && generationResult === null) return null;
+
+  return {
+    source: "aggregated-agent-summaries",
+    agentSummaries,
+    ...(generationResult !== null ? { generationResult: truncateForPrompt(generationResult) } : {}),
+  };
+}
+
 export function currentRunSummary(
   namespaceId: string,
   orgId: string,
@@ -190,7 +252,7 @@ export function currentRunSummary(
 ): unknown {
   const { runDir } = locateRunEvidence(namespaceId, orgId, runId, taskMetadata);
   const p = join(runDir, "artifacts", "run-summary.json");
-  return readJsonFile(p) || fallback || null;
+  return readJsonFile(p) || aggregatedRunSummary(runDir) || fallback || null;
 }
 
 function listArtifactFiles(root: string, dir: string, out: RunArtifactEvidence[], limit: number) {
@@ -208,6 +270,7 @@ function listArtifactFiles(root: string, dir: string, out: RunArtifactEvidence[]
       const rel = relative(root, fullPath);
       out.push({
         path: rel,
+        absolutePath: fullPath,
         name: entry.name,
         size: stat.size,
         modifiedAt: stat.mtime.toISOString(),
@@ -227,14 +290,19 @@ export function currentRunArtifacts(
 ): unknown {
   const location = locateRunEvidence(namespaceId, orgId, runId, taskMetadata);
   const runDir = location.runDir;
+  const artifactsRoot = join(runDir, "artifacts");
   const run = runEvidenceRecord(location);
   const fromRunJson = Array.isArray(run.artifacts) ? run.artifacts : [];
   const fromFallback = Array.isArray(fallback) ? fallback : [];
   const fromDisk: RunArtifactEvidence[] = [];
-  listArtifactFiles(runDir, join(runDir, "artifacts"), fromDisk, 200);
+  listArtifactFiles(runDir, artifactsRoot, fromDisk, 200);
 
-  if (fromRunJson.length === 0 && fromFallback.length === 0) return fromDisk;
+  // sourceRunId + artifactsRoot make this self-locating: a reader resolving
+  // `disk[].path` on its own must not guess a root — it is given the exact one,
+  // and `disk[].absolutePath` needs no resolution at all.
   return {
+    sourceRunId: runId,
+    artifactsRoot,
     runJson: fromRunJson,
     metadata: fromFallback,
     disk: fromDisk,

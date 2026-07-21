@@ -307,6 +307,82 @@ describe("startTaskOutcomeAudit", () => {
     );
   });
 
+  it("embeds the self-locating artifacts root and source run id from currentRunArtifacts into the built prompt", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-050",
+      title: "Audit backend microservices",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-abs" },
+    });
+    currentRunArtifacts.mockReturnValue({
+      sourceRunId: "run-abs",
+      artifactsRoot: "/Users/test/.mentiko/namespaces/default/runs/run-abs/artifacts",
+      runJson: [],
+      metadata: [],
+      disk: [{
+        path: "final-verifier-summary.json",
+        absolutePath: "/Users/test/.mentiko/namespaces/default/runs/run-abs/artifacts/final-verifier-summary.json",
+        name: "final-verifier-summary.json",
+        size: 10,
+        modifiedAt: "2026-01-01T00:00:00.000Z",
+      }],
+    });
+
+    await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-050",
+    });
+
+    const jobInput = createJob.mock.calls[0][1] as { prompt: string };
+    expect(jobInput.prompt).toContain("\"sourceRunId\": \"run-abs\"");
+    expect(jobInput.prompt).toContain("/Users/test/.mentiko/namespaces/default/runs/run-abs/artifacts");
+  });
+
+  it("falls back to the default template when the stored copy predates the ARTIFACTS ROOT upgrade", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-060",
+      title: "Legacy task",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-legacy" },
+    });
+    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT\nstale stored copy {{TASK_DATA}}" });
+
+    await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-060",
+    });
+
+    const jobInput = createJob.mock.calls[0][1] as { prompt: string };
+    expect(jobInput.prompt).not.toContain("stale stored copy");
+  });
+
+  it("keeps a stored template that already has both markers instead of falling back", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-061",
+      title: "Current task",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: { last_run_id: "run-current" },
+    });
+    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT custom copy {{TASK_DATA}}" });
+
+    await startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-061",
+    });
+
+    const jobInput = createJob.mock.calls[0][1] as { prompt: string };
+    expect(jobInput.prompt).toContain("custom copy");
+  });
+
   it("uses task.workspace_id before stale metadata workspace_path for the audit workspace", async () => {
     taskGet.mockReturnValue({
       id: "TASK-093",
