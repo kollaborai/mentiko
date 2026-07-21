@@ -149,7 +149,17 @@ describe("POST /api/decisions/[id]/guided/plan", () => {
 
   it("starts one plan run for a double-submit of the same selection", async () => {
     let resolveRun: ((run: { runId: string }) => void) | undefined;
-    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
+    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => {
+      // Mirror chain-run-service.startChainRun: run.json is durably written
+      // before the caller can ever observe the runId, so a concurrent reader's
+      // dead-pointer check must see a live run, not a missing one.
+      resolveRun = (result) => {
+        const dir = join(runsDir, result.runId);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ id: result.runId, status: "running" }));
+        resolve(result);
+      };
+    }));
 
     const first = POST(request("option-b"), { params: Promise.resolve({ id: "dec-plan" }) });
     await new Promise((resolve) => setImmediate(resolve));
@@ -215,6 +225,61 @@ describe("POST /api/decisions/[id]/guided/plan", () => {
       selectedOptionId: "option-b",
     }));
     expect(payload).toMatchObject({ runId: "run-plan-option-b", status: "running" });
+  });
+
+  function writeRun(runId: string, status: string) {
+    const dir = join(runsDir, runId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ id: runId, status }));
+  }
+
+  it("relaunches when the pointed-at plan run died (dead-run recovery)", async () => {
+    storedDecision = {
+      ...baseDecision("dec-plan-dead"),
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "complete", questions: [], answers: [] },
+        round2: {
+          status: "ready",
+          tailoredOptions: [option("option-a", "A"), option("option-b", "B")],
+          selectedOptionId: "option-b",
+        },
+        round3: { status: "generating", generationRunId: "run-plan-dead" },
+      },
+    } as never;
+    writeRun("run-plan-dead", "failed");
+    startDecisionChainRun.mockResolvedValue({ runId: "run-plan-relaunched" });
+
+    const response = await POST(request("option-b"), { params: Promise.resolve({ id: "dec-plan-dead" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(payload).toMatchObject({ runId: "run-plan-relaunched", status: "running" });
+    expect((storedDecision.guidedFlow.round3 as { generationRunId?: string }).generationRunId)
+      .toBe("run-plan-relaunched");
+  });
+
+  it("keeps already_generating when the pointed-at plan run is still live", async () => {
+    storedDecision = {
+      ...baseDecision("dec-plan-live"),
+      guidedFlow: {
+        currentRound: 3,
+        round1: { status: "complete", questions: [], answers: [] },
+        round2: {
+          status: "ready",
+          tailoredOptions: [option("option-a", "A"), option("option-b", "B")],
+          selectedOptionId: "option-b",
+        },
+        round3: { status: "generating", generationRunId: "run-plan-live" },
+      },
+    } as never;
+    writeRun("run-plan-live", "running");
+
+    const response = await POST(request("option-b"), { params: Promise.resolve({ id: "dec-plan-live" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    expect(payload).toMatchObject({ runId: "run-plan-live", status: "already_generating" });
   });
 
   it("refuses a completed legacy plan that cannot prove each generated task", async () => {

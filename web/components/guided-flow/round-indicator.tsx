@@ -21,6 +21,12 @@ function deriveStepState(
   currentRound: 0 | 1 | 2 | 3
 ): StepState {
   if (status === "complete" || status === "skipped") return "complete";
+  // The flow has moved past this round. Round1/round2 never reach a stored
+  // "complete" status on the headless path (round1's tradeoff cards are
+  // optional context, not a human gate, and round2 has no "complete" state at
+  // all -- see decision-types.ts), so once currentRound has advanced beyond a
+  // round it is done, whatever its own status field still says.
+  if (roundNumber < currentRound) return "complete";
   if (roundNumber === currentRound) return "active";
   if (status === "in_progress" || status === "ready" || status === "generating" || status === "synthesizing")
     return "active";

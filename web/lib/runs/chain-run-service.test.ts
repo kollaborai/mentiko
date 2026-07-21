@@ -39,7 +39,10 @@ describe("assertRunnableChainDefinition", () => {
 describe("typed chain launch boundary", () => {
   it.each(["1", "0"])("never selects a shell runner when MENTIKO_RUNNER_V2=%s", () => {
     const source = readFileSync(join(process.cwd(), "lib", "runs", "chain-run-service.ts"), "utf8");
-    expect(source).toContain("await startRunnerV2Launch({");
+    // Both the synchronous (default) and deferred (decision-phase, FIX 6)
+    // launch paths call the SAME typed launcher through the SAME shared
+    // context object -- proving neither branch drifted onto a shell runner.
+    expect(source.match(/startRunnerV2Launch\(runnerV2LaunchContext\)/g)).toHaveLength(2);
     expect(source).not.toContain("isRunnerV2Enabled");
     expect(source).not.toMatch(/spawn\(\s*["']\/bin\/zsh/);
     expect(source).not.toContain("bin/mentiko");

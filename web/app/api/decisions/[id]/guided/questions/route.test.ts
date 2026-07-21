@@ -125,7 +125,17 @@ describe("POST /api/decisions/[id]/guided/questions", () => {
 
   it("starts one deck run when browser and server calls arrive concurrently", async () => {
     let resolveRun: ((run: { runId: string }) => void) | undefined;
-    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
+    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => {
+      // Mirror chain-run-service.startChainRun: run.json is durably written
+      // before the caller can ever observe the runId, so a concurrent reader's
+      // dead-pointer check must see a live run, not a missing one.
+      resolveRun = (result) => {
+        const dir = join(runsDir, result.runId);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ id: result.runId, status: "running" }));
+        resolve(result);
+      };
+    }));
 
     const first = POST(request(), { params: Promise.resolve({ id: "dec-questions" }) });
     await new Promise((resolve) => setImmediate(resolve));
@@ -188,5 +198,52 @@ describe("POST /api/decisions/[id]/guided/questions", () => {
     expect(storedDecision.guidedFlow).toEqual(expect.objectContaining({
       round1: expect.objectContaining({ generationRunId: "run-existing" }),
     }));
+  });
+
+  function writeRun(runId: string, status: string) {
+    const dir = join(runsDir, runId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ id: runId, status }));
+  }
+
+  it("relaunches when the pointed-at deck run died (dead-run recovery)", async () => {
+    storedDecision = {
+      ...baseDecision("dec-questions-dead"),
+      guidedFlow: {
+        currentRound: 1,
+        round1: { status: "in_progress", questions: [], answers: [], generationRunId: "run-questions-dead" },
+        round2: { status: "pending", tailoredOptions: [] },
+        round3: { status: "pending" },
+      },
+    };
+    writeRun("run-questions-dead", "blocked");
+    startDecisionChainRun.mockResolvedValue({ runId: "run-questions-relaunched" });
+
+    const response = await POST(request(), { params: Promise.resolve({ id: "dec-questions-dead" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(payload).toMatchObject({ runId: "run-questions-relaunched", status: "running" });
+    expect((storedDecision.guidedFlow as { round1: { generationRunId?: string } }).round1.generationRunId)
+      .toBe("run-questions-relaunched");
+  });
+
+  it("keeps already_generating when the pointed-at deck run is still live", async () => {
+    storedDecision = {
+      ...baseDecision("dec-questions-live"),
+      guidedFlow: {
+        currentRound: 1,
+        round1: { status: "in_progress", questions: [], answers: [], generationRunId: "run-questions-live" },
+        round2: { status: "pending", tailoredOptions: [] },
+        round3: { status: "pending" },
+      },
+    };
+    writeRun("run-questions-live", "pending");
+
+    const response = await POST(request(), { params: Promise.resolve({ id: "dec-questions-live" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    expect(payload).toMatchObject({ status: "already_generating" });
   });
 });

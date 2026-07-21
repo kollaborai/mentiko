@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -132,7 +132,17 @@ describe("POST /api/decisions/[id]/guided/options", () => {
 
   it("starts one options run when browser and server calls arrive concurrently", async () => {
     let resolveRun: ((run: { runId: string }) => void) | undefined;
-    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
+    startDecisionChainRun.mockImplementation(() => new Promise((resolve) => {
+      // Mirror chain-run-service.startChainRun: run.json is durably written
+      // before the caller can ever observe the runId, so a concurrent reader's
+      // dead-pointer check must see a live run, not a missing one.
+      resolveRun = (result) => {
+        const dir = join(runsDir, result.runId);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ id: result.runId, status: "running" }));
+        resolve(result);
+      };
+    }));
 
     const first = POST(request(), { params: Promise.resolve({ id: "dec-options" }) });
     await new Promise((resolve) => setImmediate(resolve));
@@ -171,5 +181,71 @@ describe("POST /api/decisions/[id]/guided/options", () => {
     expect(payload).toMatchObject({ runId: "run-options-restart", status: "already_generating" });
     expect((storedDecision.guidedFlow.round2 as { generationRunId?: string }).generationRunId)
       .toBe("run-options-restart");
+  });
+
+  function writeRun(runId: string, status: string) {
+    const dir = join(runsDir, runId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.json"), JSON.stringify({ id: runId, status }));
+  }
+
+  it("relaunches when the pointed-at options run died (dead-run recovery)", async () => {
+    storedDecision = {
+      ...baseDecision("dec-options-dead"),
+      guidedFlow: {
+        currentRound: 1,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [] },
+        round2: { status: "generating", tailoredOptions: [], generationRunId: "run-options-dead" },
+        round3: { status: "pending" },
+      },
+    } as never;
+    writeRun("run-options-dead", "blocked");
+    startDecisionChainRun.mockResolvedValue({ runId: "run-options-relaunched" });
+
+    const response = await POST(request(), { params: Promise.resolve({ id: "dec-options-dead" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(payload).toMatchObject({ runId: "run-options-relaunched", status: "running" });
+    expect((storedDecision.guidedFlow.round2 as { generationRunId?: string }).generationRunId)
+      .toBe("run-options-relaunched");
+  });
+
+  it("relaunches when the pointed-at options run is missing entirely", async () => {
+    storedDecision = {
+      ...baseDecision("dec-options-missing"),
+      guidedFlow: {
+        currentRound: 1,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [] },
+        round2: { status: "generating", tailoredOptions: [], generationRunId: "run-options-never-existed" },
+        round3: { status: "pending" },
+      },
+    } as never;
+    startDecisionChainRun.mockResolvedValue({ runId: "run-options-relaunched-2" });
+
+    const response = await POST(request(), { params: Promise.resolve({ id: "dec-options-missing" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).toHaveBeenCalledTimes(1);
+    expect(payload).toMatchObject({ runId: "run-options-relaunched-2", status: "running" });
+  });
+
+  it("keeps already_generating when the pointed-at options run is still live", async () => {
+    storedDecision = {
+      ...baseDecision("dec-options-live"),
+      guidedFlow: {
+        currentRound: 1,
+        round1: { status: "in_progress", questions: [{ id: "q-1" }], answers: [] },
+        round2: { status: "generating", tailoredOptions: [], generationRunId: "run-options-live" },
+        round3: { status: "pending" },
+      },
+    } as never;
+    writeRun("run-options-live", "running");
+
+    const response = await POST(request(), { params: Promise.resolve({ id: "dec-options-live" }) });
+    const payload = await responseData(response);
+
+    expect(startDecisionChainRun).not.toHaveBeenCalled();
+    expect(payload).toMatchObject({ runId: "run-options-live", status: "already_generating" });
   });
 });

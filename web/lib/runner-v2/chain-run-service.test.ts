@@ -269,6 +269,82 @@ describe("chain-run-service runner-v2 guard", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  describe("decision phase launches (FIX 6: no blocking on slot admission)", () => {
+    it("resolves before the runner-v2 launch (admission/bootstrap) completes", async () => {
+      let resolveLaunch: ((result: Awaited<ReturnType<typeof startRunnerV2Launch>>) => void) | undefined;
+      mockStartRunnerV2Launch.mockImplementation(() => new Promise((resolve) => { resolveLaunch = resolve; }));
+
+      const resultPromise = startMinimalRun("run-decision-deferred", {
+        decisionId: "dec-1",
+        decisionPhase: "options",
+      });
+
+      // The launch (which in production can block on acquireChainAdmission's
+      // up-to-300s poll loop) is deliberately never resolved here. If the route
+      // still awaited it synchronously, this race would time out instead of
+      // returning the durable run pointer.
+      const winner = await Promise.race([
+        resultPromise.then(() => "resolved" as const),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]);
+
+      expect(winner).toBe("resolved");
+      await expect(resultPromise).resolves.toMatchObject({
+        runId: "run-decision-deferred",
+        status: "started",
+      });
+      expect(mockStartRunnerV2Launch).toHaveBeenCalledTimes(1);
+
+      // run.json must already be the durable pointer even though the launch
+      // itself is still in flight in the background.
+      const runJson = JSON.parse(readFileSync(join(currentRunsDir, "run-decision-deferred", "run.json"), "utf8"));
+      expect(runJson.status).toBe("running");
+
+      // Resolve the deferred launch so it doesn't leak an unhandled rejection
+      // or a dangling timer into a later test.
+      resolveLaunch?.({ support: "supported", mode: "typed-plan" });
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    it("still blocks on the launch for non-decision runs (unchanged behavior)", async () => {
+      let resolveLaunch: ((result: Awaited<ReturnType<typeof startRunnerV2Launch>>) => void) | undefined;
+      mockStartRunnerV2Launch.mockImplementation(() => new Promise((resolve) => { resolveLaunch = resolve; }));
+
+      const resultPromise = startMinimalRun("run-task-not-deferred");
+
+      const winner = await Promise.race([
+        resultPromise.then(() => "resolved" as const),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]);
+      expect(winner).toBe("timeout");
+
+      resolveLaunch?.({ support: "supported", mode: "typed-plan" });
+      await expect(resultPromise).resolves.toMatchObject({
+        runId: "run-task-not-deferred",
+        status: "started",
+      });
+    });
+
+    it("marks the run failed in the background when the deferred launch is unsupported", async () => {
+      let resolveLaunch: ((result: Awaited<ReturnType<typeof startRunnerV2Launch>>) => void) | undefined;
+      mockStartRunnerV2Launch.mockImplementation(() => new Promise((resolve) => { resolveLaunch = resolve; }));
+
+      const result = await startMinimalRun("run-decision-deferred-fail", {
+        decisionId: "dec-2",
+        decisionPhase: "questions",
+      });
+      expect(result).toMatchObject({ runId: "run-decision-deferred-fail", status: "started" });
+
+      resolveLaunch?.({ support: "unsupported", reason: "runner-v2 contract missing" });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const runJson = JSON.parse(readFileSync(join(currentRunsDir, "run-decision-deferred-fail", "run.json"), "utf8"));
+      expect(runJson.status).toBe("failed");
+      expect(runJson.error).toBe("runner-v2 contract missing");
+    });
+  });
+
   it("runs the typed dry-run probe through the service when explicitly requested", async () => {
     const { buildChildEnv } = await import("@/lib/runs/child-env");
     (buildChildEnv as jest.MockedFunction<typeof buildChildEnv>).mockImplementation((env) => ({ ...env, NODE_ENV: "test", MENTIKO_RUNNER_V2: "1" } as ReturnType<typeof buildChildEnv>));

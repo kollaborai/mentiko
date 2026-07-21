@@ -36,7 +36,10 @@ describe("typed direct-run gateway, context, and readiness ownership", () => {
   });
 
   it("does not relaunch a shell runner when the old feature flag is on or off", () => {
-    expect(chainService).toContain("await startRunnerV2Launch({");
+    // Both the synchronous (default) and deferred (decision-phase, FIX 6)
+    // launch paths call the SAME typed launcher through the SAME shared
+    // context object -- proving neither branch drifted onto a shell runner.
+    expect(chainService.match(/startRunnerV2Launch\(runnerV2LaunchContext\)/g)).toHaveLength(2);
     expect(chainService).not.toContain("isRunnerV2Enabled");
     expect(chainService).not.toMatch(/spawn\(\s*[\"']\/bin\/zsh/);
     expect(chainService).not.toContain("bin/mentiko");

@@ -13,7 +13,7 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
-import { startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
+import { isDecisionGenerationPointerDead, startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
 
 export const dynamic = "force-dynamic";
 
@@ -81,12 +81,26 @@ export const POST = withErrorHandling(async (
   if (!guidedFlow) throw new BadRequest("No guided flow");
 
   if (guidedFlow.round2.generationRunId || guidedFlow.round2.generationJobId) {
-    return apiSuccess({
+    const dead = isDecisionGenerationPointerDead(namespaceId, orgId, {
       runId: guidedFlow.round2.generationRunId,
       jobId: guidedFlow.round2.generationJobId,
-      status: "already_generating",
-      decision,
     });
+    if (!dead) {
+      return apiSuccess({
+        runId: guidedFlow.round2.generationRunId,
+        jobId: guidedFlow.round2.generationJobId,
+        status: "already_generating",
+        decision,
+      });
+    }
+    // The prior launch died before producing options (crashed/blocked/failed run,
+    // or one that never durably landed) and nothing else would ever clear this
+    // pointer -- every retry hit the guard above and no-opped forever. Clear it
+    // so the durable phase launch below can relaunch under the lease.
+    guidedFlow.round2.status = "pending";
+    guidedFlow.round2.generationRunId = undefined;
+    guidedFlow.round2.generationJobId = undefined;
+    await updateDecision(namespaceId, orgId, id, { guidedFlow }, workspacePath);
   }
 
   const phase = await startDurableDecisionPhaseOnce({

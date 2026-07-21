@@ -13,7 +13,7 @@ import { Unauthorized, NotFound, BadRequest, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startDecisionChainRun } from "@/lib/decisions/decision-chain-dispatch";
-import { startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
+import { isDecisionGenerationPointerDead, startDurableDecisionPhaseOnce } from "@/lib/decisions/decision-auto-advance";
 import { validateExecutionPlan } from "@/lib/decisions/decision-plan-contract";
 
 export const dynamic = "force-dynamic";
@@ -85,12 +85,24 @@ export const POST = withErrorHandling(async (
     guidedFlow.round2.selectedOptionId === selectedId &&
     (guidedFlow.round3.generationRunId || guidedFlow.round3.generationJobId)
   ) {
-    return apiSuccess({
+    const dead = isDecisionGenerationPointerDead(namespaceId, orgId, {
       runId: guidedFlow.round3.generationRunId,
       jobId: guidedFlow.round3.generationJobId,
-      status: "already_generating",
-      decision,
     });
+    if (!dead) {
+      return apiSuccess({
+        runId: guidedFlow.round3.generationRunId,
+        jobId: guidedFlow.round3.generationJobId,
+        status: "already_generating",
+        decision,
+      });
+    }
+    // Same stale-pointer recovery as options/questions: a dead plan run left
+    // this selection permanently wedged since the guard above never expires.
+    guidedFlow.round3.status = "pending";
+    guidedFlow.round3.generationRunId = undefined;
+    guidedFlow.round3.generationJobId = undefined;
+    await updateDecision(namespaceId, orgId, id, { guidedFlow }, workspacePath);
   }
 
   const phase = await startDurableDecisionPhaseOnce({

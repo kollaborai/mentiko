@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
+import { getJob } from "@/lib/runs/job-store";
 
 type DecisionPhaseStart<T, R> = {
   started: T;
@@ -132,6 +133,56 @@ export function findDurableDecisionPhaseRun(input: DecisionPhaseIdentity): Durab
   }
   candidates.sort((a, b) => b.started - a.started || b.runId.localeCompare(a.runId));
   return candidates[0] ? { runId: candidates[0].runId } : null;
+}
+
+export interface DecisionGenerationPointer {
+  runId?: string;
+  jobId?: string;
+}
+
+/** Run statuses that mean "this launch will never produce a result" -- excludes
+ * completed/complete (success) and running/pending (still live). */
+const DEAD_DECISION_GENERATION_RUN_STATUSES = new Set([
+  "failed", "blocked", "stopped", "cancelled", "deleted", "unknown",
+]);
+
+/**
+ * A round's generationRunId/generationJobId guards every relaunch attempt
+ * (the routes early-return "already_generating" whenever it's set) but nothing
+ * ever cleared it when the underlying run died mid-flight -- a crashed,
+ * concurrency-blocked, or cap-timed-out run wedges the round forever. This is
+ * the ONE place that decides "dead", shared by the three guided routes and
+ * the auto-advance healer below, so relaunch eligibility can't drift between
+ * them. A pointer is dead when every component it has (run and/or job) is
+ * terminal-and-not-completed, or missing entirely (the launch never landed
+ * durably). A genuinely live run/job, or one that completed and is only
+ * awaiting import, is NOT dead -- callers must keep treating it as in flight.
+ */
+export function isDecisionGenerationPointerDead(
+  namespaceId: string,
+  orgId: string,
+  pointer: DecisionGenerationPointer,
+): boolean {
+  if (!pointer.runId && !pointer.jobId) return false;
+
+  if (pointer.runId) {
+    const runJsonPath = join(resolveLinkRunsDir(namespaceId, orgId), pointer.runId, "run.json");
+    try {
+      const run = JSON.parse(readFileSync(runJsonPath, "utf8")) as { status?: unknown };
+      const status = typeof run.status === "string" ? run.status : "";
+      if (!DEAD_DECISION_GENERATION_RUN_STATUSES.has(status)) return false;
+    } catch {
+      // Missing or unreadable run.json: the launch never landed durably, or
+      // was pruned. Either way there is nothing left to wait on.
+    }
+  }
+
+  if (pointer.jobId) {
+    const job = getJob(pointer.jobId, namespaceId);
+    if (job && job.status !== "failed") return false;
+  }
+
+  return true;
 }
 
 /**
@@ -360,6 +411,51 @@ export function advanceDecisionAfterPhase(input: {
   const { namespaceId, orgId, decision } = input;
   const ws = decision.workspacePath;
   const gf = decision.guidedFlow;
+
+  // Self-heal a round wedged on a dead generation pointer before evaluating the
+  // normal phase transitions below. Nothing else re-triggers this decision once
+  // its run stops emitting completion events, so a crashed/blocked/cap-timed-out
+  // run would otherwise freeze the round forever. Re-post to the SAME phase
+  // route rather than relaunching here -- the durable lease, staleness check,
+  // and relaunch all stay in the one place the routes already own.
+  if (
+    gf?.round1.status === "in_progress" &&
+    gf.round1.questions.length === 0 &&
+    isDecisionGenerationPointerDead(namespaceId, orgId, {
+      runId: gf.round1.generationRunId,
+      jobId: gf.round1.generationJobId,
+    })
+  ) {
+    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);
+    return;
+  }
+  if (
+    gf?.round2.status === "generating" &&
+    isDecisionGenerationPointerDead(namespaceId, orgId, {
+      runId: gf.round2.generationRunId,
+      jobId: gf.round2.generationJobId,
+    })
+  ) {
+    internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws);
+    return;
+  }
+  if (
+    gf?.round3.status === "generating" &&
+    gf.round2.selectedOptionId &&
+    isDecisionGenerationPointerDead(namespaceId, orgId, {
+      runId: gf.round3.generationRunId,
+      jobId: gf.round3.generationJobId,
+    })
+  ) {
+    internalDecisionPost(
+      namespaceId,
+      orgId,
+      `/api/decisions/${decision.id}/guided/plan`,
+      ws,
+      { selectedOptionId: gf.round2.selectedOptionId },
+    );
+    return;
+  }
 
   if (decision.status === "briefed" && (!gf || !gf.round1 || gf.round1.status === "pending")) {
     internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);

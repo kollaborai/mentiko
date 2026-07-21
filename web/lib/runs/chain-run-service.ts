@@ -19,6 +19,7 @@
 // -------------------------------------------------------------------
 
 import { randomBytes } from "crypto";
+import type { ChildProcess } from "child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
 import config, { nsPath, orgPath } from "@/lib/config";
@@ -162,6 +163,51 @@ function getClientIp(request: Request): string {
 
 function logAuditEvent(eventType: string, description: string, metadata: Record<string, string>, ip: string): Promise<void> {
   return execAuditLog(eventType, description, metadata, { ip }).then(() => undefined);
+}
+
+/** Mark a run terminally failed after launch (sync or deferred) could not start it. */
+function markChainLaunchFailed(
+  runDir: string,
+  validChainName: string,
+  namespaceId: string,
+  runObject: Record<string, unknown>,
+  runId: string,
+  message: string,
+): void {
+  const errorRunPath = join(runDir, "run.json");
+  if (existsSync(errorRunPath)) {
+    const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
+    errorRun.status = "failed";
+    errorRun.error = message;
+    writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
+  }
+  createNotification(namespaceId, {
+    type: "chain_failed",
+    title: `Chain failed: ${validChainName}`,
+    message: `Spawn error: ${message}`,
+    metadata: {
+      chainId: runObject.chainId as string,
+      runId,
+      error: message,
+      actionUrl: `/runs?runId=${runId}`,
+      actionLabel: "View Run",
+    },
+  });
+}
+
+function attachChildFailureHandling(
+  child: ChildProcess | undefined,
+  runDir: string,
+  validChainName: string,
+  namespaceId: string,
+  runObject: Record<string, unknown>,
+  runId: string,
+): void {
+  if (!child) return;
+  child.unref();
+  child.on("error", (spawnError) => {
+    markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, spawnError.message);
+  });
 }
 
 function applyRuntimeAgentProfileOverride(chain: Chain, agentProfileId?: string): Chain {
@@ -533,7 +579,7 @@ export async function startChainRun({
     };
   }
 
-  const runnerV2Launch = await startRunnerV2Launch({
+  const runnerV2LaunchContext = {
     chainPath: validatedChainPath,
     runDir,
     runId,
@@ -545,40 +591,43 @@ export async function startChainRun({
     logFd,
     cwd: config.codeRoot,
     env: childEnv,
-  });
+  };
 
-  if (runnerV2Launch.support === "unsupported") {
-    closeSync(logFd);
-    throw new Error(runnerV2Launch.reason);
-  }
-
-  const child = runnerV2Launch.child;
-
-  if (child) {
-    child.unref();
-    child.on("error", (spawnError) => {
-      const errorRunPath = join(runDir, "run.json");
-      if (existsSync(errorRunPath)) {
-        const errorRun = JSON.parse(readFileSync(errorRunPath, "utf-8"));
-        errorRun.status = "failed";
-        errorRun.error = spawnError.message;
-        writeFileSync(errorRunPath, JSON.stringify(errorRun, null, 2));
-      }
-      createNotification(namespaceId, {
-        type: "chain_failed",
-        title: `Chain failed: ${validChainName}`,
-        message: `Spawn error: ${spawnError.message}`,
-        metadata: {
-          chainId: runObject.chainId as string,
-          runId,
-          error: spawnError.message,
-          actionUrl: `/runs?runId=${runId}`,
-          actionLabel: "View Run",
-        },
+  if (decisionRunMetadata) {
+    // Decision phase launches (guided options/questions/plan) must not block this
+    // HTTP request on slot admission or PTY bootstrap readiness: for local
+    // workspaces, executeLocalBootstrap's acquireChainAdmission polls up to
+    // MENTIKO_CAP_MAX_WAIT_SECS (default 300s) INSIDE the awaited launch chain,
+    // while decision-auto-advance's internal caller times out at 30s (observed
+    // as a 302,861ms POST). run.json above is already the durable pointer the
+    // caller needs; let admission/bootstrap continue in the background and
+    // return now. Launch failures still land in run.json (status "failed") so
+    // the next request's dead-run recovery (decision-auto-advance's
+    // isDecisionGenerationPointerDead) can relaunch instead of wedging forever.
+    void startRunnerV2Launch(runnerV2LaunchContext)
+      .then((launch) => {
+        closeSync(logFd);
+        if (launch.support === "unsupported") {
+          markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, launch.reason);
+          return;
+        }
+        attachChildFailureHandling(launch.child, runDir, validChainName, namespaceId, runObject, runId);
+      })
+      .catch((error) => {
+        try { closeSync(logFd); } catch { /* already closed */ }
+        markChainLaunchFailed(runDir, validChainName, namespaceId, runObject, runId, error instanceof Error ? error.message : String(error));
       });
-    });
+  } else {
+    const runnerV2Launch = await startRunnerV2Launch(runnerV2LaunchContext);
+
+    if (runnerV2Launch.support === "unsupported") {
+      closeSync(logFd);
+      throw new Error(runnerV2Launch.reason);
+    }
+
+    attachChildFailureHandling(runnerV2Launch.child, runDir, validChainName, namespaceId, runObject, runId);
+    closeSync(logFd);
   }
-  closeSync(logFd);
 
   logAuditEvent("chain_complete", `Chain launched from web: ${validChainName}`, {
     chain_name: validChainName,

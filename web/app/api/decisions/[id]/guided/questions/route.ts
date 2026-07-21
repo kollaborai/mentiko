@@ -17,6 +17,7 @@ import {
   acquireDurableDecisionPhaseClaim,
   decisionPhaseKey,
   findDurableDecisionPhaseRun,
+  isDecisionGenerationPointerDead,
   recordDurableDecisionPhaseRun,
   releaseDurableDecisionPhaseClaim,
   startDecisionPhaseOnce,
@@ -83,7 +84,21 @@ export const POST = withErrorHandling(async (
   // below closes the smaller check-then-start window before that pointer is written.
   const existingRound1 = decision.guidedFlow?.round1;
   if (existingRound1?.status === "in_progress" && (existingRound1.generationRunId || existingRound1.generationJobId)) {
-    return apiSuccess({ status: "already_generating", decision });
+    const dead = isDecisionGenerationPointerDead(namespaceId, orgId, {
+      runId: existingRound1.generationRunId,
+      jobId: existingRound1.generationJobId,
+    });
+    if (!dead) {
+      return apiSuccess({ status: "already_generating", decision });
+    }
+    // The prior deck run died before producing questions and nothing else would
+    // ever clear this pointer. Clear it so the durable phase launch below can
+    // relaunch under the lease instead of no-opping forever.
+    const clearedFlow: GuidedFlow = {
+      ...decision.guidedFlow!,
+      round1: { ...existingRound1, status: "pending", generationRunId: undefined, generationJobId: undefined },
+    };
+    await updateDecision(namespaceId, orgId, id, { guidedFlow: clearedFlow, mode: "guided" }, workspacePath);
   }
 
   const phase = await startDecisionPhaseOnce({
