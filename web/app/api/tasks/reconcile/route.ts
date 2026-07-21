@@ -44,6 +44,7 @@ import {
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 import { hasLivePendingHandoff } from "@/lib/runner-v2/handoff-liveness";
+import { isConcurrencyCapBlockedReason } from "@/lib/runner-v2/concurrency-admission";
 
 export const dynamic = "force-dynamic";
 
@@ -736,10 +737,19 @@ async function applyExecutionLifecycle(input: {
             runId: input.runId,
             fingerprint: runFingerprint,
             reason: input.reason,
-            // `blocked` means runner-v2 reached a deliberate terminal policy
-            // decision (for example readiness/auth/cap). Retrying it blindly
-            // hides the evidence and recreates the same bad launch.
-            nonRetryable: input.runStatus === "blocked",
+            // `blocked` usually means runner-v2 reached a deliberate terminal
+            // policy decision (bad readiness, invalid admission, an auth
+            // prompt, ...) -- retrying it blindly hides the evidence and
+            // recreates the same bad launch, so it skips retry and goes
+            // straight to the outcome audit. A concurrency-cap timeout is the
+            // one exception: the agent never launched, nothing is wrong with
+            // the task or the agent, it just lost a race for a slot. That
+            // case gets the same bounded execution-retry budget as a plain
+            // failed/stopped run instead of a permanent non-retryable
+            // dead end. Discriminate on the producer's own reason text
+            // (isConcurrencyCapBlockedReason), never on status alone, so a
+            // genuine human_action_required block is untouched.
+            nonRetryable: input.runStatus === "blocked" && !isConcurrencyCapBlockedReason(input.reason),
           },
     context: {
       request: input.request,

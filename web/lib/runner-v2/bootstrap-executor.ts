@@ -5,6 +5,7 @@ import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
 import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
+import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
@@ -624,7 +625,12 @@ async function acquireChainAdmission(input: {
     const elapsedMs = Date.now() - started;
     if (elapsedMs >= maxWaitMs) {
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      const reason = `concurrency cap: waited ${elapsedSeconds}s for a chain slot (limit ${cap}); blocked`;
+      // Shared prefix with concurrency-admission.ts's wait-chain timeout: task
+      // reconcile's execution-lifecycle discriminator matches on this exact
+      // text to treat a pure cap-contention block as retryable instead of the
+      // non-retryable "human_action_required" default for every other blocked
+      // run (see CONCURRENCY_CAP_BLOCKED_REASON_PREFIX for the full contract).
+      const reason = `${CONCURRENCY_CAP_BLOCKED_REASON_PREFIX}${elapsedSeconds}s for a chain slot (limit ${cap}); blocked`;
       markRunAgentBlocked(input.runJsonPath, input.agentId, reason);
       updateRunStatus(input.runJsonPath, "blocked", reason);
       return { admitted: false, reason };

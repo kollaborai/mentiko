@@ -254,6 +254,14 @@ replacement.
 Before PTY allocation, `acquireChainAdmission` applies the same chain-cap
 contract as the shell gate. Cap expiry transitions the attempt to
 `human_action_required` with `concurrency_cap_blocked` and launches no agent.
+Unlike other `human_action_required` causes, this one is not a permanent dead
+end: task reconcile's execution-lifecycle discriminator
+(`isConcurrencyCapBlockedReason` in `concurrency-admission.ts`, consumed by
+`applyExecutionLifecycle` in `app/api/tasks/reconcile/route.ts`) recognizes
+the cap-timeout reason text and routes the task through the normal bounded
+execution-retry budget instead of straight to the outcome audit. Slot waits
+themselves are FIFO-ordered by a durable per-run ticket (same file, `waitForChainAdmission`)
+so a later launch cannot grab a freed slot ahead of an earlier waiter.
 
 ### 6. Agent PTY bootstrap
 
