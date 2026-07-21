@@ -358,6 +358,52 @@ describe("POST /api/tasks/auto-run", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  // Regression: CHOR-001 (2026-07-20) -- a generate job failing the delivery
+  // contract validator used to just increment auto_run_retries and drop the
+  // reason on the floor; the next attempt re-sent the exact same prompt with
+  // no idea what had been rejected. The failure reason must now be persisted
+  // so the next generate_new attempt can use it as corrective guidance (see
+  // "starts generation with corrective guidance..." below).
+  it("persists the failed generation job's error as corrective guidance for the next retry", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-1",
+      title: "Generate again",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        generation_job_id: "job-failed-gen",
+        generation_status: "running",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-failed-gen",
+      type: "generate",
+      status: "failed",
+      error: "generated chain delivery contract invalid: delivery generated chains require an agent with edit_files authority",
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-1" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.triggered).toBe(false);
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-1",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "failed",
+          auto_run_retries: 1,
+          generation_last_error: "generated chain delivery contract invalid: delivery generated chains require an agent with edit_files authority",
+        }),
+      },
+      "default",
+    );
+  });
+
   it("clears a missing generation job so auto-run can retry", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-1",
@@ -1172,6 +1218,70 @@ describe("POST /api/tasks/auto-run", () => {
           analysis_status: "accepted",
         }),
       }),
+      "default",
+    );
+  });
+
+  // Regression: CHOR-001 (2026-07-20). Reuses the cached recommendation path
+  // above (analysis job already complete -> generate_new), but this time the
+  // task carries a generation_last_error from a previous rejected attempt.
+  // The retry must fold that error into the new generation prompt as
+  // corrective guidance AND clear the field so a later, unrelated retry
+  // doesn't inherit stale guidance.
+  it("starts generation with corrective guidance when a prior attempt was rejected, then clears it", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "TASK-3",
+      title: "Close TASK-001 with completion notes",
+      description: "Close TASK-001 and document the audit.",
+      status: "open",
+      issue_type: "task",
+      priority: 2,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis",
+        analysis_status: "running",
+        generation_last_error: "generated chain delivery contract invalid: delivery generated chains require an agent with edit_files authority",
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-analysis",
+      type: "recommend",
+      status: "complete",
+      result: {
+        recommendation: {
+          chain_id: null,
+          confidence: "none",
+          rationale: "No existing chain handles this task.",
+        },
+      },
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: true,
+      data: { jobId: "job-generation-2", status: "pending" },
+    }));
+
+    const res = await POST(makeRequest({ taskId: "TASK-3" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ triggered: true, jobId: "job-generation-2" });
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls.find(
+      ([url]: [string]) => url === "http://localhost:3000/api/jobs",
+    );
+    const requestBody = JSON.parse(init.body);
+    expect(requestBody.input.prompt).toContain("PRIOR ATTEMPT REJECTED");
+    expect(requestBody.input.prompt).toContain(
+      "delivery generated chains require an agent with edit_files authority",
+    );
+
+    // consumed: cleared from the claim patch so it does not leak into a
+    // later, unrelated generation attempt for this task
+    expect(mockTaskClaimMetadataKeyIfUnset).toHaveBeenCalledWith(
+      "default",
+      "TASK-3",
+      "generation_job_id",
+      expect.objectContaining({ generation_last_error: undefined }),
       "default",
     );
   });

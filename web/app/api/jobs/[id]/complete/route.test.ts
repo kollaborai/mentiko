@@ -480,6 +480,143 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "team-a");
   });
 
+  // Regression: CHOR-001 (2026-07-20). A generated chain missing an
+  // edit_files agent used to raise an uncaught Error from
+  // assertValidGeneratedChainDeliveryContract, which the route rethrew,
+  // producing a raw 500 AND skipping every side effect below (task metadata
+  // update, auto-run continuation) because the handler aborted mid-function.
+  // The rejection is an expected outcome of model generation, not a server
+  // bug: the job must be marked failed with the validator's exact message
+  // (so the bounded auto-run retry can use it as corrective guidance) and
+  // the route must return normally instead of throwing.
+  test("marks a generate job failed with the validator's message instead of throwing a raw 500 when the delivery contract is violated", async () => {
+    let currentJob = {
+      id: "job-chain",
+      type: "generate",
+      status: "running",
+      taskId: "TASK-008",
+      input: {},
+      runId: "run-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-008",
+      metadata: { generation_job_id: "job-chain", generation_status: "running" },
+    });
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          name: "Task Status Updater Chain",
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "delivery",
+              acceptance_criteria: "TASK-001 shows status='closed'",
+            },
+          },
+          agents: [{
+            id: "task-status-updater",
+            name: "Task Status Updater",
+            prompt: "Update TASK-001 status.",
+            triggers: ["manual-start"],
+            emits: "task-update-complete",
+            deliverable: "TASK-001 status changed to closed",
+            verification: "Query the task and confirm status='closed'",
+            authorities: { can: ["run_commands", "read_files"], needs_approval: [] },
+            final_verifier: true,
+            verifies_acceptance_criteria: true,
+            success_assertion: "TASK-001 status is closed",
+          }],
+        }),
+      },
+      runId: "run-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-chain" }) });
+
+    // non-5xx: apiSuccess is mocked to always report status 200
+    expect(response.status).toBe(200);
+    // rejected before ever reaching postProcessChain
+    expect(mockPostProcessChain).not.toHaveBeenCalled();
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-chain", expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("delivery generated chains require an agent with edit_files authority"),
+    }), "default");
+    // the rest of the handler still ran instead of aborting: task metadata
+    // reflects the failure so the auto-run retry loop can pick it up
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "TASK-008", expect.objectContaining({
+      metadata: expect.objectContaining({ generation_status: "failed" }),
+    }), "default");
+  });
+
+  // Regression guard: only the delivery-contract rejection gets the graceful
+  // handling above. A genuine internal error during post-processing (e.g.
+  // postProcessChain itself throwing) must still surface as a thrown error
+  // so it is not silently swallowed as if it were an expected generation
+  // rejection.
+  test("still throws (not swallowed) when post-processing fails for a reason other than the delivery contract", async () => {
+    let currentJob = {
+      id: "job-chain",
+      type: "generate",
+      status: "running",
+      input: {},
+      runId: "run-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockPostProcessChain.mockRejectedValueOnce(new Error("registry write failed"));
+
+    const { POST } = await import("./route");
+
+    await expect(POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          name: "Generated Chain",
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "research",
+              acceptance_criteria: "the report is complete",
+            },
+          },
+          agents: [{
+            id: "agent-a",
+            name: "Agent A",
+            prompt: "Collect evidence.",
+            triggers: ["manual-start"],
+            emits: "evidence-verified",
+            deliverable: "A cited evidence report",
+            verification: "Check every claim against its source.",
+            authorities: ["read_files"],
+            final_verifier: true,
+            verifies_acceptance_criteria: true,
+            success_assertion: "Every claim is cited.",
+          }],
+        }),
+      },
+      runId: "run-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-chain" }) })).rejects.toThrow("registry write failed");
+
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-chain", expect.objectContaining({
+      status: "failed",
+      error: "registry write failed",
+    }), "default");
+  });
+
   test("recommend completion stores recommendation run provenance without clobbering execution run", async () => {
     let currentJob = {
       id: "job-recommend",

@@ -859,6 +859,13 @@ async function triggerAutoRun(
           generation_job_id: undefined,
           generation_status: "failed",
           auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+          // Carried into the next generate_new attempt (see
+          // buildGenerationPromptFromTaskRecommendation's priorError param
+          // in autoAcceptRecommendation below) as corrective guidance, then
+          // cleared once consumed by startGenerationJob. This is what turns
+          // the existing bounded auto_run_retries loop into a GUIDED retry
+          // instead of a blind repeat of the same prompt (CHOR-001).
+          ...(job.error ? { generation_last_error: job.error } : {}),
         },
       }, namespaceId);
       return {
@@ -1427,6 +1434,14 @@ async function autoAcceptRecommendation(
     // acceptance_criteria. Without this, autonomous auto-run generation never
     // told the chain-generator this task needed a code-writing agent.
     const fullTask = taskGet(orgId, taskId, namespaceId);
+    // A previous generate attempt's rejection (see the job.status === "failed"
+    // branch above), if any -- carried forward as corrective guidance for
+    // this bounded retry. Consumed here so it applies to exactly one
+    // regeneration, not every future attempt (see startGenerationJob, which
+    // clears it once the job is dispatched).
+    const priorError = typeof metadata.generation_last_error === "string"
+      ? metadata.generation_last_error
+      : undefined;
     // kick off generation job — next trigger cycle will start the run
     return await startGenerationJob(
       taskId,
@@ -1438,7 +1453,8 @@ async function autoAcceptRecommendation(
           issue_type: fullTask?.issue_type ?? undefined,
           acceptance_criteria: fullTask?.acceptance_criteria ?? undefined,
         },
-        normalized
+        normalized,
+        priorError
       ),
       namespaceId,
       orgId,
@@ -1574,6 +1590,10 @@ async function startGenerationJob(
     generation_status: "starting",
     generation_job_claimed_at: new Date().toISOString(),
     analysis_status: "accepted",
+    // Consumed (folded into `prompt` by the caller) -- clear it so a later,
+    // unrelated generation attempt for this task doesn't inherit stale
+    // guidance from an already-resolved failure.
+    generation_last_error: undefined,
   }, namespaceId);
 
   if (!claimed) {

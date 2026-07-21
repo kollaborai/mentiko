@@ -19,7 +19,10 @@ import {
   outcomeSummarySourceEligibility,
 } from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
-import { assertValidGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  assertValidGeneratedChainDeliveryContract,
+  GeneratedChainContractError,
+} from "@/lib/chains/generated-chain-delivery-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -226,7 +229,18 @@ export const POST = withErrorHandling(async (
         error: message,
         completedAt: new Date().toISOString(),
       }, namespaceId);
-      throw e;
+      // A rejected generated-chain payload is an expected outcome of model
+      // generation, not an internal server error: the job is correctly
+      // terminal-failed above, and the bounded auto-run retry path (see
+      // app/api/tasks/auto-run/route.ts's generation_last_error handling)
+      // re-generates with the validator's message as corrective guidance. Let
+      // the rest of this handler run (task metadata + auto-run continuation)
+      // instead of aborting with an uncaught 500 -- CHOR-001 (2026-07-20) hit
+      // exactly this: the 500 killed the job AND skipped the task metadata
+      // update below, so nothing ever learned the generation failed.
+      if (!(e instanceof GeneratedChainContractError)) {
+        throw e;
+      }
     }
   }
 

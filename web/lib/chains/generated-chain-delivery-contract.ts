@@ -103,9 +103,23 @@ export function validateGeneratedChainDeliveryContract(chain: unknown): string[]
   return errors;
 }
 
+/**
+ * Distinguishes a model-output rejection (payload violates the delivery
+ * contract) from an unexpected internal error. A rejected payload is an
+ * expected, retryable outcome of generation -- not a server bug -- so
+ * callers should catch this specifically and respond accordingly rather than
+ * letting it bubble up as a generic 500.
+ */
+export class GeneratedChainContractError extends Error {
+  constructor(errors: string[]) {
+    super(`generated chain delivery contract invalid: ${errors.join("; ")}`);
+    this.name = "GeneratedChainContractError";
+  }
+}
+
 export function assertValidGeneratedChainDeliveryContract(chain: unknown): void {
   const errors = validateGeneratedChainDeliveryContract(chain);
   if (errors.length) {
-    throw new Error(`generated chain delivery contract invalid: ${errors.join("; ")}`);
+    throw new GeneratedChainContractError(errors);
   }
 }

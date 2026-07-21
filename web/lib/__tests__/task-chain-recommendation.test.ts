@@ -100,4 +100,50 @@ describe("task chain recommendation helpers", () => {
       expect(prompt).toContain("DELIVERY REQUIREMENT");
     });
   });
+
+  // Regression: CHOR-001 (2026-07-20) -- a generated chain was rejected by
+  // the delivery contract validator (missing edit_files agent) and the job
+  // died with an uncaught 500, with no regeneration attempt. The bounded
+  // auto-run retry (app/api/tasks/auto-run/route.ts) now re-invokes this
+  // builder with the validator's exact rejection so the retry is a GUIDED
+  // one, not a blind repeat of the same prompt.
+  describe("prior-attempt corrective guidance", () => {
+    const recommendation = normalizeTaskChainRecommendation({
+      chain_id: null,
+      rationale: "No existing chain handles this.",
+    });
+
+    it("appends the prior rejection verbatim as guidance for a bounded retry", () => {
+      const priorError = "generated chain delivery contract invalid: delivery generated chains require an agent with edit_files authority";
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Close TASK-001 with completion notes", issue_type: "task" },
+        recommendation,
+        priorError,
+      );
+
+      expect(prompt).toContain("PRIOR ATTEMPT REJECTED");
+      expect(prompt).toContain(priorError);
+    });
+
+    it("also guides research-mode (non-deliverable) retries", () => {
+      const priorError = "generated chain delivery contract invalid: the last generated-chain agent must declare final_verifier: true";
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Research the migration options", issue_type: "epic" },
+        recommendation,
+        priorError,
+      );
+
+      expect(prompt).toContain("PRIOR ATTEMPT REJECTED");
+      expect(prompt).toContain(priorError);
+    });
+
+    it("omits the guidance block entirely on a first attempt (no prior error)", () => {
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Close TASK-001 with completion notes", issue_type: "task" },
+        recommendation,
+      );
+
+      expect(prompt).not.toContain("PRIOR ATTEMPT REJECTED");
+    });
+  });
 });

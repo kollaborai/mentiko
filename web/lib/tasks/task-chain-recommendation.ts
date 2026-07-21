@@ -100,7 +100,14 @@ export function normalizeTaskChainRecommendation(value: unknown): TaskChainRecom
 
 export function buildGenerationPromptFromTaskRecommendation(
   task: { title: string; description?: string; issue_type?: string; acceptance_criteria?: string },
-  recommendation: TaskChainRecommendation | null
+  recommendation: TaskChainRecommendation | null,
+  // The exact error the previous generation attempt for this task was
+  // rejected with (e.g. metadata.generation_last_error, set when a "generate"
+  // job comes back status: "failed" -- see app/api/tasks/auto-run/route.ts).
+  // Passing it turns the existing bounded auto-run retry into a GUIDED retry:
+  // the model sees precisely what it did wrong last time instead of repeating
+  // the same generic instructions and possibly the same mistake.
+  priorError?: string
 ): string {
   const base = recommendation?.generation_prompt || [
     `Create a Mentiko chain for this task: ${task.title}.`,
@@ -118,13 +125,17 @@ export function buildGenerationPromptFromTaskRecommendation(
     task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : "The task has no acceptance criteria; do not generate a chain until a verifiable criterion is supplied.",
   ].join("\n\n");
 
+  const priorErrorGuidance = priorError
+    ? `PRIOR ATTEMPT REJECTED (this is a bounded regeneration retry — fix the exact issue below, do not repeat it):\n${priorError}`
+    : null;
+
   // Appended even when the recommender already supplied its own
   // generation_prompt — a chain-recommendation output for a feature/task/bug
   // is exactly where this requirement was previously missing. (FEAT-014's
   // chain was born from a chain-recommendation-generated prompt and ended up
   // with 4 read-only agents and zero code.)
   if (!isDeliverableIssueType(task.issue_type)) {
-    return [base, generatedChainContract].join("\n\n");
+    return [base, generatedChainContract, priorErrorGuidance].filter(Boolean).join("\n\n");
   }
 
   return [
@@ -137,5 +148,6 @@ export function buildGenerationPromptFromTaskRecommendation(
       "(read_files-only / run_commands-only authorities) does NOT satisfy this task, no matter how " +
       "thorough — the acceptance criteria describe working software, and a spec is not working software.",
     generatedChainContract,
+    priorErrorGuidance,
   ].filter(Boolean).join("\n\n");
 }

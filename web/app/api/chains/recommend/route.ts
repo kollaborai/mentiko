@@ -13,6 +13,7 @@ import { BadRequest, NotFound, Unauthorized, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -81,7 +82,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     : "";
   const schema = getChainSchema();
   const template = getTemplate(namespaceId, orgId, "chain_generation");
-  const generationPrompt = resolveTemplate(template.content, {
+  const generationPrompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
     USER_PROMPT: prompt,
     SCHEMA: schema,
     AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId),
