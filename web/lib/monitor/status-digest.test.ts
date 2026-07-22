@@ -194,6 +194,31 @@ describe("buildMonitorStatusDigest", () => {
     ]);
   });
 
+  it("keeps reconciler no-ops (info) out of both recoveries and errors, real warns are recoveries only", async () => {
+    const now = new Date().toISOString();
+    const { buildMonitorStatusDigest } = await setup({
+      logs: [
+        // idempotent no-op: the reconciler inspected a task and changed nothing.
+        // route.ts logs this at info — it is neither an error nor a recovery.
+        { ts: now, level: "info", source: "task-reconciler",
+          message: "task TASK-003 run run-1: repair_skipped" },
+        // genuine reconciliation logged at warn — a recovery, never an error.
+        { ts: now, level: "warn", source: "task-reconciler",
+          message: "task BUG-003 run run-2: retry requested" },
+      ],
+    });
+    const digest = await buildMonitorStatusDigest("digest-test", "default");
+
+    // the no-op must not surface anywhere (this is the Operations spam bug)
+    expect(digest.autoFixes.some((f) => f.detail.includes("repair_skipped"))).toBe(false);
+    expect(digest.errorsRecent.some((e) => e.message.includes("repair_skipped"))).toBe(false);
+    // a real reconciliation surfaces once, as a recovery — not as an error
+    expect(digest.autoFixes).toContainEqual(
+      expect.objectContaining({ kind: "reconciler", detail: expect.stringContaining("retry requested") }),
+    );
+    expect(digest.errorsRecent.some((e) => e.source === "task-reconciler")).toBe(false);
+  });
+
   it("masks webhook urls to origin and carries the remote http code", async () => {
     const now = new Date().toISOString();
     const { buildMonitorStatusDigest } = await setup({

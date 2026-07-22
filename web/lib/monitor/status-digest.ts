@@ -245,7 +245,11 @@ function collectAutoFixes(
     });
   }
   for (const entry of logs) {
-    if (entry.source === "task-reconciler" && fixes.length < 12) {
+    // A reconciler no-op logs at "info" (it inspected a task and changed
+    // nothing). That is not a recovery — only genuine reconciliations (warn)
+    // are auto-fixes. Without this the recovery feed floods with idempotent
+    // repair_skipped / lifecycle-no-op cycles.
+    if (entry.source === "task-reconciler" && entry.level !== "info" && fixes.length < 12) {
       fixes.push({ kind: "reconciler", detail: clampDetail(entry.message), at: entry.ts });
     }
   }
@@ -303,7 +307,15 @@ export async function buildMonitorStatusDigest(
     // no system log yet
   }
   const errorsRecent = logs
-    .filter((l) => (l.level === "error" || l.level === "warn") && isRecent(l.ts, now))
+    .filter((l) => {
+      if ((l.level !== "error" && l.level !== "warn") || !isRecent(l.ts, now)) return false;
+      // Reconciler activity is never an "error": a no-op logs at info (already
+      // excluded above) and a genuine reconciliation logs at warn, surfacing as
+      // a recovery via autoFixes — not an error card. Keep it out of errors so
+      // it can't double-show as both an error and a recovery.
+      if (l.source === "task-reconciler") return false;
+      return true;
+    })
     .slice(0, 8)
     .map((l) => ({ ts: l.ts, level: l.level, source: l.source, message: clampDetail(l.message) }));
 

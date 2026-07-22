@@ -189,16 +189,8 @@ describe("GET /api/tasks/reconcile", () => {
 
     expect(res.status).toBe(200);
     expect(body.data).toMatchObject({
-      reconciled: 1,
-      checked: 1,
-      results: [
-        expect.objectContaining({
-          taskId: "TASK-044",
-          runId: "run-audit",
-          newStatus: "non_execution_ignored",
-          reason: "non-execution run is not a task execution run",
-        }),
-      ],
+      reconciled: 0,
+      results: [],
     });
     expect(mockTaskClose).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
@@ -291,16 +283,8 @@ describe("GET /api/tasks/reconcile", () => {
 
     expect(res.status).toBe(200);
     expect(body.data).toMatchObject({
-      reconciled: 1,
-      checked: 1,
-      results: [
-        expect.objectContaining({
-          taskId: "TASK-044",
-          runId: "run-decision",
-          newStatus: "non_execution_ignored",
-          reason: "non-execution run is not a task execution run",
-        }),
-      ],
+      reconciled: 0,
+      results: [],
     });
     expect(mockTaskClose).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
@@ -1845,12 +1829,39 @@ describe("GET /api/tasks/reconcile", () => {
 
     expect(res.status).toBe(200);
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
-    expect(body.data.results).toEqual([
-      expect.objectContaining({
-        taskId: "BUG-002",
-        runId: "run-stopped",
-        newStatus: "lifecycle_noop",
-      }),
+    expect(body.data.results).toEqual([]);
+  });
+
+  it("does not log warnings for a stable decision task whose execution provenance already matches the audited run", async () => {
+    mockApplyCompletionAudit.mockResolvedValueOnce({
+      action: "skipped",
+      detail: "audit already applied for this run",
+    });
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-003",
+        title: "Deploy monitoring stack",
+        status: "blocked",
+        metadata: {
+          last_audit_verdict: "decision",
+          completion_audit_run_id: "run-1784513693715",
+          completion_audit_run_fingerprint: "completed:2026-07-15T12:00:00.000Z",
+          completion_audit_apply_status: "applied",
+          last_run_id: "run-1784513693715",
+          last_run_status: "completed",
+          lifecycle_phase: "followup_blocked",
+        },
+      },
     ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.results).toEqual([]);
+    const warnCalls = mockWriteLog.mock.calls.filter((c) => c[2] === "warn");
+    const infoCalls = mockWriteLog.mock.calls.filter((c) => c[2] === "info");
+    expect(warnCalls.some((c) => String(c[4] || "").includes("TASK-003"))).toBe(false);
+    expect(infoCalls.some((c) => String(c[4] || "").includes("TASK-003"))).toBe(true);
   });
 });

@@ -65,6 +65,22 @@ interface ReconcileResult {
   reason: string;
 }
 
+// A reconciler no-op is an expected cycle where the reconciler inspected a
+// task, found it already in the correct state, and changed nothing. These
+// must log at "info" and be excluded from results so they don't generate
+// fake SYSTEM ERROR cards in Operations.
+const NOOP_STATUS_PREFIXES = ["lifecycle_noop", "non_execution_ignored"];
+
+function isReconcilerNoOp(newStatus: string): boolean {
+  if (NOOP_STATUS_PREFIXES.some((prefix) => newStatus.startsWith(prefix))) return true;
+  // audit_skipped is a no-op (the audit job decided not to act).
+  // repair_skipped / reclose_skipped are NOT always no-ops: when the detail
+  // contains "repaired", metadata was actually fixed. That case is handled
+  // separately in the audit-repair loop via the detail string.
+  if (newStatus === "audit_skipped") return true;
+  return false;
+}
+
 // A completed auto-run is eligible for a completion audit when it points at an
 // execution chain. The audit helper owns idempotency by run terminal
 // fingerprint; reconcile must not suppress a later terminal audit from a stale
@@ -311,15 +327,8 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
           const safeId = validateTaskId(issue.id);
           const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
           taskUpdate(orgId, safeId, { metadata: cleaned }, namespaceId);
-          writeLog(namespaceId, orgId, "warn", "task-reconciler",
+          writeLog(namespaceId, orgId, "info", "task-reconciler",
             `task ${issue.id} ignored non-execution run ${runId}`, "non-execution run is not a task execution run");
-          results.push({
-            taskId: issue.id,
-            runId,
-            previousStatus: "running",
-            newStatus: "non_execution_ignored",
-            reason: "non-execution run is not a task execution run",
-          });
           continue;
         }
 
@@ -462,16 +471,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         const safeId = validateTaskId(issue.id);
         const cleaned = cleanTaskExecutionRunMetadata(meta, run, runId);
         taskUpdate(orgId, safeId, { metadata: cleaned }, namespaceId);
-        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        writeLog(namespaceId, orgId, "info", "task-reconciler",
           `task ${issue.id} ignored completed non-execution run ${runId}`,
           "non-execution run is not a task execution run");
-        results.push({
-          taskId: issue.id,
-          runId,
-          previousStatus: String(meta.last_run_status || "completed"),
-          newStatus: "non_execution_ignored",
-          reason: "non-execution run is not a task execution run",
-        });
         continue;
       }
 
@@ -518,8 +520,12 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
             resultReason = "late-recovered terminal run already handled";
           }
         }
-        writeLog(namespaceId, orgId, "warn", "task-reconciler",
-          `task ${issue.id} run ${runId}: ${resultStatus}`, resultReason);
+        {
+          const noOp = isReconcilerNoOp(resultStatus);
+          writeLog(namespaceId, orgId, noOp ? "info" : "warn", "task-reconciler",
+            `task ${issue.id} run ${runId}: ${resultStatus}`, resultReason);
+          if (noOp) continue;
+        }
         results.push({
           taskId: issue.id,
           runId,
@@ -562,29 +568,29 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
 
       const startedSummary = lifecycle.effects.some((effect) => effect.type === "start_outcome_summary");
       if (!startedSummary) {
-        writeLog(namespaceId, orgId, "warn", "task-reconciler",
+        writeLog(namespaceId, orgId, "info", "task-reconciler",
           `task ${issue.id} run ${runId}: lifecycle no-op`,
           "terminal run was already handled by lifecycle state");
-        results.push({
-          taskId: issue.id,
-          runId,
-          previousStatus: String(meta.last_run_status || "completed"),
-          newStatus: "lifecycle_noop",
-          reason: "terminal run already handled",
-        });
         continue;
       }
 
-      writeLog(namespaceId, orgId, "warn", "task-reconciler",
-        `task ${issue.id} run ${runId}: audit ${lifecycle.auditStatus ?? "skipped"}`,
-        "completion audit triggered for terminal auto-run task");
-      results.push({
-        taskId: issue.id,
-        runId,
-        previousStatus: String(meta.last_run_status || "completed"),
-        newStatus: `audit_${lifecycle.auditStatus ?? "skipped"}`,
-        reason: "completion audit triggered",
-      });
+      {
+        const auditStatus = lifecycle.auditStatus ?? "skipped";
+        const auditResultStatus = `audit_${auditStatus}`;
+        const noOp = isReconcilerNoOp(auditResultStatus);
+        writeLog(namespaceId, orgId, noOp ? "info" : "warn", "task-reconciler",
+          `task ${issue.id} run ${runId}: audit ${auditStatus}`,
+          "completion audit triggered for terminal auto-run task");
+        if (!noOp) {
+          results.push({
+            taskId: issue.id,
+            runId,
+            previousStatus: String(meta.last_run_status || "completed"),
+            newStatus: auditResultStatus,
+            reason: "completion audit triggered",
+          });
+        }
+      }
     } catch (error) {
       failed.push({
         taskId: issue.id,
@@ -669,20 +675,27 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
         metadata: meta,
         sourceTerminalMetadata,
       });
-      writeLog(namespaceId, orgId, "warn", "task-reconciler",
-        `task ${safeId} run ${runId}: ${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`,
-        verdict === "close"
-          ? "re-applied durable audited close after reopen"
-          : "re-applied durable audited decision to repair execution provenance");
-      results.push({
-        taskId: issue.id,
-        runId,
-        previousStatus: issue.status,
-        newStatus: `${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`,
-        reason: verdict === "close"
-          ? "audited close re-applied after reopen wiped run evidence"
-          : "audited decision re-applied to repair stale execution provenance",
-      });
+      const resultStatus = `${verdict === "close" ? "reclose" : "repair"}_${outcome.action}`;
+      const noOp = isReconcilerNoOp(resultStatus)
+        || (outcome.action === "skipped" && !String(outcome.detail || "").includes("repaired"));
+      writeLog(namespaceId, orgId, noOp ? "info" : "warn", "task-reconciler",
+        `task ${safeId} run ${runId}: ${resultStatus}`,
+        noOp
+          ? "audit already applied; execution provenance is consistent"
+          : verdict === "close"
+            ? "re-applied durable audited close after reopen"
+            : "re-applied durable audited decision to repair execution provenance");
+      if (!noOp) {
+        results.push({
+          taskId: issue.id,
+          runId,
+          previousStatus: issue.status,
+          newStatus: resultStatus,
+          reason: verdict === "close"
+            ? "audited close re-applied after reopen wiped run evidence"
+            : "audited decision re-applied to repair stale execution provenance",
+        });
+      }
     } catch (error) {
       failed.push({
         taskId: issue.id,
