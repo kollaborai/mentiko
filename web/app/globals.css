@@ -544,6 +544,43 @@
     100% { opacity: 1; transform: translateX(0); }
 }
 
+/* briefing header: stretch the label to fill its column at any viewport.
+   font-size = container width / character count, so short and long labels
+   both span the full measure. --chars is set inline per slide. */
+.briefing-header-fit {
+    /* scales with the panel, but stays in a sane display band. deliberately NOT
+       normalized by label length — filling the full column width blows a short
+       label up to ~150px on a wide panel. */
+    font-size: clamp(32px, calc(22px + 4.2cqi), 86px);
+    /* the fill is arbitrary art (a gif), so parts of it are dark — and dark fill on
+       a near-black stage makes those letters vanish. compress luminance into a
+       bright band: lowering contrast pulls darks up, brightness lifts the whole
+       range. floor lands ~0.48 so no letter can drop out. grayscale keeps it
+       monochrome with the rest of the surface. */
+    filter: grayscale(1) contrast(0.45) brightness(1.75);
+}
+
+/* briefing body type scale. the header now stretches with the container, so fixed
+   14/16/24px body type drifts out of proportion as the panel widens. these track
+   the same container. one knob: --u, everything else is a ratio of it. */
+.briefing-content { container-type: inline-size; }
+
+.briefing-body { --u: clamp(13px, calc(12px + 0.35cqi), 17px); font-size: var(--u); }
+.briefing-body .briefing-hero { font-size: calc(var(--u) * 2.2); }
+.briefing-body .briefing-h2   { font-size: calc(var(--u) * 1.55); }
+.briefing-body .briefing-lead { font-size: calc(var(--u) * 1.15); }
+.briefing-body .briefing-sm   { font-size: calc(var(--u) * 0.8); }
+
+/* watermark gentle float (briefing presentation surface) */
+@keyframes watermark-float {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(-16px) rotate(2deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [style*="watermark-float"] { animation: none !important; }
+}
+
 @keyframes fadeIn {
     0% { opacity: 0; }
     100% { opacity: 1; }
