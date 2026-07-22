@@ -51,15 +51,8 @@ jest.mock("@/lib/generation/generation-chain-dispatch", () => ({
   startGenerationChainRun: (...args: unknown[]) => mockStartGenerationChainRun(...args),
 }));
 
-jest.mock("@/lib/agents/agent-loader", () => ({
-  getAllStandaloneAgents: () => [
-    {
-      id: "agent-1",
-      name: "Researcher",
-      role: "Analyst",
-      description: "Looks up project details",
-    },
-  ],
+jest.mock("@/lib/agents/agent-catalog", () => ({
+  buildAgentCatalog: () => 'agent id="agent-1" name="Researcher" role="Analyst"',
 }));
 
 jest.mock("@/lib/auth/auth-bridge", () => ({

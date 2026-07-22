@@ -18,6 +18,9 @@ export function stoppedBackgroundWorkerStatus(
     checkCount: statusFile?.checkCount,
     lastReconcile: statusFile?.lastReconcile,
     lastReconcileCleaned: statusFile?.lastReconcileCleaned,
+    decisionReconciler: statusFile?.decisionReconciler
+      ? { ...statusFile.decisionReconciler, status: "stopped" }
+      : undefined,
     lastExternalDrain: statusFile?.lastExternalDrain,
     lastExternalDispatched: statusFile?.lastExternalDispatched,
     autoRun: statusFile?.autoRun

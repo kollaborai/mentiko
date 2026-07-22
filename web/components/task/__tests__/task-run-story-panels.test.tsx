@@ -2,11 +2,20 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { Task } from "@/lib/tasks/task-types";
 import { TaskRunStoryPanels } from "../task-run-story-panels";
 
-jest.mock("@aliimam/icons", () => new Proxy({}, {
-  get: () => ({ className }: { className?: string }) => (
+jest.mock(
+  "@aliimam/icons",
+  () =>
+    new Proxy(
+      {},
+      {
+        get:
+          () =>
+          ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
-}));
+      },
+    ),
+);
 
 const mockFetchWithNamespace = jest.fn();
 jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
@@ -67,9 +76,12 @@ describe("TaskRunStoryPanels", () => {
   it("does not show stale summarizing status when a fallback run summary is already present", () => {
     render(<TaskRunStoryPanels task={task} />);
 
-    expect(screen.getByText("Summary")).toBeInTheDocument();
+    expect(screen.getByText("Execution")).toBeInTheDocument();
+    // stored "running" audit status is stale once a fallback summary exists —
+    // no audit badge is shown at all
+    expect(screen.queryByText("Outcome audit")).not.toBeInTheDocument();
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
     expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
-    expect(screen.queryByText("summarizing")).not.toBeInTheDocument();
   });
 
   it("renders the completed outcome summary when execution metadata was cleared", () => {
@@ -103,9 +115,16 @@ describe("TaskRunStoryPanels", () => {
 
     render(<TaskRunStoryPanels task={decisionBlockedTask} />);
 
-    expect(screen.getByText("All six phase-1 lead-capture test cases passed.")).toBeInTheDocument();
-    expect(screen.getByText("Runtime validation passed but closure needs review.")).toBeInTheDocument();
-    expect(screen.getByText("ready")).toBeInTheDocument();
+    expect(
+      screen.getByText("All six phase-1 lead-capture test cases passed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Runtime validation passed but closure needs review."),
+    ).toBeInTheDocument();
+    // audit status "ready" is displayed as "complete" alongside the execution
+    // outcome badge (also "complete")
+    expect(screen.getByText("Outcome audit")).toBeInTheDocument();
+    expect(screen.getAllByText("complete").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("review")).toBeInTheDocument();
     expect(screen.getAllByText("run-source").length).toBeGreaterThan(0);
     expect(screen.getByText("run-summary")).toBeInTheDocument();
@@ -127,12 +146,48 @@ describe("TaskRunStoryPanels", () => {
 
     render(<TaskRunStoryPanels task={pendingTask} />);
 
-    const section = screen.getByText("Summary").closest("section");
+    const section = screen.getByText("Execution").closest("section");
     expect(section).toBeInTheDocument();
-    expect(section?.firstElementChild).toHaveTextContent("Summary");
-    expect(section?.firstElementChild).toHaveTextContent("summarizing");
-    expect(section?.querySelector(":scope > .rounded-sm.bg-muted")).not.toHaveTextContent("Summary");
+    expect(section?.firstElementChild).toHaveTextContent("Outcome audit");
+    expect(section?.firstElementChild).toHaveTextContent("running");
+    expect(screen.getByText("Outcome audit in progress")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Mentiko is auditing its evidence/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("auditing")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Task outcome needs review"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
+  });
+
+  it("does not describe an active execution as finished or needing review", () => {
+    const runningTask: Task = {
+      ...task,
+      completed: false,
+      status: "open",
+      closedAt: undefined,
+      chainBinding: {
+        ...task.chainBinding!,
+        last_run_status: "running",
+        last_run_id: "run-active",
+      },
+      metadata: {},
+    };
+
+    render(<TaskRunStoryPanels task={runningTask} />);
+
+    expect(screen.getByText("Execution in progress")).toBeInTheDocument();
+    expect(
+      screen.getByText(/execution run is still in progress/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("in progress")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Task outcome needs review"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("run finished without a summary"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the Summary label outside the panel when summary generation fails", () => {
@@ -152,12 +207,16 @@ describe("TaskRunStoryPanels", () => {
 
     render(<TaskRunStoryPanels task={failedTask} />);
 
-    const section = screen.getByText("Summary").closest("section");
+    const section = screen.getByText("Execution").closest("section");
     expect(section).toBeInTheDocument();
-    expect(section?.firstElementChild).toHaveTextContent("Summary");
+    expect(section?.firstElementChild).toHaveTextContent("Outcome audit");
     expect(section?.firstElementChild).toHaveTextContent("failed");
-    expect(section?.querySelector(":scope > .rounded-sm.bg-muted")).not.toHaveTextContent("Summary");
-    expect(screen.getByText("Generation failed.")).toBeInTheDocument();
+    // the panel body carries the error detail + retry, not the header badge
+    expect(
+      section?.querySelector(":scope > .rounded-xl.bg-muted"),
+    ).toHaveTextContent("Outcome audit error: Generation failed.");
+    expect(screen.getByText(/Generation failed\./)).toBeInTheDocument();
+    expect(screen.getByText("Retry outcome audit")).toBeInTheDocument();
     expect(screen.queryByText("Outcome Dashboard")).not.toBeInTheDocument();
   });
 
@@ -172,21 +231,32 @@ describe("TaskRunStoryPanels", () => {
         last_run_id: "run-blocked",
         last_run_status: "blocked",
         last_run_outcome: "blocked",
-        last_run_blocked_reason: "startup_recovery:blocked: authentication required",
+        last_run_blocked_reason:
+          "startup_recovery:blocked: authentication required",
       },
       metadata: {
-        last_run_blocked_reason: "startup_recovery:blocked: authentication required",
+        last_run_blocked_reason:
+          "startup_recovery:blocked: authentication required",
       },
     };
 
     render(<TaskRunStoryPanels task={blockedTask} />);
 
     expect(screen.getByText("Run blocked")).toBeInTheDocument();
-    expect(screen.getByText("Blocked reason: startup_recovery:blocked: authentication required")).toBeInTheDocument();
-    expect(screen.getAllByText(/startup_recovery:blocked: authentication required/).length).toBeGreaterThan(0);
-    await waitFor(() => expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+    expect(
+      screen.getByText(
+        "Blocked reason: startup_recovery:blocked: authentication required",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/startup_recovery:blocked: authentication required/)
+        .length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(mockFetchWithNamespace).toHaveBeenCalledWith(
       "/api/tasks/TASK-1/outcome-summary",
       expect.objectContaining({ method: "POST" }),
-    ));
+      ),
+    );
   });
 });

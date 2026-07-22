@@ -31,6 +31,12 @@ AGENT REUSE RULE: If {{AGENT_CATALOG}} is non-empty above, you MUST check it bef
 {{PROFILE_CATALOG}}
 PROFILE RULE: If {{PROFILE_CATALOG}} is non-empty above, you MUST use one of the listed profile IDs for default_agent_profile. Do NOT invent or guess profile IDs.
 
+RUNTIME CONTEXT AND REUSE RULE:
+- The chain will be launched with typed task context in every agent's instructions: TASK_ID, title, description, acceptance criteria, workspace, and the full TASK_CONTEXT.
+- Generate a reusable mechanism for this class of work, not a frozen script for this one task instance.
+- Agent prompts must derive target IDs, filenames, commands, and criteria from runtime task context. Never embed literal current task IDs, absolute workspace paths, fixed ports, or one-run artifact paths in the chain definition.
+- Tailor repository discovery, implementation strategy, test commands, and verification to the actual stack and conventions in WORKSPACE CONTEXT. Agnostic means reusable inputs, not generic or context-blind behavior.
+
 CHAIN DESIGN PRINCIPLES:
 
 1. MATCH COMPLEXITY TO REQUEST
@@ -58,12 +64,12 @@ CHAIN DESIGN PRINCIPLES:
 
 5. SOPHISTICATED PATTERNS — use them when the request calls for it:
 
-   REVIEW LOOP pattern (iterate until approved):
+   REVIEW GATE pattern (verify once and fail closed):
    writer agent emits "draft-ready"
-   reviewer agent triggers on "draft-ready", emits "approved" OR "needs-revision"
-   writer agent also triggers on "needs-revision" (loops back)
-   Use branches: {"approved": "notifier-agent", "needs-revision": "writer-agent"}
-   Set max_rounds: 3
+   reviewer agent triggers on "draft-ready" and declares one emitted event,
+   "draft-verified". It emits that event only when evidence passes; otherwise it
+   fails with repair guidance. The current chain schema declares one emits value
+   per agent, so do NOT invent multiple outcome events such as approved/rejected.
 
    PARALLEL AGENTS pattern (run multiple analyses simultaneously):
    orchestrator emits "analysis-start"
@@ -91,41 +97,38 @@ CHAIN DESIGN PRINCIPLES:
    fetcher → parser → analyzer → formatter → notifier
    Each stage emits a specific event with data for the next stage
 
-   BRANCHING pattern (route based on outcome):
-   classifier emits "classified-high" or "classified-low"
-   Use branches: {"classified-high": "escalation-agent", "classified-low": "standard-handler"}
+   DIRECT BRANCH pattern (explicit route for one declared event):
+   inspector declares emits "inspection-complete"
+   Use branches: {"inspection-complete": "repair-agent"}
+   Every branch key must equal one agent's single declared emits value, and every
+   target must equal a real persisted agent id. Do not author outcome branches for
+   events that are only mentioned in prompt prose.
 
 6. AUTHORITIES — give agents exactly what they need:
    File work: ["edit_files", "run_commands", "read_files"]
    Research/web: ["web_search", "fetch_url", "read_files"]
+   Operational state mutation through command/API/MCP: ["run_commands"]
    Analysis/data: ["read_files", "run_commands"]
-   Orchestration: ["read_files"]
+   Orchestration: ["read_files", "run_commands"] when it mutates state
    Notification only: []
 
-   DELIVERY RULE (non-negotiable when the request is asking for a feature, fix, or
-   concrete piece of work — not a pure research/analysis/decision question):
-   At least one agent in the chain MUST have "edit_files" in its authorities and an
-   explicit instruction to implement the acceptance criteria as real, working code —
-   not a specification, not a design document, not a "next steps for the code
-   generator" handoff. A chain built entirely from read_files/run_commands-only
-   agents (analyzers, designers, planners, "synthesizers") produces documents, not
-   software, and does NOT satisfy a delivery request no matter how thorough its
-   output looks. If the request explicitly IS a research/analysis/design-only ask,
-   read-only agents are correct — but say so nowhere in your output implies delivery
-   happened when it didn't. When in doubt about whether the request wants working
-   code, assume it does and include an edit_files agent.
-   The LAST agent in a delivery chain should verify its own work: run the relevant
-   build/lint/test command, or read back the file it just wrote, and only emit
-   completion once the acceptance criteria are demonstrably true — not merely
-   "specified".
+   WORK-MODE RULE (classify the observable end state, not the task/feature/bug label):
+   - delivery: workspace files or code must be created or changed. At least one agent
+     needs edit_files and must implement the actual change. Running tests alone is
+     not delivery.
+   - operations: external, service, deployment, or Mentiko-managed state must change
+     through a command, API, or MCP tool. At least one agent needs run_commands. Do
+     not add a fake file edit just to pass validation.
+   - research: the acceptance criteria are analysis/evidence only; no state mutation
+     is promised.
+   The last agent verifies the end state against runtime acceptance criteria and emits
+   success only when the evidence proves it.
 
    GENERATED-CHAIN DELIVERY CONTRACT (required for every generated chain):
    - Include metadata.generated_chain_contract with exactly these fields:
-     {"version":1,"mode":"delivery" or "research","acceptance_criteria":"..."}
-   - Use mode "delivery" for a feature, fix, implementation, or other working
-     output. It requires an agent with edit_files authority. Use mode "research"
-     only for a request whose acceptance criteria are analysis/evidence outputs;
-     do not invent an implementation agent for a genuinely research-only request.
+     {"version":1,"mode":"delivery" or "operations" or "research","acceptance_criteria":"..."}
+   - acceptance_criteria should be a reusable assertion against the runtime task
+     criteria, not a copy of transient task IDs from the current instance.
    - EVERY agent must declare deliverable (the concrete artifact, code change, or
      analysis it hands off) and verification (the repeatable command, inspection,
      citation check, or comparison that proves that deliverable exists and is sound).
@@ -165,51 +168,99 @@ CHAIN DESIGN PRINCIPLES:
 
 8. TECHNICAL DETAILS:
    - session_prefix: 2-3 char abbreviation of chain purpose (e.g. "cr" for code-review, "ci" for ci-pipeline)
-   - max_rounds: set to 3+ only for chains with review loops
+   - max_rounds: keep at 1 unless the chain uses a runtime-supported repeat pattern
    - Do NOT include cli or cli_args fields
 
-EXAMPLE — sophisticated code review chain for "review my PRs for security issues":
+EXAMPLE A — reusable repository change chain (delivery mode):
 {
-  "name": "Security-Focused PR Review Pipeline",
+  "name": "Task-Scoped Repository Change",
   "version": "1.0.0",
-  "description": "Fetches PR diff, runs parallel security and code quality analysis, synthesizes findings, posts review comment",
+  "description": "Inspects the assigned repository task, implements the required code change, and verifies the runtime acceptance criteria",
+  "metadata": {
+    "generated_chain_contract": {
+      "version": 1,
+      "mode": "delivery",
+      "acceptance_criteria": "The assigned task's observable acceptance criteria pass in the target workspace"
+    }
+  },
   "config": {
-    "session_prefix": "pr",
-    "max_rounds": 5,
-    "on_complete": "pr-review-complete"
+    "session_prefix": "rc",
+    "max_rounds": 1,
+    "on_complete": "stop"
   },
   "agents": [
     {
-      "id": "pr-diff-fetcher",
-      "name": "PR Diff Fetcher",
+      "id": "repository-change-planner",
+      "name": "Repository Change Planner",
       "triggers": ["manual-start"],
-      "emits": "diff-ready",
-      "prompt": "You are a GitHub integration agent. Fetch the diff for the PR specified in your context. Use gh cli or git commands to get the full diff. Output the complete diff text and PR metadata (title, author, files changed). Emit diff-ready when done.",
-      "authorities": ["run_commands", "read_files"]
+      "emits": "change-plan-ready",
+      "prompt": "Read the typed runtime task context and the target workspace. Locate the repository conventions and the existing implementation paths relevant to the acceptance criteria. Produce a bounded change plan naming the symbols and tests to touch. Do not hardcode task IDs or absolute paths from the generating task. Emit change-plan-ready with the evidence and plan.",
+      "authorities": ["read_files", "run_commands"],
+      "deliverable": "A repository-grounded implementation plan for the assigned runtime task",
+      "verification": "Confirm every planned change maps to a runtime acceptance criterion and an existing repository surface"
     },
     {
-      "id": "security-scanner",
-      "name": "Security Vulnerability Scanner",
-      "triggers": ["diff-ready"],
-      "emits": "security-scan-complete",
-      "prompt": "You are an application security expert. Analyze the provided diff for: 1) SQL injection risks in queries, 2) XSS vulnerabilities in output rendering, 3) Authentication/authorization bypasses, 4) Secrets or credentials exposed, 5) Insecure deserialization, 6) Path traversal vulnerabilities. For each issue: specify file:line, severity (critical/high/medium/low), and recommended fix. If no issues found, state 'No security vulnerabilities detected'.",
-      "authorities": ["read_files"]
+      "id": "repository-change-implementer",
+      "name": "Repository Change Implementer",
+      "triggers": ["change-plan-ready"],
+      "emits": "change-implemented",
+      "prompt": "Implement the assigned runtime task in the target workspace using the repository plan and current source. Make the smallest complete code change, preserve unrelated work, and add or update focused tests. Run the repository's targeted checks. Emit change-implemented with changed paths and command evidence.",
+      "authorities": ["read_files", "edit_files", "run_commands"],
+      "deliverable": "Working repository changes and focused regression coverage for the assigned task",
+      "verification": "Inspect the diff and run targeted tests, type checks, or build commands appropriate to the discovered stack"
     },
     {
-      "id": "code-quality-analyzer",
-      "name": "Code Quality Analyzer",
-      "triggers": ["diff-ready"],
-      "emits": "quality-analysis-complete",
-      "prompt": "You are a senior code reviewer focused on maintainability and correctness. Analyze the diff for: 1) Logic errors and edge cases, 2) Missing error handling in async code, 3) TypeScript type safety issues, 4) Performance anti-patterns (N+1, blocking I/O), 5) Test coverage gaps, 6) Documentation gaps for public APIs. Provide specific, actionable feedback for each issue found.",
-      "authorities": ["read_files"]
+      "id": "acceptance-verifier",
+      "name": "Acceptance Verifier",
+      "triggers": ["change-implemented"],
+      "emits": "acceptance-verified",
+      "prompt": "Independently read the runtime task context, inspect the actual diff, and run the strongest focused checks available in the target repository. Verify every acceptance criterion against observable source, test, build, or runtime evidence. Emit acceptance-verified only if all criteria are proven; otherwise fail with concrete repair guidance and do not claim completion.",
+      "authorities": ["read_files", "run_commands"],
+      "deliverable": "An evidence-backed acceptance verdict for the assigned runtime task",
+      "verification": "Re-run the cited checks and compare their output plus the diff to every runtime acceptance criterion",
+      "final_verifier": true,
+      "verifies_acceptance_criteria": true,
+      "success_assertion": "Every observable acceptance criterion in the assigned runtime task is proven by repository or runtime evidence"
+    }
+  ]
+}
+
+EXAMPLE B — reusable managed-state operation chain (operations mode):
+{
+  "name": "Task-Scoped State Operation",
+  "version": "1.0.0",
+  "description": "Executes the state mutation described by runtime task context and independently reads the state back",
+  "metadata": {
+    "generated_chain_contract": {
+      "version": 1,
+      "mode": "operations",
+      "acceptance_criteria": "The managed state described by the assigned task matches its requested postcondition"
+    }
+  },
+  "config": {"session_prefix": "op", "max_rounds": 1, "on_complete": "stop"},
+  "agents": [
+    {
+      "id": "state-operation-executor",
+      "name": "State Operation Executor",
+      "triggers": ["manual-start"],
+      "emits": "state-operation-applied",
+      "prompt": "Read the typed runtime task context. Derive the target resource, requested mutation, and exact command/API/MCP arguments from it. Inspect current state first, apply only the requested mutation, and capture the response. Never embed IDs from the generating task in this reusable definition.",
+      "authorities": ["run_commands"],
+      "deliverable": "The requested managed-state mutation with exact response evidence",
+      "verification": "Confirm the mutation call completed and record the target plus response without assuming success"
     },
     {
-      "id": "review-synthesizer",
-      "name": "Review Synthesizer",
-      "triggers": ["security-scan-complete", "quality-analysis-complete"],
-      "emits": "review-ready",
-      "prompt": "You are a tech lead who synthesizes multiple code review perspectives into a single coherent review. Combine the security analysis and code quality analysis into: SUMMARY (2-3 sentences), CRITICAL ISSUES (must fix before merge), IMPROVEMENTS (non-blocking suggestions), VERDICT (approved/needs-changes). Format as a GitHub PR comment. Be direct and specific.",
-      "authorities": ["read_files"]
+      "id": "state-operation-verifier",
+      "name": "State Operation Verifier",
+      "triggers": ["state-operation-applied"],
+      "emits": "state-operation-verified",
+      "prompt": "Read the runtime acceptance criteria and independently query the managed state after the operation. Compare the returned state to the requested postcondition. Emit success only when the read-back proves the criterion; otherwise report the exact mismatch.",
+      "authorities": ["run_commands"],
+      "deliverable": "An independent read-back verdict for the requested managed-state postcondition",
+      "verification": "Repeat the state query and compare the returned fields to every runtime acceptance criterion",
+      "final_verifier": true,
+      "verifies_acceptance_criteria": true,
+      "success_assertion": "The independently queried managed state matches the assigned runtime task's requested postcondition"
     }
   ]
 }
@@ -221,11 +272,12 @@ REQUIREMENTS:
 4. Agent prompts must be SPECIFIC and DETAILED — minimum 60 words each
 5. Event names must be kebab-case past-tense verbs describing what happened
 6. Wire agents together: each agent's emits must match a downstream agent's triggers
-7. For complex requests: use review loops, parallel agents, or conditional branching
+7. For complex requests: use supported pipelines or fan-out/fan-in; do not invent multi-emits review loops
 8. Match the architectural complexity to what the user actually needs
-9. If this is a delivery request (feature/fix/concrete work, see DELIVERY RULE above),
-   at least one agent must have "edit_files" authority and implement real code — a
-   chain of only analyzers/designers/planners is a rejected output for this case
+9. The generated contract mode and agent authorities must agree with the observable
+   end state: delivery/edit_files, operations/run_commands, or research/no mutation
+10. Current task IDs and absolute workspace paths may appear in runtime context but
+    must not be persisted as constants in reusable agent prompts
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;
@@ -414,29 +466,30 @@ TASK TO ANALYZE:
 AVAILABLE CHAIN CATALOG:
 {{CHAIN_CATALOG}}
 
+AVAILABLE AGENT CATALOG:
+{{AGENT_CATALOG}}
+
 DECISION RULES:
 - If an existing chain is a good fit (>70% match to the task requirements), recommend "use_existing"
 - If no chain fits well, recommend "generate_new" with suggested agents and a generation prompt
 - If the task is already satisfied by the current workspace state, recommend "no_action_needed" and include concrete evidence
 - Do not return "no_match" or "execute directly"; if the task is not covered by an existing chain, create a new chain recommendation
-- A good fit means the chain satisfies the exact task contract, not just the general category. If the task names a required file, artifact, command, framework, workspace, acceptance criterion, or output shape and the existing chain is hardcoded for a different one, recommend "generate_new".
-- Do not recommend reusable-looking chains that produce task-specific hardcoded outputs unless those outputs exactly match the current task or the chain description/catalog clearly says the chain parameterizes them from task context.
+- A good fit means the chain implements the same reusable mechanism and can derive this task's concrete inputs from typed runtime task context. A generic dependency-removal chain can fit different task IDs; a chain whose prompts hardcode one task ID cannot.
+- Do not reject an otherwise-correct reusable chain merely because the current task names different IDs, paths, or values. Reject it only when those values are persisted constants rather than runtime inputs.
 - Always provide reasoning (2-3 sentences) and a confidence score (0-1)
 - Always provide 1-3 alternatives from existing chains if any are partially relevant
 - For "use_existing": include match_reasons as bullet points explaining why this chain fits
-- For "generate_new": include a suggested chain name, description, agent list, and a generation_prompt ready for the chain generator API
+- For "generate_new": include a generic suggested chain name, description, reusable agent roles, work_mode, reuse_scope, runtime_inputs, and a generation_prompt ready for the chain generator API
+- The generated design must be task-agnostic but workspace-aware: it reads target IDs, files, commands, and criteria from typed runtime task context while tailoring repository discovery and verification to WORKSPACE CONTEXT.
+- Never put the current TASK-NNN identifiers, absolute workspace paths, fixed ports, or one-run artifact paths into suggested_name, agent roles, or generation_prompt.
+- Prefer agents from AVAILABLE AGENT CATALOG when their capabilities match; propose new roles only for missing capabilities.
 
-DELIVERY RULE (applies when the task's type in TASK TO ANALYZE is "feature", "task", or
-"bug" — these promise working software, not a document):
-- For "use_existing": only recommend a catalog chain if it includes an agent with
-  "edit_files" authority that actually implements things, or match_reasons show concrete
-  evidence the work is already done in the workspace (real file paths, passing tests, a
-  working endpoint). Never recommend a read-only analysis/design chain as a fit for a
-  feature/task/bug — that is a mismatch, not a match, no matter how detailed its output is.
-- For "generate_new": the generation_prompt you write MUST explicitly require at least one
-  edit_files agent that implements the acceptance criteria as working code, plus a final
-  verification step. Do not write a "produce a specification for a future code generator"
-  prompt as if it satisfies the task.
+WORK-MODE RULE (classify the observable end state, not the broad issue type):
+- delivery: workspace files/code must change. The chain needs edit_files and must implement the real change.
+- operations: service, deployment, external, or Mentiko-managed state must change via command/API/MCP. The chain needs run_commands; do not invent a file edit.
+- research: acceptance criteria are analysis/evidence only and promise no state mutation.
+- For "use_existing", the catalog chain's capabilities and mode must match that end state.
+- For "generate_new", set work_mode and make generation_prompt state the corresponding capability plus a final read-back/acceptance verifier.
 - For "no_action_needed": evidence must point at actual files/behavior in the workspace, not
   at a prior run's summary or spec document merely claiming the work is done.
 
@@ -456,6 +509,9 @@ JSON SCHEMA:
     "suggested_name": "string (when generate_new)",
     "suggested_description": "string (when generate_new)",
     "suggested_agents": [{"name": "string", "role": "string"}],
+    "work_mode": "delivery or operations or research (when generate_new)",
+    "reuse_scope": "string describing the reusable class of tasks this chain handles",
+    "runtime_inputs": ["semantic inputs agents must read from typed task context"],
     "generation_prompt": "string (when generate_new, ready for chain generator)",
     "evidence": ["string array (when no_action_needed)"]
   },
@@ -466,7 +522,36 @@ JSON SCHEMA:
       "relevance": "string (one-line explanation)"
     }
   ]
-}`;
+}
+
+VALID COMPLETE EXAMPLE (generate_new; use the shape, not the sample wording):
+{
+  "recommendation": {
+    "action": "generate_new",
+    "reasoning": "No catalog chain performs this reusable managed-state mutation without hardcoded task identifiers. A small operations chain can read the concrete identifiers from typed task context, apply the mutation, and verify the stored state independently.",
+    "confidence": 0.94,
+    "suggested_name": "managed task dependency mutation",
+    "suggested_description": "Applies a dependency add or removal requested in task context and proves the resulting managed task state.",
+    "suggested_agents": [
+      {"name": "dependency state inspector", "role": "Read the target and dependency identifiers from typed task context, inspect current state, and emit a normalized mutation plan."},
+      {"name": "dependency mutation operator", "role": "Use run_commands authority to apply only the requested managed-state mutation."},
+      {"name": "dependency state verifier", "role": "Independently read back the target state and compare it with acceptance criteria."}
+    ],
+    "work_mode": "operations",
+    "reuse_scope": "Managed task dependency additions and removals for arbitrary task identifiers supplied at runtime.",
+    "runtime_inputs": ["target task identifier", "dependency task identifier", "requested add or remove operation", "acceptance criteria", "workspace identity"],
+    "generation_prompt": "Generate a reusable operations-mode chain for managed task dependency mutations. Every agent must read the concrete identifiers, requested operation, acceptance criteria, and workspace identity from typed TASK_CONTEXT at runtime; do not persist literal task identifiers or absolute paths in the chain. Reuse catalog agents whose capabilities match. Include an inspector, one run_commands-authorized mutation operator, and a final independent verifier that reads back the managed task state. The final verifier must fail closed when the requested relationship is not proven. Return one valid chain JSON object following the generated-chain contract."
+  },
+  "alternatives": []
+}
+
+FINAL RESPONSE CHECK (read immediately before writing the artifact):
+- The top-level object has exactly two keys: recommendation and alternatives.
+- recommendation.action is exactly use_existing, generate_new, or no_action_needed.
+- Do not emit a run summary (status, executiveSummary, workCompleted), a legacy shape
+  (recommended_chain, custom_chain_suggestion), or prose outside the JSON object.
+- For generate_new, work_mode, reuse_scope, runtime_inputs, suggested_agents, and
+  generation_prompt are all present and contain no literal current TASK-NNN IDs.`;
 
 export const DEFAULT_DECISION_RESEARCH_TEMPLATE = `You are a senior analyst conducting research for a decision briefing.
 Your job is to deeply understand the problem, gather evidence, and
@@ -1795,16 +1880,15 @@ c. MOOT CRITERIA CLOSE RULE (stale specifics, proven end-state — see TASK-010)
    this rule does not apply and rule (b) governs.
 d. Only choose "retry" when the fix is a re-run with clearer guidance — not when a human judgment call is required.
 e. audit.reason is always required and must justify the verdict from the evidence.
-f. SPEC-VS-DELIVERED CHECK (this exact failure has happened before — see FEAT-014): if TASK DATA's type is
-   "feature", "task", or "bug", the acceptance criteria describe working software, not a document. Before
-   choosing "close", check RUN SUMMARY / RUN ARTIFACTS for evidence that real code files were written or
-   modified (not just markdown/spec/plan artifacts, and not just a "here is the implementation plan for the
-   next agent" handoff). A chain whose agents only analyzed, designed, or synthesized a specification —
-   however complete-sounding — has NOT satisfied a feature/task/bug and must get "decision", with
-   audit.decision.prompt asking whether to proceed to an implementation chain. Note: even if you judge this
-   as "close", the platform independently verifies that at least one agent in the chain had file-write
-   authority and will downgrade to "decision" if not — so there is no advantage to rating a spec-only run as
-   "close"; it will not stick.
+f. OBSERVABLE END-STATE DELIVERY CHECK (issue type alone does not determine the work mode):
+   - delivery: acceptance criteria require workspace code/files to change. Require evidence that the actual
+     files were written or modified; a spec, plan, or markdown-only handoff is not implementation.
+   - operations: acceptance criteria require managed, service, deployment, API, or MCP state to change.
+     Require command/API evidence plus an independent read-back proving the requested state; do not demand a
+     fake source edit merely because TASK DATA's type is "task" or "bug".
+   - research: acceptance criteria promise analysis/evidence only. Judge the cited evidence directly.
+   Classify from the observable acceptance criteria and delivered evidence, not from the broad issue type.
+   The platform independently checks the generated-chain mode and required authority before accepting close.
 g. CITATION DISCIPLINE: never claim an artifact or piece of evidence is MISSING without citing the exact
    absolute path you checked (join artifactsRoot with the artifact's path, or use its absolutePath — see
    RUN ARTIFACTS). If you did not check a specific path under ARTIFACTS ROOT, do not claim it is missing.

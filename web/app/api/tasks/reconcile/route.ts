@@ -55,6 +55,7 @@ const DONE_TASK_STATUSES = new Set(["closed", "resolved", "done", "complete"]);
 const TERMINAL_RUN_STATUSES = new Set(["completed", "complete", "blocked", "failed", "stopped", "deleted", "unknown", "cancelled"]);
 const RUN_STARTUP_GRACE_MS = 2 * 60 * 1000;
 const RUN_HANDOFF_GRACE_MS = 5 * 60 * 1000;
+const OUTCOME_SUMMARY_FAILURE_LIMIT = 2;
 
 interface ReconcileResult {
   taskId: string;
@@ -74,11 +75,19 @@ function shouldAuditCompletedAutoRun(meta: Record<string, unknown>, autoRunEnabl
     typeof meta.chain_id === "string" ||
     typeof meta.chain_name === "string" ||
     typeof meta.last_run_chain === "string";
+  const summaryFailures = typeof meta.task_outcome_summary_failures === "number"
+    ? meta.task_outcome_summary_failures
+    : 0;
+  const exhaustedCurrentSummary =
+    meta.task_outcome_summary_status === "failed"
+    && meta.task_outcome_summary_source_run_id === meta.last_run_id
+    && summaryFailures >= OUTCOME_SUMMARY_FAILURE_LIMIT;
 
   return (
     autoRunEnabled &&
     !!meta.last_run_id &&
-    generatedTaskHasExecutionChain
+    generatedTaskHasExecutionChain &&
+    !exhaustedCurrentSummary
   );
 }
 

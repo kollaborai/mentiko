@@ -30,6 +30,7 @@ import type { CompletionAudit } from "@/lib/tasks/completion-audit-schema";
 // only means "can write its own generation-result.json handoff file" and does
 // NOT count as delivering a task's acceptance criteria.
 const DELIVERY_AUTHORITIES = new Set(["edit_files", "write_files"]);
+const OPERATIONS_AUTHORITIES = new Set(["run_commands"]);
 
 function readJson(path: string): unknown {
   if (!existsSync(path)) return null;
@@ -42,7 +43,17 @@ function readJson(path: string): unknown {
 
 export function chainHasDeliveryAgent(chain: unknown): boolean {
   if (!chain || typeof chain !== "object") return false;
-  const agents = (chain as Record<string, unknown>).agents;
+  const chainRecord = chain as Record<string, unknown>;
+  const metadata = chainRecord.metadata && typeof chainRecord.metadata === "object" && !Array.isArray(chainRecord.metadata)
+    ? chainRecord.metadata as Record<string, unknown>
+    : undefined;
+  const contract = metadata?.generated_chain_contract && typeof metadata.generated_chain_contract === "object" && !Array.isArray(metadata.generated_chain_contract)
+    ? metadata.generated_chain_contract as Record<string, unknown>
+    : undefined;
+  const acceptedAuthorities = contract?.mode === "operations"
+    ? OPERATIONS_AUTHORITIES
+    : DELIVERY_AUTHORITIES;
+  const agents = chainRecord.agents;
   if (!Array.isArray(agents)) return false;
 
   return agents.some((agent) => {
@@ -53,7 +64,7 @@ export function chainHasDeliveryAgent(chain: unknown): boolean {
       : Array.isArray(authorities)
         ? authorities // some chain shapes put authorities as a flat string array
         : undefined;
-    return Array.isArray(can) && can.some((c) => typeof c === "string" && DELIVERY_AUTHORITIES.has(c));
+    return Array.isArray(can) && can.some((c) => typeof c === "string" && acceptedAuthorities.has(c));
   });
 }
 
@@ -88,14 +99,15 @@ export function enforceDeliveryGate(
     verdict: "decision",
     reason:
       `Auditor verdict was "close", but this ${task.issue_type} requires a working code deliverable ` +
-      "and no agent in the audited chain had file-write authority (edit_files/write_files) — chain.json " +
-      "shows read-only (and/or run_commands-only) agents throughout. A design/analysis-only chain cannot " +
+      "and no agent in the audited chain had the authority required by its declared work mode " +
+      "(edit_files/write_files for workspace delivery; run_commands for operations) — chain.json " +
+      "shows a capability mismatch. A design/analysis-only chain cannot " +
       `satisfy this task's acceptance criteria. Delivery gate escalated to human decision. Original ` +
       `auditor reason: ${audit.reason}`,
     decision: {
       prompt:
         "The completion auditor said this task is done, but the chain that ran had no agent with " +
-        "write authority — it could only have produced analysis, specs, or docs, not the working " +
+        "delivery authority for its declared mode — it could only have produced analysis, specs, or docs, not the working " +
         "feature/fix this task requires. Choose how to proceed.",
       options_hint:
         "Option A: If a working deliverable genuinely exists already (e.g. shipped by an earlier run), " +

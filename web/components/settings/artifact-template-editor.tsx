@@ -23,7 +23,8 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
   WorkflowSidebarItem,
   WorkflowSidebarResizeHandle,
 } from "@/components/ui/workflow-sidebar";
@@ -88,7 +89,7 @@ export function ArtifactTemplateEditor({
   const [creating, setCreating] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === "undefined") return 340;
     const stored = localStorage.getItem("artifacts-sidebar-width");
@@ -131,7 +132,7 @@ export function ArtifactTemplateEditor({
   const selected = templates.find((t) => t.id === selectedId);
 
   const filtered = templates.filter((t) => {
-    if (categoryFilter !== "all" && t.type !== categoryFilter) return false;
+    if (!matchesToggleFilter(categoryFilter, t.type)) return false;
     if (search) {
       const q = search.toLowerCase();
       return t.name.toLowerCase().includes(q) || t.id.toLowerCase().includes(q);
@@ -206,7 +207,7 @@ export function ArtifactTemplateEditor({
                 <Plus className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={CATEGORY_OPTIONS}
               value={categoryFilter}
               onChange={setCategoryFilter}

@@ -53,6 +53,21 @@ const DELIVERY_CHAIN = {
   ],
 };
 
+const OPERATIONS_CHAIN = {
+  id: "task-dependency-removal",
+  metadata: {
+    generated_chain_contract: {
+      version: 1,
+      mode: "operations",
+      acceptance_criteria: "The requested dependency is absent from task state.",
+    },
+  },
+  agents: [
+    { id: "dependency-remover", authorities: { can: ["run_commands"] } },
+    { id: "state-verifier", authorities: { can: ["run_commands", "read_files"] } },
+  ],
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -64,6 +79,11 @@ describe("chainHasDeliveryAgent", () => {
 
   it("true when at least one agent has edit_files", () => {
     expect(chainHasDeliveryAgent(DELIVERY_CHAIN)).toBe(true);
+  });
+
+  it("accepts run_commands only for an explicitly operational chain", () => {
+    expect(chainHasDeliveryAgent(OPERATIONS_CHAIN)).toBe(true);
+    expect(chainHasDeliveryAgent(READ_ONLY_CHAIN)).toBe(false);
   });
 
   it("false for null/malformed input", () => {
@@ -87,7 +107,7 @@ describe("enforceDeliveryGate", () => {
     const gated = enforceDeliveryGate(audit, { issue_type: "feature" }, "default", "default", "run-1782109461935-37aa975b");
 
     expect(gated.verdict).toBe("decision");
-    expect(gated.reason).toContain("no agent in the audited chain had file-write authority");
+    expect(gated.reason).toContain("no agent in the audited chain had the authority required by its declared work mode");
     expect(gated.decision?.prompt).toBeTruthy();
   });
 
@@ -106,6 +126,13 @@ describe("enforceDeliveryGate", () => {
     const gated = enforceDeliveryGate(audit, { issue_type: "feature" }, "default", "default", "run-2");
 
     expect(gated).toBe(audit);
+  });
+
+  it("leaves close alone for a verified operations chain", () => {
+    mockChainFile(OPERATIONS_CHAIN);
+    const audit: CompletionAudit = { verdict: "close", reason: "Task state changed and was read back." };
+
+    expect(enforceDeliveryGate(audit, { issue_type: "task" }, "default", "default", "run-ops")).toBe(audit);
   });
 
   it("leaves close alone for epic/chore/decision issue types (planning-only work can legitimately close)", () => {

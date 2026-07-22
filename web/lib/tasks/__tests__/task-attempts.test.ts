@@ -1,7 +1,6 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskRunMissingError } from "../task-run-locator";
 import { buildTaskAttempts, listTaskAttempts } from "../task-attempts";
 import type { TaskAttemptRun } from "../task-attempt-types";
 
@@ -369,7 +368,7 @@ describe("buildTaskAttempts", () => {
     expect(mockResolveLinkRunsDir).not.toHaveBeenCalled();
   });
 
-  it("does not fall back to the current request root when the persisted scope is missing", () => {
+  it("renders a missing scoped run with same-scope history without scanning the request root", () => {
     const taskRunScope = {
       version: 1 as const,
       taskId: "TASK-1",
@@ -384,16 +383,42 @@ describe("buildTaskAttempts", () => {
       goal: "Incorrect request-root run.",
       metadata: { taskExecution: true },
     }));
+    writeReferencedRun({
+      namespaceId: taskRunScope.namespaceId,
+      orgId: taskRunScope.orgId,
+      runId: "run-recommendation",
+    }, {
+      taskId: undefined,
+      chain: "Chain Recommendation",
+      chainId: "chain-recommendation",
+      metadata: { generationKind: "chain_recommendation" },
+    });
 
-    expect(() => listTaskAttempts({
+    const attempts = listTaskAttempts({
       namespaceId: "request-namespace",
       orgId: "default",
       taskId: "TASK-1",
       metadata: {
+        recommendation_run_id: "run-recommendation",
         last_run_id: "run-scoped-missing",
         task_run_scope: taskRunScope,
       },
-    })).toThrow(TaskRunMissingError);
+    });
+
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        runId: "run-recommendation",
+        kind: "recommendation",
+        status: "completed",
+      }),
+      expect.objectContaining({
+        runId: "run-scoped-missing",
+        kind: "execution",
+        status: "missing",
+        isCurrent: true,
+        staleReason: "Task run run-scoped-missing is missing from its persisted scope.",
+      }),
+    ]);
     expect(mockResolveLinkRunsDir).not.toHaveBeenCalled();
   });
 });

@@ -54,9 +54,10 @@ import {
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
   WorkflowSidebarResizeHandle,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
   WorkflowSidebarItem,
   WorkflowSidebarVisibilityToggleGroup,
+  matchesToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 
 interface Agent {
@@ -203,8 +204,8 @@ function ChainsPageContent() {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(SYSTEM_CHAINS_VISIBILITY_KEY) === "1";
   });
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>(
-    (searchParams.get("status") as FilterStatus) || "all"
+  const [filterStatus, setFilterStatus] = useState<FilterStatus[]>(
+    (searchParams.get("status")?.split(",").filter(Boolean) as FilterStatus[]) || []
   );
   const [sortBy, setSortBy] = useState<SortBy>(
     (searchParams.get("sort") as SortBy) || "name"
@@ -298,7 +299,7 @@ function ChainsPageContent() {
       else params.set(key, value);
     };
     sync("q", searchQuery, "");
-    sync("status", filterStatus, "all");
+    sync("status", filterStatus.join(","), "");
     sync("sort", sortBy, "name");
     const qs = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
@@ -550,7 +551,7 @@ function ChainsPageContent() {
         a.name.toLowerCase().includes(query) ||
         a.role.toLowerCase().includes(query)
       );
-    const matchesFilter = filterStatus === "all" || chain.status === filterStatus;
+    const matchesFilter = matchesToggleFilter(filterStatus, chain.status);
     return matchesSearch && matchesFilter;
   };
   const hiddenSystemMatchCount = showSystemChains
@@ -920,7 +921,7 @@ function ChainsPageContent() {
                 <AddFilled className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={STATUS_FILTERS}
               value={filterStatus}
               onChange={setFilterStatus}
@@ -984,7 +985,7 @@ function ChainsPageContent() {
                     Matching chains are hidden
                   </div>
                 </div>
-              ) : searchQuery || filterStatus !== "all" ? (
+              ) : searchQuery || filterStatus.length > 0 ? (
                 <div className="text-center py-12 text-xs text-muted-foreground/80">
                   No chains match filters
                 </div>

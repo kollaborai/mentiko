@@ -3,6 +3,7 @@ import {
   taskGet,
   taskList,
   taskUpdate,
+  taskClaimMetadataKeyIfUnset,
   taskClose,
   taskAddDep,
   taskRemoveDep,
@@ -351,6 +352,42 @@ describe("task-store", () => {
       taskUpdate("upd", t.id, { metadata: { c: 3 } });
       const fetched = taskGet("upd", t.id)!;
       expect(fetched.metadata).toEqual({ c: 3 });
+    });
+
+    it("claims metadata atomically without overwriting sibling fields", () => {
+      const t = taskCreate("upd", {
+        title: "Claim",
+        metadata: { auto_run_retries: 2, generation_last_error: "old", sibling: "keep" },
+      });
+
+      expect(taskClaimMetadataKeyIfUnset("upd", t.id, "generation_job_id", {
+        generation_job_id: "claim-1",
+        generation_status: "starting",
+        generation_last_error: undefined,
+      }, undefined, {
+        metadataNumberLessThan: { key: "auto_run_retries", value: 3 },
+      })).toBe(true);
+
+      expect(taskGet("upd", t.id)!.metadata).toEqual({
+        auto_run_retries: 2,
+        generation_job_id: "claim-1",
+        generation_status: "starting",
+        sibling: "keep",
+      });
+    });
+
+    it("rejects a generation claim once the retry ceiling is reached", () => {
+      const t = taskCreate("upd", {
+        title: "Claim ceiling",
+        metadata: { auto_run_retries: 3 },
+      });
+
+      expect(taskClaimMetadataKeyIfUnset("upd", t.id, "generation_job_id", {
+        generation_job_id: "claim-too-late",
+      }, undefined, {
+        metadataNumberLessThan: { key: "auto_run_retries", value: 3 },
+      })).toBe(false);
+      expect(taskGet("upd", t.id)!.metadata).toEqual({ auto_run_retries: 3 });
     });
 
     it("replaces labels entirely", () => {

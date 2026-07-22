@@ -402,6 +402,7 @@ describe("POST /api/tasks/auto-run", () => {
       },
       "default",
     );
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default");
   });
 
   it("clears a missing generation job so auto-run can retry", async () => {
@@ -436,12 +437,14 @@ describe("POST /api/tasks/auto-run", () => {
         metadata: expect.objectContaining({
           generation_job_id: undefined,
           generation_status: "missing",
+          generation_last_error: "Chain generation job record is missing: job-missing",
           auto_run_retries: 1,
         }),
       },
       "default",
     );
     expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default");
   });
 
   it("prefers task.workspace_id over stale metadata workspace_path", async () => {
@@ -1207,6 +1210,7 @@ describe("POST /api/tasks/auto-run", () => {
         analysis_status: "accepted",
       }),
       "default",
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
     );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
@@ -1283,6 +1287,7 @@ describe("POST /api/tasks/auto-run", () => {
       "generation_job_id",
       expect.objectContaining({ generation_last_error: undefined }),
       "default",
+      { metadataNumberLessThan: { key: "auto_run_retries", value: 3 } },
     );
   });
 
@@ -1693,7 +1698,7 @@ describe("POST /api/tasks/auto-run", () => {
     },
   );
 
-  it("rejects further re-analysis once auto_run_retries has already reached the ceiling", async () => {
+  it("rejects further re-analysis once auto_run_retries has reached the ceiling and no job needs reconciliation", async () => {
     // Proves the unreadable-retry increment above actually terminates the loop:
     // once retries reach MAX_AUTO_RUN_RETRIES, canAdmitAutoRun's pre-existing
     // ceiling check rejects before ever reaching analysis again.
@@ -1705,8 +1710,7 @@ describe("POST /api/tasks/auto-run", () => {
       priority: 2,
       metadata: {
         auto_run: true,
-        analysis_job_id: "job-analysis-100",
-        analysis_status: "running",
+        analysis_status: "unreadable",
         auto_run_retries: 3,
       },
     });
@@ -1722,6 +1726,54 @@ describe("POST /api/tasks/auto-run", () => {
     });
     expect(global.fetch).not.toHaveBeenCalled();
     expect(mockGetJob).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a poisoned complete generation job at the retry ceiling without counting it again", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      title: "Fresh project feature",
+      status: "open",
+      issue_type: "feature",
+      priority: 1,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis-complete",
+        analysis_status: "accepted",
+        generation_job_id: "job-generation-empty",
+        generation_status: "complete",
+        auto_run_retries: 3,
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-generation-empty",
+      type: "generate",
+      status: "complete",
+      result: undefined,
+    });
+
+    const res = await POST(makeRequest({ taskId: "FEAT-001" }) as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "FEAT-001",
+      error: expect.stringContaining("without a valid JSON chain payload"),
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "FEAT-001",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "failed",
+          generation_last_error: expect.stringContaining("without a valid JSON chain payload"),
+          auto_run_retries: 3,
+        }),
+      },
+      "default",
+    );
+    expect(mockTriggerAutoRunScan).not.toHaveBeenCalled();
   });
 
   it("does not start duplicate generation when another request already claimed it", async () => {

@@ -135,6 +135,83 @@ export function WorkflowSidebarSegmentedControl<T extends string = string>({
   );
 }
 
+// Multi-select sibling of WorkflowSidebarSegmentedControl: same segmented look,
+// but any number of options can be active at once (combine filters). An empty
+// selection means "all" (no filtering). The `allValue` option, if present in
+// `options`, renders as a clear-to-all pill.
+export function matchesToggleFilter(
+  selected: readonly string[],
+  value: string | null | undefined
+): boolean {
+  return selected.length === 0 || (value != null && selected.includes(value));
+}
+
+interface WorkflowSidebarToggleFilterProps<T extends string = string> {
+  options: Array<WorkflowSidebarOption<T>>;
+  value: T[];
+  onChange: (value: T[]) => void;
+  /** option value that clears the selection back to "all" (default "all") */
+  allValue?: T;
+  className?: string;
+  buttonClassName?: string;
+}
+
+export function WorkflowSidebarToggleFilter<T extends string = string>({
+  options,
+  value,
+  onChange,
+  allValue = "all" as T,
+  className,
+  buttonClassName,
+}: WorkflowSidebarToggleFilterProps<T>) {
+  const selected = new Set(value);
+  const toggle = (v: T) => {
+    if (v === allValue) {
+      onChange([]);
+      return;
+    }
+    const next = new Set(selected);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    // keep canonical option order (stable URLs), drop the all-pill value
+    onChange(
+      options
+        .filter((o) => o.value !== allValue && next.has(o.value))
+        .map((o) => o.value)
+    );
+  };
+  return (
+    <div
+      role="group"
+      data-testid="workflow-sidebar-toggle-filter"
+      data-workflow-sidebar-control=""
+      className={cn("flex flex-wrap items-center gap-1 rounded-xl bg-card p-0.5", className)}
+    >
+      {options.map((option) => {
+        const active =
+          option.value === allValue ? selected.size === 0 : selected.has(option.value);
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => toggle(option.value)}
+            className={cn(
+              "flex-1 rounded-lg px-2 py-0.5 text-[10px] capitalize transition-colors",
+              active
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground",
+              buttonClassName
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export interface WorkflowSidebarVisibilityOption<T extends string = string> {
   value: T;
   label: string;

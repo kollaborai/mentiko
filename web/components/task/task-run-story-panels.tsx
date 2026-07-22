@@ -57,13 +57,16 @@ function stringValue(value: unknown): string | undefined {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    ? value.filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
     : [];
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
@@ -72,7 +75,10 @@ function runSummary(value: unknown): RunSummary | undefined {
   if (!record) return undefined;
   const agents = Array.isArray(record.agents)
     ? record.agents
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+        .filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        )
         .map((agent) => ({
           id: stringValue(agent.id),
           name: stringValue(agent.name),
@@ -85,14 +91,20 @@ function runSummary(value: unknown): RunSummary | undefined {
     chain: stringValue(record.chain),
     status: stringValue(record.status),
     outcome: stringValue(record.outcome),
-    decision_required: typeof record.decision_required === "boolean" ? record.decision_required : undefined,
+    decision_required:
+      typeof record.decision_required === "boolean"
+        ? record.decision_required
+        : undefined,
     recommendation: stringValue(record.recommendation),
     summary: stringValue(record.summary),
     findings: stringArray(record.findings),
     risks: stringArray(record.risks),
     next_actions: stringArray(record.next_actions),
     agents,
-    artifacts_count: typeof record.artifacts_count === "number" ? record.artifacts_count : undefined,
+    artifacts_count:
+      typeof record.artifacts_count === "number"
+        ? record.artifacts_count
+        : undefined,
   };
 }
 
@@ -106,7 +118,10 @@ function aiOutcomeSummary(value: unknown): AiOutcomeSummary | undefined {
     narrative: stringValue(record.narrative),
     outcome: stringValue(record.outcome),
     confidence: stringValue(record.confidence),
-    decision_required: typeof record.decision_required === "boolean" ? record.decision_required : undefined,
+    decision_required:
+      typeof record.decision_required === "boolean"
+        ? record.decision_required
+        : undefined,
     what_happened: stringArray(record.what_happened),
     evidence: stringArray(record.evidence),
     improvement_signals: stringArray(record.improvement_signals),
@@ -115,21 +130,44 @@ function aiOutcomeSummary(value: unknown): AiOutcomeSummary | undefined {
 }
 
 function isTerminalRunStatus(status?: string) {
-  return status === "completed" || status === "complete" || status === "blocked" || status === "failed" || status === "stopped";
+  return (
+    status === "completed" ||
+    status === "complete" ||
+    status === "blocked" ||
+    status === "failed" ||
+    status === "stopped"
+  );
+}
+
+function isActiveRunStatus(status?: string) {
+  return (
+    status === "pending" ||
+    status === "queued" ||
+    status === "starting" ||
+    status === "running"
+  );
 }
 
 function toneFor(outcome?: string, decisionRequired?: boolean) {
   if (decisionRequired) return "text-amber-300 bg-amber-500/10";
-  if (outcome === "failed" || outcome === "error") return "text-red-300 bg-red-500/10";
-  if (outcome === "complete" || outcome === "completed" || outcome === "pass") return "text-emerald-300 bg-emerald-500/10";
+  if (outcome === "failed" || outcome === "error")
+    return "text-red-300 bg-red-500/10";
+  if (outcome === "complete" || outcome === "completed" || outcome === "pass")
+    return "text-emerald-300 bg-emerald-500/10";
   return "text-sky-300 bg-sky-500/10";
 }
 
-function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "info" | "bad" }) {
+function Badge({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "good" | "warn" | "info" | "bad";
+}) {
   return (
     <span
       className={cn(
-        "inline-flex h-5 items-center rounded-sm px-1.5 text-[10px] font-mono",
+        "inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-mono",
         tone === "good" && "bg-emerald-500/10 text-emerald-300",
         tone === "warn" && "bg-amber-500/10 text-amber-300",
         tone === "info" && "bg-sky-500/10 text-sky-300",
@@ -154,18 +192,30 @@ function Widget({
   detail?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-sm bg-background/50 p-2">
+    <div className="rounded-lg bg-card p-2">
       <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
         {icon}
         {label}
       </div>
-      <div className="mt-1 truncate text-xs font-semibold text-foreground/80">{value}</div>
-      {detail ? <div className="mt-0.5 truncate text-[10px] text-foreground/35">{detail}</div> : null}
+      <div className="mt-1 truncate text-xs font-semibold text-foreground/80">
+        {value}
+      </div>
+      {detail ? (
+        <div className="mt-0.5 truncate text-[10px] text-foreground/35">
+          {detail}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function RunLink({ runId, children }: { runId?: string; children: React.ReactNode }) {
+function RunLink({
+  runId,
+  children,
+}: {
+  runId?: string;
+  children: React.ReactNode;
+}) {
   if (!runId) return <span>{children}</span>;
   return (
     <a
@@ -191,6 +241,10 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function outcomeAuditStatusLabel(status?: string) {
+  return status === "ready" ? "complete" : status || "-";
+}
+
 function SummarySectionHeader({
   outcome,
   outcomeTone,
@@ -203,12 +257,27 @@ function SummarySectionHeader({
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-foreground/40">Summary</span>
+        <span className="text-xs font-medium text-foreground/40">
+          Execution
+        </span>
         <Badge tone={outcomeTone}>{outcome}</Badge>
         {status ? (
-          <Badge tone={status === "ready" ? "good" : status === "failed" ? "bad" : "info"}>
-            {status === "running" ? "summarizing" : status}
+          <>
+            <span className="ml-1 text-xs font-medium text-foreground/40">
+              Outcome audit
+            </span>
+            <Badge
+              tone={
+                status === "ready"
+                  ? "good"
+                  : status === "failed"
+                    ? "bad"
+                    : "info"
+              }
+            >
+              {outcomeAuditStatusLabel(status)}
           </Badge>
+          </>
         ) : null}
       </div>
     </div>
@@ -226,23 +295,67 @@ export function TaskRunStoryPanels({
   const metadata = task.metadata || {};
   const summary = runSummary(metadata.last_run_summary);
   const binding = task.chainBinding;
-  const summarySourceRunId = stringValue(metadata.task_outcome_summary_source_run_id);
-  const lastRunId = binding?.last_run_id || summary?.run_id || summarySourceRunId;
-  const matchingAiSummary = summarySourceRunId === lastRunId
+  const summarySourceRunId = stringValue(
+    metadata.task_outcome_summary_source_run_id,
+  );
+  const lastRunId =
+    binding?.last_run_id || summary?.run_id || summarySourceRunId;
+  const matchingAiSummary =
+    summarySourceRunId === lastRunId
     ? aiOutcomeSummary(metadata.task_outcome_summary)
     : undefined;
-  const outcome = matchingAiSummary?.outcome || binding?.last_run_outcome || summary?.outcome || binding?.last_run_status || "unknown";
-  const decisionRequired = matchingAiSummary?.decision_required ?? binding?.last_run_decision_required ?? summary?.decision_required;
+  const outcome =
+    matchingAiSummary?.outcome ||
+    binding?.last_run_outcome ||
+    summary?.outcome ||
+    binding?.last_run_status ||
+    "unknown";
+  const decisionRequired =
+    matchingAiSummary?.decision_required ??
+    binding?.last_run_decision_required ??
+    summary?.decision_required;
   const summaryStatus = stringValue(metadata.task_outcome_summary_status);
   const summaryError = stringValue(metadata.task_outcome_summary_error);
   const summaryJobRunId = stringValue(metadata.task_outcome_summary_run_id);
-  const blockedReason = binding?.last_run_blocked_reason || stringValue(metadata.last_run_blocked_reason);
+  const blockedReason =
+    binding?.last_run_blocked_reason ||
+    stringValue(metadata.last_run_blocked_reason);
+  const executionStatus = binding?.last_run_status || summary?.status;
+  const executionActive = isActiveRunStatus(executionStatus);
   const [localStatus, setLocalStatus] = useState<string | undefined>();
   const startedForRun = useRef<string | undefined>(undefined);
+  const summaryInProgress =
+    !matchingAiSummary && (localStatus || summaryStatus) === "running";
+  const summaryFailed =
+    !matchingAiSummary && (localStatus || summaryStatus) === "failed";
 
-  const narrative = matchingAiSummary?.narrative || blockedReason || summary?.summary || binding?.last_run_error || "run finished without a summary";
-  const headline = matchingAiSummary?.headline || (binding?.last_run_status === "blocked" ? "Run blocked" : outcome === "complete" ? "Task completed" : "Task outcome needs review");
-  const confidence = matchingAiSummary?.confidence || (summary ? "medium" : "low");
+  const narrative =
+    matchingAiSummary?.narrative ||
+    blockedReason ||
+    (executionActive
+      ? "The execution run is still in progress. Outcome evidence and audit will appear after it reaches a terminal state."
+      : summaryInProgress
+        ? "The execution run completed. Mentiko is auditing its evidence and will update the task when that check finishes."
+        : summaryFailed
+          ? "The execution run finished, but its outcome audit did not. The task remains open until the run evidence is summarized and audited."
+          : summary?.summary ||
+            binding?.last_run_error ||
+            "run finished without a summary");
+  const headline =
+    matchingAiSummary?.headline ||
+    (executionActive
+      ? "Execution in progress"
+      : summaryInProgress
+        ? "Outcome audit in progress"
+        : summaryFailed
+          ? "Execution finished; outcome audit failed"
+          : binding?.last_run_status === "blocked"
+            ? "Run blocked"
+            : outcome === "complete"
+              ? "Task completed"
+              : "Task outcome needs review");
+  const confidence =
+    matchingAiSummary?.confidence || (summary ? "medium" : "low");
   const findings = matchingAiSummary?.what_happened?.length
     ? matchingAiSummary.what_happened
     : summary?.findings || [];
@@ -266,24 +379,40 @@ export function TaskRunStoryPanels({
   const generatedChainRunId = stringValue(metadata.generated_chain_run_id);
   const timeline = [
     { label: "task", value: task.id, detail: task.title },
-    { label: "recommend", value: recommendationRunId, detail: "chain recommendation" },
-    { label: "generate", value: generatedChainRunId, detail: "chain generation" },
-    { label: "execute", value: lastRunId, detail: binding?.chain_name || summary?.chain || "execution chain" },
+    {
+      label: "recommend",
+      value: recommendationRunId,
+      detail: "chain recommendation",
+    },
+    {
+      label: "generate",
+      value: generatedChainRunId,
+      detail: "chain generation",
+    },
+    {
+      label: "execute",
+      value: lastRunId,
+      detail: binding?.chain_name || summary?.chain || "execution chain",
+    },
   ].filter((item) => item.value);
 
   useEffect(() => {
     if (!lastRunId || matchingAiSummary) return;
-    if (!isTerminalRunStatus(binding?.last_run_status || summary?.status)) return;
+    if (!isTerminalRunStatus(binding?.last_run_status || summary?.status))
+      return;
     if (summaryStatus === "running" || localStatus === "running") return;
     if (summaryStatus === "failed") return;
     if (startedForRun.current === lastRunId) return;
 
     startedForRun.current = lastRunId;
-    fetchWithNamespace(`/api/tasks/${encodeURIComponent(task.id)}/outcome-summary`, {
+    fetchWithNamespace(
+      `/api/tasks/${encodeURIComponent(task.id)}/outcome-summary`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
-    })
+      },
+    )
       .then(async (response) => {
         if (!response.ok) {
           setLocalStatus("failed");
@@ -311,8 +440,51 @@ export function TaskRunStoryPanels({
   const staleStoredRunningStatus = summaryStatus === "running" && !!summary;
   const visibleSummaryStatus = matchingAiSummary
     ? "ready"
-    : localStatus || (staleStoredRunningStatus ? undefined : summaryStatus) || (summary ? undefined : "queued");
-  const outcomeTone = binding?.last_run_status === "blocked" || outcome === "failed" || outcome === "error" ? "bad" : decisionRequired ? "warn" : "good";
+    : localStatus ||
+      (staleStoredRunningStatus ? undefined : summaryStatus) ||
+      (summary ? undefined : "queued");
+  const reviewRequired = Boolean(
+    !executionActive && (decisionRequired || summaryFailed),
+  );
+  const decisionLabel = executionActive
+    ? "in progress"
+    : summaryInProgress
+      ? "auditing"
+      : reviewRequired
+        ? "review"
+        : "move forward";
+  const outcomeTone =
+    binding?.last_run_status === "blocked" ||
+    outcome === "failed" ||
+    outcome === "error"
+      ? "bad"
+      : decisionRequired
+        ? "warn"
+        : "good";
+
+  const retryOutcomeAudit = async () => {
+    if (!lastRunId || localStatus === "running") return;
+    setLocalStatus("running");
+    startedForRun.current = lastRunId;
+    try {
+      const response = await fetchWithNamespace(
+        `/api/tasks/${encodeURIComponent(task.id)}/outcome-summary`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
+      if (!response.ok) {
+        setLocalStatus("failed");
+        return;
+      }
+      await onRefreshTask?.();
+      window.setTimeout(() => void onRefreshTask?.(), 2500);
+    } catch {
+      setLocalStatus("failed");
+    }
+  };
 
   return (
     <section className="px-4 py-3">
@@ -322,107 +494,209 @@ export function TaskRunStoryPanels({
         status={visibleSummaryStatus}
       />
 
-      <div className="rounded-sm bg-muted p-3">
+      <div className="rounded-xl border border-border/60 bg-muted p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-foreground/85">{headline}</h3>
-            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-foreground/60">{narrative}</p>
-            {blockedReason ? <p className="mt-1 text-[10px] text-red-300">Blocked reason: {blockedReason}</p> : null}
-            {summaryError ? <p className="mt-1 text-[10px] text-red-300">{summaryError}</p> : null}
+            <h3 className="text-sm font-semibold text-foreground/85">
+              {headline}
+            </h3>
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-foreground/60">
+              {narrative}
+            </p>
+            {blockedReason ? (
+              <p className="mt-1 text-[10px] text-red-300">
+                Blocked reason: {blockedReason}
+              </p>
+            ) : null}
+            {summaryError ? (
+              <p className="mt-1 text-[10px] text-red-300">
+                Outcome audit error: {summaryError}
+              </p>
+            ) : null}
+            {summaryFailed ? (
+              <button
+                type="button"
+                className="mt-2 rounded-md bg-foreground/10 px-2 py-1 text-[10px] font-medium text-foreground/70 hover:bg-foreground/15"
+                onClick={() => void retryOutcomeAudit()}
+              >
+                Retry outcome audit
+              </button>
+            ) : null}
           </div>
-          <div className={cn("rounded-sm px-2.5 py-2 text-right", toneFor(outcome, decisionRequired))}>
-            <div className="text-[10px] font-mono uppercase opacity-70">decision</div>
-            <div className="text-sm font-semibold">{decisionRequired ? "review" : "move forward"}</div>
+          <div
+            className={cn(
+              "rounded-lg px-2.5 py-2 text-right",
+              toneFor(outcome, reviewRequired),
+            )}
+          >
+            <div className="text-[10px] font-mono uppercase opacity-70">
+              decision
+          </div>
+            <div className="text-sm font-semibold">{decisionLabel}</div>
           </div>
         </div>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-          <Widget icon={<Check className="h-3 w-3" />} label="confidence" value={confidence} detail={matchingAiSummary ? "ai summary" : "structured fallback"} />
-          <Widget icon={<Document className="h-3 w-3" />} label="artifacts" value={summary?.artifacts_count ?? "-"} detail="run evidence" />
-          <Widget icon={<Route className="h-3 w-3" />} label="execution" value={<RunLink runId={lastRunId}>{shortId(lastRunId)}</RunLink>} detail={binding?.chain_name || summary?.chain || "chain"} />
-          <Widget icon={<Flash className="h-3 w-3" />} label="agents" value={agents.length || "-"} detail={agents[0]?.name || "agent report"} />
-          <Widget icon={<Clock className="h-3 w-3" />} label="closed" value={task.closedAt ? "yes" : "no"} detail={formatDate(task.closedAt)} />
+          <Widget
+            icon={<Check className="h-3 w-3" />}
+            label="confidence"
+            value={confidence}
+            detail={matchingAiSummary ? "ai summary" : "structured fallback"}
+          />
+          <Widget
+            icon={<Document className="h-3 w-3" />}
+            label="artifacts"
+            value={summary?.artifacts_count ?? "-"}
+            detail="run evidence"
+          />
+          <Widget
+            icon={<Route className="h-3 w-3" />}
+            label="execution"
+            value={<RunLink runId={lastRunId}>{shortId(lastRunId)}</RunLink>}
+            detail={binding?.chain_name || summary?.chain || "chain"}
+          />
+          <Widget
+            icon={<Flash className="h-3 w-3" />}
+            label="agents"
+            value={agents.length || "-"}
+            detail={agents[0]?.name || "agent report"}
+          />
+          <Widget
+            icon={<Clock className="h-3 w-3" />}
+            label="closed"
+            value={task.closedAt ? "yes" : "no"}
+            detail={formatDate(task.closedAt)}
+          />
         </div>
 
         <div className="mt-3 grid gap-2 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-sm bg-background/45 p-2.5">
+          <div className="rounded-lg bg-card p-2.5">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
               <Route className="h-3 w-3" />
               execution journey
             </div>
             <div className="grid gap-1.5">
               {timeline.map((item, index) => (
-                <div key={`${item.label}-${item.value}`} className="grid grid-cols-[20px_82px_1fr] items-start gap-2 text-xs">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-sm bg-muted text-[10px] text-foreground/40">{index + 1}</span>
-                  <span className="font-mono text-[10px] text-foreground/35">{item.label}</span>
+                <div
+                  key={`${item.label}-${item.value}`}
+                  className="grid grid-cols-[20px_82px_1fr] items-start gap-2 text-xs"
+                >
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md bg-muted text-[10px] text-foreground/40">
+                    {index + 1}
+                  </span>
+                  <span className="font-mono text-[10px] text-foreground/35">
+                    {item.label}
+                  </span>
                   <span className="min-w-0 text-foreground/65">
-                    {item.label === "execute" ? <RunLink runId={item.value}>{item.detail}</RunLink> : item.detail}
+                    {item.label === "execute" ? (
+                      <RunLink runId={item.value}>{item.detail}</RunLink>
+                    ) : (
+                      item.detail
+                    )}
                   </span>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="rounded-sm bg-background/45 p-2.5">
+          <div className="rounded-lg bg-card p-2.5">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
               <DatabaseSearch className="h-3 w-3" />
               proof
             </div>
-            <div className="break-all font-mono text-[10px] text-foreground/45">{artifactDir}</div>
+            <div className="break-all font-mono text-[10px] text-foreground/45">
+              {artifactDir}
+            </div>
             <div className="mt-2 space-y-1.5">
               {evidence.slice(0, 3).map((item) => (
-                <div key={item} className="flex gap-1.5 text-xs text-foreground/65">
+                <div
+                  key={item}
+                  className="flex gap-1.5 text-xs text-foreground/65"
+                >
                   <Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-300" />
                   <span>{item}</span>
                 </div>
               ))}
-              {!evidence.length ? <div className="text-xs text-foreground/40">no evidence extracted yet</div> : null}
+              {!evidence.length ? (
+                <div className="text-xs text-foreground/40">
+                  no evidence extracted yet
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
 
         <div className="mt-2 grid gap-2 xl:grid-cols-3">
-          <div className="rounded-sm bg-background/45 p-2.5">
+          <div className="rounded-lg bg-card p-2.5">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
               <Chart className="h-3 w-3" />
               what happened
             </div>
             <div className="space-y-1.5">
               {findings.slice(0, 3).map((item) => (
-                <div key={item} className="text-xs text-foreground/65">{item}</div>
+                <div key={item} className="text-xs text-foreground/65">
+                  {item}
+                </div>
               ))}
-              {!findings.length ? <div className="text-xs text-foreground/40">no findings extracted yet</div> : null}
+              {!findings.length ? (
+                <div className="text-xs text-foreground/40">
+                  no findings extracted yet
+                </div>
+              ) : null}
             </div>
           </div>
 
-          <div className="rounded-sm bg-background/45 p-2.5">
+          <div className="rounded-lg bg-card p-2.5">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
               <Warning className="h-3 w-3" />
               improvement signals
             </div>
             <div className="space-y-1.5">
               {improvementSignals.slice(0, 3).map((item) => (
-                <div key={item} className="text-xs text-foreground/65">{item}</div>
+                <div key={item} className="text-xs text-foreground/65">
+                  {item}
+                </div>
               ))}
             </div>
           </div>
 
-          <div className="rounded-sm bg-background/45 p-2.5">
+          <div className="rounded-lg bg-card p-2.5">
             <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono uppercase text-foreground/30">
               <Refresh className="h-3 w-3" />
               receipt
             </div>
             <dl className="grid grid-cols-[82px_1fr] gap-x-2 gap-y-1 text-[10px]">
               <dt className="text-foreground/35">run</dt>
-              <dd className="truncate font-mono text-foreground/65"><RunLink runId={lastRunId}>{lastRunId || "-"}</RunLink></dd>
+              <dd className="truncate font-mono text-foreground/65">
+                <RunLink runId={lastRunId}>{lastRunId || "-"}</RunLink>
+              </dd>
               <dt className="text-foreground/35">summary run</dt>
-              <dd className="truncate font-mono text-foreground/65"><RunLink runId={summaryJobRunId}>{summaryJobRunId || "-"}</RunLink></dd>
-              <dt className="text-foreground/35">status</dt>
-              <dd className="text-foreground/65">{summary?.status || binding?.last_run_status || summaryStatus || "-"}</dd>
+              <dd className="truncate font-mono text-foreground/65">
+                <RunLink runId={summaryJobRunId}>
+                  {summaryJobRunId || "-"}
+                </RunLink>
+              </dd>
+              <dt className="text-foreground/35">execution</dt>
+              <dd className="text-foreground/65">
+                {summary?.status ||
+                  binding?.last_run_status ||
+                  summaryStatus ||
+                  "-"}
+              </dd>
+              <dt className="text-foreground/35">outcome audit</dt>
+              <dd className="text-foreground/65">
+                {outcomeAuditStatusLabel(visibleSummaryStatus)}
+              </dd>
               <dt className="text-foreground/35">chain</dt>
-              <dd className="truncate text-foreground/65">{binding?.chain_name || summary?.chain || "-"}</dd>
+              <dd className="truncate text-foreground/65">
+                {binding?.chain_name || summary?.chain || "-"}
+              </dd>
             </dl>
-            {nextActions.length ? <div className="mt-2 text-xs text-foreground/60">{nextActions[0]}</div> : null}
+            {nextActions.length ? (
+              <div className="mt-2 text-xs text-foreground/60">
+                {nextActions[0]}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

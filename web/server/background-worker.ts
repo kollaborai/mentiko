@@ -7,6 +7,7 @@ import {
   writeBackgroundWorkerStatusFile,
 } from "../lib/system/background-worker-state";
 import { reconcileOrphanedRuns } from "../lib/runs/run-reconciler";
+import { reconcileDecisions } from "../lib/decisions/decision-reconciler";
 import { drainRunnerV2ExternalEffects } from "../lib/runner-v2/external-effects";
 import {
   getSchedulerStatus,
@@ -32,11 +33,13 @@ const EXTERNAL_DRAIN_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 60_000;
 
 let reconcileInterval: ReturnType<typeof setInterval> | null = null;
+let decisionReconcileInterval: ReturnType<typeof setInterval> | null = null;
 let externalDrainInterval: ReturnType<typeof setInterval> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let externalDrainInFlight = false;
 let watchdogInFlight = false;
+let decisionReconcileInFlight = false;
 
 const startedAt = new Date().toISOString();
 const workerOwner = captureBackgroundWorkerOwner(process.pid);
@@ -45,6 +48,18 @@ const reconcilerState: {
   lastCleaned?: number;
   note?: string;
 } = {};
+const decisionReconcilerState: {
+  lastCheck?: string;
+  checkCount: number;
+  examined?: number;
+  activeGenerating?: number;
+  deadPointers?: number;
+  recoveriesScheduled?: number;
+  replaysScheduled?: number;
+  exhausted?: number;
+  coolingDown?: number;
+  lastError?: string;
+} = { checkCount: 0 };
 const externalDrainState: {
   lastRun?: string;
   lastDispatched?: number;
@@ -73,6 +88,19 @@ function currentStatus(note?: string) {
     checkCount: scheduler.checkCount,
     lastReconcile: reconcilerState.lastRun,
     lastReconcileCleaned: reconcilerState.lastCleaned,
+    decisionReconciler: {
+      status: shutdownController.isStopping() ? "stopped" as const : "running" as const,
+      lastCheck: decisionReconcilerState.lastCheck,
+      checkCount: decisionReconcilerState.checkCount,
+      examined: decisionReconcilerState.examined,
+      activeGenerating: decisionReconcilerState.activeGenerating,
+      deadPointers: decisionReconcilerState.deadPointers,
+      recoveriesScheduled: decisionReconcilerState.recoveriesScheduled,
+      replaysScheduled: decisionReconcilerState.replaysScheduled,
+      exhausted: decisionReconcilerState.exhausted,
+      coolingDown: decisionReconcilerState.coolingDown,
+      lastError: decisionReconcilerState.lastError,
+    },
     autoRun: {
       status: autoRun.status,
       lastCheck: autoRun.lastCheck,
@@ -97,8 +125,49 @@ function currentStatus(note?: string) {
     },
     lastExternalDrain: externalDrainState.lastRun,
     lastExternalDispatched: externalDrainState.lastDispatched,
-    note: note || reconcilerState.note || externalDrainState.note,
+    note: note || reconcilerState.note || decisionReconcilerState.lastError || externalDrainState.note,
   };
+}
+
+async function runDecisionReconciler(label: string) {
+  if (decisionReconcileInFlight) return;
+  decisionReconcileInFlight = true;
+  try {
+    const result = reconcileDecisions();
+    decisionReconcilerState.lastCheck = new Date().toISOString();
+    decisionReconcilerState.checkCount += 1;
+    decisionReconcilerState.examined = result.examined;
+    decisionReconcilerState.activeGenerating = result.activeGenerating;
+    decisionReconcilerState.deadPointers = result.deadPointers;
+    decisionReconcilerState.recoveriesScheduled = result.recoveriesScheduled;
+    decisionReconcilerState.replaysScheduled = result.replaysScheduled;
+    decisionReconcilerState.exhausted = result.exhausted;
+    decisionReconcilerState.coolingDown = result.coolingDown;
+    decisionReconcilerState.lastError = result.errors.length > 0
+      ? result.errors.join("; ")
+      : undefined;
+
+    if (
+      result.deadPointers > 0
+      || result.recoveriesScheduled > 0
+      || result.replaysScheduled > 0
+      || result.exhausted > 0
+    ) {
+      console.log(
+        `[worker] decision reconciler ${label}: ${result.examined} examined, `
+        + `${result.deadPointers} dead, ${result.recoveriesScheduled} recoveries scheduled, `
+        + `${result.replaysScheduled} import replays scheduled, ${result.exhausted} exhausted`,
+      );
+    }
+  } catch (error) {
+    decisionReconcilerState.lastCheck = new Date().toISOString();
+    decisionReconcilerState.checkCount += 1;
+    decisionReconcilerState.lastError = error instanceof Error ? error.message : String(error);
+    console.warn(`[worker] decision reconciler ${label} failed:`, error);
+  } finally {
+    decisionReconcileInFlight = false;
+    persistStatus();
+  }
 }
 
 function persistStatus(note?: string) {
@@ -208,11 +277,16 @@ async function start() {
 
   await new Promise((resolve) => setTimeout(resolve, RECONCILE_STARTUP_DELAY_MS));
   await runReconciler("startup");
+  await runDecisionReconciler("startup");
   await runWatchdog("startup");
   await runExternalDrain("startup");
 
   reconcileInterval = setInterval(() => {
     void runReconciler("periodic");
+  }, CHECK_INTERVAL_MS);
+
+  decisionReconcileInterval = setInterval(() => {
+    void runDecisionReconciler("periodic");
   }, CHECK_INTERVAL_MS);
 
   externalDrainInterval = setInterval(() => {
@@ -234,6 +308,10 @@ async function stopWorkerServices() {
   if (reconcileInterval) {
     clearInterval(reconcileInterval);
     reconcileInterval = null;
+  }
+  if (decisionReconcileInterval) {
+    clearInterval(decisionReconcileInterval);
+    decisionReconcileInterval = null;
   }
   if (externalDrainInterval) {
     clearInterval(externalDrainInterval);

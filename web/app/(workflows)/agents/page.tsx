@@ -11,7 +11,7 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
   WorkflowSidebarItem,
   WorkflowSidebarResizeHandle,
   type WorkflowSidebarOption,
@@ -87,7 +87,7 @@ function AgentsPageContent() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState(searchParams.get("q") || "");
   const [roleFilter, setRoleFilter] = useState(searchParams.get("role") || "all");
-  const [categoryFilter, setCategoryFilter] = useState<AgentCategory>("all");
+  const [categoryFilter, setCategoryFilter] = useState<AgentCategory[]>([]);
   const [sortBy, _setSortBy] = useState<"name" | "role" | "chains">(
     (searchParams.get("sort") as "name" | "role" | "chains") || "name"
   );
@@ -159,9 +159,12 @@ function AgentsPageContent() {
     return agents
       .filter((a) => {
         if (roleFilter !== "all" && a.role !== roleFilter) return false;
-        if (categoryFilter !== "all") {
-          const cat = AGENT_CATEGORIES.find(c => c.id === categoryFilter);
-          if (cat && !cat.keywords.some(kw => (a.role || "").toLowerCase().includes(kw))) return false;
+        if (categoryFilter.length > 0) {
+          const matchesCategory = categoryFilter.some((cf) => {
+            const cat = AGENT_CATEGORIES.find(c => c.id === cf);
+            return cat ? cat.keywords.some(kw => (a.role || "").toLowerCase().includes(kw)) : false;
+          });
+          if (!matchesCategory) return false;
         }
         if (search) {
           const q = search.toLowerCase();
@@ -261,7 +264,7 @@ function AgentsPageContent() {
       {/* category filter chips */}
       {agents.length > 0 && (
         <div className="flex items-center gap-1 px-4 pb-2 shrink-0 overflow-x-auto">
-          <WorkflowSidebarSegmentedControl
+          <WorkflowSidebarToggleFilter
             options={[
               { value: "all", label: "All" },
               ...AGENT_CATEGORIES.map(c => ({ value: c.id, label: c.label }))

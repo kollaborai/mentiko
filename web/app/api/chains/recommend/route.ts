@@ -85,7 +85,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const generationPrompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
     USER_PROMPT: prompt,
     SCHEMA: schema,
-    AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId),
+    AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId, { query: prompt }),
     PROFILE_CATALOG: buildProfileCatalog(namespaceId, orgId),
     WORKSPACE_CONTEXT: workspaceContext,
   });

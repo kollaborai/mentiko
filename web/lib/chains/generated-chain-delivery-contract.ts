@@ -5,7 +5,7 @@
  * chains remain backward compatible, while generated chains fail closed.
  */
 
-export type GeneratedChainMode = "delivery" | "research";
+export type GeneratedChainMode = "delivery" | "operations" | "research";
 
 export interface GeneratedChainDeliveryContract {
   version: 1;
@@ -25,18 +25,18 @@ function text(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function agentCanEdit(agent: RecordValue): boolean {
+function agentHasAuthority(agent: RecordValue, authority: string): boolean {
   const authorities = agent.authorities;
-  if (Array.isArray(authorities)) return authorities.includes("edit_files");
+  if (Array.isArray(authorities)) return authorities.includes(authority);
   const authorityRecord = record(authorities);
-  return Array.isArray(authorityRecord?.can) && authorityRecord.can.includes("edit_files");
+  return Array.isArray(authorityRecord?.can) && authorityRecord.can.includes(authority);
 }
 
 function contractFromChain(chain: RecordValue): GeneratedChainDeliveryContract | null {
   const metadata = record(chain.metadata);
   const raw = record(metadata?.generated_chain_contract);
   if (!raw || raw.version !== 1 || !text(raw.acceptance_criteria)) return null;
-  if (raw.mode !== "delivery" && raw.mode !== "research") return null;
+  if (raw.mode !== "delivery" && raw.mode !== "operations" && raw.mode !== "research") return null;
   return {
     version: 1,
     mode: raw.mode,
@@ -61,7 +61,7 @@ export function validateGeneratedChainDeliveryContract(chain: unknown): string[]
   const contract = contractFromChain(source);
   if (!contract) {
     return [
-      "metadata.generated_chain_contract requires version: 1, mode: delivery|research, and acceptance_criteria",
+      "metadata.generated_chain_contract requires version: 1, mode: delivery|operations|research, and acceptance_criteria",
     ];
   }
 
@@ -84,8 +84,11 @@ export function validateGeneratedChainDeliveryContract(chain: unknown): string[]
     }
   });
 
-  if (contract.mode === "delivery" && !agents.some((agent) => agent && agentCanEdit(agent))) {
+  if (contract.mode === "delivery" && !agents.some((agent) => agent && agentHasAuthority(agent, "edit_files"))) {
     errors.push("delivery generated chains require an agent with edit_files authority");
+  }
+  if (contract.mode === "operations" && !agents.some((agent) => agent && agentHasAuthority(agent, "run_commands"))) {
+    errors.push("operations generated chains require an agent with run_commands authority");
   }
 
   const finalAgent = agents.at(-1);

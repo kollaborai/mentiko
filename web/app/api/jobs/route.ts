@@ -13,8 +13,10 @@ import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
-import { buildChainSummary, getAllChains } from "@/lib/chains/chain-utils";
+import { buildChainRecommendationCatalog, getAllChains } from "@/lib/chains/chain-utils";
 import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
+import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
+import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -89,6 +91,11 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT: This job belongs to the project in "${authorizedWorkspacePath}". Tailor the output to that specific codebase.\n`
     : "";
+  const catalogQuery = type === "recommend"
+    ? JSON.stringify(input.task || {})
+    : String(input.userPrompt || input.prompt || "");
+  const agentCatalog = buildAgentCatalog(namespaceId, orgId, { query: catalogQuery });
+  const profileCatalog = buildProfileCatalog(namespaceId, orgId);
 
   // lazy cleanup: delete jobs older than 24h
   cleanupOldJobs(24 * 60 * 60 * 1000, namespaceId);
@@ -96,8 +103,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // build chain catalog for recommend jobs so the LLM knows what's available
   if (type === "recommend" && !input.chainCatalog) {
     try {
-      input.chainCatalog = buildChainSummary(
-        getAllChains(config.chainsDir, config.cliBin, undefined, namespaceId, orgId)
+      input.chainCatalog = buildChainRecommendationCatalog(
+        getAllChains(config.chainsDir, config.cliBin, undefined, namespaceId, orgId),
+        JSON.stringify(input.task || {}),
       );
     } catch {
       input.chainCatalog = "Failed to load chain catalog.";
@@ -128,6 +136,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     const prompt = resolveTemplate(template.content, {
       TASK_CONTEXT: taskContext,
       CHAIN_CATALOG: String(input.chainCatalog),
+      AGENT_CATALOG: agentCatalog,
+      PROFILE_CATALOG: profileCatalog,
       WORKSPACE_CONTEXT: workspaceContext,
     });
 
@@ -141,7 +151,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
       USER_PROMPT: String(input.userPrompt || ""),
       SCHEMA: schema,
-      AGENT_CATALOG: "",
+      AGENT_CATALOG: agentCatalog,
+      PROFILE_CATALOG: profileCatalog,
       WORKSPACE_CONTEXT: workspaceContext,
     });
   } else if (type === "generate" && input.prompt) {
@@ -152,7 +163,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
       USER_PROMPT: String(input.prompt),
       SCHEMA: schema,
-      AGENT_CATALOG: "",
+      AGENT_CATALOG: agentCatalog,
+      PROFILE_CATALOG: profileCatalog,
       WORKSPACE_CONTEXT: workspaceContext,
     });
   }

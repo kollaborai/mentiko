@@ -489,6 +489,99 @@ describe("getAutoRunCandidates", () => {
     expect(canAdmitAutoRun(repaired, "default", "default")).toMatchObject({ admit: true });
   });
 
+  it("releases a mismatched scope whose run is verifiably terminal (the wedged-claim class)", () => {
+    // The TASK-107 shape: a later launch updated last_run_id without rewriting
+    // the durable scope. The scope's run is terminal, so the claim proves
+    // nothing — reconcile must release it instead of wedging the task forever.
+    const wedgedMetadata = {
+      auto_run: true,
+      chain_id: "release-review",
+      last_run_id: "run-newer",
+      last_run_status: "blocked",
+      task_run_scope: {
+        version: 1,
+        taskId: "TASK-WEDGED",
+        runId: "run-older",
+        namespaceId: "default",
+        orgId: "default",
+      },
+    };
+    const task = {
+      id: "TASK-WEDGED",
+      title: "Wedged stale claim",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: wedgedMetadata,
+    } as never;
+    mockLocateTaskRun.mockReturnValue({
+      runsDir: "/tmp/mentiko-test/runs",
+      run: {
+        id: "run-older",
+        taskId: "TASK-WEDGED",
+        status: "blocked",
+        agents: [],
+        metadata: { taskExecution: true },
+      },
+    });
+
+    expect(reconcileTaskActiveRun("default", task, "default")).toEqual({
+      activeRun: null,
+      reconciled: true,
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-WEDGED",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          task_run_scope: undefined,
+          retry_source_run_id: "run-older",
+          // The real pointer to the newer terminal run survives the release so
+          // the outcome audit can consume it.
+          last_run_id: "run-newer",
+          last_run_status: "blocked",
+        }),
+      }),
+      "default",
+    );
+  });
+
+  it("never releases a mismatched scope whose run is still live", () => {
+    const task = {
+      id: "TASK-LIVE-CLAIM",
+      title: "Live scoped run with drifted pointer",
+      status: "in_progress",
+      issue_type: "task",
+      metadata: {
+        auto_run: true,
+        last_run_id: "run-drifted",
+        last_run_status: "running",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-LIVE-CLAIM",
+          runId: "run-live",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      },
+    } as never;
+    mockLocateTaskRun.mockReturnValue({
+      runsDir: "/tmp/mentiko-test/runs",
+      run: {
+        id: "run-live",
+        taskId: "TASK-LIVE-CLAIM",
+        status: "running",
+        agents: [],
+        metadata: { taskExecution: true },
+      },
+    });
+
+    expect(reconcileTaskActiveRun("default", task, "default")).toEqual({
+      activeRun: null,
+      reconciled: false,
+    });
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+  });
+
   it("orders ready tasks by priority, creation time, then natural task id", () => {
     mockTaskList.mockReturnValue([
       {

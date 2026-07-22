@@ -6,8 +6,58 @@ import {
   WorkflowSidebarItem,
   WorkflowSidebarPane,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
   WorkflowSidebarVisibilityToggleGroup,
+  matchesToggleFilter,
 } from "./workflow-sidebar";
+
+const STATUS_OPTS = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "ready", label: "Ready" },
+  { value: "closed", label: "Closed" },
+];
+
+describe("matchesToggleFilter", () => {
+  it("treats an empty selection as 'all'", () => {
+    expect(matchesToggleFilter([], "open")).toBe(true);
+    expect(matchesToggleFilter([], "anything")).toBe(true);
+  });
+  it("matches only selected values when non-empty", () => {
+    expect(matchesToggleFilter(["open", "closed"], "open")).toBe(true);
+    expect(matchesToggleFilter(["open", "closed"], "ready")).toBe(false);
+  });
+});
+
+describe("WorkflowSidebarToggleFilter", () => {
+  it("marks the all-pill active when nothing is selected", () => {
+    render(<WorkflowSidebarToggleFilter options={STATUS_OPTS} value={[]} onChange={() => {}} />);
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("adds a value to the selection, preserving option order", () => {
+    const onChange = jest.fn();
+    render(<WorkflowSidebarToggleFilter options={STATUS_OPTS} value={["closed"]} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    // canonical option order: open before closed
+    expect(onChange).toHaveBeenCalledWith(["open", "closed"]);
+  });
+
+  it("removes an already-selected value (toggle off)", () => {
+    const onChange = jest.fn();
+    render(<WorkflowSidebarToggleFilter options={STATUS_OPTS} value={["open", "closed"]} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(onChange).toHaveBeenCalledWith(["closed"]);
+  });
+
+  it("clears the selection when the all-pill is clicked", () => {
+    const onChange = jest.fn();
+    render(<WorkflowSidebarToggleFilter options={STATUS_OPTS} value={["open", "ready"]} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+});
 
 describe("workflow sidebar panel surfaces", () => {
   it("exposes shared hooks for panel-surface transparency", () => {

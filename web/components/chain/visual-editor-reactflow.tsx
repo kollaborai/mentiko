@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { AgentPreview } from "./agent-preview";
+import { AgentAvatar } from "@/components/agent/agent-avatar";
 import {
   AddFilled as Plus,
   TrashFilled as Trash2,
@@ -65,6 +66,9 @@ const NODE_WIDTH = 300;
 const NODE_HEIGHT = 185;
 const H_GAP = 420;
 const V_GAP = 220;
+// arrowhead length (user units). the stroke ends this far short of the target
+// so the marker's tip lands on the card edge and the line meets its fat base.
+const ARROWHEAD_LEN = 12;
 
 function getNodeMetrics(previewMode: boolean) {
   return {
@@ -236,6 +240,27 @@ interface EdgeSvgProps {
   readOnly?: boolean;
 }
 
+// flowing packet dots that travel along an edge path (source → target).
+// comet trail: a bright lead dot with two dimmer, smaller trailing dots.
+// colored by the edge so each edge type keeps its palette.
+function FlowDots({ path, color }: { path: string; color: string }) {
+  const DUR = 1.6; // seconds for one source→target traversal
+  const trail = [
+    { r: 2.4, opacity: 1, begin: 0 },
+    { r: 1.7, opacity: 0.55, begin: 0.3 },
+    { r: 1.1, opacity: 0.28, begin: 0.6 },
+  ];
+  return (
+    <>
+      {trail.map((dot, i) => (
+        <circle key={i} r={dot.r} fill={color} opacity={dot.opacity} style={{ pointerEvents: "none" }}>
+          <animateMotion dur={`${DUR}s`} repeatCount="indefinite" begin={`${dot.begin}s`} path={path} />
+        </circle>
+      ))}
+    </>
+  );
+}
+
 function EdgeLayer({
   edges,
   nodeMap,
@@ -245,6 +270,21 @@ function EdgeLayer({
   onEdgeClick,
   readOnly,
 }: EdgeSvgProps) {
+  // Group edges by the node they attach to so a fan-out / fan-in spreads its
+  // anchor points along the card edge instead of stacking them all on one
+  // center point. Sort each group by the other endpoint's y so lines don't cross.
+  const outByNode = new Map<string, EdgeLayout[]>();
+  const inByNode = new Map<string, EdgeLayout[]>();
+  for (const e of edges) {
+    if (!nodeMap.has(e.fromId) || !nodeMap.has(e.toId)) continue;
+    (outByNode.get(e.fromId) ?? outByNode.set(e.fromId, []).get(e.fromId)!).push(e);
+    (inByNode.get(e.toId) ?? inByNode.set(e.toId, []).get(e.toId)!).push(e);
+  }
+  outByNode.forEach((list) => list.sort((a, b) => (nodeMap.get(a.toId)?.y ?? 0) - (nodeMap.get(b.toId)?.y ?? 0)));
+  inByNode.forEach((list) => list.sort((a, b) => (nodeMap.get(a.fromId)?.y ?? 0) - (nodeMap.get(b.fromId)?.y ?? 0)));
+  // one edge → dead center (unchanged); K edges → evenly spread, off the corners
+  const anchorY = (top: number, count: number, index: number) => top + nodeHeight * (index + 1) / (count + 1);
+
   return (
     <>
       <defs>
@@ -254,13 +294,17 @@ function EdgeLayer({
             <marker
               key={type}
               id={`arrow-${type}`}
-              markerWidth="10"
-              markerHeight="7"
-              refX="9"
-              refY="3.5"
+              viewBox="0 0 12 10"
+              markerWidth="12"
+              markerHeight="10"
+              refX="0"
+              refY="5"
               orient="auto"
+              markerUnits="userSpaceOnUse"
             >
-              <polygon points="0 0, 10 3.5, 0 7" fill={color} />
+              {/* refX=0 puts the fat base center at the line end, so the line
+                  meets the arrowhead at any approach angle (no detached gap) */}
+              <path d="M0,0 L12,5 L0,10 Z" fill={color} />
             </marker>
           );
         })}
@@ -279,16 +323,21 @@ function EdgeLayer({
         const isDashed = isError || isTimeout;
         const isAnimated = !isDashed && (edge.edgeType === "branch" || edge.edgeType === "trigger" || edge.edgeType === "fanout" || edge.edgeType === "fanin");
 
-        // right-center of source to left-center of target
+        // spread anchors along the source right edge / target left edge so
+        // fan-outs and fan-ins attach at distinct points rather than one center
+        const outList = outByNode.get(edge.fromId)!;
+        const inList = inByNode.get(edge.toId)!;
         const x1 = from.x + nodeWidth;
-        const y1 = from.y + nodeHeight / 2;
+        const y1 = anchorY(from.y, outList.length, outList.indexOf(edge));
         const x2 = to.x;
-        const y2 = to.y + nodeHeight / 2;
+        const y2 = anchorY(to.y, inList.length, inList.indexOf(edge));
 
         const labelX = (x1 + x2) / 2;
         const labelY = (y1 + y2) / 2 - 12;
 
-        const d = bezierPath(x1, y1, x2, y2);
+        // end the stroke one arrowhead-length short of the target so the marker
+        // tip lands on the card edge and the line meets the arrowhead's fat base
+        const d = bezierPath(x1, y1, x2 - ARROWHEAD_LEN, y2);
 
         return (
           <g key={edge.id}>
@@ -301,18 +350,6 @@ function EdgeLayer({
                 strokeWidth="16"
                 style={{ pointerEvents: "stroke", cursor: "pointer" }}
                 onClick={(e) => onEdgeClick(edge.id, e)}
-              />
-            )}
-            {/* animated dash underlay (branch flow) */}
-            {isAnimated && (
-              <path
-                d={d}
-                fill="none"
-                stroke={color}
-                strokeWidth="1.5"
-                strokeDasharray="6,6"
-                strokeOpacity="0.35"
-                style={{ animation: "mentiko-dash 1s linear infinite", pointerEvents: "none" }}
               />
             )}
             {/* main visible path */}
@@ -329,6 +366,8 @@ function EdgeLayer({
                 pointerEvents: readOnly ? "none" : "stroke",
               }}
             />
+            {/* flowing packet dots along the line (branch flow) */}
+            {isAnimated && <FlowDots path={d} color={color} />}
             {/* label */}
             <text
               x={labelX}
@@ -450,7 +489,7 @@ function AgentNode({
             {/* header */}
             <div className={previewMode ? "mb-1.5 flex items-start justify-between gap-2" : "mb-2 flex items-start justify-between gap-3"}>
               <div className="flex min-w-0 items-center gap-2">
-                <Bot className={`${previewMode ? "h-3.5 w-3.5" : "h-4 w-4"} text-purple-400 shrink-0`} />
+                <AgentAvatar seed={agent.id} size={previewMode ? 14 : 16} className="shrink-0" />
                 <span className={`${previewMode ? "text-[12px]" : "text-sm"} truncate font-semibold text-foreground`}>
                   {agent.name}
                 </span>
@@ -822,14 +861,6 @@ export function VisualChainEditor({
 
   return (
     <div className="h-full w-full relative overflow-hidden bg-background" ref={containerRef}>
-      {/* inject animation keyframes once */}
-      <style>{`
-        @keyframes mentiko-dash {
-          from { stroke-dashoffset: 12; }
-          to   { stroke-dashoffset: 0;  }
-        }
-      `}</style>
-
       {/* top toolbar */}
       {!readOnly && (
         <div className="absolute top-4 left-4 z-10 flex gap-2">

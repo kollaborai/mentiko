@@ -83,6 +83,33 @@ describe("typed chain generation contract", () => {
     expect(readFileSync(join(outputDir, "specs/reviewer.md"), "utf8")).toContain("# Reviewer");
     expect(receivedPrompt).toContain("make a review chain");
     expect(receivedPrompt).toContain("REFERENCE TEMPLATE");
+    expect(receivedPrompt).toContain('"delivery"|"operations"|"research"');
+    expect(receivedPrompt).toContain("never persist current task IDs");
+  });
+
+  it("accepts an operations-mode chain with run_commands and no fake edit_files step", () => {
+    expect(validateGeneratedChain({
+      name: "managed-state-operation",
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "operations",
+          acceptance_criteria: "the requested state postcondition is true",
+        },
+      },
+      agents: [{
+        id: "state-mutator",
+        name: "State Mutator",
+        triggers: ["manual-start"],
+        emits: "state-mutated",
+        deliverable: "the requested state mutation",
+        verification: "read the state back",
+        authorities: { can: ["run_commands"] },
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "the read-back proves the requested postcondition",
+      }],
+    })).toMatchObject({ name: "managed-state-operation" });
   });
 
   it("rejects missing fields, duplicate ids, and symlinked output", () => {

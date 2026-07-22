@@ -41,6 +41,14 @@ jest.mock("@/lib/auth/auth-bridge", () => ({
   getSessionUser: jest.fn().mockResolvedValue({ id: "user-1" }),
 }));
 
+jest.mock("@/lib/agents/agent-catalog", () => ({
+  buildAgentCatalog: () => "agent-catalog-entry",
+}));
+
+jest.mock("@/lib/agents/profile-catalog", () => ({
+  buildProfileCatalog: () => "profile-catalog-entry",
+}));
+
 const mockResolveWorkspace = jest.fn((_namespaceId, _orgId, workspacePath) => workspacePath);
 jest.mock("@/lib/auth/workspace-auth", () => ({
   resolveAuthorizedWorkspacePath: (...args: unknown[]) => mockResolveWorkspace(args[0], args[1], args[2]),

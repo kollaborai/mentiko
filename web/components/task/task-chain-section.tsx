@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Link2Filled as Link2, CloseCircleFilled as X, ExportFilled as ExternalLink, RefreshFilled as Refresh } from "@aliimam/icons";
+import {
+  Link2Filled as Link2,
+  CloseCircleFilled as X,
+  ExportFilled as ExternalLink,
+  RefreshFilled as Refresh,
+} from "@aliimam/icons";
 import { ChainAssignWorkflow } from "./chain-assign-workflow";
 import { ChainDetailPanelById } from "@/components/chain/chain-detail-panel";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
@@ -32,7 +37,8 @@ export function TaskChainSection({
   // track generation job status for real-time updates
   // skip polling for terminal states to avoid request spam on remount
   const genStatus = binding?.generation_status;
-  const generationJobId = genStatus === "complete" || genStatus === "failed"
+  const generationJobId =
+    genStatus === "complete" || genStatus === "failed"
     ? null
     : binding?.generation_job_id || null;
   const { job: generationJob } = useJobStatus(generationJobId);
@@ -45,26 +51,40 @@ export function TaskChainSection({
       // auto-show workflow if there's an active analysis job
       if (binding?.analysis_job_id && binding.analysis_status === "running") {
         setShowWorkflow(true);
-      } else if (binding?.analysis_job_id && binding.analysis_status === "complete") {
+      } else if (
+        binding?.analysis_job_id &&
+        binding.analysis_status === "complete"
+      ) {
         // also auto-show if analysis completed but no chain assigned yet
         setShowWorkflow(true);
-      } else if (binding?.generation_job_id && binding.generation_status === "running") {
+      } else if (
+        binding?.generation_job_id &&
+        binding.generation_status === "running"
+      ) {
         setShowWorkflow(true);
-      } else if (binding?.generation_job_id && binding.generation_status === "complete") {
+      } else if (
+        binding?.generation_job_id &&
+        binding.generation_status === "complete"
+      ) {
         setShowWorkflow(true);
       }
     });
-  }, [task.id, binding?.analysis_job_id, binding?.analysis_status, binding?.generation_job_id, binding?.generation_status]);
+  }, [
+    task.id,
+    binding?.analysis_job_id,
+    binding?.analysis_status,
+    binding?.generation_job_id,
+    binding?.generation_status,
+  ]);
 
   if (!binding?.chain_id) {
     return (
-      <div className="px-4 py-3">
+      <section className="px-4 py-3">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs text-foreground/40 font-medium">
-            Chain
-          </span>
+          <span className="text-xs text-foreground/40 font-medium">Chain</span>
         </div>
         {showWorkflow ? (
+          <div className="rounded-xl border border-border/60 bg-muted p-2">
           <ChainAssignWorkflow
             key={task.id}
             task={task}
@@ -77,22 +97,26 @@ export function TaskChainSection({
             onClearMetadata={onClearMetadata}
             workspacePath={workspacePath}
           />
+          </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted p-2">
             <button
               onClick={() => setShowWorkflow(true)}
               disabled={!!generationJobId}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-muted hover:bg-accent transition-colors text-xs text-foreground/50 w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex w-full items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-xs text-foreground/50 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               data-testid="assign-chain-btn"
             >
               <Link2 className="h-3.5 w-3.5" />
-              {generationJobId ? "Chain Generation in Progress..." : "Assign Chain"}
+              {generationJobId
+                ? "Chain Generation in Progress..."
+                : "Assign Chain"}
             </button>
 
             {/* generation status indicator */}
             {generationJobId && (
-              <div className="rounded-md bg-card p-2.5 space-y-1.5">
-                {generationJob?.status === "running" || generationJob?.status === "pending" ? (
+              <div className="space-y-1.5 rounded-lg bg-card p-2.5">
+                {generationJob?.status === "running" ||
+                generationJob?.status === "pending" ? (
                   <div className="flex items-center gap-2">
                     <WaveSpinner
                       color="cyan"
@@ -102,10 +126,13 @@ export function TaskChainSection({
                       className="shrink-0"
                     />
                     <span className="text-xs text-foreground/60">
-                      {generationJob?.status === "pending" ? "Queued for generation..." : "Generating chain..."}
+                      {generationJob?.status === "pending"
+                        ? "Queued for generation..."
+                        : "Generating chain..."}
                     </span>
                   </div>
-                ) : generationJob?.status === "complete" && generationJob?.result ? (
+                ) : generationJob?.status === "complete" &&
+                  generationJob?.result ? (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1.5 text-[10px] text-green-400">
                       <span className="text-[10px]">✓</span>
@@ -150,17 +177,15 @@ export function TaskChainSection({
             )}
           </div>
         )}
-      </div>
+      </section>
     );
   }
 
   // chain assigned view
   return (
-    <div className="px-4 py-3">
+    <section className="px-4 py-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-foreground/40 font-medium">
-          Chain
-        </span>
+        <span className="text-xs text-foreground/40 font-medium">Chain</span>
         <div className="flex items-center gap-2">
           <a
             href={`/runs?task=${encodeURIComponent(task.id)}`}
@@ -178,11 +203,13 @@ export function TaskChainSection({
         </div>
       </div>
 
+      <div className="rounded-xl border border-border/60 bg-muted p-2">
       <ChainDetailPanelById
         chainId={binding.chain_id}
         fallbackName={binding.chain_name}
         compact
       />
     </div>
+    </section>
   );
 }

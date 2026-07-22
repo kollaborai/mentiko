@@ -14,7 +14,8 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/common/empty-state";
@@ -159,7 +160,7 @@ function SchedulesPageContent() {
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
+  const [filterStatus, setFilterStatus] = useState<FilterStatus[]>([]);
 
   // circuit breaker + daemon
   const [circuitBreaker, setCircuitBreaker] = useState<CircuitBreakerState | null>(null);
@@ -424,8 +425,7 @@ function SchedulesPageContent() {
         s.chainId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         targetSummary.includes(searchQuery.toLowerCase()) ||
         triggerSummary.includes(searchQuery.toLowerCase());
-      const matchesFilter =
-        filterStatus === "all" || s.status === filterStatus;
+      const matchesFilter = matchesToggleFilter(filterStatus, s.status);
       return matchesSearch && matchesFilter;
     })
     .sort((a, b) => {
@@ -487,7 +487,7 @@ function SchedulesPageContent() {
                   <RefreshCw className="h-3 w-3" />
                 </Button>
               </div>
-              <WorkflowSidebarSegmentedControl
+              <WorkflowSidebarToggleFilter
                 options={STATUS_FILTER_OPTIONS}
                 value={filterStatus}
                 onChange={setFilterStatus}
@@ -500,7 +500,7 @@ function SchedulesPageContent() {
                   <WaveSpinner size="sm" color="primary" animation="ripple" />
                 </div>
               ) : filtered.length === 0 ? (
-                searchQuery || filterStatus !== "all" ? (
+                searchQuery || filterStatus.length > 0 ? (
                   <div className="text-center py-12 text-xs text-foreground/40">
                     No schedules match filters
                   </div>

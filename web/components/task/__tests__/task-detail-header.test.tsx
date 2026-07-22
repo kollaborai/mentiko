@@ -25,6 +25,9 @@ jest.mock("@aliimam/icons", () => ({
   JudgeFilled: ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
+  InfoCircleFilled: ({ className }: { className?: string }) => (
+    <svg className={className} aria-hidden="true" />
+  ),
   Link2Filled: ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
@@ -204,7 +207,7 @@ describe("TaskDetailHeader", () => {
     await waitFor(() => expect(onToggleAutoRun).toHaveBeenCalledWith(true));
   });
 
-  it("shows paused auto-run state and reset action in the header", async () => {
+  it("shows the exact auto-run failure in a prominent banner and retries generation", async () => {
     const onResetAutoRunAttempts = jest.fn().mockResolvedValue(undefined);
     render(
       <TaskDetailHeader
@@ -212,10 +215,16 @@ describe("TaskDetailHeader", () => {
           ...taskWithActions,
           chainBinding: {
             ...taskWithActions.chainBinding!,
+            chain_id: "",
             auto_run: true,
             auto_run_retries: 3,
-            last_run_status: "failed",
+            generation_status: "failed",
+            generated_chain_run_id: "run-generation",
           },
+          metadata: {
+            generation_last_error: "Chain output was malformed JSON",
+          },
+          dependentCount: 2,
         }}
         onBack={jest.fn()}
         onClose={jest.fn()}
@@ -229,9 +238,53 @@ describe("TaskDetailHeader", () => {
     );
 
     expect(screen.getByRole("switch", { name: /auto-run/i })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByText(/auto-run paused/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /reset attempts/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Chain generation failed");
+    expect(screen.getByRole("alert")).toHaveTextContent("Chain output was malformed JSON");
+    expect(screen.getByRole("alert")).toHaveTextContent("blocking 2 dependent tasks");
+    expect(screen.getByRole("link", { name: /open failed run/i })).toHaveAttribute(
+      "href",
+      "/runs?runId=run-generation",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /retry chain generation/i }));
     await waitFor(() => expect(onResetAutoRunAttempts).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows the exact transient failure while automatic recovery is active", () => {
+    render(
+      <TaskDetailHeader
+        task={{
+          ...taskWithActions,
+          chainBinding: {
+            ...taskWithActions.chainBinding!,
+            chain_id: "",
+            auto_run: true,
+            auto_run_retries: 1,
+            generation_status: "running",
+            generated_chain_run_id: "run-failed-generation",
+          },
+          metadata: {
+            generation_last_error: "generated chain delivery contract invalid",
+          },
+        }}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        onToggleAutoRun={jest.fn()}
+        onResetAutoRunAttempts={jest.fn()}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Chain generation failed; retrying");
+    expect(screen.getByRole("alert")).toHaveTextContent("generated chain delivery contract invalid");
+    expect(screen.getByRole("alert")).toHaveTextContent("Auto-recovery is active after 1/3 failed attempts");
+    expect(screen.getByRole("link", { name: /open failed run/i })).toHaveAttribute(
+      "href",
+      "/runs?runId=run-failed-generation",
+    );
+    expect(screen.queryByRole("button", { name: /retry chain generation/i })).not.toBeInTheDocument();
   });
 
   it("shows a pause control when auto-run is enabled and pauses on click", async () => {

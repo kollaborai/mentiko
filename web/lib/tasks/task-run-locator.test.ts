@@ -15,6 +15,7 @@ import {
   parseTaskRunScope,
   releaseTaskRunScopeForRetry,
   resolveTaskRunLocation,
+  taskRunLaunchFailureMetadata,
   verifyTaskRunRecord,
 } from "./task-run-locator";
 
@@ -108,6 +109,34 @@ describe("task run locator", () => {
       retry_source_run_id: "run-task-059",
       retry_source_task_run_scope: undefined,
     });
+  });
+
+  it("releases a rejected launch claim while retaining attempted-scope diagnostics", () => {
+    const attemptedScope = scope({ runId: "run-rejected" });
+    const metadata = taskRunLaunchFailureMetadata({
+      metadata: {
+        chain_id: "broken-chain",
+        last_run_id: "run-previous",
+        last_run_status: "completed",
+        task_run_scope: attemptedScope,
+      },
+      scope: attemptedScope,
+      message: "Invalid chain",
+    });
+
+    expect(metadata).toMatchObject({
+      chain_id: "broken-chain",
+      last_run_id: "run-previous",
+      last_run_status: "completed",
+      auto_run_paused: true,
+      auto_run_paused_reason: "Invalid chain",
+      task_run_launch_failure: {
+        version: 1,
+        attempted_scope: attemptedScope,
+        message: "Invalid chain",
+      },
+    });
+    expect(metadata).not.toHaveProperty("task_run_scope");
   });
 
   it("reads only the run at its persisted scope and validates task ownership", () => {

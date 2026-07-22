@@ -12,7 +12,10 @@ import { BadRequest, ValidationError } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
-import { normalizeAgentAuthorities } from "@/lib/chains/chain-postprocessor";
+import {
+  normalizeAgentAuthorities,
+  rewriteBranchAgentIds,
+} from "@/lib/chains/chain-postprocessor";
 import { isGeneratedChainContract, validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
 
 function getClientIp(request: NextRequest): string {
@@ -68,8 +71,11 @@ async function migrateInlineAgents(
   agents: unknown[],
   namespaceId: string,
   orgId: string
-): Promise<string[]> {
+): Promise<{ migratedIds: string[]; agentIdMap: Map<string, string> }> {
   const migrated: string[] = [];
+  const agentIdMap = new Map<string, string>();
+  const reservedAgentSlugs = new Set<string>();
+  const pendingAgentWrites: Array<{ path: string; data: Record<string, unknown> }> = [];
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i] as Partial<InlineAgent> & Record<string, unknown>;
@@ -91,15 +97,20 @@ async function migrateInlineAgents(
     let agentDir = orgPath(namespaceId, orgId, "agents", agentSlug);
     let agentPath = join(agentDir, "agent.json");
 
-    if (existsSync(agentPath)) {
+    if (existsSync(agentPath) || reservedAgentSlugs.has(agentSlug)) {
       let counter = 2;
-      while (existsSync(join(orgPath(namespaceId, orgId, "agents", `${agentSlug}-${counter}`), "agent.json"))) {
+      const baseSlug = agentSlug;
+      while (
+        reservedAgentSlugs.has(`${baseSlug}-${counter}`)
+        || existsSync(join(orgPath(namespaceId, orgId, "agents", `${baseSlug}-${counter}`), "agent.json"))
+      ) {
         counter++;
       }
-      agentSlug = `${agentSlug}-${counter}`;
+      agentSlug = `${baseSlug}-${counter}`;
       agentDir = orgPath(namespaceId, orgId, "agents", agentSlug);
       agentPath = join(agentDir, "agent.json");
     }
+    reservedAgentSlugs.add(agentSlug);
 
     mkdirSync(agentDir, { recursive: true });
 
@@ -136,7 +147,7 @@ async function migrateInlineAgents(
       throw new BadRequest(error instanceof Error ? error.message : "Invalid MCP task tool declaration");
     }
 
-    writeFileSync(agentPath, JSON.stringify(agentData, null, 2));
+    pendingAgentWrites.push({ path: agentPath, data: agentData });
 
     // Replace inline agent with reference, but keep routing metadata visible in
     // the chain so branch validation and editor views do not have to resolve
@@ -147,9 +158,47 @@ async function migrateInlineAgents(
       ...(inline.emits ? { emits: inline.emits } : {}),
     };
     migrated.push(agentSlug);
+    agentIdMap.set(agentId, agentSlug);
   }
 
-  return migrated;
+  // Agent-level failure targets can point at a later inline agent. Delay the
+  // writes until every collision suffix is known, then rewrite those targets
+  // with the same map used for branches and chain-level routing.
+  for (const pending of pendingAgentWrites) {
+    for (const field of ["on_error", "on_timeout"] as const) {
+      const value = pending.data[field];
+      if (typeof value === "string" && agentIdMap.has(value)) {
+        pending.data[field] = agentIdMap.get(value);
+      }
+    }
+    writeFileSync(pending.path, JSON.stringify(pending.data, null, 2));
+  }
+
+  return { migratedIds: migrated, agentIdMap };
+}
+
+/**
+ * Repair the one branch shape the chain validator hard-rejects but the AI chain
+ * generator still emits intermittently: a fan_in (join) agent that also appears
+ * in its own fan_out (parallel) list. That would launch the agent twice — once as
+ * a fan-out worker and again when the group joins — so validateChain returns 422
+ * ("fan_in must not also appear in fan_out"), which surfaces as the recurring
+ * "Chain save failed ... 422" the interactive assign, manual editor, and headless
+ * auto-run paths all hit here (every producer routes through this save endpoint).
+ * The fix is deterministic and unambiguous — drop the join agent from the worker
+ * list — so normalize at this single write boundary rather than failing the save.
+ * Mutates branches in place (chainForValidation shares this object).
+ */
+function normalizeBranchFanInFanOut(chain: Record<string, unknown>): void {
+  const branches = chain.branches;
+  if (!branches || typeof branches !== "object" || Array.isArray(branches)) return;
+  for (const target of Object.values(branches as Record<string, unknown>)) {
+    if (!target || typeof target !== "object" || Array.isArray(target)) continue;
+    const branch = target as Record<string, unknown>;
+    if (typeof branch.fan_in === "string" && Array.isArray(branch.fan_out)) {
+      branch.fan_out = branch.fan_out.filter((member) => member !== branch.fan_in);
+    }
+  }
 }
 
 export const POST = withErrorHandling(async (request: NextRequest) => {
@@ -164,6 +213,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   if (!chain || !name) {
     throw new BadRequest("chain and name are required", { field: "chain" });
   }
+
+  normalizeBranchFanInFanOut(chain);
 
   const chainForValidation = { ...chain };
   if (Array.isArray(chain.agents)) {
@@ -217,7 +268,17 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   // Migrate inline agents to standalone before saving
   const agents = (chain.agents as unknown[]) || [];
-  const migratedAgentIds = await migrateInlineAgents(agents, namespaceId, orgId);
+  const { migratedIds: migratedAgentIds, agentIdMap } = await migrateInlineAgents(
+    agents,
+    namespaceId,
+    orgId,
+  );
+  // Validation above runs against the original inline IDs. Registry collisions
+  // can suffix those IDs during migration, so rewrite every supported branch
+  // and chain-level routing target before persisting the now-ref-based chain.
+  // Without this, a chain can validate successfully and then become invalid at
+  // the write boundary.
+  rewriteBranchAgentIds(chain, agentIdMap);
 
   writeFileSync(chainPath, JSON.stringify(chain, null, 2));
 

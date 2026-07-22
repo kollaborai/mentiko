@@ -8,15 +8,18 @@ jest.mock("@/components/ui/workflow-sidebar", () => ({
     selected,
     onClick,
     className,
+    accentClassName,
   }: {
     children?: React.ReactNode;
     selected?: boolean;
     onClick?: () => void;
     className?: string;
+    accentClassName?: string;
   }) => (
     <div
       data-testid="workflow-sidebar-item"
       data-selected={selected ? "true" : "false"}
+      data-accent={accentClassName}
       className={className}
       onClick={onClick}
     >
@@ -87,7 +90,7 @@ describe("TaskListItem", () => {
         selected={false}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     expect(screen.getByText("Fix the bug")).toBeInTheDocument();
   });
@@ -99,7 +102,7 @@ describe("TaskListItem", () => {
         selected={false}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     expect(screen.getByTestId("type-badge")).toHaveTextContent("bug");
     expect(screen.getByTestId("priority-badge")).toHaveTextContent("high");
@@ -113,7 +116,7 @@ describe("TaskListItem", () => {
         selected={false}
         onSelect={onSelect}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     fireEvent.click(container.firstChild!);
     expect(onSelect).toHaveBeenCalledWith(baseTask);
@@ -126,7 +129,7 @@ describe("TaskListItem", () => {
         selected={false}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     expect(screen.queryByRole("button", { name: "Complete task" })).toBeNull();
   });
@@ -146,7 +149,7 @@ describe("TaskListItem", () => {
         selected={false}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     expect(screen.getByText("Code Review")).toBeInTheDocument();
   });
@@ -158,8 +161,63 @@ describe("TaskListItem", () => {
         selected={true}
         onSelect={jest.fn()}
         onToggleComplete={jest.fn()}
-      />
+      />,
     );
     expect(container.firstChild).toHaveAttribute("data-selected", "true");
+  });
+
+  it("does not claim raw dependency counts are active blockers", () => {
+    render(
+      <TaskListItem
+        task={baseTask}
+        selected={false}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+        depInfo={
+          new Map([[baseTask.id, { blockedBy: ["task-closed"], blocks: [] }]])
+        }
+      />,
+    );
+
+    expect(screen.getByTitle("1 dependency")).toBeInTheDocument();
+    expect(screen.queryByTitle("Blocked by 1 task")).not.toBeInTheDocument();
+  });
+
+  it("uses the sidebar rail for execution state, not priority", () => {
+    const { rerender } = render(
+      <TaskListItem
+        task={baseTask}
+        selected={false}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("workflow-sidebar-item")).toHaveAttribute(
+      "data-accent",
+      "bg-muted-foreground/40",
+    );
+
+    rerender(
+      <TaskListItem
+        task={{
+          ...baseTask,
+          chainBinding: {
+            chain_id: "chain-1",
+            chain_name: "Chain",
+            auto_run: false,
+            last_run_status: "running",
+          },
+        }}
+        selected={false}
+        onSelect={jest.fn()}
+        onToggleComplete={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("workflow-sidebar-item")).toHaveAttribute(
+      "data-accent",
+      "bg-sky-400",
+    );
   });
 });

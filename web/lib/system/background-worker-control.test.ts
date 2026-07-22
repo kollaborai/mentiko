@@ -187,6 +187,14 @@ describe("background worker stopped status", () => {
         checkCount: 7,
         lastTriggered: 2,
       },
+      decisionReconciler: {
+        status: "running",
+        checkCount: 5,
+        examined: 12,
+        deadPointers: 2,
+        recoveriesScheduled: 1,
+        exhausted: 1,
+      },
       chainWatcher: {
         status: "running",
         checkCount: 9,
@@ -205,6 +213,14 @@ describe("background worker stopped status", () => {
       status: "stopped",
       note: "worker exited unexpectedly",
       autoRun: { status: "stopped", checkCount: 7, lastTriggered: 2 },
+      decisionReconciler: {
+        status: "stopped",
+        checkCount: 5,
+        examined: 12,
+        deadPointers: 2,
+        recoveriesScheduled: 1,
+        exhausted: 1,
+      },
       chainWatcher: {
         status: "stopped",
         checkCount: 9,

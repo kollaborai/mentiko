@@ -6,6 +6,17 @@ import {
   DEFAULT_GUIDED_PLAN_TEMPLATE,
   DEFAULT_FAILURE_TRIAGE_TEMPLATE,
 } from "@/lib/generation/generation-template-storage";
+import { validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
+import { validateChain } from "@/lib/validators";
+
+function jsonExampleBetween(startMarker: string, endMarker: string) {
+  const start = DEFAULT_CHAIN_TEMPLATE.indexOf(startMarker);
+  const end = DEFAULT_CHAIN_TEMPLATE.indexOf(endMarker, start + startMarker.length);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  const json = DEFAULT_CHAIN_TEMPLATE.slice(start + startMarker.length, end).trim();
+  return JSON.parse(json) as Record<string, unknown>;
+}
 
 describe("DEFAULT_CHAIN_TEMPLATE", () => {
   it("pins branch fan-out to real emitted events and real agent ids", () => {
@@ -13,6 +24,30 @@ describe("DEFAULT_CHAIN_TEMPLATE", () => {
     expect(DEFAULT_CHAIN_TEMPLATE).toContain("branches MUST be keyed by that exact emitted event");
     expect(DEFAULT_CHAIN_TEMPLATE).toContain("NEVER invent a branch key that no agent emits");
     expect(DEFAULT_CHAIN_TEMPLATE).toContain("NEVER put a fan_in agent id that differs from the real agent id");
+  });
+
+  it("teaches reusable runtime inputs and only runtime-supported event shapes", () => {
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("Generate a reusable mechanism for this class of work");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("typed task context in every agent's instructions");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("do NOT invent multiple outcome events");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("EXAMPLE A — reusable repository change chain");
+    expect(DEFAULT_CHAIN_TEMPLATE).toContain("EXAMPLE B — reusable managed-state operation chain");
+  });
+
+  it("keeps both comprehensive examples valid under the contract they teach", () => {
+    const delivery = jsonExampleBetween(
+      "EXAMPLE A — reusable repository change chain (delivery mode):",
+      "EXAMPLE B — reusable managed-state operation chain (operations mode):",
+    );
+    const operations = jsonExampleBetween(
+      "EXAMPLE B — reusable managed-state operation chain (operations mode):",
+      "REQUIREMENTS:",
+    );
+
+    for (const example of [delivery, operations]) {
+      expect(validateChain(example).valid).toBe(true);
+      expect(validateGeneratedChainDeliveryContract(example)).toEqual([]);
+    }
   });
 });
 
@@ -31,15 +66,36 @@ describe("DEFAULT_TASK_TEMPLATE", () => {
 });
 
 describe("DEFAULT_RECOMMEND_TEMPLATE", () => {
-  it("requires exact task-contract matches before reusing a chain", () => {
+  it("matches reusable mechanisms without hardcoding the current task instance", () => {
     expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
-      "A good fit means the chain satisfies the exact task contract"
+      "A good fit means the chain implements the same reusable mechanism"
     );
     expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
-      "required file, artifact, command, framework, workspace, acceptance criterion, or output shape"
+      "A generic dependency-removal chain can fit different task IDs"
     );
     expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
-      "hardcoded for a different one, recommend \"generate_new\""
+      "Never put the current TASK-NNN identifiers"
+    );
+    expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
+      '"work_mode": "delivery or operations or research (when generate_new)"'
+    );
+    expect(DEFAULT_RECOMMEND_TEMPLATE).toContain("{{AGENT_CATALOG}}");
+    expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
+      "VALID COMPLETE EXAMPLE (generate_new; use the shape, not the sample wording)"
+    );
+    expect(DEFAULT_RECOMMEND_TEMPLATE).toContain(
+      '"suggested_name": "managed task dependency mutation"'
+    );
+  });
+});
+
+describe("DEFAULT_TASK_RUN_SUMMARY_TEMPLATE", () => {
+  it("audits delivery, operations, and research by observable end state", () => {
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("OBSERVABLE END-STATE DELIVERY CHECK");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("operations: acceptance criteria require managed");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).toContain("do not demand a");
+    expect(DEFAULT_TASK_RUN_SUMMARY_TEMPLATE).not.toContain(
+      'if TASK DATA\'s type is\n   "feature", "task", or "bug", the acceptance criteria describe working software'
     );
   });
 });

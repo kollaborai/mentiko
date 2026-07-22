@@ -10,16 +10,16 @@ import type {
 import {
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 
 interface TaskFiltersProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
-  filterStatus: TaskFilterStatus;
-  onFilterStatusChange: (status: TaskFilterStatus) => void;
-  filterType: TaskFilterType;
-  onFilterTypeChange: (type: TaskFilterType) => void;
+  filterStatus: TaskFilterStatus[];
+  onFilterStatusChange: (status: TaskFilterStatus[]) => void;
+  filterType: TaskFilterType[];
+  onFilterTypeChange: (type: TaskFilterType[]) => void;
   sortBy: TaskSortBy;
   onSortChange: (sort: TaskSortBy) => void;
   totalCount: number;
@@ -90,12 +90,12 @@ export function TaskFilters({
           </Button>
         )}
       </div>
-      <WorkflowSidebarSegmentedControl
+      <WorkflowSidebarToggleFilter
         options={statusOptions}
         value={filterStatus}
         onChange={onFilterStatusChange}
       />
-      <WorkflowSidebarSegmentedControl
+      <WorkflowSidebarToggleFilter
         options={typeOptions}
         value={filterType}
         onChange={onFilterTypeChange}

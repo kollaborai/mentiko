@@ -1,26 +1,46 @@
 "use client";
 
-import { Link2Filled, PlayFilled, ArrowUpFilled, ArrowDownFilled, TickSquareFilled, SquareRounded } from "@aliimam/icons";
+import {
+  Link2Filled,
+  PlayFilled,
+  ArrowUpFilled,
+  ArrowDownFilled,
+  TickSquareFilled,
+  SquareRounded,
+} from "@aliimam/icons";
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
 import type { Task } from "@/lib/tasks/task-types";
-import { resolveAutoRunState, MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
+import {
+  resolveAutoRunState,
+  MAX_AUTO_RUN_RETRIES,
+} from "@/lib/tasks/auto-run-state";
 import { WorkflowSidebarItem } from "@/components/ui/workflow-sidebar";
+import {
+  TaskOpIndicator,
+  type TaskOpIndicatorState,
+} from "@/components/task/task-op-indicator";
 
 // Resolved auto-run state -- single source of truth (lib/tasks/auto-run-state.ts).
 // Prefer the server-resolved Task.autoRun (folds in the workspace default); fall
 // back to resolving from raw chainBinding fields via the SAME resolver so the list
 // item never disagrees with the admission gate or the detail header.
 function taskAutoRunState(task: Task) {
-  return task.autoRun ?? resolveAutoRunState({
-    explicitAutoRun: typeof task.chainBinding?.auto_run === "boolean" ? task.chainBinding.auto_run : undefined,
+  return (
+    task.autoRun ??
+    resolveAutoRunState({
+      explicitAutoRun:
+        typeof task.chainBinding?.auto_run === "boolean"
+          ? task.chainBinding.auto_run
+          : undefined,
     retries: task.chainBinding?.auto_run_retries,
     userPaused: task.chainBinding?.auto_run_paused,
     pausedReason: task.chainBinding?.auto_run_paused_reason,
     completed: task.completed,
-  });
+    })
+  );
 }
 
 interface TaskListItemProps {
@@ -31,6 +51,8 @@ interface TaskListItemProps {
   depInfo?: Map<string, { blockedBy: string[]; blocks: string[] }>;
   selectMode?: boolean;
   isChecked?: boolean;
+  /** Operational state from /api/operations/timeline — richer than depInfo when present. */
+  op?: TaskOpIndicatorState;
 }
 
 function isRunRecent(lastRunId: string | undefined): boolean {
@@ -47,19 +69,25 @@ function getTaskAccent(task: Task): string {
     return "bg-red-500";
   }
   if (task.chainBinding?.last_run_decision_required) return "bg-amber-400";
-  if (task.type === "decision") return task.completed ? "bg-emerald-500" : "bg-blue-400";
   if (task.completed) return "bg-emerald-500";
   switch (task.chainBinding?.last_run_status) {
     case "running":
       return "bg-sky-400";
+    case "pending":
+    case "queued":
+    case "starting":
+    case "retry_requested":
+    case "blocked":
+      return "bg-amber-400";
     case "failed":
+    case "error":
+    case "cancelled":
       return "bg-red-400";
     case "completed":
+    case "complete":
       return "bg-emerald-400";
-    case "pending":
-      return "bg-amber-400";
     default:
-      return task.rawPriority <= 1 ? "bg-amber-400" : "bg-muted-foreground/40";
+      return "bg-muted-foreground/40";
   }
 }
 
@@ -71,6 +99,7 @@ export function TaskListItem({
   depInfo,
   selectMode,
   isChecked,
+  op,
 }: TaskListItemProps) {
   const isRunning = task.chainBinding?.last_run_status === "running";
   const needsRunReview = !!task.chainBinding?.last_run_decision_required;
@@ -93,7 +122,7 @@ export function TaskListItem({
         "rounded-md px-3 py-2.5",
         task.type === "decision" && "bg-blue-500/5",
         selected && task.type === "decision" && "bg-blue-500/10",
-        isRunning && "animate-in fade-in duration-300"
+        isRunning && "animate-in fade-in duration-300",
       )}
     >
       <div className={cn("relative", selectMode ? "pl-10" : "pl-4")}>
@@ -111,7 +140,7 @@ export function TaskListItem({
             <span
               className={cn(
                 "line-clamp-2 text-sm font-semibold leading-5",
-                task.completed && "text-foreground/45 line-through"
+                task.completed && "text-foreground/45 line-through",
               )}
             >
               {task.title}
@@ -135,7 +164,10 @@ export function TaskListItem({
 
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
             <TypeBadge type={task.type} />
-            <PriorityBadge priority={task.priority} rawPriority={task.rawPriority} />
+            <PriorityBadge
+              priority={task.priority}
+              rawPriority={task.rawPriority}
+            />
             <span className="font-mono text-foreground/25">{task.id}</span>
             {task.chainBinding && (
               <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] text-foreground/55">
@@ -146,23 +178,24 @@ export function TaskListItem({
           </div>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
-            {blockedByCount > 0 && (
+            {/* Operational indicator (server read model) supersedes the raw dep
+                counts; the counts remain the fallback when ops data is absent. */}
+            {op && !task.completed && (
+              <TaskOpIndicator state={op} hide={["running", "paused"]} />
+            )}
+            {!op && blockedByCount > 0 && (
               <span
                 className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
-                title={`Blocked by ${blockedByCount} task${blockedByCount > 1 ? 's' : ''}`}
+                title={`${blockedByCount} dependenc${blockedByCount === 1 ? "y" : "ies"}`}
               >
-                <ArrowUpFilled className="h-2 w-2 text-red-400/60" />
-                <span className={cn(
-                  blockedByCount > 0 && !task.completed ? "text-red-400/70" : ""
-                )}>
-                  {blockedByCount}
-                </span>
+                <ArrowUpFilled className="h-2 w-2 text-foreground/35" />
+                <span>{blockedByCount}</span>
               </span>
             )}
-            {blocksCount > 0 && (
+            {!op && blocksCount > 0 && (
               <span
                 className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
-                title={`Unlocks ${blocksCount} task${blocksCount > 1 ? 's' : ''}`}
+                title={`Unlocks ${blocksCount} task${blocksCount > 1 ? "s" : ""}`}
               >
                 <ArrowDownFilled className="h-2 w-2 text-amber-400/60" />
                 <span className="text-amber-400/70">{blocksCount}</span>
@@ -176,7 +209,7 @@ export function TaskListItem({
                     ? "bg-red-500/15 text-red-300"
                     : autoRunRetries > 0
                       ? "bg-amber-500/15 text-amber-300"
-                      : "bg-emerald-500/10 text-emerald-300"
+                      : "bg-emerald-500/10 text-emerald-300",
                 )}
                 title={
                   autoRunPaused
@@ -186,7 +219,11 @@ export function TaskListItem({
                       : "Auto-run enabled"
                 }
               >
-                {autoRunPaused ? `Auto paused ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}` : autoRunRetries > 0 ? `Auto ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}` : "Auto"}
+                {autoRunPaused
+                  ? `Auto paused ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+                  : autoRunRetries > 0
+                    ? `Auto ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+                    : "Auto"}
               </span>
             )}
             {hasRecentRun && task.chainBinding?.last_run_id && (

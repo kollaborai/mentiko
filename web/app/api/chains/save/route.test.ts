@@ -90,4 +90,124 @@ describe("POST /api/chains/save inline agents", () => {
       },
     });
   });
+
+  it("drops a fan_in join agent from its own fan_out worker list before persisting", async () => {
+    const request = new Request("http://localhost/api/chains/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "fanin-chain",
+        chain: {
+          name: "fanin-chain",
+          version: "1.0.0",
+          agents: [{ $ref: "orchestrator" }, { $ref: "agent-a" }, { $ref: "aggregator" }],
+          branches: {
+            "analysis-start": {
+              fan_out: ["agent-a", "aggregator", "aggregator"],
+              fan_in: "aggregator",
+              wait_for: "all",
+            },
+          },
+        },
+      }),
+    });
+
+    const response = await POST(request as never);
+
+    expect(response.status).toBe(200);
+    const chainWrite = writeFileSync.mock.calls.find(([target]) =>
+      target === "/tmp/mentiko/chains/fanin-chain/chain.json",
+    );
+    expect(chainWrite).toBeDefined();
+    const persisted = JSON.parse(chainWrite![1] as string);
+    // every occurrence of the join agent removed from fan_out; fan_in preserved
+    expect(persisted.branches["analysis-start"].fan_out).toEqual(["agent-a"]);
+    expect(persisted.branches["analysis-start"].fan_in).toBe("aggregator");
+  });
+
+  it("rewrites branch targets when an inline agent is collision-suffixed during persistence", async () => {
+    existsSync.mockImplementation((target: string) =>
+      target === "/tmp/mentiko/agents/final-verifier/agent.json",
+    );
+    const request = new Request("http://localhost/api/chains/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "collision-chain",
+        chain: {
+          name: "collision-chain",
+          version: "1.0.0",
+          agents: [
+            {
+              id: "worker",
+              name: "Worker",
+              prompt: "Do the work.",
+              triggers: ["chain_start"],
+              emits: "work-complete",
+              on_error: "final-verifier",
+              on_timeout: "final-verifier",
+            },
+            {
+              id: "final-verifier",
+              name: "Final Verifier",
+              prompt: "Verify the work.",
+              triggers: ["work-complete"],
+              emits: "verification-complete",
+            },
+          ],
+          branches: {
+            "work-complete": "final-verifier",
+            "verification-complete": {
+              conditions: [
+                { if: "accepted", then: "stop" },
+                { if: "retry", then: "worker" },
+              ],
+              on_error: "final-verifier",
+            },
+          },
+          routing: {
+            error_handler: "final-verifier",
+            timeout_agent: "final-verifier",
+            timeout_handler: "worker",
+          },
+        },
+      }),
+    });
+
+    const response = await POST(request as never);
+
+    expect(response.status).toBe(200);
+    const chainWrite = writeFileSync.mock.calls.find(([target]) =>
+      target === "/tmp/mentiko/chains/collision-chain/chain.json",
+    );
+    expect(chainWrite).toBeDefined();
+    const persisted = JSON.parse(chainWrite![1] as string);
+    expect(persisted.agents).toEqual([
+      { $ref: "worker", triggers: ["chain_start"], emits: "work-complete" },
+      { $ref: "final-verifier-2", triggers: ["work-complete"], emits: "verification-complete" },
+    ]);
+    const workerWrite = writeFileSync.mock.calls.find(([target]) =>
+      target === "/tmp/mentiko/agents/worker/agent.json",
+    );
+    expect(workerWrite).toBeDefined();
+    expect(JSON.parse(workerWrite![1] as string)).toMatchObject({
+      on_error: "final-verifier-2",
+      on_timeout: "final-verifier-2",
+    });
+    expect(persisted.branches).toEqual({
+      "work-complete": "final-verifier-2",
+      "verification-complete": {
+        conditions: [
+          { if: "accepted", then: "stop" },
+          { if: "retry", then: "worker" },
+        ],
+        on_error: "final-verifier-2",
+      },
+    });
+    expect(persisted.routing).toEqual({
+      error_handler: "final-verifier-2",
+      timeout_agent: "final-verifier-2",
+      timeout_handler: "worker",
+    });
+  });
 });

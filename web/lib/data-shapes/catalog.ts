@@ -127,7 +127,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
     readers: ["web/lib/runner-v2/chain-contract.ts", "web/lib/runner-v2/routing-contract.ts", "web/lib/runner-v2/monitor-completion-contract.ts", "web/lib/runs/chain-run-service.ts", "web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/chain-generation-cli.ts"],
     samples: { root: "organization", patterns: [["chains", "*", "chain.json"]], format: "json" },
-    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback.", "A chain that declares metadata.generated_chain_contract is validated as typed delivery or research work: every agent must state an observable deliverable and repeatable verification, while the last agent is a final acceptance gate with an evidence-backed success assertion. Delivery chains also require edit_files authority."],
+    notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback.", "A chain that declares metadata.generated_chain_contract is validated as typed delivery, operations, or research work: every agent must state an observable deliverable and repeatable verification, while the last agent is a final acceptance gate with an evidence-backed success assertion. Delivery chains require edit_files; operations chains require run_commands."],
   }),
   shape({
     id: "chain-version-control",
@@ -2010,6 +2010,28 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       format: "json",
     },
     notes: ["background-worker.pid is retained as a legacy plain-text compatibility artifact; owner.json is authoritative for identity-aware cleanup."],
+  }),
+  shape({
+    id: "decision-reconciler-state",
+    name: "Decision Reconciler State",
+    category: "system",
+    description: "Durable retry budget and cooldown state for automatic recovery of dead decision-generation phase pointers.",
+    scope: "project",
+    format: "json",
+    storage: ["{runtimeRoot}/state/decision-reconciler.json"],
+    assurance: "typed",
+    typePaths: ["web/lib/decisions/decision-reconciler.ts"],
+    writers: ["web/lib/decisions/decision-reconciler.ts"],
+    readers: ["web/lib/decisions/decision-reconciler.ts"],
+    samples: {
+      root: "project",
+      patterns: [["state", "decision-reconciler.json"]],
+      format: "json",
+    },
+    notes: [
+      "The ledger is committed before a recovery POST so worker restarts cannot create an uncounted relaunch.",
+      "Entries are removed only after their decision phase is no longer actively generating; manual route requests remain available after automatic retries are exhausted.",
+    ],
   }),
   shape({
     id: "retry-state",

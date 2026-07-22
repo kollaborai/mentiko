@@ -43,8 +43,35 @@ const MIN_SCHEMA = {
   },
 };
 
+function asGeneratedChain(chain, mode = "research") {
+  const agents = chain.agents.map((agent, index) => ({
+    ...agent,
+    deliverable: agent.deliverable || `Verified output from ${agent.name}`,
+    verification: agent.verification || `Inspect ${agent.name}'s output against the requested result`,
+    ...(index === chain.agents.length - 1
+      ? {
+          final_verifier: true,
+          verifies_acceptance_criteria: true,
+          success_assertion: "The generated test chain produced the requested verified result",
+        }
+      : {}),
+  }));
+  return {
+    ...chain,
+    metadata: {
+      ...chain.metadata,
+      generated_chain_contract: {
+        version: 1,
+        mode,
+        acceptance_criteria: "The generated test chain produces a verified result",
+      },
+    },
+    agents,
+  };
+}
+
 // valid chain the mock CLI will return (compact -- single line)
-const MOCK_CHAIN = {
+const MOCK_CHAIN = asGeneratedChain({
   name: "test-chain",
   description: "A generated test chain",
   agents: [
@@ -67,7 +94,7 @@ const MOCK_CHAIN = {
     max_rounds: 3,
     session_prefix: "test",
   },
-};
+});
 
 // chain with no name -- triggers validation error
 const MOCK_CHAIN_NO_NAME = {
@@ -90,7 +117,7 @@ const MOCK_CHAIN_NO_AGENTS = {
 };
 
 // chain with agents referencing spec files
-const MOCK_CHAIN_WITH_SPECS = {
+const MOCK_CHAIN_WITH_SPECS = asGeneratedChain({
   name: "spec-chain",
   agents: [
     {
@@ -102,7 +129,7 @@ const MOCK_CHAIN_WITH_SPECS = {
       prompt: "Design the system",
     },
   ],
-};
+});
 
 // invalid JSON output (not JSON at all)
 const MOCK_INVALID_OUTPUT = "This is not JSON at all, just plain text.";
@@ -396,14 +423,14 @@ test("rejects generated chain with zero agents", () => {
 
 test("valid chain passes all validation", () => {
   resetTmp();
-  const validChain = {
+  const validChain = asGeneratedChain({
     name: "valid-pipeline",
     agents: [
       { id: "a", name: "A", triggers: ["manual-start"], emits: "a-done", prompt: "do a" },
       { id: "b", name: "B", triggers: ["a-done"], emits: "b-done", prompt: "do b" },
     ],
     config: { max_rounds: 3, session_prefix: "vp" },
-  };
+  });
   writeMockCli(JSON.stringify(validChain));
   runGen(["build valid pipeline", "--output", OUTPUT_DIR]);
   const chain = readChainJson();
@@ -508,7 +535,7 @@ test("each agent has required fields (id, name, triggers, emits)", () => {
 
 test("agents form a valid trigger-emit chain", () => {
   resetTmp();
-  const chain = {
+  const chain = asGeneratedChain({
     name: "linear-chain",
     agents: [
       { id: "step1", name: "Step 1", triggers: ["manual-start"], emits: "step1-done", prompt: "first" },
@@ -516,7 +543,7 @@ test("agents form a valid trigger-emit chain", () => {
       { id: "step3", name: "Step 3", triggers: ["step2-done"], emits: "final", prompt: "third" },
     ],
     config: { session_prefix: "linear" },
-  };
+  });
   writeMockCli(JSON.stringify(chain));
   runGen(["build a linear chain", "--output", OUTPUT_DIR]);
   const result = readChainJson();
@@ -581,12 +608,12 @@ test("human-readable output shows chain graph with agent details", () => {
 
 test("chain with single agent generates correctly", () => {
   resetTmp();
-  const singleChain = {
+  const singleChain = asGeneratedChain({
     name: "solo-chain",
     agents: [
       { id: "lone-wolf", name: "Lone Wolf", triggers: ["manual-start"], emits: "done", prompt: "do everything" },
     ],
-  };
+  });
   writeMockCli(JSON.stringify(singleChain));
   runGen(["build a single agent chain", "--output", OUTPUT_DIR]);
   const chain = readChainJson();

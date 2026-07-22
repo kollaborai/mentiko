@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { checkAuth } from "@/lib/auth/api-auth";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getAllStandaloneAgents } from "@/lib/agents/agent-loader";
+import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { createJob } from "@/lib/runs/job-store";
@@ -29,17 +29,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const session = await getSessionUser(request);
   const userId = session?.id;
   const authorizedWorkspacePath = resolveAuthorizedWorkspacePath(namespaceId, orgId, workspacePath, userId);
-  const standaloneAgents = getAllStandaloneAgents(namespaceId, orgId);
-
-  const agentCatalog =
-    standaloneAgents.length > 0
-      ? `\nAVAILABLE AGENTS (use {"$ref": "id"} to reference these):\n${standaloneAgents
-          .map(
-            (a) =>
-              `  - id: "${a.id}", name: "${a.name}", role: "${a.role || ""}", description: "${a.description || ""}"`
-          )
-          .join("\n")}\n`
-      : "\nNo existing agents in catalog. Create new inline agents for both positions.\n";
+  const agentCatalog = buildAgentCatalog(namespaceId, orgId, { query: prompt });
 
   const workspaceContext = authorizedWorkspacePath
     ? `\nWORKSPACE CONTEXT: The agents will work in "${authorizedWorkspacePath}". Tailor agent roles, prompts, and expertise to this specific codebase. Reference it by name in the leading prompt so agents know where to look.\n`

@@ -235,22 +235,6 @@ function rowToTaskRecord(row: RawTaskRow): TaskRecord {
   return { ...row, labels, metadata };
 }
 
-function parseMetadata(value: unknown): Record<string, unknown> {
-  if (!value) return {};
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value !== "string") return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 function now(): string {
   return new Date().toISOString();
 }
@@ -522,31 +506,47 @@ export function taskClaimMetadataKeyIfUnset(
   id: string,
   key: string,
   metadata: Record<string, unknown>,
-  namespaceId?: string
+  namespaceId?: string,
+  options?: {
+    metadataNumberLessThan?: { key: string; value: number };
+  },
 ): boolean {
   const db = getDb(namespaceId);
-  const existing = taskGet(orgId, id, namespaceId);
-  if (!existing) return false;
+  let metadataExpression = "COALESCE(metadata, '{}')";
+  const metadataParams: unknown[] = [];
+  for (const [metadataKey, value] of Object.entries(metadata)) {
+    const jsonPath = `$.${metadataKey}`;
+    if (value === undefined) {
+      metadataExpression = `json_remove(${metadataExpression}, ?)`;
+      metadataParams.push(jsonPath);
+    } else {
+      metadataExpression = `json_set(${metadataExpression}, ?, json(?))`;
+      metadataParams.push(jsonPath, JSON.stringify(value));
+    }
+  }
 
-  const existingMetadata = parseMetadata(existing.metadata);
-  if (existingMetadata[key] !== undefined && existingMetadata[key] !== null) {
-    return false;
+  const predicates = ["json_extract(metadata, ?) IS NULL"];
+  const predicateParams: unknown[] = [`$.${key}`];
+  if (options?.metadataNumberLessThan) {
+    predicates.push("COALESCE(CAST(json_extract(metadata, ?) AS INTEGER), 0) < ?");
+    predicateParams.push(
+      `$.${options.metadataNumberLessThan.key}`,
+      options.metadataNumberLessThan.value,
+    );
   }
 
   const result = db.prepare(`
     UPDATE tasks
-    SET metadata = ?, updated_at = ?
+    SET metadata = ${metadataExpression}, updated_at = ?
     WHERE id = ?
       AND org_id = ?
-      AND (
-        json_extract(metadata, ?) IS NULL
-      )
+      AND ${predicates.join(" AND ")}
   `).run(
-    JSON.stringify({ ...existingMetadata, ...metadata }),
+    ...metadataParams,
     now(),
     id,
     orgId,
-    `$.${key}`
+    ...predicateParams,
   );
 
   return result.changes > 0;

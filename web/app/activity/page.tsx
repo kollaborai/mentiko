@@ -1,7 +1,18 @@
 "use client";
 
+// Operations Timeline (/activity).
+//
+// Default view: the operational read model from /api/operations/timeline —
+// system health, attention, running now, expected next, waiting, human gates,
+// accomplishments, and a provenance-tagged timeline. The legacy chain/agent
+// event feed (with the live output log panel) is preserved under the "Feed"
+// view toggle.
+
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useRouter } from "next/navigation";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { useWorkspace } from "@/lib/ui-context/workspace-context";
+import { unwrapApiData } from "@/lib/api/api-client";
 import {
   RefreshCw,
   DocumentTextFilled,
@@ -11,6 +22,7 @@ import {
   RouteSquareFilled,
   LinkFilled,
   SendFilled,
+  TaskSquareFilled,
 } from "@aliimam/icons";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { EmptyState } from "@/components/common/empty-state";
@@ -23,6 +35,18 @@ import {
 import { PageBanner } from "@/components/ui/page-banner";
 import { TimeAgo } from "@/components/shared/time-ago";
 import Link from "next/link";
+import {
+  AccomplishmentsSection,
+  AttentionSection,
+  GatesSection,
+  RunningSection,
+  SystemSection,
+  UpNextSection,
+  WaitingSection,
+} from "@/components/operations/operations-sections";
+import type { OperationsView, OpsTimelineItem } from "@/lib/operations/operations-read-model";
+
+// ---------------- legacy feed (preserved behavior) ----------------
 
 type ActivityFilter = "all" | "chains" | "agents" | "system";
 
@@ -286,12 +310,343 @@ function LogPanel({
   );
 }
 
-const filters: { value: ActivityFilter; label: string }[] = [
+const feedFilters: { value: ActivityFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "chains", label: "Chains" },
   { value: "agents", label: "Agents" },
   { value: "system", label: "System" },
 ];
+
+function LegacyFeed({ sidebarWidth, onDragStart }: {
+  sidebarWidth: number;
+  onDragStart: (event: React.MouseEvent) => void;
+}) {
+  const { fetchWithNamespace } = useNamespaceFetch();
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [selected, setSelected] = useState<ActivityEvent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<ActivityFilter>("all");
+  const pollingRef = useRef(true);
+
+  const fetchActivity = useCallback(async (isPolling = false) => {
+    if (!isPolling) setLoading(true);
+    try {
+      const res = await fetchWithNamespace(`/api/activity?limit=100&filter=${filter}`);
+      const data = await res.json() as ActivityResponse;
+      const nextEvents = data.events || [];
+      setEvents(nextEvents);
+      if (!isPolling) {
+        setSelected((current) => {
+          if (current && nextEvents.some((event) => event.id === current.id)) {
+            return current;
+          }
+          return nextEvents[0] || null;
+        });
+      }
+    } catch (e) {
+      console.error("Failed to fetch activity", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchWithNamespace, filter]);
+
+  useEffect(() => {
+    fetchActivity();
+    const interval = setInterval(() => {
+      if (pollingRef.current) {
+        fetchActivity(true);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [fetchActivity]);
+
+  return (
+    <div className="flex-1 flex gap-2 overflow-hidden pl-2 sm:pl-4">
+      {/* Left: event list (resizable sidebar) */}
+      <WorkflowSidebarPane style={{ width: sidebarWidth }}>
+        <div className="shrink-0 space-y-2 bg-accent p-3">
+          <WorkflowSidebarSegmentedControl
+            options={feedFilters}
+            value={filter}
+            onChange={setFilter}
+          />
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <WaveSpinner size="sm" color="primary" animation="ripple" />
+          </div>
+        ) : events.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center p-6">
+            <EmptyState
+              icon={<ActivityFilled className="h-8 w-8" />}
+              title="No activity yet"
+              description="Run a chain to see activity events here."
+              action={{ label: "Go to chains", href: "/chains" }}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {events.map((event) => (
+              <ActivityRow
+                key={event.id}
+                event={event}
+                isSelected={selected?.id === event.id}
+                onClick={() => setSelected(event)}
+              />
+            ))}
+          </div>
+        )}
+
+        <WorkflowSidebarResizeHandle onMouseDown={onDragStart} />
+      </WorkflowSidebarPane>
+
+      {/* Right: log viewer (full width) */}
+      <div className="flex flex-1 flex-col overflow-hidden rounded-xl bg-card">
+        {selected && selected.metadata.runId && (
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-accent/50 text-xs text-foreground/50 shrink-0">
+            <span className="font-semibold text-foreground/70 truncate">{selected.title}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] shrink-0 ${getEventPillColor(selected.type)}`}>
+              {getEventTypeLabel(selected.type)}
+            </span>
+            <span className="ml-auto shrink-0">
+              <Link
+                href={`/runs?runId=${selected.metadata.runId}`}
+                className="flex items-center gap-1 text-foreground/40 hover:text-foreground transition-colors"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open run
+              </Link>
+            </span>
+          </div>
+        )}
+        <div className="flex-1 overflow-hidden">
+          <LogPanel
+            runId={selected?.metadata.runId}
+            fetchWithNamespace={fetchWithNamespace}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- operations timeline (default view) ----------------
+
+type TimelineFilter = "all" | "tasks" | "runs" | "errors" | "recovery" | "decisions";
+type TimeRange = "24h" | "7d" | "all";
+
+const timelineFilters: { value: TimelineFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "tasks", label: "Tasks" },
+  { value: "runs", label: "Runs" },
+  { value: "errors", label: "Errors" },
+  { value: "recovery", label: "Recovery" },
+  { value: "decisions", label: "Decisions" },
+];
+
+const TIMELINE_FILTER_KINDS: Record<Exclude<TimelineFilter, "all">, Set<OpsTimelineItem["kind"]>> = {
+  tasks: new Set(["task_created", "task_closed"]),
+  runs: new Set(["run_started", "run_completed", "audit_completed"]),
+  errors: new Set(["run_failed", "system_error"]),
+  recovery: new Set(["run_reaped", "system_recovery"]),
+  decisions: new Set(["decision_created", "decision_resolved"]),
+};
+
+const TIMELINE_ACCENT: Record<OpsTimelineItem["severity"], string> = {
+  info: "bg-foreground/20",
+  warn: "bg-orange-400",
+  critical: "bg-red-400",
+};
+
+const TIMELINE_KIND_PILL: Record<string, string> = {
+  task_created: "bg-blue-500/10 text-blue-300",
+  task_closed: "bg-emerald-500/15 text-emerald-400",
+  run_started: "bg-amber-500/15 text-amber-400",
+  run_completed: "bg-emerald-500/15 text-emerald-400",
+  run_failed: "bg-red-500/15 text-red-400",
+  run_reaped: "bg-orange-500/15 text-orange-400",
+  audit_completed: "bg-purple-500/15 text-purple-300",
+  decision_created: "bg-blue-500/10 text-blue-300",
+  decision_resolved: "bg-emerald-500/15 text-emerald-400",
+  system_error: "bg-red-500/15 text-red-400",
+  system_recovery: "bg-emerald-500/10 text-emerald-300",
+};
+
+function TimelineRow({ item, onOpen }: { item: OpsTimelineItem; onOpen: () => void }) {
+  return (
+    <WorkflowSidebarItem
+      selected={false}
+      onClick={onOpen}
+      accentClassName={TIMELINE_ACCENT[item.severity]}
+    >
+      <div className="pl-4">
+        <div className="flex items-start justify-between gap-2">
+          <span className="line-clamp-2 text-sm font-semibold leading-5">{item.title}</span>
+          <TimeAgo
+            date={item.at}
+            format="short"
+            suffix={false}
+            className="shrink-0 !text-[10px] text-foreground/30"
+          />
+        </div>
+        {item.detail && (
+          <p className="line-clamp-1 text-[11px] text-foreground/40 mt-0.5">{item.detail}</p>
+        )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
+          <span className={`rounded-full px-2 py-0.5 uppercase tracking-[0.14em] ${TIMELINE_KIND_PILL[item.kind] ?? "bg-foreground/5"}`}>
+            {item.kind.replace(/_/g, " ")}
+          </span>
+          {item.taskId && <span className="font-mono text-foreground/30">{item.taskId}</span>}
+          {item.runId && <span className="font-mono text-foreground/30 truncate max-w-[140px]">{item.runId}</span>}
+          {item.decisionId && <span className="font-mono text-foreground/30">{item.decisionId}</span>}
+          <span className="text-foreground/25">{item.source}</span>
+        </div>
+      </div>
+    </WorkflowSidebarItem>
+  );
+}
+
+function OperationsTimeline({ sidebarWidth, onDragStart }: {
+  sidebarWidth: number;
+  onDragStart: (event: React.MouseEvent) => void;
+}) {
+  const router = useRouter();
+  const { fetchWithNamespace } = useNamespaceFetch();
+  const { workspacePath, workspaceReady } = useWorkspace();
+  const [view, setView] = useState<OperationsView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<TimelineFilter>("all");
+  const [range, setRange] = useState<TimeRange>("7d");
+
+  const fetchView = useCallback(async (isPolling = false) => {
+    if (!isPolling) setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (workspacePath) params.set("workspace", workspacePath);
+      const res = await fetchWithNamespace(`/api/operations/timeline?${params}`);
+      if (!res.ok) {
+        setError(`HTTP ${res.status}`);
+        return;
+      }
+      const data = unwrapApiData<{ view: OperationsView | null }>(await res.json());
+      setView(data.view);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchWithNamespace, workspacePath]);
+
+  useEffect(() => {
+    if (!workspaceReady) return;
+    fetchView();
+    const interval = setInterval(() => fetchView(true), 15_000);
+    return () => clearInterval(interval);
+  }, [fetchView, workspaceReady]);
+
+  const rangeMs = range === "24h" ? 24 * 60 * 60 * 1000 : range === "7d" ? 7 * 24 * 60 * 60 * 1000 : Infinity;
+  const timeline = (view?.timeline ?? [])
+    .filter((item) => filter === "all" || TIMELINE_FILTER_KINDS[filter].has(item.kind))
+    .filter((item) => rangeMs === Infinity || Date.now() - Date.parse(item.at) <= rangeMs);
+
+  if (loading && !view) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <WaveSpinner size="sm" color="primary" animation="ripple" />
+      </div>
+    );
+  }
+
+  if (!view) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <EmptyState
+          icon={<ActivityFilled className="h-8 w-8" />}
+          title="Operations view unavailable"
+          description={error ?? "Select a workspace to see its operational state."}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex gap-2 overflow-hidden pl-2 sm:pl-4">
+      {/* Left: timeline (resizable sidebar) */}
+      <WorkflowSidebarPane style={{ width: sidebarWidth }} className="hidden md:flex">
+        <div className="shrink-0 space-y-2 bg-accent p-3">
+          <WorkflowSidebarSegmentedControl
+            options={timelineFilters}
+            value={filter}
+            onChange={setFilter}
+          />
+          <WorkflowSidebarSegmentedControl
+            options={[
+              { value: "24h" as TimeRange, label: "24h" },
+              { value: "7d" as TimeRange, label: "7d" },
+              { value: "all" as TimeRange, label: "All" },
+            ]}
+            value={range}
+            onChange={setRange}
+          />
+        </div>
+
+        {timeline.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center p-6">
+            <EmptyState
+              icon={<ActivityFilled className="h-8 w-8" />}
+              title="No timeline events"
+              description="Nothing persisted matches this filter and time range."
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {timeline.map((item, index) => (
+              <TimelineRow
+                key={`${item.kind}-${item.at}-${index}`}
+                item={item}
+                onOpen={() => item.actionUrl && router.push(item.actionUrl)}
+              />
+            ))}
+          </div>
+        )}
+
+        <WorkflowSidebarResizeHandle onMouseDown={onDragStart} />
+      </WorkflowSidebarPane>
+
+      {/* Right: operational overview */}
+      <div className="flex-1 overflow-y-auto rounded-xl bg-muted p-3 space-y-3 min-w-0">
+        <SystemSection view={view} />
+        <AttentionSection items={view.attention} />
+        <RunningSection items={view.runningNow} />
+        <UpNextSection items={view.upNext} />
+        <WaitingSection states={view.waiting} />
+        <GatesSection gates={view.humanGates} />
+        <AccomplishmentsSection items={view.recentAccomplishments} />
+        {/* Mobile: the timeline lives below the overview instead of a sidebar */}
+        <section className="md:hidden rounded-md bg-card p-3 space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground/40">Timeline</h2>
+          <div className="space-y-1">
+            {timeline.slice(0, 30).map((item, index) => (
+              <TimelineRow
+                key={`m-${item.kind}-${item.at}-${index}`}
+                item={item}
+                onOpen={() => item.actionUrl && router.push(item.actionUrl)}
+              />
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- page shell ----------------
+
+type PageView = "operations" | "feed";
 
 export default function ActivityPage() {
   return (
@@ -306,30 +661,21 @@ export default function ActivityPage() {
 }
 
 function ActivityPageContent() {
-  const { fetchWithNamespace } = useNamespaceFetch();
-  const [events, setEvents] = useState<ActivityEvent[]>([]);
-  const [selected, setSelected] = useState<ActivityEvent | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<ActivityFilter>("all");
-  const [, setSseConnected] = useState(false);
-  const pollingRef = useRef(true);
+  const [pageView, setPageView] = useState<PageView>("operations");
 
   const SIDEBAR_KEY = "activity-sidebar-width";
   const MIN_W = 260;
   const MAX_W = 450;
   const DEFAULT_W = 320;
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_W);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_W;
+    const saved = window.localStorage.getItem(SIDEBAR_KEY);
+    const width = saved ? parseInt(saved, 10) : DEFAULT_W;
+    return width >= MIN_W && width <= MAX_W ? width : DEFAULT_W;
+  });
   const dragging = useRef(false);
   const startX = useRef(0);
   const startW = useRef(DEFAULT_W);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(SIDEBAR_KEY);
-    if (saved) {
-      const width = parseInt(saved, 10);
-      if (width >= MIN_W && width <= MAX_W) setSidebarWidth(width);
-    }
-  }, []);
 
   const onDragStart = useCallback(
     (event: React.MouseEvent) => {
@@ -361,136 +707,43 @@ function ActivityPageContent() {
     [sidebarWidth]
   );
 
-  const fetchActivity = useCallback(async (isPolling = false) => {
-    if (!isPolling) setLoading(true);
-    try {
-      const res = await fetchWithNamespace(`/api/activity?limit=100&filter=${filter}`);
-      const data = await res.json() as ActivityResponse;
-      const nextEvents = data.events || [];
-      setEvents(nextEvents);
-      // only auto-select first item on initial load, not on poll
-      if (!isPolling) {
-        setSelected((current) => {
-          if (current && nextEvents.some((event) => event.id === current.id)) {
-            return current;
-          }
-          return nextEvents[0] || null;
-        });
-      }
-    } catch (e) {
-      console.error("Failed to fetch activity", e);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchWithNamespace, filter]);
-
-  // SSE connection for real-time updates (reserved for future use)
-  useEffect(() => {
-    // Reserved for global SSE stream endpoint
-    // For now, we use 5-second polling
-    setSseConnected(false);
-  }, [filter]);
-
-  // Poll for updates
-  useEffect(() => {
-    fetchActivity();
-    const interval = setInterval(() => {
-      if (pollingRef.current) {
-        fetchActivity(true);
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [fetchActivity]);
-
   return (
     <div className="h-full flex flex-col">
       <PageBanner
-        title="Activity Feed"
-        subtitle="Real-time chain and agent events across your workspace. Monitor pipeline execution, track agent completions, and catch errors as they happen."
+        title="Operations"
+        subtitle="One truthful view of the system: what is running, what runs next and why, what is blocked, what needs you, and what was accomplished — with the evidence."
         icon={ActivityFilled}
         sectionColor="#5b9ef5"
         actions={[
+          { label: "Tasks", href: "/tasks", icon: TaskSquareFilled, iconColor: "#5b9ef5" },
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
           { label: "Events", href: "/events", icon: SendFilled, iconColor: "#b07ee8" },
-          { label: "Refresh", onClick: () => fetchActivity(), icon: RefreshCw },
+          { label: "Refresh", onClick: () => window.location.reload(), icon: RefreshCw },
         ]}
         docs={[
           { label: "Activity Guide", href: "/docs/activity", icon: ActivityFilled },
         ]}
       />
 
-      {/* 2-panel: list | logs */}
-      <div className="flex-1 flex gap-2 overflow-hidden pl-2 sm:pl-4">
-        {/* Left: event list (resizable sidebar) */}
-        <WorkflowSidebarPane style={{ width: sidebarWidth }}>
-          {/* Filters */}
-          <div className="shrink-0 space-y-2 bg-accent p-3">
-            <WorkflowSidebarSegmentedControl
-              options={filters}
-              value={filter}
-              onChange={setFilter}
-            />
-          </div>
-
-          {/* Event list */}
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <WaveSpinner size="sm" color="primary" animation="ripple" />
-            </div>
-          ) : events.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center p-6">
-              <EmptyState
-                icon={<ActivityFilled className="h-8 w-8" />}
-                title="No activity yet"
-                description="Run a chain to see activity events here."
-                action={{ label: "Go to chains", href: "/chains" }}
-              />
-            </div>
-          ) : (
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {events.map((event) => (
-                <ActivityRow
-                  key={event.id}
-                  event={event}
-                  isSelected={selected?.id === event.id}
-                  onClick={() => setSelected(event)}
-                />
-              ))}
-            </div>
-          )}
-
-          <WorkflowSidebarResizeHandle onMouseDown={onDragStart} />
-        </WorkflowSidebarPane>
-
-        {/* Right: log viewer (full width) */}
-        <div className="flex flex-1 flex-col overflow-hidden rounded-xl bg-card">
-          {selected && selected.metadata.runId && (
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-accent/50 text-xs text-foreground/50 shrink-0">
-              <span className="font-semibold text-foreground/70 truncate">{selected.title}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] shrink-0 ${getEventPillColor(selected.type)}`}>
-                {getEventTypeLabel(selected.type)}
-              </span>
-              <span className="ml-auto shrink-0">
-                <Link
-                  href={`/runs?runId=${selected.metadata.runId}`}
-                  className="flex items-center gap-1 text-foreground/40 hover:text-foreground transition-colors"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Open run
-                </Link>
-              </span>
-            </div>
-          )}
-          <div className="flex-1 overflow-hidden">
-            <LogPanel
-              runId={selected?.metadata.runId}
-              fetchWithNamespace={fetchWithNamespace}
-            />
-          </div>
+      <div className="shrink-0 flex items-center px-2 sm:px-4 pb-2">
+        <div className="w-[220px]">
+          <WorkflowSidebarSegmentedControl
+            options={[
+              { value: "operations" as PageView, label: "Operations" },
+              { value: "feed" as PageView, label: "Feed" },
+            ]}
+            value={pageView}
+            onChange={setPageView}
+          />
         </div>
       </div>
+
+      {pageView === "operations" ? (
+        <OperationsTimeline sidebarWidth={sidebarWidth} onDragStart={onDragStart} />
+      ) : (
+        <LegacyFeed sidebarWidth={sidebarWidth} onDragStart={onDragStart} />
+      )}
     </div>
   );
 }

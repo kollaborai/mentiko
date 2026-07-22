@@ -45,44 +45,53 @@ describe("task chain recommendation helpers", () => {
     });
   });
 
-  // Regression: FEAT-014's chain-generation prompt never told the generator
-  // this task needed a code-writing agent, so it built 4 read-only
-  // analysis/design agents that produced only markdown specs. The prompt
-  // builder must now append a hard delivery requirement for issue types that
-  // promise working software.
-  describe("delivery requirement for feature/task/bug", () => {
+  it("preserves reusable work-mode guidance from the recommender", () => {
+    expect(normalizeTaskChainRecommendation({
+      action: "generate_new",
+      suggested_name: "task-state-operation",
+      work_mode: "operations",
+      reuse_scope: "Mentiko task-state mutations",
+      runtime_inputs: ["target task ID", "requested postcondition"],
+    })).toMatchObject({
+      work_mode: "operations",
+      reuse_scope: "Mentiko task-state mutations",
+      runtime_inputs: ["target task ID", "requested postcondition"],
+    });
+  });
+
+  describe("work-mode and reuse requirements", () => {
     const recommendation = normalizeTaskChainRecommendation({
       chain_id: null,
       rationale: "No existing chain handles this.",
     });
 
-    it.each(["feature", "task", "bug"])("appends the DELIVERY REQUIREMENT block for issue_type=%s", (issue_type) => {
+    it.each(["feature", "task", "bug"])("does not infer capability from broad issue_type=%s", (issue_type) => {
       const prompt = buildGenerationPromptFromTaskRecommendation(
         { title: "Create AI summary API endpoint", issue_type, acceptance_criteria: "Endpoint returns a summary within 5s" },
         recommendation
       );
 
-      expect(prompt).toContain("DELIVERY REQUIREMENT");
-      expect(prompt).toContain("edit_files");
+      expect(prompt).toContain("classify from the acceptance criteria, not from the broad issue_type label");
+      expect(prompt).toContain("REUSABILITY REQUIREMENT");
       expect(prompt).toContain("ACCEPTANCE CRITERIA TO SATISFY");
     });
 
-    it("does not append the delivery block for epic/chore/decision issue types", () => {
+    it("includes the same explicit classification rule for epic/chore/decision issue types", () => {
       const prompt = buildGenerationPromptFromTaskRecommendation(
         { title: "Plan the migration", issue_type: "epic" },
         recommendation
       );
 
-      expect(prompt).not.toContain("DELIVERY REQUIREMENT");
+      expect(prompt).toContain("delivery for workspace file/code changes");
     });
 
-    it("does not append the delivery block when issue_type is omitted (back-compat)", () => {
+    it("does not need issue_type to classify the end state", () => {
       const prompt = buildGenerationPromptFromTaskRecommendation({ title: "Run smoke tests" }, recommendation);
 
-      expect(prompt).not.toContain("DELIVERY REQUIREMENT");
+      expect(prompt).toContain("operations for command/API/MCP state mutations");
     });
 
-    it("appends the delivery block even when the recommender already supplied its own generation_prompt", () => {
+    it("generalizes a recommender-provided design brief instead of treating literals as chain constants", () => {
       const withPrompt = normalizeTaskChainRecommendation({
         action: "generate_new",
         generation_prompt: "Build a chain to add branch management to the git panel.",
@@ -94,10 +103,27 @@ describe("task chain recommendation helpers", () => {
         withPrompt
       );
 
-      // the recommender's own prompt is preserved as the base...
       expect(prompt).toContain("Build a chain to add branch management to the git panel.");
-      // ...but the delivery requirement is still enforced on top of it
-      expect(prompt).toContain("DELIVERY REQUIREMENT");
+      expect(prompt).toContain("generalize this instance into a reusable chain");
+      expect(prompt).toContain("do not copy literal task IDs");
+    });
+
+    it("requires operational authority without inventing a file edit for task-state mutation", () => {
+      const operationsRecommendation = {
+        ...recommendation!,
+        work_mode: "operations" as const,
+        reuse_scope: "Any Mentiko task dependency removal",
+        runtime_inputs: ["target task ID", "dependency task ID"],
+      };
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Remove a dependency", issue_type: "task", acceptance_criteria: "The dependency is absent" },
+        operationsRecommendation,
+      );
+
+      expect(prompt).toContain('mode "operations"');
+      expect(prompt).toContain("declare run_commands");
+      expect(prompt).toContain("do not add a fake edit_files step");
+      expect(prompt).toContain("target task ID, dependency task ID");
     });
   });
 

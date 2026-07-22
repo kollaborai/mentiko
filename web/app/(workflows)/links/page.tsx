@@ -21,7 +21,8 @@ import {
   WorkflowSidebarFilters,
   WorkflowSidebarSearchInput,
   WorkflowSidebarResizeHandle,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
   WorkflowSidebarItem,
 } from "@/components/ui/workflow-sidebar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -63,8 +64,8 @@ function LinksPageContent() {
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
-  const [filterMode, setFilterMode] = useState<FilterMode>(
-    (searchParams.get("mode") as FilterMode) || "all"
+  const [filterMode, setFilterMode] = useState<FilterMode[]>(
+    (searchParams.get("mode")?.split(",").filter(Boolean) as FilterMode[]) || []
   );
 
   // detail state
@@ -218,7 +219,7 @@ function LinksPageContent() {
         l.agent1Name.toLowerCase().includes(q) ||
         l.agent2Name.toLowerCase().includes(q) ||
         (l.description || "").toLowerCase().includes(q);
-      const matchesMode = filterMode === "all" || l.mode === filterMode;
+      const matchesMode = matchesToggleFilter(filterMode, l.mode);
       return matchesSearch && matchesMode;
     })
     .sort((a, b) => {
@@ -453,7 +454,7 @@ function LinksPageContent() {
                   <MagicStarFilled className="h-3 w-3" />
                 </Button>
               </div>
-              <WorkflowSidebarSegmentedControl
+              <WorkflowSidebarToggleFilter
                 options={MODE_FILTERS}
                 value={filterMode}
                 onChange={setFilterMode}
@@ -469,7 +470,7 @@ function LinksPageContent() {
               {loading ? (
                 <div className="p-4 text-xs text-foreground/40">Loading...</div>
               ) : filtered.length === 0 ? (
-                searchQuery || filterMode !== "all" ? (
+                searchQuery || filterMode.length > 0 ? (
                   <div className="text-center py-12 text-xs text-muted-foreground/80">
                     No links match filters
                   </div>

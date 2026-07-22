@@ -4,7 +4,25 @@ import { getAllStandaloneAgents } from "./agent-loader";
  * Builds the AGENT_CATALOG string injected into the chain generation template.
  * Returns empty string if no agents exist.
  */
-export function buildAgentCatalog(namespaceId: string, orgId: string): string {
+export interface AgentCatalogOptions {
+  query?: string;
+  limit?: number;
+}
+
+const STOP_WORDS = new Set(["agent", "criteria", "task", "that", "this", "verification", "with"]);
+
+function queryTerms(value: string): string[] {
+  return [...new Set(
+    value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g)
+      ?.filter((term) => !STOP_WORDS.has(term)) ?? [],
+  )];
+}
+
+export function buildAgentCatalog(
+  namespaceId: string,
+  orgId: string,
+  options: AgentCatalogOptions = {},
+): string {
   let agents = getAllStandaloneAgents(namespaceId, orgId);
 
   // filter out test/fixture agents
@@ -13,6 +31,24 @@ export function buildAgentCatalog(namespaceId: string, orgId: string): string {
     if (a.name.includes("Test")) return false;
     return true;
   });
+
+  const terms = queryTerms(options.query || "");
+  agents = agents
+    .map((agent) => {
+      const identity = `${agent.id} ${agent.name} ${agent.role || ""}`.toLowerCase();
+      const detail = [
+        agent.description || "",
+        agent.prompt || "",
+        ...(agent.tags || []),
+        ...(agent.authorities?.can || []),
+      ].join(" ").toLowerCase();
+      const score = terms.reduce((sum, term) =>
+        sum + (identity.includes(term) ? 5 : 0) + (detail.includes(term) ? 1 : 0), 0);
+      return { agent, score };
+    })
+    .sort((a, b) => b.score - a.score || a.agent.name.localeCompare(b.agent.name))
+    .slice(0, Math.max(1, options.limit ?? 24))
+    .map(({ agent }) => agent);
 
   if (agents.length === 0) return "";
 
@@ -29,6 +65,7 @@ export function buildAgentCatalog(namespaceId: string, orgId: string): string {
     const emitsStr = agent.emits || "";
     const produces = agent.artifacts?.produces?.map((p) => p.id) ?? [];
     const tags = agent.tags ?? [];
+    const authorities = agent.authorities?.can ?? [];
 
     // prompt preview: first 120 chars, no newlines
     const promptPreview = agent.prompt
@@ -40,6 +77,9 @@ export function buildAgentCatalog(namespaceId: string, orgId: string): string {
     lines.push(entry);
 
     lines.push(`  triggers: ${triggersStr} | emits: "${emitsStr}"`);
+    if (authorities.length > 0) {
+      lines.push(`  authorities.can: ${JSON.stringify(authorities)}`);
+    }
 
     if (produces.length > 0) {
       lines.push(`  produces: ${JSON.stringify(produces)}`);

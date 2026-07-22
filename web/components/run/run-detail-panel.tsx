@@ -2,7 +2,10 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useRunNotifications, notifyAgentEvent } from "@/hooks/use-notifications-listener";
+import {
+  useRunNotifications,
+  notifyAgentEvent,
+} from "@/hooks/use-notifications-listener";
 import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +47,12 @@ import {
   CheckFilled as Check,
   CloseCircleFilled as X,
 } from "@aliimam/icons";
-import { ArrowLeftFilled, ArrowDown1Filled, ArrowRight1Filled, TaskSquareFilled } from "@aliimam/icons";
+import {
+  ArrowLeftFilled,
+  ArrowDown1Filled,
+  ArrowRight1Filled,
+  TaskSquareFilled,
+} from "@aliimam/icons";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
 import { TerminalIcon } from "@/components/ui/terminal-icon";
@@ -121,7 +129,11 @@ interface EventArtifactExecution {
     };
   } | null;
   draftTask?: GeneratedTriageTask | null;
-  actionResults?: Array<{ type?: string; count?: number; createdTaskIds?: string[] }>;
+  actionResults?: Array<{
+    type?: string;
+    count?: number;
+    createdTaskIds?: string[];
+  }>;
   error?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -170,11 +182,32 @@ interface MetricPoint {
   value: number;
 }
 
-interface FileChange { status: string; file: string; }
-interface ActivityToolCall { name: string; label: string; input: Record<string, unknown>; }
-interface ActivityMessage { role: string; content: string; toolCalls?: ActivityToolCall[]; ts?: string; }
-interface ActivityConversation { path: string; messages: ActivityMessage[]; }
-interface AgentActivityEvent { agent_id: string; agent_name: string; event: string; session: string; timestamp: string; }
+interface FileChange {
+  status: string;
+  file: string;
+}
+interface ActivityToolCall {
+  name: string;
+  label: string;
+  input: Record<string, unknown>;
+}
+interface ActivityMessage {
+  role: string;
+  content: string;
+  toolCalls?: ActivityToolCall[];
+  ts?: string;
+}
+interface ActivityConversation {
+  path: string;
+  messages: ActivityMessage[];
+}
+interface AgentActivityEvent {
+  agent_id: string;
+  agent_name: string;
+  event: string;
+  session: string;
+  timestamp: string;
+}
 interface AgentSummary {
   status?: string;
   executiveSummary?: string;
@@ -214,25 +247,30 @@ interface RunCost {
 }
 
 function AgentTimeline({ run }: { run: Run }) {
-  const agents = (run.agents || []).filter(a => a.completed);
+  const agents = (run.agents || []).filter((a) => a.completed);
   if (agents.length === 0) return null;
 
   const runStart = run.started ? new Date(run.started).getTime() : null;
-  const times = agents.map(a => new Date(a.completed!).getTime());
+  const times = agents.map((a) => new Date(a.completed!).getTime());
   const earliest = runStart ?? Math.min(...times);
   const latest = Math.max(...times);
   const span = latest - earliest;
   if (span <= 0) return null;
 
   const statusColor = (status: string) =>
-    status === "complete" ? "bg-green-500" :
-    status === "error" ? "bg-red-500" :
-    status === "cancelled" ? "bg-foreground/20" :
-    "bg-amber-400";
+    status === "complete"
+      ? "bg-green-500"
+      : status === "error"
+        ? "bg-red-500"
+        : status === "cancelled"
+          ? "bg-foreground/20"
+          : "bg-amber-400";
 
   return (
     <div className="mb-4 max-w-4xl">
-      <p className="text-[10px] text-foreground/30 uppercase mb-2">execution timeline</p>
+      <p className="text-[10px] text-foreground/30 uppercase mb-2">
+        execution timeline
+      </p>
       <div className="relative h-6 bg-card rounded-sm overflow-visible">
         {/* track */}
         <div className="absolute inset-y-0 left-0 right-0 flex items-center">
@@ -248,11 +286,17 @@ function AgentTimeline({ run }: { run: Run }) {
               className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 group"
               style={{ left: `${Math.max(1, Math.min(99, pct))}%` }}
             >
-              <div className={`w-2 h-2 rounded-full ${statusColor(agent.status)} ring-1 ring-background`} />
+              <div
+                className={`w-2 h-2 rounded-full ${statusColor(agent.status)} ring-1 ring-background`}
+              />
               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:flex flex-col items-center z-10 pointer-events-none">
                 <div className="bg-card border border-foreground/10 rounded px-1.5 py-0.5 text-[9px] whitespace-nowrap shadow-lg">
-                  <span className="text-foreground/80">{agent.name || agent.id}</span>
-                  <span className="text-foreground/30 ml-1">{new Date(agent.completed!).toLocaleTimeString()}</span>
+                  <span className="text-foreground/80">
+                    {agent.name || agent.id}
+                  </span>
+                  <span className="text-foreground/30 ml-1">
+                    {new Date(agent.completed!).toLocaleTimeString()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -268,11 +312,19 @@ function AgentTimeline({ run }: { run: Run }) {
 }
 
 function renderMarkdownBlock(text: string) {
-  return <Markdown content={text} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />;
+  return (
+    <Markdown
+      content={text}
+      compact
+      className="min-w-0 break-words [overflow-wrap:anywhere]"
+    />
+  );
 }
 
 function TaskObjectSchema({ block }: { block: string }) {
-  const match = block.match(/^(TASK OBJECT SCHEMA(?:\s*\([^)]*\))?):\s*([\s\S]+)$/);
+  const match = block.match(
+    /^(TASK OBJECT SCHEMA(?:\s*\([^)]*\))?):\s*([\s\S]+)$/,
+  );
   if (!match) return null;
 
   let formattedSchema = match[2].trim();
@@ -286,8 +338,12 @@ function TaskObjectSchema({ block }: { block: string }) {
     <details className="group rounded-md bg-muted/60">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium text-foreground/80 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary">
         <span>Task object schema</span>
-        <span className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:hidden">View JSON</span>
-        <span className="hidden text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:inline">Hide JSON</span>
+        <span className="text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:hidden">
+          View JSON
+        </span>
+        <span className="hidden text-[10px] font-normal uppercase tracking-wider text-muted-foreground group-open:inline">
+          Hide JSON
+        </span>
       </summary>
       <pre className="max-h-[28rem] overflow-auto border-t border-foreground/10 px-3 py-3 text-[11px] leading-relaxed text-foreground/70">
         <code>{formattedSchema}</code>
@@ -305,8 +361,14 @@ function GoalContent({ goal }: { goal: string }) {
   for (const line of lines) {
     if (!pastMeta) {
       const m = line.match(/^(TASK ID|TITLE|TYPE|PRIORITY|ASSIGNEE):\s*(.*)$/);
-      if (m) { metaFields.push({ key: m[1], value: m[2] }); continue; }
-      if (line.trim() === "" && metaFields.length > 0) { pastMeta = true; continue; }
+      if (m) {
+        metaFields.push({ key: m[1], value: m[2] });
+        continue;
+      }
+      if (line.trim() === "" && metaFields.length > 0) {
+        pastMeta = true;
+        continue;
+      }
       if (metaFields.length === 0) pastMeta = true;
     }
     bodyLines.push(line);
@@ -320,7 +382,9 @@ function GoalContent({ goal }: { goal: string }) {
         <div className="flex flex-wrap gap-3">
           {metaFields.map(({ key, value }) => (
             <div key={key} className="flex items-center gap-1.5 text-xs">
-              <span className="text-foreground/30 uppercase text-[10px] tracking-wide">{key}</span>
+              <span className="text-foreground/30 uppercase text-[10px] tracking-wide">
+                {key}
+              </span>
               {key === "TASK ID" ? (
                 <a
                   href={`/tasks?task=${encodeURIComponent(value)}`}
@@ -342,12 +406,18 @@ function GoalContent({ goal }: { goal: string }) {
             if (/^TASK OBJECT SCHEMA(?:\s*\([^)]*\))?:/.test(block)) {
               return <div key={i}>{taskObjectSchema}</div>;
             }
-            const sectionMatch = block.match(/^([A-Z][A-Za-z ]+):\s*\n([\s\S]*)$/);
+            const sectionMatch = block.match(
+              /^([A-Z][A-Za-z ]+):\s*\n([\s\S]*)$/,
+            );
             if (sectionMatch) {
               return (
                 <div key={i}>
-                  <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">{sectionMatch[1]}</p>
-                  <div className="text-foreground/75 space-y-1">{renderMarkdownBlock(sectionMatch[2].trim())}</div>
+                  <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-2">
+                    {sectionMatch[1]}
+                  </p>
+                  <div className="text-foreground/75 space-y-1">
+                    {renderMarkdownBlock(sectionMatch[2].trim())}
+                  </div>
                 </div>
               );
             }
@@ -361,25 +431,34 @@ function GoalContent({ goal }: { goal: string }) {
 
 function runOutcomeLabel(summary: RunSummary): string {
   switch (summary.outcome) {
-    case "partial_pass": return "partial pass";
-    case "fail": return "failed";
-    case "pass": return "passed";
-    case "complete": return "complete";
-    default: return summary.outcome || "unknown";
+    case "partial_pass":
+      return "partial pass";
+    case "fail":
+      return "failed";
+    case "pass":
+      return "passed";
+    case "complete":
+      return "complete";
+    default:
+      return summary.outcome || "unknown";
   }
 }
 
 function runOutcomeStatus(summary: RunSummary): Status {
-  if (summary.decision_required || summary.outcome === "partial_pass") return "warning";
+  if (summary.decision_required || summary.outcome === "partial_pass")
+    return "warning";
   if (summary.outcome === "fail") return "failed";
-  if (summary.outcome === "pass" || summary.outcome === "complete") return "complete";
+  if (summary.outcome === "pass" || summary.outcome === "complete")
+    return "complete";
   return "idle";
 }
 
 function canInteractWithAgentTerminal(agent?: RunAgent | null) {
   return Boolean(
     agent?.session &&
-    (agent.status === "running" || agent.status === "blocked" || agent.status === "startup_recovery")
+    (agent.status === "running" ||
+      agent.status === "blocked" ||
+      agent.status === "startup_recovery"),
   );
 }
 
@@ -390,7 +469,10 @@ function SummaryList({ label, items }: { label: string; items?: string[] }) {
       <p className="text-[10px] text-foreground/40 uppercase mb-1.5">{label}</p>
       <div className="space-y-1">
         {items.slice(0, 4).map((item, index) => (
-          <p key={index} className="break-words text-[11px] text-foreground/60 leading-relaxed [overflow-wrap:anywhere]">
+          <p
+            key={index}
+            className="break-words text-[11px] text-foreground/60 leading-relaxed [overflow-wrap:anywhere]"
+          >
             {item}
           </p>
         ))}
@@ -401,7 +483,9 @@ function SummaryList({ label, items }: { label: string; items?: string[] }) {
 
 function artifactPathValue(artifact?: RunArtifact | null) {
   const path = artifact?.path;
-  return typeof path === "string" && path.trim().length > 0 ? path.trim() : null;
+  return typeof path === "string" && path.trim().length > 0
+    ? path.trim()
+    : null;
 }
 
 function artifactName(path?: string) {
@@ -426,30 +510,53 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const [connected, setConnected] = useState(false);
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [agentOutputs, setAgentOutputs] = useState<Record<string, string>>({});
-  const [metricsTimeline, setMetricsTimeline] = useState<Record<string, MetricPoint[]>>({});
+  const [metricsTimeline, setMetricsTimeline] = useState<
+    Record<string, MetricPoint[]>
+  >({});
   const [debugPaused, setDebugPaused] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [agentConversations, setAgentConversations] = useState<Record<string, string | null>>({});
-  const [agentMessages, setAgentMessages] = useState<Record<string, ConversationMessage[]>>({});
-  const [agentMsgTotals, setAgentMsgTotals] = useState<Record<string, number>>({});
+  const [agentConversations, setAgentConversations] = useState<
+    Record<string, string | null>
+  >({});
+  const [agentMessages, setAgentMessages] = useState<
+    Record<string, ConversationMessage[]>
+  >({});
+  const [agentMsgTotals, setAgentMsgTotals] = useState<Record<string, number>>(
+    {},
+  );
   const [showToolResults, setShowToolResults] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
-  const [outputView, setOutputView] = useState<"conversation" | "terminal">("conversation");
+  const [outputView, setOutputView] = useState<"conversation" | "terminal">(
+    "conversation",
+  );
   const [terminalInputEnabled, setTerminalInputEnabled] = useState(false);
-  const [agentActivity, setAgentActivity] = useState<Record<string, AgentActivity | null>>({});
+  const [agentActivity, setAgentActivity] = useState<
+    Record<string, AgentActivity | null>
+  >({});
   const [expandedDiffs, setExpandedDiffs] = useState<Set<string>>(new Set());
   const [costData, setCostData] = useState<RunCost | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [submittingApproval, setSubmittingApproval] = useState(false);
-  const [eventArtifacts, setEventArtifacts] = useState<EventArtifactExecution[]>([]);
+  const [eventArtifacts, setEventArtifacts] = useState<
+    EventArtifactExecution[]
+  >([]);
   const [eventArtifactLoading, setEventArtifactLoading] = useState(false);
-  const [eventArtifactError, setEventArtifactError] = useState<string | null>(null);
-  const [applyingEventArtifactId, setApplyingEventArtifactId] = useState<string | null>(null);
-  const [selectedArtifact, setSelectedArtifact] = useState<RunArtifact | null>(null);
-  const [artifactPreview, setArtifactPreview] = useState<ArtifactPreviewState | null>(null);
+  const [eventArtifactError, setEventArtifactError] = useState<string | null>(
+    null,
+  );
+  const [applyingEventArtifactId, setApplyingEventArtifactId] = useState<
+    string | null
+  >(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<RunArtifact | null>(
+    null,
+  );
+  const [artifactPreview, setArtifactPreview] =
+    useState<ArtifactPreviewState | null>(null);
   const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
-  const [artifactPreviewError, setArtifactPreviewError] = useState<string | null>(null);
+  const [artifactPreviewError, setArtifactPreviewError] = useState<
+    string | null
+  >(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const metricsRef = useRef<Record<string, MetricPoint[]>>({});
@@ -512,13 +619,22 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     setEventArtifactLoading(true);
     setEventArtifactError(null);
     try {
-      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts`);
+      const res = await fetchWithNamespace(
+        `/api/runs/${runId}/event-artifacts`,
+      );
       const raw = await res.json();
-      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to load triage artifacts"));
-      const data = unwrapApiData<{ executions?: EventArtifactExecution[] }>(raw);
+      if (!res.ok)
+        throw new Error(
+          getApiErrorMessage(raw, "failed to load triage artifacts"),
+        );
+      const data = unwrapApiData<{ executions?: EventArtifactExecution[] }>(
+        raw,
+      );
       setEventArtifacts(data.executions || []);
     } catch (e) {
-      setEventArtifactError(e instanceof Error ? e.message : "failed to load triage artifacts");
+      setEventArtifactError(
+        e instanceof Error ? e.message : "failed to load triage artifacts",
+      );
       setEventArtifacts([]);
     } finally {
       setEventArtifactLoading(false);
@@ -530,7 +646,11 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       const res = await fetchWithNamespace(`/api/runs/${runId}/status`);
       if (!res.ok) return;
       const raw = await res.json();
-      const data = unwrapApiData<{ status?: string; completed?: string; agents?: Array<{ id: string; status: string; session: string }> }>(raw);
+      const data = unwrapApiData<{
+        status?: string;
+        completed?: string;
+        agents?: Array<{ id: string; status: string; session: string }>;
+      }>(raw);
       setRun((prev) => {
         if (!prev) return prev;
         return {
@@ -538,8 +658,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           status: data.status || prev.status,
           completed: data.completed || prev.completed,
           agents: (prev.agents || []).map((agent) => {
-            const live = (data.agents || []).find((a: { id: string }) => a.id === agent.id);
-            return live ? { ...agent, status: live.status, session: live.session } : agent;
+            const live = (data.agents || []).find(
+              (a: { id: string }) => a.id === agent.id,
+            );
+            return live
+              ? { ...agent, status: live.status, session: live.session }
+              : agent;
           }),
         };
       });
@@ -548,20 +672,28 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     }
   }, [runId, fetchWithNamespace]);
 
-  const fetchAgentActivity = useCallback(async (agentId: string) => {
+  const fetchAgentActivity = useCallback(
+    async (agentId: string) => {
     try {
-      const res = await fetchWithNamespace(`/api/runs/${runId}/agents/${encodeURIComponent(agentId)}/activity`);
+        const res = await fetchWithNamespace(
+          `/api/runs/${runId}/agents/${encodeURIComponent(agentId)}/activity`,
+        );
       const raw = res.ok ? await res.json() : null;
       const data = raw ? unwrapApiData<AgentActivity>(raw) : null;
       setAgentActivity((prev) => ({ ...prev, [agentId]: data }));
     } catch {
       setAgentActivity((prev) => ({ ...prev, [agentId]: null }));
     }
-  }, [runId, fetchWithNamespace]);
+    },
+    [runId, fetchWithNamespace],
+  );
 
-  const fetchAgentOutput = useCallback(async (_agentId: string, session: string) => {
+  const fetchAgentOutput = useCallback(
+    async (_agentId: string, session: string) => {
     try {
-      const res = await fetchWithNamespace(`/api/agents/${encodeURIComponent(session)}/output`);
+        const res = await fetchWithNamespace(
+          `/api/agents/${encodeURIComponent(session)}/output`,
+        );
       if (res.ok) {
         const raw = await res.json();
         const data = unwrapApiData<{ output?: string }>(raw);
@@ -574,9 +706,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     } catch (e) {
       console.error("failed to fetch output", e);
     }
-  }, [fetchWithNamespace]);
+    },
+    [fetchWithNamespace],
+  );
 
-  const findAgentConversation = useCallback(async (agentName: string, agentId: string) => {
+  const findAgentConversation = useCallback(
+    async (agentName: string, agentId: string) => {
     try {
       const params = new URLSearchParams({
         name: agentName,
@@ -587,40 +722,61 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       if (run?.workspacePath) params.set("cwd", run.workspacePath);
 
       const res = await fetchWithNamespace(
-        `/api/conversations/find-by-agent?${params.toString()}`
+          `/api/conversations/find-by-agent?${params.toString()}`,
       );
       if (res.ok) {
         const raw = await res.json();
         const data = unwrapApiData<{ conversationId?: string }>(raw);
-        setAgentConversations((prev) => ({ ...prev, [agentId]: data.conversationId || null }));
+          setAgentConversations((prev) => ({
+            ...prev,
+            [agentId]: data.conversationId || null,
+          }));
       }
     } catch {
       setAgentConversations((prev) => ({ ...prev, [agentId]: null }));
     }
-  }, [run?.id, run?.started, run?.workspacePath, fetchWithNamespace]);
+    },
+    [run?.id, run?.started, run?.workspacePath, fetchWithNamespace],
+  );
 
-  const fetchAgentMessages = useCallback(async (agentId: string) => {
+  const fetchAgentMessages = useCallback(
+    async (agentId: string) => {
     const conversationId = agentConversations[agentId];
     if (!conversationId) return;
 
     try {
-      const cwdParam = run?.workspacePath ? `&cwd=${encodeURIComponent(run.workspacePath)}` : "";
-      const res = await fetchWithNamespace(`/api/conversations/${conversationId}?mode=tail&tail=100${cwdParam}`);
+        const cwdParam = run?.workspacePath
+          ? `&cwd=${encodeURIComponent(run.workspacePath)}`
+          : "";
+        const res = await fetchWithNamespace(
+          `/api/conversations/${conversationId}?mode=tail&tail=100${cwdParam}`,
+        );
       if (res.ok) {
         const raw = await res.json();
-        const data = unwrapApiData<{ total?: number; messages?: ConversationMessage[] }>(raw);
+          const data = unwrapApiData<{
+            total?: number;
+            messages?: ConversationMessage[];
+          }>(raw);
         const newTotal = data.total || 0;
-        if (newTotal === prevAgentTotalsRef.current[agentId] && prevAgentTotalsRef.current[agentId] > 0) {
+          if (
+            newTotal === prevAgentTotalsRef.current[agentId] &&
+            prevAgentTotalsRef.current[agentId] > 0
+          ) {
           return;
         }
         prevAgentTotalsRef.current[agentId] = newTotal;
-        setAgentMessages((prev) => ({ ...prev, [agentId]: data.messages || [] }));
+          setAgentMessages((prev) => ({
+            ...prev,
+            [agentId]: data.messages || [],
+          }));
         setAgentMsgTotals((prev) => ({ ...prev, [agentId]: newTotal }));
       }
     } catch {
       // ignore
     }
-  }, [agentConversations, run?.workspacePath, fetchWithNamespace]);
+    },
+    [agentConversations, run?.workspacePath, fetchWithNamespace],
+  );
 
   const fetchCost = useCallback(async () => {
     try {
@@ -641,14 +797,17 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     if (!agent) return;
 
     const currentConversation = agentConversations[selectedAgent];
-    const hasConversation = !!(currentConversation && (agentMessages[selectedAgent]?.length ?? 0) > 0);
+    const hasConversation = !!(
+      currentConversation && (agentMessages[selectedAgent]?.length ?? 0) > 0
+    );
     if (hasConversation) {
       conversationLookupAttemptsRef.current[selectedAgent] = 0;
       delete outputAutoTerminalRef.current[selectedAgent];
       return;
     }
 
-    const attempt = (conversationLookupAttemptsRef.current[selectedAgent] || 0) + 1;
+    const attempt =
+      (conversationLookupAttemptsRef.current[selectedAgent] || 0) + 1;
     if (attempt > 8) {
       if (agentConversations[selectedAgent] === undefined) {
         setAgentConversations((prev) => ({ ...prev, [selectedAgent]: null }));
@@ -678,7 +837,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
   useEffect(() => {
     const eventSource = new EventSource(
-      `/api/events/stream?run-id=${encodeURIComponent(runId)}`
+      `/api/events/stream?run-id=${encodeURIComponent(runId)}`,
     );
     eventSource.onopen = () => setConnected(true);
     eventSource.onerror = () => setConnected(false);
@@ -687,20 +846,33 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       try {
         const event: StreamEvent = JSON.parse(e.data);
         if (event.type === "session_status" && event.data) {
-          const eventData = event.data as { agent_id: string; status: string; session: string };
+          const eventData = event.data as {
+            agent_id: string;
+            status: string;
+            session: string;
+          };
           setRun((prev) => {
             if (!prev) return prev;
             return {
               ...prev,
               agents: prev.agents.map((agent) =>
                 agent.id === eventData.agent_id
-                  ? { ...agent, status: eventData.status, session: eventData.session || agent.session }
-                  : agent
+                  ? {
+                      ...agent,
+                      status: eventData.status,
+                      session: eventData.session || agent.session,
+                    }
+                  : agent,
               ),
             };
           });
           if (eventData.status === "complete") {
-            notifyAgentEvent({ type: "agent_complete", title: "Agent completed", message: eventData.agent_id, metadata: { agentId: eventData.agent_id, runId } });
+            notifyAgentEvent({
+              type: "agent_complete",
+              title: "Agent completed",
+              message: eventData.agent_id,
+              metadata: { agentId: eventData.agent_id, runId },
+            });
             // refresh activity if agent is expanded, otherwise invalidate cache
             const completedId = eventData.agent_id;
             setAgentActivity((prev) => {
@@ -712,19 +884,39 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
             if (expandedAgentsRef.current.has(completedId)) {
               setTimeout(() => fetchAgentActivity(completedId), 1000);
             }
-          } else if (eventData.status === "error" || eventData.status === "failed") {
-            notifyAgentEvent({ type: "agent_error", title: "Agent failed", message: eventData.agent_id, metadata: { agentId: eventData.agent_id, runId } });
+          } else if (
+            eventData.status === "error" ||
+            eventData.status === "failed"
+          ) {
+            notifyAgentEvent({
+              type: "agent_error",
+              title: "Agent failed",
+              message: eventData.agent_id,
+              metadata: { agentId: eventData.agent_id, runId },
+            });
           }
           const agentId = eventData.agent_id;
           if (!metricsRef.current[agentId]) metricsRef.current[agentId] = [];
-          metricsRef.current[agentId].push({ timestamp: Date.now(), value: eventData.status === "running" ? 1 : eventData.status === "complete" ? 0.5 : 0 });
-          if (metricsRef.current[agentId].length > 100) metricsRef.current[agentId] = metricsRef.current[agentId].slice(-100);
+          metricsRef.current[agentId].push({
+            timestamp: Date.now(),
+            value:
+              eventData.status === "running"
+                ? 1
+                : eventData.status === "complete"
+                  ? 0.5
+                  : 0,
+          });
+          if (metricsRef.current[agentId].length > 100)
+            metricsRef.current[agentId] =
+              metricsRef.current[agentId].slice(-100);
           setMetricsTimeline({ ...metricsRef.current });
         }
       } catch {}
     });
     eventSourceRef.current = eventSource;
-    return () => { eventSource.close(); };
+    return () => {
+      eventSource.close();
+    };
   }, [runId, debugPaused, fetchAgentActivity]);
 
   useEffect(() => {
@@ -736,22 +928,34 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   }, [fetchRun]);
 
   // convert activity messages (captured artifacts) to ConversationMessage format
-  const activityToMessages = useCallback((activity: AgentActivity): ConversationMessage[] => {
+  const activityToMessages = useCallback(
+    (activity: AgentActivity): ConversationMessage[] => {
     const msgs: ConversationMessage[] = [];
     for (const conv of activity.conversations) {
       for (const m of conv.messages) {
         if (m.content) {
-          msgs.push({ type: m.role as "user" | "assistant", timestamp: m.ts, text: m.content });
+            msgs.push({
+              type: m.role as "user" | "assistant",
+              timestamp: m.ts,
+              text: m.content,
+            });
         }
         if (m.toolCalls) {
           for (const tc of m.toolCalls) {
-            msgs.push({ type: "tool_use", timestamp: m.ts, toolName: tc.name, toolInput: tc.input });
+              msgs.push({
+                type: "tool_use",
+                timestamp: m.ts,
+                toolName: tc.name,
+                toolInput: tc.input,
+              });
           }
         }
       }
     }
     return msgs;
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (selectedAgent && run) {
@@ -804,9 +1008,15 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       const msgs = activityToMessages(activity);
       if (msgs.length > 0) {
         setAgentMessages((prev) => ({ ...prev, [selectedAgent]: msgs }));
-        setAgentMsgTotals((prev) => ({ ...prev, [selectedAgent]: msgs.length }));
+        setAgentMsgTotals((prev) => ({
+          ...prev,
+          [selectedAgent]: msgs.length,
+        }));
         // mark as having conversation so MessageList renders
-        setAgentConversations((prev) => ({ ...prev, [selectedAgent]: "artifact" }));
+        setAgentConversations((prev) => ({
+          ...prev,
+          [selectedAgent]: "artifact",
+        }));
       }
     }
     // also load captured output as fallback for raw output display
@@ -817,7 +1027,15 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         setAgentOutputs({ ...outputsRef.current });
       }
     }
-  }, [selectedAgent, run, agentConversations, agentMessages, agentActivity, fetchAgentActivity, activityToMessages]);
+  }, [
+    selectedAgent,
+    run,
+    agentConversations,
+    agentMessages,
+    agentActivity,
+    fetchAgentActivity,
+    activityToMessages,
+  ]);
 
   // auto-switch to terminal view for live agents without conversation data
   // (raw pty output looks corrupt when rendered as plain text)
@@ -826,7 +1044,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     const agent = run.agents?.find((a) => a.id === selectedAgent);
     if (!agent?.session) return;
     const isAlive = agent.status === "running";
-    const hasConv = agentConversations[selectedAgent] && (agentMessages[selectedAgent]?.length ?? 0) > 0;
+    const hasConv =
+      agentConversations[selectedAgent] &&
+      (agentMessages[selectedAgent]?.length ?? 0) > 0;
     if (isAlive && !hasConv && outputView === "conversation") {
       outputAutoTerminalRef.current[selectedAgent] = true;
       setOutputView("terminal");
@@ -834,7 +1054,10 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     }
 
     if (!isAlive || !hasConv) return;
-    if (outputView === "terminal" && outputAutoTerminalRef.current[selectedAgent]) {
+    if (
+      outputView === "terminal" &&
+      outputAutoTerminalRef.current[selectedAgent]
+    ) {
       delete outputAutoTerminalRef.current[selectedAgent];
       setOutputView("conversation");
     }
@@ -856,11 +1079,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     }
   }, [autoScrollEnabled]);
 
-  const scrollOutputToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+  const scrollOutputToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
     const container = outputScrollRef.current;
     if (!container) return;
     container.scrollTo({ top: container.scrollHeight, behavior });
-  }, []);
+    },
+    [],
+  );
 
   const scrollToBottom = useCallback(() => {
     scrollOutputToBottom("smooth");
@@ -905,7 +1131,8 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
   const formatDuration = (start?: string, end?: string) => {
     if (!start) return "-";
-    const diff = (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();
+    const diff =
+      (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();
     if (diff < 1000) return `${diff}ms`;
     if (diff < 60000) return `${(diff / 1000).toFixed(1)}s`;
     return `${Math.floor(diff / 60000)}m ${Math.floor((diff % 60000) / 1000)}s`;
@@ -917,15 +1144,25 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
   const handleStop = async () => {
     try {
-      const res = await fetchWithNamespace(`/api/runs/${runId}/stop`, { method: "POST" });
+      const res = await fetchWithNamespace(`/api/runs/${runId}/stop`, {
+        method: "POST",
+      });
       if (res.ok) {
         // refetch full run to get updated agent statuses
         const runRes = await fetchWithNamespace(`/api/runs/${runId}`);
         if (runRes.ok) {
-          const updated = await runRes.json() as { run: Run };
+          const updated = (await runRes.json()) as { run: Run };
           setRun(updated.run);
         } else {
-          setRun((prev) => prev ? { ...prev, status: "stopped", completed: new Date().toISOString() } : prev);
+          setRun((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "stopped",
+                  completed: new Date().toISOString(),
+                }
+              : prev,
+          );
         }
       } else {
         console.error("failed to stop run:", res.status);
@@ -941,7 +1178,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       // refetch to get updated agent statuses
       const runRes = await fetchWithNamespace(`/api/runs/${runId}`);
       if (runRes.ok) {
-        const updated = await runRes.json() as { run: Run };
+        const updated = (await runRes.json()) as { run: Run };
         setRun(updated.run);
       }
     } catch (e) {
@@ -952,9 +1189,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const handleStopLinkRun = async () => {
     if (!run?.id) return;
     try {
-      await fetchWithNamespace(`/api/links/runs/${encodeURIComponent(run.id)}/stop`, {
+      await fetchWithNamespace(
+        `/api/links/runs/${encodeURIComponent(run.id)}/stop`,
+        {
         method: "POST",
-      });
+        },
+      );
       // refresh run data
       fetchRun();
     } catch {
@@ -969,37 +1209,48 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       body: JSON.stringify({ action: "cancel" }),
     });
     if (res.ok) {
-      const updated = await res.json() as { run: Run };
+      const updated = (await res.json()) as { run: Run };
       setRun(updated.run);
     }
   };
 
   const handleApplyEventArtifact = async (executionId: string) => {
     if (!run?.taskId) {
-      setEventArtifactError("this run is not attached to a task, so draft tasks cannot be applied");
+      setEventArtifactError(
+        "this run is not attached to a task, so draft tasks cannot be applied",
+      );
       return;
     }
     setApplyingEventArtifactId(executionId);
     try {
-      const res = await fetchWithNamespace(`/api/runs/${runId}/event-artifacts/${encodeURIComponent(executionId)}/apply`, {
+      const res = await fetchWithNamespace(
+        `/api/runs/${runId}/event-artifacts/${encodeURIComponent(executionId)}/apply`,
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           parentTaskId: run.taskId,
           ...(run.workspacePath ? { workspacePath: run.workspacePath } : {}),
         }),
-      });
+        },
+      );
       const raw = await res.json();
-      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to apply triage draft"));
+      if (!res.ok)
+        throw new Error(
+          getApiErrorMessage(raw, "failed to apply triage draft"),
+        );
       await fetchEventArtifacts();
     } catch (e) {
-      setEventArtifactError(e instanceof Error ? e.message : "failed to apply triage draft");
+      setEventArtifactError(
+        e instanceof Error ? e.message : "failed to apply triage draft",
+      );
     } finally {
       setApplyingEventArtifactId(null);
     }
   };
 
-  const handleSelectArtifact = useCallback(async (artifact: RunArtifact) => {
+  const handleSelectArtifact = useCallback(
+    async (artifact: RunArtifact) => {
     const artifactPath = artifactPathValue(artifact);
     setSelectedArtifact(artifact);
     setArtifactPreview(null);
@@ -1015,29 +1266,39 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         `/api/runs/${runId}/artifacts?path=${encodeURIComponent(artifactPath)}`,
       );
       const raw = await res.json();
-      if (!res.ok) throw new Error(getApiErrorMessage(raw, "failed to load artifact"));
+        if (!res.ok)
+          throw new Error(getApiErrorMessage(raw, "failed to load artifact"));
       const data = unwrapApiData<ArtifactPreview>(raw);
       setArtifactPreview({ ...data, requestPath: artifactPath });
     } catch (e) {
-      setArtifactPreviewError(e instanceof Error ? e.message : "failed to load artifact");
+        setArtifactPreviewError(
+          e instanceof Error ? e.message : "failed to load artifact",
+        );
     } finally {
       setArtifactPreviewLoading(false);
     }
-  }, [fetchWithNamespace, runId]);
+    },
+    [fetchWithNamespace, runId],
+  );
 
   const handleResume = async () => {
     try {
-      const res = await fetchWithNamespace(`/api/runs/${runId}/resume`, { method: "POST" });
+      const res = await fetchWithNamespace(`/api/runs/${runId}/resume`, {
+        method: "POST",
+      });
       if (res.ok) {
         // refetch the run to get updated state
         const runRes = await fetchWithNamespace(`/api/runs/${runId}`);
         if (runRes.ok) {
-          const updated = await runRes.json() as { run: Run };
+          const updated = (await runRes.json()) as { run: Run };
           setRun(updated.run);
         }
       } else {
         const raw = await res.json().catch(() => ({ error: "Resume failed" }));
-        console.error("failed to resume run:", getApiErrorMessage(raw, "Resume failed"));
+        console.error(
+          "failed to resume run:",
+          getApiErrorMessage(raw, "Resume failed"),
+        );
       }
     } catch (e) {
       console.error("failed to resume run:", e);
@@ -1045,7 +1306,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   };
 
   const handleDelete = async () => {
-    const res = await fetchWithNamespace(`/api/runs/${runId}`, { method: "DELETE" });
+    const res = await fetchWithNamespace(`/api/runs/${runId}`, {
+      method: "DELETE",
+    });
     if (res.ok) onDelete?.();
   };
 
@@ -1065,7 +1328,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         }),
       });
       if (res.ok) {
-        const data = await res.json() as { data?: { runId?: string } };
+        const data = (await res.json()) as { data?: { runId?: string } };
         const newRunId = data?.data?.runId;
         if (newRunId) router.push(`/runs?runId=${newRunId}`);
       } else {
@@ -1076,12 +1339,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
     // chain runs rerun via the chains API
     const chainId = run.chainId || run.chain.toLowerCase().replace(/\s+/g, "-");
-    const chainRes = await fetchWithNamespace(`/api/chains/${encodeURIComponent(chainId)}`);
+    const chainRes = await fetchWithNamespace(
+      `/api/chains/${encodeURIComponent(chainId)}`,
+    );
     if (!chainRes.ok) {
       console.error("failed to fetch chain for rerun:", chainRes.status);
       return;
     }
-    const chainData = await chainRes.json() as { chain?: unknown };
+    const chainData = (await chainRes.json()) as { chain?: unknown };
     const { chain } = chainData;
     if (!chain) {
       console.error("chain not found for rerun");
@@ -1102,7 +1367,7 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
       }),
     });
     if (res.ok) {
-      const data = await res.json() as { runId?: string };
+      const data = (await res.json()) as { runId?: string };
       if (data.runId) {
         router.push(`/runs?runId=${data.runId}`);
       }
@@ -1117,7 +1382,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     try {
       // Fetch output text
       const outputRes = await fetchWithNamespace(`/api/runs/${runId}/output`);
-      const outputText = outputRes.ok ? await outputRes.text() : "(No output available)";
+      const outputText = outputRes.ok
+        ? await outputRes.text()
+        : "(No output available)";
 
       // Build markdown content
       const md: string[] = [
@@ -1125,7 +1392,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         "",
         `**Run ID:** \`${run.id}\``,
         `**Started:** ${new Date(run.started).toLocaleString()}`,
-        run.completed ? `**Completed:** ${new Date(run.completed).toLocaleString()}` : "",
+        run.completed
+          ? `**Completed:** ${new Date(run.completed).toLocaleString()}`
+          : "",
         run.taskId ? `**Task:** ${run.taskId}` : "",
         "",
         "## Goal",
@@ -1140,9 +1409,15 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
       // Add agent table rows
       run.agents.forEach((agent) => {
-        const started = agent.started ? new Date(agent.started).toLocaleTimeString() : "-";
-        const completed = agent.completed ? new Date(agent.completed).toLocaleTimeString() : "-";
-        md.push(`| ${agent.name} | ${agent.status} | ${started} | ${completed} |`);
+        const started = agent.started
+          ? new Date(agent.started).toLocaleTimeString()
+          : "-";
+        const completed = agent.completed
+          ? new Date(agent.completed).toLocaleTimeString()
+          : "-";
+        md.push(
+          `| ${agent.name} | ${agent.status} | ${started} | ${completed} |`,
+        );
       });
 
       md.push("", "## Output", "", "```", outputText, "```", "");
@@ -1188,29 +1463,40 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const isActive = run?.status === "running" || run?.status === "pending";
   const isWaitingApproval = run?.status === "waiting_approval";
   const isLinkRun = run?.type === "link";
-  const completedAgents = run?.agents?.filter((a) => a.status === "complete").length || 0;
+  const completedAgents =
+    run?.agents?.filter((a) => a.status === "complete").length || 0;
   const totalAgents = run?.agents?.length || 0;
   const runArtifacts = run?.artifacts || [];
-  const artifactCount = runArtifacts.length || run?.summary?.artifacts_count || 0;
+  const artifactCount =
+    runArtifacts.length || run?.summary?.artifacts_count || 0;
   const selectedArtifactPath = artifactPathValue(selectedArtifact);
-  const activeArtifactPreview = selectedArtifactPath && artifactPreview?.requestPath === selectedArtifactPath
+  const activeArtifactPreview =
+    selectedArtifactPath &&
+    artifactPreview?.requestPath === selectedArtifactPath
     ? artifactPreview
     : null;
   const panelClassName = embedded
-    ? "h-[720px] max-h-[calc(100vh-220px)] min-h-[560px] overflow-hidden flex flex-col rounded-sm bg-background/45"
+    ? "flex min-h-[720px] flex-col overflow-hidden bg-transparent"
     : "h-full overflow-hidden flex flex-col";
   const headerClassName = embedded
     ? "mx-2 mt-2 shrink-0"
     : "mx-3 mt-2 shrink-0 rounded-xl px-4 py-4";
-  const runHeaderTitleBlockClassName = cn("min-w-0 flex-1", !embedded && onBack && "pt-9 sm:pt-0");
-  const runHeaderTitleLineClassName = "flex min-w-0 flex-wrap items-center gap-2";
-  const runHeaderTitleClassName = "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere]";
-  const runHeaderMetaClassName = "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1";
+  const runHeaderTitleBlockClassName = cn(
+    "min-w-0 flex-1",
+    !embedded && onBack && "pt-9 sm:pt-0",
+  );
+  const runHeaderTitleLineClassName =
+    "flex min-w-0 flex-wrap items-center gap-2";
+  const runHeaderTitleClassName =
+    "line-clamp-2 min-w-0 text-sm font-bold leading-tight tracking-normal [overflow-wrap:anywhere]";
+  const runHeaderMetaClassName =
+    "mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1";
   const runHeaderActionsClassName = embedded
     ? "flex flex-col items-stretch gap-2"
     : "flex flex-wrap items-center justify-end gap-3";
   const runHeaderMetricsClassName = "flex shrink-0 items-center gap-3";
-  const runHeaderControlsClassName = "flex shrink-0 items-center gap-1.5";
+  const runHeaderControlsClassName =
+    "flex shrink-0 flex-wrap items-center justify-end gap-2";
   const tabsChromeClassName = embedded
     ? "shrink-0 overflow-x-auto px-2 pt-2 no-scrollbar"
     : "shrink-0 max-w-full px-4 pt-3";
@@ -1229,7 +1515,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const agentIdentityClassName = embedded
     ? "flex min-w-0 items-start gap-2"
     : "flex min-w-0 items-start gap-3";
-  const agentTitleBlockClassName = embedded ? "min-w-0 flex-1" : "min-w-0 flex-1";
+  const agentTitleBlockClassName = embedded
+    ? "min-w-0 flex-1"
+    : "min-w-0 flex-1";
   const agentTitleClassName = embedded
     ? "text-sm font-medium leading-tight break-words"
     : "text-base font-semibold leading-tight tracking-normal [overflow-wrap:anywhere] sm:text-sm";
@@ -1251,7 +1539,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
   const outputAgentListClassName = embedded
     ? "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 no-scrollbar"
     : "shrink-0 border-b border-foreground/5 overflow-x-auto p-2 sm:w-40 sm:border-b-0 sm:border-r sm:overflow-y-auto md:w-48 no-scrollbar";
-  const outputAgentListBodyClassName = embedded ? "flex min-w-max gap-1" : "flex min-w-max gap-1 sm:block sm:min-w-0 sm:space-y-1";
+  const outputAgentListBodyClassName = embedded
+    ? "flex min-w-max gap-1"
+    : "flex min-w-max gap-1 sm:block sm:min-w-0 sm:space-y-1";
   const outputAgentButtonClassName = embedded
     ? "min-w-[128px] max-w-[180px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors"
     : "min-w-[144px] max-w-[220px] text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors sm:w-full sm:min-w-0 sm:max-w-none";
@@ -1297,28 +1587,52 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
     : "flex items-center justify-between gap-3";
 
   // detect stale state: run is stopped/done but agents are still running/pending
-  const hasStaleAgents = !isActive && run?.agents?.some(
-    (a) => a.status === "running" || a.status === "pending"
-  );
+  const hasStaleAgents =
+    !isActive &&
+    run?.agents?.some((a) => a.status === "running" || a.status === "pending");
 
   // detect resumable: run is not active and has incomplete agents (not all completed)
-  const hasIncompleteAgents = !isActive && run?.agents?.some(
-    (a) => a.status !== "complete"
-  );
+  const hasIncompleteAgents =
+    !isActive && run?.agents?.some((a) => a.status !== "complete");
 
-  const Sparkline = ({ data, width = 200, height = 40 }: { data: MetricPoint[]; width?: number; height?: number }) => {
+  const Sparkline = ({
+    data,
+    width = 200,
+    height = 40,
+  }: {
+    data: MetricPoint[];
+    width?: number;
+    height?: number;
+  }) => {
     if (data.length < 2) return null;
     const max = Math.max(...data.map((d) => d.value), 1);
-    const points = data.map((d, i) => {
+    const points = data
+      .map((d, i) => {
       const x = (i / (data.length - 1)) * width;
       const y = height - (d.value / max) * height;
       return `${x},${y}`;
-    }).join(" ");
+      })
+      .join(" ");
     return (
-      <svg width={width} height={height} className="max-w-full overflow-visible">
-        <polyline fill="none" stroke="url(#sparkline-gradient)" strokeWidth="2" points={points} />
+      <svg
+        width={width}
+        height={height}
+        className="max-w-full overflow-visible"
+      >
+        <polyline
+          fill="none"
+          stroke="url(#sparkline-gradient)"
+          strokeWidth="2"
+          points={points}
+        />
         <defs>
-          <linearGradient id="sparkline-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <linearGradient
+            id="sparkline-gradient"
+            x1="0%"
+            y1="0%"
+            x2="100%"
+            y2="0%"
+          >
             <stop offset="0%" stopColor="#22c55e" stopOpacity="0.5" />
             <stop offset="100%" stopColor="#22c55e" stopOpacity="1" />
           </linearGradient>
@@ -1344,7 +1658,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         <AlertCircle className="h-8 w-8 text-foreground/20" />
         <p className="text-sm text-foreground/40">run not found</p>
         {onBack && (
-          <Button size="sm" variant="secondary" onClick={onBack}>back to runs</Button>
+          <Button size="sm" variant="secondary" onClick={onBack}>
+            back to runs
+          </Button>
         )}
       </div>
     );
@@ -1360,7 +1676,12 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3">
                 {onBack && (
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onBack}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0"
+                    onClick={onBack}
+                  >
                     <ArrowLeftFilled className="h-4 w-4" />
                   </Button>
                 )}
@@ -1431,7 +1752,13 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
             <div className={runHeaderTitleBlockClassName}>
               <div className={runHeaderTitleLineClassName}>
                 {run.chainId ? (
-                  <Link href={`/chains/${encodeURIComponent(run.chainId)}/edit`} className={cn(runHeaderTitleClassName, "hover:text-cyan-400 transition-colors")}>
+                  <Link
+                    href={`/chains/${encodeURIComponent(run.chainId)}/edit`}
+                    className={cn(
+                      runHeaderTitleClassName,
+                      "hover:text-cyan-400 transition-colors",
+                    )}
+                  >
                     {run.chain}
                   </Link>
                 ) : (
@@ -1439,7 +1766,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 )}
                 <StatusBadge
                   status={run.status as Status}
-                  label={connected && isActive ? "running · connected" : undefined}
+                  label={
+                    connected && isActive ? "running · connected" : undefined
+                  }
                   size="sm"
                 />
               </div>
@@ -1450,7 +1779,10 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                     href={`/tasks?task=${encodeURIComponent(run.taskId)}`}
                     className="flex items-center gap-1 text-[10px] text-cyan-400/70 hover:text-cyan-400 transition-colors font-mono"
                   >
-                    <TaskSquareFilled className="h-2.5 w-2.5" style={{ color: "#5b9ef5" }} />
+                    <TaskSquareFilled
+                      className="h-2.5 w-2.5"
+                      style={{ color: "#5b9ef5" }}
+                    />
                     {run.taskId}
                   </Link>
                 )}
@@ -1463,32 +1795,68 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
             <div className={runHeaderMetricsClassName}>
               <div className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
                 <Clock className="h-3 w-3 text-foreground/40" />
-                <span className="font-mono">{formatDuration(run.started, run.completed)}</span>
+                <span className="font-mono">
+                  {formatDuration(run.started, run.completed)}
+                </span>
               </div>
               <div className="flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background/35 px-3 py-2 sm:bg-transparent sm:px-0 sm:py-0">
                 <Zap className="h-3 w-3 text-foreground/40" />
-                <span className="font-mono">{completedAgents}/{totalAgents}</span>
+                <span className="font-mono">
+                  {completedAgents}/{totalAgents}
+                </span>
               </div>
             </div>
             <div className={runHeaderControlsClassName}>
               {isActive && (
                 <>
-                  <Button size="sm" variant={debugPaused ? "default" : "secondary"} className="h-7 text-[10px]" onClick={() => setDebugPaused(!debugPaused)}>
-                    {debugPaused ? <Pause className="h-3 w-3 mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+                  <Button
+                    size="sm"
+                    variant={debugPaused ? "default" : "secondary"}
+                    className="h-7 text-[10px]"
+                    onClick={() => setDebugPaused(!debugPaused)}
+                  >
+                    {debugPaused ? (
+                      <Pause className="h-3 w-3 mr-1" />
+                    ) : (
+                      <Play className="h-3 w-3 mr-1" />
+                    )}
                     {debugPaused ? "resume" : "pause"}
                   </Button>
                   {confirmStop ? (
                     <>
-                      <span className="text-[10px] text-red-400">stop all agents?</span>
-                      <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-400/10 px-2" onClick={() => { handleStop(); setConfirmStop(false); }} data-testid="confirm-stop-btn">
+                      <span className="text-[10px] text-red-400">
+                        stop all agents?
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-[10px] text-red-400 hover:text-red-300 hover:bg-red-400/10 px-2"
+                        onClick={() => {
+                          handleStop();
+                          setConfirmStop(false);
+                        }}
+                        data-testid="confirm-stop-btn"
+                      >
                         confirm
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={() => setConfirmStop(false)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-[10px] px-2"
+                        onClick={() => setConfirmStop(false)}
+                      >
                         cancel
                       </Button>
                     </>
                   ) : (
-                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-red-400/70 hover:text-red-400 hover:bg-red-400/10 px-2" onClick={() => setConfirmStop(true)} title="Force stop run" data-testid="stop-run-btn">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[10px] text-red-400/70 hover:text-red-400 hover:bg-red-400/10 px-2"
+                      onClick={() => setConfirmStop(true)}
+                      title="Force stop run"
+                      data-testid="stop-run-btn"
+                    >
                       <Square className="h-3 w-3 mr-1" />
                       stop
                     </Button>
@@ -1498,50 +1866,98 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               {!isActive && (
                 <>
                   {hasIncompleteAgents && (
-                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-400/10 px-2" onClick={handleResume} title="Resume from where it left off" data-testid="resume-btn">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[10px] text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-400/10 px-2"
+                      onClick={handleResume}
+                      title="Resume from where it left off"
+                      data-testid="resume-btn"
+                    >
                       <Play className="h-3 w-3 mr-1" />
                       resume
                     </Button>
                   )}
                   {hasStaleAgents && (
-                    <Button size="sm" variant="ghost" className="h-7 text-[10px] text-amber-400/70 hover:text-amber-400 hover:bg-amber-400/10 px-2" onClick={handleCleanup} title="Clean up stale agent states" data-testid="cleanup-btn">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[10px] text-amber-400/70 hover:text-amber-400 hover:bg-amber-400/10 px-2"
+                      onClick={handleCleanup}
+                      title="Clean up stale agent states"
+                      data-testid="cleanup-btn"
+                    >
                       <Square className="h-3 w-3 mr-1" />
                       clean up
                     </Button>
                   )}
-                  <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" onClick={handleRerun} title="Rerun from scratch" data-testid="rerun-btn">
-                    <RotateCw className="h-3 w-3 mr-1" />
-                    rerun
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-8 px-3 text-xs"
+                    onClick={handleRerun}
+                    title="Rerun from scratch"
+                    data-testid="rerun-btn"
+                  >
+                    <RotateCw className="h-3.5 w-3.5" />
+                    Rerun
                   </Button>
                 </>
               )}
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Copy Run ID" onClick={handleCopyRunId}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                title="Copy Run ID"
+                onClick={handleCopyRunId}
+              >
                 <Copy className="h-3.5 w-3.5" />
+                Copy ID
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-[10px] px-2" title="Download Log" onClick={handleDownloadLog}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                title="Download Log"
+                onClick={handleDownloadLog}
+              >
                 <Download className="h-3.5 w-3.5 mr-1" />
-                <span className="hidden sm:inline">Log</span>
+                Download log
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 w-8 p-0"
+                    aria-label="More run actions"
+                  >
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {isActive && (
-                    <DropdownMenuItem onClick={handleCancel} className="text-red-400 focus:text-red-400">
-                      <XCircle className="h-4 w-4 mr-2" />Cancel Run
+                    <DropdownMenuItem
+                      onClick={handleCancel}
+                      className="text-red-400 focus:text-red-400"
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Cancel Run
                     </DropdownMenuItem>
                   )}
                   {!isActive && (
                     <>
                       <DropdownMenuItem onClick={handleRerun}>
-                        <RotateCw className="h-4 w-4 mr-2" />Rerun
+                        <RotateCw className="h-4 w-4 mr-2" />
+                        Rerun
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={handleDelete} className="text-red-400 focus:text-red-400">
-                        <Trash2 className="h-4 w-4 mr-2" />Delete Run
+                      <DropdownMenuItem
+                        onClick={handleDelete}
+                        className="text-red-400 focus:text-red-400"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Run
                       </DropdownMenuItem>
                     </>
                   )}
@@ -1557,23 +1973,59 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
         <Tabs defaultValue="goal" className="h-full flex flex-col">
           <div className={tabsChromeClassName}>
             <TabsList className={tabsListClassName}>
-              <TabsTrigger value="goal" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Goal</TabsTrigger>
-              <TabsTrigger value="agents" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Agents</TabsTrigger>
-              <TabsTrigger value="output" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Output</TabsTrigger>
-              <TabsTrigger value="metrics" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
+              <TabsTrigger
+                value="goal"
+                className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+              >
+                Goal
+              </TabsTrigger>
+              <TabsTrigger
+                value="agents"
+                className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+              >
+                Agents
+              </TabsTrigger>
+              <TabsTrigger
+                value="output"
+                className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+              >
+                Output
+              </TabsTrigger>
+              <TabsTrigger
+                value="metrics"
+                className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+              >
                 <span className="sm:hidden">Metrics</span>
                 <span className="hidden sm:inline">Metrics</span>
               </TabsTrigger>
-              <TabsTrigger value="cost" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">Cost</TabsTrigger>
+              <TabsTrigger
+                value="cost"
+                className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+              >
+                Cost
+              </TabsTrigger>
               {artifactCount > 0 && (
-                <TabsTrigger value="artifacts" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
-                  <span className="sm:hidden">Art {artifactCount > 0 ? artifactCount : ""}</span>
-                  <span className="hidden sm:inline">Artifacts{artifactCount > 0 ? ` ${artifactCount}` : ""}</span>
+                <TabsTrigger
+                  value="artifacts"
+                  className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+                >
+                  <span className="sm:hidden">
+                    Art {artifactCount > 0 ? artifactCount : ""}
+                  </span>
+                  <span className="hidden sm:inline">
+                    Artifacts{artifactCount > 0 ? ` ${artifactCount}` : ""}
+                  </span>
                 </TabsTrigger>
               )}
-              {(eventArtifacts.length > 0 || eventArtifactLoading || eventArtifactError) && (
-                <TabsTrigger value="triage" className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm">
-                  Triage{eventArtifacts.length > 0 ? ` ${eventArtifacts.length}` : ""}
+              {(eventArtifacts.length > 0 ||
+                eventArtifactLoading ||
+                eventArtifactError) && (
+                <TabsTrigger
+                  value="triage"
+                  className="h-8 min-w-0 flex-1 px-1 text-[11px] sm:flex-none sm:px-3 sm:text-sm"
+                >
+                  Triage
+                  {eventArtifacts.length > 0 ? ` ${eventArtifacts.length}` : ""}
                 </TabsTrigger>
               )}
             </TabsList>
@@ -1616,7 +2068,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       Reject
                     </Button>
                     {submittingApproval && (
-                      <span className="text-[10px] text-foreground/40">processing...</span>
+                      <span className="text-[10px] text-foreground/40">
+                        processing...
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1631,7 +2085,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 <div className="rounded-md border border-foreground/10 bg-card p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-foreground/40">Run Outcome</span>
+                      <span className="text-xs text-foreground/40">
+                        Run Outcome
+                      </span>
                       <StatusBadge
                         status={runOutcomeStatus(run.summary)}
                         label={runOutcomeLabel(run.summary)}
@@ -1649,11 +2105,19 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       {run.summary.summary}
                     </p>
                   )}
-                  {(run.summary.findings?.length || run.summary.risks?.length || run.summary.next_actions?.length) ? (
+                  {run.summary.findings?.length ||
+                  run.summary.risks?.length ||
+                  run.summary.next_actions?.length ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-3 border-t border-foreground/10 pt-3">
-                      <SummaryList label="Findings" items={run.summary.findings} />
+                      <SummaryList
+                        label="Findings"
+                        items={run.summary.findings}
+                      />
                       <SummaryList label="Risks" items={run.summary.risks} />
-                      <SummaryList label="Next" items={run.summary.next_actions} />
+                      <SummaryList
+                        label="Next"
+                        items={run.summary.next_actions}
+                      />
                     </div>
                   ) : null}
                 </div>
@@ -1676,14 +2140,20 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 {run.sessions?.length > 0 && (
                   <>
                     <span className="text-foreground/40">Sessions</span>
-                    <span className="min-w-0 break-all font-mono text-[10px] text-foreground/60">{run.sessions.join(", ")}</span>
+                    <span className="min-w-0 break-all font-mono text-[10px] text-foreground/60">
+                      {run.sessions.join(", ")}
+                    </span>
                   </>
                 )}
               </div>
               <div className="border-t border-foreground/5 pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs text-foreground/40">Goal</span>
-                  <CopyButton value={run.goal} showLabel={false} className="text-[10px] h-6 px-2" />
+                  <CopyButton
+                    value={run.goal}
+                    showLabel={false}
+                    className="text-[10px] h-6 px-2"
+                  />
                 </div>
                 <GoalContent goal={run.goal} />
               </div>
@@ -1691,27 +2161,34 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* agents tab */}
-          <TabsContent value="agents" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
+          <TabsContent
+            value="agents"
+            className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar"
+          >
             <AgentTimeline run={run} />
             {run.agents && run.agents.length > 1 && (
               <div className="flex justify-end mb-3 max-w-4xl">
                 <button
                   className="text-[10px] text-foreground/40 hover:text-foreground/60 transition-colors"
                   onClick={() => {
-                    const allIds = run.agents.map(a => a.id);
-                    const allExpanded = allIds.every(id => expandedAgents.has(id));
+                    const allIds = run.agents.map((a) => a.id);
+                    const allExpanded = allIds.every((id) =>
+                      expandedAgents.has(id),
+                    );
                     if (allExpanded) {
                       setExpandedAgents(new Set());
                     } else {
                       const next = new Set(allIds);
-                      allIds.forEach(id => {
+                      allIds.forEach((id) => {
                         if (!agentActivity[id]) fetchAgentActivity(id);
                       });
                       setExpandedAgents(next);
                     }
                   }}
                 >
-                  {run.agents.every(a => expandedAgents.has(a.id)) ? "collapse all" : "expand all"}
+                  {run.agents.every((a) => expandedAgents.has(a.id))
+                    ? "collapse all"
+                    : "expand all"}
                 </button>
               </div>
             )}
@@ -1720,31 +2197,84 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 const isExpanded = expandedAgents.has(agent.id);
                 const hasOutput = agentOutputs[agent.session || ""]?.length > 0;
                 const timeline = metricsTimeline[agent.id] || [];
-                const agentArtifacts = (run.artifacts || []).filter(a => a.agentId === agent.id);
-                const hasDiffArtifact = agentArtifacts.some(a => a.type === "diff");
-                const hasConvArtifact = agentArtifacts.some(a => a.type === "conversations");
-                const hasFilesArtifact = agentArtifacts.some(a => a.type === "files-changed");
-                const hasOutputArtifact = agentArtifacts.some(a => a.type === "output");
-                const hasEventArtifact = agentArtifacts.some(a => a.type === "event" || a.type === "events");
+                const agentArtifacts = (run.artifacts || []).filter(
+                  (a) => a.agentId === agent.id,
+                );
+                const hasDiffArtifact = agentArtifacts.some(
+                  (a) => a.type === "diff",
+                );
+                const hasConvArtifact = agentArtifacts.some(
+                  (a) => a.type === "conversations",
+                );
+                const hasFilesArtifact = agentArtifacts.some(
+                  (a) => a.type === "files-changed",
+                );
+                const hasOutputArtifact = agentArtifacts.some(
+                  (a) => a.type === "output",
+                );
+                const hasEventArtifact = agentArtifacts.some(
+                  (a) => a.type === "event" || a.type === "events",
+                );
                 const evidenceBadges = [
-                  hasFilesArtifact ? { label: "files", className: "bg-emerald-500/10 text-emerald-300" } : null,
-                  hasDiffArtifact ? { label: "diff", className: "bg-amber-500/10 text-amber-300" } : null,
-                  hasConvArtifact ? { label: "conv", className: "bg-blue-500/10 text-blue-300" } : null,
-                  hasEventArtifact ? { label: "evt", className: "bg-violet-500/10 text-violet-300" } : null,
-                  !hasFilesArtifact && !hasDiffArtifact && !hasConvArtifact && hasOutputArtifact
-                    ? { label: "log", className: "bg-foreground/5 text-foreground/35" }
+                  hasFilesArtifact
+                    ? {
+                        label: "files",
+                        className: "bg-emerald-500/10 text-emerald-300",
+                      }
                     : null,
-                ].filter(Boolean) as Array<{ label: string; className: string }>;
+                  hasDiffArtifact
+                    ? {
+                        label: "diff",
+                        className: "bg-amber-500/10 text-amber-300",
+                      }
+                    : null,
+                  hasConvArtifact
+                    ? {
+                        label: "conv",
+                        className: "bg-blue-500/10 text-blue-300",
+                      }
+                    : null,
+                  hasEventArtifact
+                    ? {
+                        label: "evt",
+                        className: "bg-violet-500/10 text-violet-300",
+                      }
+                    : null,
+                  !hasFilesArtifact &&
+                  !hasDiffArtifact &&
+                  !hasConvArtifact &&
+                  hasOutputArtifact
+                    ? {
+                        label: "log",
+                        className: "bg-foreground/5 text-foreground/35",
+                      }
+                    : null,
+                ].filter(Boolean) as Array<{
+                  label: string;
+                  className: string;
+                }>;
                 return (
-                  <div key={agent.id} className="overflow-hidden rounded-xl border border-border/55 bg-card/80 shadow-sm">
-                    <div className="cursor-pointer p-4 transition-colors hover:bg-accent/80" onClick={() => toggleExpand(agent.id)}>
+                  <div
+                    key={agent.id}
+                    className="overflow-hidden rounded-xl border border-border/55 bg-card/80 shadow-sm"
+                  >
+                    <div
+                      className="cursor-pointer p-4 transition-colors hover:bg-accent/80"
+                      onClick={() => toggleExpand(agent.id)}
+                    >
                       <div className={agentHeaderClassName}>
                         <div className={agentIdentityClassName}>
                           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background/45 text-foreground/45">
-                            {isExpanded ? <ArrowDown1Filled className="h-3.5 w-3.5" /> : <ArrowRight1Filled className="h-3.5 w-3.5" />}
+                            {isExpanded ? (
+                              <ArrowDown1Filled className="h-3.5 w-3.5" />
+                            ) : (
+                              <ArrowRight1Filled className="h-3.5 w-3.5" />
+                            )}
                           </div>
                           <div className={agentTitleBlockClassName}>
-                            <p className={agentTitleClassName}>{agent.name || agent.id}</p>
+                            <p className={agentTitleClassName}>
+                              {agent.name || agent.id}
+                            </p>
                             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-foreground/35">
                               <TerminalIcon className="h-3 w-3 shrink-0" />
                               <CopyButton value={agent.id} fullValue={agent} />
@@ -1752,22 +2282,38 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                           </div>
                         </div>
                         <div className={agentStatusClassName}>
-                          {!isExpanded && evidenceBadges.map((badge) => (
+                          {!isExpanded &&
+                            evidenceBadges.map((badge) => (
                             <span
                               key={badge.label}
                               className={cn(
                                 "rounded-full px-2 py-1 text-[10px] font-mono leading-none",
-                                badge.className
+                                  badge.className,
                               )}
                             >
                               {badge.label}
                             </span>
                           ))}
                           {agent.isStale && (
-                            <span className="rounded-full bg-orange-400/10 px-2 py-1 text-[10px] font-mono leading-none text-orange-300" title="No heartbeat — agent may be stale">stale</span>
+                            <span
+                              className="rounded-full bg-orange-400/10 px-2 py-1 text-[10px] font-mono leading-none text-orange-300"
+                              title="No heartbeat — agent may be stale"
+                            >
+                              stale
+                            </span>
                           )}
-                          {agent.emits && <Badge variant="ghost" className={agentEmitBadgeClassName}>{agent.emits}</Badge>}
-                          <StatusBadge status={agent.status as Status} size="sm" />
+                          {agent.emits && (
+                            <Badge
+                              variant="ghost"
+                              className={agentEmitBadgeClassName}
+                            >
+                              {agent.emits}
+                            </Badge>
+                          )}
+                          <StatusBadge
+                            status={agent.status as Status}
+                            size="sm"
+                          />
                           <span className={agentDurationClassName}>
                             {formatDuration(agent.started, agent.completed)}
                           </span>
@@ -1776,7 +2322,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       {timeline.length > 2 && !isExpanded && (
                         <div className="mt-2 flex items-center gap-2">
                           <Sparkline data={timeline} width={150} height={20} />
-                          <span className="text-[9px] text-foreground/30">activity</span>
+                          <span className="text-[9px] text-foreground/30">
+                            activity
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1784,7 +2332,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       <div className="border-t border-foreground/5 p-3 space-y-3">
                         <div className="space-y-2 text-[10px]">
                           <div className="session-row bg-card rounded p-2">
-                            <p className="text-foreground/40 uppercase">session</p>
+                            <p className="text-foreground/40 uppercase">
+                              session
+                            </p>
                             {agent.session ? (
                               <div className="mt-1 flex min-w-0 items-start gap-1.5">
                                 <CopyButton
@@ -1804,31 +2354,67 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
                           <div className={agentDetailGridClassName}>
                             <div className="bg-card rounded p-2">
-                              <p className="text-foreground/40 uppercase">started</p>
-                              <p>{agent.started ? new Date(agent.started).toLocaleTimeString() : "-"}</p>
+                              <p className="text-foreground/40 uppercase">
+                                started
+                              </p>
+                              <p>
+                                {agent.started
+                                  ? new Date(agent.started).toLocaleTimeString()
+                                  : "-"}
+                              </p>
                             </div>
                             <div className="bg-card rounded p-2">
-                              <p className="text-foreground/40 uppercase">completed</p>
-                              <p>{agent.completed ? new Date(agent.completed).toLocaleTimeString() : "-"}</p>
+                              <p className="text-foreground/40 uppercase">
+                                completed
+                              </p>
+                              <p>
+                                {agent.completed
+                                  ? new Date(
+                                      agent.completed,
+                                    ).toLocaleTimeString()
+                                  : "-"}
+                              </p>
                             </div>
                             <div className="bg-card rounded p-2">
-                              <p className="text-foreground/40 uppercase">duration</p>
-                              <p className="font-mono">{formatDuration(agent.started, agent.completed)}</p>
+                              <p className="text-foreground/40 uppercase">
+                                duration
+                              </p>
+                              <p className="font-mono">
+                                {formatDuration(agent.started, agent.completed)}
+                              </p>
                             </div>
                             {agent.lastHeartbeat && (
-                              <div className={`bg-card rounded p-2 ${embedded ? "" : "col-span-2 md:col-span-3"} ${agent.isStale ? "border border-orange-400/30" : ""}`}>
-                                <p className={`text-foreground/40 uppercase ${agent.isStale ? "text-orange-400/60" : ""}`}>last heartbeat</p>
+                              <div
+                                className={`bg-card rounded p-2 ${embedded ? "" : "col-span-2 md:col-span-3"} ${agent.isStale ? "border border-orange-400/30" : ""}`}
+                              >
+                                <p
+                                  className={`text-foreground/40 uppercase ${agent.isStale ? "text-orange-400/60" : ""}`}
+                                >
+                                  last heartbeat
+                                </p>
                                 <p className="font-mono text-[10px]">
-                                  {new Date(agent.lastHeartbeat).toLocaleTimeString()}
+                                  {new Date(
+                                    agent.lastHeartbeat,
+                                  ).toLocaleTimeString()}
                                   {agent.msSinceHeartbeat != null && (
                                     <span className="text-foreground/40 ml-1">
-                                      ({Math.round(agent.msSinceHeartbeat / 1000 / 60)}m ago)
+                                      (
+                                      {Math.round(
+                                        agent.msSinceHeartbeat / 1000 / 60,
+                                      )}
+                                      m ago)
                                     </span>
                                   )}
-                                  {agent.isStale && <span className="text-orange-400/70 ml-2">stale</span>}
+                                  {agent.isStale && (
+                                    <span className="text-orange-400/70 ml-2">
+                                      stale
+                                    </span>
+                                  )}
                                 </p>
                                 {agent.lastMessage && (
-                                  <p className="text-foreground/50 mt-1 truncate">{agent.lastMessage}</p>
+                                  <p className="text-foreground/50 mt-1 truncate">
+                                    {agent.lastMessage}
+                                  </p>
                                 )}
                               </div>
                             )}
@@ -1836,46 +2422,94 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                         </div>
                         {timeline.length > 2 && (
                           <div className="bg-card rounded p-3">
-                            <p className="text-[10px] text-foreground/40 uppercase mb-2">activity</p>
-                            <Sparkline data={timeline} width={embedded ? 220 : 300} height={32} />
+                            <p className="text-[10px] text-foreground/40 uppercase mb-2">
+                              activity
+                            </p>
+                            <Sparkline
+                              data={timeline}
+                              width={embedded ? 220 : 300}
+                              height={32}
+                            />
                           </div>
                         )}
                         {/* agent activity: files changed + diff + captured conversations */}
                         {(() => {
                           const activity = agentActivity[agent.id];
-                          if (activity === undefined) return (
-                            <div className="text-[10px] text-foreground/30 text-center py-2">loading activity...</div>
+                          if (activity === undefined)
+                            return (
+                              <div className="text-[10px] text-foreground/30 text-center py-2">
+                                loading activity...
+                              </div>
                           );
-                          if (activity === null) return (
-                            <div className="text-[10px] text-foreground/20 text-center py-1">no activity data</div>
+                          if (activity === null)
+                            return (
+                              <div className="text-[10px] text-foreground/20 text-center py-1">
+                                no activity data
+                              </div>
                           );
                           const hasFiles = activity.filesChanged?.length > 0;
-                          const hasDiff = !!(activity.diff?.trim());
-                          const allMsgs = activity.conversations?.flatMap(c => c.messages) || [];
+                          const hasDiff = !!activity.diff?.trim();
+                          const allMsgs =
+                            activity.conversations?.flatMap(
+                              (c) => c.messages,
+                            ) || [];
                           const hasMsgs = allMsgs.length > 0;
-                          const hasStoredOutput = !!(activity.output?.trim()) && !hasOutput;
+                          const hasStoredOutput =
+                            !!activity.output?.trim() && !hasOutput;
                           const hasEvent = !!activity.event;
-                          const hasSummary = !!(activity.summary?.executiveSummary || activity.summaryMarkdown?.trim());
-                          if (!hasSummary && !hasFiles && !hasDiff && !hasMsgs && !hasStoredOutput && !hasEvent) return (
-                            <div className="text-[10px] text-foreground/20 text-center py-1">no activity captured</div>
+                          const hasSummary = !!(
+                            activity.summary?.executiveSummary ||
+                            activity.summaryMarkdown?.trim()
+                          );
+                          if (
+                            !hasSummary &&
+                            !hasFiles &&
+                            !hasDiff &&
+                            !hasMsgs &&
+                            !hasStoredOutput &&
+                            !hasEvent
+                          )
+                            return (
+                              <div className="text-[10px] text-foreground/20 text-center py-1">
+                                no activity captured
+                              </div>
                           );
                           return (
                             <div className="space-y-3">
                               {hasSummary && (
                                 <div>
-                                  <p className="text-[10px] text-foreground/40 uppercase mb-1.5">summary</p>
+                                  <p className="text-[10px] text-foreground/40 uppercase mb-1.5">
+                                    summary
+                                  </p>
                                   <div className="bg-card rounded p-2 text-[11px] text-foreground/70">
                                     {activity.summary?.executiveSummary ? (
-                                      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{activity.summary.executiveSummary}</p>
+                                      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                                        {activity.summary.executiveSummary}
+                                      </p>
                                     ) : (
-                                      <Markdown content={activity.summaryMarkdown || ""} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
+                                      <Markdown
+                                        content={activity.summaryMarkdown || ""}
+                                        compact
+                                        className="min-w-0 break-words [overflow-wrap:anywhere]"
+                                      />
                                     )}
-                                    {activity.summary?.nextAgentHints && activity.summary.nextAgentHints.length > 0 && (
+                                    {activity.summary?.nextAgentHints &&
+                                      activity.summary.nextAgentHints.length >
+                                        0 && (
                                       <div className="mt-2 pt-2 border-t border-foreground/10">
-                                        <p className="text-[9px] text-foreground/35 uppercase mb-1">next</p>
+                                          <p className="text-[9px] text-foreground/35 uppercase mb-1">
+                                            next
+                                          </p>
                                         <ul className="space-y-0.5">
-                                          {activity.summary.nextAgentHints.slice(0, 3).map((hint, i) => (
-                                            <li key={i} className="text-foreground/55 break-words [overflow-wrap:anywhere]">{hint}</li>
+                                            {activity.summary.nextAgentHints
+                                              .slice(0, 3)
+                                              .map((hint, i) => (
+                                                <li
+                                                  key={i}
+                                                  className="text-foreground/55 break-words [overflow-wrap:anywhere]"
+                                                >
+                                                  {hint}
+                                                </li>
                                           ))}
                                         </ul>
                                       </div>
@@ -1883,28 +2517,49 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                   </div>
                                 </div>
                               )}
-                              {hasFiles && (() => {
+                              {hasFiles &&
+                                (() => {
                                 const FILES_LIMIT = 20;
-                                const visible = activity.filesChanged.slice(0, FILES_LIMIT);
-                                const hidden = activity.filesChanged.length - FILES_LIMIT;
+                                  const visible = activity.filesChanged.slice(
+                                    0,
+                                    FILES_LIMIT,
+                                  );
+                                  const hidden =
+                                    activity.filesChanged.length - FILES_LIMIT;
                                 return (
                                   <div>
                                     <p className="text-[10px] text-foreground/40 uppercase mb-1.5">
-                                      files changed ({activity.filesChanged.length})
+                                        files changed (
+                                        {activity.filesChanged.length})
                                     </p>
                                     <div className="space-y-0.5">
                                       {visible.map((f, i) => (
-                                        <div key={i} className="flex min-w-0 items-center gap-2 text-[11px] font-mono">
-                                          <span className={`w-3 shrink-0 font-bold ${
-                                            f.status === "M" ? "text-amber-400" :
-                                            f.status === "A" ? "text-green-400" :
-                                            f.status === "D" ? "text-red-400" : "text-foreground/40"
-                                          }`}>{f.status}</span>
-                                          <span className="min-w-0 truncate text-foreground/70">{f.file}</span>
+                                          <div
+                                            key={i}
+                                            className="flex min-w-0 items-center gap-2 text-[11px] font-mono"
+                                          >
+                                            <span
+                                              className={`w-3 shrink-0 font-bold ${
+                                                f.status === "M"
+                                                  ? "text-amber-400"
+                                                  : f.status === "A"
+                                                    ? "text-green-400"
+                                                    : f.status === "D"
+                                                      ? "text-red-400"
+                                                      : "text-foreground/40"
+                                              }`}
+                                            >
+                                              {f.status}
+                                            </span>
+                                            <span className="min-w-0 truncate text-foreground/70">
+                                              {f.file}
+                                            </span>
                                         </div>
                                       ))}
                                       {hidden > 0 && (
-                                        <p className="text-[10px] text-foreground/20 pt-1">+{hidden} more (see diff)</p>
+                                          <p className="text-[10px] text-foreground/20 pt-1">
+                                            +{hidden} more (see diff)
+                                          </p>
                                       )}
                                     </div>
                                   </div>
@@ -1917,13 +2572,21 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                       onClick={() => toggleDiff(agent.id)}
                                       className="flex items-center gap-1 text-[10px] text-foreground/40 uppercase hover:text-foreground/60 transition-colors"
                                     >
-                                      {expandedDiffs.has(agent.id) ? <ArrowDown1Filled className="h-3 w-3" /> : <ArrowRight1Filled className="h-3 w-3" />}
-                                      diff ({activity.diff!.split("\n").length} lines)
+                                      {expandedDiffs.has(agent.id) ? (
+                                        <ArrowDown1Filled className="h-3 w-3" />
+                                      ) : (
+                                        <ArrowRight1Filled className="h-3 w-3" />
+                                      )}
+                                      diff ({activity.diff!.split("\n").length}{" "}
+                                      lines)
                                     </button>
                                     <button
                                       className="text-[9px] text-foreground/30 hover:text-foreground/50 transition-colors"
                                       onClick={() => {
-                                        const blob = new Blob([activity.diff!], { type: "text/plain" });
+                                        const blob = new Blob(
+                                          [activity.diff!],
+                                          { type: "text/plain" },
+                                        );
                                         const url = URL.createObjectURL(blob);
                                         const a = document.createElement("a");
                                         a.href = url;
@@ -1935,24 +2598,43 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                       download
                                     </button>
                                   </div>
-                                  {expandedDiffs.has(agent.id) && (() => {
-                                    const diffLines = activity.diff!.split("\n");
+                                  {expandedDiffs.has(agent.id) &&
+                                    (() => {
+                                      const diffLines =
+                                        activity.diff!.split("\n");
                                     const DIFF_LIMIT = 300;
-                                    const capped = diffLines.length > DIFF_LIMIT;
-                                    const visibleLines = capped ? diffLines.slice(0, DIFF_LIMIT) : diffLines;
+                                      const capped =
+                                        diffLines.length > DIFF_LIMIT;
+                                      const visibleLines = capped
+                                        ? diffLines.slice(0, DIFF_LIMIT)
+                                        : diffLines;
                                     return (
                                       <div className="bg-card rounded p-2 overflow-x-auto max-h-64 overflow-y-auto no-scrollbar">
                                         <pre className="text-[10px] font-mono whitespace-pre">
                                           {visibleLines.map((line, i) => (
-                                            <span key={i} className={`block ${
-                                              line.startsWith("+") && !line.startsWith("+++") ? "text-green-400" :
-                                              line.startsWith("-") && !line.startsWith("---") ? "text-red-400" :
-                                              line.startsWith("@@") ? "text-cyan-400" : "text-foreground/50"
-                                            }`}>{line}</span>
+                                              <span
+                                                key={i}
+                                                className={`block ${
+                                                  line.startsWith("+") &&
+                                                  !line.startsWith("+++")
+                                                    ? "text-green-400"
+                                                    : line.startsWith("-") &&
+                                                        !line.startsWith("---")
+                                                      ? "text-red-400"
+                                                      : line.startsWith("@@")
+                                                        ? "text-cyan-400"
+                                                        : "text-foreground/50"
+                                                }`}
+                                              >
+                                                {line}
+                                              </span>
                                           ))}
                                           {capped && (
                                             <span className="block text-foreground/20 text-center py-1">
-                                              ··· {diffLines.length - DIFF_LIMIT} more lines (download diff for full view)
+                                                ···{" "}
+                                                {diffLines.length - DIFF_LIMIT}{" "}
+                                                more lines (download diff for
+                                                full view)
                                             </span>
                                           )}
                                         </pre>
@@ -1963,37 +2645,75 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                               )}
                               {hasMsgs && (
                                 <div>
-                                  <p className="text-[10px] text-foreground/40 uppercase mb-1.5">conversation ({allMsgs.length} messages)</p>
+                                  <p className="text-[10px] text-foreground/40 uppercase mb-1.5">
+                                    conversation ({allMsgs.length} messages)
+                                  </p>
                                   <div className="space-y-1.5 max-h-96 overflow-y-auto no-scrollbar">
                                     {allMsgs.map((msg, i) => {
-                                      const hasText = msg.content.trim().length > 0;
-                                      const hasTools = (msg.toolCalls?.length ?? 0) > 0;
+                                      const hasText =
+                                        msg.content.trim().length > 0;
+                                      const hasTools =
+                                        (msg.toolCalls?.length ?? 0) > 0;
                                       return (
-                                        <div key={i} className={`text-[11px] rounded px-2 py-1.5 ${
-                                          msg.role === "user" ? "bg-accent text-foreground/60" : "bg-card text-foreground/80"
-                                        }`}>
-                                          <span className="text-[9px] uppercase text-foreground/30 mr-2">{msg.role}</span>
+                                        <div
+                                          key={i}
+                                          className={`text-[11px] rounded px-2 py-1.5 ${
+                                            msg.role === "user"
+                                              ? "bg-accent text-foreground/60"
+                                              : "bg-card text-foreground/80"
+                                          }`}
+                                        >
+                                          <span className="text-[9px] uppercase text-foreground/30 mr-2">
+                                            {msg.role}
+                                          </span>
                                           {hasText && (
-                                            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                                            <span className="whitespace-pre-wrap break-words">
+                                              {msg.content}
+                                            </span>
                                           )}
-                                          {hasTools && (() => {
+                                          {hasTools &&
+                                            (() => {
                                             // filter out meta/internal tool calls that are noise for auditing
-                                            const HIDDEN_TOOLS = new Set(["ToolSearch", "AskUserQuestion", "Skill"]);
-                                            const visible = msg.toolCalls!.filter(tc => !HIDDEN_TOOLS.has(tc.name));
-                                            if (visible.length === 0) return null;
+                                              const HIDDEN_TOOLS = new Set([
+                                                "ToolSearch",
+                                                "AskUserQuestion",
+                                                "Skill",
+                                              ]);
+                                              const visible =
+                                                msg.toolCalls!.filter(
+                                                  (tc) =>
+                                                    !HIDDEN_TOOLS.has(tc.name),
+                                                );
+                                              if (visible.length === 0)
+                                                return null;
                                             return (
-                                              <div className={`flex flex-wrap gap-1 ${hasText ? "mt-1" : ""}`}>
+                                                <div
+                                                  className={`flex flex-wrap gap-1 ${hasText ? "mt-1" : ""}`}
+                                                >
                                                 {visible.map((tc, j) => {
                                                   const toolColor =
-                                                    tc.name === "Read" ? "text-blue-400" :
-                                                    tc.name === "Write" || tc.name === "Edit" ? "text-amber-400" :
-                                                    tc.name === "Bash" ? "text-violet-400" :
-                                                    tc.name === "WebFetch" ? "text-cyan-400" :
-                                                    "text-foreground/40";
+                                                      tc.name === "Read"
+                                                        ? "text-blue-400"
+                                                        : tc.name === "Write" ||
+                                                            tc.name === "Edit"
+                                                          ? "text-amber-400"
+                                                          : tc.name === "Bash"
+                                                            ? "text-violet-400"
+                                                            : tc.name ===
+                                                                "WebFetch"
+                                                              ? "text-cyan-400"
+                                                              : "text-foreground/40";
                                                   return (
-                                            <span key={j} className={`inline-flex min-w-0 items-center gap-1 text-[9px] bg-background/60 rounded px-1.5 py-0.5 font-mono ${toolColor}`}>
-                                              <span className="text-foreground/30">{tc.name}</span>
-                                              <span className="max-w-[200px] truncate">{tc.label}</span>
+                                                      <span
+                                                        key={j}
+                                                        className={`inline-flex min-w-0 items-center gap-1 text-[9px] bg-background/60 rounded px-1.5 py-0.5 font-mono ${toolColor}`}
+                                                      >
+                                                        <span className="text-foreground/30">
+                                                          {tc.name}
+                                                        </span>
+                                                        <span className="max-w-[200px] truncate">
+                                                          {tc.label}
+                                                        </span>
                                                     </span>
                                                   );
                                                 })}
@@ -2006,13 +2726,20 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                   </div>
                                 </div>
                               )}
-                              {hasStoredOutput && (() => {
+                              {hasStoredOutput &&
+                                (() => {
                                 const out = activity.output!;
                                 return (
                                   <div>
-                                    <p className="text-[10px] text-foreground/40 uppercase mb-1.5">session output</p>
+                                      <p className="text-[10px] text-foreground/40 uppercase mb-1.5">
+                                        session output
+                                      </p>
                                     <div className="bg-card text-foreground p-2 rounded max-h-48 overflow-y-auto no-scrollbar">
-                                      <Markdown content={out} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
+                                        <Markdown
+                                          content={out}
+                                          compact
+                                          className="min-w-0 break-words [overflow-wrap:anywhere]"
+                                        />
                                     </div>
                                   </div>
                                 );
@@ -2020,8 +2747,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                               {hasEvent && (
                                 <div className="flex items-center gap-2 text-[10px] text-foreground/40">
                                   <span className="uppercase">event fired</span>
-                                  <span className="font-mono text-violet-400/70">{activity.event!.event}</span>
-                                  <span className="text-foreground/20">{new Date(activity.event!.timestamp).toLocaleTimeString()}</span>
+                                  <span className="font-mono text-violet-400/70">
+                                    {activity.event!.event}
+                                  </span>
+                                  <span className="text-foreground/20">
+                                    {new Date(
+                                      activity.event!.timestamp,
+                                    ).toLocaleTimeString()}
+                                  </span>
                                 </div>
                               )}
                             </div>
@@ -2030,13 +2763,28 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                         {hasOutput && (
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <p className="text-[10px] text-foreground/40 uppercase">output</p>
-                              <Button size="sm" variant="ghost" className="h-6 text-[9px]" onClick={() => handleCopyOutput(agent.session || "")}>
+                              <p className="text-[10px] text-foreground/40 uppercase">
+                                output
+                              </p>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-[9px]"
+                                onClick={() =>
+                                  handleCopyOutput(agent.session || "")
+                                }
+                              >
                                 <Copy className="h-3 w-3" />
                               </Button>
                             </div>
                             <div className="bg-card text-foreground p-3 rounded h-32 overflow-y-auto no-scrollbar">
-                              <Markdown content={agentOutputs[agent.session || ""] || ""} compact className="min-w-0 break-words [overflow-wrap:anywhere]" />
+                              <Markdown
+                                content={
+                                  agentOutputs[agent.session || ""] || ""
+                                }
+                                compact
+                                className="min-w-0 break-words [overflow-wrap:anywhere]"
+                              />
                             </div>
                           </div>
                         )}
@@ -2049,10 +2797,15 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* output tab */}
-          <TabsContent value="output" className="flex-1 overflow-hidden flex flex-col mt-0">
+          <TabsContent
+            value="output"
+            className="flex-1 overflow-hidden flex flex-col mt-0"
+          >
             <div className={outputShellClassName}>
               <div className={outputAgentListClassName}>
-                <p className="text-[10px] text-foreground/40 uppercase px-2 mb-2">agents</p>
+                <p className="text-[10px] text-foreground/40 uppercase px-2 mb-2">
+                  agents
+                </p>
                 <div className={outputAgentListBodyClassName}>
                   {run.agents?.map((agent) => (
                     <button
@@ -2060,17 +2813,29 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       onClick={() => setSelectedAgent(agent.id)}
                       className={cn(
                         outputAgentButtonClassName,
-                        selectedAgent === agent.id ? "bg-accent" : "hover:bg-card",
+                        selectedAgent === agent.id
+                          ? "bg-accent"
+                          : "hover:bg-card",
                       )}
                     >
-                      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        agent.status === "running" ? "bg-amber-400" :
-                        agent.status === "complete" ? "bg-green-400" :
-                        agent.status === "error" ? "bg-red-400" : "bg-gray-400"
-                      }`} />
-                      <span className="min-w-0 flex-1 truncate font-mono">{agent.id}</span>
+                      <div
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          agent.status === "running"
+                            ? "bg-amber-400"
+                            : agent.status === "complete"
+                              ? "bg-green-400"
+                              : agent.status === "error"
+                                ? "bg-red-400"
+                                : "bg-gray-400"
+                        }`}
+                      />
+                      <span className="min-w-0 flex-1 truncate font-mono">
+                        {agent.id}
+                      </span>
                       {agentMsgTotals[agent.id] > 0 && (
-                        <span className="shrink-0 text-[9px] text-foreground/30">{agentMsgTotals[agent.id]}</span>
+                        <span className="shrink-0 text-[9px] text-foreground/30">
+                          {agentMsgTotals[agent.id]}
+                        </span>
                       )}
                     </button>
                   ))}
@@ -2078,70 +2843,137 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               </div>
 
               <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {selectedAgent ? (() => {
-                  const agent = run.agents?.find((a) => a.id === selectedAgent);
+                {selectedAgent ? (
+                  (() => {
+                    const agent = run.agents?.find(
+                      (a) => a.id === selectedAgent,
+                    );
                   const messages = agentMessages[selectedAgent] || [];
                   const conversationId = agentConversations[selectedAgent];
                   const rawOutput = agentOutputs[agent?.session || ""] || "";
-                  const hasConversation = conversationId && messages.length > 0;
+                    const hasConversation =
+                      conversationId && messages.length > 0;
                   const canInteract = canInteractWithAgentTerminal(agent);
-                  const agentAlive = agent?.status === "running" || canInteract;
+                    const agentAlive =
+                      agent?.status === "running" || canInteract;
 
                   return (
                     <>
                       <div className={outputHeaderClassName}>
                         <div className="min-w-0 flex-1">
                           <div className={outputHeaderTitleLineClassName}>
-                            <h1 className="text-sm truncate">{agent?.name || agent?.id}</h1>
-                            <StatusBadge status={(agent?.status || "pending") as Status} size="sm" />
+                              <h1 className="text-sm truncate">
+                                {agent?.name || agent?.id}
+                              </h1>
+                              <StatusBadge
+                                status={(agent?.status || "pending") as Status}
+                                size="sm"
+                              />
                           </div>
                           <p className="truncate text-xs text-foreground/50">
-                            {outputView === "terminal" ? agent?.session || "no session" : hasConversation ? `${agentMsgTotals[selectedAgent] || messages.length} messages` : agent?.session || "no session"}
+                              {outputView === "terminal"
+                                ? agent?.session || "no session"
+                                : hasConversation
+                                  ? `${agentMsgTotals[selectedAgent] || messages.length} messages`
+                                  : agent?.session || "no session"}
                           </p>
                         </div>
                         <div className={outputHeaderControlsClassName}>
                           {agent?.session && (
                             <Button
-                              variant={outputView === "terminal" ? "default" : "ghost"}
+                                variant={
+                                  outputView === "terminal"
+                                    ? "default"
+                                    : "ghost"
+                                }
                               size="sm"
                               className="h-7 text-xs"
                               onClick={() => {
-                                const nextView = outputView === "terminal" ? "conversation" : "terminal";
+                                  const nextView =
+                                    outputView === "terminal"
+                                      ? "conversation"
+                                      : "terminal";
                                 if (selectedAgent) {
                                   if (nextView === "terminal") {
-                                    outputAutoTerminalRef.current[selectedAgent] = false;
+                                      outputAutoTerminalRef.current[
+                                        selectedAgent
+                                      ] = false;
                                   } else {
-                                    delete outputAutoTerminalRef.current[selectedAgent];
+                                      delete outputAutoTerminalRef.current[
+                                        selectedAgent
+                                      ];
                                   }
                                 }
                                 setOutputView(nextView);
                               }}
                             >
-                              <TerminalIcon className="mr-1 h-3 w-3" />Terminal
+                                <TerminalIcon className="mr-1 h-3 w-3" />
+                                Terminal
                             </Button>
                           )}
                           {outputView === "terminal" && canInteract && (
                             <Button
-                              variant={terminalInputEnabled ? "default" : "ghost"}
+                                variant={
+                                  terminalInputEnabled ? "default" : "ghost"
+                                }
                               size="sm"
                               className="h-7 text-xs"
-                              onClick={() => setTerminalInputEnabled((enabled) => !enabled)}
+                                onClick={() =>
+                                  setTerminalInputEnabled((enabled) => !enabled)
+                                }
                             >
                               <TerminalIcon className="mr-1 h-3 w-3" />
-                              {terminalInputEnabled ? "Input on" : "Input off"}
+                                {terminalInputEnabled
+                                  ? "Input on"
+                                  : "Input off"}
                             </Button>
                           )}
                           {outputView === "conversation" && (
                             <>
                               {hasConversation && (
-                                <Button variant={showToolResults ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setShowToolResults(!showToolResults)}>
-                                  <Wrench className="mr-1 h-3 w-3" />Results
+                                  <Button
+                                    variant={
+                                      showToolResults ? "default" : "ghost"
+                                    }
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() =>
+                                      setShowToolResults(!showToolResults)
+                                    }
+                                  >
+                                    <Wrench className="mr-1 h-3 w-3" />
+                                    Results
                                 </Button>
                               )}
-                              <Button variant={autoScrollEnabled ? "default" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => { setAutoScrollEnabled(!autoScrollEnabled); if (!autoScrollEnabled) scrollOutputToBottom("smooth"); }}>
-                                <ArrowDown className="mr-1 h-3 w-3" />Scroll
+                                <Button
+                                  variant={
+                                    autoScrollEnabled ? "default" : "ghost"
+                                  }
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    setAutoScrollEnabled(!autoScrollEnabled);
+                                    if (!autoScrollEnabled)
+                                      scrollOutputToBottom("smooth");
+                                  }}
+                                >
+                                  <ArrowDown className="mr-1 h-3 w-3" />
+                                  Scroll
                               </Button>
-                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { if (hasConversation) fetchAgentMessages(selectedAgent); if (agent?.session) fetchAgentOutput(selectedAgent, agent.session); }}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    if (hasConversation)
+                                      fetchAgentMessages(selectedAgent);
+                                    if (agent?.session)
+                                      fetchAgentOutput(
+                                        selectedAgent,
+                                        agent.session,
+                                      );
+                                  }}
+                                >
                                 <RefreshCw className="h-3 w-3" />
                               </Button>
                             </>
@@ -2151,28 +2983,51 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
                       <div className="flex-1 overflow-hidden relative">
                         {outputView === "terminal" && agent?.session ? (
-                          <TerminalPanel session={agent.session} sessionAlive={agentAlive} fallbackOutput={rawOutput} readOnly={!terminalInputEnabled} />
+                            <TerminalPanel
+                              session={agent.session}
+                              sessionAlive={agentAlive}
+                              fallbackOutput={rawOutput}
+                              readOnly={!terminalInputEnabled}
+                            />
                         ) : hasConversation ? (
-                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className={outputScrollClassName}>
+                            <div
+                              ref={outputScrollRef}
+                              onScroll={checkOutputScrollPosition}
+                              className={outputScrollClassName}
+                            >
                             <div className={outputInnerClassName}>
-                              <MessageList messages={messages} showToolResults={showToolResults} />
+                                <MessageList
+                                  messages={messages}
+                                  showToolResults={showToolResults}
+                                />
                               <div ref={outputBottomRef} />
                             </div>
                           </div>
                         ) : rawOutput ? (
-                          <div ref={outputScrollRef} onScroll={checkOutputScrollPosition} className={outputScrollClassName}>
+                            <div
+                              ref={outputScrollRef}
+                              onScroll={checkOutputScrollPosition}
+                              className={outputScrollClassName}
+                            >
                             <div className={outputInnerClassName}>
-                              <Markdown content={rawOutput || ""} compact className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
+                                <Markdown
+                                  content={rawOutput || ""}
+                                  compact
+                                  className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+                                />
                               <div ref={outputBottomRef} />
                             </div>
                           </div>
                         ) : (
                           <div className="h-full flex items-center justify-center text-xs text-foreground/40">
-                            {agentConversations[selectedAgent] === undefined ? "loading conversation..." : "no output yet..."}
+                              {agentConversations[selectedAgent] === undefined
+                                ? "loading conversation..."
+                                : "no output yet..."}
                           </div>
                         )}
                         {/* Floating jump to bottom button */}
-                        {!autoScrollEnabled && (hasConversation || rawOutput) && (
+                          {!autoScrollEnabled &&
+                            (hasConversation || rawOutput) && (
                           <button
                             onClick={scrollToBottom}
                             className="absolute bottom-4 right-4 bg-card hover:bg-accent text-foreground rounded-full p-2 transition-colors"
@@ -2184,7 +3039,8 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       </div>
                     </>
                   );
-                })() : (
+                  })()
+                ) : (
                   <div className="flex-1 flex items-center justify-center text-foreground/30 text-xs">
                     select an agent to view output
                   </div>
@@ -2194,23 +3050,32 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* metrics tab */}
-          <TabsContent value="metrics" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
+          <TabsContent
+            value="metrics"
+            className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar"
+          >
             {/* agent execution timeline */}
             <div className="max-w-4xl mb-6">
-              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">Agent Timeline</p>
+              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">
+                Agent Timeline
+              </p>
               <div className="bg-card rounded-sm p-3">
                 <div className={metricsTimelineScaleClassName}>
                   <span>0%</span>
                   <div className="flex-1 h-px bg-foreground/10 mx-2" />
-                  <span>Total: {formatDuration(run.started, run.completed)}</span>
+                  <span>
+                    Total: {formatDuration(run.started, run.completed)}
+                  </span>
                   <div className="flex-1 h-px bg-foreground/10 mx-2" />
                   <span>100%</span>
                 </div>
                 {(() => {
                   const runStart = new Date(run.started).getTime();
-                  const runEnd = run.completed ? new Date(run.completed).getTime() : Date.now();
+                  const runEnd = run.completed
+                    ? new Date(run.completed).getTime()
+                    : Date.now();
                   const totalDuration = runEnd - runStart;
-                  const hasTimestamps = run.agents?.some(a => a.started);
+                  const hasTimestamps = run.agents?.some((a) => a.started);
 
                   if (!hasTimestamps) return null;
 
@@ -2218,9 +3083,13 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                     if (!agent.started) return null;
 
                     const agentStart = new Date(agent.started).getTime();
-                    const agentEnd = agent.completed ? new Date(agent.completed).getTime() : runEnd;
-                    const leftPercent = ((agentStart - runStart) / totalDuration) * 100;
-                    const rawWidth = ((agentEnd - agentStart) / totalDuration) * 100;
+                    const agentEnd = agent.completed
+                      ? new Date(agent.completed).getTime()
+                      : runEnd;
+                    const leftPercent =
+                      ((agentStart - runStart) / totalDuration) * 100;
+                    const rawWidth =
+                      ((agentEnd - agentStart) / totalDuration) * 100;
                     const widthPercent = Math.max(rawWidth, 2); // min 2% visibility
 
                     const statusColor: Record<string, string> = {
@@ -2232,21 +3101,47 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                       idle: "bg-muted-foreground/30",
                     };
 
-                    const durationText = formatDuration(agent.started, agent.completed);
+                    const durationText = formatDuration(
+                      agent.started,
+                      agent.completed,
+                    );
                     const showInside = rawWidth > 5;
 
                     return (
-                      <div key={agent.id} className={metricsTimelineRowClassName}>
-                        <span className={metricsTimelineAgentClassName} title={agent.name || agent.id}>{agent.name || agent.id}</span>
+                      <div
+                        key={agent.id}
+                        className={metricsTimelineRowClassName}
+                      >
+                        <span
+                          className={metricsTimelineAgentClassName}
+                          title={agent.name || agent.id}
+                        >
+                          {agent.name || agent.id}
+                        </span>
                         <div className="flex-1 relative h-5 bg-accent/30 rounded-sm">
                           <div
-                            className={cn("h-full rounded-sm flex items-center justify-end px-1.5 text-[9px] text-white font-mono truncate", statusColor[agent.status] || "bg-muted")}
-                            style={{ left: `${Math.max(leftPercent, 0)}%`, width: `${Math.min(widthPercent, 100 - leftPercent)}%`, position: "absolute" }}
+                            className={cn(
+                              "h-full rounded-sm flex items-center justify-end px-1.5 text-[9px] text-white font-mono truncate",
+                              statusColor[agent.status] || "bg-muted",
+                            )}
+                            style={{
+                              left: `${Math.max(leftPercent, 0)}%`,
+                              width: `${Math.min(widthPercent, 100 - leftPercent)}%`,
+                              position: "absolute",
+                            }}
                           >
-                            {showInside && <span className="drop-shadow-sm">{durationText}</span>}
+                            {showInside && (
+                              <span className="drop-shadow-sm">
+                                {durationText}
+                              </span>
+                            )}
                           </div>
                         </div>
-                        {!showInside && <span className={metricsTimelineDurationClassName}>{durationText}</span>}
+                        {!showInside && (
+                          <span className={metricsTimelineDurationClassName}>
+                            {durationText}
+                          </span>
+                        )}
                       </div>
                     );
                   });
@@ -2258,37 +3153,59 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Clock className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">Duration</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">
+                    Duration
+                  </p>
                 </div>
-                <p className="text-lg font-mono">{formatDuration(run.started, run.completed)}</p>
+                <p className="text-lg font-mono">
+                  {formatDuration(run.started, run.completed)}
+                </p>
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Zap className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">Progress</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">
+                    Progress
+                  </p>
                 </div>
-                <p className="text-lg font-mono">{completedAgents}/{totalAgents}</p>
+                <p className="text-lg font-mono">
+                  {completedAgents}/{totalAgents}
+                </p>
                 <div className="w-full bg-accent rounded-full h-1 mt-2">
-                  <div className="bg-green-500 h-1 rounded-full transition-all" style={{ width: `${totalAgents > 0 ? (completedAgents / totalAgents) * 100 : 0}%` }} />
+                  <div
+                    className="bg-green-500 h-1 rounded-full transition-all"
+                    style={{
+                      width: `${totalAgents > 0 ? (completedAgents / totalAgents) * 100 : 0}%`,
+                    }}
+                  />
                 </div>
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Cpu className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">Active Agents</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">
+                    Active Agents
+                  </p>
                 </div>
-                <p className="text-lg font-mono">{run.agents?.filter((a) => a.status === "running").length || 0}</p>
+                <p className="text-lg font-mono">
+                  {run.agents?.filter((a) => a.status === "running").length ||
+                    0}
+                </p>
               </div>
               <div className="bg-card rounded-md p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <TerminalIcon className="h-4 w-4 text-foreground/40" />
-                  <p className="text-[10px] text-foreground/40 uppercase">Total Agents</p>
+                  <p className="text-[10px] text-foreground/40 uppercase">
+                    Total Agents
+                  </p>
                 </div>
                 <p className="text-lg font-mono">{totalAgents}</p>
               </div>
             </div>
             <div className="max-w-4xl">
-              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">agent metrics</p>
+              <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">
+                agent metrics
+              </p>
               <div className="grid gap-2">
                 {run.agents?.map((agent) => {
                   const timeline = metricsTimeline[agent.id] || [];
@@ -2296,15 +3213,28 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                     <div key={agent.id} className="bg-card rounded-md p-3">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="min-w-0 break-words text-xs font-medium [overflow-wrap:anywhere]">{agent.name || agent.id}</span>
-                          <StatusBadge status={agent.status as Status} size="sm" />
+                          <span className="min-w-0 break-words text-xs font-medium [overflow-wrap:anywhere]">
+                            {agent.name || agent.id}
+                          </span>
+                          <StatusBadge
+                            status={agent.status as Status}
+                            size="sm"
+                          />
                         </div>
-                        <span className="shrink-0 text-[10px] text-foreground/40 font-mono">{formatDuration(agent.started, agent.completed)}</span>
+                        <span className="shrink-0 text-[10px] text-foreground/40 font-mono">
+                          {formatDuration(agent.started, agent.completed)}
+                        </span>
                       </div>
                       {timeline.length > 2 ? (
-                        <Sparkline data={timeline} width={embedded ? 220 : 300} height={32} />
+                        <Sparkline
+                          data={timeline}
+                          width={embedded ? 220 : 300}
+                          height={32}
+                        />
                       ) : (
-                        <div className="h-8 flex items-center text-[9px] text-foreground/30">no activity data yet</div>
+                        <div className="h-8 flex items-center text-[9px] text-foreground/30">
+                          no activity data yet
+                        </div>
                       )}
                     </div>
                   );
@@ -2314,11 +3244,16 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* artifacts tab */}
-          <TabsContent value="artifacts" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
+          <TabsContent
+            value="artifacts"
+            className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar"
+          >
             <div className="max-w-5xl space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">Artifact Review</p>
+                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">
+                    Artifact Review
+                  </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     captured run evidence and agent outputs
                   </p>
@@ -2334,13 +3269,19 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                     <div className="max-h-[560px] overflow-y-auto pr-1 no-scrollbar">
                       {runArtifacts.map((artifact, artifactIndex) => {
                         const artifactPath = artifactPathValue(artifact);
-                        const selected = Boolean(artifactPath && selectedArtifactPath === artifactPath);
+                        const selected = Boolean(
+                          artifactPath && selectedArtifactPath === artifactPath,
+                        );
                         return (
                           <button
                             key={`${artifact.type || "artifact"}-${artifactPath || artifact.agentId || artifact.timestamp || artifactIndex}`}
                             type="button"
                             disabled={!artifactPath}
-                            onClick={() => artifactPath ? void handleSelectArtifact(artifact) : undefined}
+                            onClick={() =>
+                              artifactPath
+                                ? void handleSelectArtifact(artifact)
+                                : undefined
+                            }
                             className={cn(
                               "mb-1 w-full rounded-sm px-2 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                               selected
@@ -2355,8 +3296,14 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                                   {artifactName(artifactPath || undefined)}
                                 </div>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/35">
-                                  <span className="truncate">{artifact.type || "artifact"}</span>
-                                  {artifact.agentId ? <span className="truncate">{artifact.agentId}</span> : null}
+                                  <span className="truncate">
+                                    {artifact.type || "artifact"}
+                                  </span>
+                                  {artifact.agentId ? (
+                                    <span className="truncate">
+                                      {artifact.agentId}
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
                             </div>
@@ -2368,7 +3315,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
                   <div className="min-w-0 rounded-sm bg-card p-3">
                     {artifactPreviewLoading ? (
-                      <div className="text-xs text-foreground/40">loading artifact...</div>
+                      <div className="text-xs text-foreground/40">
+                        loading artifact...
+                      </div>
                     ) : artifactPreviewError ? (
                       <div className="flex items-start gap-2 rounded-sm bg-red-500/10 p-3 text-xs text-red-300">
                         <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
@@ -2382,7 +3331,9 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                               {activeArtifactPreview.name}
                             </div>
                             <div className="truncate text-[10px] font-mono text-foreground/35">
-                              {activeArtifactPreview.language} · {activeArtifactPreview.size.toLocaleString()} bytes
+                              {activeArtifactPreview.language} ·{" "}
+                              {activeArtifactPreview.size.toLocaleString()}{" "}
+                              bytes
                             </div>
                           </div>
                           {activeArtifactPreview.truncated ? (
@@ -2404,58 +3355,98 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 </div>
               ) : (
                 <div className="rounded-sm bg-card p-4 text-xs text-muted-foreground">
-                  this run reported {artifactCount} artifact{artifactCount === 1 ? "" : "s"}, but no artifact list was captured
+                  this run reported {artifactCount} artifact
+                  {artifactCount === 1 ? "" : "s"}, but no artifact list was
+                  captured
                 </div>
               )}
             </div>
           </TabsContent>
 
           {/* cost tab */}
-          <TabsContent value="cost" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
+          <TabsContent
+            value="cost"
+            className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar"
+          >
             <div className="max-w-4xl">
               {!costData ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <DollarSign className="h-10 w-10 text-foreground/10 mb-3" />
-                  <p className="text-xs text-muted-foreground">no cost data available for this run</p>
+                  <p className="text-xs text-muted-foreground">
+                    no cost data available for this run
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-6">
                   {/* totals */}
                   <div className={costSummaryGridClassName}>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Total Cost</p>
-                      <p className="text-2xl font-mono">{costData.totalCostDisplay}</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">
+                        Total Cost
+                      </p>
+                      <p className="text-2xl font-mono">
+                        {costData.totalCostDisplay}
+                      </p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Input Tokens</p>
-                      <p className="text-lg font-mono">{costData.totalInputTokens.toLocaleString()}</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">
+                        Input Tokens
+                      </p>
+                      <p className="text-lg font-mono">
+                        {costData.totalInputTokens.toLocaleString()}
+                      </p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Output Tokens</p>
-                      <p className="text-lg font-mono">{costData.totalOutputTokens.toLocaleString()}</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">
+                        Output Tokens
+                      </p>
+                      <p className="text-lg font-mono">
+                        {costData.totalOutputTokens.toLocaleString()}
+                      </p>
                     </div>
                     <div className="bg-card rounded-md p-4">
-                      <p className="text-[10px] text-foreground/40 uppercase mb-1">Total Tokens</p>
-                      <p className="text-lg font-mono">{(costData.totalInputTokens + costData.totalOutputTokens).toLocaleString()}</p>
+                      <p className="text-[10px] text-foreground/40 uppercase mb-1">
+                        Total Tokens
+                      </p>
+                      <p className="text-lg font-mono">
+                        {(
+                          costData.totalInputTokens + costData.totalOutputTokens
+                        ).toLocaleString()}
+                      </p>
                     </div>
                   </div>
 
                   {/* agent breakdown */}
                   <div>
-                    <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">Agent Breakdown</p>
+                    <p className="text-[10px] text-foreground/40 uppercase tracking-wider mb-3 px-1">
+                      Agent Breakdown
+                    </p>
                     <div className="grid gap-2">
                       {costData.agentBreakdown.map((agent) => (
-                        <div key={agent.agentId} className="bg-card rounded-md p-3">
+                        <div
+                          key={agent.agentId}
+                          className="bg-card rounded-md p-3"
+                        >
                           <div className={costAgentHeaderClassName}>
                             <div className="flex min-w-0 flex-wrap items-center gap-2">
-                              <span className="min-w-0 break-words text-xs font-medium">{agent.agentName || agent.agentId}</span>
-                              <span className="max-w-full truncate text-[9px] text-foreground/30 font-mono">{agent.model}</span>
+                              <span className="min-w-0 break-words text-xs font-medium">
+                                {agent.agentName || agent.agentId}
+                              </span>
+                              <span className="max-w-full truncate text-[9px] text-foreground/30 font-mono">
+                                {agent.model}
+                              </span>
                             </div>
-                            <span className="shrink-0 text-xs font-mono">{agent.costDisplay}</span>
+                            <span className="shrink-0 text-xs font-mono">
+                              {agent.costDisplay}
+                            </span>
                           </div>
                           <div className={costAgentTokenGridClassName}>
-                            <div>input: {agent.inputTokens.toLocaleString()}</div>
-                            <div>output: {agent.outputTokens.toLocaleString()}</div>
+                            <div>
+                              input: {agent.inputTokens.toLocaleString()}
+                            </div>
+                            <div>
+                              output: {agent.outputTokens.toLocaleString()}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -2467,16 +3458,26 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
           </TabsContent>
 
           {/* triage tab */}
-          <TabsContent value="triage" className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar">
+          <TabsContent
+            value="triage"
+            className="flex-1 overflow-y-auto px-4 pb-4 pt-5 mt-0 no-scrollbar"
+          >
             <div className="max-w-4xl space-y-3">
               <div className={triageHeaderClassName}>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">quality gate triage</p>
+                  <p className="text-[10px] uppercase tracking-wider text-foreground/40">
+                    quality gate triage
+                  </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     review drafted follow-up work from failed quality gates
                   </p>
                 </div>
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={fetchEventArtifacts}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={fetchEventArtifacts}
+                >
                   refresh
                 </Button>
               </div>
@@ -2497,36 +3498,64 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                 </div>
               ) : (
                 eventArtifacts.map((execution) => {
-                  const draft = execution.draftTask || execution.artifact?.generated;
+                  const draft =
+                    execution.draftTask || execution.artifact?.generated;
                   const gate = execution.artifact?.qualityGate;
-                  const createdIds = execution.actionResults
+                  const createdIds =
+                    execution.actionResults
                     ?.flatMap((result) => result.createdTaskIds || [])
                     .filter(Boolean) || [];
-                  const applied = execution.status === "actions_applied" || createdIds.length > 0;
+                  const applied =
+                    execution.status === "actions_applied" ||
+                    createdIds.length > 0;
 
                   return (
                     <div key={execution.id} className="rounded-md bg-card p-4">
                       <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 mb-2">
-                            <Badge variant="outline" className="text-[10px]">{execution.event}</Badge>
-                            <Badge variant={applied ? "default" : "outline"} className="text-[10px]">
+                            <Badge variant="outline" className="text-[10px]">
+                              {execution.event}
+                            </Badge>
+                            <Badge
+                              variant={applied ? "default" : "outline"}
+                              className="text-[10px]"
+                            >
                               {execution.status}
                             </Badge>
                           </div>
-                          <p className="text-sm font-medium">{draft?.title || execution.artifactName || execution.id}</p>
+                          <p className="text-sm font-medium">
+                            {draft?.title ||
+                              execution.artifactName ||
+                              execution.id}
+                          </p>
                           {gate?.reason && (
-                            <p className="text-xs text-muted-foreground mt-1">{gate.reason}</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {gate.reason}
+                            </p>
                           )}
                         </div>
                         <Button
                           size="sm"
                           className="h-7 text-xs shrink-0"
-                          disabled={applied || !draft || !run?.taskId || applyingEventArtifactId === execution.id}
+                          disabled={
+                            applied ||
+                            !draft ||
+                            !run?.taskId ||
+                            applyingEventArtifactId === execution.id
+                          }
                           onClick={() => handleApplyEventArtifact(execution.id)}
-                          title={!run?.taskId ? "run is not attached to a task" : undefined}
+                          title={
+                            !run?.taskId
+                              ? "run is not attached to a task"
+                              : undefined
+                          }
                         >
-                          {applied ? "applied" : applyingEventArtifactId === execution.id ? "applying..." : "apply draft"}
+                          {applied
+                            ? "applied"
+                            : applyingEventArtifactId === execution.id
+                              ? "applying..."
+                              : "apply draft"}
                         </Button>
                       </div>
 
@@ -2538,10 +3567,17 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
 
                       {draft?.subtasks && draft.subtasks.length > 0 && (
                         <div className="mt-3 space-y-2">
-                          <p className="text-[10px] uppercase tracking-wider text-foreground/40">draft subtasks</p>
+                          <p className="text-[10px] uppercase tracking-wider text-foreground/40">
+                            draft subtasks
+                          </p>
                           {draft.subtasks.map((subtask, index) => (
-                            <div key={`${execution.id}-${index}`} className="rounded-sm bg-background/40 p-3">
-                              <p className="text-xs font-medium">{subtask.title || `subtask ${index + 1}`}</p>
+                            <div
+                              key={`${execution.id}-${index}`}
+                              className="rounded-sm bg-background/40 p-3"
+                            >
+                              <p className="text-xs font-medium">
+                                {subtask.title || `subtask ${index + 1}`}
+                              </p>
                               {subtask.description && (
                                 <p className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                                   {subtask.description}
@@ -2598,7 +3634,9 @@ function LinkRunTranscript({
     const fetchTranscript = async () => {
       setLoading(true);
       try {
-        const response = await fetchWithNamespace(`/api/links/runs/${encodeURIComponent(run.id)}/transcript`);
+        const response = await fetchWithNamespace(
+          `/api/links/runs/${encodeURIComponent(run.id)}/transcript`,
+        );
         if (!mounted) return;
         if (!response.ok) {
           setTranscript([]);
@@ -2625,14 +3663,20 @@ function LinkRunTranscript({
       {/* header */}
       <div className="flex items-center gap-3 px-4 py-3 shrink-0">
         {onBack && (
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onBack}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0"
+            onClick={onBack}
+          >
             <ArrowLeftFilled className="h-4 w-4" />
           </Button>
         )}
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{run.goal}</div>
           <div className="text-xs text-muted-foreground">
-            {run.linkName || run.chain} | {run.mode || "collaboration"} | {run.rounds ? `${run.rounds} rounds` : "completed"}
+            {run.linkName || run.chain} | {run.mode || "collaboration"} |{" "}
+            {run.rounds ? `${run.rounds} rounds` : "completed"}
           </div>
         </div>
       </div>
@@ -2640,28 +3684,60 @@ function LinkRunTranscript({
       {/* escalation history */}
       {run.escalations && run.escalations.length > 0 && (
         <div className="px-4 mb-3 space-y-2">
-          <div className="text-xs font-medium text-muted-foreground">Escalations</div>
-          {run.escalations.map((esc: { id?: string; round: number; trigger: string; haiku_summary?: string; human_reply?: string }, i: number) => (
-            <div key={esc.id || i} className="text-xs p-2 bg-muted/30 rounded">
-              <span className="text-amber-400">Round {esc.round}: {esc.trigger}</span>
-              {esc.haiku_summary && <div className="mt-1 opacity-70">{esc.haiku_summary}</div>}
-              {esc.human_reply && <div className="mt-1 text-blue-400">Steering: {esc.human_reply}</div>}
+          <div className="text-xs font-medium text-muted-foreground">
+            Escalations
             </div>
-          ))}
+          {run.escalations.map(
+            (
+              esc: {
+                id?: string;
+                round: number;
+                trigger: string;
+                haiku_summary?: string;
+                human_reply?: string;
+              },
+              i: number,
+            ) => (
+              <div
+                key={esc.id || i}
+                className="text-xs p-2 bg-muted/30 rounded"
+              >
+                <span className="text-amber-400">
+                  Round {esc.round}: {esc.trigger}
+                </span>
+                {esc.haiku_summary && (
+                  <div className="mt-1 opacity-70">{esc.haiku_summary}</div>
+                )}
+                {esc.human_reply && (
+                  <div className="mt-1 text-blue-400">
+                    Steering: {esc.human_reply}
+                  </div>
+                )}
+              </div>
+            ),
+          )}
         </div>
       )}
 
       {/* transcript */}
       <div className="flex-1 overflow-auto px-4 pb-4 space-y-4 no-scrollbar">
         {loading ? (
-          <div className="text-xs text-muted-foreground animate-pulse">Loading transcript...</div>
+          <div className="text-xs text-muted-foreground animate-pulse">
+            Loading transcript...
+          </div>
         ) : transcript.length === 0 ? (
-          <div className="text-xs text-muted-foreground">No transcript data available.</div>
+          <div className="text-xs text-muted-foreground">
+            No transcript data available.
+          </div>
         ) : (
           transcript.map((entry, i) => {
             const isPrompt = entry.agent === "Prompt";
             const isAgent1 = run.agents?.[0]?.name === entry.agent;
-            const dotColor = isPrompt ? "#10b981" : isAgent1 ? "#3b82f6" : "#f59e0b";
+            const dotColor = isPrompt
+              ? "#10b981"
+              : isAgent1
+                ? "#3b82f6"
+                : "#f59e0b";
             return (
               <div key={i} className="space-y-1">
                 <div className="flex items-center gap-2">
@@ -2669,10 +3745,18 @@ function LinkRunTranscript({
                     className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: dotColor }}
                   />
-                  <span className="text-xs font-medium">{isPrompt ? "Goal" : entry.agent}</span>
-                  {!isPrompt && <span className="text-[10px] text-muted-foreground">Round {entry.round}</span>}
+                  <span className="text-xs font-medium">
+                    {isPrompt ? "Goal" : entry.agent}
+                  </span>
+                  {!isPrompt && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Round {entry.round}
+                    </span>
+                  )}
                 </div>
-                <div className={`ml-4 text-sm whitespace-pre-wrap rounded-md p-3 leading-relaxed ${isPrompt ? "bg-accent/30 border border-accent/20" : "bg-muted/20"}`}>
+                <div
+                  className={`ml-4 text-sm whitespace-pre-wrap rounded-md p-3 leading-relaxed ${isPrompt ? "bg-accent/30 border border-accent/20" : "bg-muted/20"}`}
+                >
                   {entry.content}
                 </div>
               </div>

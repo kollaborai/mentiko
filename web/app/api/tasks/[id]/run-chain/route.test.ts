@@ -264,11 +264,66 @@ describe("POST /api/tasks/[id]/run-chain", () => {
       taskId: "FEAT-001",
       namespaceId: "marco",
       orgId: "default",
-      runId: expect.stringMatching(/^run-\d+$/),
+      runId: expect.stringMatching(/^run-\d+-[0-9a-f]{8}$/),
     });
     expect(body).toMatchObject({
       runId: scope.runId,
       metadata: { task_run_scope: scope },
     });
+  });
+
+  it("releases the provisional scope when the chain launch is rejected", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      title: "Smoke test suite",
+      description: "Create smoke tests",
+      issue_type: "feat",
+      priority: 1,
+      metadata: {
+        chain_id: "smoke-test-suite-generator",
+        chain_name: "smoke-test-suite-generator",
+        last_run_id: "run-previous",
+        last_run_status: "completed",
+      },
+    });
+    global.fetch = jest.fn((url: URL | string) => {
+      const href = String(url);
+      if (href.endsWith("/api/chains/smoke-test-suite-generator")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Smoke test suite generator", agents: [] } },
+        }));
+      }
+      if (href.endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({ error: "Invalid chain" }, 400));
+      }
+      return Promise.resolve(jsonResponse({ error: "unexpected url" }, 500));
+    }) as jest.Mock;
+
+    const res = await POST(makeRequest() as never, {
+      params: Promise.resolve({ id: "FEAT-001" }),
+    });
+
+    expect(res.status).toBe(400);
+    const failureUpdate = mockTaskUpdate.mock.calls[1];
+    expect(failureUpdate).toEqual([
+      "default",
+      "FEAT-001",
+      {
+        status: "blocked",
+        metadata: expect.objectContaining({
+          last_run_id: "run-previous",
+          last_run_status: "completed",
+          auto_run_paused: true,
+          auto_run_paused_reason: "Invalid chain",
+          task_run_launch_failure: expect.objectContaining({
+            version: 1,
+            message: "Invalid chain",
+          }),
+        }),
+      },
+      "marco",
+    ]);
+    expect(failureUpdate[2].metadata).not.toHaveProperty("task_run_scope");
   });
 });

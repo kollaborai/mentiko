@@ -36,6 +36,51 @@ describe("withRequiredChainGenerationRules", () => {
     expect(result).toContain("delivery generated chains require an agent with edit_files authority");
   });
 
+  it("accepts operational state mutation without a fake file-edit agent", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+    const errors = validateGeneratedChainDeliveryContract({
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "operations",
+          acceptance_criteria: "the requested managed state is updated",
+        },
+      },
+      agents: [{
+        deliverable: "the requested state mutation",
+        verification: "read the managed state back",
+        authorities: ["run_commands"],
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "the read-back matches the requested postcondition",
+      }],
+    });
+
+    expect(errors).toEqual([]);
+    expect(result).toContain("operations generated chains require an agent with run_commands authority");
+    expect(result).toContain("Never add a fake edit_files agent");
+  });
+
+  it("rejects an operations chain that cannot mutate state", () => {
+    expect(validateGeneratedChainDeliveryContract({
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "operations",
+          acceptance_criteria: "state changed",
+        },
+      },
+      agents: [{
+        deliverable: "a report",
+        verification: "read it",
+        authorities: ["read_files"],
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "the report exists",
+      }],
+    })).toContain("operations generated chains require an agent with run_commands authority");
+  });
+
   it("does not duplicate a marker that a stored namespace template already carries", () => {
     const alreadyHasDelivery = "Some template.\n\nDELIVERY_CONTRACT_EDIT_AUTHORITY already present here.";
     const result = withRequiredChainGenerationRules(alreadyHasDelivery);
@@ -50,9 +95,8 @@ describe("withRequiredChainGenerationRules", () => {
     expect(result).toContain("DELIVERY_CONTRACT_EDIT_AUTHORITY");
   });
 
-  it("documents both authorities shapes the validator accepts (array and authorities.can)", () => {
+  it("documents both authorities shapes the validator accepts", () => {
     const result = withRequiredChainGenerationRules("Design a chain for the request.");
-    expect(result).toContain('"authorities": ["edit_files"');
-    expect(result).toContain("authorities.can");
+    expect(result).toContain("Authorities may be a string array or authorities.can");
   });
 });

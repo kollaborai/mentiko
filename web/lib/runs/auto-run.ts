@@ -155,6 +155,45 @@ function repairVerifiedRetryScope(
 }
 
 /**
+ * Release a scoped claim that is provably dead: the persisted scope parses,
+ * belongs to this task, points at a run that exists and is TERMINAL, yet
+ * mismatches the task's own last_run_id pointer (the invalid-evidence class
+ * resolveScopedTaskRun fails closed on — observed when a second launch updates
+ * last_run_id without rewriting the scope, e.g. TASK-107 2026-07-21). Admission
+ * correctly refuses such a claim, but without this repair the task is wedged
+ * FOREVER: no relaunch, and even the outcome audit cannot read its evidence
+ * (locateRunEvidence throws on the mismatch). Fail-closed by construction —
+ * a claim whose run is live, missing, or foreign-task is never touched.
+ */
+function repairVerifiedStaleScope(
+  orgId: string,
+  task: TaskRecord,
+  metadata: Record<string, unknown>,
+  namespaceId?: string,
+): boolean {
+  try {
+    const scope = parseTaskRunScope(metadata[TASK_RUN_SCOPE_METADATA_KEY]);
+    if (scope.taskId !== task.id) return false;
+    if (typeof metadata.last_run_id !== "string" || metadata.last_run_id === scope.runId) {
+      return false;
+    }
+    const located = locateTaskRun(scope);
+    if (!TERMINAL_RETRY_SOURCE_RUN_STATUSES.has(located.run.status)) return false;
+
+    taskUpdate(orgId, task.id, {
+      metadata: releaseTaskRunScopeForRetry(metadata, {
+        taskId: task.id,
+        sourceRunId: scope.runId,
+      }),
+    }, namespaceId);
+    return true;
+  } catch {
+    // Malformed or unlocatable claims stay fail-closed for a human.
+    return false;
+  }
+}
+
+/**
  * Check if a task's dependencies are all closed/resolved.
  * @param orgId - organization ID
  * @param taskId - task ID to check
@@ -425,7 +464,15 @@ export function reconcileTaskActiveRun(
   const scoped = resolveScopedTaskRun(task.id, metadata);
   // A bad scoped claim must not be reconciled from a namespace snapshot. That
   // would silently overwrite the task's durable pointer with a different run.
-  if (scoped && !scoped.valid) return { activeRun: null, reconciled: false };
+  // But a claim whose own run is verifiably terminal is not evidence of
+  // anything — release it so the normal lifecycle (audit, retry, admission)
+  // can resume instead of wedging the task until a human presses Run.
+  if (scoped && !scoped.valid) {
+    if (repairVerifiedStaleScope(orgId, task, metadata, namespaceId)) {
+      return { activeRun: null, reconciled: true };
+    }
+    return { activeRun: null, reconciled: false };
+  }
 
   const activeRun = scoped
     ? scoped.activeRun
@@ -675,8 +722,15 @@ export function canAdmitAutoRun(
     }
   }
 
-  // stop retrying after MAX_AUTO_RUN_RETRIES failures to prevent infinite loops
-  if (autoRun.retriesExhausted) {
+  // stop launching NEW work after MAX_AUTO_RUN_RETRIES failures. A persisted
+  // analysis/generation job reference is different: it still has to be
+  // reconciled to a terminal task state so a bad `complete` record cannot hide
+  // its failure forever. triggerAutoRun returns after that reconciliation; once
+  // the pointer is cleared, this gate rejects any further launch at the ceiling.
+  const hasJobToReconcile =
+    typeof metadata.analysis_job_id === "string"
+    || typeof metadata.generation_job_id === "string";
+  if (autoRun.retriesExhausted && !hasJobToReconcile) {
     return { admit: false, reason: "max auto-run retries reached", action: "max_retries" };
   }
 

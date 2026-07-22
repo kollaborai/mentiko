@@ -29,6 +29,8 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TimeAgo } from "@/components/shared/time-ago";
@@ -484,7 +486,7 @@ export default function EventsPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterEnabled, setFilterEnabled] = useState<FilterEnabled>("all");
+  const [filterEnabled, setFilterEnabled] = useState<FilterEnabled[]>([]);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
   // resizable sidebar
@@ -608,8 +610,7 @@ export default function EventsPage() {
 
   // filter triggers
   const filtered = triggers.filter((t) => {
-    if (filterEnabled === "enabled" && !t.enabled) return false;
-    if (filterEnabled === "disabled" && t.enabled) return false;
+    if (!matchesToggleFilter(filterEnabled, t.enabled ? "enabled" : "disabled")) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -673,7 +674,7 @@ export default function EventsPage() {
                 <MagicStarFilled className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={FILTER_CHIPS}
               value={filterEnabled}
               onChange={setFilterEnabled}
@@ -686,7 +687,7 @@ export default function EventsPage() {
                 <WaveSpinner size="sm" color="primary" animation="ripple" />
               </div>
             ) : filtered.length === 0 ? (
-              searchQuery || filterEnabled !== "all" ? (
+              searchQuery || filterEnabled.length > 0 ? (
                 <div className="text-center py-12 text-xs text-foreground/40">
                   No triggers match filter
                 </div>

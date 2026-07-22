@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import config from "@/lib/config";
@@ -15,6 +16,7 @@ import type { TaskChainBinding } from "@/lib/tasks/task-types";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 import {
   createTaskRunScope,
+  taskRunLaunchFailureMetadata,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 
@@ -149,7 +151,7 @@ export const POST = requirePermission("manage_tasks")(async (
     const chainDef = chainData.data?.chain || chainData.chain || chainData;
 
     // 5. pre-generate runId and update task status + metadata FIRST
-    const runId = `run-${Date.now()}`;
+    const runId = `run-${Date.now()}-${randomBytes(4).toString("hex")}`;
     const taskRunScope = createTaskRunScope({
       version: 1,
       taskId: safeId,
@@ -197,13 +199,14 @@ export const POST = requirePermission("manage_tasks")(async (
     if (!runRes.ok) {
       const rawError = runData.error;
       const errorMsg = typeof rawError === "string" ? rawError : rawError?.message || "Unknown error";
-      const errorMeta = {
-        ...updatedMeta,
-        last_run_id: runId,
-        last_run_status: "failed",
-        last_run_error: errorMsg,
-      };
-      taskUpdate(orgId, safeId, { metadata: errorMeta }, namespaceId);
+      taskUpdate(orgId, safeId, {
+        status: "blocked",
+        metadata: taskRunLaunchFailureMetadata({
+          metadata,
+          scope: taskRunScope,
+          message: errorMsg,
+        }),
+      }, namespaceId);
 
       createNotification(namespaceId, {
         type: "chain_failed",

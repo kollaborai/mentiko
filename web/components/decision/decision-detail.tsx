@@ -590,7 +590,7 @@ export function DecisionDetail({
     <div className="flex h-full flex-col">
       {/* header - always visible */}
       <div className="px-4 py-3 shrink-0">
-        {onBack && <BackButton onBack={onBack} hideFrom="md" />}
+        {onBack && <BackButton onBack={onBack} />}
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">

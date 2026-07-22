@@ -18,6 +18,8 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
   WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TimeAgo } from "@/components/shared/time-ago";
@@ -124,7 +126,7 @@ export default function WebhooksPage() {
   const [showSecret, setShowSecret] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterActive, setFilterActive] = useState<FilterActive>("all");
+  const [filterActive, setFilterActive] = useState<FilterActive[]>([]);
 
   // resizable sidebar
   const SIDEBAR_KEY = "webhooks-sidebar-width";
@@ -461,8 +463,7 @@ export default function WebhooksPage() {
 
   // filter outbound webhooks
   const filteredWebhooks = webhooks.filter((w) => {
-    if (filterActive === "active" && !w.active) return false;
-    if (filterActive === "paused" && w.active) return false;
+    if (!matchesToggleFilter(filterActive, w.active ? "active" : "paused")) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -523,7 +524,7 @@ export default function WebhooksPage() {
                 <MagicStarFilled className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={ACTIVE_CHIPS}
               value={filterActive}
               onChange={setFilterActive}
@@ -546,8 +547,7 @@ export default function WebhooksPage() {
               <div className="p-2 space-y-1">
                 {inboundWebhooks
                   .filter((h) => {
-                    if (filterActive === "active" && !h.active) return false;
-                    if (filterActive === "paused" && h.active) return false;
+                    if (!matchesToggleFilter(filterActive, h.active ? "active" : "paused")) return false;
                     if (!inboundSearchQuery) return true;
                     const q = inboundSearchQuery.toLowerCase();
                     return h.name.toLowerCase().includes(q) || h.tokenPreview.toLowerCase().includes(q);
@@ -890,7 +890,7 @@ export default function WebhooksPage() {
                 <MagicStarFilled className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={ACTIVE_CHIPS}
               value={filterActive}
               onChange={setFilterActive}
@@ -903,7 +903,7 @@ export default function WebhooksPage() {
                 <WaveSpinner size="sm" color="primary" animation="ripple" />
               </div>
             ) : filteredWebhooks.length === 0 ? (
-              searchQuery || filterActive !== "all" ? (
+              searchQuery || filterActive.length > 0 ? (
                 <div className="text-center py-12 text-xs text-foreground/40">
                   No webhooks match filter
                 </div>

@@ -93,6 +93,44 @@ describe("runner-v2 completion runner", () => {
     });
   });
 
+  it("fails core generation when AGENT_COMPLETE exists without an importable payload", () => {
+    const file = runPath();
+    seedRun(file);
+    seedSubmittedAttempt(file);
+
+    const decision = completeAgent({
+      runJsonPath: file,
+      runId: "run-123",
+      agent: { id: "writer", emits: "chain-generation-complete" },
+      chain: { id: "chain-generation", name: "Chain Generation", agents: [] },
+      events: [],
+      generation: {
+        jobId: "job-1",
+        generationKind: "chain_generation",
+        runId: "run-123",
+        artifactsDir: "/tmp/run-123/artifacts",
+        importablePayload: false,
+      },
+      completionRecoveryEvidence: "durable-marker",
+      now: new Date("2026-06-25T10:00:00.000Z"),
+    });
+
+    expect(decision).toMatchObject({
+      action: "fail",
+      reason: "generation agent completed without a valid chain_generation JSON payload",
+    });
+    expect(readRunJson(file)).toMatchObject({
+      status: "failed",
+      status_message: "generation agent completed without a valid chain_generation JSON payload",
+      agents: [{ id: "writer", status: "failed" }],
+    });
+    expect(runnerV2Attempts(file)[0]).toMatchObject({
+      phase: "completion_failed",
+      terminalReason: "no_completion_event",
+      terminalDetail: "generation agent completed without a valid chain_generation JSON payload",
+    });
+  });
+
   it("imports core generation payload before deferring to live session liveness", () => {
     const file = runPath();
     seedRun(file);

@@ -536,15 +536,22 @@ export function WorkspaceSettings({
         <div className="space-y-3">
           <div>
             <Label className="text-xs text-foreground/50">Chain Auto-Run</Label>
-            <select
-              className="mt-1.5 flex h-9 w-full rounded-md bg-muted px-3 py-1 text-xs outline-none"
-              value={autoRun}
-              onChange={(e) => setAutoRun(e.target.value as "enabled" | "disabled" | "inherit")}
-            >
-              <option value="inherit">Inherit (use system default)</option>
-              <option value="enabled">Enabled (always auto-run)</option>
-              <option value="disabled">Disabled (never auto-run)</option>
-            </select>
+            <div className="mt-1.5 flex h-9 w-full rounded-md bg-muted p-0.5 text-xs">
+              {(["inherit", "enabled", "disabled"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setAutoRun(value)}
+                  className={`flex-1 rounded-[5px] transition-colors ${
+                    autoRun === value
+                      ? "bg-accent text-foreground"
+                      : "text-foreground/50 hover:text-foreground/80"
+                  }`}
+                >
+                  {value === "inherit" ? "Inherit" : value === "enabled" ? "Enabled" : "Disabled"}
+                </button>
+              ))}
+            </div>
             <p className="mt-1 text-[10px] text-foreground/30">
               {autoRun === "inherit"
                 ? "Uses the system-level auto-run setting"

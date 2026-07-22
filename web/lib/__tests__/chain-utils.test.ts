@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildChainSummary, loadChain } from "../chains/chain-utils";
+import { buildChainRecommendationCatalog, buildChainSummary, loadChain } from "../chains/chain-utils";
 
 const root = join(tmpdir(), `mentiko-chain-utils-${process.pid}`);
 
@@ -95,5 +95,36 @@ describe("chain utils", () => {
     expect(summary).not.toContain("prompt_hint:");
     expect(summary).not.toContain("Create cli-agnostic-pointer-proof.json");
     expect(summary).toContain("cli-agnostic-pointer-proof.json");
+  });
+
+  it("builds a bounded task-ranked recommendation catalog with capability evidence", () => {
+    const chain = (id: string, description: string, authority: string) => ({
+      id,
+      name: id,
+      description,
+      version: "1.0.0",
+      agentCount: 1,
+      cli: "mentiko",
+      monitor: true,
+      agents: [{
+        id: `${id}-agent`,
+        name: `${id} agent`,
+        role: description,
+        triggers: ["manual-start"],
+        emits: "complete",
+        authorities: { can: [authority], needs_approval: [] },
+      }],
+    });
+
+    const catalog = buildChainRecommendationCatalog([
+      chain("chain-generation", "system generator", "write_artifacts"),
+      chain("dependency-removal", "removes task dependencies from managed state", "run_commands"),
+      chain("documentation-writer", "writes repository documentation", "edit_files"),
+    ], "remove a managed task dependency", 1);
+
+    expect(catalog).toContain("id=dependency-removal");
+    expect(catalog).toContain("[run_commands]");
+    expect(catalog).not.toContain("chain-generation");
+    expect(catalog).not.toContain("documentation-writer");
   });
 });

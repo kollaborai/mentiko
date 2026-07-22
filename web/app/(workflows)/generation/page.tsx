@@ -17,7 +17,8 @@ import {
   WorkflowSidebarPane,
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSearchInput,
-  WorkflowSidebarSegmentedControl,
+  WorkflowSidebarToggleFilter,
+  matchesToggleFilter,
 } from "@/components/ui/workflow-sidebar";
 import { TimeAgo } from "@/components/shared/time-ago";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
@@ -59,7 +60,7 @@ export default function GenerationPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterCategory, setFilterCategory] = useState<FilterCategory>("all");
+  const [filterCategory, setFilterCategory] = useState<FilterCategory[]>([]);
 
   // resizable sidebar
   const SIDEBAR_KEY = "generation-sidebar-width";
@@ -196,7 +197,7 @@ export default function GenerationPage() {
 
   // filter templates by category + search
   const filtered = templates.filter((t) => {
-    if (filterCategory !== "all" && templateCategory(t.id) !== filterCategory) return false;
+    if (!matchesToggleFilter(filterCategory, templateCategory(t.id))) return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -244,7 +245,7 @@ export default function GenerationPage() {
                 <AddFilled className="h-3 w-3" />
               </Button>
             </div>
-            <WorkflowSidebarSegmentedControl
+            <WorkflowSidebarToggleFilter
               options={CATEGORY_CHIPS}
               value={filterCategory}
               onChange={setFilterCategory}

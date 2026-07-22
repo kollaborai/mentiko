@@ -50,11 +50,17 @@ import {
   createTaskRunScope,
   locateTaskRun,
   parseTaskRunScope,
+  taskRunLaunchFailureMetadata,
   TASK_RUN_SCOPE_METADATA_KEY,
 } from "@/lib/tasks/task-run-locator";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { pruneInvalidChainBranches } from "@/lib/validators";
+import { MAX_AUTO_RUN_RETRIES } from "@/lib/tasks/auto-run-state";
+import {
+  extractGeneratedChainResult,
+  INVALID_GENERATED_CHAIN_RESULT_ERROR,
+} from "@/lib/chains/generated-chain-result";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +71,6 @@ const JOB_CLAIM_PREFIX = "claim-";
 const JOB_CLAIM_STALE_MS = 5 * 60 * 1000;
 const EXECUTE_DIRECTLY_GATE_KEY = "auto_run_execute_directly_gate";
 const EXECUTE_DIRECTLY_GATE_STALE_MS = 5 * 60 * 1000;
-const TASK_RUN_LAUNCH_FAILURE_METADATA_KEY = "task_run_launch_failure";
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
@@ -467,44 +472,6 @@ function sanitizeGeneratedChain(chain: Record<string, unknown>): Record<string, 
   return sanitized;
 }
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const cleaned = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```\s*$/m, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      const parsed = JSON.parse(match[0]);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : null;
-    } catch {
-      return null;
-    }
-  }
-}
-
-function extractGeneratedChain(result: Record<string, unknown> | undefined): Record<string, unknown> | null {
-  if (!result) return null;
-  const direct = result.chain && typeof result.chain === "object" && !Array.isArray(result.chain)
-    ? result.chain as Record<string, unknown>
-    : result;
-  if (typeof direct.name === "string" && Array.isArray(direct.agents)) {
-    return direct;
-  }
-  if (typeof result.output === "string") {
-    const parsed = parseJsonObject(result.output);
-    if (parsed && typeof parsed.name === "string" && Array.isArray(parsed.agents)) {
-      return parsed;
-    }
-  }
-  return null;
-}
-
 function asPlainObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -578,8 +545,7 @@ function recoverGeneratedChainFromRunArtifacts(
   for (const candidate of candidates) {
     const path = join(artifactsDir, candidate);
     if (!existsSync(path)) continue;
-    const parsed = parseJsonObject(readFileSync(path, "utf8"));
-    const chain = extractGeneratedChain(parsed || undefined);
+    const chain = extractGeneratedChainResult({ output: readFileSync(path, "utf8") });
     if (chain) return chain;
   }
   return undefined;
@@ -832,14 +798,23 @@ async function triggerAutoRun(
           workspacePath
         );
       }
+      const message = `Chain generation job record is missing: ${generationJobId}`;
+      const nextRetries = Math.min(
+        MAX_AUTO_RUN_RETRIES,
+        ((metadata.auto_run_retries as number) || 0) + 1,
+      );
       taskUpdate(orgId, taskId, {
         metadata: {
           ...metadata,
           generation_job_id: undefined,
           generation_status: "missing",
-          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+          generation_last_error: message,
+          auto_run_retries: nextRetries,
         },
       }, namespaceId);
+      if (nextRetries < MAX_AUTO_RUN_RETRIES) {
+        void triggerAutoRunScan(namespaceId, orgId);
+      }
       return { triggered: false, taskId, action: "generation_missing", jobId: generationJobId };
     }
 
@@ -853,25 +828,33 @@ async function triggerAutoRun(
     }
 
     if (job.status === "failed") {
+      const message = job.error || "Chain generation job failed";
+      const nextRetries = Math.min(
+        MAX_AUTO_RUN_RETRIES,
+        ((metadata.auto_run_retries as number) || 0) + 1,
+      );
       taskUpdate(orgId, taskId, {
         metadata: {
           ...metadata,
           generation_job_id: undefined,
           generation_status: "failed",
-          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+          auto_run_retries: nextRetries,
           // Carried into the next generate_new attempt (see
           // buildGenerationPromptFromTaskRecommendation's priorError param
           // in autoAcceptRecommendation below) as corrective guidance, then
           // cleared once consumed by startGenerationJob. This is what turns
           // the existing bounded auto_run_retries loop into a GUIDED retry
           // instead of a blind repeat of the same prompt (CHOR-001).
-          ...(job.error ? { generation_last_error: job.error } : {}),
+          generation_last_error: message,
         },
       }, namespaceId);
+      if (nextRetries < MAX_AUTO_RUN_RETRIES) {
+        void triggerAutoRunScan(namespaceId, orgId);
+      }
       return {
         triggered: false,
         taskId,
-        error: `Generation job failed: ${job.error}`,
+        error: `Generation job failed: ${message}`,
       };
     }
 
@@ -1518,19 +1501,28 @@ async function autoAcceptGeneratedChain(
   request: NextRequest,
   workspacePath?: string
 ): Promise<TriggerResult> {
-  const generated = extractGeneratedChain(result);
+  const generated = extractGeneratedChainResult(result);
   if (!generated) {
+    const nextRetries = Math.min(
+      MAX_AUTO_RUN_RETRIES,
+      ((metadata.auto_run_retries as number) || 0) + 1,
+    );
     taskUpdate(orgId, taskId, {
       metadata: {
         ...metadata,
+        generation_job_id: undefined,
         generation_status: "failed",
-        auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+        generation_last_error: INVALID_GENERATED_CHAIN_RESULT_ERROR,
+        auto_run_retries: nextRetries,
       },
     }, namespaceId);
+    if (nextRetries < MAX_AUTO_RUN_RETRIES) {
+      void triggerAutoRunScan(namespaceId, orgId);
+    }
     return {
       triggered: false,
       taskId,
-      error: "Generation job completed without a valid chain",
+      error: INVALID_GENERATED_CHAIN_RESULT_ERROR,
     };
   }
 
@@ -1594,7 +1586,12 @@ async function startGenerationJob(
     // unrelated generation attempt for this task doesn't inherit stale
     // guidance from an already-resolved failure.
     generation_last_error: undefined,
-  }, namespaceId);
+  }, namespaceId, {
+    metadataNumberLessThan: {
+      key: "auto_run_retries",
+      value: MAX_AUTO_RUN_RETRIES,
+    },
+  });
 
   if (!claimed) {
     return {
@@ -1809,20 +1806,14 @@ function recordTaskRunLaunchFailure(input: {
   scope: ReturnType<typeof createTaskRunScope>;
   message: string;
 }): TriggerResult {
-  const { [TASK_RUN_SCOPE_METADATA_KEY]: _provisionalScope, ...priorMetadata } = input.metadata;
   try {
     taskUpdate(input.orgId, input.taskId, {
       status: "blocked",
-      metadata: {
-        ...priorMetadata,
-        auto_run_paused: true,
-        auto_run_paused_reason: input.message,
-        [TASK_RUN_LAUNCH_FAILURE_METADATA_KEY]: {
-          version: 1,
-          attempted_scope: input.scope,
-          message: input.message,
-        },
-      },
+      metadata: taskRunLaunchFailureMetadata({
+        metadata: input.metadata,
+        scope: input.scope,
+        message: input.message,
+      }),
     }, input.namespaceId);
     return {
       triggered: false,

@@ -202,17 +202,19 @@ ${schemaContext}
 REQUIREMENTS:
 1. Output ONLY a valid JSON object. No markdown, no explanation, no code blocks.
 2. The JSON must be valid according to the schema above.
-3. All agents must have: id, name, triggers (array), emits (string), deliverable (concrete output), and verification (repeatable check)
+3. All agents must have: id, name, triggers (array), emits (one string), deliverable (concrete output), and verification (repeatable check)
 4. triggers can include: manual-start, or event names from other agents' emits
 5. Create a sensible flow: agent A emits X, agent B triggers on X, emits Y, etc.
-6. For review loops: make the reviewer emit either 'approved' or 'needs-revision'
-   and make the first agent also trigger on 'needs-revision'
+6. Each agent declares exactly one emitted event. Do not invent multi-outcome events
+   in prompt prose or branches. A verifier emits its declared success event only
+   when evidence passes; otherwise it fails with repair guidance.
 7. Default cli should be '\${DEFAULT_CLI}' (or user can override per agent)
 8. Include inline prompts for each agent - keep them clear and actionable
-9. Set max_rounds to 3 for chains with review loops
+9. Keep max_rounds at 1 unless a runtime-supported repeat pattern is explicitly required
 10. Set session_prefix to something short and descriptive
-11. Include metadata.generated_chain_contract exactly as {"version":1,"mode":"delivery"|"research","acceptance_criteria":"..."}. Use research only for a genuinely research/analysis-only request; delivery requires an edit_files agent.
-12. The last agent must be a final verifier with final_verifier: true, verifies_acceptance_criteria: true, and a success_assertion tied to metadata.generated_chain_contract.acceptance_criteria. It must verify evidence, not merely report that agents ran.
+11. Generate a reusable mechanism. Read target IDs, paths, commands, and criteria from runtime task context; never persist current task IDs, absolute workspace paths, fixed ports, or one-run artifact paths as constants.
+12. Include metadata.generated_chain_contract exactly as {"version":1,"mode":"delivery"|"operations"|"research","acceptance_criteria":"..."}. Use delivery for workspace file/code changes (requires edit_files), operations for command/API/MCP state mutations (requires run_commands), and research for evidence-only work. Running tests does not turn a code-writing task into operations.
+13. The last agent must be a final verifier with final_verifier: true, verifies_acceptance_criteria: true, and a success_assertion tied to metadata.generated_chain_contract.acceptance_criteria. It must verify evidence, not merely report that agents ran.
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;

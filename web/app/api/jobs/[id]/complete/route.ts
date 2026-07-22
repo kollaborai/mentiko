@@ -23,6 +23,11 @@ import {
   assertValidGeneratedChainDeliveryContract,
   GeneratedChainContractError,
 } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  extractGeneratedChainResult,
+  INVALID_GENERATED_CHAIN_RESULT_ERROR,
+} from "@/lib/chains/generated-chain-result";
+import { taskLifecycleRunFingerprintKey } from "@/lib/orchestration/task-lifecycle-types";
 
 export const dynamic = "force-dynamic";
 
@@ -178,12 +183,26 @@ export const POST = withErrorHandling(async (
     result = job.result as Record<string, unknown>;
   }
 
+  // A core chain-generation run is not complete merely because its agent/run
+  // reached a terminal marker. The handoff payload is part of the completion
+  // contract. Fail closed here as a second producer boundary so a missing or
+  // malformed generation-result can never persist as `complete + result:null`.
+  let jobStatus = status || (error ? "failed" : "complete");
+  let jobError = error;
+  if (
+    jobStatus === "complete"
+    && job.type === "generate"
+    && !extractGeneratedChainResult(result || job.result)
+  ) {
+    jobStatus = "failed";
+    jobError = INVALID_GENERATED_CHAIN_RESULT_ERROR;
+  }
+
   // update job
-  const jobStatus = status || (error ? "failed" : "complete");
   updateJob(id, {
     status: jobStatus,
     result: result || job.result,
-    error: jobStatus === "failed" ? error || job.error : undefined,
+    error: jobStatus === "failed" ? jobError || job.error : undefined,
     runId: typeof body.runId === "string" ? body.runId : job.runId,
     chainId: typeof body.chainId === "string" ? body.chainId : job.chainId,
     completedAt: jobStatus === "complete" || jobStatus === "failed" ? new Date().toISOString() : job.completedAt,
@@ -194,19 +213,9 @@ export const POST = withErrorHandling(async (
     try {
       const nsId = typeof job.input.namespaceId === "string" ? job.input.namespaceId : namespaceId;
       const oId = typeof job.input.orgId === "string" ? job.input.orgId : orgId;
-      const rawOutput = (result.output as string) || "";
+      const chainJson = extractGeneratedChainResult(result);
 
-      // try to parse the chain JSON from the output
-      let chainJson: Record<string, unknown> | null = null;
-      try {
-        // output might be a JSON string directly or wrapped in ```json blocks
-        const cleaned = rawOutput.replace(/^```(?:json)?\n?/m, "").replace(/\n?```\s*$/m, "").trim();
-        chainJson = JSON.parse(cleaned);
-      } catch {
-        // not parseable, skip post-processing
-      }
-
-      if (chainJson && Array.isArray(chainJson.agents)) {
+      if (chainJson) {
         // This is the import boundary for model output. Do not persist agents
         // from an activity-only chain and hope the later task audit infers an
         // outcome; every generated agent must declare its handoff and the last
@@ -347,7 +356,7 @@ export const POST = withErrorHandling(async (
         // and gating on ===true stalled its recommend->generate continuation
         // until the 60s poller (ISSUE-006 sibling).
         const shouldContinueAutoRun =
-          updatedJob.status === "complete" &&
+          (updatedJob.status === "complete" || updatedJob.status === "failed") &&
           (updatedJob.type === "recommend" || updatedJob.type === "generate") &&
           resolveTaskAutoRunDefault({
             namespaceId,
@@ -475,6 +484,23 @@ export const POST = withErrorHandling(async (
           : undefined;
         const runFingerprint = expectedFingerprint || sourceEligibility?.fingerprint;
         const summaryAccepted = sourceEligibility?.eligible === true;
+        const summarySucceeded = summaryAccepted && updatedJob.status === "complete" && !!updatedJob.result;
+        const summaryFingerprintKey = sourceRunId && runFingerprint
+          ? taskLifecycleRunFingerprintKey(sourceRunId, runFingerprint)
+          : undefined;
+        const summarizedFingerprints = Array.isArray(existing.summarized_run_fingerprints)
+          ? existing.summarized_run_fingerprints.filter(
+              (value): value is string => typeof value === "string" && value.length > 0 && value !== summaryFingerprintKey,
+            )
+          : [];
+        const summaryFailureAlreadyRecorded =
+          existing.task_outcome_summary_job_id === updatedJob.id
+          && existing.task_outcome_summary_status === "failed";
+        const summaryFailures = summarySucceeded
+          ? 0
+          : summaryFailureAlreadyRecorded
+            ? (typeof existing.task_outcome_summary_failures === "number" ? existing.task_outcome_summary_failures : 1)
+            : (typeof existing.task_outcome_summary_failures === "number" ? existing.task_outcome_summary_failures : 0) + 1;
         taskUpdate(orgId, updatedJob.taskId, {
           metadata: {
             ...existing,
@@ -482,9 +508,15 @@ export const POST = withErrorHandling(async (
             task_outcome_summary_job_id: updatedJob.id,
             task_outcome_summary_run_id: updatedJob.runId,
             task_outcome_summary_chain_id: updatedJob.chainId,
+            task_outcome_summary_failures: summaryFailures,
             ...(sourceRunId ? { task_outcome_summary_source_run_id: sourceRunId } : {}),
-            ...(runFingerprint ? { task_outcome_summary_run_fingerprint: runFingerprint } : {}),
-            ...(summaryAccepted && updatedJob.status === "complete" && updatedJob.result
+            ...(summarySucceeded && runFingerprint
+              ? { task_outcome_summary_run_fingerprint: runFingerprint }
+              : {
+                  task_outcome_summary_run_fingerprint: undefined,
+                  summarized_run_fingerprints: summarizedFingerprints,
+                }),
+            ...(summarySucceeded
               ? {
                   // Store the auditor's canonical payload (headline, narrative,
                   // audit, ...), NOT the raw { output: "<json string>" } job

@@ -357,8 +357,9 @@ human decision gate. Everything else is momentum. Concretely:
   their Decision entity advances instead (below).
 
 decisions auto-advance too, server-side + headless (lib/decisions/decision-auto-advance.ts's
-advanceDecisionAfterPhase, driven from BOTH phase-completion paths so it fires no matter how a
-phase finishes: app/api/jobs/[id]/complete (job-based phases) AND app/api/decisions/[id]/import
+advanceDecisionAfterPhase, driven from both phase-completion paths plus the supervised decision
+reconciler so it fires no matter how a phase finishes or dies: app/api/jobs/[id]/complete
+(job-based phases), app/api/decisions/[id]/import
 (the `mentiko decision import` path that decision CHAIN runs use — this is the one that actually
 completes guided research/options/plan runs). idempotency-guarded — single-flight nudge ledger +
 guarded resolve — so a browser tab and either server driver never double-generate or double-resolve):
@@ -371,6 +372,11 @@ then auto-run themselves. (If you wire advanceDecisionAfterPhase into a NEW comp
 it after applyDecisionRunResult and pass the returned decision — see both sites above.)
 
 robustness (why it stays unjammed):
+- the supervised 60s decision reconciler scans organization and registered project workspaces,
+  replays completed results whose import was lost, and reposts dead generation pointers through
+  the existing phase routes. Automatic relaunches use a durable three-attempt exponential-cooldown
+  ledger in state/decision-reconciler.json; exhausting it stops run storms without blocking an
+  explicit manual retry.
 - crashed/orphaned runs are reaped: a running/pending run with no agent liveness (heartbeat /
   status write / run.json mtime) for >45m is terminalized at the top of every scan (reapDeadRuns),
   so a dead session can't hold a concurrency slot or block its task via findActiveRunForTask.

@@ -114,6 +114,42 @@ beforeEach(() => {
 });
 
 describe("startTaskOutcomeAudit", () => {
+  it("releases the execution fingerprint when the summary chain cannot launch", async () => {
+    taskGet.mockReturnValue({
+      id: "TASK-079",
+      title: "Copy baseline findings",
+      status: "open",
+      issue_type: "task",
+      metadata: {
+        last_run_id: "run-execution",
+        summarized_run_fingerprints: ["run-older::completed:old"],
+      },
+    });
+    startGenerationChainRun.mockRejectedValue(new Error("write EPIPE"));
+
+    await expect(startTaskOutcomeAudit({
+      request: {} as Request,
+      namespaceId: "default",
+      orgId: "default",
+      taskId: "TASK-079",
+    })).rejects.toThrow("write EPIPE");
+
+    expect(taskUpdate).toHaveBeenLastCalledWith(
+      "default",
+      "TASK-079",
+      {
+        metadata: expect.objectContaining({
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_error: "write EPIPE",
+          task_outcome_summary_run_fingerprint: undefined,
+          task_outcome_summary_failures: 1,
+          summarized_run_fingerprints: ["run-older::completed:old"],
+        }),
+      },
+      "default",
+    );
+  });
+
   it("does not start an audit while the execution run is still active", async () => {
     taskGet.mockReturnValue({
       id: "TASK-093",
@@ -383,7 +419,7 @@ describe("startTaskOutcomeAudit", () => {
     expect(jobInput.prompt).not.toContain("stale stored copy");
   });
 
-  it("keeps a stored template that already has all three markers instead of falling back", async () => {
+  it("keeps a stored template that has every current audit marker instead of falling back", async () => {
     taskGet.mockReturnValue({
       id: "TASK-061",
       title: "Current task",
@@ -391,7 +427,7 @@ describe("startTaskOutcomeAudit", () => {
       issue_type: "task",
       metadata: { last_run_id: "run-current" },
     });
-    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT MOOT CRITERIA CLOSE RULE custom copy {{TASK_DATA}}" });
+    getTemplate.mockReturnValue({ content: "COMPLETION AUDIT ARTIFACTS ROOT MOOT CRITERIA CLOSE RULE OBSERVABLE END-STATE DELIVERY CHECK custom copy {{TASK_DATA}}" });
 
     await startTaskOutcomeAudit({
       request: {} as Request,

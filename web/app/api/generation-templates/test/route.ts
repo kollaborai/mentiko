@@ -8,6 +8,8 @@ import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
+import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
+import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +46,8 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const generationPrompt = resolveTemplate(content, {
     USER_PROMPT: prompt,
     SCHEMA: "(schema omitted in preview — template variables are substituted at runtime)",
-    AGENT_CATALOG: "",
+    AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId, { query: prompt }),
+    PROFILE_CATALOG: buildProfileCatalog(namespaceId, orgId),
     CHAIN_CATALOG: "",
     TASK_CONTEXT: "",
     WORKSPACE_CONTEXT: workspaceContext,

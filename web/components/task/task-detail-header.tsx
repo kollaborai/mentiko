@@ -14,6 +14,7 @@ import {
   JudgeFilled as DecisionIcon,
   ToggleOffFilled as ToggleLeft,
   ToggleOnFilled as ToggleRight,
+  InfoCircleFilled as AlertCircle,
 } from "@aliimam/icons";
 import { PlayFilled, LinkFilled, PauseFilled as Pause } from "@aliimam/icons";
 import { useState } from "react";
@@ -25,8 +26,9 @@ import { copyToClipboard } from "@/lib/ui/copy-to-clipboard";
 import { PriorityBadge } from "./priority-badge";
 import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
-import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
+import { MAX_AUTO_RUN_RETRIES, resolveAutoRunState } from "@/lib/tasks/auto-run-state";
 import type { Task } from "@/lib/tasks/task-types";
+import { cn } from "@/lib/utils";
 
 interface TaskDetailHeaderProps {
   task: Task;
@@ -82,6 +84,30 @@ export function TaskDetailHeader({
   const autoRunUserPauseReason = autoRun.pausedReason;
   const autoRunUserPaused = autoRun.userPaused;
   const autoRunFromWorkspace = autoRun.source === "workspace";
+  const generationFailure = !hasAssignedChain && Boolean(
+    task.chainBinding?.generation_status
+    || task.chainBinding?.generation_job_id
+    || task.chainBinding?.generated_chain_run_id
+    || task.metadata?.generation_last_error
+    || task.metadata?.generation_error
+  );
+  const reportedFailure = [
+    task.metadata?.generation_last_error,
+    task.metadata?.generation_error,
+    task.chainBinding?.last_run_blocked_reason,
+    task.chainBinding?.last_run_error,
+  ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const failureReason = reportedFailure || (generationFailure
+      ? "The generation run completed, but Mentiko could not import a valid runnable chain from its result."
+      : "Mentiko could not complete this task automatically.");
+  const failureRunId = generationFailure
+    ? task.chainBinding?.generated_chain_run_id
+    : task.chainBinding?.last_run_id;
+  const autoRunRecovering = !autoRunPaused
+    && autoRunEnabled
+    && autoRunRetries > 0
+    && Boolean(reportedFailure);
+  const showAutoRunFailure = autoRunPaused || autoRunRecovering;
 
   function copyId() {
     copyToClipboard(task.id);
@@ -297,23 +323,6 @@ export function TaskDetailHeader({
                     ) : null}
                   </>
                 ) : null}
-                {autoRunPaused ? (
-                  <>
-                    <span className="inline-flex h-7 items-center rounded-md bg-red-500/10 px-2 text-[10px] font-mono text-red-300">
-                      auto-run paused
-                    </span>
-                    {onResetAutoRunAttempts ? (
-                      <button
-                        type="button"
-                        onClick={resetAutoRunAttempts}
-                        disabled={autoRunResetting}
-                        className="inline-flex h-7 items-center rounded-md bg-red-500/10 px-2 text-[10px] font-mono text-red-200 transition-colors hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        {autoRunResetting ? "resetting..." : "reset attempts"}
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
               </div>
             )
           )}
@@ -346,6 +355,79 @@ export function TaskDetailHeader({
           </>
         }
       />
+
+      {showAutoRunFailure ? (
+        <div
+          role="alert"
+          className={cn(
+            "mt-3 flex flex-col gap-3 rounded-md px-3 py-3 sm:flex-row sm:items-start sm:justify-between",
+            autoRunRecovering ? "bg-amber-500/10" : "bg-red-500/10",
+          )}
+          data-testid="auto-run-failure-banner"
+        >
+          <div className="flex min-w-0 gap-2.5">
+            <AlertCircle className={cn(
+              "mt-0.5 h-4 w-4 shrink-0",
+              autoRunRecovering ? "text-amber-300" : "text-red-300",
+            )} />
+            <div className="min-w-0">
+              <p className={cn(
+                "text-xs font-semibold",
+                autoRunRecovering ? "text-amber-200" : "text-red-200",
+              )}>
+                {autoRunRecovering
+                  ? generationFailure
+                    ? "Chain generation failed; retrying"
+                    : "Auto-run failed; retrying"
+                  : generationFailure
+                    ? "Chain generation failed"
+                    : "Auto-run failed"}
+              </p>
+              <p className="mt-1 break-words text-[11px] leading-relaxed text-foreground/65 [overflow-wrap:anywhere]">
+                {failureReason}
+              </p>
+              <p className={cn(
+                "mt-1.5 text-[10px] font-mono",
+                autoRunRecovering ? "text-amber-200/70" : "text-red-200/70",
+              )}>
+                {autoRunRecovering
+                  ? `Auto-recovery is active after ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`
+                  : `Auto-recovery stopped after ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`}
+                {task.dependentCount > 0
+                  ? ` · blocking ${task.dependentCount} dependent task${task.dependentCount === 1 ? "" : "s"}`
+                  : ""}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {failureRunId ? (
+              <Link
+                href={`/runs?runId=${encodeURIComponent(failureRunId)}`}
+                className="inline-flex h-8 items-center justify-center rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary/80"
+              >
+                Open failed run
+              </Link>
+            ) : null}
+            {!autoRunRecovering && onResetAutoRunAttempts ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                className="h-8 px-3 text-xs"
+                onClick={resetAutoRunAttempts}
+                disabled={autoRunResetting}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {autoRunResetting
+                  ? "Retrying..."
+                  : generationFailure
+                    ? "Retry chain generation"
+                    : "Retry task"}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* metadata grid */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-3 px-3 py-2.5 bg-muted rounded-md text-[10px]">

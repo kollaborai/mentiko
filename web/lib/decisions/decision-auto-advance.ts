@@ -141,6 +141,18 @@ export interface DecisionGenerationPointer {
   jobId?: string;
 }
 
+export type DecisionGenerationPhase = "questions" | "options" | "plan";
+
+export interface ActiveDecisionGenerationPhase {
+  phase: DecisionGenerationPhase;
+  pointer: DecisionGenerationPointer;
+  selectedOptionId?: string;
+}
+
+export interface DecisionGenerationRecovery extends ActiveDecisionGenerationPhase {
+  kind: "dead" | "awaiting_import";
+}
+
 /** Run statuses that mean "this launch will never produce a result" -- excludes
  * completed/complete (success) and running/pending (still live). */
 const DEAD_DECISION_GENERATION_RUN_STATUSES = new Set([
@@ -184,6 +196,74 @@ export function isDecisionGenerationPointerDead(
   }
 
   return true;
+}
+
+/**
+ * Return the one generation phase currently capable of being reconciled.
+ * Keeping this state-shape check shared prevents the background reconciler and
+ * completion-driven auto-advance path from disagreeing about which round owns
+ * a pointer.
+ */
+export function getActiveDecisionGenerationPhase(
+  decision: Decision,
+): ActiveDecisionGenerationPhase | null {
+  const guidedFlow = decision.guidedFlow;
+  if (
+    guidedFlow?.round1.status === "in_progress"
+    && guidedFlow.round1.questions.length === 0
+    && (guidedFlow.round1.generationRunId || guidedFlow.round1.generationJobId)
+  ) {
+    return {
+      phase: "questions",
+      pointer: {
+        runId: guidedFlow.round1.generationRunId,
+        jobId: guidedFlow.round1.generationJobId,
+      },
+    };
+  }
+  if (
+    guidedFlow?.round2.status === "generating"
+    && (guidedFlow.round2.generationRunId || guidedFlow.round2.generationJobId)
+  ) {
+    return {
+      phase: "options",
+      pointer: {
+        runId: guidedFlow.round2.generationRunId,
+        jobId: guidedFlow.round2.generationJobId,
+      },
+    };
+  }
+  if (
+    guidedFlow?.round3.status === "generating"
+    && guidedFlow.round2.selectedOptionId
+    && (guidedFlow.round3.generationRunId || guidedFlow.round3.generationJobId)
+  ) {
+    return {
+      phase: "plan",
+      pointer: {
+        runId: guidedFlow.round3.generationRunId,
+        jobId: guidedFlow.round3.generationJobId,
+      },
+      selectedOptionId: guidedFlow.round2.selectedOptionId,
+    };
+  }
+  return null;
+}
+
+export function inspectDecisionGenerationRecovery(input: {
+  namespaceId: string;
+  orgId: string;
+  decision: Decision;
+}): DecisionGenerationRecovery | null {
+  const active = getActiveDecisionGenerationPhase(input.decision);
+  if (!active) return null;
+  if (isDecisionGenerationPointerDead(input.namespaceId, input.orgId, active.pointer)) {
+    return { ...active, kind: "dead" };
+  }
+  if (isCompletedRunAwaitingDecisionImport(input.namespaceId, input.orgId, active.pointer.runId)) {
+    return { ...active, kind: "awaiting_import" };
+  }
+  return null;
 }
 
 /**
@@ -487,6 +567,16 @@ export function advanceDecisionAfterPhase(input: {
   decision: Decision;
 }): void {
   const { namespaceId, orgId, decision } = input;
+  if (
+    decision.resolution
+    || decision.status === "approved"
+    || decision.status === "in_progress"
+    || decision.status === "done"
+    || decision.status === "skipped"
+    || decision.status === "superseded"
+  ) {
+    return;
+  }
   const ws = decision.workspacePath;
   const gf = decision.guidedFlow;
 
@@ -502,54 +592,31 @@ export function advanceDecisionAfterPhase(input: {
   // crashed after writing decision-result.json, mistyped the decision id, or
   // the completion-driven import failed). Replay the import for that case
   // instead of no-opping forever.
-  if (gf?.round1.status === "in_progress" && gf.round1.questions.length === 0) {
-    const pointer = { runId: gf.round1.generationRunId, jobId: gf.round1.generationJobId };
-    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
-      internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/questions`, ws);
-      return;
-    }
-    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
-      triggerDecisionImportReplay({
-        namespaceId, orgId, decisionId: decision.id, phase: "questions",
-        runId: pointer.runId!, workspacePath: ws,
-      });
-      return;
-    }
+  const recovery = inspectDecisionGenerationRecovery({ namespaceId, orgId, decision });
+  if (recovery?.kind === "dead") {
+    const body = recovery.phase === "plan"
+      ? { selectedOptionId: recovery.selectedOptionId }
+      : undefined;
+    internalDecisionPost(
+      namespaceId,
+      orgId,
+      `/api/decisions/${decision.id}/guided/${recovery.phase}`,
+      ws,
+      body,
+    );
+    return;
   }
-  if (gf?.round2.status === "generating") {
-    const pointer = { runId: gf.round2.generationRunId, jobId: gf.round2.generationJobId };
-    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
-      internalDecisionPost(namespaceId, orgId, `/api/decisions/${decision.id}/guided/options`, ws);
-      return;
-    }
-    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
-      triggerDecisionImportReplay({
-        namespaceId, orgId, decisionId: decision.id, phase: "options",
-        runId: pointer.runId!, workspacePath: ws,
-      });
-      return;
-    }
-  }
-  if (gf?.round3.status === "generating" && gf.round2.selectedOptionId) {
-    const pointer = { runId: gf.round3.generationRunId, jobId: gf.round3.generationJobId };
-    const selectedOptionId = gf.round2.selectedOptionId;
-    if (isDecisionGenerationPointerDead(namespaceId, orgId, pointer)) {
-      internalDecisionPost(
-        namespaceId,
-        orgId,
-        `/api/decisions/${decision.id}/guided/plan`,
-        ws,
-        { selectedOptionId },
-      );
-      return;
-    }
-    if (isCompletedRunAwaitingDecisionImport(namespaceId, orgId, pointer.runId)) {
-      triggerDecisionImportReplay({
-        namespaceId, orgId, decisionId: decision.id, phase: "plan",
-        runId: pointer.runId!, workspacePath: ws, selectedOptionId,
-      });
-      return;
-    }
+  if (recovery?.kind === "awaiting_import" && recovery.pointer.runId) {
+    triggerDecisionImportReplay({
+      namespaceId,
+      orgId,
+      decisionId: decision.id,
+      phase: recovery.phase,
+      runId: recovery.pointer.runId,
+      workspacePath: ws,
+      selectedOptionId: recovery.selectedOptionId,
+    });
+    return;
   }
 
   if (decision.status === "briefed" && (!gf || !gf.round1 || gf.round1.status === "pending")) {

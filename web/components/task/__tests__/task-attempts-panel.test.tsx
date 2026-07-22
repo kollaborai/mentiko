@@ -2,11 +2,20 @@ import { readFileSync } from "fs";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TaskAttemptsPanel } from "../task-attempts-panel";
 
-jest.mock("@aliimam/icons", () => new Proxy({}, {
-  get: () => ({ className }: { className?: string }) => (
+jest.mock(
+  "@aliimam/icons",
+  () =>
+    new Proxy(
+      {},
+      {
+        get:
+          () =>
+          ({ className }: { className?: string }) => (
     <svg className={className} aria-hidden="true" />
   ),
-}));
+      },
+    ),
+);
 
 const mockFetchWithNamespace = jest.fn();
 jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
@@ -14,7 +23,13 @@ jest.mock("@/lib/hooks/use-namespace-fetch", () => ({
 }));
 
 jest.mock("@/components/run/run-detail-panel", () => ({
-  RunDetailPanel: ({ runId, embedded }: { runId: string; embedded?: boolean }) => (
+  RunDetailPanel: ({
+    runId,
+    embedded,
+  }: {
+    runId: string;
+    embedded?: boolean;
+  }) => (
     <div data-testid="run-detail-panel">
       {embedded ? "embedded" : "page"} {runId}
     </div>
@@ -22,7 +37,10 @@ jest.mock("@/components/run/run-detail-panel", () => ({
 }));
 
 describe("TaskAttemptsPanel", () => {
-  const source = readFileSync(new URL("../task-attempts-panel.tsx", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../task-attempts-panel.tsx", import.meta.url),
+    "utf8",
+  );
 
   beforeEach(() => {
     mockFetchWithNamespace.mockReset();
@@ -63,23 +81,34 @@ describe("TaskAttemptsPanel", () => {
     });
   });
 
-  it("keeps the task attempt sidebar and embeds the selected run detail panel", async () => {
+  it("renders the task attempt sidebar first and mounts the canonical run detail only after a selection", async () => {
     render(<TaskAttemptsPanel taskId="TASK-1" />);
 
-    expect(await screen.findByText("System, generation, and execution activity")).toBeInTheDocument();
+    expect(
+      await screen.findByText("System, generation, and execution activity"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/run history for/i)).not.toBeInTheDocument();
     expect(screen.getByText("Runs")).toBeInTheDocument();
     expect(screen.queryByText(/task runs/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/chain attempts/i)).not.toBeInTheDocument();
     expect(await screen.findByText("Chain Recommendation")).toBeInTheDocument();
-    expect(screen.getByText("Git Branch Management API Chain")).toBeInTheDocument();
+    expect(
+      screen.getByText("Git Branch Management API Chain"),
+    ).toBeInTheDocument();
     expect(screen.getByText("current")).toBeInTheDocument();
-    expect(screen.getByTestId("run-detail-panel")).toHaveTextContent("embedded run-exec");
+    expect(screen.queryByTestId("run-detail-panel")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Select a run to open its detail."),
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /recommendation.*run-rec/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /recommendation.*run-rec/i }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("run-detail-panel")).toHaveTextContent("embedded run-rec");
+      expect(screen.getByTestId("run-detail-panel")).toHaveTextContent(
+        "embedded run-rec",
+      );
     });
   });
 
@@ -147,7 +176,9 @@ describe("TaskAttemptsPanel", () => {
     render(<TaskAttemptsPanel taskId="TASK-1" />);
 
     await screen.findByText("Chain Recommendation");
-    const runButtons = screen.getAllByRole("button").map((button) => button.textContent || "");
+    const runButtons = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent || "");
 
     expect(runButtons).toEqual([
       expect.stringContaining("Chain Recommendation"),
@@ -165,14 +196,18 @@ describe("TaskAttemptsPanel", () => {
     const section = document.querySelector("#task-runs");
     expect(section).toBeInTheDocument();
     expect(screen.getByText("Runs")).toBeInTheDocument();
-    expect(screen.getByText("System, generation, and execution activity")).toBeInTheDocument();
+    expect(
+      screen.getByText("System, generation, and execution activity"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading runs...")).toBeInTheDocument();
     expect(source).toContain("function RunsSectionHeader");
   });
 
-  it("keeps the run list compact instead of stretching to the preview height", () => {
-    expect(source).toContain("items-start");
-    expect(source).toContain("self-start");
-    expect(source).toContain("xl:grid-cols-[260px_minmax(0,1fr)]");
+  it("keeps every run in the full-height rail instead of creating a nested scrollbar", () => {
+    expect(source).toContain("min-h-[720px]");
+    expect(source).toContain("xl:grid-cols-[280px_minmax(0,1fr)]");
+    expect(source).not.toContain("max-h-[340px]");
+    expect(source).not.toContain("overflow-y-auto pr-1 no-scrollbar");
+    expect(source).not.toContain("self-start");
   });
 });

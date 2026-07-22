@@ -16,6 +16,7 @@ export interface ChainAgent {
   timeout?: number;
   retry?: { max_retries?: number };
   artifacts?: { produces?: Array<{ id: string; type?: string; description?: string }> };
+  authorities?: { can?: string[]; needs_approval?: string[] } | string[];
 }
 
 export interface ChainData {
@@ -67,6 +68,7 @@ export function loadChain(
         timeout: a.timeout,
         retry: a.retry,
         artifacts: a.artifacts,
+        authorities: a.authorities,
       }));
     } catch {
       // fallback: map raw fields (won't have $ref data)
@@ -84,6 +86,7 @@ export function loadChain(
         timeout: a.timeout as number | undefined,
         retry: a.retry as { max_retries?: number } | undefined,
         artifacts: a.artifacts as { produces?: Array<{ id: string; type?: string; description?: string }> } | undefined,
+        authorities: a.authorities as ChainAgent["authorities"],
       }));
     }
 
@@ -224,4 +227,87 @@ export function buildChainSummary(chains: ChainData[]): string {
         .join("\n");
     })
     .join("\n\n");
+}
+
+const CORE_GENERATION_CHAIN_IDS = new Set([
+  "agent-edit",
+  "agent-generation",
+  "artifact-generation",
+  "chain-generation",
+  "chain-recommendation",
+  "decision-guided-options",
+  "decision-guided-plan",
+  "decision-guided-questions",
+  "decision-preference-synthesis",
+  "decision-research",
+  "decision-retrospective",
+  "run-summary-generation",
+  "task-generation",
+  "template-test",
+  "webhook-generation",
+]);
+
+const CATALOG_STOP_WORDS = new Set([
+  "about", "after", "against", "criteria", "deliverable", "description",
+  "from", "into", "task", "that", "this", "using", "verification", "with",
+]);
+
+function catalogTerms(value: string): string[] {
+  return [...new Set(
+    value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g)
+      ?.filter((term) => !CATALOG_STOP_WORDS.has(term)) ?? [],
+  )];
+}
+
+function chainCatalogScore(chain: ChainData, terms: string[]): number {
+  if (terms.length === 0) return 0;
+  const identity = `${chain.id} ${chain.name}`.toLowerCase();
+  const detail = [
+    chain.description,
+    ...chain.agents.flatMap((agent) => [agent.id, agent.name, agent.role]),
+  ].join(" ").toLowerCase();
+  return terms.reduce((score, term) =>
+    score + (identity.includes(term) ? 5 : 0) + (detail.includes(term) ? 1 : 0), 0);
+}
+
+function agentAuthorities(agent: ChainAgent): string[] {
+  if (Array.isArray(agent.authorities)) return agent.authorities;
+  return Array.isArray(agent.authorities?.can) ? agent.authorities.can : [];
+}
+
+/**
+ * Bounded catalog for LLM chain recommendation. The general UI summary is
+ * intentionally rich; injecting all of it plus every agent into a generation
+ * prompt made the output contract the least salient part of a 50KB request.
+ * Rank against the current task and keep only the fields needed to decide fit.
+ */
+export function buildChainRecommendationCatalog(
+  chains: ChainData[],
+  taskContext = "",
+  limit = 24,
+): string {
+  const terms = catalogTerms(taskContext);
+  const candidates = chains
+    .filter((chain) => !CORE_GENERATION_CHAIN_IDS.has(chain.id))
+    .map((chain) => ({ chain, score: chainCatalogScore(chain, terms) }))
+    .sort((a, b) => b.score - a.score || a.chain.name.localeCompare(b.chain.name))
+    .slice(0, Math.max(1, limit));
+
+  if (candidates.length === 0) return "No user chains available.";
+
+  return candidates.map(({ chain, score }) => {
+    const contract = chain.metadata?.generated_chain_contract;
+    const mode = contract && typeof contract === "object" && !Array.isArray(contract)
+      ? (contract as Record<string, unknown>).mode
+      : undefined;
+    const agents = chain.agents.slice(0, 6).map((agent) => {
+      const can = agentAuthorities(agent);
+      return `${agent.name}${can.length ? ` [${can.join(",")}]` : ""}`;
+    });
+    return [
+      `- id=${chain.id} | name=${chain.name} | score=${score}${typeof mode === "string" ? ` | mode=${mode}` : ""}`,
+      chain.description ? `  purpose=${chain.description.replace(/\s+/g, " ").trim().slice(0, 220)}` : null,
+      agents.length ? `  agents=${agents.join(" -> ")}` : null,
+    ].filter(Boolean).join("\n");
+  }).join("\n");
 }

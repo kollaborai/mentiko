@@ -14,6 +14,7 @@ import { orgPath } from "@/lib/config";
  * run. The same value is written to run.json metadata at launch time.
  */
 export const TASK_RUN_SCOPE_METADATA_KEY = "task_run_scope" as const;
+export const TASK_RUN_LAUNCH_FAILURE_METADATA_KEY = "task_run_launch_failure" as const;
 
 /**
  * Historical provenance for the terminal execution that a retry replaced.
@@ -86,6 +87,29 @@ export class DuplicateTaskRunLocationError extends Error {
 
 export function createTaskRunScope(input: TaskRunScope): TaskRunScope {
   return parseTaskRunScope(input);
+}
+
+/**
+ * A launch rejected before run.json exists must not retain an authoritative
+ * task_run_scope. Preserve the attempted scope as diagnostic evidence, pause
+ * automatic admission, and leave any older durable run history untouched.
+ */
+export function taskRunLaunchFailureMetadata(input: {
+  metadata: Record<string, unknown>;
+  scope: TaskRunScope;
+  message: string;
+}): Record<string, unknown> {
+  const { [TASK_RUN_SCOPE_METADATA_KEY]: _provisionalScope, ...priorMetadata } = input.metadata;
+  return {
+    ...priorMetadata,
+    auto_run_paused: true,
+    auto_run_paused_reason: input.message,
+    [TASK_RUN_LAUNCH_FAILURE_METADATA_KEY]: {
+      version: 1,
+      attempted_scope: input.scope,
+      message: input.message,
+    },
+  };
 }
 
 /**

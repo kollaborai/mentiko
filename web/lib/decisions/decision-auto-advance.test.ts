@@ -168,6 +168,35 @@ describe("decision auto-advance", () => {
     }));
   });
 
+  it.each(["approved", "in_progress", "done", "skipped", "superseded"])(
+    "does not re-resolve a terminal %s decision during periodic reconciliation",
+    async (status) => {
+      const fetchMock = jest.fn().mockResolvedValue(new Response(null, { status: 200 }));
+      global.fetch = fetchMock;
+      jest.mocked(listWorkspaces).mockReturnValue([{ id: "ws", path: "/repo", name: "repo" }] as never);
+      jest.mocked(resolveDecisionAutoApprove).mockReturnValue(true);
+      const decision = {
+        id: `dec-terminal-${status}`,
+        status,
+        workspacePath: "/repo",
+        options: [{ id: "option-a" }],
+        recommendation: { choiceId: "option-a" },
+        resolution: status === "approved" ? { selectedOptionId: "option-a" } : undefined,
+        guidedFlow: {
+          currentRound: 3,
+          round1: { status: "complete", questions: [], answers: [] },
+          round2: { status: "ready", tailoredOptions: [], selectedOptionId: "option-a" },
+          round3: { status: "ready", plan: { summary: "plan", tasks: [], dependencies: [] } },
+        },
+      } as never;
+
+      advanceDecisionAfterPhase({ namespaceId: "ns", orgId: "org", decision });
+      await Promise.resolve();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("retries a failed pointer write by adopting the original run", async () => {
     const key = decisionPhaseKey("ns", "org", "dec-recover", "questions");
     const start = jest.fn().mockResolvedValue({ runId: "run-existing" });

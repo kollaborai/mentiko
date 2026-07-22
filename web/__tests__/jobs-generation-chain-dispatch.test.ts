@@ -42,9 +42,17 @@ jest.mock("@/lib/generation/generation-template-storage", () => ({
   getTemplate: (_namespaceId: string, _orgId: string, key: string) => ({
     content:
       key === "chain_recommendation"
-        ? "recommend {{TASK_CONTEXT}} {{CHAIN_CATALOG}} {{WORKSPACE_CONTEXT}}"
-        : "generate {{USER_PROMPT}} {{SCHEMA}} {{WORKSPACE_CONTEXT}}",
+        ? "recommend {{TASK_CONTEXT}} {{CHAIN_CATALOG}} {{AGENT_CATALOG}} {{PROFILE_CATALOG}} {{WORKSPACE_CONTEXT}}"
+        : "generate {{USER_PROMPT}} {{SCHEMA}} {{AGENT_CATALOG}} {{PROFILE_CATALOG}} {{WORKSPACE_CONTEXT}}",
   }),
+}));
+
+jest.mock("@/lib/agents/agent-catalog", () => ({
+  buildAgentCatalog: () => "agent-catalog-entry",
+}));
+
+jest.mock("@/lib/agents/profile-catalog", () => ({
+  buildProfileCatalog: () => "profile-catalog-entry",
 }));
 
 jest.mock("@/lib/system/template-resolver", () => ({
@@ -140,6 +148,9 @@ describe("POST /api/jobs chain dispatch migration", () => {
       prompt: expect.stringContaining("chain guidance: create a new chain"),
       workspacePath: "/repo/ws",
     }));
+    const recommendPrompt = mockStartGenerationChainRun.mock.calls[0][0].prompt as string;
+    expect(recommendPrompt).toContain("agent-catalog-entry");
+    expect(recommendPrompt).toContain("profile-catalog-entry");
   });
 
   test("type generate keeps job type and dispatches chain_generation", async () => {

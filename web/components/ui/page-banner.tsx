@@ -1,6 +1,6 @@
 "use client";
 
-import { type ComponentType, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -110,6 +110,7 @@ interface PageBannerProps {
   backLabel?: string; // label next to arrow (default: "Back")
   background?: React.ReactNode; // custom full-bleed background; replaces the default pattern + watermark
   overlayDark?: boolean; // force light title/subtitle for legibility over a dark custom background
+  watermarkFill?: React.ReactNode; // node rendered *inside* the watermark icon's silhouette (e.g. a shader), instead of the flat colored icon
 }
 
 // ─── action button (icon-only) ──────────────────────────────
@@ -189,6 +190,7 @@ export function PageBanner({
   backLabel,
   background,
   overlayDark,
+  watermarkFill,
 }: PageBannerProps) {
   const router = useRouter();
   const hash = hashString(title);
@@ -199,6 +201,21 @@ export function PageBanner({
 
   // if icon provided, use it as watermark; otherwise fall back to abstract vectors
   const WatermarkIcon = icon ?? VECTORS[hashString(title, 7) % VECTORS.length];
+
+  // watermarkFill mode: serialize the rendered icon to a data-URI mask so the
+  // provided node (a shader, etc.) shows only through the icon's silhouette.
+  const iconMeasureRef = useRef<HTMLDivElement>(null);
+  const [iconMask, setIconMask] = useState<string>();
+  useEffect(() => {
+    if (!watermarkFill) return;
+    const svg = iconMeasureRef.current?.querySelector("svg");
+    if (!svg) return;
+    const clone = svg.cloneNode(true) as SVGElement;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("fill", "#000"); // opaque silhouette → clean alpha mask
+    const serialized = new XMLSerializer().serializeToString(clone);
+    setIconMask(`url("data:image/svg+xml,${encodeURIComponent(serialized)}")`);
+  }, [watermarkFill, title]);
 
   return (
     <div className={`shrink-0 ${background ? "" : "px-3 pt-3 pb-2 sm:px-4 sm:pt-4 sm:pb-3"}`}>
@@ -240,6 +257,13 @@ export function PageBanner({
           />
         )}
 
+        {/* hidden measurer: renders the icon once so we can serialize it into a mask */}
+        {watermarkFill && (
+          <div ref={iconMeasureRef} className="absolute -z-10 opacity-0 pointer-events-none" aria-hidden>
+            <WatermarkIcon size={400} />
+          </div>
+        )}
+
         {/* watermark - right side, large and pushed to edge */}
         <div
           className="absolute -right-4 top-0 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none"
@@ -248,13 +272,32 @@ export function PageBanner({
             WebkitMask: "linear-gradient(to right, transparent 10%, black 50%)",
           }}
         >
-          <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}>
-            {isCustomIcon ? (
-              <WatermarkIcon size={400} className="h-64 w-64" />
-            ) : (
-              <WatermarkIcon size={400} />
-            )}
-          </div>
+          {watermarkFill && iconMask ? (
+            // the provided node shows only through the icon silhouette
+            <div
+              className="relative -mr-6 h-64 w-64"
+              style={{
+                maskImage: iconMask,
+                WebkitMaskImage: iconMask,
+                maskSize: "contain",
+                WebkitMaskSize: "contain",
+                maskRepeat: "no-repeat",
+                WebkitMaskRepeat: "no-repeat",
+                maskPosition: "center",
+                WebkitMaskPosition: "center",
+              }}
+            >
+              {watermarkFill}
+            </div>
+          ) : (
+            <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}>
+              {isCustomIcon ? (
+                <WatermarkIcon size={400} className="h-64 w-64" />
+              ) : (
+                <WatermarkIcon size={400} />
+              )}
+            </div>
+          )}
         </div>
 
         {/* content */}

@@ -5,6 +5,7 @@ import {
   locateTaskRun,
   parseTaskRunScope,
   resolveTaskRunLocation,
+  TaskRunMissingError,
   TaskRunScopeError,
 } from "./task-run-locator";
 import { readRunRecordAt } from "@/lib/runs/run-record";
@@ -291,13 +292,35 @@ export function listTaskAttempts({
         "Task run scope taskId must match the task attempts request.",
       );
     }
-    const located = locateTaskRun(persistedScope);
     const { runsDir } = resolveTaskRunLocation(persistedScope);
-    return buildTaskAttempts({
-      taskId,
-      metadata: metadataRecord,
-      runs: [located.run, ...referencedRunsAtScope(metadataRecord, located.run.id, runsDir)],
-    });
+    try {
+      const located = locateTaskRun(persistedScope);
+      return buildTaskAttempts({
+        taskId,
+        metadata: metadataRecord,
+        runs: [located.run, ...referencedRunsAtScope(metadataRecord, located.run.id, runsDir)],
+      });
+    } catch (error) {
+      if (!(error instanceof TaskRunMissingError)) throw error;
+
+      // Scope remains authoritative: do not scan another root just because its
+      // run disappeared. The attempts surface is diagnostic, though, so a
+      // missing authoritative run must render as a stale attempt alongside any
+      // explicitly-linked history that still exists at that same root instead
+      // of turning the entire Runs panel into a 500 response.
+      const scopedMetadata = {
+        ...metadataRecord,
+        last_run_id: persistedScope.runId,
+      };
+      const attempts = buildTaskAttempts({
+        taskId,
+        metadata: scopedMetadata,
+        runs: referencedRunsAtScope(scopedMetadata, persistedScope.runId, runsDir),
+      });
+      const missing = attempts.find((attempt) => attempt.runId === persistedScope.runId);
+      if (missing) missing.staleReason = error.message;
+      return attempts;
+    }
   }
 
   const runsDir = resolveLinkRunsDir(namespaceId, orgId);

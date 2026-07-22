@@ -1,12 +1,15 @@
 import { readFileSync } from "fs";
 
 describe("run detail terminal interactivity source contract", () => {
-  const source = readFileSync(new URL("../run-detail-panel.tsx", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../run-detail-panel.tsx", import.meta.url),
+    "utf8",
+  );
 
   it("does not hardcode agent terminals to read-only", () => {
     expect(source).toContain("terminalInputEnabled");
     expect(source).toContain("setTerminalInputEnabled");
-    expect(source).toContain('readOnly={!terminalInputEnabled}');
+    expect(source).toContain("readOnly={!terminalInputEnabled}");
     expect(source).not.toContain("readOnly={true}");
   });
 
@@ -19,9 +22,11 @@ describe("run detail terminal interactivity source contract", () => {
 
   it("supports embedding the canonical run detail surface inside another workflow", () => {
     expect(source).toContain("embedded?: boolean");
-    expect(source).toContain("RunDetailPanel({ runId, onBack, onDelete, embedded");
+    expect(source).toContain(
+      "RunDetailPanel({ runId, onBack, onDelete, embedded",
+    );
     expect(source).toContain("const panelClassName = embedded");
-    expect(source).toContain("\"h-[720px]");
+    expect(source).toContain('"flex min-h-[720px]');
   });
 
   it("stacks embedded run headers so narrow task panes do not overflow", () => {

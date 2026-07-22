@@ -17,6 +17,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 import { NotificationsPanel } from "@/components/app-shell/notifications-panel";
 import { SessionsIndicator } from "@/components/app-shell/sessions-indicator";
+import { OperationsIndicator } from "@/components/app-shell/operations-indicator";
 import { NavNamespaceSelector } from "@/components/app-shell/nav-namespace-selector";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useEditorStore } from "@/lib/ui/editor-store";
@@ -1399,6 +1400,7 @@ export function FloatingPillNav() {
         >
           <CodeFilled className="h-4.5 w-4.5" />
         </button>
+        <OperationsIndicator />
         <SessionsIndicator />
         <NotificationsPanel />
         <WorkspaceSwitcherPill onPanelRoute={openPanelRoute} />

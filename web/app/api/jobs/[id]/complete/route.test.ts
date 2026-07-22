@@ -165,6 +165,7 @@ describe("POST /api/jobs/[id]/complete", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true }) as jest.Mock;
     mockOutcomeSummarySourceEligibility.mockImplementation(
       (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string) => ({
         eligible: true,
@@ -557,6 +558,53 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "default");
   });
 
+  test("fails a generate completion with no valid chain result and continues auto-recovery", async () => {
+    let currentJob = {
+      id: "job-chain-empty",
+      type: "generate",
+      status: "running",
+      taskId: "FEAT-001",
+      input: {},
+      result: undefined,
+      runId: "run-chain-empty",
+      chainId: "chain-generation",
+      createdAt: "2026-07-21T23:02:06.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "FEAT-001",
+      workspace_id: "/repo/fresh-project",
+      metadata: {
+        auto_run: true,
+        generation_job_id: "job-chain-empty",
+        generation_status: "running",
+      },
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      runId: "run-chain-empty",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-chain-empty" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateJob).toHaveBeenCalledWith("job-chain-empty", expect.objectContaining({
+      status: "failed",
+      error: expect.stringContaining("without a valid JSON chain payload"),
+    }), "default");
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "FEAT-001", expect.objectContaining({
+      metadata: expect.objectContaining({ generation_status: "failed" }),
+    }), "default");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/api/tasks/auto-run",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   // Regression guard: only the delivery-contract rejection gets the graceful
   // handling above. A genuine internal error during post-processing (e.g.
   // postProcessChain itself throwing) must still surface as a thrown error
@@ -748,6 +796,49 @@ describe("POST /api/jobs/[id]/complete", () => {
     }, "default");
   });
 
+  test("failed task run summary releases its execution fingerprint for a bounded retry", async () => {
+    let currentJob = {
+      id: "job-task-summary-failed",
+      type: "task_run_summary",
+      status: "running",
+      taskId: "TASK-079",
+      input: { sourceRunId: "run-execution", runFingerprint: "completed:f1" },
+      result: undefined,
+      runId: "run-summary",
+      chainId: "run-summary-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-079",
+      metadata: {
+        last_run_id: "run-execution",
+        task_outcome_summary_run_fingerprint: "completed:f1",
+        summarized_run_fingerprints: ["run-execution::completed:f1", "run-older::completed:old"],
+      },
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "failed",
+      error: "agent capacity unavailable",
+    }), { params: Promise.resolve({ id: "job-task-summary-failed" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockTaskUpdate).toHaveBeenCalledWith("default", "TASK-079", {
+      metadata: expect.objectContaining({
+        task_outcome_summary_status: "failed",
+        task_outcome_summary_error: "agent capacity unavailable",
+        task_outcome_summary_run_fingerprint: undefined,
+        task_outcome_summary_failures: 1,
+        summarized_run_fingerprints: ["run-older::completed:old"],
+      }),
+    }, "default");
+  });
+
   test("supersedes a summary whose execution source was non-terminal or changed before delivery", async () => {
     let currentJob = {
       id: "job-stale-summary",
@@ -879,7 +970,30 @@ describe("POST /api/jobs/[id]/complete", () => {
 
     const response = await POST(makeRequest({
       status: "complete",
-      result: { output: "{}" },
+      result: {
+        output: JSON.stringify({
+          name: "Generated Chain",
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "research",
+              acceptance_criteria: "The requested evidence is verified.",
+            },
+          },
+          agents: [{
+            id: "verifier",
+            name: "Verifier",
+            prompt: "Collect and verify evidence.",
+            triggers: ["manual-start"],
+            emits: "evidence-verified",
+            deliverable: "Verified evidence",
+            verification: "Check the evidence against the request.",
+            final_verifier: true,
+            verifies_acceptance_criteria: true,
+            success_assertion: "The requested evidence is verified.",
+          }],
+        }),
+      },
       runId: "run-generate",
       chainId: "chain-generation",
     }), { params: Promise.resolve({ id: "job-generate" }) });

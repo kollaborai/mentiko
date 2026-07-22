@@ -145,6 +145,33 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
   }
 
+  // Core generation completion has two required proofs: an agent completion
+  // signal AND a current, kind-compatible JSON handoff. A declared event or a
+  // durable AGENT_COMPLETE marker without that payload is a failed generation,
+  // not a completed run. This is the producer-side guard for the clean-project
+  // workflow: bad model data must enter the bounded retry path instead of
+  // becoming a poisoned `complete` job that blocks the task graph forever.
+  if (
+    input.generation?.jobId
+    && input.generation.generationKind
+    && input.generation.importablePayload === false
+    && (match.matched || input.completionRecoveryEvidence)
+  ) {
+    const reason = `generation agent completed without a valid ${input.generation.generationKind} JSON payload`;
+    const fanGroup = planFanGroupCompletion(input, "failed");
+    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
+    const run = updateRunStatus(input.runJsonPath, "failed", reason, input.now, input.onRunMutation);
+    markAgentAttemptFailedNoCompletion({
+      runJsonPath: input.runJsonPath,
+      runId: input.runId,
+      agentId: input.agent.id,
+      detail: reason,
+      now: input.now,
+      onMutation: input.onRunMutation,
+    });
+    return { action: "fail", reason, fanGroup, run };
+  }
+
   if (!match.matched || !match.event) {
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
       updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now, input.onRunMutation);

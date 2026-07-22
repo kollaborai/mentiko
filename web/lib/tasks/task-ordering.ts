@@ -181,6 +181,95 @@ export function sortTasksByDependencyOrder<T extends SortableTask>(
   return [...result, ...unresolved];
 }
 
+/**
+ * Structural subset of the operations read model's per-task state
+ * (TaskOpIndicatorState) that operational ordering needs. Kept structural so
+ * this pure module doesn't import from components.
+ */
+export interface OperationalOrderState {
+  reason: string;
+  /** 1-based Expected Next queue position when the task is queued. */
+  expectedNextPosition?: number;
+  blockedDownstreamTaskIds?: readonly string[];
+}
+
+const IN_FLIGHT_REASONS = new Set([
+  "awaiting_recommendation",
+  "awaiting_generation",
+  "awaiting_execution",
+  "queued_capacity",
+  "outcome_audit_pending",
+]);
+
+const ATTENTION_ORDER_REASONS = new Set([
+  "blocked_error",
+  "blocked_failed_dependency",
+  "outcome_audit_failed",
+  "stale_run_scope",
+  "unknown_inconsistent_state",
+  "paused_retries_exhausted",
+  "waiting_human_decision",
+]);
+
+/**
+ * Operational rank for sidebar ordering: active work first, then the system's
+ * own pipeline steps, then the Expected Next queue, then human-actionable
+ * blockers, then everything waiting, closed last.
+ */
+export function operationalRank(state?: OperationalOrderState): number {
+  if (!state) return 5;
+  if (state.reason === "running") return 0;
+  if (IN_FLIGHT_REASONS.has(state.reason)) return 1;
+  if (state.expectedNextPosition !== undefined) return 2;
+  if (ATTENTION_ORDER_REASONS.has(state.reason)) return 3;
+  if (state.reason === "paused_manual") return 4;
+  if (state.reason === "closed") return 6;
+  return 5;
+}
+
+/**
+ * Compare two operational states within the ranking above. Equal-rank pairs
+ * compare by queue position (rank 2) or downstream impact, biggest blockers
+ * first (rank 3); everything else is 0 so a stable sort preserves the base
+ * (dependency/priority) order.
+ */
+export function compareOperationalStates(
+  a?: OperationalOrderState,
+  b?: OperationalOrderState
+): number {
+  const rankA = operationalRank(a);
+  const rankB = operationalRank(b);
+  if (rankA !== rankB) return rankA - rankB;
+  if (rankA === 2) {
+    return (
+      (a?.expectedNextPosition ?? Infinity) - (b?.expectedNextPosition ?? Infinity)
+    );
+  }
+  if (rankA === 3) {
+    return (
+      (b?.blockedDownstreamTaskIds?.length ?? 0) -
+      (a?.blockedDownstreamTaskIds?.length ?? 0)
+    );
+  }
+  return 0;
+}
+
+/**
+ * Stable re-rank of an already-ordered task list by live operational state:
+ * running on top, then up-next in queue order, then blockers by downstream
+ * impact. Ties keep the incoming (dependency/priority) order. Without op
+ * states the list is returned unchanged.
+ */
+export function sortTasksByOperationalOrder<T extends { id: string }>(
+  tasks: readonly T[],
+  opStates?: Map<string, OperationalOrderState>
+): T[] {
+  if (!opStates || opStates.size === 0 || tasks.length < 2) return [...tasks];
+  return [...tasks].sort((a, b) =>
+    compareOperationalStates(opStates.get(a.id), opStates.get(b.id))
+  );
+}
+
 export function sortTaskTreeNodes<T extends SortableTask>(
   nodes: readonly T[],
   deps: readonly { from: string; to: string }[]

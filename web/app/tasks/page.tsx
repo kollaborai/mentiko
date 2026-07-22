@@ -5,8 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { TaskSquareFilled, RouteSquareFilled, LinkFilled } from "@aliimam/icons";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { PageBanner } from "@/components/ui/page-banner";
+import GridBloom from "@/components/ui/grid-bloom";
 import { TaskFilters } from "@/components/task/task-filters";
 import { TaskListItem } from "@/components/task/task-list-item";
+import type { TaskOpIndicatorState } from "@/components/task/task-op-indicator";
 import { EpicGroupHeader } from "@/components/task/epic-group-header";
 import { TaskDetail } from "@/components/task/task-detail";
 import { TaskGenerateDialog } from "@/components/task/task-generate-dialog";
@@ -16,7 +18,11 @@ import { TaskTreeView } from "@/components/task/task-tree-view";
 import { TaskWelcome } from "@/components/task/task-welcome";
 import { toTask, groupByEpic, priorityOrder } from "@/lib/tasks/task-transforms";
 import { buildTaskListQuery } from "@/lib/tasks/task-filter-query";
-import { sortTasksByDependencyOrder } from "@/lib/tasks/task-ordering";
+import {
+  operationalRank,
+  sortTasksByDependencyOrder,
+  sortTasksByOperationalOrder,
+} from "@/lib/tasks/task-ordering";
 import { normalizeEmbeddedTaskSelectionSearch } from "@/lib/tasks/task-routes";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -69,6 +75,7 @@ function TasksPageContent() {
     (searchParams.get("view") as "list" | "tree" | "overview") || "list"
   );
   const [depInfo, setDepInfo] = useState<Map<string, { blockedBy: string[]; blocks: string[] }>>(new Map());
+  const [opStates, setOpStates] = useState<Map<string, TaskOpIndicatorState>>(new Map());
   const [taskInventoryCount, setTaskInventoryCount] = useState<number | null>(null);
   const [treeRefreshSignal, setTreeRefreshSignal] = useState(0);
 
@@ -148,11 +155,11 @@ function TasksPageContent() {
 
   // filters (read initial values from URL)
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
-  const [filterStatus, setFilterStatus] = useState<TaskFilterStatus>(
-    (searchParams.get("status") as TaskFilterStatus) || "all"
+  const [filterStatus, setFilterStatus] = useState<TaskFilterStatus[]>(
+    (searchParams.get("status")?.split(",").filter(Boolean) as TaskFilterStatus[]) || []
   );
-  const [filterType, setFilterType] = useState<TaskFilterType>(
-    (searchParams.get("type") as TaskFilterType) || "all"
+  const [filterType, setFilterType] = useState<TaskFilterType[]>(
+    (searchParams.get("type")?.split(",").filter(Boolean) as TaskFilterType[]) || []
   );
   const [sortBy, setSortBy] = useState<TaskSortBy>(
     (searchParams.get("sort") as TaskSortBy) || "priority"
@@ -166,8 +173,8 @@ function TasksPageContent() {
       else params.set(key, value);
     };
     sync("view", viewMode, "list");
-    sync("status", filterStatus, "all");
-    sync("type", filterType, "all");
+    sync("status", filterStatus.join(","), "");
+    sync("type", filterType.join(","), "");
     sync("sort", sortBy, "priority");
     sync("q", searchQuery, "");
     const qs = params.toString();
@@ -177,9 +184,11 @@ function TasksPageContent() {
   // fetch all tasks
   const fetchTasks = useCallback(async () => {
     try {
+      // Fetch all statuses/types; status + type filtering happens client-side
+      // now that both are multi-select (see `filtered` below).
       const params = buildTaskListQuery({
-        status: filterStatus,
-        type: filterType,
+        status: "all",
+        type: "all",
         query: searchQuery,
         workspacePath,
       });
@@ -194,7 +203,7 @@ function TasksPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterType, searchQuery, workspacePath, fetchWithNamespace]);
+  }, [searchQuery, workspacePath, fetchWithNamespace]);
 
   // fetch epics
   const fetchEpics = useCallback(async () => {
@@ -250,6 +259,40 @@ function TasksPageContent() {
     }
   }, [workspacePath, fetchWithNamespace]);
 
+  // one operations read-model request for the whole list — per-task attention
+  // indicators (failed / audit failed / blocked / blocking / review / next)
+  // come from the same server aggregation the Operations Timeline uses.
+  const fetchOpStates = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (workspacePath) params.set("workspace", workspacePath);
+      const res = await fetchWithNamespace(`/api/operations/timeline?${params}`);
+      const raw = await res.json();
+      const data = unwrapApiData<{
+        view?: {
+          taskStates?: Array<TaskOpIndicatorState & { taskId: string }>;
+          upNext?: Array<{ taskId: string; position: number }>;
+        } | null;
+      }>(raw);
+      const nextPosition = new Map(
+        (data.view?.upNext ?? []).map((item) => [item.taskId, item.position])
+      );
+      const map = new Map<string, TaskOpIndicatorState>();
+      for (const state of data.view?.taskStates ?? []) {
+        map.set(state.taskId, {
+          reason: state.reason,
+          detail: state.detail,
+          blockingTaskIds: state.blockingTaskIds ?? [],
+          blockedDownstreamTaskIds: state.blockedDownstreamTaskIds ?? [],
+          expectedNextPosition: nextPosition.get(state.taskId),
+        });
+      }
+      setOpStates(map);
+    } catch {
+      setOpStates(new Map()); // rows fall back to raw dep counts
+    }
+  }, [workspacePath, fetchWithNamespace]);
+
   useEffect(() => {
     setTaskInventoryCount(null);
   }, [workspacePath]);
@@ -262,7 +305,8 @@ function TasksPageContent() {
     fetchTasks();
     fetchEpics();
     fetchDepInfo();
-  }, [fetchTasks, fetchEpics, fetchDepInfo, workspaceReady]);
+    fetchOpStates();
+  }, [fetchTasks, fetchEpics, fetchDepInfo, fetchOpStates, workspaceReady]);
 
   // load detail data when selection changes
   const loadDetail = useCallback(async (task: Task) => {
@@ -366,21 +410,29 @@ function TasksPageContent() {
     setMobileView("list");
   }, []);
 
-  // apply client-side type filter + sort
+  // ready = non-terminal task with no active (non-terminal) blockers
+  const isTaskReady = (t: Task) => {
+    if (t.completed) return false;
+    const info = depInfo.get(t.id);
+    if (!info || info.blockedBy.length === 0) return true;
+    return info.blockedBy.every((blockerId) => {
+      const blocker = tasks.find((task) => task.id === blockerId);
+      return blocker?.completed === true;
+    });
+  };
+
+  // apply client-side status + type filters (both multi-select; empty = all)
   const filtered = tasks
     .filter((t) => {
-      if (filterType !== "all" && t.type !== filterType) return false;
+      if (filterType.length > 0 && !filterType.includes(t.type as TaskFilterType)) return false;
 
-      // ready filter: show non-terminal tasks with no active blockers
-      if (filterStatus === "ready") {
-        if (t.completed) return false;
-        const info = depInfo.get(t.id);
-        if (!info || info.blockedBy.length === 0) return true;
-        // check if all blockers are terminal
-        return info.blockedBy.every(blockerId => {
-          const blocker = tasks.find(task => task.id === blockerId);
-          return blocker?.completed === true;
-        });
+      if (filterStatus.length > 0) {
+        // "ready" is computed; every other status mirrors the server's exact
+        // `status = ?` match. A task matches if it satisfies ANY selected status.
+        const matchesStatus = filterStatus.some((s) =>
+          s === "ready" ? isTaskReady(t) : t.status === s
+        );
+        if (!matchesStatus) return false;
       }
 
       return true;
@@ -406,12 +458,23 @@ function TasksPageContent() {
       }
     });
 
-  const shouldShowMatchingEpics = filterType === "all" || filterType === "epic" || searchQuery.trim().length > 0;
+  const shouldShowMatchingEpics = filterType.length === 0 || filterType.includes("epic") || searchQuery.trim().length > 0;
+  // Within each group: dependency order first, then a stable operational
+  // re-rank so live activity wins — running on top, then Expected Next in
+  // queue order, then blockers by downstream impact.
   const groups = groupByEpic(filtered, epics, { includeEpics: shouldShowMatchingEpics }).map((group) =>
     group.epic
-      ? { ...group, tasks: sortTasksByDependencyOrder(group.tasks, depInfo) }
-      : group
+      ? { ...group, tasks: sortTasksByOperationalOrder(sortTasksByDependencyOrder(group.tasks, depInfo), opStates) }
+      : { ...group, tasks: sortTasksByOperationalOrder(group.tasks, opStates) }
   );
+  // Float the group with the most active work to the top (stable: ties keep
+  // the epic-priority order groupByEpic produced).
+  const groupRank = (group: (typeof groups)[number]) =>
+    group.tasks.reduce(
+      (min, t) => Math.min(min, operationalRank(opStates.get(t.id))),
+      99
+    );
+  groups.sort((a, b) => groupRank(a) - groupRank(b));
 
   // actions
   const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : "";
@@ -444,8 +507,9 @@ function TasksPageContent() {
       }
       fetchTasks();
       fetchDepInfo();
+      fetchOpStates();
     },
-    [fetchTasks, fetchDepInfo, wsParam, fetchWithNamespace]
+    [fetchTasks, fetchDepInfo, fetchOpStates, wsParam, fetchWithNamespace]
   );
 
   const handleClose = useCallback(async () => {
@@ -454,8 +518,9 @@ function TasksPageContent() {
     await fetchWithNamespace(`/api/tasks/${id}/close${wsParam}`, { method: "POST" });
     fetchTasks();
     fetchDepInfo();
+    fetchOpStates();
     setSelected((prev) => (prev ? { ...prev, completed: true, status: "closed" } : null));
-  }, [selected, fetchTasks, fetchDepInfo, wsParam, fetchWithNamespace]);
+  }, [selected, fetchTasks, fetchDepInfo, fetchOpStates, wsParam, fetchWithNamespace]);
 
   const handleReopen = useCallback(async () => {
     if (!selected) return;
@@ -467,8 +532,9 @@ function TasksPageContent() {
     });
     fetchTasks();
     fetchDepInfo();
+    fetchOpStates();
     setSelected((prev) => (prev ? { ...prev, completed: false, status: "open" } : null));
-  }, [selected, fetchTasks, fetchDepInfo, wsParam, fetchWithNamespace]);
+  }, [selected, fetchTasks, fetchDepInfo, fetchOpStates, wsParam, fetchWithNamespace]);
 
   const handleAssignChain = useCallback(
     async (chainId: string, chainName: string) => {
@@ -492,8 +558,9 @@ function TasksPageContent() {
         auto_run: true,
         auto_run_retries: 0,
       }));
+      fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
   );
 
   const handleRemoveChain = useCallback(async () => {
@@ -554,11 +621,12 @@ function TasksPageContent() {
             }
           : binding
       );
+      fetchOpStates();
     } else {
       const msg = typeof data.error === "string" ? data.error : data.error?.message || `Chain run failed (${res.status})`;
       throw new Error(msg);
     }
-  }, [selected, workspacePath, wsParam, fetchWithNamespace, updateTaskBinding]);
+  }, [selected, workspacePath, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]);
 
   const handleToggleAutoRun = useCallback(
     async (autoRun: boolean) => {
@@ -604,8 +672,9 @@ function TasksPageContent() {
           body: JSON.stringify({}),
         }).catch(() => {});
       }
+      fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
   );
 
   const handleResetAutoRunAttempts = useCallback(async () => {
@@ -640,7 +709,8 @@ function TasksPageContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     }).catch(() => {});
-  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding]);
+    fetchOpStates();
+  }, [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]);
 
   const handleToggleAutoRunPause = useCallback(
     async (paused: boolean) => {
@@ -678,8 +748,9 @@ function TasksPageContent() {
             }
           : binding
       );
+      fetchOpStates();
     },
-    [selected, wsParam, fetchWithNamespace, updateTaskBinding]
+    [selected, wsParam, fetchWithNamespace, updateTaskBinding, fetchOpStates]
   );
 
   const handleMetadataUpdate = useCallback(
@@ -767,6 +838,7 @@ function TasksPageContent() {
       // re-fetch to get updated data
       fetchTasks();
       fetchDepInfo();
+      fetchOpStates();
       const detailRes = await fetchWithNamespace(`/api/tasks/${id}${wsParam}`);
       if (detailRes.ok) {
         const raw = await detailRes.json();
@@ -787,7 +859,7 @@ function TasksPageContent() {
         }
       }
     },
-    [selected, wsParam, fetchTasks, fetchDepInfo, fetchWithNamespace]
+    [selected, wsParam, fetchTasks, fetchDepInfo, fetchOpStates, fetchWithNamespace]
   );
 
   const handleCreate = useCallback(
@@ -836,10 +908,11 @@ function TasksPageContent() {
         fetchTasks();
         fetchEpics();
         fetchDepInfo();
+        fetchOpStates();
       }
       return result.issue?.id as string | undefined;
     },
-    [fetchTasks, fetchEpics, fetchDepInfo, wsParam, fetchWithNamespace]
+    [fetchTasks, fetchEpics, fetchDepInfo, fetchOpStates, wsParam, fetchWithNamespace]
   );
 
   const handleDecisionUpdate = useCallback(async () => {
@@ -847,10 +920,11 @@ function TasksPageContent() {
       fetchTasks(),
       fetchEpics(),
       fetchDepInfo(),
+      fetchOpStates(),
       refreshSelectedTask(),
     ]);
     setTreeRefreshSignal((value) => value + 1);
-  }, [fetchTasks, fetchEpics, fetchDepInfo, refreshSelectedTask]);
+  }, [fetchTasks, fetchEpics, fetchDepInfo, fetchOpStates, refreshSelectedTask]);
 
   const handleSelectDep = useCallback(
     async (taskId: string) => {
@@ -889,7 +963,7 @@ function TasksPageContent() {
           task.type,
         );
         window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
-        setFilterType(task.type === "decision" ? "decision" : "all");
+        setFilterType(task.type === "decision" ? ["decision"] : []);
         setSelected(task);
         setChildren([]);
         setComments([]);
@@ -965,11 +1039,12 @@ function TasksPageContent() {
         fetchTasks();
         fetchEpics();
         fetchDepInfo();
+        fetchOpStates();
       } catch {
         // ignore
       }
     },
-    [selectedTaskIds, selected, fetchTasks, fetchEpics, fetchDepInfo, fetchWithNamespace]
+    [selectedTaskIds, selected, fetchTasks, fetchEpics, fetchDepInfo, fetchOpStates, fetchWithNamespace]
   );
 
   const isRunning = selected?.chainBinding?.last_run_status === "running";
@@ -989,7 +1064,7 @@ function TasksPageContent() {
       open={showGenerate}
       onClose={() => { setShowGenerate(false); }}
       onCreate={handleCreate}
-      onRefresh={() => { fetchTasks(); fetchEpics(); fetchDepInfo(); }}
+      onRefresh={() => { fetchTasks(); fetchEpics(); fetchDepInfo(); fetchOpStates(); }}
       parentEpics={epics.map((e) => ({ id: e.id, title: e.title }))}
       workspacePath={workspacePath}
       initialMode={generateMode}
@@ -1026,16 +1101,19 @@ function TasksPageContent() {
     fetchWithNamespace("/api/tasks/reconcile").catch(() => {});
   }, [workspaceReady, fetchWithNamespace]);
 
-  // periodic task list refresh (picks up server-side status changes)
+  // periodic refresh (picks up server-side status changes): task list, dep
+  // graph, ops chips + ordering, epic progress, and the open detail panel.
   useEffect(() => {
     if (!workspaceReady) return;
     const interval = setInterval(() => {
       fetchTasks();
       fetchDepInfo();
+      fetchOpStates();
+      fetchEpics();
       refreshSelectedTask();
     }, 15000);
     return () => clearInterval(interval);
-  }, [fetchTasks, fetchDepInfo, refreshSelectedTask, workspaceReady]);
+  }, [fetchTasks, fetchDepInfo, fetchOpStates, fetchEpics, refreshSelectedTask, workspaceReady]);
 
   return (
     <div className="h-full flex flex-col">
@@ -1045,6 +1123,53 @@ function TasksPageContent() {
         subtitle="Track and manage project issues. Create epics, features, bugs, and chores with dependency tracking and chain bindings."
         icon={TaskSquareFilled}
         sectionColor="#5b9ef5"
+        overlayDark
+        watermarkFill={
+          // very dense, bright near-white-blue grid so the task-square reads as a solid
+          // silhouette *made of* the fine pattern (not loose, separated cells)
+          <GridBloom
+            color="#eef4ff"
+            speed={0.9}
+            gridScale={30}
+            fadeFalloff={16}
+            distortionAmount={0.03}
+            enableMouseInteraction={false}
+          />
+        }
+        background={
+          <>
+            {/* dark base so the additive grid glow has something to bloom over */}
+            <div className="absolute inset-0" style={{ background: "#0a0a0b" }} />
+            {/* the structured "task lattice": a quiet blue grid that breathes + blooms under the
+                cursor, dimmed so the icon node stays the focal point */}
+            <GridBloom
+              color="#5b9ef5"
+              speed={0.6}
+              gridScale={15}
+              fadeFalloff={9}
+              distortionAmount={0.05}
+              hoverLightRadius={0.4}
+              hoverRepulsionStrength={0.35}
+              className="opacity-[0.75]"
+            />
+            {/* edge vignette + heavier bottom fade so the grid melts into the dark instead of ending at the list bar */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(to bottom, transparent 30%, rgba(10,10,11,0.6) 74%, #0a0a0b 100%), radial-gradient(125% 120% at 50% 25%, transparent 46%, rgba(10,10,11,0.85) 100%)",
+              }}
+            />
+            {/* left-to-right scrim keeps the title legible while the grid shows through on the right */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(to right, rgba(8,8,11,0.9) 0%, rgba(8,8,11,0.5) 34%, rgba(8,8,11,0.08) 66%, rgba(8,8,11,0) 100%)",
+              }}
+            />
+          </>
+        }
         actions={[
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
@@ -1138,6 +1263,7 @@ function TasksPageContent() {
           <TaskTreeView
             selectedId={selected?.id}
             refreshSignal={treeRefreshSignal}
+            opStates={opStates}
             onSelectTask={(taskId) => {
               setMobileView("detail");
               handleSelectDep(taskId);
@@ -1231,7 +1357,7 @@ function TasksPageContent() {
                 <WaveSpinner size="sm" color="primary" animation="ripple" />
               </div>
             ) : filtered.length === 0 ? (
-              searchQuery || filterStatus !== "all" || filterType !== "all" ? (
+              searchQuery || filterStatus.length > 0 || filterType.length > 0 ? (
                 <div className="text-center py-12 text-xs text-foreground/30">
                   No tasks match filters
                 </div>
@@ -1286,6 +1412,7 @@ function TasksPageContent() {
                               depInfo={depInfo}
                               selectMode={selectMode}
                               isChecked={selectedTaskIds.has(task.id)}
+                              op={opStates.get(task.id)}
                             />
                           ))}
                         </div>

@@ -17,6 +17,19 @@ export interface BackgroundWorkerStatus {
   checkCount?: number;
   lastReconcile?: string;
   lastReconcileCleaned?: number;
+  decisionReconciler?: {
+    status: "running" | "stopped";
+    lastCheck?: string;
+    checkCount?: number;
+    examined?: number;
+    activeGenerating?: number;
+    deadPointers?: number;
+    recoveriesScheduled?: number;
+    replaysScheduled?: number;
+    exhausted?: number;
+    coolingDown?: number;
+    lastError?: string;
+  };
   lastExternalDrain?: string;
   lastExternalDispatched?: number;
   autoRun?: {

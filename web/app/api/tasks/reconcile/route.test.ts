@@ -975,6 +975,40 @@ describe("GET /api/tasks/reconcile", () => {
     );
   });
 
+  it("stops autonomous outcome-summary retries after two failures for the same execution", async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-exec",
+      taskId: "TASK-079",
+      status: "completed",
+      chainId: "baseline-artifacts-copy-chain",
+      metadata: {},
+    }));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-079",
+        title: "Copy baseline findings",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          last_run_id: "run-exec",
+          last_run_status: "completed",
+          chain_id: "baseline-artifacts-copy-chain",
+          task_outcome_summary_status: "failed",
+          task_outcome_summary_source_run_id: "run-exec",
+          task_outcome_summary_failures: 2,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data.reconciled).toBe(0);
+    expect(body.data.results).toEqual([]);
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+  });
+
   it("retries a missing execution run through the lifecycle reducer", async () => {
     mockExistsSync.mockReturnValue(false);
     mockCurrentRunTerminalFingerprint.mockReturnValue("deleted:no-terminal-time");

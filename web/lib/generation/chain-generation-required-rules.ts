@@ -1,14 +1,12 @@
 export const CHAIN_GENERATION_RUNTIME_PROOF_RULE = `
 DYNAMIC_PORT_RUNTIME_PROOF (required): Never assume port 3000 for generated app verification. Pick a free port at verification time, bind the target app explicitly to 127.0.0.1 on that port, capture the PID and working directory for the process you started, and verify target-specific content from this workspace. Do not treat an already-listening port as proof. Do not use broad kills such as pkill -f "next dev"; stop only the PID you started.`;
 
-// Matches the exact rejection thrown by validateGeneratedChainDeliveryContract
-// (web/lib/chains/generated-chain-delivery-contract.ts): "delivery generated
-// chains require an agent with edit_files authority". Stated here in the
-// validator's own words as a hard backstop -- independent of whatever prose
-// the rest of a chain_generation template does or does not carry, so a stored
-// namespace copy that predates this rule still gets it injected.
+// Matches the exact capability rejections thrown by the generated-chain
+// validator. This is injected into stored namespace templates too, so an older
+// customized prompt cannot keep teaching the obsolete delivery-vs-research
+// binary or force file edits for service/task-state operations.
 export const CHAIN_GENERATION_DELIVERY_AUTHORITY_RULE = `
-DELIVERY_CONTRACT_EDIT_AUTHORITY (required): delivery generated chains require an agent with edit_files authority. If metadata.generated_chain_contract.mode is "delivery", at least one agent MUST declare "edit_files" in its authorities -- either as an authorities array (e.g. "authorities": ["edit_files", "read_files"]) or as authorities.can (e.g. "authorities": {"can": ["edit_files"], "needs_approval": []}). A chain with no edit_files agent will be rejected on submission. Use mode "research" instead of "delivery" only when the acceptance criteria are genuinely analysis/evidence outputs, not working code.`;
+DELIVERY_CONTRACT_EDIT_AUTHORITY (required): classify the requested end state before choosing metadata.generated_chain_contract.mode. Use "delivery" only when the chain must create or modify workspace files/code; delivery generated chains require an agent with edit_files authority. Use "operations" when the end state is a mutation of external or Mentiko-managed state through a command, API, or MCP tool; operations generated chains require an agent with run_commands authority. Use "research" only when the acceptance criteria are analysis/evidence outputs and no state mutation is required. Running tests does not make a code-writing task "operations"; if workspace files must change, the mode is "delivery". Authorities may be a string array or authorities.can. Never add a fake edit_files agent to an operational chain merely to satisfy validation.`;
 
 export function withRequiredChainGenerationRules(templateContent: string): string {
   let content = templateContent;

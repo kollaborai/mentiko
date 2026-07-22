@@ -249,7 +249,10 @@ export async function startTaskOutcomeAudit(
   // predates the completion-audit upgrade, the ARTIFACTS ROOT / citation-discipline
   // upgrade that fixed the self-locating-evidence bug, or the moot-criteria close
   // rule that fixed the TASK-010 wasted-decision-gate bug.
-  const templateContent = template.content.includes("COMPLETION AUDIT") && template.content.includes("ARTIFACTS ROOT") && template.content.includes("MOOT CRITERIA CLOSE RULE")
+  const templateContent = template.content.includes("COMPLETION AUDIT")
+    && template.content.includes("ARTIFACTS ROOT")
+    && template.content.includes("MOOT CRITERIA CLOSE RULE")
+    && template.content.includes("OBSERVABLE END-STATE DELIVERY CHECK")
     ? template.content
     : DEFAULT_TASK_RUN_SUMMARY_TEMPLATE;
   const prompt = resolveTemplate(templateContent, {
@@ -322,14 +325,29 @@ export async function startTaskOutcomeAudit(
   } catch (error) {
     const latest = taskGet(orgId, taskId, namespaceId);
     const latestMetadata = metadataRecord(latest?.metadata);
+    const failedMetadata = outcomeAuditLifecycleMetadata(latestMetadata, sourceRunId, runFingerprint, {
+      task_outcome_summary_job_id: job.id,
+      task_outcome_summary_status: "failed",
+      task_outcome_summary: undefined,
+      task_outcome_summary_completed_at: undefined,
+      task_outcome_summary_error: error instanceof Error ? error.message : String(error),
+      task_outcome_summary_failures:
+        (latestMetadata.task_outcome_summary_source_run_id === sourceRunId
+          && typeof latestMetadata.task_outcome_summary_failures === "number"
+          ? latestMetadata.task_outcome_summary_failures
+          : 0) + 1,
+    });
+    failedMetadata.summarized_run_fingerprints = withoutLifecycleFingerprint(
+      latestMetadata,
+      sourceRunId,
+      runFingerprint,
+    );
+    // A launch failure is not a completed audit. Keeping this legacy field
+    // made lifecycle hydration consume the execution fingerprint forever, so
+    // reconcile reported a no-op and the task could never self-heal.
+    failedMetadata.task_outcome_summary_run_fingerprint = undefined;
     taskUpdate(orgId, taskId, {
-      metadata: outcomeAuditLifecycleMetadata(latestMetadata, sourceRunId, runFingerprint, {
-        task_outcome_summary_job_id: job.id,
-        task_outcome_summary_status: "failed",
-        task_outcome_summary: undefined,
-        task_outcome_summary_completed_at: undefined,
-        task_outcome_summary_error: error instanceof Error ? error.message : String(error),
-      }),
+      metadata: failedMetadata,
     }, namespaceId);
     throw error;
   }
@@ -345,6 +363,19 @@ function withLifecycleFingerprint(
     : [];
   const key = taskLifecycleRunFingerprintKey(sourceRunId, runFingerprint);
   return existing.includes(key) ? existing : [...existing, key];
+}
+
+function withoutLifecycleFingerprint(
+  metadata: Record<string, unknown>,
+  sourceRunId: string,
+  runFingerprint: string,
+): string[] {
+  const key = taskLifecycleRunFingerprintKey(sourceRunId, runFingerprint);
+  return Array.isArray(metadata.summarized_run_fingerprints)
+    ? metadata.summarized_run_fingerprints.filter(
+        (value): value is string => typeof value === "string" && value.length > 0 && value !== key,
+      )
+    : [];
 }
 
 function outcomeAuditLifecycleMetadata(

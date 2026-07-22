@@ -2,6 +2,7 @@ export interface TemplateVars {
   SCHEMA?: string;
   USER_PROMPT?: string;
   AGENT_CATALOG?: string;
+  PROFILE_CATALOG?: string;
   CHAIN_CATALOG?: string;
   TASK_CONTEXT?: string;
   PREVIOUS_ANALYSIS?: string;
@@ -56,6 +57,11 @@ export const KNOWN_VARIABLES: Array<{
   {
     name: "AGENT_CATALOG",
     description: "Available standalone agents for $ref",
+    usedIn: ["chain_generation", "chain_recommendation"],
+  },
+  {
+    name: "PROFILE_CATALOG",
+    description: "Available agent profile IDs for generated chains",
     usedIn: ["chain_generation"],
   },
   {

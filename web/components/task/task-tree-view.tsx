@@ -5,11 +5,16 @@ import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { mapPriority } from "@/lib/tasks/task-transforms";
-import { sortTaskTreeNodes } from "@/lib/tasks/task-ordering";
+import {
+  compareOperationalStates,
+  operationalRank,
+  sortTaskTreeNodes,
+} from "@/lib/tasks/task-ordering";
 import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 import { WaveSpinner } from "@/components/ui/wave-spinner";
 import { TypeBadge } from "./type-badge";
 import { PriorityBadge } from "./priority-badge";
+import { TaskOpIndicator, type TaskOpIndicatorState } from "./task-op-indicator";
 import type { TaskPriority } from "@/lib/tasks/task-types";
 import {
   ArrowDown1Filled,
@@ -51,6 +56,8 @@ interface TaskTreeViewProps {
   onSelectTask?: (taskId: string) => void;
   selectedId?: string | null;
   refreshSignal?: number;
+  /** Per-task operational state from /api/operations/timeline (page-level fetch). */
+  opStates?: Map<string, TaskOpIndicatorState>;
 }
 
 function statusDot(status: string) {
@@ -117,7 +124,7 @@ function flattenVisibleRows(
   return rows;
 }
 
-export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: TaskTreeViewProps) {
+export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0, opStates }: TaskTreeViewProps) {
   const { workspacePath } = useWorkspace();
   const { fetchWithNamespace } = useNamespaceFetch();
   const [nodes, setNodes] = useState<ApiNode[]>([]);
@@ -155,12 +162,20 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
         setNodes(data.nodes);
         setDeps(data.deps || []);
         setLinks(data.links || []);
+        setError("");
       })
       .catch(() => setError("Failed to load graph"))
       .finally(() => setLoading(false));
   }, [workspacePath, fetchWithNamespace]);
 
   useEffect(() => { fetchGraph(); }, [fetchGraph, refreshSignal]);
+
+  // background refresh so the tree tracks server-side status changes; a failed
+  // poll keeps the last good tree (error screen only when nothing loaded yet)
+  useEffect(() => {
+    const interval = setInterval(fetchGraph, 15000);
+    return () => clearInterval(interval);
+  }, [fetchGraph]);
 
   // handle drag-drop dependency creation
   async function handleDrop(fromId: string, toId: string) {
@@ -276,8 +291,33 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
       }
     }
 
+    // operational re-rank (stable): running work on top, then Expected Next in
+    // queue order, then blockers by downstream impact. A container ranks as its
+    // best descendant so the epic with active work floats up; ties keep the
+    // dependency/priority order built above.
+    if (opStates && opStates.size > 0) {
+      const rankCache = new Map<string, number>();
+      const nodeRank = (item: HierarchyNode): number => {
+        const cached = rankCache.get(item.node.id);
+        if (cached !== undefined) return cached;
+        let rank = operationalRank(opStates.get(item.node.id));
+        for (const child of item.children) rank = Math.min(rank, nodeRank(child));
+        rankCache.set(item.node.id, rank);
+        return rank;
+      };
+      const sortByOps = (list: HierarchyNode[]) => {
+        list.sort(
+          (a, b) =>
+            nodeRank(a) - nodeRank(b) ||
+            compareOperationalStates(opStates.get(a.node.id), opStates.get(b.node.id))
+        );
+        for (const item of list) sortByOps(item.children);
+      };
+      sortByOps(treeNodes);
+    }
+
     return treeNodes;
-  }, [nodes, links, deps, nodeMap, depInfo]);
+  }, [nodes, links, deps, nodeMap, depInfo, opStates]);
 
   // stats
   const stats = useMemo(() => {
@@ -369,7 +409,7 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
     );
   }
 
-  if (error) {
+  if (error && nodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-foreground/30">
         {error}
@@ -407,6 +447,7 @@ export function TaskTreeView({ onSelectTask, selectedId, refreshSignal = 0 }: Ta
             collapsed={collapsed}
             showClosed={showClosed}
             nodeMap={nodeMap}
+            opStates={opStates}
             selectedId={selectedId}
             onToggle={toggleCollapse}
             onClick={handleClick}
@@ -430,6 +471,7 @@ interface TreeRowProps {
   collapsed: Set<string>;
   showClosed: boolean;
   nodeMap: Map<string, ApiNode>;
+  opStates?: Map<string, TaskOpIndicatorState>;
   selectedId?: string | null;
   onToggle: (id: string) => void;
   onClick: (id: string) => void;
@@ -448,6 +490,7 @@ function TreeRow({
   collapsed,
   showClosed,
   nodeMap,
+  opStates,
   selectedId,
   onToggle,
   onClick,
@@ -460,6 +503,7 @@ function TreeRow({
   onDrop,
 }: TreeRowProps) {
   const { node, children, blocksIds, blockedByIds } = treeNode;
+  const op = opStates?.get(node.id);
   const isClosed = isTerminalTaskStatus(node.status);
   const isEpic = node.type === "epic";
   const isDecision = node.type === "decision";
@@ -560,6 +604,7 @@ function TreeRow({
                 collapsed={collapsed}
                 showClosed={showClosed}
                 nodeMap={nodeMap}
+                opStates={opStates}
                 selectedId={selectedId}
                 onToggle={onToggle}
                 onClick={onClick}
@@ -684,29 +729,38 @@ function TreeRow({
             {node.label}
           </span>
 
-          {/* dep indicators */}
-          {blockedByIds.length > 0 && (
-            <span
-              className={`inline-flex items-center gap-0.5 text-[10px] font-mono shrink-0 ${
-                isClosed ? "text-red-400/30" : "text-red-400/60"
-              }`}
-              title={`Blocked by: ${blockedByIds.map((id) => nodeMap.get(id)?.label || id).join(", ")}`}
-            >
-              <ArrowUpFilled className="h-2.5 w-2.5" />
-              {blockedByIds.length}
+          {/* operational indicator (server read model) supersedes the raw dep
+              counts; the counts remain the fallback when ops data is absent */}
+          {op && !isClosed ? (
+            <span className="shrink-0">
+              <TaskOpIndicator state={op} />
             </span>
-          )}
+          ) : (
+            <>
+              {blockedByIds.length > 0 && (
+                <span
+                  className={`inline-flex items-center gap-0.5 text-[10px] font-mono shrink-0 ${
+                    isClosed ? "text-red-400/30" : "text-red-400/60"
+                  }`}
+                  title={`Blocked by: ${blockedByIds.map((id) => nodeMap.get(id)?.label || id).join(", ")}`}
+                >
+                  <ArrowUpFilled className="h-2.5 w-2.5" />
+                  {blockedByIds.length}
+                </span>
+              )}
 
-          {blocksIds.length > 0 && (
-            <span
-              className={`inline-flex items-center gap-0.5 text-[10px] font-mono shrink-0 ${
-                isClosed ? "text-amber-400/30" : "text-amber-400/60"
-              }`}
-              title={`Unlocks: ${blocksIds.map((id) => nodeMap.get(id)?.label || id).join(", ")}`}
-            >
-              <ArrowDownFilled className="h-2.5 w-2.5" />
-              {blocksIds.length}
-            </span>
+              {blocksIds.length > 0 && (
+                <span
+                  className={`inline-flex items-center gap-0.5 text-[10px] font-mono shrink-0 ${
+                    isClosed ? "text-amber-400/30" : "text-amber-400/60"
+                  }`}
+                  title={`Unlocks: ${blocksIds.map((id) => nodeMap.get(id)?.label || id).join(", ")}`}
+                >
+                  <ArrowDownFilled className="h-2.5 w-2.5" />
+                  {blocksIds.length}
+                </span>
+              )}
+            </>
           )}
 
           {/* child count badge when collapsed */}
@@ -729,6 +783,7 @@ function TreeRow({
             collapsed={collapsed}
             showClosed={showClosed}
             nodeMap={nodeMap}
+            opStates={opStates}
             selectedId={selectedId}
             onToggle={onToggle}
             onClick={onClick}
