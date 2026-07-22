@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDown1Filled, ArrowRight1Filled, JudgeFilled, ToggleOffFilled as ToggleLeft, ToggleOnFilled as ToggleRight } from "@aliimam/icons";
+import { ArrowDown1Filled, ArrowRight1Filled, ToggleOffFilled as ToggleLeft, ToggleOnFilled as ToggleRight } from "@aliimam/icons";
 import { TaskDetailHeader } from "./task-detail-header";
-import { TaskChainSection } from "./task-chain-section";
 import { TaskChildren } from "./task-children";
 import { TaskComments } from "./task-comments";
 import { TaskActivity } from "./task-activity";
 import { TaskDepsGraph } from "./task-deps-graph";
-import { TaskRunStoryPanels } from "./task-run-story-panels";
 import { TaskAttemptsPanel } from "./task-attempts-panel";
 import { DecisionDetail } from "@/components/decision/decision-detail";
 import { filterVisibleTasks } from "@/lib/tasks/task-visibility";
@@ -112,15 +110,6 @@ export function TaskDetail({
   const eventArtifactRunId = typeof task.metadata?.event_artifact_run_id === "string"
     ? task.metadata.event_artifact_run_id
     : undefined;
-  const auditVerdict = typeof task.metadata?.last_audit_verdict === "string"
-    ? (task.metadata.last_audit_verdict as string)
-    : undefined;
-  const reopenedReason = typeof task.metadata?.reopened_reason === "string"
-    ? (task.metadata.reopened_reason as string)
-    : undefined;
-  const decisionSubtaskId = typeof task.metadata?.decision_subtask_id === "string"
-    ? (task.metadata.decision_subtask_id as string)
-    : undefined;
   const visibleSubtasks = filterVisibleTasks([task, ...subtasks]).filter(
     (subtask) => subtask.id !== task.id,
   );
@@ -154,53 +143,19 @@ export function TaskDetail({
         isRunning={isRunning}
       />
 
-      {/* chain section */}
-      <TaskChainSection
+      {/* chain · runs · outcome · decision, merged into one panel: the rail is
+          the table of contents, the right pane is the viewer for whatever's
+          selected. */}
+      <TaskAttemptsPanel
         task={task}
+        onRefreshTask={onRefreshTask}
         onAssignChain={onAssignChain}
         onRemoveChain={onRemoveChain}
         onMetadataUpdate={onMetadataUpdate}
         onClearMetadata={onClearMetadata}
         workspacePath={workspacePath}
+        onOpenDecisionSubtask={onOpenTask ?? onSelectDep}
       />
-
-      <TaskAttemptsPanel taskId={task.id} />
-
-      <TaskRunStoryPanels task={task} onRefreshTask={onRefreshTask} />
-
-      {auditVerdict && (
-        <div className={`mx-4 my-3 rounded-md p-3 ${
-          auditVerdict === "decision" ? "bg-blue-500/10" :
-          auditVerdict === "close" ? "bg-green-500/10" :
-          "bg-amber-500/10"
-        }`}>
-          <div className="flex items-center gap-1.5">
-            <JudgeFilled className={`h-3.5 w-3.5 shrink-0 ${
-              auditVerdict === "decision" ? "text-blue-400" :
-              auditVerdict === "close" ? "text-green-400" :
-              "text-amber-400"
-            }`} />
-            <p className={`text-xs font-medium ${
-              auditVerdict === "decision" ? "text-blue-300" :
-              auditVerdict === "close" ? "text-green-300" :
-              "text-amber-300"
-            }`}>
-              completion audit · {auditVerdict}
-            </p>
-          </div>
-          {reopenedReason && (
-            <p className="mt-1 text-[11px] text-foreground/55">{reopenedReason}</p>
-          )}
-          {decisionSubtaskId && (
-            <button
-              onClick={() => (onOpenTask ?? onSelectDep)(decisionSubtaskId)}
-              className="mt-2 rounded-sm bg-background/50 px-2 py-1 text-[10px] font-mono text-foreground/60 hover:text-foreground"
-            >
-              → view decision subtask
-            </button>
-          )}
-        </div>
-      )}
 
       {eventArtifactChildIds.length > 0 && (
         <div className="mx-4 my-3 rounded-md bg-amber-500/10 p-3">

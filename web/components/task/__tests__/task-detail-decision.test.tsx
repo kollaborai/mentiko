@@ -56,6 +56,23 @@ jest.mock("../task-deps-graph", () => ({
   TaskDepsGraph: () => <div data-testid="task-deps-graph" />,
 }));
 
+jest.mock("../task-attempts-panel", () => ({
+  TaskAttemptsPanel: ({
+    onOpenDecisionSubtask,
+  }: {
+    onOpenDecisionSubtask?: (id: string) => void;
+  }) => (
+    <div data-testid="task-attempts-panel">
+      <button
+        type="button"
+        onClick={() => onOpenDecisionSubtask?.("DEC-034")}
+      >
+        → view decision subtask
+      </button>
+    </div>
+  ),
+}));
+
 jest.mock("../task-run-story-panels", () => ({
   TaskRunStoryPanels: () => <div data-testid="task-run-story-panels" />,
 }));
@@ -146,7 +163,7 @@ describe("TaskDetail decision mapping", () => {
     );
 
     expect(screen.queryByTestId("decision-detail")).not.toBeInTheDocument();
-    expect(screen.getByTestId("task-chain-section")).toBeInTheDocument();
+    expect(screen.getByTestId("task-attempts-panel")).toBeInTheDocument();
   });
 
   it("wires embedded decision open-task actions to local task selection", () => {
