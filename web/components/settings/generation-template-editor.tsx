@@ -73,7 +73,9 @@ export function GenerationTemplateEditor({
       const res = await fetchWithNamespace("/api/generation-templates/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: current.content, prompt: testPrompt, workspacePath }),
+        // templateId lets the route apply the same required-rule injection
+        // production applies, so the preview shows the prompt that is actually sent.
+        body: JSON.stringify({ content: current.content, templateId: activeTemplate, prompt: testPrompt, workspacePath }),
       });
       const raw = await res.json();
       if (!res.ok) throw new Error(getApiErrorMessage(raw, "Test failed"));

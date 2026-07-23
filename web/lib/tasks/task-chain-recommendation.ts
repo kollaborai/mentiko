@@ -1,3 +1,5 @@
+import { GENERATED_CHAIN_CONTRACT_SHAPE } from "@/lib/chains/generated-chain-delivery-contract";
+
 export type TaskChainRecommendationAction =
   | "use_existing"
   | "generate_new"
@@ -155,7 +157,12 @@ export function buildGenerationPromptFromTaskRecommendation(
     : "WORK MODE: classify from the acceptance criteria, not from the broad issue_type label. Use delivery for workspace file/code changes, operations for command/API/MCP state mutations, and research for analysis/evidence with no mutation.";
 
   const generatedChainContract = [
-    "GENERATED-CHAIN CONTRACT: include metadata.generated_chain_contract with version 1, mode delivery, operations, or research, and a reusable acceptance assertion derived from the runtime task criteria.",
+    // Name the literal keys, never paraphrase them. This line used to say "and
+    // a reusable acceptance assertion derived from the runtime task criteria";
+    // sitting 2.8% into an 85KB prompt, it out-shouted the exact spec 60KB
+    // deeper and the model emitted `reusable_acceptance_assertion` as the key.
+    // TASK-203 lost six generation attempts to that one sentence.
+    `GENERATED-CHAIN CONTRACT: include metadata.generated_chain_contract with exactly these fields: ${GENERATED_CHAIN_CONTRACT_SHAPE}. Set acceptance_criteria (that exact key) to a reusable assertion derived from the runtime task criteria.`,
     modeRequirement,
     "Every agent must declare a concrete deliverable and repeatable verification. The last agent must be the final verifier and declare final_verifier: true, verifies_acceptance_criteria: true, and an evidence-backed success_assertion. It must reject a result when criteria are not proven.",
     task.acceptance_criteria ? `ACCEPTANCE CRITERIA TO SATISFY:\n${task.acceptance_criteria}` : "The task has no acceptance criteria; do not generate a chain until a verifiable criterion is supplied.",

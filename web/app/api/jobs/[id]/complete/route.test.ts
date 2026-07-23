@@ -67,6 +67,13 @@ jest.mock("@/lib/decisions/decision-storage", () => ({
 }));
 
 const mockPostProcessChain = jest.fn();
+const mockResolveChainAgents = jest.fn(
+  (agents: unknown[], _namespaceId?: string, _orgId?: string) => agents,
+);
+jest.mock("@/lib/agents/agent-loader", () => ({
+  resolveChainAgents: (...args: [unknown[], string, string]) => mockResolveChainAgents(...args),
+}));
+
 jest.mock("@/lib/chains/chain-postprocessor", () => ({
   postProcessChain: (...args: unknown[]) => mockPostProcessChain(...args),
 }));
@@ -165,6 +172,10 @@ describe("POST /api/jobs/[id]/complete", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // clearAllMocks keeps implementations, so restore the pass-through default
+    // (inline agents resolve to themselves) or a $ref-specific implementation
+    // set by one test leaks into every test after it.
+    mockResolveChainAgents.mockImplementation((agents: unknown[]) => agents);
     global.fetch = jest.fn().mockResolvedValue({ ok: true }) as jest.Mock;
     mockOutcomeSummarySourceEligibility.mockImplementation(
       (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string) => ({
@@ -479,6 +490,78 @@ describe("POST /api/jobs/[id]/complete", () => {
         extractedCount: 1,
       }),
     }), "team-a");
+  });
+
+  // Regression: TASK-203 (2026-07-23). With a populated agent catalog the
+  // generator obeys the AGENT REUSE RULE and emits {"$ref": "id"} entries whose
+  // declarations and authorities live in the registry, not inline. This boundary
+  // validated the RAW model output, so a correct catalog-reuse chain looked like
+  // it had no deliverable and no edit_files agent and was rejected -- verified
+  // live: job-1784821712506-jkbu5wi failed on "requires an agent with edit_files"
+  // while the referenced acceptance-criteria-backup-writer in the registry does
+  // declare edit_files. /api/chains/save has always resolved before validating.
+  test("resolves $ref agents before the delivery contract check so a catalog-reuse chain is not falsely rejected", async () => {
+    let currentJob = {
+      id: "job-chain",
+      type: "generate",
+      status: "running",
+      taskId: "TASK-203",
+      input: {},
+      runId: "run-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-07-23T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-203",
+      metadata: { generation_job_id: "job-chain", generation_status: "running" },
+    });
+    // The registry supplies what the bare $ref omits -- exactly what runs.
+    mockResolveChainAgents.mockImplementation(() => [{
+      id: "acceptance-criteria-backup-writer",
+      name: "Backup Writer",
+      prompt: "Write the backup.",
+      triggers: ["manual-start"],
+      emits: "backup-written",
+      deliverable: "a timestamped backup file",
+      verification: "read the backup file back",
+      authorities: { can: ["read_files", "edit_files", "write_artifacts"], needs_approval: [] },
+      final_verifier: true,
+      verifies_acceptance_criteria: true,
+      success_assertion: "the backup contains every original criterion",
+    }]);
+
+    const { POST } = await import("./route");
+
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          name: "Task Acceptance Criteria Backup",
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "delivery",
+              acceptance_criteria: "a timestamped backup of the runtime task's criteria exists",
+            },
+          },
+          agents: [{ $ref: "acceptance-criteria-backup-writer" }],
+        }),
+      },
+      runId: "run-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-chain" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockResolveChainAgents).toHaveBeenCalled();
+    // accepted: it reached post-processing instead of being marked failed
+    expect(mockPostProcessChain).toHaveBeenCalled();
+    expect(mockUpdateJob).not.toHaveBeenCalledWith("job-chain", expect.objectContaining({
+      status: "failed",
+    }), expect.anything());
   });
 
   // Regression: CHOR-001 (2026-07-20). A generated chain missing an

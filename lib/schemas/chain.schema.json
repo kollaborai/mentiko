@@ -20,6 +20,32 @@
       "type": "string",
       "description": "Default agent profile ID for all agents in this chain. Resolved from namespaces/{id}/agent-profiles/{id}.json."
     },
+    "metadata": {
+      "type": "object",
+      "description": "Chain-level metadata. Open map: hand-written and core chains store their own keys here (coreGenerationChain, decisionPhase, etc). No additionalProperties constraint -- adding one would invalidate existing stored chains.",
+      "properties": {
+        "generated_chain_contract": {
+          "type": "object",
+          "description": "REQUIRED on any chain produced by a model. Declares what the chain promises and how it will be proven. Enforced by web/lib/chains/generated-chain-delivery-contract.ts.",
+          "required": ["version", "mode", "acceptance_criteria"],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["delivery", "operations", "research"],
+              "description": "delivery: workspace files/code are created or changed (requires an agent with edit_files; write_artifacts does not count). operations: external or Mentiko-managed state changes via command/API/MCP (requires run_commands). research: analysis/evidence only, no state mutation."
+            },
+            "acceptance_criteria": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reusable assertion the final verifier proves against the runtime task criteria. This exact key -- acceptance_assertion and reusable_acceptance_assertion are rejected."
+            }
+          }
+        }
+      }
+    },
     "config": {
       "type": "object",
       "description": "Chain-level configuration",

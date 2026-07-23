@@ -2,6 +2,10 @@ import {
   buildGenerationPromptFromTaskRecommendation,
   normalizeTaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
+import {
+  GENERATED_CHAIN_CONTRACT_SHAPE,
+  GeneratedChainContractError,
+} from "@/lib/chains/generated-chain-delivery-contract";
 
 describe("task chain recommendation helpers", () => {
   it("treats legacy no-match recommendation payloads as generate-new", () => {
@@ -127,6 +131,49 @@ describe("task chain recommendation helpers", () => {
     });
   });
 
+  // Regression: TASK-203 (2026-07-23) -- this builder's contract line said "and
+  // a reusable acceptance assertion derived from the runtime task criteria".
+  // Sitting 2.8% into an 85KB prompt it out-shouted the literal spec 60KB
+  // deeper, and the model emitted `reusable_acceptance_assertion` as the key.
+  // Six generation attempts died alternating between that and edit_files.
+  describe("contract instruction names literal keys, never prose", () => {
+    const recommendation = normalizeTaskChainRecommendation({
+      chain_id: null,
+      rationale: "No existing chain handles this.",
+      work_mode: "delivery",
+    });
+
+    it("states the exact contract shape the validator enforces", () => {
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Back up the acceptance criteria", issue_type: "task", acceptance_criteria: "a backup file exists" },
+        recommendation,
+      );
+
+      expect(prompt).toContain(GENERATED_CHAIN_CONTRACT_SHAPE);
+      expect(prompt).toContain("acceptance_criteria");
+    });
+
+    it("never paraphrases the key as an 'acceptance assertion'", () => {
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Back up the acceptance criteria", issue_type: "task", acceptance_criteria: "a backup file exists" },
+        recommendation,
+      );
+
+      expect(prompt).not.toContain("acceptance assertion");
+      expect(prompt).not.toContain("acceptance_assertion");
+    });
+
+    it("keeps naming the key when there is no recommender brief", () => {
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Back up the acceptance criteria", issue_type: "task", acceptance_criteria: "a backup file exists" },
+        null,
+      );
+
+      expect(prompt).toContain(GENERATED_CHAIN_CONTRACT_SHAPE);
+      expect(prompt).not.toContain("acceptance assertion");
+    });
+  });
+
   // Regression: CHOR-001 (2026-07-20) -- a generated chain was rejected by
   // the delivery contract validator (missing edit_files agent) and the job
   // died with an uncaught 500, with no regeneration attempt. The bounded
@@ -160,6 +207,32 @@ describe("task chain recommendation helpers", () => {
       );
 
       expect(prompt).toContain("PRIOR ATTEMPT REJECTED");
+      expect(prompt).toContain(priorError);
+    });
+
+    // Regression: TASK-203 (2026-07-23). This is the actual end-to-end mechanism
+    // of the oscillation. GeneratedChainContractError joins violations with "; "
+    // and that whole string lands in metadata.generation_last_error, then here as
+    // priorError. When the validator could only ever report one violation, the
+    // retry only ever learned about one -- it fixed that and regressed the other,
+    // six times. A multi-violation rejection has to survive into the prompt
+    // intact, or reporting them together buys nothing.
+    it("carries every violation of a multi-error rejection into the retry prompt", () => {
+      const priorError = new GeneratedChainContractError([
+        "metadata.generated_chain_contract.acceptance_criteria must be a non-empty string -- that exact key, not acceptance_assertion or reusable_acceptance_assertion",
+        "delivery generated chains require an agent with edit_files authority",
+      ]).message;
+
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        { title: "Back up the acceptance criteria", issue_type: "task", acceptance_criteria: "a backup file exists" },
+        recommendation,
+        priorError,
+      );
+
+      expect(prompt).toContain("PRIOR ATTEMPT REJECTED");
+      // both halves of the "; "-joined message, not just the first
+      expect(prompt).toContain("metadata.generated_chain_contract.acceptance_criteria");
+      expect(prompt).toContain("delivery generated chains require an agent with edit_files authority");
       expect(prompt).toContain(priorError);
     });
 

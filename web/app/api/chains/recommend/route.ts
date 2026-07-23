@@ -3,9 +3,6 @@ import { checkAuth } from "@/lib/auth/api-auth";
 import { createJob, deleteJob } from "@/lib/runs/job-store";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { getChainSchema } from "@/lib/schema-loader";
-import { getTemplate } from "@/lib/generation/generation-template-storage";
-import { resolveTemplate } from "@/lib/system/template-resolver";
 import { taskUpdate, taskGet } from "@/lib/tasks/task-store";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
@@ -13,7 +10,7 @@ import { BadRequest, NotFound, Unauthorized, InternalServerError } from "@/lib/a
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
-import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
+import { buildChainGenerationPrompt } from "@/lib/generation/chain-generation-required-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -80,14 +77,13 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   const workspaceContext = workspacePath
     ? `\nWORKSPACE CONTEXT: The chain will execute in "${workspacePath}". Tailor agent roles and tasks to this specific codebase.\n`
     : "";
-  const schema = getChainSchema();
-  const template = getTemplate(namespaceId, orgId, "chain_generation");
-  const generationPrompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
-    USER_PROMPT: prompt,
-    SCHEMA: schema,
-    AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId, { query: prompt }),
-    PROFILE_CATALOG: buildProfileCatalog(namespaceId, orgId),
-    WORKSPACE_CONTEXT: workspaceContext,
+  const generationPrompt = buildChainGenerationPrompt({
+    namespaceId,
+    orgId,
+    userPrompt: prompt,
+    agentCatalog: buildAgentCatalog(namespaceId, orgId, { query: prompt }),
+    profileCatalog: buildProfileCatalog(namespaceId, orgId),
+    workspaceContext,
   });
 
   // ================================================================

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { orgPath } from "../config";
+import { GENERATED_CHAIN_CONTRACT_SHAPE } from "../chains/generated-chain-delivery-contract";
 
 export type GenerationTemplateId = "chain_generation" | "agent_generation" | "task_generation" | "chain_recommendation" | "link_generation" | "decision_research" | "decision_steering" | "decision_retrospective" | "decision_guided_questions" | "decision_guided_options" | "decision_guided_plan" | "preference_synthesis" | "agent_edit" | "webhook_inbound" | "webhook_outbound" | "event_trigger" | "artifact_generation" | "failure_triage" | "link_summary" | "task_run_summary";
 
@@ -27,9 +28,9 @@ USER REQUEST:
 JSON SCHEMA (your output MUST match this structure):
 {{SCHEMA}}
 {{AGENT_CATALOG}}
-AGENT REUSE RULE: If {{AGENT_CATALOG}} is non-empty above, you MUST check it before creating any new agent. Use {"$ref": "id"} when a catalog agent matches your need. Only create inline agents when nothing in the catalog fits.
+AGENT REUSE RULE: If the agent catalog above is non-empty, you MUST check it before creating any new agent. Use {"$ref": "id"} when a catalog agent matches your need. Only create inline agents when nothing in the catalog fits. A reuse entry still declares its own contract: write {"$ref": "id", "deliverable": "...", "verification": "..."} — and if it is the last agent, add final_verifier: true, verifies_acceptance_criteria: true, and success_assertion. A bare {"$ref": "id"} is rejected.
 {{PROFILE_CATALOG}}
-PROFILE RULE: If {{PROFILE_CATALOG}} is non-empty above, you MUST use one of the listed profile IDs for default_agent_profile. Do NOT invent or guess profile IDs.
+PROFILE RULE: If the profile catalog above is non-empty, you MUST use one of the listed profile IDs for default_agent_profile. Do NOT invent or guess profile IDs.
 
 RUNTIME CONTEXT AND REUSE RULE:
 - The chain will be launched with typed task context in every agent's instructions: TASK_ID, title, description, acceptance criteria, workspace, and the full TASK_CONTEXT.
@@ -106,6 +107,11 @@ CHAIN DESIGN PRINCIPLES:
 
 6. AUTHORITIES — give agents exactly what they need:
    File work: ["edit_files", "run_commands", "read_files"]
+   Writing ANY file the task must produce — including a file written into the
+   artifacts directory: ["edit_files"]. write_artifacts only permits an agent to
+   write its own generation handoff file; it never satisfies a delivery
+   deliverable, and a delivery chain whose only writer declares write_artifacts
+   is rejected.
    Research/web: ["web_search", "fetch_url", "read_files"]
    Operational state mutation through command/API/MCP: ["run_commands"]
    Analysis/data: ["read_files", "run_commands"]
@@ -126,7 +132,7 @@ CHAIN DESIGN PRINCIPLES:
 
    GENERATED-CHAIN DELIVERY CONTRACT (required for every generated chain):
    - Include metadata.generated_chain_contract with exactly these fields:
-     {"version":1,"mode":"delivery" or "operations" or "research","acceptance_criteria":"..."}
+     ${GENERATED_CHAIN_CONTRACT_SHAPE}
    - acceptance_criteria should be a reusable assertion against the runtime task
      criteria, not a copy of transient task IDs from the current instance.
    - EVERY agent must declare deliverable (the concrete artifact, code change, or
@@ -149,10 +155,13 @@ CHAIN DESIGN PRINCIPLES:
    only the PID you started; do not use broad commands such as pkill -f "next dev".
 
 7. EXISTING AGENTS — prefer $ref over inline
-   Check {{AGENT_CATALOG}} for agents that match your needs:
-   - Same role and capabilities? Use {"$ref": "agent-id"}
+   Check the agent catalog above for agents that match your needs:
+   - Same role and capabilities? Use {"$ref": "agent-id", "deliverable": "...", "verification": "..."}
    - Can use with minor prompt tweaks? Add "prompt" field alongside $ref
    - No suitable agent? Create inline agent (will be extracted post-generation)
+   Every $ref entry declares its own deliverable and verification; a last agent
+   written as a $ref also declares final_verifier, verifies_acceptance_criteria,
+   and success_assertion. A bare {"$ref": "agent-id"} is rejected.
 
    Decision flow:
    a) Search catalog for agent with matching role + artifacts

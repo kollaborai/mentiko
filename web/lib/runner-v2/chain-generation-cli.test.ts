@@ -141,6 +141,49 @@ describe("typed chain generation contract", () => {
     })).toThrow(/generated chain delivery contract invalid/);
   });
 
+  // Regression: TASK-203 follow-up (2026-07-23). This generator is standalone --
+  // no namespace, no org, no agent registry (grep: zero agent-loader imports) --
+  // and it validates the raw parsed model JSON with no resolution step. The
+  // --template flag injects an arbitrary chain.json verbatim as "REFERENCE
+  // TEMPLATE", so pointing it at a real platform chain (where $ref is the normal
+  // reuse shorthand) would teach the model to emit references this path can
+  // never resolve, reproducing the exact false rejection fixed at the web
+  // import boundary. The prompt has to rule $ref out here.
+  it("tells the model to emit inline agents because this path cannot resolve a $ref", () => {
+    let receivedPrompt = "";
+    const root = tempRoot();
+    const templatePath = join(root, "reference-chain.json");
+    // a reference template that itself uses the platform's $ref shorthand
+    writeFileSync(templatePath, JSON.stringify({
+      name: "existing-chain",
+      agents: [{ $ref: "some-registry-agent" }],
+    }));
+
+    generateChain(
+      { prompt: "make a chain", outputDir: join(root, "out"), templateFile: templatePath, jsonOutput: false, rawOutput: false },
+      {
+        runExternalCli: (_cli, prompt) => {
+          receivedPrompt = prompt;
+          return JSON.stringify(validChain);
+        },
+      },
+      { ...process.env, DEFAULT_CLI: "test-cli" },
+    );
+
+    expect(receivedPrompt).toContain('Never emit a {"$ref": "agent-id"} catalog reference here');
+    expect(receivedPrompt).toContain("no agent registry to resolve a $ref against");
+    // The rejection it would otherwise hit is real, and in this path it lands
+    // even earlier than the delivery contract: the CLI's own field check fires
+    // first, so the model gets "agent unnamed is missing required fields" with
+    // no hint that a $ref was the problem. All the more reason the prompt has
+    // to rule it out up front.
+    expect(() => validateGeneratedChain({
+      name: "ref-chain",
+      metadata: { generated_chain_contract: { version: 1, mode: "delivery", acceptance_criteria: "x" } },
+      agents: [{ $ref: "some-registry-agent" }],
+    })).toThrow("agent unnamed is missing required fields (id, name, triggers, emits)");
+  });
+
   it("fails closed when no configured external CLI exists", () => {
     expect(() => generateChain(
       { prompt: "test", outputDir: tempRoot(), jsonOutput: false, rawOutput: false },

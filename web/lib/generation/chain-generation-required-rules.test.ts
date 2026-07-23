@@ -1,4 +1,7 @@
-import { validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  GENERATED_CHAIN_CONTRACT_SHAPE,
+  validateGeneratedChainDeliveryContract,
+} from "@/lib/chains/generated-chain-delivery-contract";
 import { withRequiredChainGenerationRules } from "./chain-generation-required-rules";
 
 describe("withRequiredChainGenerationRules", () => {
@@ -79,6 +82,54 @@ describe("withRequiredChainGenerationRules", () => {
         success_assertion: "the report exists",
       }],
     })).toContain("operations generated chains require an agent with run_commands authority");
+  });
+
+  // Regression: TASK-203 (2026-07-23). The prompt described the contract in
+  // prose ("a reusable acceptance assertion") instead of naming the key, and
+  // the model emitted reusable_acceptance_assertion as the field name. Four of
+  // six failed generation attempts were this one sentence.
+  it("names the literal contract keys the validator requires", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+
+    expect(result).toContain("GENERATED_CHAIN_CONTRACT_FIELDS");
+    expect(result).toContain(GENERATED_CHAIN_CONTRACT_SHAPE);
+    expect(result).toContain('"acceptance_criteria"');
+    // The rule must warn off the exact names the model reached for.
+    expect(result).toContain("reusable_acceptance_assertion");
+  });
+
+  it("states the contract-field requirement in the exact words the validator rejects with", () => {
+    const result = withRequiredChainGenerationRules("Design a chain for the request.");
+    const rejectionErrors = validateGeneratedChainDeliveryContract({
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "delivery",
+          acceptance_assertion: "the thing works",
+        },
+      },
+      agents: [{
+        deliverable: "a change",
+        verification: "read the diff",
+        authorities: ["read_files", "edit_files"],
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "the change is present",
+      }],
+    });
+
+    const rejection = rejectionErrors.find((e) => e.includes("acceptance_criteria"));
+    expect(rejection).toBeDefined();
+    // Every key the rejection names must be a key the prompt taught.
+    expect(result).toContain("acceptance_criteria");
+    expect(result).toContain("acceptance_assertion");
+  });
+
+  it("does not duplicate the contract-fields marker when already present", () => {
+    const already = "Some template.\n\nGENERATED_CHAIN_CONTRACT_FIELDS already present here.";
+    const result = withRequiredChainGenerationRules(already);
+    expect(result.split("GENERATED_CHAIN_CONTRACT_FIELDS").length - 1).toBe(1);
+    expect(result).toContain("DELIVERY_CONTRACT_EDIT_AUTHORITY");
   });
 
   it("does not duplicate a marker that a stored namespace template already carries", () => {

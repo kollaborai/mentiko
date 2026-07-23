@@ -13,6 +13,17 @@ export interface GeneratedChainDeliveryContract {
   acceptance_criteria: string;
 }
 
+/**
+ * The contract shape, written the way a model must emit it. Every prompt that
+ * asks a model for a generated chain states this literal instead of describing
+ * it in prose -- TASK-203 burned six generation attempts because one prompt
+ * said "a reusable acceptance assertion" and the model faithfully emitted
+ * `reusable_acceptance_assertion`, which this validator rejects. Import the
+ * constant; never re-word it.
+ */
+export const GENERATED_CHAIN_CONTRACT_SHAPE =
+  '{"version":1,"mode":"delivery"|"operations"|"research","acceptance_criteria":"..."}';
+
 type RecordValue = Record<string, unknown>;
 
 function record(value: unknown): RecordValue | null {
@@ -32,16 +43,43 @@ function agentHasAuthority(agent: RecordValue, authority: string): boolean {
   return Array.isArray(authorityRecord?.can) && authorityRecord.can.includes(authority);
 }
 
-function contractFromChain(chain: RecordValue): GeneratedChainDeliveryContract | null {
-  const metadata = record(chain.metadata);
-  const raw = record(metadata?.generated_chain_contract);
-  if (!raw || raw.version !== 1 || !text(raw.acceptance_criteria)) return null;
-  if (raw.mode !== "delivery" && raw.mode !== "operations" && raw.mode !== "research") return null;
-  return {
-    version: 1,
-    mode: raw.mode,
-    acceptance_criteria: raw.acceptance_criteria.trim(),
-  };
+/**
+ * Reads the contract field by field instead of all-or-nothing. A malformed
+ * contract used to abort validation before the authority and final-verifier
+ * checks ever ran, so a rejected generation only ever learned about ONE broken
+ * thing at a time -- and the bounded regeneration retry (which feeds the
+ * rejection back as "fix the exact issue below") oscillated: fix the contract
+ * key, drop edit_files; restore edit_files, break the contract key again.
+ * Reporting every violation in one pass is what makes the retry converge.
+ *
+ * `mode` is returned whenever it parses, even if a sibling field is broken, so
+ * the mode-dependent authority check still runs on a partially bad contract.
+ */
+function readContract(chain: RecordValue): { mode: GeneratedChainMode | null; errors: string[] } {
+  const raw = record(record(chain.metadata)?.generated_chain_contract);
+  if (!raw) {
+    return {
+      mode: null,
+      errors: [`metadata.generated_chain_contract is required: ${GENERATED_CHAIN_CONTRACT_SHAPE}`],
+    };
+  }
+
+  const errors: string[] = [];
+  if (raw.version !== 1) {
+    errors.push("metadata.generated_chain_contract.version must be 1");
+  }
+  const mode = raw.mode === "delivery" || raw.mode === "operations" || raw.mode === "research"
+    ? raw.mode
+    : null;
+  if (!mode) {
+    errors.push('metadata.generated_chain_contract.mode must be "delivery", "operations", or "research"');
+  }
+  if (!text(raw.acceptance_criteria)) {
+    errors.push(
+      "metadata.generated_chain_contract.acceptance_criteria must be a non-empty string -- that exact key, not acceptance_assertion or reusable_acceptance_assertion",
+    );
+  }
+  return { mode, errors };
 }
 
 /** True only for records that deliberately claim generated-chain ownership. */
@@ -58,36 +96,43 @@ export function validateGeneratedChainDeliveryContract(chain: unknown): string[]
   const source = record(chain);
   if (!source) return ["generated chain must be an object"];
 
-  const contract = contractFromChain(source);
-  if (!contract) {
-    return [
-      "metadata.generated_chain_contract requires version: 1, mode: delivery|operations|research, and acceptance_criteria",
-    ];
-  }
+  const { mode, errors } = readContract(source);
 
+  // Stays an early return: without agents, every remaining check is nonsense
+  // ("the last agent must declare final_verifier: true" on a chain that has no
+  // agents teaches the model to fix the wrong thing).
   if (!Array.isArray(source.agents) || source.agents.length === 0) {
-    return ["generated chain requires at least one agent"];
+    errors.push("generated chain requires at least one agent");
+    return errors;
   }
 
-  const errors: string[] = [];
   const agents = source.agents.map(record);
   agents.forEach((agent, index) => {
     if (!agent) {
       errors.push(`agents[${index}] must be an object`);
       return;
     }
+    // A catalog reuse entry ({"$ref": "id"}) still owes its declarations. The
+    // post-processor already emits refs this way -- rewriteChainInlineToRef in
+    // chain-postprocessor.ts keeps non-base fields alongside $ref as overrides
+    // -- so the shape is consistent with what the pipeline itself produces. Say
+    // so explicitly: this message is fed verbatim into the regeneration prompt,
+    // and "must name the concrete output" alone doesn't tell a model that emitted
+    // a bare $ref what to add.
+    const isRefEntry = typeof agent.$ref === "string" && agent.$ref.trim().length > 0;
+    const refHint = isRefEntry ? " alongside its $ref" : "";
     if (!text(agent.deliverable)) {
-      errors.push(`agents[${index}].deliverable must name the concrete output this agent hands off`);
+      errors.push(`agents[${index}].deliverable must name the concrete output this agent hands off${refHint}`);
     }
     if (!text(agent.verification)) {
-      errors.push(`agents[${index}].verification must state how that output is checked`);
+      errors.push(`agents[${index}].verification must state how that output is checked${refHint}`);
     }
   });
 
-  if (contract.mode === "delivery" && !agents.some((agent) => agent && agentHasAuthority(agent, "edit_files"))) {
+  if (mode === "delivery" && !agents.some((agent) => agent && agentHasAuthority(agent, "edit_files"))) {
     errors.push("delivery generated chains require an agent with edit_files authority");
   }
-  if (contract.mode === "operations" && !agents.some((agent) => agent && agentHasAuthority(agent, "run_commands"))) {
+  if (mode === "operations" && !agents.some((agent) => agent && agentHasAuthority(agent, "run_commands"))) {
     errors.push("operations generated chains require an agent with run_commands authority");
   }
 

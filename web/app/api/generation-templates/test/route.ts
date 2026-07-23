@@ -10,6 +10,7 @@ import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispa
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
+import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +22,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new Unauthorized();
   }
 
-  const { content, prompt, workspacePath } = await request.json() as {
+  const { content, templateId, prompt, workspacePath } = await request.json() as {
     content: string;
+    templateId?: unknown;
     prompt: string;
     workspacePath?: unknown;
   };
@@ -43,7 +45,15 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     ? `\nWORKSPACE CONTEXT: Test this generation template against the project in "${authorizedWorkspacePath}".\n`
     : "";
 
-  const generationPrompt = resolveTemplate(content, {
+  // Preview the prompt production actually sends: /api/jobs and
+  // /api/chains/recommend both inject the required chain-generation rules, so a
+  // chain_generation preview that skipped them would show an operator a prompt
+  // that never leaves the building.
+  const templateContent = templateId === "chain_generation"
+    ? withRequiredChainGenerationRules(content)
+    : content;
+
+  const generationPrompt = resolveTemplate(templateContent, {
     USER_PROMPT: prompt,
     SCHEMA: "(schema omitted in preview — template variables are substituted at runtime)",
     AGENT_CATALOG: buildAgentCatalog(namespaceId, orgId, { query: prompt }),

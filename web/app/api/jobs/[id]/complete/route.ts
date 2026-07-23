@@ -23,6 +23,7 @@ import {
   assertValidGeneratedChainDeliveryContract,
   GeneratedChainContractError,
 } from "@/lib/chains/generated-chain-delivery-contract";
+import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import {
   extractGeneratedChainResult,
   INVALID_GENERATED_CHAIN_RESULT_ERROR,
@@ -220,7 +221,24 @@ export const POST = withErrorHandling(async (
         // from an activity-only chain and hope the later task audit infers an
         // outcome; every generated agent must declare its handoff and the last
         // one must assert the task contract from evidence.
-        assertValidGeneratedChainDeliveryContract(chainJson);
+        //
+        // Validate what will actually RUN: a {"$ref": "id"} reuse entry carries
+        // its declarations and authorities in the registry, not inline, so the
+        // raw model output alone made a correct catalog-reuse chain look like it
+        // had no deliverable and no edit_files agent. /api/chains/save has always
+        // resolved before validating (save/route.ts) -- this boundary hadn't, and
+        // the false rejection cost TASK-203 a regeneration round.
+        const chainForContract = { ...chainJson };
+        if (Array.isArray(chainJson.agents)) {
+          try {
+            chainForContract.agents = resolveChainAgents(chainJson.agents, nsId, oId) as unknown[];
+          } catch {
+            // Unresolvable $ref: validate the raw shape so the rejection names
+            // the missing declarations rather than swallowing a broken chain.
+            chainForContract.agents = chainJson.agents;
+          }
+        }
+        assertValidGeneratedChainDeliveryContract(chainForContract);
         const processed = await postProcessChain(chainJson, nsId, oId);
         // update result with processed chain
         result = {

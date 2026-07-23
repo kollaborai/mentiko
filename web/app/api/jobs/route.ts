@@ -6,7 +6,6 @@ import config from "@/lib/config";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { resolveTemplate } from "@/lib/system/template-resolver";
-import { getChainSchema } from "@/lib/schema-loader";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
@@ -14,7 +13,7 @@ import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { buildChainRecommendationCatalog, getAllChains } from "@/lib/chains/chain-utils";
-import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
+import { buildChainGenerationPrompt } from "@/lib/generation/chain-generation-required-rules";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
@@ -144,28 +143,18 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     input.prompt = prompt;
   }
 
-  if (type === "generate" && !input.prompt) {
-    // raw user prompt — wrap it in the chain_generation template
-    const schema = getChainSchema();
-    const template = getTemplate(namespaceId, orgId, "chain_generation");
-    input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
-      USER_PROMPT: String(input.userPrompt || ""),
-      SCHEMA: schema,
-      AGENT_CATALOG: agentCatalog,
-      PROFILE_CATALOG: profileCatalog,
-      WORKSPACE_CONTEXT: workspaceContext,
-    });
-  } else if (type === "generate" && input.prompt) {
-    // prompt already provided (e.g. generation_prompt from recommendation)
-    // wrap it in the chain_generation template as USER_PROMPT
-    const schema = getChainSchema();
-    const template = getTemplate(namespaceId, orgId, "chain_generation");
-    input.prompt = resolveTemplate(withRequiredChainGenerationRules(template.content), {
-      USER_PROMPT: String(input.prompt),
-      SCHEMA: schema,
-      AGENT_CATALOG: agentCatalog,
-      PROFILE_CATALOG: profileCatalog,
-      WORKSPACE_CONTEXT: workspaceContext,
+  if (type === "generate") {
+    // Either a raw user prompt or an already-built one (e.g. generation_prompt
+    // from the recommender) becomes USER_PROMPT inside the chain_generation
+    // template. Both go through the same builder so neither can lose the
+    // required rules.
+    input.prompt = buildChainGenerationPrompt({
+      namespaceId,
+      orgId,
+      userPrompt: String(input.prompt || input.userPrompt || ""),
+      agentCatalog,
+      profileCatalog,
+      workspaceContext,
     });
   }
 
