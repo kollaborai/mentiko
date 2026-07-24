@@ -150,6 +150,13 @@ export interface PlanTask {
   /** Persisted on the child task so downstream chain generation has a target. */
   acceptance_criteria?: string;
   /**
+   * Observable end state: "delivery" (change files/code), "operations" (mutate
+   * state via command/API/MCP), or "research" (analysis/evidence only). Persisted
+   * to the child task's metadata.work_mode so the completion-audit delivery gate
+   * reads authoritative intent instead of guessing from issue_type.
+   */
+  work_mode?: string;
+  /**
    * Legacy task rows explicitly covered by this regenerated v1 task. This is
    * provenance, not a semantic guess made by reconciliation.
    */

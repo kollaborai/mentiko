@@ -4,6 +4,7 @@ import {
   withDecisionResolutionLock,
 } from "@/lib/decisions/decision-storage";
 import { taskAddDep, taskCreate, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 import { applyLifecycleEvent, type LifecycleEffectDeps } from "@/lib/orchestration/task-lifecycle-service";
 import { hydrateLifecycleState } from "@/lib/orchestration/task-lifecycle-hydrate";
 import type { TaskLifecycleState } from "@/lib/orchestration/task-lifecycle-types";
@@ -335,6 +336,9 @@ async function resolveDecisionToTasksUnlocked({
             decision_plan_phase: planTask.phase,
             decision_plan_deliverable: planTask.deliverable,
             decision_plan_verification: planTask.verification,
+            // Authoritative work_mode so the delivery gate reads intent on these
+            // decision-spawned follow-up tasks too (the re-entry path).
+            ...(isTaskWorkMode(planTask.work_mode) ? { work_mode: planTask.work_mode } : {}),
           },
         },
         namespaceId,
@@ -405,6 +409,7 @@ async function resolveDecisionToTasksUnlocked({
             decision_plan_phase: planTask.phase,
             decision_plan_deliverable: planTask.deliverable,
             decision_plan_verification: planTask.verification,
+            ...(isTaskWorkMode(planTask.work_mode) ? { work_mode: planTask.work_mode } : {}),
           },
         },
         namespaceId,

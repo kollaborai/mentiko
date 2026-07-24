@@ -1,4 +1,5 @@
 import type { ExecutionPlan, LegacyPlanTaskReconciliation, PlanDependency, PlanTask } from "@/lib/decisions/decision-types";
+import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 
 export interface VerifiablePlanTask extends PlanTask {
   deliverable: string;
@@ -107,6 +108,7 @@ export function validateExecutionPlan(value: unknown): ExecutionPlanValidation {
       deliverable,
       verification,
       acceptance_criteria: canonicalAcceptanceCriteria(text(task.acceptance_criteria), deliverable, verification),
+      ...(isTaskWorkMode(task.work_mode) ? { work_mode: task.work_mode } : {}),
       ...(legacyTaskIds.value?.length ? { legacy_task_ids: legacyTaskIds.value } : {}),
     });
   }

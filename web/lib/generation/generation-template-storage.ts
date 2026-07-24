@@ -1380,6 +1380,7 @@ Output ONLY valid JSON:
       "deliverable": "the exact file, behavior, test result, deployment state, or other observable output this task leaves behind",
       "verification": "the repeatable command, inspection, or assertion that proves the deliverable exists and satisfies the intended behavior",
       "acceptance_criteria": "a concise, testable completion rule; include the expected result, not just an activity",
+      "work_mode": "delivery",
       "priority": 2,
       "phase": 1
     }
@@ -1407,6 +1408,10 @@ RULES:
 9. Task titles should be imperative: "Set up X" not "X setup"
 10. Phase 1 should be the smallest possible step that proves the
    approach works (de-risk early)
+11. WORK MODE (required per task): "delivery" (workspace files/code must change), "operations" (service,
+   deployment, or Mentiko-managed state must change via a command/API/MCP tool), or "research"
+   (analysis/evidence only, no state mutation). Classify from each task's observable end state, not the
+   decision topic — a task that only analyzes or documents is "research".
 
 EXAMPLE (for "SQLite with WAL mode" option):
 
