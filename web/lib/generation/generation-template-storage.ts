@@ -170,14 +170,14 @@ CHAIN DESIGN PRINCIPLES:
    written as a $ref also declares final_verifier, verifies_acceptance_criteria,
    and success_assertion. A bare {"$ref": "agent-id"} is rejected.
 
-   Decision flow:
+   Decision flow (every $ref still declares its own deliverable and verification — a bare $ref is rejected):
    a) Search catalog for agent with matching role + artifacts
-   b) If found: {"id": "my-step", "$ref": "catalog-agent-id"}
-   c) If close match: {"id": "my-step", "$ref": "catalog-agent-id", "prompt": "Focus on X specifically"}
+   b) If found: {"id": "my-step", "$ref": "catalog-agent-id", "deliverable": "...", "verification": "..."}
+   c) If close match: {"id": "my-step", "$ref": "catalog-agent-id", "prompt": "Focus on X specifically", "deliverable": "...", "verification": "..."}
    d) If no match: create full inline agent definition
 
    Example reuse:
-   {"id": "code-reviewer", "$ref": "pr-security-scanner", "prompt": "Focus specifically on SQL injection and XSS vulnerabilities"}
+   {"id": "code-reviewer", "$ref": "pr-security-scanner", "prompt": "Focus specifically on SQL injection and XSS vulnerabilities", "deliverable": "A findings report listing each vulnerability with file:line and severity", "verification": "Re-scan confirms every reported issue reproduces and no High-severity finding is unlisted"}
 
    Example new (no catalog match):
    {"id": "custom-analyzer", "name": "Custom Analyzer", "role": "specialist", "prompt": "...", "triggers": [...], "emits": "..."}
