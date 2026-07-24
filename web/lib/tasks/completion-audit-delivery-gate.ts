@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveLinkRunPaths } from "@/lib/links/link-run-runtime";
 import { isDeliverableIssueType } from "@/lib/tasks/deliverable-issue-types";
+import { resolveTaskWorkMode, type TaskWorkMode } from "@/lib/tasks/work-mode";
 import type { CompletionAudit } from "@/lib/tasks/completion-audit-schema";
 
 // The only authorities that mean "this agent can actually write the
@@ -41,7 +42,7 @@ function readJson(path: string): unknown {
   }
 }
 
-export function chainHasDeliveryAgent(chain: unknown): boolean {
+export function chainHasDeliveryAgent(chain: unknown, expectedMode?: TaskWorkMode): boolean {
   if (!chain || typeof chain !== "object") return false;
   const chainRecord = chain as Record<string, unknown>;
   const metadata = chainRecord.metadata && typeof chainRecord.metadata === "object" && !Array.isArray(chainRecord.metadata)
@@ -50,7 +51,11 @@ export function chainHasDeliveryAgent(chain: unknown): boolean {
   const contract = metadata?.generated_chain_contract && typeof metadata.generated_chain_contract === "object" && !Array.isArray(metadata.generated_chain_contract)
     ? metadata.generated_chain_contract as Record<string, unknown>
     : undefined;
-  const acceptedAuthorities = contract?.mode === "operations"
+  // The task's authoritative work_mode (when known) overrides the chain's
+  // self-declared contract.mode, so a delivery task cannot slip past the gate by
+  // shipping a chain that labels ITSELF research/operations.
+  const effectiveMode = expectedMode ?? (typeof contract?.mode === "string" ? contract.mode : undefined);
+  const acceptedAuthorities = effectiveMode === "operations"
     ? OPERATIONS_AUTHORITIES
     : DELIVERY_AUTHORITIES;
   const agents = chainRecord.agents;
@@ -70,6 +75,11 @@ export function chainHasDeliveryAgent(chain: unknown): boolean {
 
 export interface DeliveryGateTask {
   issue_type: string;
+  // Authoritative work-mode intent, persisted at task generation/recommendation
+  // time. When present it is trusted over the issue_type heuristic below. Typed
+  // unknown because task-store metadata may arrive as an object or a JSON string;
+  // resolveTaskWorkMode normalizes both.
+  metadata?: unknown;
 }
 
 /**
@@ -88,19 +98,34 @@ export function enforceDeliveryGate(
   runId: string,
 ): CompletionAudit {
   if (audit.verdict !== "close") return audit;
-  if (!isDeliverableIssueType(task.issue_type)) return audit;
+
+  // Authoritative intent, set at generation/recommendation time. When present it
+  // overrides the blunt issue_type proxy: a "research" task legitimately closes on
+  // analysis/evidence and must NOT be forced to have produced a file writer. This
+  // is the fix for the false-positive escalation storm — see work-mode.ts.
+  const workMode = resolveTaskWorkMode(task.metadata);
+  if (workMode === "research") return audit;
+
+  // Demand an implementing agent when the task INTENDS a state change
+  // (delivery/operations), or — for legacy tasks with no persisted work_mode —
+  // when the issue_type promises a deliverable (unchanged legacy behavior).
+  const requiresImplementingAgent =
+    workMode === "delivery" ||
+    workMode === "operations" ||
+    (workMode === undefined && isDeliverableIssueType(task.issue_type));
+  if (!requiresImplementingAgent) return audit;
 
   const { runDir } = resolveLinkRunPaths(namespaceId, orgId, runId);
   const chain = readJson(join(runDir, "chain.json"));
 
-  if (chainHasDeliveryAgent(chain)) return audit;
+  if (chainHasDeliveryAgent(chain, workMode)) return audit;
 
   return {
     verdict: "decision",
     reason:
-      `Auditor verdict was "close", but this ${task.issue_type} requires a working code deliverable ` +
+      `Auditor verdict was "close", but this ${task.issue_type}${workMode ? ` (work_mode: ${workMode})` : ""} needs an implementing agent ` +
       "and no agent in the audited chain had the authority required by its declared work mode " +
-      "(edit_files/write_files for workspace delivery; run_commands for operations) — chain.json " +
+      "(edit_files/write_files for delivery; run_commands for operations) — chain.json " +
       "shows a capability mismatch. A design/analysis-only chain cannot " +
       `satisfy this task's acceptance criteria. Delivery gate escalated to human decision. Original ` +
       `auditor reason: ${audit.reason}`,

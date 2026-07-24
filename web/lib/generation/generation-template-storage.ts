@@ -40,6 +40,13 @@ RUNTIME CONTEXT AND REUSE RULE:
 
 CHAIN DESIGN PRINCIPLES:
 
+0. METHODOLOGY-DRIVEN STRUCTURE
+   Structure the chain's agents to execute the recognized framework, standard, or methodology that
+   professionals use for this class of work (e.g. a relevant ISO/IEC standard, OWASP, RFC/spec
+   conformance, a formal test strategy, or structured root-cause analysis). Name the framework in the
+   relevant agent prompts and let its steps drive the agent sequence. Prefer a defensible standard
+   approach over ad-hoc steps.
+
 1. MATCH COMPLEXITY TO REQUEST
    Simple request → clean 2-3 agent chain with clear handoffs
    Complex request → sophisticated multi-stage orchestration with parallel agents, review loops, conditional routing
@@ -382,6 +389,17 @@ TASK OBJECT SCHEMA (the "task" field below MUST match this structure):
 
 TASK DESIGN PRINCIPLES (apply only when route is "task"):
 
+0. METHODOLOGY FIRST — anchor the work to a recognized framework
+   Before structuring the work, identify the established, industry-recognized framework, standard,
+   or methodology that practitioners actually use to resolve THIS class of problem — for example a
+   relevant ISO/IEC standard, OWASP for web security, RFC/spec conformance, the 12-factor method for
+   app configuration, a formal test strategy (boundary-value / equivalence partitioning), or
+   structured root-cause analysis (5 Whys, fault-tree analysis). Name it explicitly in the
+   description or design, and sequence the subtasks and acceptance criteria so the work executes that
+   framework's steps in order. Prefer a named, defensible standard over an ad-hoc approach. If no
+   formal standard fits, state the closest professional best practice you are applying and why. Never
+   invent a standard or cite one that does not exist.
+
 1. TITLE — outcome-focused, not activity-focused
    BAD: "Work on the login system" / "Fix the bug" / "Improve performance"
    GOOD: "Add OAuth2 login via GitHub and Google" / "Fix race condition in chain runner that marks runs as stopped prematurely" / "Reduce initial page load from 4.2s to under 1s by lazy-loading route chunks"
@@ -432,6 +450,17 @@ TASK DESIGN PRINCIPLES (apply only when route is "task"):
    Common: frontend, backend, api, database, auth, ui, performance, security, testing,
            infrastructure, documentation, devex, mobile, accessibility
 
+8. WORK MODE — classify each task's observable end state (this drives which authorities its
+   execution chain is granted and how completion is verified):
+   - delivery: workspace files or code must be created or changed.
+   - operations: external, service, deployment, or Mentiko-managed state must change via a command,
+     API, or MCP tool (no file edit required).
+   - research: the acceptance criteria are analysis/evidence only — a report, a recommendation, or a
+     documented finding — and promise no state mutation.
+   Classify from the acceptance criteria's observable end state, NOT from the issue-type label. A task
+   that only documents, analyzes, or recommends is "research" and MUST be marked so — do not mislabel
+   it delivery. Set work_mode on the task and on every subtask.
+
 STEP 2 — TASK OUTPUT (use this shape when route is "task"):
 {
   "route": "task",
@@ -439,9 +468,10 @@ STEP 2 — TASK OUTPUT (use this shape when route is "task"):
     "title": "Add HMAC-SHA256 signature verification to outbound webhooks",
     "type": "feature",
     "priority": 1,
+    "work_mode": "delivery",
     "description": "Outbound webhooks have no signature. Receiving systems can't verify payload authenticity. Add HMAC-SHA256 signing using a per-webhook secret key so consumers can verify requests are genuine.",
     "acceptance_criteria": "Given each webhook endpoint exists, when it is created, then it has a unique signing secret\\nGiven a consumer receives an outbound request, when it verifies X-Mentiko-Signature: sha256=<hmac>, then the payload authenticity can be confirmed",
-    "design": "Use crypto.createHmac('sha256', secret).update(rawBody).digest('hex'). Secret must be stored recoverable (not hashed). See web/lib/inbound-webhook-storage.ts for the existing token storage pattern. Add X-Mentiko-Signature header in the webhook dispatch function.",
+    "design": "Framework: RFC 2104 (HMAC) and OWASP webhook-security guidance. Use crypto.createHmac('sha256', secret).update(rawBody).digest('hex'). Secret must be stored recoverable (not hashed). See web/lib/inbound-webhook-storage.ts for the existing token storage pattern. Add X-Mentiko-Signature header in the webhook dispatch function.",
     "labels": ["backend", "security", "api"]
   }
 }
@@ -459,9 +489,11 @@ REQUIREMENTS:
 4. When route is "decision", "reason" is required (one paragraph, no JSON inside it).
 5. acceptance_criteria (when task) must be a newline-delimited string of verifiable conditions, not goals.
 6. CRITICAL: if "task" includes subtasks, the task type MUST be "epic" — never "task" or "feature" with subtasks.
-7. Each subtask needs: title, description, type, and optionally depends_on (0-based indices).
+7. Each subtask needs: title, description, type, work_mode, and optionally depends_on (0-based indices).
 8. Priority should reflect genuine urgency — most things are 2 (medium).
 9. labels must be lowercase.
+10. WORK MODE is required on the task (and on each subtask when present): "delivery", "operations", or "research", classified from the observable end state — never omit it.
+11. Name the recognized framework, standard, or methodology you structured the work around in the description or design. Do not invent or cite a standard that does not exist.
 
 OUTPUT FORMAT:
 Raw JSON only. No backticks, no 'json' label, nothing but the JSON object.`;
@@ -485,6 +517,7 @@ DECISION RULES:
 - Do not return "no_match" or "execute directly"; if the task is not covered by an existing chain, create a new chain recommendation
 - A good fit means the chain implements the same reusable mechanism and can derive this task's concrete inputs from typed runtime task context. A generic dependency-removal chain can fit different task IDs; a chain whose prompts hardcode one task ID cannot.
 - Do not reject an otherwise-correct reusable chain merely because the current task names different IDs, paths, or values. Reject it only when those values are persisted constants rather than runtime inputs.
+- Anchor the recommendation to the recognized framework, standard, or methodology practitioners use for this class of problem; prefer a catalog chain that already implements that discipline, and name the framework in your reasoning.
 - Always provide reasoning (2-3 sentences) and a confidence score (0-1)
 - Always provide 1-3 alternatives from existing chains if any are partially relevant
 - For "use_existing": include match_reasons as bullet points explaining why this chain fits
@@ -497,6 +530,7 @@ WORK-MODE RULE (classify the observable end state, not the broad issue type):
 - delivery: workspace files/code must change. The chain needs edit_files and must implement the real change.
 - operations: service, deployment, external, or Mentiko-managed state must change via command/API/MCP. The chain needs run_commands; do not invent a file edit.
 - research: acceptance criteria are analysis/evidence only and promise no state mutation.
+- If the task context already declares a work_mode, honor it exactly; never downgrade a declared delivery or operations task to research just to make an analysis-only chain fit.
 - For "use_existing", the catalog chain's capabilities and mode must match that end state.
 - For "generate_new", set work_mode and make generation_prompt state the corresponding capability plus a final read-back/acceptance verifier.
 - For "no_action_needed": evidence must point at actual files/behavior in the workspace, not

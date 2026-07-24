@@ -40,6 +40,11 @@
       "maximum": 4,
       "description": "Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog"
     },
+    "work_mode": {
+      "type": "string",
+      "enum": ["delivery", "operations", "research"],
+      "description": "Observable end state this task must reach: delivery (create/change workspace files or code), operations (mutate service/deployment/managed state via command/API/MCP), or research (analysis/evidence only, no state mutation). Classify from the acceptance criteria, not the type label."
+    },
     "acceptance_criteria": {
       "type": "string",
       "description": "Newline-delimited acceptance criteria for when this task is considered done"
@@ -82,6 +87,11 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 4
+          },
+          "work_mode": {
+            "type": "string",
+            "enum": ["delivery", "operations", "research"],
+            "description": "Observable end state: delivery (change files/code), operations (mutate state via command/API/MCP), or research (analysis/evidence only)."
           },
           "acceptance_criteria": {
             "type": "string",

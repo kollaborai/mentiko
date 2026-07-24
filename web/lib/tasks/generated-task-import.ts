@@ -4,6 +4,7 @@ import config from "@/lib/config";
 import { _getDb, taskAddDep, taskCreate, taskGet } from "@/lib/tasks/task-store";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 
 type IssueType = "epic" | "feature" | "task" | "bug" | "chore";
 
@@ -15,6 +16,7 @@ export interface GeneratedSubtask {
   acceptance_criteria?: string | string[];
   labels?: string[];
   depends_on?: number[];
+  work_mode?: string;
 }
 
 export interface GeneratedTask {
@@ -28,6 +30,7 @@ export interface GeneratedTask {
   notes?: string;
   labels?: string[];
   subtasks?: GeneratedSubtask[];
+  work_mode?: string;
 }
 
 export interface CreatedTaskSummary {
@@ -232,7 +235,15 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
         parent_id: input.parentId,
         created_by: input.createdBy,
         workspace_id: effectiveWorkspace,
-        metadata: generatedTaskMetadata(input, effectiveWorkspace, { task_generation_role: "parent" }),
+        metadata: generatedTaskMetadata(input, effectiveWorkspace, {
+          task_generation_role: "parent",
+          // Persist the authoritative work_mode on leaf tasks so the delivery gate
+          // reads intent instead of guessing from issue_type. Skip epics: they are
+          // containers that close on their subtasks, and the gate exempts them.
+          ...(parentIssueType !== "epic" && isTaskWorkMode(input.generated.work_mode)
+            ? { work_mode: input.generated.work_mode }
+            : {}),
+        }),
       },
       input.namespaceId,
     );
@@ -261,6 +272,9 @@ export function importGeneratedTaskTree(input: ImportGeneratedTaskTreeInput): Im
               task_generation_role: "subtask",
               task_generation_parent_id: parent.id,
               task_generation_subtask_index: index,
+              ...(issueType(subtask.type, "task") !== "epic" && isTaskWorkMode(subtask.work_mode)
+                ? { work_mode: subtask.work_mode }
+                : {}),
             }),
           },
           input.namespaceId,

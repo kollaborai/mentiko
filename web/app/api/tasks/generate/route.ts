@@ -5,6 +5,7 @@ import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
+import { withRequiredWorkModeRule } from "@/lib/generation/work-mode-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { getSessionUser } from "@/lib/auth/auth-bridge";
 import { Unauthorized, BadRequest } from "@/lib/api-errors";
@@ -77,7 +78,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   const schema = getTaskSchema();
   const template = getTemplate(namespaceId, orgId, "task_generation");
-  const generationPrompt = resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
+  const generationPrompt = resolveTemplate(withRequiredWorkModeRule(withRequiredObservableEndStateCriteriaRule(template.content)), {
     USER_PROMPT: trimmedPrompt,
     SCHEMA: schema,
     WORKSPACE_CONTEXT: workspaceContext,

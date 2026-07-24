@@ -97,6 +97,14 @@ describe("chainHasDeliveryAgent", () => {
       agents: [{ id: "run-summary-generator", authorities: { can: ["read_files", "run_commands", "write_artifacts"] } }],
     })).toBe(false);
   });
+
+  it("expectedMode override: the task's work_mode wins over the chain's self-declared mode", () => {
+    // A chain that labels ITSELF operations (run_commands only) does not satisfy a
+    // task whose authoritative work_mode is delivery — closes the self-declare dodge.
+    expect(chainHasDeliveryAgent(OPERATIONS_CHAIN, "delivery")).toBe(false);
+    // A run_commands chain satisfies an operations task even with no contract.mode.
+    expect(chainHasDeliveryAgent({ agents: [{ id: "op", authorities: { can: ["run_commands"] } }] }, "operations")).toBe(true);
+  });
 });
 
 describe("enforceDeliveryGate", () => {
@@ -157,6 +165,62 @@ describe("enforceDeliveryGate", () => {
     const audit: CompletionAudit = { verdict: "close", reason: "Trust me." };
 
     const gated = enforceDeliveryGate(audit, { issue_type: "feature" }, "default", "default", "run-5");
+
+    expect(gated.verdict).toBe("decision");
+  });
+
+  // --- authoritative work_mode (single source of truth) ---------------------
+  // The false-positive escalation storm: an analysis-only task typed "task" got a
+  // correct research chain, but the issue_type-only gate demanded a file writer and
+  // escalated it every run. With work_mode persisted, research intent closes cleanly.
+  it("work_mode 'research' lets an analysis-only task close even with a read-only chain", () => {
+    mockChainFile(READ_ONLY_CHAIN);
+    const audit: CompletionAudit = { verdict: "close", reason: "Analysis complete; findings documented." };
+
+    const gated = enforceDeliveryGate(
+      audit,
+      { issue_type: "task", metadata: { work_mode: "research" } },
+      "default", "default", "run-research",
+    );
+
+    expect(gated).toBe(audit);
+  });
+
+  it("work_mode 'delivery' still escalates a read-only chain — intent drives the gate, not issue_type", () => {
+    mockChainFile(READ_ONLY_CHAIN);
+    const audit: CompletionAudit = { verdict: "close", reason: "Spec written." };
+
+    const gated = enforceDeliveryGate(
+      audit,
+      { issue_type: "task", metadata: { work_mode: "delivery" } },
+      "default", "default", "run-delivery",
+    );
+
+    expect(gated.verdict).toBe("decision");
+  });
+
+  it("reads work_mode from a JSON-string metadata too (task-store read path)", () => {
+    mockChainFile(READ_ONLY_CHAIN);
+    const audit: CompletionAudit = { verdict: "close", reason: "Documented." };
+
+    const gated = enforceDeliveryGate(
+      audit,
+      { issue_type: "feature", metadata: JSON.stringify({ work_mode: "research" }) },
+      "default", "default", "run-research-str",
+    );
+
+    expect(gated).toBe(audit);
+  });
+
+  it("work_mode 'operations' escalates when no agent can mutate state", () => {
+    mockChainFile({ agents: [{ id: "reader", authorities: { can: ["read_files"] } }] });
+    const audit: CompletionAudit = { verdict: "close", reason: "Claims state changed." };
+
+    const gated = enforceDeliveryGate(
+      audit,
+      { issue_type: "task", metadata: { work_mode: "operations" } },
+      "default", "default", "run-ops-fail",
+    );
 
     expect(gated.verdict).toBe("decision");
   });

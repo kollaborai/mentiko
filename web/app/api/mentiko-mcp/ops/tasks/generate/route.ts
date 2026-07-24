@@ -3,6 +3,7 @@ import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mc
 import { getTaskSchema } from "@/lib/schema-loader";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { withRequiredObservableEndStateCriteriaRule } from "@/lib/generation/criteria-authoring-required-rules";
+import { withRequiredWorkModeRule } from "@/lib/generation/work-mode-required-rules";
 import { resolveTemplate } from "@/lib/system/template-resolver";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationJob } from "@/lib/generation/generation-chain-dispatch";
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
 
   const schema = getTaskSchema();
   const template = getTemplate(namespaceId, orgId, "task_generation");
-  const generationPrompt = resolveTemplate(withRequiredObservableEndStateCriteriaRule(template.content), {
+  const generationPrompt = resolveTemplate(withRequiredWorkModeRule(withRequiredObservableEndStateCriteriaRule(template.content)), {
     USER_PROMPT: prompt,
     SCHEMA: schema,
     WORKSPACE_CONTEXT: workspaceContext,
