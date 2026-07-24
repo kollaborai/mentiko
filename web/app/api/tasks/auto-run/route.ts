@@ -27,6 +27,7 @@ import {
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
+import { isTaskWorkMode } from "@/lib/tasks/work-mode";
 import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
@@ -1379,6 +1380,19 @@ async function autoAcceptRecommendation(
   }
 
   const action = normalized.action;
+
+  // Persist the recommender's work_mode onto the task so the completion-audit
+  // delivery gate reads authoritative intent even for tasks NOT created via
+  // task-generation (this is auto-run's dominant path). Fill it in only when
+  // unset — never override a work_mode the task already carries.
+  if (isTaskWorkMode(normalized.work_mode) && !isTaskWorkMode((metadata as Record<string, unknown>).work_mode)) {
+    metadata = { ...metadata, work_mode: normalized.work_mode };
+    try {
+      taskUpdate(orgId, taskId, { metadata }, namespaceId);
+    } catch {
+      /* non-fatal: the gate falls back to the issue_type heuristic */
+    }
+  }
 
   if (action === "use_existing") {
     const chainId = normalized.chain_id;

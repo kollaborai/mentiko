@@ -551,6 +551,12 @@ export function triggerDecisionImportReplay(input: {
 
 function decisionAutoApprovalEnabled(namespaceId: string, orgId: string, decision: Decision): boolean {
   if (!decision.workspacePath) return false;
+  // Circuit breaker against self-amplification: never auto-approve a decision the
+  // completion-audit delivery gate raised. Those mean "a task ran but a human must
+  // judge the outcome" — auto-approving them is exactly what let ONE delivery-gate
+  // escalation re-seed the queue into hundreds of tasks (the ApothesIQ storm). They
+  // wait for a person; every other decision still auto-advances under the policy.
+  if (decision.source === "completion-audit") return false;
   const workspace = listWorkspaces(namespaceId, orgId).find(
     (candidate) => candidate.id === decision.workspacePath || candidate.path === decision.workspacePath,
   );
