@@ -27,7 +27,8 @@ import {
   type RunsSnapshot,
 } from "@/lib/runs/auto-run";
 import { taskAddDep, taskClaimMetadataKeyIfUnset, taskGet, taskUpdate } from "@/lib/tasks/task-store";
-import { isTaskWorkMode } from "@/lib/tasks/work-mode";
+import { isTaskWorkMode, resolveTaskWorkMode } from "@/lib/tasks/work-mode";
+import { chainHasDeliveryAgent } from "@/lib/tasks/completion-audit-delivery-gate";
 import { normalizeTaskChainBindingMetadata } from "@/lib/tasks/task-chain-binding";
 import { createTaskDecision } from "@/lib/tasks/task-decision-link";
 import { triggerAutoRunScan } from "@/lib/runs/auto-run-service";
@@ -1719,6 +1720,37 @@ async function startChainRun(
   const chain = chainData.data.chain;
   if (!chain) {
     return { triggered: false, taskId, error: "Chain data missing" };
+  }
+
+  // Pre-dispatch delivery gate: if this task's authoritative work_mode needs an
+  // implementing agent (delivery/operations) but the bound chain has none, running
+  // it would only waste a run and trip the post-hoc gate into a held decision.
+  // Clear the binding + count a retry so the next scan re-analyzes and produces a
+  // capable chain (self-heal), instead of running a chain that cannot deliver. This
+  // closes the use_existing hole (a catalog chain assigned with no authority check)
+  // and backstops a generated chain that omitted its writer. Fail-open: a research
+  // or unset work_mode, or a chain that HAS the authority, runs unchanged. Bounded
+  // by the auto_run_retries cap. Mirrors the chain-deleted self-heal above.
+  const preDispatchWorkMode = resolveTaskWorkMode(metadata);
+  if ((preDispatchWorkMode === "delivery" || preDispatchWorkMode === "operations")
+      && !chainHasDeliveryAgent(chain, preDispatchWorkMode)) {
+    const neededAuthority = preDispatchWorkMode === "operations" ? "run_commands" : "edit_files";
+    try {
+      taskUpdate(orgId, taskId, {
+        metadata: {
+          ...metadata,
+          chain_id: undefined,
+          chain_name: undefined,
+          auto_run_retries: ((metadata.auto_run_retries as number) || 0) + 1,
+          generation_last_error: `The bound chain "${chainId}" has no agent with ${neededAuthority} authority, but this ${preDispatchWorkMode} task requires one. Generate a ${preDispatchWorkMode}-capable chain with an implementing agent.`,
+        },
+      }, namespaceId);
+    } catch { /* non-fatal */ }
+    return {
+      triggered: false,
+      taskId,
+      error: `Bound chain ${chainId} lacks ${neededAuthority} authority for this ${preDispatchWorkMode} task; binding cleared for re-analysis.`,
+    };
   }
 
   // A task-linked run must claim its exact data root before dispatch. The
