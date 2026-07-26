@@ -107,6 +107,10 @@ case "$CMD" in
         node "$LIB_DIR/mentiko-cli-schedules.mjs" "$CMD" "$@"
         ;;
 
+    list_tasks|get_task|create_task|update_task|close_task|comment_task|link_task|unlink_task)
+        node "$LIB_DIR/mentiko-cli-tasks.mjs" "$CMD" "$@"
+        ;;
+
     # -------------------------------------------------------------------
     # spec mode (legacy, still works)
     # -------------------------------------------------------------------
@@ -257,18 +261,18 @@ case "$CMD" in
             exit 1
         fi
 
-        # Invoke the typed writer directly. Run scope is the normal agent path.
-        # Empty-run ingress is exceptional and must be declared explicitly; it is never
-        # inferred as a compatibility path.
-        RUNNER_EVENT_EMITTER="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/runner-event-emitter.js"
-        if ! node "$RUNNER_EVENT_EMITTER" emit \
+        # Route through the ops endpoint (ns/org from the verified token); the
+        # client degrades to the local typed writer if the web process is down, so
+        # the completion signal never fails closed. Same flag contract as the bundle.
+        EMIT_CLIENT="${MENTIKO_CODE_ROOT:?MENTIKO_CODE_ROOT must be configured}/lib/mentiko-cli-emit.mjs"
+        if ! node "$EMIT_CLIENT" emit \
             --scope "$EVENT_SCOPE" \
             --event "$EVENT_NAME" \
             --source "$SOURCE" \
             --run-id "${MENTIKO_RUN_ID:-${RUN_ID:-}}" \
             --data "$DATA"
         then
-            echo "  error: typed runner event emission failed" >&2
+            echo "  error: runner event emission failed (http + local fallback)" >&2
             exit 1
         fi
 
