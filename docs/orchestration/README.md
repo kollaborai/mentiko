@@ -10,6 +10,10 @@ see: [../architecture.md](../architecture.md) for system-wide architecture.
 see: [../RUNNER_V2_ARCHITECTURE.md](../RUNNER_V2_ARCHITECTURE.md) for the
 current typed runner-v2 boundary and the complete HTTP-to-next-agent lifecycle.
 
+see: [ENGINE_MAP.md](./ENGINE_MAP.md) for the visual topology of the whole engine
+(triggers, watchers, runner, generation, tasks, decisions) as mermaid diagrams, plus
+a dead-end / things-to-verify list.
+
 overview
 ========
 
