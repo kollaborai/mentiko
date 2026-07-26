@@ -57,7 +57,7 @@ case "$CMD" in
     # -------------------------------------------------------------------
 
     run)
-        exec node "$LIB_DIR/runner-v2-direct-run.js" "$@"
+        exec node "$LIB_DIR/mentiko-cli-run.mjs" "$@"
         ;;
 
     generate)
