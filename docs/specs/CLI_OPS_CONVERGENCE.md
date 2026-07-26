@@ -1,6 +1,6 @@
 # CLI / ops convergence
 
-Status: phases 1a/1b + 2 + 3 shipped; phase 4 (tasks) shipped, agents/secrets/workspaces deferred (2026-07-26)
+Status: phases 1a/1b + 2 + 3 + 4 shipped (2026-07-26); packaging track separate
 Branch: `cli-ops-convergence`
 
 Make `bin/mentiko` reach Mentiko the way the MCP already does — through
@@ -184,19 +184,25 @@ unchanged; what changed is who decides where it lands.
 - proven live: valid token → 200 (event written to the token's ns/org);
   bogus/missing token → 401; unreachable → local fallback writes + logs.
 
-### phase 4 — close the surface gap  (tasks SHIPPED; agents/secrets/workspaces deferred)
+### phase 4 — close the surface gap  (SHIPPED)
 
 36 ops endpoints and 106 MCP tools against 19 CLI subcommands. The CLI had no task,
-agent, secret, or workspace commands. NEW `lib/mentiko-cli-tasks.mjs` ships the
-mission-critical surface — `list_tasks / get_task / create_task / update_task /
-close_task / comment_task / link_task / unlink_task` over the ops endpoints, under
-the verified session (same shape as the schedules CLI; `close` requires `--yes`).
+agent, secret, or workspace commands. Two modules close it, both argument parsers
+over the shared `opsRequest`, under the verified session:
 
-Deliberate scope: tasks drive the auto-run mission. agents / secrets / workspaces
-follow the identical pattern — argument parsers over `opsRequest` — deferred
-rather than ported wholesale, per "decide deliberately which belong on a CLI."
-Proven live: `list_tasks` → 200, `create_task` → `TASK-###` with `owner` from the
-token.
+- `lib/mentiko-cli-tasks.mjs` — `list_tasks / get_task / create_task / update_task /
+  close_task / comment_task / link_task / unlink_task` (close requires `--yes`).
+  Tasks drive the auto-run mission; full CRUD over the ops task routes.
+- `lib/mentiko-cli-org.mjs` — `list_agents / create_agent / list_secrets /
+  create_secret / list_workspaces`. Scope matches what the ops layer exposes:
+  agents + secrets are list/create (no update/delete on ops); workspaces are
+  list-only (created via the UI). Secrets never print their value — the route
+  omits it, and `create_secret` returns the id; prefer `--json-stdin` for the value.
+
+Deliberate, not wholesale: every command maps 1:1 to an existing ops endpoint under
+`requireOpsAuth` — no new server surface, no porting all 106 MCP tools. Proven live:
+`list_tasks`/`create_task` (owner from token), `list_agents`/`create_agent`,
+`list_secrets`/`create_secret` (value redacted), `list_workspaces`.
 
 ## packaging (separate track, informs phase 1)
 

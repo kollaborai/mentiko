@@ -111,6 +111,10 @@ case "$CMD" in
         node "$LIB_DIR/mentiko-cli-tasks.mjs" "$CMD" "$@"
         ;;
 
+    list_agents|create_agent|list_secrets|create_secret|list_workspaces)
+        node "$LIB_DIR/mentiko-cli-org.mjs" "$CMD" "$@"
+        ;;
+
     # -------------------------------------------------------------------
     # spec mode (legacy, still works)
     # -------------------------------------------------------------------
