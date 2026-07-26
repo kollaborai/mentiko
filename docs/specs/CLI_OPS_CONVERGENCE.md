@@ -111,6 +111,42 @@ Replace the second run creator. `runTypedDirect`
 itself and POSTs to `/api/mentiko-mcp/ops/context/runs` with the credential from
 phase 1a.
 
+**Flag reconciliation — read this before designing anything.** The gap is NOT
+between the CLI and `startChainRun`; it is between the CLI and the thin ops
+wrapper. `startChainRun` already destructures
+(`web/lib/runs/chain-run-service.ts:303-311`):
+
+    chainId, userPrompt, debug, workspacePath, workspaceId, taskId,
+    executor, agentProfileId
+
+`workspacePath` is accepted alongside `workspaceId` and resolved through
+`resolveAuthorizedWorkspacePath` (`:320`) — so "the CLI has a filesystem path,
+the endpoint wants a DB id" is already solved by the service.
+
+What drops the fields is `/ops/context/runs`, which forwards only four of them
+(`web/app/api/mentiko-mcp/ops/context/runs/route.ts:53-58`):
+
+    body: JSON.stringify({ chain, chainId, userPrompt: task || "", workspaceId })
+
+So the work is widening a passthrough to match the service beneath it, not
+designing new API surface.
+
+`mentiko run` parses exactly five flags (`parseDirectRunArgs`):
+`--workspace`, `--start`, `--task`, `--dry-run`, `--debug`.
+
+- `--workspace`, `--task`, `--debug` → already supported; just stop dropping them.
+- `--dry-run` → stays local. It creates no run by definition, so there is nothing
+  to route.
+- `--start <agent>` → **the one genuine gap.** `startChainRun` has no
+  `agentId`/`startAgent` concept. DECISION (Marco): make it a first-class field
+  on the service, or keep `--start` as an explicitly-marked local debug path.
+  Recommendation: first-class — "start at agent N" is a real capability, and
+  confining it locally is how the second run creator survives forever.
+- `parentRunId` is **not a flag.** It is a `DirectRunOptions` field
+  (`direct-run.ts:26,117`) used by programmatic chained-run callers. Routing
+  `mentiko run` over HTTP must not break those callers — check them before
+  changing the signature.
+
 This is what populates `MENTIKO_SESSION_TOKEN` for CLI-launched agents —
 `startChainRun` mints it at `chain-run-service.ts:266` and
 `agent-bootstrap-plan.ts:121` already forwards it. It also retires the
