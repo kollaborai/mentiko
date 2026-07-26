@@ -1,7 +1,11 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { orgPath } from "@/lib/config";
-import type { AgentDefinition } from "@/lib/agents/agent-loader";
+import {
+  resolveAgentRef,
+  type AgentDefinition,
+  type AgentRef,
+} from "@/lib/agents/agent-loader";
 import { normalizeMcpTaskToolDeclarations } from "@/lib/agents/mcp-task-tool-contract";
 
 type AgentAuthorities = NonNullable<AgentDefinition["authorities"]>;
@@ -86,6 +90,40 @@ function normalizedAgentForRegistry(agent: AgentDefinition, id: string): AgentDe
     ...taskToolNormalized,
     id,
     ...(authorities ? { authorities } : {}),
+  };
+}
+
+/**
+ * A generated agent can reuse a catalog agent while overriding its prompt,
+ * identity, or task-specific contract fields:
+ *
+ *   { "$ref": "fix-implementer", "id": "lint-fixer", "prompt": "..." }
+ *
+ * Such entries are extracted into new registry records below. Hydrate the
+ * referenced base first so extraction cannot silently discard inherited
+ * triggers, emits, authorities, and other runtime-critical fields.
+ */
+export function hydrateInlineAgentRefs(
+  chainJson: Record<string, unknown>,
+  resolveRef: (ref: AgentRef) => AgentDefinition,
+): Record<string, unknown> {
+  if (!Array.isArray(chainJson.agents)) return chainJson;
+
+  return {
+    ...chainJson,
+    agents: chainJson.agents.map((entry) => {
+      if (
+        !entry
+        || typeof entry !== "object"
+        || Array.isArray(entry)
+        || typeof (entry as Record<string, unknown>).$ref !== "string"
+        || typeof (entry as Record<string, unknown>).prompt !== "string"
+      ) {
+        return entry;
+      }
+
+      return resolveRef(entry as AgentRef);
+    }),
   };
 }
 
@@ -334,7 +372,11 @@ export async function postProcessChain(
   namespaceId: string,
   orgId: string
 ): Promise<PostProcessResult> {
-  const extracted = extractInlineAgents(chainJson);
+  const hydratedChain = hydrateInlineAgentRefs(
+    chainJson,
+    (ref) => resolveAgentRef(ref, namespaceId, orgId),
+  );
+  const extracted = extractInlineAgents(hydratedChain);
 
   if (extracted.length === 0) {
     return { chain: chainJson, createdAgents: [], extractedCount: 0 };
@@ -349,7 +391,7 @@ export async function postProcessChain(
     createdAgents.push({ id: finalId, name: item.agent.name });
   }
 
-  const rewrittenChain = rewriteChainInlineToRef(chainJson, agentIdMap);
+  const rewrittenChain = rewriteChainInlineToRef(hydratedChain, agentIdMap);
 
   return {
     chain: rewrittenChain,

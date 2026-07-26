@@ -203,6 +203,47 @@ function chainStorageName(chain: GeneratedChain): string {
     .replace(/^-|-$/g, "");
 }
 
+class ChainSaveError extends Error {
+  constructor(
+    message: string,
+    readonly attempts: number,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "ChainSaveError";
+  }
+}
+
+function chainSaveFailure(status: number, body: string): { message: string; retryable: boolean } {
+  let summary = `Chain save returned ${status}`;
+  let validationErrors: string[] = [];
+
+  try {
+    const payload = asRecord(JSON.parse(body));
+    const error = asRecord(payload?.error);
+    const details = asRecord(error?.details) ?? asRecord(payload?.details);
+    if (typeof error?.message === "string") {
+      summary = error.message;
+    } else if (typeof payload?.error === "string") {
+      summary = payload.error;
+    }
+    if (Array.isArray(details?.errors)) {
+      validationErrors = details.errors.filter(
+        (item): item is string => typeof item === "string",
+      );
+    }
+  } catch {
+    if (body.trim()) summary = `${summary}: ${body.trim().slice(0, 500)}`;
+  }
+
+  return {
+    message: validationErrors.length > 0
+      ? `${summary}: ${validationErrors.join("; ")}`
+      : summary,
+    retryable: status === 408 || status === 425 || status === 429 || status >= 500,
+  };
+}
+
 export function ChainAssignWorkflow({
   task,
   onAssignChain,
@@ -246,6 +287,60 @@ export function ChainAssignWorkflow({
 
   // helper to append workspace query param to URLs
   const wsParam = workspacePath ? `?workspace=${encodeURIComponent(workspacePath)}` : "";
+
+  async function requestAutomaticSaveRecovery(): Promise<string | null> {
+    if (!task.chainBinding?.auto_run) return null;
+
+    try {
+      const response = await fetchWithNamespace(`/api/tasks/auto-run${wsParam}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id }),
+      });
+      if (!response.ok) {
+        return `automatic recovery request failed (${response.status})`;
+      }
+
+      const result = unwrapApiData<{
+        action?: string;
+        error?: string;
+        retryCount?: number;
+        retryLimit?: number;
+        recoveryScheduled?: boolean;
+      }>(await response.json());
+
+      if (result.action !== "generation_save_failed") {
+        return "auto-run rechecked the task and will continue from its latest durable state";
+      }
+      if (result.recoveryScheduled) {
+        return `save failure recorded; corrected regeneration scheduled (${result.retryCount}/${result.retryLimit} failed attempts used)`;
+      }
+      return `save failure recorded; automatic recovery stopped because the retry budget is exhausted (${result.retryCount}/${result.retryLimit})`;
+    } catch (error) {
+      return `automatic recovery request failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  async function handleGeneratedChainSaveFailure(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Chain save failed:", message);
+    const recovery = await requestAutomaticSaveRecovery();
+    setErrorMessage(
+      recovery
+        ? `${message}\n\nRecovery: ${recovery}.`
+        : message,
+    );
+    setShowErrorDetails(true);
+    setStep("generated");
+  }
+
+  function handleChainAssignmentFailure(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Chain assignment failed:", message);
+    setErrorMessage(`Chain saved successfully, but task assignment failed: ${message}`);
+    setShowErrorDetails(true);
+    setStep("generated");
+  }
 
   const generateChain = useCallback(async (prompt: string) => {
     // double-submit protection
@@ -411,19 +506,21 @@ export function ChainAssignWorkflow({
       const chainData = extractGeneratedChain(generationJob.result);
       if (chainData) {
         setGeneratedChain(chainData);
+        setSaving(true);
+        setErrorMessage(null);
         // auto-save to disk + assign to task so chain persists across page loads
         // only bind chain to task if save succeeds - otherwise user gets "chain not found"
         autoSaveChain(chainData)
-          .then((name) => {
-            onAssignChain(name, chainData.name).catch(() => {});
+          .then(async (name) => {
+            try {
+              await onAssignChain(name, chainData.name);
+              setErrorMessage(null);
+            } catch (error) {
+              handleChainAssignmentFailure(error);
+            }
           })
-          .catch((err) => {
-            console.error("Chain save failed:", err.message);
-            setErrorMessage(
-              "Chain was generated but could not be saved. Try again or save manually from the Chains page."
-            );
-            setStep("recommendation");
-          });
+          .catch(handleGeneratedChainSaveFailure)
+          .finally(() => setSaving(false));
       } else {
         setErrorMessage("Chain generation completed but no valid chain JSON was found.");
       }
@@ -436,7 +533,6 @@ export function ChainAssignWorkflow({
       };
       onMetadataUpdate?.(metadata);
       setStep("generated");
-      setErrorMessage(null);
     } else if (generationJob.status === "failed") {
       setErrorMessage(generationJob.error || "Generation failed");
       // clear generation_status in local state so the retry button isn't blocked
@@ -448,14 +544,14 @@ export function ChainAssignWorkflow({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onMetadataUpdate may cause re-renders if parent doesn't memoize
   }, [generationJob]);
 
-  // auto-save generated chain to disk so it can be viewed/edited
-  // retries up to 3 times on failure since this is critical for the run-chain flow
+  // Auto-save generated chains. Retry only failures that can plausibly heal
+  // without changing the payload; validation/auth failures fail immediately.
   async function autoSaveChain(chain: GeneratedChain) {
     const sanitized = sanitizeChain(chain);
     const name = chainStorageName(chain);
 
     const maxRetries = 3;
-    let lastError: string | null = null;
+    let lastError = "Unknown chain save failure";
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -470,10 +566,18 @@ export function ChainAssignWorkflow({
           return name; // success
         }
 
-        // parse error response for diagnostics
         const body = await res.text().catch(() => "");
-        lastError = `Save returned ${res.status}: ${body.slice(0, 200)}`;
+        const failure = chainSaveFailure(res.status, body);
+        lastError = failure.message;
+        if (!failure.retryable) {
+          throw new ChainSaveError(
+            `Chain save failed after ${attempt} attempt${attempt === 1 ? "" : "s"}: ${lastError}`,
+            attempt,
+            false,
+          );
+        }
       } catch (err) {
+        if (err instanceof ChainSaveError) throw err;
         lastError = err instanceof Error ? err.message : String(err);
       }
 
@@ -483,8 +587,11 @@ export function ChainAssignWorkflow({
       }
     }
 
-    // all retries exhausted - throw so caller knows save failed
-    throw new Error(`Failed to save chain after ${maxRetries} attempts: ${lastError}`);
+    throw new ChainSaveError(
+      `Chain save failed after ${maxRetries} attempts: ${lastError}`,
+      maxRetries,
+      true,
+    );
   }
 
   async function checkExistingJob() {
@@ -511,19 +618,35 @@ export function ChainAssignWorkflow({
             setStep("generating");
             return;
           } else if (jobData.status === "complete" && jobData.result) {
+            const completedJobId = typeof jobData.id === "string"
+              ? jobData.id
+              : binding.generation_job_id;
+            if (
+              completedJobId
+              && handledGenerationCompleteJobIds.current.has(completedJobId)
+            ) {
+              return;
+            }
+            if (completedJobId) {
+              handledGenerationCompleteJobIds.current.add(completedJobId);
+            }
             const chainData = extractGeneratedChain(jobData.result);
             if (chainData) {
               setGeneratedChain(chainData);
+              setSaving(true);
+              setErrorMessage(null);
               try {
                 const name = await autoSaveChain(chainData);
-                await onAssignChain(name, chainData.name).catch(() => {});
+                try {
+                  await onAssignChain(name, chainData.name);
+                } catch (error) {
+                  handleChainAssignmentFailure(error);
+                }
               } catch (err) {
-                console.error("Chain save failed:", err instanceof Error ? err.message : String(err));
-                setErrorMessage(
-                  "Chain was generated but could not be saved. Try again or save manually from the Chains page."
-                );
-                setStep("recommendation");
+                await handleGeneratedChainSaveFailure(err);
                 return;
+              } finally {
+                setSaving(false);
               }
             } else {
               setErrorMessage("Chain generation completed but no valid chain JSON was found.");
@@ -816,33 +939,14 @@ export function ChainAssignWorkflow({
     setErrorMessage(null);
 
     try {
-      const chain = sanitizeChain(generatedChain);
-      const name = chain.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
-
-      const res = await fetchWithNamespace("/api/chains/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chain, name }),
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        let detail = "";
-        try {
-          const parsed = JSON.parse(body);
-          detail = parsed?.error?.details?.errors?.join(", ") || parsed?.error?.message || "";
-        } catch { /* not json */ }
-        throw new Error(detail || `Save returned ${res.status}`);
+      const name = await autoSaveChain(generatedChain);
+      try {
+        await onAssignChain(name, generatedChain.name);
+      } catch (error) {
+        handleChainAssignmentFailure(error);
       }
-
-      await onAssignChain(name, chain.name);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error("Chain save failed:", msg);
-      setErrorMessage(`Failed to save chain: ${msg}`);
+      await handleGeneratedChainSaveFailure(err);
     } finally {
       setSaving(false);
     }
@@ -1318,7 +1422,22 @@ export function ChainAssignWorkflow({
         />
 
         {errorMessage && (
-          <div className="text-[10px] text-destructive">{errorMessage}</div>
+          <div className="space-y-1.5 rounded-md bg-red-500/5 p-2">
+            <div className="text-[10px] text-red-400">
+              {errorMessage.split("\n")[0].slice(0, 180)}
+            </div>
+            <button
+              className="text-[10px] text-foreground/30 hover:text-foreground/50 underline"
+              onClick={() => setShowErrorDetails((value) => !value)}
+            >
+              {showErrorDetails ? "Hide Details" : "Show Details"}
+            </button>
+            {showErrorDetails && (
+              <pre className="text-[9px] text-foreground/40 whitespace-pre-wrap break-words max-h-40 overflow-auto font-mono">
+                {errorMessage}
+              </pre>
+            )}
+          </div>
         )}
 
         <div className="flex items-center flex-wrap gap-2 pt-2">
@@ -1327,7 +1446,11 @@ export function ChainAssignWorkflow({
               <button
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-cyan-500 text-white text-xs font-medium hover:bg-cyan-600 transition-colors"
                 onClick={async () => {
-                  await onAssignChain(savedChainName, generatedChain?.name || savedChainName);
+                  try {
+                    await onAssignChain(savedChainName, generatedChain?.name || savedChainName);
+                  } catch (error) {
+                    handleChainAssignmentFailure(error);
+                  }
                 }}
               >
                 Assign to Task
@@ -1383,13 +1506,18 @@ export function ChainAssignWorkflow({
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md hover:bg-accent text-xs text-foreground/60 hover:text-foreground transition-colors"
                 onClick={() => {
                   const base = recommendation?.generation_prompt || "";
-                  const tweaked = tweakInput
-                    ? `${base}\n\nADDITIONAL REQUIREMENTS:\n${tweakInput}`
-                    : base;
+                  const priorFailure = errorMessage?.split("\n\nRecovery:")[0];
+                  const tweaked = [
+                    base,
+                    priorFailure
+                      ? `PRIOR ATTEMPT REJECTED:\n${priorFailure}\nReturn a corrected chain that satisfies every reported save validation error.`
+                      : "",
+                    tweakInput ? `ADDITIONAL REQUIREMENTS:\n${tweakInput}` : "",
+                  ].filter(Boolean).join("\n\n");
                   generateChain(tweaked);
                 }}
               >
-                Tweak & Regenerate
+                {errorMessage ? "Regenerate With Correction" : "Tweak & Regenerate"}
               </button>
               <button
                 className="text-[10px] text-foreground/30 hover:text-foreground/50 px-2"

@@ -1151,6 +1151,82 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("records exact chain-save validation errors and schedules a corrected generation attempt", async () => {
+    mockTaskGet.mockReturnValue({
+      id: "CHOR-001",
+      title: "Restore the lint gate",
+      status: "open",
+      issue_type: "chore",
+      priority: 3,
+      metadata: {
+        auto_run: true,
+        analysis_job_id: "job-analysis",
+        analysis_status: "accepted",
+        generation_job_id: "job-generation",
+        generation_status: "complete",
+        auto_run_retries: 1,
+      },
+    });
+    mockGetJob.mockReturnValue({
+      id: "job-generation",
+      type: "generate",
+      status: "complete",
+      result: {
+        name: "Static Analysis Gate",
+        metadata: {
+          generated_chain_contract: {
+            version: 1,
+            mode: "delivery",
+            acceptance_criteria: "The declared lint command reports zero violations.",
+          },
+        },
+        agents: [{ $ref: "lint-fix-implementer" }],
+      },
+    });
+    (global.fetch as jest.Mock).mockResolvedValue(jsonResponse({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Invalid chain",
+        details: {
+          errors: [
+            "agents[0].emits: required and must be non-empty",
+            "delivery generated chains require an agent with edit_files authority",
+          ],
+        },
+      },
+    }, 422));
+
+    const response = await POST(makeRequest({ taskId: "CHOR-001" }) as never);
+    const body = await response.json();
+
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "CHOR-001",
+      action: "generation_save_failed",
+      error: expect.stringContaining("agents[0].emits"),
+      retryCount: 2,
+      retryLimit: 3,
+      recoveryScheduled: true,
+    });
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "CHOR-001",
+      {
+        metadata: expect.objectContaining({
+          generation_job_id: undefined,
+          generation_status: "failed",
+          generation_last_error: expect.stringContaining(
+            "delivery generated chains require an agent with edit_files authority",
+          ),
+          auto_run_retries: 2,
+        }),
+      },
+      "default",
+    );
+    expect(mockTriggerAutoRunScan).toHaveBeenCalledWith("default", "default");
+  });
+
   it("starts generation when a completed recommendation has no existing chain", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-3",

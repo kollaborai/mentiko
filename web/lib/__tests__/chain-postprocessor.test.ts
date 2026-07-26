@@ -1,5 +1,6 @@
 import {
   extractInlineAgents,
+  hydrateInlineAgentRefs,
   normalizeAgentAuthorities,
   rewriteChainInlineToRef,
 } from "@/lib/chains/chain-postprocessor";
@@ -130,6 +131,45 @@ describe("rewriteChainInlineToRef", () => {
 });
 
 describe("generated agent authority contract", () => {
+  it("hydrates hybrid $ref agents before extraction so inherited runtime fields survive", () => {
+    const hydrated = hydrateInlineAgentRefs({
+      agents: [{
+        $ref: "fix-implementer",
+        id: "lint-fix-implementer",
+        name: "Lint Fix Implementer",
+        prompt: "Fix the reported lint violations.",
+        triggers: ["lint-findings-categorized"],
+        deliverable: "A zero-violation workspace",
+      }],
+    }, (ref) => ({
+      id: "fix-implementer",
+      name: "Fix Implementer",
+      prompt: "Apply the diagnosed fix.",
+      triggers: ["root-cause-identified"],
+      emits: "fix-implemented",
+      authorities: {
+        can: ["read_files", "edit_files", "run_commands"],
+        needs_approval: [],
+      },
+      ...Object.fromEntries(
+        Object.entries(ref).filter(([key]) => key !== "$ref"),
+      ),
+    }));
+
+    const [extracted] = extractInlineAgents(hydrated);
+
+    expect(extracted.agent).toMatchObject({
+      id: "lint-fix-implementer",
+      triggers: ["lint-findings-categorized"],
+      emits: "fix-implemented",
+      authorities: {
+        can: ["read_files", "edit_files", "run_commands"],
+        needs_approval: [],
+      },
+      deliverable: "A zero-violation workspace",
+    });
+  });
+
   it("canonicalizes the legacy generated string-array shorthand before registry persistence", () => {
     expect(normalizeAgentAuthorities(["read_files", "run_commands"])).toEqual({
       can: ["read_files", "run_commands"],

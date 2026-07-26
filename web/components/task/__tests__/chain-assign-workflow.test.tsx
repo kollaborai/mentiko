@@ -427,4 +427,131 @@ describe("ChainAssignWorkflow", () => {
     ]);
     expect(onAssignChain).toHaveBeenCalledWith("shell-command-executor", "Shell Command Executor");
   });
+
+  it("shows exact save validation errors, skips blind 422 retries, and reports bounded recovery", async () => {
+    jobsById.set("job-chain-generation", completedChainGenerationJob);
+    mockFetchWithNamespace.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/jobs/job-chain-generation")) {
+        return { ok: true, json: async () => completedChainGenerationJob };
+      }
+      if (url === "/api/chains/save" && init?.method === "POST") {
+        return {
+          ok: false,
+          status: 422,
+          text: async () => JSON.stringify({
+            success: false,
+            error: {
+              message: "Invalid chain",
+              details: {
+                errors: [
+                  "agents[1].emits: required and must be non-empty",
+                  "delivery generated chains require an agent with edit_files authority",
+                ],
+              },
+            },
+          }),
+        };
+      }
+      if (url === "/api/tasks/auto-run" && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: {
+              action: "generation_save_failed",
+              retryCount: 2,
+              retryLimit: 3,
+              recoveryScheduled: true,
+            },
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const onAssignChain = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: true,
+          generation_job_id: "job-chain-generation",
+          generation_status: "complete",
+        })}
+        onAssignChain={onAssignChain}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/agents\[1\]\.emits/).length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText("Regenerate With Correction")).toBeInTheDocument();
+    expect(screen.getAllByText(/corrected regeneration scheduled/).length).toBeGreaterThan(0);
+    expect(
+      mockFetchWithNamespace.mock.calls.filter(([url]) => url === "/api/chains/save"),
+    ).toHaveLength(1);
+    expect(mockFetchWithNamespace).toHaveBeenCalledWith(
+      "/api/tasks/auto-run",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ taskId: "TASK-016" }),
+      }),
+    );
+    expect(onAssignChain).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText(
+        "Chain was generated but could not be saved. Try again or save manually from the Chains page.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not misreport an assignment failure as a save failure or trigger regeneration", async () => {
+    jobsById.set("job-chain-generation", completedChainGenerationJob);
+    mockFetchWithNamespace.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/jobs/job-chain-generation")) {
+        return { ok: true, json: async () => completedChainGenerationJob };
+      }
+      if (url === "/api/chains/save" && init?.method === "POST") {
+        return { ok: true, status: 200, text: async () => "" };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    const onAssignChain = jest.fn().mockRejectedValue(new Error("task update conflict"));
+
+    render(
+      <ChainAssignWorkflow
+        task={makeTask({
+          chain_id: "",
+          auto_run: true,
+          generation_job_id: "job-chain-generation",
+          generation_status: "complete",
+        })}
+        onAssignChain={onAssignChain}
+        onCancel={jest.fn()}
+        onMetadataUpdate={jest.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(/Chain saved successfully, but task assignment failed/).length,
+      ).toBeGreaterThan(0);
+    });
+    expect(
+      mockFetchWithNamespace.mock.calls.some(([url]) => url === "/api/tasks/auto-run"),
+    ).toBe(false);
+    fireEvent.click(screen.getByText("Assign to Task"));
+    await waitFor(() => {
+      expect(onAssignChain).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      screen.getAllByText(/Chain saved successfully, but task assignment failed/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      mockFetchWithNamespace.mock.calls.some(([url]) => url === "/api/tasks/auto-run"),
+    ).toBe(false);
+  });
 });

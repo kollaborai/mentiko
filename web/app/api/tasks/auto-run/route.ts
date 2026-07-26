@@ -74,6 +74,30 @@ const JOB_CLAIM_STALE_MS = 5 * 60 * 1000;
 const EXECUTE_DIRECTLY_GATE_KEY = "auto_run_execute_directly_gate";
 const EXECUTE_DIRECTLY_GATE_STALE_MS = 5 * 60 * 1000;
 
+function asJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function generatedChainSaveFailureMessage(payload: unknown, status: number): string {
+  const root = asJsonRecord(payload);
+  const error = asJsonRecord(root?.error);
+  const details = asJsonRecord(error?.details) ?? asJsonRecord(root?.details);
+  const validationErrors = Array.isArray(details?.errors)
+    ? details.errors.filter((item): item is string => typeof item === "string")
+    : [];
+  const summary = typeof error?.message === "string"
+    ? error.message
+    : typeof root?.error === "string"
+      ? root.error
+      : `Chain save returned ${status}`;
+
+  return validationErrors.length > 0
+    ? `${summary}: ${validationErrors.join("; ")}`
+    : summary;
+}
+
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
 export const GET = withErrorHandling(async (request: NextRequest) => {
   if (!(await checkAuth(request))) {
@@ -272,6 +296,9 @@ interface TriggerResult {
   action?: string;
   reason?: string;
   error?: string;
+  retryCount?: number;
+  retryLimit?: number;
+  recoveryScheduled?: boolean;
 }
 
 function readResumableRunId(
@@ -1553,11 +1580,33 @@ async function autoAcceptGeneratedChain(
   });
 
   if (!saveRes.ok) {
-    const err = await saveRes.json().catch(() => ({}));
-    const message = (err as { error?: { message?: string } }).error?.message
-      || (err as { error?: string }).error
-      || "Failed to save generated chain";
-    return { triggered: false, taskId, error: message };
+    const payload = await saveRes.json().catch(() => ({}));
+    const message = generatedChainSaveFailureMessage(payload, saveRes.status);
+    const nextRetries = Math.min(
+      MAX_AUTO_RUN_RETRIES,
+      ((metadata.auto_run_retries as number) || 0) + 1,
+    );
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...metadata,
+        generation_job_id: undefined,
+        generation_status: "failed",
+        generation_last_error: message,
+        auto_run_retries: nextRetries,
+      },
+    }, namespaceId);
+    if (nextRetries < MAX_AUTO_RUN_RETRIES) {
+      void triggerAutoRunScan(namespaceId, orgId);
+    }
+    return {
+      triggered: false,
+      taskId,
+      action: "generation_save_failed",
+      error: message,
+      retryCount: nextRetries,
+      retryLimit: MAX_AUTO_RUN_RETRIES,
+      recoveryScheduled: nextRetries < MAX_AUTO_RUN_RETRIES,
+    };
   }
 
   const updated = {
