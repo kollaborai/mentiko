@@ -1,6 +1,6 @@
 # CLI / ops convergence
 
-Status: phases 1a/1b + 2 shipped (2026-07-26); phase 3 (emit) + phase 4 (surface) pending
+Status: phases 1a/1b + 2 + 3 shipped; phase 4 (tasks) shipped, agents/secrets/workspaces deferred (2026-07-26)
 Branch: `cli-ops-convergence`
 
 Make `bin/mentiko` reach Mentiko the way the MCP already does — through
@@ -167,27 +167,36 @@ This is what populates `MENTIKO_SESSION_TOKEN` for CLI-launched agents —
 CLI-started runs carry a session, all-three-absent stops happening in normal
 operation.
 
-### phase 3 — move `emit` behind an ops endpoint
+### phase 3 — move `emit` behind an ops endpoint  (SHIPPED)
 
-Add `POST /api/mentiko-mcp/ops/events`, gated by `requireOpsAuth`, calling the
-existing `emitRunnerEvent` server-side. The write stays where it is; what
-changes is that namespace and org come from the token rather than the
-environment.
+`POST /api/mentiko-mcp/ops/events`, gated by `requireOpsAuth`, calls the existing
+`emitRunnerEvent` server-side with `eventsDir = orgPath(ctx.ns, ctx.org, "events")`
+— namespace and org come from the token claims, not the environment. The write is
+unchanged; what changed is who decides where it lands.
 
-- agents already carry the token once phase 2 lands — no prompt or bootstrap
-  change needed
-- **keep a local fallback.** If `MENTIKO_WEB_URL` is unreachable, write locally
-  and log loudly. An agent that cannot signal completion wedges a chain; this
-  path degrades, never fails closed.
-- leave one runnable check: a chain hop completes over HTTP with a valid token
-  and is rejected with an invalid one
+- NEW `lib/mentiko-cli-emit.mjs` routes `mentiko emit` through it; `bin/mentiko`
+  dispatches there. The `runner-event-emitter.js` bundle stays as the local
+  fallback and for `run-lib.sh`'s bash-engine callers (catch #3).
+- **degrade, never fail closed.** Any HTTP failure (unreachable, 4xx, 5xx) falls
+  back to the local typed write with a loud log — an agent that cannot signal
+  completion wedges a chain hop. (`run` fails loud because origination has no
+  prior auth; `emit` degrades because it is mid-flight.)
+- proven live: valid token → 200 (event written to the token's ns/org);
+  bogus/missing token → 401; unreachable → local fallback writes + logs.
 
-### phase 4 — close the surface gap
+### phase 4 — close the surface gap  (tasks SHIPPED; agents/secrets/workspaces deferred)
 
-36 ops endpoints and 106 MCP tools against 19 CLI subcommands. The CLI has no
-task, agent, secret or workspace commands. Once the client is shared these are
-argument parsers over handlers that already exist — but decide deliberately
-which belong on a CLI rather than porting all 106.
+36 ops endpoints and 106 MCP tools against 19 CLI subcommands. The CLI had no task,
+agent, secret, or workspace commands. NEW `lib/mentiko-cli-tasks.mjs` ships the
+mission-critical surface — `list_tasks / get_task / create_task / update_task /
+close_task / comment_task / link_task / unlink_task` over the ops endpoints, under
+the verified session (same shape as the schedules CLI; `close` requires `--yes`).
+
+Deliberate scope: tasks drive the auto-run mission. agents / secrets / workspaces
+follow the identical pattern — argument parsers over `opsRequest` — deferred
+rather than ported wholesale, per "decide deliberately which belong on a CLI."
+Proven live: `list_tasks` → 200, `create_task` → `TASK-###` with `owner` from the
+token.
 
 ## packaging (separate track, informs phase 1)
 

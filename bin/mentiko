@@ -223,6 +223,18 @@ case "$CMD" in
         ;;
 
     emit)
+        # Pull global flags out of the positionals before <event> [source] [data]
+        # parsing, so `--web-url` is not swallowed as the data argument.
+        EMIT_WEB_URL=""
+        EMIT_POS=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --web-url) EMIT_WEB_URL="${2:-}"; shift 2;;
+                *) EMIT_POS+=("$1"); shift;;
+            esac
+        done
+        set -- "${EMIT_POS[@]}"
+
         EVENT_SCOPE="run"
         if [[ "${1:-}" == "--scope" ]]; then
             if [[ -z "${2:-}" ]]; then
@@ -270,7 +282,8 @@ case "$CMD" in
             --event "$EVENT_NAME" \
             --source "$SOURCE" \
             --run-id "${MENTIKO_RUN_ID:-${RUN_ID:-}}" \
-            --data "$DATA"
+            --data "$DATA" \
+            ${EMIT_WEB_URL:+--web-url "$EMIT_WEB_URL"}
         then
             echo "  error: runner event emission failed (http + local fallback)" >&2
             exit 1
