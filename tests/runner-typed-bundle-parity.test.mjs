@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
-import { allTargets, buildBundle } from "../scripts/build-runner-bundles.mjs";
+import { allTargets, buildBundle, normalizeForCompare } from "../scripts/build-runner-bundles.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const lib = join(root, "lib");
@@ -16,9 +16,12 @@ try {
   for (const [stem, bundle] of allTargets()) {
     const output = join(temp, `${bundle}.js`);
     buildBundle(stem, output); // cwd = web; adds the GENERATED banner
+    // normalizeForCompare: ignore WHERE node_modules resolved (a worktree without its
+    // own install bakes the parent checkout's path into esbuild's module comments),
+    // while still catching any real difference in generated code.
     assert.equal(
-      readFileSync(output, "utf8"),
-      readFileSync(join(lib, `${bundle}.js`), "utf8"),
+      normalizeForCompare(readFileSync(output, "utf8")),
+      normalizeForCompare(readFileSync(join(lib, `${bundle}.js`), "utf8")),
       `${bundle} is stale — run: node scripts/build-runner-bundles.mjs`,
     );
   }

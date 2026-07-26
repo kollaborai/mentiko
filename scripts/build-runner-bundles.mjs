@@ -91,6 +91,20 @@ export function allTargets() {
   return [...PAIRS, ...STANDALONE];
 }
 
+// esbuild stamps every inlined module's source path into a comment. Those paths are
+// relative to the build cwd (web/), so when a checkout has no web/node_modules of its
+// own, resolution walks up and the comments record wherever it landed — e.g.
+// `../../../../../../dev/platform/mentiko/web/node_modules/ajv/...` from a worktree.
+// Identical sources then produced different bytes purely from where node_modules lived,
+// which made this guardrail report "stale" for the environment rather than for drift.
+// (That false red is how a real hand-edit hides: the signal stops meaning anything.)
+// Normalizing the dependency prefix keeps the check honest about code while ignoring
+// where the dependency tree was found. A hand-edit never carries a `../node_modules/`
+// prefix, so nothing real is masked.
+export function normalizeForCompare(text) {
+  return text.replace(/(?:\.\.\/)+(?:[^\s"']*?\/)?node_modules\//g, "node_modules/");
+}
+
 // Rebuild every bundle into lib/.
 function rebuildAll() {
   for (const [stem, bundle] of allTargets()) {
@@ -108,7 +122,7 @@ function checkParity() {
       const tmpOut = join(temp, `${bundle}.js`);
       buildBundle(stem, tmpOut);
       const committed = join(LIB, `${bundle}.js`);
-      if (readFileSync(tmpOut, "utf8") !== readFileSync(committed, "utf8")) {
+      if (normalizeForCompare(readFileSync(tmpOut, "utf8")) !== normalizeForCompare(readFileSync(committed, "utf8"))) {
         console.error(`stale: ${bundle}`);
         stale++;
       }
