@@ -7,6 +7,32 @@ via pty-manager sessions with file-based event communication.
 evolving into a SaaS product. vision and roadmap tracked in
 the memory system (see MEMORY.md topic files).
 
+## operating priorities (set 2026-07-24, after a week of backend churn)
+
+the four moves that govern how this project gets worked. re-read at session start.
+
+1. mission first, chrome on a leash. the go-live blockers are chain-execution consistency and
+   the runner-v2 typed pipeline — that is the mission (see "auto-run automation" below). when the
+   task is backend/engine, do NOT drift into UI polish; the standing "don't drift" rule failed
+   last week because nothing enforced it. a shiny UI idea goes into the tracker as a deferred
+   card, not a mid-session pivot. (the operational view and decision UX are product; background
+   shaders are not.)
+2. kill failure families at the producer, with a test. three keep respawning: (a) chain
+   generation emitting invalid graphs (emits∪triggers, then fan_in-in-fan_out, then the
+   contract-retry-loop) — constrain generation so it CANNOT emit an invalid graph, or make ONE
+   authoritative validate+repair layer tested against the real failure corpus, not an Nth
+   downstream normalizer; (b) decision/autorun runs wedging with no janitor — build/keep the
+   reaper (reapDeadRuns + the 60s reconciler) as the single recovery owner; (c) summarizer running
+   in the wrong dir / not reading files. fix the source (article ii), leave a runnable check behind.
+3. commit + push per session; worktree per agent. this is a SHARED checkout (a Codex agent +
+   worktrees live here). do not let work pile up dirty and get swept into bulk "changes" commits;
+   a stash probe once stashed 86 files including another agent's work. each agent stages by
+   concern, commits small, and pushes before it yields. give parallel agents their own worktree.
+4. match the model to the job. Haiku for legwork (search, file-mapping, mechanical sweeps),
+   Opus/Sonnet for judgment (design, tricky debugging, security/correctness). no browser-driving
+   to pixel-tune at Opus rates. cheapest of all is no subagent — a single known lookup, do it
+   inline.
+
 ## public repo boundary
 
 See `REPO_BOUNDARY.md` for the operating rule of what belongs in this
