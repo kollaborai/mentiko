@@ -29,7 +29,9 @@ export function createClaudeMentikoMcpConfig(
   const sessionToken = value(env.MENTIKO_SESSION_TOKEN);
   const contextValues = [webUrl, sessionId, sessionToken];
 
-  if (contextValues.every((entry) => !entry)) return undefined;
+  if (contextValues.every((entry) => !entry)) {
+    throw new Error("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN but all were absent/empty");
+  }
   if (contextValues.some((entry) => !entry)) {
     throw new Error("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN");
   }

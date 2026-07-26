@@ -42,7 +42,7 @@ describe("Claude run-scoped Mentiko MCP config", () => {
   });
 
   it("does not materialize a config for a Claude session without run capability", () => {
-    expect(createClaudeMentikoMcpConfig({}, { serverPath })).toBeUndefined();
+    expect(() => createClaudeMentikoMcpConfig({}, { serverPath })).toThrow("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN but all were absent/empty");
   });
 
   it("fails closed for partial run context instead of using a global MCP credential", () => {
@@ -51,6 +51,14 @@ describe("Claude run-scoped Mentiko MCP config", () => {
       MENTIKO_SESSION_ID: "chain-run-123",
       MENTIKO_CODE_ROOT: join(process.cwd(), ".."),
     }, { serverPath })).toThrow("requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN");
+  });
+
+  it("fails closed when MENTIKO_CODE_ROOT is missing", () => {
+    expect(() => createClaudeMentikoMcpConfig({
+      MENTIKO_WEB_URL: "http://127.0.0.1:3200",
+      MENTIKO_SESSION_ID: "chain-run-123",
+      MENTIKO_SESSION_TOKEN: "session-token",
+    }, {})).toThrow("Claude Mentiko MCP context requires MENTIKO_CODE_ROOT");
   });
 
   it("cleans the private config only after Claude exits and preserves Claude's status", () => {
