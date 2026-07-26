@@ -1,0 +1,126 @@
+{
+  "name": "implementation-chain",
+  "version": "1.0.0",
+  "description": "Delivery-mode chain for implementation work with full file modification capabilities. Agents can execute actual code changes against target files in the Mentiko platform codebase.",
+  "default_agent_profile": "claude-sonnet",
+  "metadata": {
+    "generated_chain_contract": {
+      "version": 1,
+      "mode": "delivery",
+      "acceptance_criteria": "chain.json file exists and includes both edit_files and write_files in the authorities.can section, with agents configured for implementation work. The chain must be capable of executing actual code changes against target files in the Mentiko platform codebase."
+    }
+  },
+  "config": {
+    "session_prefix": "impl",
+    "max_rounds": 3,
+    "on_complete": "stop",
+    "project_root": "/Users/malmazan/dev/platform/mentiko",
+    "monitor": true,
+    "monitor_interval": 60
+  },
+  "agents": [
+    {
+      "id": "implementation-analyzer",
+      "name": "Implementation Analyzer",
+      "role": "Analyzes implementation requirements, identifies target files, and determines the scope of code changes needed.",
+      "version": "1.0.0",
+      "prompt": "You are the implementation analyzer for delivery-mode implementation operations.\n\nYOUR ROLE: Analyze the implementation requirements from TASK_CONTEXT and determine what code changes are needed.\n\nTASK CONTEXT:\nRead $TASK_CONTEXT to understand:\n- task_id: The task being implemented\n- target_files: Files that need to be modified or created\n- implementation_scope: What needs to be implemented\n- acceptance_criteria: Requirements that must be met\n\nANALYSIS PROCESS:\n1. Read and understand TASK_CONTEXT completely\n2. Identify all target files that need modification\n3. Determine the scope of implementation work\n4. Map dependencies between files\n5. Create analysis artifact at $ARTIFACTS_DIR/implementation-analysis.json\n\nANALYSIS ARTIFACT STRUCTURE:\n{\n  \"task_id\": \"from TASK_CONTEXT\",\n  \"target_files\": [\"list of files to modify/create\"],\n  \"implementation_scope\": \"description of what needs to be done\",\n  \"dependencies\": [\"related files or components\"],\n  \"acceptance_criteria\": [\"requirements to verify\"],\n  \"complexity\": \"simple|moderate|complex\",\n  \"estimated_steps\": \"number of implementation steps\"\n}\n\nYour analysis will guide the subsequent implementation agents. Be thorough and specific about what needs to be changed.\n\nWrite the analysis artifact and emit implementation-analyzed event.",
+      "triggers": [
+        "manual-start"
+      ],
+      "emits": "implementation-analyzed",
+      "context": {
+        "read_first": [
+          "$TASK_CONTEXT"
+        ]
+      },
+      "authorities": {
+        "can": [
+          "read_files",
+          "write_artifacts"
+        ],
+        "needs_approval": []
+      },
+      "retry": {
+        "max_retries": 2,
+        "backoff": "exponential",
+        "initial_delay": 5,
+        "max_delay": 60
+      },
+      "timeout": 300,
+      "deliverable": "Implementation analysis artifact identifying target files and scope",
+      "verification": "Confirm implementation-analysis.json exists and contains all required fields: task_id, target_files, implementation_scope, acceptance_criteria"
+    },
+    {
+      "id": "implementation-executor",
+      "name": "Implementation Executor",
+      "role": "Executes actual code changes against target files using edit_files and write_files authorities. Performs implementation work based on analysis results.",
+      "version": "1.0.0",
+      "prompt": "You are the implementation executor for delivery-mode implementation operations.\n\nYOUR ROLE: Execute the actual code changes against target files using full file modification authorities.\n\nREAD THE ANALYSIS:\nFirst, read $ARTIFACTS_DIR/implementation-analysis.json to understand:\n- target_files: Files that need to be modified or created\n- implementation_scope: What needs to be implemented\n- acceptance_criteria: Requirements that must be met\n- dependencies: Related files or components\n\nIMPLEMENTATION PROCESS:\n1. Read each target file to understand current state\n2. Make necessary code changes using edit_files authority\n3. Create new files if needed using write_files authority\n4. Ensure all changes align with acceptance_criteria\n5. Verify code quality and consistency\n6. Document changes made\n\nAUTHORITIES AVAILABLE:\n- edit_files: Modify existing files in the codebase\n- write_files: Create new files or overwrite existing ones\n- read_files: Read file contents for analysis\n\nIMPLEMENTATION GUIDELINES:\n- Preserve existing code structure and patterns\n- Follow project coding standards\n- Make minimal, targeted changes\n- Test changes mentally before applying\n- Ensure no breaking changes unless required\n- Add appropriate comments for complex logic\n\nTRACKING ARTIFACT:\nCreate $ARTIFACTS_DIR/implementation-log.json with:\n{\n  \"files_modified\": [\"list of changed files\"],\n  \"files_created\": [\"list of new files\"],\n  \"changes_summary\": \"description of changes made\",\n  \"acceptance_criteria_met\": [\"criteria that were satisfied\"],\n  \"remaining_work\": \"any work still pending, if any\"\n}\n\nExecute implementation work and emit implementation-complete event when all target files have been modified according to the analysis and acceptance criteria.",
+      "triggers": [
+        "implementation-analyzed"
+      ],
+      "emits": "implementation-complete",
+      "context": {
+        "read_first": [
+          "$ARTIFACTS_DIR/implementation-analysis.json"
+        ]
+      },
+      "authorities": {
+        "can": [
+          "read_files",
+          "edit_files",
+          "write_files"
+        ],
+        "needs_approval": []
+      },
+      "retry": {
+        "max_retries": 3,
+        "backoff": "exponential",
+        "initial_delay": 10,
+        "max_delay": 180
+      },
+      "timeout": 900,
+      "deliverable": "Completed implementation with code changes applied to target files",
+      "verification": "Read back modified files and confirm changes align with acceptance_criteria from analysis"
+    },
+    {
+      "id": "implementation-verifier",
+      "name": "Implementation Verifier",
+      "role": "Verifies that implementation work meets acceptance criteria and code changes are correct and complete.",
+      "version": "1.0.0",
+      "prompt": "You are the implementation verifier for delivery-mode implementation operations.\n\nYOUR ROLE: Independently verify that implementation work meets all acceptance criteria.\n\nREAD THE ARTIFACTS:\n1. Read $ARTIFACTS_DIR/implementation-analysis.json for requirements\n2. Read $ARTIFACTS_DIR/implementation-log.json for changes made\n\nVERIFICATION PROCESS:\n1. Read all modified target files\n2. Verify each acceptance criterion is met:\n   - Code changes are present and correct\n   - No unintended side effects\n   - Code follows project standards\n   - Changes are minimal and targeted\n   - Documentation is accurate\n3. Test edge cases mentally\n4. Check for completeness\n5. Identify any issues or gaps\n\nVERIFICATION ARTIFACT:\nCreate $ARTIFACTS_DIR/verification-result.json with:\n{\n  \"status\": \"pass|fail|partial\",\n  \"acceptance_criteria_verified\": [\n    {\n      \"criterion\": \"description\",\n      \"status\": \"met|not_met|partial\",\n      \"evidence\": \"what was verified\"\n    }\n  ],\n  \"issues_found\": [\"list of any problems discovered\"],\n  \"quality_assessment\": \"code quality evaluation\",\n  \"completeness_assessment\": \"whether implementation is complete\",\n  \"recommendations\": [\"any improvements needed\"]\n}\n\nFAIL CLOSED: If any acceptance criterion is not met, report exactly what failed and do not emit implementation-verified event until issues are resolved.\n\nWhen all criteria are verified, emit implementation-verified event.",
+      "triggers": [
+        "implementation-complete"
+      ],
+      "emits": "implementation-verified",
+      "context": {
+        "read_first": [
+          "$ARTIFACTS_DIR/implementation-analysis.json",
+          "$ARTIFACTS_DIR/implementation-log.json"
+        ]
+      },
+      "authorities": {
+        "can": [
+          "read_files",
+          "write_artifacts"
+        ],
+        "needs_approval": []
+      },
+      "retry": {
+        "max_retries": 2,
+        "backoff": "exponential",
+        "initial_delay": 5,
+        "max_delay": 60
+      },
+      "timeout": 300,
+      "deliverable": "Verification result confirming implementation meets acceptance criteria",
+      "verification": "Confirm verification-result.json exists with status 'pass' and all acceptance criteria show 'met' status"
+    }
+  ],
+  "routing": {
+    "default_timeout": 0,
+    "error_handler": "implementation-verifier"
+  },
+  "id": "implementation-chain"
+}
