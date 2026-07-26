@@ -529,41 +529,9 @@ function RunsPageContent() {
         }
         icon={RouteSquareFilled}
         sectionColor="#5b9ef5"
-        overlayDark
         watermarkFill={
-          // brighter mist reads clearly inside the icon silhouette (vs. the dimmed bg)
+          // electric shimmer shows only through the icon silhouette
           <ElectricMist color="#3b6fe0" speed={0.7} distortion={2.4} brightness={1.15} />
-        }
-        background={
-          <>
-            {/* dark base so masked/faded areas resolve to the page color, not transparent */}
-            <div className="absolute inset-0" style={{ background: "#0a0a0b" }} />
-            {/* the shader: neutral cool-grey smoke (desaturated so the colored watermark pops),
-                dimmed + brightness raised so the cloud reads more transparent */}
-            <ElectricMist
-              color="#3a3d44"
-              speed={0.6}
-              distortion={2.2}
-              brightness={1.45}
-              className="opacity-[0.55]"
-            />
-            {/* edge vignette + heavier bottom fade so the mist melts into the dark instead of ending at the list bar */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(to bottom, transparent 30%, rgba(10,10,11,0.65) 72%, #0a0a0b 100%), radial-gradient(125% 120% at 50% 22%, transparent 42%, rgba(10,10,11,0.9) 100%)",
-              }}
-            />
-            {/* left-to-right scrim keeps the title legible while the mist shows through on the right */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(to right, rgba(8,8,11,0.92) 0%, rgba(8,8,11,0.55) 34%, rgba(8,8,11,0.1) 66%, rgba(8,8,11,0) 100%)",
-              }}
-            />
-          </>
         }
         actions={[
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },

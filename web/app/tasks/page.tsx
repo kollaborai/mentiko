@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { TaskSquareFilled, RouteSquareFilled, LinkFilled } from "@aliimam/icons";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { PageBanner } from "@/components/ui/page-banner";
-import GridBloom from "@/components/ui/grid-bloom";
 import { TaskFilters } from "@/components/task/task-filters";
 import { TaskListItem } from "@/components/task/task-list-item";
 import type { TaskOpIndicatorState } from "@/components/task/task-op-indicator";
@@ -32,6 +31,16 @@ import {
   WorkflowSidebarResizeHandle,
   WorkflowSidebarSegmentedControl,
 } from "@/components/ui/workflow-sidebar";
+import {
+  AccomplishmentsSection,
+  AttentionSection,
+  GatesSection,
+  RunningSection,
+  SystemSection,
+  UpNextSection,
+  WaitingSection,
+} from "@/components/operations/operations-sections";
+import type { OperationsView } from "@/lib/operations/operations-read-model";
 import type {
   TaskRecord,
   EpicStatus,
@@ -76,6 +85,7 @@ function TasksPageContent() {
   );
   const [depInfo, setDepInfo] = useState<Map<string, { blockedBy: string[]; blocks: string[] }>>(new Map());
   const [opStates, setOpStates] = useState<Map<string, TaskOpIndicatorState>>(new Map());
+  const [opsView, setOpsView] = useState<OperationsView | null>(null);
   const [taskInventoryCount, setTaskInventoryCount] = useState<number | null>(null);
   const [treeRefreshSignal, setTreeRefreshSignal] = useState(0);
 
@@ -268,12 +278,7 @@ function TasksPageContent() {
       if (workspacePath) params.set("workspace", workspacePath);
       const res = await fetchWithNamespace(`/api/operations/timeline?${params}`);
       const raw = await res.json();
-      const data = unwrapApiData<{
-        view?: {
-          taskStates?: Array<TaskOpIndicatorState & { taskId: string }>;
-          upNext?: Array<{ taskId: string; position: number }>;
-        } | null;
-      }>(raw);
+      const data = unwrapApiData<{ view?: OperationsView | null }>(raw);
       const nextPosition = new Map(
         (data.view?.upNext ?? []).map((item) => [item.taskId, item.position])
       );
@@ -288,8 +293,11 @@ function TasksPageContent() {
         });
       }
       setOpStates(map);
+      setOpsView(data.view ?? null);
     } catch {
       setOpStates(new Map()); // rows fall back to raw dep counts
+      // keep last-known opsView on a transient poll failure — avoids flashing
+      // the operations panel back to a spinner every 15s on a blip.
     }
   }, [workspacePath, fetchWithNamespace]);
 
@@ -1083,6 +1091,29 @@ function TasksPageContent() {
     />
   );
 
+  // shown in the detail pane when no task is selected — the same operations
+  // read model + sections as /activity, fed by the poll already running on
+  // this page (fetchOpStates), so this adds no extra requests.
+  const operationsPanel = (
+    <div className="h-full overflow-y-auto p-3 space-y-3">
+      {!opsView ? (
+        <div className="flex items-center justify-center h-full">
+          <WaveSpinner size="sm" color="primary" animation="ripple" />
+        </div>
+      ) : (
+        <>
+          <SystemSection view={opsView} />
+          <AttentionSection items={opsView.attention} />
+          <RunningSection items={opsView.runningNow} />
+          <UpNextSection items={opsView.upNext} />
+          <WaitingSection states={opsView.waiting} />
+          <GatesSection gates={opsView.humanGates} />
+          <AccomplishmentsSection items={opsView.recentAccomplishments} />
+        </>
+      )}
+    </div>
+  );
+
   // auto-select task from ?task= query param (once after initial load)
   useEffect(() => {
     if (autoSelectDone.current) return;
@@ -1123,53 +1154,6 @@ function TasksPageContent() {
         subtitle="Track and manage project issues. Create epics, features, bugs, and chores with dependency tracking and chain bindings."
         icon={TaskSquareFilled}
         sectionColor="#5b9ef5"
-        overlayDark
-        watermarkFill={
-          // very dense, bright near-white-blue grid so the task-square reads as a solid
-          // silhouette *made of* the fine pattern (not loose, separated cells)
-          <GridBloom
-            color="#eef4ff"
-            speed={0.9}
-            gridScale={30}
-            fadeFalloff={16}
-            distortionAmount={0.03}
-            enableMouseInteraction={false}
-          />
-        }
-        background={
-          <>
-            {/* dark base so the additive grid glow has something to bloom over */}
-            <div className="absolute inset-0" style={{ background: "#0a0a0b" }} />
-            {/* the structured "task lattice": a quiet blue grid that breathes + blooms under the
-                cursor, dimmed so the icon node stays the focal point */}
-            <GridBloom
-              color="#5b9ef5"
-              speed={0.6}
-              gridScale={15}
-              fadeFalloff={9}
-              distortionAmount={0.05}
-              hoverLightRadius={0.4}
-              hoverRepulsionStrength={0.35}
-              className="opacity-[0.75]"
-            />
-            {/* edge vignette + heavier bottom fade so the grid melts into the dark instead of ending at the list bar */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(to bottom, transparent 30%, rgba(10,10,11,0.6) 74%, #0a0a0b 100%), radial-gradient(125% 120% at 50% 25%, transparent 46%, rgba(10,10,11,0.85) 100%)",
-              }}
-            />
-            {/* left-to-right scrim keeps the title legible while the grid shows through on the right */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(to right, rgba(8,8,11,0.9) 0%, rgba(8,8,11,0.5) 34%, rgba(8,8,11,0.08) 66%, rgba(8,8,11,0) 100%)",
-              }}
-            />
-          </>
-        }
         actions={[
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
@@ -1285,9 +1269,7 @@ function TasksPageContent() {
             ) : hasNoTasks ? (
               welcomePanel
             ) : (
-            <div className="flex items-center justify-center h-full text-xs text-foreground/30">
-              Select a task
-            </div>
+            operationsPanel
             )
           ) : (
             <TaskDetail
@@ -1439,9 +1421,7 @@ function TasksPageContent() {
             ) : hasNoTasks ? (
               welcomePanel
             ) : (
-            <div className="flex items-center justify-center h-full text-xs text-foreground/30">
-              Select a task
-            </div>
+            operationsPanel
             )
           ) : (
             <TaskDetail
