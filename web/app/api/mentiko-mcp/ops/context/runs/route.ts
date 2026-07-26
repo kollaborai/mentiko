@@ -19,10 +19,14 @@ export async function POST(req: Request) {
   if (perm) return perm;
 
   const { namespaceId, orgId } = ctx;
-  const { chainId, task, workspaceId } = (await req.json()) as {
+  const { chainId, task, workspaceId, workspacePath, debug, taskId, startAgent } = (await req.json()) as {
     chainId?: string;
     task?: string;
     workspaceId?: string;
+    workspacePath?: string;
+    debug?: boolean;
+    taskId?: string;
+    startAgent?: string;
   };
 
   if (!chainId) return new NextResponse("chainId required", { status: 400 });
@@ -55,6 +59,10 @@ export async function POST(req: Request) {
       chainId,
       userPrompt: task || "",
       workspaceId,
+      workspacePath,
+      debug,
+      taskId,
+      startAgent,
     }),
   });
 

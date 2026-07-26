@@ -83,6 +83,7 @@ interface StartChainRunBody {
   taskId?: string;
   executor?: string;
   agentProfileId?: string;
+  startAgent?: string;
   runId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -308,6 +309,7 @@ export async function startChainRun({
     taskId,
     executor,
     agentProfileId,
+    startAgent,
   } = body;
 
   const requestedWorkspace =
@@ -384,6 +386,18 @@ export async function startChainRun({
     : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
   assertRunnableChainDefinition(runChain);
+
+  // --start <agent-id>: start the run at a specific agent instead of the chain's
+  // default entry. Validated against the resolved agent list so a bad id is a
+  // structured 400, not the bootstrap's generic "no launchable agent" throw.
+  // Mirrors chainAgent() in direct-run.ts (the local runTypedDirect path).
+  if (typeof startAgent === "string" && startAgent) {
+    const agentExists = Array.isArray(runChain.agents)
+      && runChain.agents.some((a) => a && typeof a.id === "string" && a.id === startAgent);
+    if (!agentExists) {
+      throw new BadRequest("startAgent not found in chain", { field: "startAgent", value: startAgent });
+    }
+  }
 
   const runId = body.runId && typeof body.runId === "string"
     ? validateRunId(body.runId)
@@ -588,6 +602,7 @@ export async function startChainRun({
     workspacePath: authorizedWorkspacePath,
     taskId: executionTaskId,
     debug,
+    agentId: typeof startAgent === "string" && startAgent ? startAgent : undefined,
     logFd,
     cwd: config.codeRoot,
     env: childEnv,
