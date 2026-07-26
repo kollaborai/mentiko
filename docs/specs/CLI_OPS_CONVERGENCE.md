@@ -1,6 +1,6 @@
 # CLI / ops convergence
 
-Status: proposed (2026-07-25)
+Status: phases 1a/1b + 2 shipped (2026-07-26); phase 3 (emit) + phase 4 (surface) pending
 Branch: `cli-ops-convergence`
 
 Make `bin/mentiko` reach Mentiko the way the MCP already does — through
@@ -104,12 +104,23 @@ module both the MCP and the CLI import: `opsGet/opsPost/opsPatch/opsDelete`,
 currently shares only `resolveToken`; it still has its own `request()` with no
 timeout. `mentiko-cli-decision.mjs` moves off its ad-hoc route at the same time.
 
-### phase 2 — `mentiko run` through startChainRun
+### phase 2 — `mentiko run` through startChainRun  (SHIPPED)
 
-Replace the second run creator. `runTypedDirect`
-(`web/lib/runner-v2/direct-run.ts:97`) stops calling `mkdirSync`/`writeFileSync`
-itself and POSTs to `/api/mentiko-mcp/ops/context/runs` with the credential from
-phase 1a.
+Route the CLI through the single run creator. A NEW hand-written client
+`lib/mentiko-cli-run.mjs` parses `mentiko run`'s flags and POSTs to
+`/api/mentiko-mcp/ops/context/runs` with the phase-1a credential; `bin/mentiko`'s
+`run)` case dispatches to it. `runTypedDirect` (`direct-run.ts:97`) and its
+compiled bundle `runner-v2-direct-run.js` are UNCHANGED — they stay the local
+creator for the scheduler, `chain-runner.sh`, `batch-runner.ts`, and next-chain
+hops. Turning that bundle into an HTTP client would make the web process POST
+back to itself (the scheduler spawns it from inside the web process → loopback
+HTTP), so caller #1 became a new file, not a mutation. `--dry-run` delegates to
+the bundle (local validate, no run to route); a server unreachable at run start
+fails loud via the shared ops client.
+
+The run endpoint awaits the full PTY bootstrap (admission + spawn + readiness),
+so the client uses a 120s timeout — the default 15s reported a misleading
+"timed out" on runs that actually started.
 
 **Flag reconciliation — read this before designing anything.** The gap is NOT
 between the CLI and `startChainRun`; it is between the CLI and the thin ops
@@ -137,11 +148,13 @@ designing new API surface.
 - `--workspace`, `--task`, `--debug` → already supported; just stop dropping them.
 - `--dry-run` → stays local. It creates no run by definition, so there is nothing
   to route.
-- `--start <agent>` → **the one genuine gap.** `startChainRun` has no
-  `agentId`/`startAgent` concept. DECISION (Marco): make it a first-class field
-  on the service, or keep `--start` as an explicitly-marked local debug path.
-  Recommendation: first-class — "start at agent N" is a real capability, and
-  confining it locally is how the second run creator survives forever.
+- `--start <agent>` → **the one genuine gap, now closed.** `startChainRun` had no
+  start-agent concept. SHIPPED: `startAgent` is a first-class body field
+  (`StartChainRunBody`), validated against the resolved chain agents (a bad id is
+  a structured `BadRequest`), threaded to the typed launch context as `agentId`.
+  The ops wrapper forwards it. Over HTTP a bad `--start` returns 400 and a valid
+  one starts the run at that agent — the same `chainAgent()` selection the local
+  `runTypedDirect` path uses.
 - `parentRunId` is **not a flag.** It is a `DirectRunOptions` field
   (`direct-run.ts:26,117`) used by programmatic chained-run callers. Routing
   `mentiko run` over HTTP must not break those callers — check them before
@@ -201,15 +214,14 @@ rebuilds all 52 from `.ts` at image build (lines 122+), so the committed bytes
 never reach a tenant; they serve local dev only. A package with a real build
 step removes this.
 
-Interim hardening, independent of the packaging work:
+Interim hardening, independent of the packaging work (SHIPPED with phase 2):
 
-1. `scripts/build-runner-bundles.mjs` — lift the esbuild loop out of
-   `tests/runner-typed-bundle-parity.test.mjs`, which is currently the only
-   place the command is written down
-2. `--banner:js='// GENERATED FROM web/lib/runner-v2/<src>.ts — DO NOT EDIT'`
-3. wire the parity test into something that runs — it lives at repo root in
-   `tests/*.mjs`, and the one CI workflow runs jest from `web/`, so it is
-   currently checked by nothing
+1. `scripts/build-runner-bundles.mjs` — the single esbuild source; the parity
+   test imports `buildBundle()` from it so there is one invocation, not two
+2. every committed `lib/*.js` carries a `// GENERATED FROM ...` banner
+3. `tests/runner-typed-bundle-parity.test.mjs` is wired into
+   `.github/workflows/engine-tests.yml` (folded into the jest step, which already
+   installs deps); regen exposed several stale bundles local dev had been running
 
 ## open decisions
 
