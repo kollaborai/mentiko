@@ -98,11 +98,36 @@ endpoints could not be used at all.
 - `tests/cli-auth-sidecar-contract.test.mjs` pins precedence, refresh-absence,
   corrupt-file tolerance, the shared path/shape, and 0600
 
-**1b. one ops client.** Lift `lib/mentiko-mcp/handlers/ops-client.ts` into a
-module both the MCP and the CLI import: `opsGet/opsPost/opsPatch/opsDelete`,
-401 refresh, device-flow pickup, 15s timeout. `mentiko-cli-schedules.mjs`
-currently shares only `resolveToken`; it still has its own `request()` with no
-timeout. `mentiko-cli-decision.mjs` moves off its ad-hoc route at the same time.
+**1b. one ops client.**  (SHIPPED, with one documented exception)
+
+`opsRequest()` in `lib/mentiko-cli-auth.mjs` is the CLI's only HTTP boundary to
+`/api/mentiko-mcp/ops/*`: bearer auth, a bounded timeout, and exactly one forced
+refresh-and-retry on 401. `mentiko-cli-schedules.mjs`, `-run`, `-emit`, `-tasks`,
+`-org` all use it; no per-file `request()` fork remains in them.
+`tests/cli-ops-client.test.mjs` pins the 401 path against a real loopback server.
+
+Still duplicated, deliberately: `lib/mentiko-mcp/handlers/ops-client.ts`. It lives
+inside the `@mentiko/mentiko-mcp` package and is bundled to `dist/`, so merging the
+two waits on the packaging track.
+
+NOT converted: `lib/mentiko-cli-decision.mjs`. It still posts to
+`/api/decisions/{id}/import` with its own `fetch`, and its credential chain is
+`MENTIKO_DECISION_IMPORT_TOKEN` -> `<run>/.internal/decision-import-token` ->
+`BETTER_AUTH_SECRET`, with self-asserted `x-namespace-id` / `x-org-id` headers.
+Reason for deferring, not an oversight:
+
+- the route is gated by `requireInternalAuth`, which compares against a
+  context-derived secret (`resolveAppSecret("decision-import")`), so this is a
+  deliberate internal service-auth model with run-scoped token files — converting it
+  is a design change to that model, not a client swap
+- `/api/mentiko-mcp/ops/decisions/` exists (`answer`, `approve`, `select`) but has
+  no `import`, so the conversion also needs a new route
+- agents never receive `BETTER_AUTH_SECRET` (it is absent from the bootstrap and
+  profile env exports), so the alarming-looking last fallback is dormant in the
+  agent path
+
+DECISION FOR MARCO: convert the decision CLI to ops (add `/ops/decisions/import`,
+drop the secret fallback), or keep the internal service-auth model as designed?
 
 ### phase 2 — `mentiko run` through startChainRun  (SHIPPED)
 
