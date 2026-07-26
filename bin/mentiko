@@ -2,6 +2,7 @@
 # mentiko - CLI entry point
 #
 # usage:
+#   mentiko auth [status|token|logout]
 #   mentiko run <chain.json> [--workspace <path>] [--start <agent-id>] [--debug]
 #   mentiko generate "<prompt>" [--output <dir>] [--template <file>] [--json] [--raw]
 #   mentiko decision import <artifact.json> --decision <id> --phase <phase>
@@ -86,6 +87,12 @@ case "$CMD" in
             echo "  error: tsx not found. install with: npm install -g tsx"
             exit 1
         fi
+        ;;
+
+    auth)
+        # Credential for every ops-endpoint command. Shares the sidecar with the
+        # MCP bridge (~/.mentiko/mcp/session.json), so authorizing once covers both.
+        exec node "$LIB_DIR/mentiko-cli-auth.mjs" "$@"
         ;;
 
     decision)

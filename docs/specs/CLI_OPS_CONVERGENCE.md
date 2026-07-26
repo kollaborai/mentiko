@@ -66,44 +66,66 @@ non-ops route (`/api/decisions/{id}/import`).
 
 ## phases
 
-### phase 0 — give CLI-started runs an identity (prerequisite)
+### decided: route through the server
 
-`runTypedDirect` must obtain a session token before launching agents. Genuine
-fork, needs a decision:
+`mentiko run` POSTs to `/api/mentiko-mcp/ops/context/runs` and lets
+`startChainRun` do the work — one run creator, every guarantee inherited.
 
-- **A. route through the server.** `mentiko run` POSTs to
-  `/api/mentiko-mcp/ops/context/runs`; `startChainRun` does the work. Collapses
-  two run creators into one and inherits every guarantee immediately. Cost: the
-  CLI requires a reachable web process.
-- **B. local device identity.** The CLI holds its own credential — the MCP
-  sidecar at `~/.mentiko/mcp/session.json` already exists — and mints a run
-  token through the existing device-auth flow
-  (`docs/specs/MCP_AUTH_RECOVERY.md`). Keeps `mentiko run` working without the
-  UI open.
+The alternative considered and rejected was "the CLI mints its own token
+locally." `mintSessionToken` is an HS256 sign with `resolveAppSecret(...)`
+(`web/lib/auth/session-token.ts:10`), derived from `BETTER_AUTH_SECRET` — the
+secret that signs every session in the deployment and encrypts the vault. A CLI
+holding it could forge any user in any namespace. Not a tradeoff; a hole.
 
-Recommendation: **A**, with the sidecar from **B** as the credential source.
-Collapsing the two run creators is the actual prize.
+### phase 1 — credential first, then the shared client
 
-### phase 1 — one ops client, delete the fork (~150 lines, net negative)
+**1a. `mentiko auth` (done).** Nothing else is reachable without a credential.
+Verified before the work: `mentiko list_schedules` from a normal shell fails
+with `MENTIKO_SESSION_TOKEN not set` — the one CLI family already on the ops
+endpoints could not be used at all.
 
-Lift `lib/mentiko-mcp/handlers/ops-client.ts` into a module both the MCP and the
-CLI import: `opsGet/opsPost/opsPatch/opsDelete`, 401 refresh, sidecar exchange,
-device-flow pickup, 15s timeout.
+- `lib/mentiko-cli-auth.mjs` — device flow against the existing
+  `/api/mentiko-mcp/auth/device/{start,poll}` and `/auth/token` endpoints
+- shares the sidecar with the MCP bridge at
+  `$MENTIKO_GLOBAL_ROOT/mcp/session.json` (0600, atomic rename), so authorizing
+  once covers both surfaces
+- `resolveToken()` implements the precedence from `ops-client.ts:27` — injected
+  `MENTIKO_SESSION_TOKEN` wins (agent runs, CI), then the stored credential,
+  refreshed in place when the 24h access token has expired
+- subcommands: `auth`, `auth status`, `auth token`, `auth logout`.
+  `auth token` prints a valid token to stdout, so headless is
+  `export MENTIKO_SESSION_TOKEN=$(mentiko auth token)`
+- `tests/cli-auth-sidecar-contract.test.mjs` pins precedence, refresh-absence,
+  corrupt-file tolerance, the shared path/shape, and 0600
 
-- rewrite `lib/mentiko-cli-schedules.mjs` onto it — net deletion
-- rewrite `lib/mentiko-cli-decision.mjs` onto it, adding
-  `/ops/decisions/import` if absent
+**1b. one ops client.** Lift `lib/mentiko-mcp/handlers/ops-client.ts` into a
+module both the MCP and the CLI import: `opsGet/opsPost/opsPatch/opsDelete`,
+401 refresh, device-flow pickup, 15s timeout. `mentiko-cli-schedules.mjs`
+currently shares only `resolveToken`; it still has its own `request()` with no
+timeout. `mentiko-cli-decision.mjs` moves off its ad-hoc route at the same time.
 
-Independently verifiable: both commands keep working and gain refresh.
+### phase 2 — `mentiko run` through startChainRun
 
-### phase 2 — move `emit` behind an ops endpoint
+Replace the second run creator. `runTypedDirect`
+(`web/lib/runner-v2/direct-run.ts:97`) stops calling `mkdirSync`/`writeFileSync`
+itself and POSTs to `/api/mentiko-mcp/ops/context/runs` with the credential from
+phase 1a.
+
+This is what populates `MENTIKO_SESSION_TOKEN` for CLI-launched agents —
+`startChainRun` mints it at `chain-run-service.ts:266` and
+`agent-bootstrap-plan.ts:121` already forwards it. It also retires the
+`claude-mentiko-mcp-config.ts` throw committed on main (89ccde7): once
+CLI-started runs carry a session, all-three-absent stops happening in normal
+operation.
+
+### phase 3 — move `emit` behind an ops endpoint
 
 Add `POST /api/mentiko-mcp/ops/events`, gated by `requireOpsAuth`, calling the
 existing `emitRunnerEvent` server-side. The write stays where it is; what
 changes is that namespace and org come from the token rather than the
 environment.
 
-- agents already carry the token once phase 0 lands — no prompt or bootstrap
+- agents already carry the token once phase 2 lands — no prompt or bootstrap
   change needed
 - **keep a local fallback.** If `MENTIKO_WEB_URL` is unreachable, write locally
   and log loudly. An agent that cannot signal completion wedges a chain; this
@@ -111,7 +133,7 @@ environment.
 - leave one runnable check: a chain hop completes over HTTP with a valid token
   and is rejected with an invalid one
 
-### phase 3 — close the surface gap
+### phase 4 — close the surface gap
 
 36 ops endpoints and 106 MCP tools against 19 CLI subcommands. The CLI has no
 task, agent, secret or workspace commands. Once the client is shared these are
@@ -155,7 +177,7 @@ Interim hardening, independent of the packaging work:
 
 ## open decisions
 
-1. phase 0: A or B — does `mentiko run` require a reachable web process?
+1. package order: CLI first (small, and the immediate irritant) or engine first?
 2. package order: CLI first (small, and the immediate irritant) or engine first
    (large, but everything else depends on where it lands)?
 
