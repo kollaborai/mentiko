@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildAgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import { buildAgentBootstrapPlan, extractAcceptanceCriteria } from "@/lib/runner-v2/agent-bootstrap-plan";
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
@@ -276,5 +276,106 @@ describe("runner-v2 agent bootstrap plan", () => {
         PATH: "/bin",
       },
     })).toThrow("Agent profile 'missing-profile' does not exist");
+  });
+
+  // These pin behavior that previously existed ONLY inside the committed lib/*.js
+  // bundles with no .ts source, so `node scripts/build-runner-bundles.mjs` deleted it
+  // with no reviewable diff. Without these tests the next rebuild deletes it again.
+  describe("task context exports", () => {
+    type ChainSpec = Record<string, unknown> | ((root: string) => Record<string, unknown>);
+
+    function planWith(chain: ChainSpec, env: Record<string, string> = {}) {
+      const root = tempDir();
+      const runDir = join(root, "runs", "run-ctx");
+      const profilesDir = join(root, "profiles");
+      mkdirSync(runDir, { recursive: true });
+      mkdirSync(profilesDir, { recursive: true });
+      writeJson(join(profilesDir, "stub-default.json"), { id: "stub-default", name: "Stub", cli: "/tmp/stub-cli" });
+      const chainPath = join(runDir, "chain.json");
+      // The temp root is created here, so a chain needing a path under it passes a
+      // function instead of an object literal.
+      writeJson(chainPath, { default_agent_profile: "stub-default", ...(typeof chain === "function" ? chain(root) : chain) });
+      const plan = buildAgentBootstrapPlan({
+        chainPath,
+        runDir,
+        runId: "run-ctx",
+        env: { AGENT_PROFILES_DIR: profilesDir, PATH: "/bin", ...env },
+      });
+      return { plan, runDir, root };
+    }
+
+    it("populates TASK_CONTEXT with resolved run identity instead of an empty string", () => {
+      const { plan, runDir, root } = planWith((chainRoot) => ({
+        id: "build-chain",
+        name: "Build Chain",
+        description: "ship the thing",
+        metadata: { implementationFocus: "runner", taskId: "TASK-500" },
+        config: { project_root: join(chainRoot, "workspace"), session_prefix: "build" },
+        agents: [{ id: "writer", name: "Writer", role: "author", triggers: ["manual-start"] }],
+      }));
+
+      expect(plan.runContextExports.TASK_CONTEXT).not.toBe("");
+      const context = JSON.parse(plan.runContextExports.TASK_CONTEXT);
+      expect(context).toMatchObject({
+        RUN_ID: "run-ctx",
+        AGENT_ID: "writer",
+        CHAIN_ID: "build-chain",
+        TASK_ID: "TASK-500",
+        CHAIN_NAME: "Build Chain",
+        CHAIN_DESCRIPTION: "ship the thing",
+        AGENT_NAME: "Writer",
+        AGENT_ROLE: "author",
+        CHAIN_OBJECTIVE: "ship the thing",
+        IMPLEMENTATION_FOCUS: "runner",
+        SESSION_PREFIX: "build",
+      });
+      // The bundle-only version read these from process.env, which is empty on a
+      // direct CLI launch — the exact case this branch fixes. They must be resolved.
+      expect(context.ARTIFACTS_DIR).toBe(join(runDir, "artifacts"));
+      expect(context.EVENTS_DIR).toBe("/project/events");
+      expect(context.WORKSPACE_PATH).toBe(join(root, "workspace"));
+    });
+
+    it("lets a caller-supplied TASK_CONTEXT win over the derived blob", () => {
+      const { plan } = planWith(
+        { agents: [{ id: "writer", triggers: ["manual-start"] }] },
+        { TASK_CONTEXT: "explicit context" },
+      );
+      expect(plan.runContextExports.TASK_CONTEXT).toBe("explicit context");
+    });
+
+    it("keeps TASK_ID identical in the export and the context blob", () => {
+      // The bundle version consulted agent.taskId for the export but not the blob,
+      // so an agent-level id appeared in one and was missing from the other.
+      const { plan } = planWith({
+        agents: [{ id: "writer", taskId: "TASK-AGENT", triggers: ["manual-start"] }],
+      });
+      expect(plan.runContextExports.TASK_ID).toBe("TASK-AGENT");
+      expect(JSON.parse(plan.runContextExports.TASK_CONTEXT).TASK_ID).toBe("TASK-AGENT");
+    });
+
+    it("resolves acceptance criteria agent -> chain metadata -> generated contract", () => {
+      const agentLevel = { id: "writer", acceptance_criteria: "from agent" };
+      expect(extractAcceptanceCriteria({ metadata: { acceptanceCriteria: "from chain" } }, agentLevel))
+        .toBe("from agent");
+      expect(extractAcceptanceCriteria({ metadata: { acceptanceCriteria: "from chain" } }, { id: "writer" }))
+        .toBe("from chain");
+      expect(extractAcceptanceCriteria(
+        { metadata: { generated_chain_contract: { acceptance_criteria: "from contract" } } },
+        { id: "writer" },
+      )).toBe("from contract");
+      expect(extractAcceptanceCriteria({}, { id: "writer" })).toBe("");
+      // An array-valued contract must not be indexed as an object.
+      expect(extractAcceptanceCriteria({ metadata: { generated_chain_contract: ["nope"] } }, { id: "writer" }))
+        .toBe("");
+    });
+
+    it("exports the resolved acceptance criteria to the agent env", () => {
+      const { plan } = planWith({
+        metadata: { acceptanceCriteria: "the postcondition holds" },
+        agents: [{ id: "writer", triggers: ["manual-start"] }],
+      });
+      expect(plan.runContextExports.TASK_ACCEPTANCE_CRITERIA).toBe("the postcondition holds");
+    });
   });
 });

@@ -18,6 +18,8 @@ export interface BootstrapChainAgent {
   monitor?: boolean;
   monitor_interval?: number;
   max_stale_count?: number;
+  acceptance_criteria?: string;
+  taskId?: string;
 }
 
 export interface BootstrapChainConfig {
@@ -32,6 +34,7 @@ export interface BootstrapChainConfig {
 export interface BootstrapChainFile {
   id?: string;
   name?: string;
+  description?: string;
   default_agent_profile?: string;
   metadata?: {
     coreGenerationChain?: boolean;
@@ -93,6 +96,11 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
   const profile = resolveAgentProfile(input.chainPath, agent.id || "", projectRoot, input.env);
   const gatewayEnv = resolveLocalAiGatewayProxyEnv(input.env);
+  // One taskId for both TASK_ID and the TASK_CONTEXT blob. The bundle-only version
+  // resolved them separately and disagreed: the export consulted agent.taskId, the
+  // blob did not, so an agent-level taskId showed up in one and not the other.
+  const taskId = input.env?.TASK_ID || metaString(chain.metadata, "taskId") || agent.taskId || "";
+  const chainId = chain.id || basename(dirname(input.chainPath));
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
     MENTIKO_BIN: join(config.codeRoot, "bin", "mentiko"),
@@ -122,16 +130,26 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_SESSION_TOKEN: input.env?.MENTIKO_SESSION_TOKEN || "",
     MENTIKO_WEB_URL: input.env?.MENTIKO_WEB_URL || "",
     KOLLABOR_ENGINE_URL: input.env?.KOLLABOR_ENGINE_URL || "",
-    TASK_ID: input.env?.TASK_ID || "",
+    TASK_ID: taskId,
     TASK_TITLE: input.env?.TASK_TITLE || "",
     TASK_DESCRIPTION: input.env?.TASK_DESCRIPTION || "",
     TASK_TYPE: input.env?.TASK_TYPE || "",
     TASK_PRIORITY: input.env?.TASK_PRIORITY || "",
-    TASK_ACCEPTANCE_CRITERIA: input.env?.TASK_ACCEPTANCE_CRITERIA || "",
+    TASK_ACCEPTANCE_CRITERIA: input.env?.TASK_ACCEPTANCE_CRITERIA || extractAcceptanceCriteria(chain, agent),
     TASK_DESIGN: input.env?.TASK_DESIGN || "",
     TASK_NOTES: input.env?.TASK_NOTES || "",
     TASK_COMMENTS: input.env?.TASK_COMMENTS || "",
-    TASK_CONTEXT: input.env?.TASK_CONTEXT || "",
+    TASK_CONTEXT: input.env?.TASK_CONTEXT || buildTaskContextJson({
+      runId: input.runId,
+      agentId: agent.id || "",
+      chainId,
+      taskId,
+      chain,
+      agent,
+      eventsDir,
+      artifactsDir,
+      projectRoot,
+    }),
     ...gatewayEnv,
     ...ptyDaemonEnv(),
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
@@ -206,6 +224,76 @@ export function resolveAgent(chain: BootstrapChainFile, agentId?: string): Boots
     throw new Error("runner-v2 bootstrap requires an agent id");
   }
   return selected;
+}
+
+/** chain.metadata is an open record, so every read has to prove it is a string. */
+function metaString(metadata: BootstrapChainFile["metadata"], key: string): string {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * Acceptance criteria for the agent's TASK_ACCEPTANCE_CRITERIA export.
+ * Priority: agent-specific -> chain metadata -> generated-chain contract.
+ *
+ * Ported from a hand-edit that existed ONLY in the committed lib/*.js bundles with
+ * no .ts behind it, so `node scripts/build-runner-bundles.mjs` deleted it silently.
+ * That is the failure class docs/specs/CLI_OPS_CONVERGENCE.md exists to end — the
+ * behavior belongs here, in the source a rebuild is generated from.
+ *
+ * The bundle version had a fourth fallback re-finding the agent in chain.agents;
+ * resolveAgent already returns that element, so it could never add anything.
+ */
+export function extractAcceptanceCriteria(chain: BootstrapChainFile, agent: BootstrapChainAgent): string {
+  const contract = chain.metadata?.generated_chain_contract;
+  const fromContract = contract && typeof contract === "object" && !Array.isArray(contract)
+    ? (contract as Record<string, unknown>).acceptance_criteria
+    : undefined;
+  return agent.acceptance_criteria
+    || metaString(chain.metadata, "acceptanceCriteria")
+    || (typeof fromContract === "string" ? fromContract : "")
+    || "";
+}
+
+export interface TaskContextInput {
+  runId: string;
+  agentId: string;
+  chainId: string;
+  taskId: string;
+  chain: BootstrapChainFile;
+  agent: BootstrapChainAgent;
+  eventsDir: string;
+  artifactsDir: string;
+  projectRoot: string;
+}
+
+/**
+ * The TASK_CONTEXT export: the run/chain/agent identity an agent needs to describe
+ * its own position in the chain. Also ported from a bundle-only hand-edit.
+ *
+ * Deliberate change from that version: it read process.env.EVENTS_DIR /
+ * ARTIFACTS_DIR / MENTIKO_PROJECT_ROOT, which are empty on a direct CLI launch —
+ * the very path this branch fixes. Here the resolved values are already in scope,
+ * so the caller passes them and the blob is never half-empty.
+ */
+export function buildTaskContextJson(input: TaskContextInput): string {
+  const { chain, agent } = input;
+  return JSON.stringify({
+    RUN_ID: input.runId,
+    AGENT_ID: input.agentId,
+    EVENTS_DIR: input.eventsDir,
+    ARTIFACTS_DIR: input.artifactsDir,
+    WORKSPACE_PATH: input.projectRoot,
+    CHAIN_ID: input.chainId,
+    TASK_ID: input.taskId,
+    CHAIN_NAME: chain.name || "",
+    CHAIN_DESCRIPTION: chain.description || "",
+    AGENT_NAME: agent.name || agent.id || "",
+    AGENT_ROLE: agent.role || "",
+    CHAIN_OBJECTIVE: metaString(chain.metadata, "chainObjective") || chain.description || "",
+    IMPLEMENTATION_FOCUS: metaString(chain.metadata, "implementationFocus"),
+    SESSION_PREFIX: chain.config?.session_prefix || "",
+  }, null, 2);
 }
 
 function resolveSessionPrefix(chain: BootstrapChainFile, agent: BootstrapChainAgent): string {
