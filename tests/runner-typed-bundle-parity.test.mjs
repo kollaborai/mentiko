@@ -1,60 +1,28 @@
-import { execFileSync } from "node:child_process";
+// Bundle parity: every committed lib/*.js runner bundle must equal a fresh esbuild
+// of its web/ source. The build list and the esbuild invocation live in ONE place —
+// scripts/build-runner-bundles.mjs — so this test and the rebuild script can never
+// drift apart. CI runs this (see .github/workflows/engine-tests.yml); locally,
+// `node scripts/build-runner-bundles.mjs` rebuilds, `--check` is this check.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
+import { allTargets, buildBundle } from "../scripts/build-runner-bundles.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
-const web = join(root, "web");
-const pairs = [
-  ["integration-contract-cli", "runner-integration-contract"], ["legacy-metrics-cli", "runner-legacy-metrics"],
-  ["routing-contract-cli", "runner-routing-contract"], ["schedule-contract-cli", "runner-schedule-contract"],
-  ["concurrency-admission-cli", "runner-concurrency-admission"], ["retry-circuit-cli", "runner-retry-circuit"],
-  ["monitor-completion-cli", "runner-monitor-completion"], ["readiness-cli", "runner-readiness"],
-  ["chain-validation-cli", "runner-chain-validation"], ["chain-generation-cli", "runner-chain-generation"],
-  ["chain-graph-cli", "runner-chain-graph"],
-  ["activity-capture-cli", "runner-activity-capture"],
-  ["approval-gate-cli", "runner-approval-gate"], ["error-handling-cli", "runner-error-handling"],
-  ["teammux-bridge-cli", "runner-teammux-bridge"], ["version-control-cli", "runner-version-control"],
-  ["task-context-cli", "runner-task-context"],
-  ["git-integration-cli", "runner-git-integration"],
-  ["audit-ship-cli", "runner-audit-ship"],
-  ["notification-dispatcher-cli", "runner-notification-dispatcher"],
-  ["complete-cli", "runner-v2-complete"],
-  ["run-record-cli", "runner-run-record"],
-  ["kollabor-mcp-settings-cli", "runner-kollabor-mcp-settings"],
-  ["agent-transcript-cli", "runner-agent-transcript"],
-  ["agent-profile-cli", "runner-agent-profile"],
-  ["direct-run-cli", "runner-v2-direct-run"],
-  ["batch-runner-cli", "runner-batch-runner"],
-  ["next-chain-launch-cli", "runner-v2-next-chain"],
-  ["existing-run-launch-cli", "runner-v2-existing-run"],
-  ["launch-agent-cli", "runner-v2-launch-agent"],
-  ["monitor-cli", "monitor-v2"],
-  ["manual-monitor-cli", "runner-manual-monitor"],
-  ["standalone-monitor-cli", "runner-v2-standalone-monitor"],
-  ["standalone-agent-launch-cli", "runner-v2-standalone-agent-launch"],
-  ["lib/system/audit-cli.ts", "runner-audit"],
-  ["lib/system/native-plugin-handler-cli.ts", "runner-native-plugin"],
-  ["lib/links/peer-link-controller-cli.ts", "runner-peer-link-controller"],
-];
-const standaloneBundles = [
-  ["lib/runner-v2/job-worker.ts", "runner-job-worker"],
-  ["lib/pty/pty-transport-cli.ts", "runner-pty-transport"],
-];
+const lib = join(root, "lib");
 const temp = mkdtempSync(join(tmpdir(), "mentiko-bundle-parity-"));
 try {
-  for (const [source, bundle] of pairs) {
+  for (const [stem, bundle] of allTargets()) {
     const output = join(temp, `${bundle}.js`);
-    const sourcePath = source.endsWith(".ts") ? source : `lib/runner-v2/${source}.ts`;
-    execFileSync("npx", ["esbuild", sourcePath, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
-    assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
+    buildBundle(stem, output); // cwd = web; adds the GENERATED banner
+    assert.equal(
+      readFileSync(output, "utf8"),
+      readFileSync(join(lib, `${bundle}.js`), "utf8"),
+      `${bundle} is stale — run: node scripts/build-runner-bundles.mjs`,
+    );
   }
-  for (const [source, bundle] of standaloneBundles) {
-    const output = join(temp, `${bundle}.js`);
-    execFileSync("npx", ["esbuild", source, "--bundle", "--platform=node", "--target=node20", `--outfile=${output}`], { cwd: web, stdio: "pipe" });
-    assert.equal(readFileSync(output, "utf8"), readFileSync(join(root, "lib", `${bundle}.js`), "utf8"), `${bundle} is stale`);
-  }
-  const bundleCount = pairs.length + standaloneBundles.length;
-  console.log(`bundle parity: ${bundleCount}/${bundleCount}`);
-} finally { rmSync(temp, { recursive: true, force: true }); }
+  console.log(`bundle parity: ${allTargets().length}/${allTargets().length}`);
+} finally {
+  rmSync(temp, { recursive: true, force: true });
+}
