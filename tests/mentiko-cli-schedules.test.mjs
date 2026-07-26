@@ -47,6 +47,12 @@ function runSched(args, extraEnv = {}) {
     env: {
       PATH: `${NODE_BIN}:/usr/bin:/bin`,
       MENTIKO_WEB_URL: "http://127.0.0.1:1",
+      // Isolate the credential sidecar. resolveToken() falls back to
+      // $MENTIKO_GLOBAL_ROOT/mcp/session.json, and that root defaults to homedir() —
+      // which Node reads from the OS, not from HOME. So on any machine where a
+      // developer has actually run `mentiko auth`, the real credential leaked into
+      // this child and the no-token case silently stopped being tested.
+      MENTIKO_GLOBAL_ROOT: TMP,
       ...extraEnv,
     },
     encoding: "utf-8",
@@ -78,11 +84,13 @@ test("unknown command fails with exit 2", () => {
   assert(r.stderr.includes("unknown schedule command"), `unexpected error: ${r.stderr}`);
 });
 
-test("missing token fails with exit 3", () => {
+test("missing credential fails with exit 3", () => {
   const r = runSchedFail(["list_schedules"]);
   assert(r !== null, "expected failure");
   assert(r.status === 3, `expected exit 3, got ${r.status}`);
-  assert(r.stderr.includes("MENTIKO_SESSION_TOKEN"), `missing token error: ${r.stderr}`);
+  // The shared ops client replaced the raw "MENTIKO_SESSION_TOKEN not set" text with
+  // an actionable instruction; exit 3 still distinguishes auth from every other failure.
+  assert(r.stderr.includes("not authenticated"), `missing credential error: ${r.stderr}`);
 });
 
 test("delete_schedule requires --id", () => {
