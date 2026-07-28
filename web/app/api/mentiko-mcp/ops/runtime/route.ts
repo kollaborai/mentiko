@@ -107,18 +107,25 @@ function readRunJson(runId: string): RunJson | null {
   return JSON.parse(readFileSync(runPath, "utf-8")) as RunJson;
 }
 
+// Canonical run-agent status vocabulary — lib/schemas/run.schema.json
+// agents[].status enum. Note it is NOT the run-level enum: agents terminate
+// as "complete"/"error", runs as "completed"/"failed". Matching the run-level
+// words here silently blanked every diagnostic field.
+const AGENT_COMPLETE_STATUSES = new Set(["complete"]);
+const AGENT_FAILED_STATUSES = new Set(["failed", "error"]);
+const AGENT_IN_FLIGHT_STATUSES = new Set(["pending", "running", "blocked"]);
+
 function deriveRunDiagnostics(run: RunJson) {
   const agents = Array.isArray(run.agents) ? run.agents : [];
   const lastCompletedAgent = [...agents].reverse().find((agent) => (
-    agent.status === "completed" || agent.status === "success"
+    AGENT_COMPLETE_STATUSES.has(agent.status ?? "")
   )) ?? null;
   const pendingAgent = agents.find((agent) => (
-    agent.status === "pending" ||
-    agent.status === "running" ||
-    agent.status === "stalled" ||
-    agent.status === "waiting"
+    AGENT_IN_FLIGHT_STATUSES.has(agent.status ?? "")
   )) ?? null;
-  const failedAgent = agents.find((agent) => agent.status === "failed" || agent.error) ?? null;
+  const failedAgent = agents.find((agent) => (
+    AGENT_FAILED_STATUSES.has(agent.status ?? "") || agent.error
+  )) ?? null;
 
   return {
     status: run.status ?? "unknown",

@@ -269,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- chains (tier A reads, tier B/C writes) ----------
     if (name === "list_chains") {
-      const result = await chains.listChains();
+      const result = await chains.listChains(args.id);
       return textResult(JSON.stringify(result, null, 2));
     }
 
@@ -340,7 +340,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     // ---------- agents (tier A reads, tier B writes) ----------
     if (name === "list_agents") {
-      const result = await agents.listAgents(args.scope);
+      const result = await agents.listAgents(args.id);
       return textResult(JSON.stringify(result, null, 2));
     }
 

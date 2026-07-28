@@ -1,7 +1,11 @@
 import { opsGet, opsPost } from "./ops-client.js";
 
-export async function listAgents(_scope?: string) {
-  return await opsGet("/api/mentiko-mcp/ops/agents");
+export async function listAgents(id?: string) {
+  return await opsGet(
+    id
+      ? `/api/mentiko-mcp/ops/agents?id=${encodeURIComponent(id)}`
+      : "/api/mentiko-mcp/ops/agents",
+  );
 }
 
 export async function createAgent(

@@ -17,7 +17,7 @@ import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mc
  * Internal chain CRUD for the mentiko-mcp stdio subprocess. JWT session auth.
  * Scoped to the namespace/org from the token — no bypass path.
  *
- * GET              list all chains
+ * GET              list chain summaries (no agents[]); ?id= returns one full chain
  * POST   {name}    create a new empty chain draft
  * PATCH  {id,name} rename a chain (rename its directory)
  * DELETE ?id=      delete a chain
@@ -53,7 +53,21 @@ export async function GET(req: Request) {
   const { namespaceId, orgId } = ctx;
   const chainsDir = orgPath(namespaceId, orgId, "chains");
   const chains = getAllChains(chainsDir, "claude", undefined, namespaceId, orgId);
-  return NextResponse.json({ chains });
+
+  const id = new URL(req.url).searchParams.get("id");
+  if (id) {
+    const slug = sanitizeSlug(id);
+    const chain = chains.find((entry) => entry.id === slug || entry.name === id);
+    if (!chain) return new NextResponse(`Chain not found: ${slug}`, { status: 404 });
+    return NextResponse.json({ chain });
+  }
+
+  // Summaries only. Every chain inlines its full agent definitions (prompts
+  // included), so the unfiltered list ran ~134KB across 28 chains and blew the
+  // MCP response budget — the tool could never return at all. agentCount
+  // already carries the shape; ?id= fetches the full definition on demand.
+  const summaries = chains.map(({ agents: _agents, ...summary }) => summary);
+  return NextResponse.json({ chains: summaries });
 }
 
 export async function POST(req: Request) {

@@ -179,8 +179,13 @@ const ALL_TOOLS: Tool[] = [
   // ③ Chain Operations
   {
     name: "list_chains",
-    description: "List all chains in the current namespace.",
-    inputSchema: { type: "object", properties: {} }
+    description: "List chains in the current namespace as SUMMARIES (id/name/description/agentCount) — the agents[] array is omitted. Pass id to get one chain's full definition including its agents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Chain id. Returns that chain's full definition instead of the summary list." }
+      }
+    }
   },
   {
     name: "open_chain",
@@ -283,11 +288,11 @@ const ALL_TOOLS: Tool[] = [
   // ④ Agent Ops
   {
     name: "list_agents",
-    description: "List all agents.",
+    description: "List agents as SUMMARIES — prompt is truncated to promptPreview. Pass id to get one agent's full record including its complete prompt.",
     inputSchema: {
       type: "object",
       properties: {
-        scope: { type: "string", enum: ["global", "namespace", "org"] }
+        id: { type: "string", description: "Agent id. Returns that agent's full record instead of the summary list." }
       }
     }
   },

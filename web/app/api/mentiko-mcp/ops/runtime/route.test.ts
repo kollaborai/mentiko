@@ -99,7 +99,9 @@ describe("/api/mentiko-mcp/ops/runtime", () => {
         id: "run-1778724644028",
         status: "stalled",
         agents: [
-          { id: "researcher", status: "completed", completedAt: "2026-05-14T02:10:00.000Z" },
+          // statuses must come from the agents[].status enum in
+          // lib/schemas/run.schema.json — agents end as "complete", not "completed"
+          { id: "researcher", status: "complete", completedAt: "2026-05-14T02:10:00.000Z" },
           { id: "writer", status: "pending" },
         ],
       }),
@@ -148,9 +150,52 @@ describe("/api/mentiko-mcp/ops/runtime", () => {
     const res = await GET(request("get_run_state", { runId: "run-1778724644028" }));
 
     expect(res.status).toBe(200);
-    const body = await res.json() as { diagnostics: { status: string; pendingAgent: { id: string } } };
+    const body = await res.json() as {
+      diagnostics: {
+        status: string;
+        pendingAgent: { id: string };
+        lastCompletedAgent: { id: string } | null;
+      };
+    };
     expect(body.diagnostics.status).toBe("stalled");
     expect(body.diagnostics.pendingAgent.id).toBe("writer");
+    // regression: matched the run-level "completed" instead of the agent-level
+    // "complete", so this was always null even on a finished agent
+    expect(body.diagnostics.lastCompletedAgent?.id).toBe("researcher");
+  });
+
+  test("classifies every terminal agent status from the run schema enum", async () => {
+    mkdirSync(join(orgRoot, "runs", "run-1778724644029"), { recursive: true });
+    writeFileSync(
+      join(orgRoot, "runs", "run-1778724644029", "run.json"),
+      JSON.stringify({
+        id: "run-1778724644029",
+        status: "failed",
+        agents: [
+          { id: "researcher", status: "complete" },
+          { id: "writer", status: "error" },
+          { id: "reviewer", status: "blocked" },
+        ],
+      }),
+    );
+
+    const res = await GET(request("get_run_state", { runId: "run-1778724644029" }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      diagnostics: {
+        lastCompletedAgent: { id: string } | null;
+        failedAgent: { id: string } | null;
+        pendingAgent: { id: string } | null;
+        hasError: boolean;
+      };
+    };
+    expect(body.diagnostics.lastCompletedAgent?.id).toBe("researcher");
+    // "error" is a terminal agent failure in the schema; it used to match nothing
+    expect(body.diagnostics.failedAgent?.id).toBe("writer");
+    expect(body.diagnostics.hasError).toBe(true);
+    // "blocked" is in-flight — it is what the run is waiting on
+    expect(body.diagnostics.pendingAgent?.id).toBe("reviewer");
   });
 
   test("returns only event files for the requested run id", async () => {
