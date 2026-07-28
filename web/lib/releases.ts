@@ -11,10 +11,10 @@ export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
     version: "v0.3.42",
-    date: "July 21, 2026",
-    title: "Operations Timeline",
+    date: "July 28, 2026",
+    title: "Operational Control and Workflow Reliability",
     description:
-      "The Activity page is now a full operational view of the platform. One server-side read model composes the task store, live run claims, the auto-run admission gate, completion audits, and system health into a single truthful answer: what is running, what is expected next and why, what is waiting on dependencies, capacity, audits, or a human decision, which errors are blocking downstream work (with the causal path), and what audited completions accomplished — with their artifacts and evidence. Task rows gain distinct attention indicators (failed, audit failed, blocked, blocking, review needed, paused, running, expected next), the app shell shows a live operations verdict, and durable state transitions raise idempotent notifications that deep-link to the affected task, run, or decision. The previous chain/agent event feed is preserved under the Feed toggle.",
+      "The Activity page is now a full operational view of the platform, showing what is running, what is expected next, what is blocked, and what completed with evidence. Chain generation and auto-run delivery recover more safely from invalid or incomplete work, decision work modes carry into follow-up tasks, and MCP diagnostics report clearer runtime status. Task rows gain distinct attention indicators plus configurable layouts through the new visual UI editor, while the original chain and agent event feed remains available under the Feed toggle.",
     category: "new",
     docsHref: "/activity",
   },
