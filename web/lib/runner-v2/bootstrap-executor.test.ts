@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { assertTypedMonitorRuntimeAvailable, buildTypedCompletionContract, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
@@ -801,6 +801,62 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.sendKeys).toHaveBeenCalledWith("workspace-writer-run-1", expect.stringContaining("writer-instructions.md"));
     const attempts = (JSON.parse(readFileSync(join(root, "run.json"), "utf8")).runnerV2 || {}).attempts || [];
     expect(attempts[0]?.phase).toBe("instructions_submitted");
+  });
+
+  it("applies a bounded typed startup recovery decision before submitting instructions", async () => {
+    const root = tempDir();
+    const profilesDir = join(root, "profiles");
+    const advisorCli = join(root, "advisor-cli.sh");
+    writeProfile(root, {
+      enabled: true,
+      ready_patterns: [{ name: "ready", type: "text", value: "Provider boot complete" }],
+      recoverable_patterns: [{ name: "press-enter", type: "text", value: "Press Enter", action: "recover", risk: "low" }],
+    });
+    writeFileSync(advisorCli, [
+      "#!/usr/bin/env bash",
+      "cat >/dev/null",
+      "printf '%s\\n' '{\"action\":\"send_keys\",\"keys\":[\"ENTER\"],\"confidence\":0.99,\"risk\":\"low\",\"reason\":\"benign startup prompt\"}'",
+      "",
+    ].join("\n"));
+    chmodSync(advisorCli, 0o700);
+    writeFileSync(join(profilesDir, "advisor.json"), JSON.stringify({
+      id: "advisor",
+      name: "Advisor",
+      cli: advisorCli,
+      isAdvisorDefault: true,
+    }));
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    let captureCount = 0;
+    const executor = {
+      remove: jest.fn(async () => {}),
+      spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+      sendKeys: jest.fn(async () => {}),
+      sendRaw: jest.fn(async () => {}),
+      capture: jest.fn(async () => {
+        captureCount += 1;
+        return captureCount === 1 ? "Press Enter to continue" : "Provider boot complete";
+      }),
+    };
+    const recoveryPlan = plan(root);
+    recoveryPlan.runContextExports = {
+      ...recoveryPlan.runContextExports,
+      AGENT_PROFILES_DIR: profilesDir,
+      MENTIKO_STARTUP_RECOVERY: "1",
+      MENTIKO_STARTUP_RECOVERY_MAX: "1",
+    };
+
+    await executeLocalBootstrap(recoveryPlan, context(root), executor);
+
+    expect(executor.sendRaw).toHaveBeenCalledWith("workspace-writer-run-1", "\r");
+    expect(readFileSync(join(root, "artifacts", "writer-startup-recovery-decisions.jsonl"), "utf8")).toContain(
+      "\"action\":\"send_keys\"",
+    );
+    const attempts = (JSON.parse(readFileSync(runJsonPath, "utf8")).runnerV2 || {}).attempts || [];
+    expect(attempts[0]).toMatchObject({
+      phase: "instructions_submitted",
+      recoveryDecisionCount: 1,
+    });
   });
 
   it.each([

@@ -60,7 +60,7 @@ describe("runner-v2 agent profile contract", () => {
       extra_args: ["--flag", "value with spaces"],
     });
 
-    const command = buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
+    const command = buildClaudeProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
     expect(command).toContain("'--allow-dangerously-skip-permissions' '--permission-mode' 'bypassPermissions'");
     expect(command).not.toContain("'--allow-dangerously-skip-permissions --permission-mode bypassPermissions'");
     expect(command).not.toContain("{secret:");
@@ -84,7 +84,7 @@ describe("runner-v2 agent profile contract", () => {
       permission_flag: '--permission-mode bypassPermissions --add-dir "/tmp/path with spaces"',
     });
 
-    expect(buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
+    expect(buildClaudeProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" }))
       .toContain("'--permission-mode' 'bypassPermissions' '--add-dir' '/tmp/path with spaces'");
   });
 
@@ -132,7 +132,7 @@ describe("runner-v2 agent profile contract", () => {
       pipe_flag: '-p --add-dir "/tmp/path with spaces"',
     });
 
-    expect(buildAgentProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" }))
+    expect(buildClaudeProfileCommand({ profilePath, interactive: false, namespaceId: "default", orgId: "default" }))
       .toContain("'claude' '-p' '--add-dir' '/tmp/path with spaces'");
   });
 
@@ -171,3 +171,33 @@ describe("runner-v2 agent profile contract", () => {
     expect(() => buildAgentProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" })).toThrow("Invalid profile env entry");
   });
 });
+
+function buildClaudeProfileCommand(input: Parameters<typeof buildAgentProfileCommand>[0]): string {
+  const previous = {
+    MENTIKO_WEB_URL: process.env.MENTIKO_WEB_URL,
+    MENTIKO_SESSION_ID: process.env.MENTIKO_SESSION_ID,
+    MENTIKO_SESSION_TOKEN: process.env.MENTIKO_SESSION_TOKEN,
+    MENTIKO_CODE_ROOT: process.env.MENTIKO_CODE_ROOT,
+  };
+  Object.assign(process.env, {
+    MENTIKO_WEB_URL: "http://127.0.0.1:3200",
+    MENTIKO_SESSION_ID: "test-session",
+    MENTIKO_SESSION_TOKEN: "test-token",
+    MENTIKO_CODE_ROOT: join(process.cwd(), ".."),
+  });
+  let command: string | undefined;
+  try {
+    command = buildAgentProfileCommand(input);
+    return command;
+  } finally {
+    const configPath = command?.match(/--mcp-config' '([^']+)'/)?.[1];
+    if (configPath) {
+      rmSync(configPath, { force: true });
+      rmdirSync(dirname(configPath));
+    }
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}

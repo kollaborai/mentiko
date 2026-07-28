@@ -137,6 +137,11 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
     MENTIKO_CLI_READY_TIMEOUT: input.env?.MENTIKO_CLI_READY_TIMEOUT || "",
     MENTIKO_CLI_READY_POLL: input.env?.MENTIKO_CLI_READY_POLL || "",
+    MENTIKO_STARTUP_RECOVERY: input.env?.MENTIKO_STARTUP_RECOVERY || "",
+    MENTIKO_STARTUP_RECOVERY_MAX: input.env?.MENTIKO_STARTUP_RECOVERY_MAX || "",
+    MENTIKO_ADVISOR_STALE_COUNT: input.env?.MENTIKO_ADVISOR_STALE_COUNT || "",
+    MENTIKO_MONITOR_MAX_NUDGES: input.env?.MENTIKO_MONITOR_MAX_NUDGES || "",
+    MENTIKO_MONITOR_NEVER_ARMED_GRACE: input.env?.MENTIKO_MONITOR_NEVER_ARMED_GRACE || "",
     // The monitor inherits these exports and hands them to typed completion.
     MENTIKO_RUNNER_V2: input.env?.MENTIKO_RUNNER_V2 || "",
     MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
@@ -167,8 +172,10 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
       agentId: agent.id || "",
       agentName: agent.name || agent.id || "",
       emits: agent.emits || "",
-      interval: String(agent.monitor_interval || chain.config?.monitor_interval || 5),
-      maxStale: String(agent.max_stale_count || 5),
+      interval: input.env?.MENTIKO_MONITOR_INTERVAL
+        || String(agent.monitor_interval || chain.config?.monitor_interval || 5),
+      maxStale: input.env?.MENTIKO_MONITOR_MAX_STALE
+        || String(agent.max_stale_count || 5),
       runId: input.runId,
       env: runContextExports,
     }),

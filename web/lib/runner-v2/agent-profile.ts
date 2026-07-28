@@ -96,13 +96,19 @@ export function loadAgentProfile(profilePath: string): Omit<ResolvedAgentProfile
 
 export function buildAgentProfileCommand(input: ProfileCommandInput): string {
   const { profile } = loadAgentProfile(input.profilePath);
-  const envFile = writeProfileEnvFile(profile, input.namespaceId, input.orgId);
   const model = input.modelOverride ?? (input.purpose === "relay" ? profile.relay_model ?? profile.model : profile.model);
+  // Validate every configured argv fragment before creating private env or MCP
+  // files. Invalid profile syntax must fail without leaving launch artifacts.
+  const pipeArgs = input.interactive || !profile.pipe_flag
+    ? []
+    : splitProfileArgumentString(profile.pipe_flag, "pipe_flag");
+  const permissionArgs = resolveProfilePermissionArgs(profile.cli, profile.permission_flag);
+  const envFile = writeProfileEnvFile(profile, input.namespaceId, input.orgId);
   const mentikoMcp = profile.cli === "claude" ? createClaudeMentikoMcpConfig(process.env) : undefined;
   const args = [
     profile.cli,
-    ...(input.interactive || !profile.pipe_flag ? [] : splitProfileArgumentString(profile.pipe_flag, "pipe_flag")),
-    ...resolveProfilePermissionArgs(profile.cli, profile.permission_flag),
+    ...pipeArgs,
+    ...permissionArgs,
     ...(model ? ["--model", model] : []),
     ...(profile.extra_args ?? []),
     // `--strict-mcp-config` prevents an old user-level `mentiko` entry from

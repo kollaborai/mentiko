@@ -7,6 +7,11 @@ import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import {
+  decideStartupRecovery,
+  recoveryKeyBytes,
+  type StartupRecoveryInput,
+} from "@/lib/runner-v2/readiness-cli";
 import { addRunSession, readRunJson, updateRunJson, updateRunStatus, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import {
   type AgentAttemptPhase,
@@ -16,6 +21,7 @@ import {
   isTerminalAgentAttemptPhase,
   readRunnerV2AttemptState,
   recordAgentAttemptProcess,
+  recordAgentAttemptRecoveryDecision,
   releaseAgentAttempt,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
@@ -421,6 +427,13 @@ async function waitForBootstrapReadiness(
       failClosed,
     });
     if (readiness.status === "ready") return;
+    if (
+      isRecoverableReadinessStatus(readiness.status)
+      && await attemptTypedStartupRecovery(plan, executor, attemptId, runJsonPath, readiness, output)
+    ) {
+      await sleep(pollMs);
+      continue;
+    }
     if (isTerminalReadinessStatus(readiness.status)) {
       const failure = classifyPolicyReadinessFailure(readiness, output);
       blockStartupForReadiness({
@@ -469,6 +482,58 @@ async function waitForBootstrapReadiness(
   throw new BootstrapReadinessBlockedError(`runner-v2 typed bootstrap timed out waiting for profile readiness; last_output=${lastOutput.slice(-500)}`);
 }
 
+async function attemptTypedStartupRecovery(
+  plan: AgentBootstrapPlan,
+  executor: RunnerV2BootstrapExecutor,
+  attemptId: string,
+  runJsonPath: string,
+  readiness: CliReadinessResult,
+  output: string,
+): Promise<boolean> {
+  const enabled = envValue(plan, "MENTIKO_STARTUP_RECOVERY") === "1";
+  const maxAttempts = Number(envValue(plan, "MENTIKO_STARTUP_RECOVERY_MAX"));
+  const currentAttempt = readRunnerV2AttemptState(runJsonPath).attempts
+    .find((attempt) => attempt.id === attemptId);
+  if (
+    !enabled
+    || !Number.isInteger(maxAttempts)
+    || maxAttempts <= 0
+    || (currentAttempt?.recoveryDecisionCount || 0) >= maxAttempts
+  ) {
+    return false;
+  }
+
+  const recovery: StartupRecoveryInput = {
+    enabled: true,
+    maxAttempts,
+    runId: plan.runContextExports.MENTIKO_RUN_ID,
+    profilesDir: plan.runContextExports.AGENT_PROFILES_DIR,
+    namespaceId: plan.runContextExports.NAMESPACE_ID,
+    orgId: plan.runContextExports.ORG_ID,
+    agentId: plan.agentId,
+    profileId: plan.profileId,
+    cli: plan.localStartCommand,
+    cwd: plan.projectRoot,
+    command: plan.localStartCommand,
+    stateFile: plan.statePath,
+    artifactDir: plan.artifactsDir,
+  };
+  const decision = decideStartupRecovery({ recovery, readiness, output });
+  if (!decision) return false;
+
+  recordAgentAttemptRecoveryDecision({ runJsonPath, attemptId });
+  if (decision.action === "send_keys") {
+    if (!executor.sendRaw || !decision.keys?.length) return false;
+    for (const key of decision.keys) {
+      await executor.sendRaw(plan.sessionName, recoveryKeyBytes(key));
+    }
+    return true;
+  }
+
+  await executor.sendKeys(plan.sessionName, plan.localStartCommand);
+  return true;
+}
+
 class BootstrapReadinessBlockedError extends Error {}
 
 function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
@@ -495,6 +560,10 @@ function resolvePlanReadinessPolicy(plan: AgentBootstrapPlan): {
 
 function isTerminalReadinessStatus(status: CliReadinessResult["status"]): boolean {
   return status === "blocked" || status === "recover" || status === "retry" || status === "no_ready_signal";
+}
+
+function isRecoverableReadinessStatus(status: CliReadinessResult["status"]): boolean {
+  return status === "blocked" || status === "recover" || status === "retry";
 }
 
 function classifyPolicyReadinessFailure(readiness: CliReadinessResult, output: string): {
