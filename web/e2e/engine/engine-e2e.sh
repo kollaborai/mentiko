@@ -292,12 +292,12 @@ else
   fi
   # error recorded
   if jq -e '.status_message // .agents[]?.lastMessage // ""
-            | test("exited before instructions|fail";"i")' "$RUN_DIR_CRASH/run.json" >/dev/null 2>&1; then
+            | test("exited before instructions|exited before producing its completion event|fail";"i")' "$RUN_DIR_CRASH/run.json" >/dev/null 2>&1; then
     pass "crash: failure reason recorded on run"
   else
     note "crash: run.json = $(jq -c '{status, status_message, agents:[.agents[]|{id,status,lastMessage}]}' "$RUN_DIR_CRASH/run.json" 2>/dev/null)"
     # not fatal — the state file also records it; assert on state file instead
-    if grep -qiE 'exited before instructions|^status: failed' "$DATA_ROOT/namespaces/default/state/"*.state 2>/dev/null; then
+    if grep -qiE 'exited before instructions|exited before producing its completion event|^status: failed' "$DATA_ROOT/namespaces/default/state/"*.state 2>/dev/null; then
       pass "crash: failure reason recorded in state file"
     else
       fail "crash: no failure reason recorded"
@@ -356,7 +356,12 @@ else
   # the agent DID emit its completion event before the gate failed the run.
   event_emitted "verify-done" && pass "gate: verify-done event emitted before gate failure" || fail "gate: verify-done event missing"
   # a machine-readable failure artifact exists.
-  if ls "$RUN_DIR_QG/artifacts/"*quality-gate.json >/dev/null 2>&1; then
+  QUALITY_GATE_ARTIFACT="$RUN_DIR_QG/artifacts/triage-result.json"
+  if jq -e '
+      .schema == "generated-tasks/v1"
+      and .event.name == "quality_gate.failed"
+      and (.qualityGate.reason | type == "string" and length > 0)
+    ' "$QUALITY_GATE_ARTIFACT" >/dev/null 2>&1; then
     pass "gate: quality-gate failure artifact written"
   else
     fail "gate: quality-gate failure artifact missing"
