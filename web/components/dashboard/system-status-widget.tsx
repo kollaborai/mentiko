@@ -182,6 +182,50 @@ function buildServices(
   return services;
 }
 
+function ServiceRow({ service, stacked = false }: { service: ServiceState; stacked?: boolean }) {
+  if (stacked) {
+    return (
+      <div className="min-w-0">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span
+            className={`inline-block h-1 w-1 shrink-0 rounded-full ${statusDot(service.status)} ${statusGlow(service.status)}`}
+          />
+          <service.icon className="h-2.5 w-2.5 shrink-0 text-foreground/25" />
+          <span className="min-w-0 truncate text-[10px] font-medium text-foreground/45">
+            {service.label}
+          </span>
+        </span>
+        <span
+          className="mt-0.5 block truncate pl-4 text-[9px] font-semibold text-foreground/40 tabular-nums"
+          title={service.detail}
+        >
+          {service.detail}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span
+          className={`inline-block h-1 w-1 shrink-0 rounded-full ${statusDot(service.status)} ${statusGlow(service.status)}`}
+        />
+        <service.icon className="h-2.5 w-2.5 shrink-0 text-foreground/25" />
+        <span className="min-w-0 truncate text-[10px] font-medium text-foreground/45">
+          {service.label}
+        </span>
+      </span>
+      <span
+        className="min-w-0 truncate text-right text-[10px] font-semibold text-foreground/45 tabular-nums"
+        title={service.detail}
+      >
+        {service.detail}
+      </span>
+    </div>
+  );
+}
+
 export function SystemStatusWidget() {
   const { fetchWithNamespace } = useNamespaceFetch();
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -228,103 +272,101 @@ export function SystemStatusWidget() {
   const services = buildServices(health, daemon);
   const overall = health?.status ?? null;
   const uptime = health?.uptime_seconds ?? null;
+  const coreServices = services.slice(0, 2);
+  const supportingServices = services.slice(2);
+
+  const status = overall === "healthy" ? "pass" : overall === "degraded" ? "warn" : "fail";
 
   return (
-    <div className="col-span-2 flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5 sm:col-span-3 md:col-span-1">
-      {/* header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          {overall && (
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full ${statusDot(
-                overall === "healthy"
-                  ? "pass"
+    <>
+      <div className="col-span-2 flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-2.5 sm:col-span-3 md:col-span-1">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
+            {overall && (
+              <span
+                className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(status)} ${
+                  overall === "healthy" ? "animate-pulse" : ""
+                } ${statusGlow(status)}`}
+              />
+            )}
+            <span className={`text-sm font-bold ${overallColor(overall)}`}>
+              {loading
+                ? "checking..."
+                : overall === "healthy"
+                  ? "all systems go"
                   : overall === "degraded"
-                  ? "warn"
-                  : "fail"
-              )} ${
-                overall === "healthy"
-                  ? "animate-pulse"
-                  : ""
-              } ${statusGlow(
-                overall === "healthy"
-                  ? "pass"
-                  : overall === "degraded"
-                  ? "warn"
-                  : "fail"
-              )}`}
-            />
-          )}
-          <span className={`text-sm font-bold ${overallColor(overall)}`}>
-            {loading
-              ? "checking..."
-              : overall === "healthy"
-              ? "all systems go"
-              : overall === "degraded"
-              ? "degraded"
-              : overall === "unhealthy"
-              ? "unhealthy"
-              : "unknown"}
+                    ? "degraded"
+                    : overall === "unhealthy"
+                      ? "unhealthy"
+                      : "unknown"}
+            </span>
+            {isKollaborBarEnabled() && !loading && (
+              <button
+                type="button"
+                onClick={() => {
+                  // mirror the bar's acceptHint mechanic: prefill + expand, never auto-send
+                  const bar = useKollaborBarStore.getState();
+                  bar.setInputValue("how's the system doing?");
+                  bar.setExpanded(true);
+                }}
+                className="self-start whitespace-nowrap text-[11px]  h-1.5 w-1.5  font-medium text-foreground/45 transition-colors hover:text-foreground/80"
+              >
+                ask mentiko
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-baseline justify-between gap-0 border-t border-border/25 pt-0">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-foreground/35">
+            uptime
+          </span>
+          <span className="truncate text-right text-xs font-semibold text-foreground/55 tabular-nums">
+            {uptime != null && !loading ? formatUptime(uptime) : "—"}
           </span>
         </div>
-        {isKollaborBarEnabled() && !loading && (
-          <button
-            type="button"
-            onClick={() => {
-              // mirror the bar's acceptHint mechanic: prefill + expand, never auto-send
-              const bar = useKollaborBarStore.getState();
-              bar.setInputValue("how's the system doing?");
-              bar.setExpanded(true);
-            }}
-            className="whitespace-nowrap text-[11px] font-medium text-foreground/45 transition-colors hover:text-foreground/80"
-          >
-            ask mentiko
-          </button>
-        )}
-        {uptime != null && !loading && (
-          <span className="text-[11px] font-medium text-foreground/35 tabular-nums">
-            up {formatUptime(uptime)}
-          </span>
+
+        {!loading && coreServices.length > 0 && (
+          <div className="flex flex-col gap-1 border-t border-border/25 pt-0">
+            {coreServices.map((service) => (
+              <ServiceRow key={service.label} service={service} />
+            ))}
+          </div>
         )}
       </div>
 
-      {/* service rows */}
-      {!loading && services.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {services.map((svc) => (
-            <div
-              key={svc.label}
-              className="grid min-w-0 grid-cols-[auto_auto_minmax(3.25rem,1fr)_auto] items-center gap-1.5"
-            >
-              <span
-                className={`inline-block h-1 w-1 rounded-full shrink-0 ${statusDot(
-                  svc.status
-                )} ${statusGlow(svc.status)}`}
-              />
-              <svc.icon className="h-2.5 w-2.5 shrink-0 text-foreground/25" />
-              <span className="text-[10px] font-medium text-foreground/45">
-                {svc.label}
-              </span>
-              <span className="min-w-0 truncate text-right text-[10px] font-semibold text-foreground/45 tabular-nums">
-                {svc.detail}
-              </span>
-            </div>
-          ))}
+      <div className="col-span-1 flex min-w-0 flex-col gap-1 overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-2.5 sm:col-span-2 md:col-span-1">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-semibold text-foreground/75">
+            services
+          </span>
+          {!loading && (
+            <span className="text-[10px] text-foreground/30">
+              {supportingServices.length} checks
+            </span>
+          )}
         </div>
-      )}
 
-      {/* loading skeleton */}
-      {loading && (
-        <div className="flex flex-col gap-1.5">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div
-              key={i}
-              className="h-2.5 rounded bg-foreground/5 animate-pulse"
-              style={{ width: `${60 + i * 7}%` }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+        {!loading && supportingServices.length > 0 && (
+          <div className="grid min-w-0 grid-cols-1 gap-x-2 gap-y-1 md:grid-cols-3">
+            {supportingServices.map((service) => (
+              <ServiceRow key={service.label} service={service} stacked />
+            ))}
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex flex-col gap-1.5">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className="h-2.5 rounded bg-foreground/5 animate-pulse"
+                style={{ width: `${60 + i * 7}%` }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

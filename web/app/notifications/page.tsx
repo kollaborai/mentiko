@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { DetailHeader } from "@/components/ui/detail-header";
+import { NotificationCard } from "@/components/ui/notification-card";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData } from "@/lib/api/api-client";
 import {
@@ -448,11 +449,22 @@ function NotificationsPageContent() {
 
               {/* Detail body */}
               <div className="flex-1 overflow-y-auto p-4">
-                <div className="bg-card rounded-md p-4 space-y-4">
-                  <div>
-                    <h3 className="text-xs font-medium text-foreground/60 mb-2">Message</h3>
-                    <p className="text-sm text-foreground">{safeStr(selected.message)}</p>
-                  </div>
+                <div className="space-y-4">
+                  <NotificationCard
+                    id={selected.id}
+                    title={selected.title}
+                    body={safeStr(selected.message)}
+                    status={selected.read ? "read" : "unread"}
+                    createdAt={selected.timestamp}
+                    actions={selected.metadata?.actionUrl ? [{
+                      id: "open",
+                      label: selected.metadata.actionLabel || "Open",
+                      type: "redirect",
+                      style: "primary",
+                    }] : []}
+                    onMarkAsRead={handleMarkAsRead}
+                    onAction={() => handleAction(selected)}
+                  />
 
                   {selected.metadata && Object.keys(selected.metadata).length > 0 && (
                     <div>

@@ -85,7 +85,7 @@ jest.mock("@/lib/tasks/task-transforms", () => ({
 }));
 
 jest.mock("../type-badge", () => ({
-  TypeBadge: ({ type }: { type: string }) => <span>{type}</span>,
+  TypeBadge: ({ type }: { type: string }) => <span data-testid="detail-type-badge">{type}</span>,
 }));
 
 jest.mock("../priority-badge", () => ({
@@ -119,6 +119,23 @@ const taskWithActions: Task = {
 };
 
 describe("TaskDetailHeader", () => {
+  it("uses the typed task ID without repeating the type badge", () => {
+    render(
+      <TaskDetailHeader
+        task={taskWithActions}
+        onBack={jest.fn()}
+        onClose={jest.fn()}
+        onReopen={jest.fn()}
+        onRunChain={jest.fn()}
+        onEdit={jest.fn()}
+        isRunning={false}
+      />,
+    );
+
+    expect(screen.getByText("FEAT-001")).toBeInTheDocument();
+    expect(screen.queryByTestId("detail-type-badge")).not.toBeInTheDocument();
+  });
+
   it("keeps task actions in one content-width wrapping group", () => {
     render(
       <TaskDetailHeader

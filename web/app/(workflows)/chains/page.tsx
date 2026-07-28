@@ -20,7 +20,6 @@ import {
 import { LinkFilled, AddFilled } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
 import { BackButton } from "@/components/ui/back-button";
-import EntropyBanner from "@/components/ui/entropy-banner";
 import { BotMessageSquare, RouteSquareFilled, CategoryFilled } from "@aliimam/icons";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
@@ -859,27 +858,6 @@ function ChainsPageContent() {
         subtitle="Define agent workflows as visual pipelines. Build multi-agent chains with triggers, event routing, and branching logic."
         icon={LinkFilled}
         sectionColor="#b07ee8"
-        overlayDark
-        background={
-          <>
-            <EntropyBanner
-              color="#b07ee8"
-              background="#0a0a0b"
-              orientation="diagonal"
-              spacing={24}
-              edgeFade
-              style={{ position: "absolute", inset: 0 }}
-            />
-            {/* left-to-right scrim keeps the title legible while the mesh + status show through on the right */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(to right, rgba(8,8,11,0.92) 0%, rgba(8,8,11,0.6) 34%, rgba(8,8,11,0.12) 66%, rgba(8,8,11,0) 100%)",
-              }}
-            />
-          </>
-        }
         actions={[
           { label: "Agents", href: "/agents", icon: BotMessageSquare, iconColor: "#b07ee8" },
           { label: "Runs", href: "/runs", icon: RouteSquareFilled, iconColor: "#5b9ef5" },

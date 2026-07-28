@@ -19,7 +19,6 @@ import {
   RouteSquareFilled,
 } from "@aliimam/icons";
 import { PageBanner } from "@/components/ui/page-banner";
-import ElectricMist from "@/components/ui/electric-mist";
 import { statusBar, statusPill, statusLabel } from "@/lib/ui/status-colors";
 import { useWorkspace } from "@/lib/ui-context/workspace-context";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
@@ -529,10 +528,6 @@ function RunsPageContent() {
         }
         icon={RouteSquareFilled}
         sectionColor="#5b9ef5"
-        watermarkFill={
-          // electric shimmer shows only through the icon silhouette
-          <ElectricMist color="#3b6fe0" speed={0.7} distortion={2.4} brightness={1.15} />
-        }
         actions={[
           { label: "Chains", href: "/chains", icon: LinkFilled, iconColor: "#b07ee8" },
           { label: "Tasks", href: "/tasks", icon: TaskSquareFilled, iconColor: "#5b9ef5" },

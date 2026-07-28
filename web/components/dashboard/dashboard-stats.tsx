@@ -24,7 +24,7 @@ interface StatCardProps {
 
 function StatCard({ icon, watermarkIcon: WatermarkIcon, watermarkColor, label, value, subtext }: StatCardProps) {
   return (
-    <div className="relative overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-3.5">
+    <div className="relative overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-background via-muted/20 to-background p-2.5">
       <div
         className="absolute -right-7 -bottom-7 pointer-events-none"
         style={{ color: watermarkColor, opacity: 0.13 }}
@@ -36,9 +36,9 @@ function StatCard({ icon, watermarkIcon: WatermarkIcon, watermarkColor, label, v
           <div className="text-foreground/60">{icon}</div>
           <span className="text-xs font-semibold text-foreground/80">{label}</span>
         </div>
-        <div className="mt-2 text-3xl font-black leading-none tracking-normal text-foreground tabular-nums md:text-4xl">{value}</div>
+        <div className="mt-1.5 text-3xl font-black leading-none tracking-normal text-foreground tabular-nums md:text-4xl">{value}</div>
         {subtext && (
-          <p className="mt-1.5 text-xs text-foreground/45">{subtext}</p>
+          <p className="mt-1 text-xs text-foreground/45">{subtext}</p>
         )}
       </div>
     </div>
@@ -57,7 +57,7 @@ export function DashboardStats() {
   const failedRuns = runs.filter(r => r.status === "failed").length;
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-[1.25fr_2fr_repeat(5,minmax(0,1fr))]">
       <SystemStatusWidget />
       <StatCard
         icon={<GitBranch className="h-4 w-4" />}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import {
   Link2Filled,
   PlayFilled,
@@ -10,7 +12,6 @@ import {
 } from "@aliimam/icons";
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "./priority-badge";
-import { TypeBadge } from "./type-badge";
 import { timeAgo } from "@/lib/tasks/task-transforms";
 import type { Task } from "@/lib/tasks/task-types";
 import {
@@ -22,6 +23,12 @@ import {
   TaskOpIndicator,
   type TaskOpIndicatorState,
 } from "@/components/task/task-op-indicator";
+import { TaskSidebarConfiguredLayout } from "@/components/task/task-sidebar-configured";
+import type { EditorState } from "@/app/docs/ui-editor/editor-model";
+import {
+  readTaskSidebarEditorState,
+  TASK_SIDEBAR_EDITOR_UPDATED_EVENT,
+} from "@/lib/task-sidebar-editor";
 
 // Resolved auto-run state -- single source of truth (lib/tasks/auto-run-state.ts).
 // Prefer the server-resolved Task.autoRun (folds in the workspace default); fall
@@ -64,31 +71,91 @@ function isRunRecent(lastRunId: string | undefined): boolean {
   return timestamp > fiveMinutesAgo;
 }
 
-function getTaskAccent(task: Task): string {
-  if (taskAutoRunState(task).retriesExhausted) {
-    return "bg-red-500";
-  }
-  if (task.chainBinding?.last_run_decision_required) return "bg-amber-400";
-  if (task.completed) return "bg-emerald-500";
-  switch (task.chainBinding?.last_run_status) {
-    case "running":
-      return "bg-sky-400";
-    case "pending":
-    case "queued":
-    case "starting":
-    case "retry_requested":
-    case "blocked":
-      return "bg-amber-400";
-    case "failed":
-    case "error":
-    case "cancelled":
-      return "bg-red-400";
-    case "completed":
-    case "complete":
-      return "bg-emerald-400";
-    default:
-      return "bg-muted-foreground/40";
-  }
+function TaskOperationalMeta({
+  task,
+  op,
+  blockedByCount,
+  blocksCount,
+  autoRun,
+  autoRunRetries,
+  autoRunPaused,
+  hasRecentRun,
+  needsRunReview,
+}: {
+  task: Task;
+  op?: TaskOpIndicatorState;
+  blockedByCount: number;
+  blocksCount: number;
+  autoRun: ReturnType<typeof taskAutoRunState>;
+  autoRunRetries: number;
+  autoRunPaused: boolean;
+  hasRecentRun: boolean;
+  needsRunReview: boolean;
+}) {
+  return (
+    <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] text-foreground/40">
+      {op && !task.completed ? (
+        <TaskOpIndicator state={op} hide={["running", "paused"]} />
+      ) : null}
+      {!op && blockedByCount > 0 ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
+          title={`${blockedByCount} dependenc${blockedByCount === 1 ? "y" : "ies"}`}
+        >
+          <ArrowUpFilled className="h-2 w-2 text-foreground/35" />
+          <span>{blockedByCount}</span>
+        </span>
+      ) : null}
+      {!op && blocksCount > 0 ? (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
+          title={`Unlocks ${blocksCount} task${blocksCount > 1 ? "s" : ""}`}
+        >
+          <ArrowDownFilled className="h-2 w-2 text-amber-400/60" />
+          <span className="text-amber-400/70">{blocksCount}</span>
+        </span>
+      ) : null}
+      {autoRun.enabled && !task.completed ? (
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5",
+            autoRunPaused
+              ? "bg-red-500/15 text-red-300"
+              : autoRunRetries > 0
+                ? "bg-amber-500/15 text-amber-300"
+                : "bg-emerald-500/10 text-emerald-300",
+          )}
+        >
+          {autoRunPaused
+            ? `Auto paused ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+            : autoRunRetries > 0
+              ? `Auto ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+              : "Auto"}
+        </span>
+      ) : null}
+      {hasRecentRun && task.chainBinding?.last_run_id ? (
+        <a
+          href={`/runs?runId=${task.chainBinding.last_run_id}`}
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <PlayFilled className="h-2.5 w-2.5" />
+          {task.chainBinding.last_run_id}
+        </a>
+      ) : null}
+      {needsRunReview && task.chainBinding?.last_run_id ? (
+        <a
+          href={`/runs?runId=${task.chainBinding.last_run_id}`}
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-300 hover:bg-amber-500/15"
+          onClick={(event) => event.stopPropagation()}
+          title={`Run outcome: ${task.chainBinding.last_run_outcome || "review required"}`}
+        >
+          <PlayFilled className="h-2.5 w-2.5" />
+          review run
+        </a>
+      ) : null}
+    </div>
+  );
 }
 
 export function TaskListItem({
@@ -101,6 +168,25 @@ export function TaskListItem({
   isChecked,
   op,
 }: TaskListItemProps) {
+  const [editorState, setEditorState] = useState<EditorState | null>(null);
+
+  useEffect(() => {
+    const loadEditorState = () => {
+      setEditorState(readTaskSidebarEditorState());
+    };
+
+    loadEditorState();
+    window.addEventListener("storage", loadEditorState);
+    window.addEventListener(TASK_SIDEBAR_EDITOR_UPDATED_EVENT, loadEditorState);
+    return () => {
+      window.removeEventListener("storage", loadEditorState);
+      window.removeEventListener(
+        TASK_SIDEBAR_EDITOR_UPDATED_EVENT,
+        loadEditorState,
+      );
+    };
+  }, []);
+
   const isRunning = task.chainBinding?.last_run_status === "running";
   const needsRunReview = !!task.chainBinding?.last_run_decision_required;
   const hasRecentRun = isRunning || isRunRecent(task.chainBinding?.last_run_id);
@@ -117,15 +203,14 @@ export function TaskListItem({
     <WorkflowSidebarItem
       selected={!selectMode && selected}
       onClick={() => onSelect(task)}
-      accentClassName={getTaskAccent(task)}
       className={cn(
-        "rounded-md px-3 py-2.5",
+        "rounded-md px-3 py-2",
         task.type === "decision" && "bg-blue-500/5",
         selected && task.type === "decision" && "bg-blue-500/10",
         isRunning && "animate-in fade-in duration-300",
       )}
     >
-      <div className={cn("relative", selectMode ? "pl-10" : "pl-4")}>
+      <div className={cn("relative", selectMode ? "pl-7" : "pl-0")}>
         {selectMode && (
           <div className="absolute left-2 top-1/2 -translate-y-1/2">
             {isChecked ? (
@@ -135,120 +220,134 @@ export function TaskListItem({
             )}
           </div>
         )}
-        <div className="min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <span
-              className={cn(
-                "line-clamp-2 text-sm font-semibold leading-5",
-                task.completed && "text-foreground/45 line-through",
-              )}
-            >
-              {task.title}
-            </span>
-            <span className="shrink-0 text-[10px] text-foreground/30">
-              {timeAgo(task.updatedAt)}
-            </span>
-          </div>
-
-          {task.description ? (
-            <p className="line-clamp-1 text-[11px] text-foreground/40 mt-0.5">
-              {task.description}
-            </p>
-          ) : null}
-
-          {task.type === "decision" && (
-            <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-blue-300/60">
-              human decision gate
-            </p>
-          )}
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
-            <TypeBadge type={task.type} />
-            <PriorityBadge
-              priority={task.priority}
-              rawPriority={task.rawPriority}
+        {editorState ? (
+          <>
+            <TaskSidebarConfiguredLayout
+              state={editorState}
+              task={task}
+              depInfo={depInfo}
             />
-            <span className="font-mono text-foreground/25">{task.id}</span>
-            {task.chainBinding && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] text-foreground/55">
-                <Link2Filled className="h-2.5 w-2.5" />
-                {task.chainBinding.chain_name || task.chainBinding.chain_id}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/40">
-            {/* Operational indicator (server read model) supersedes the raw dep
-                counts; the counts remain the fallback when ops data is absent. */}
-            {op && !task.completed && (
-              <TaskOpIndicator state={op} hide={["running", "paused"]} />
-            )}
-            {!op && blockedByCount > 0 && (
-              <span
-                className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
-                title={`${blockedByCount} dependenc${blockedByCount === 1 ? "y" : "ies"}`}
-              >
-                <ArrowUpFilled className="h-2 w-2 text-foreground/35" />
-                <span>{blockedByCount}</span>
-              </span>
-            )}
-            {!op && blocksCount > 0 && (
-              <span
-                className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
-                title={`Unlocks ${blocksCount} task${blocksCount > 1 ? "s" : ""}`}
-              >
-                <ArrowDownFilled className="h-2 w-2 text-amber-400/60" />
-                <span className="text-amber-400/70">{blocksCount}</span>
-              </span>
-            )}
-            {autoRun.enabled && !task.completed && (
+            <TaskOperationalMeta
+              task={task}
+              op={op}
+              blockedByCount={blockedByCount}
+              blocksCount={blocksCount}
+              autoRun={autoRun}
+              autoRunRetries={autoRunRetries}
+              autoRunPaused={autoRunPaused}
+              hasRecentRun={hasRecentRun}
+              needsRunReview={needsRunReview}
+            />
+          </>
+        ) : (
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-end">
               <span
                 className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
-                  autoRunPaused
-                    ? "bg-red-500/15 text-red-300"
-                    : autoRunRetries > 0
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "bg-emerald-500/10 text-emerald-300",
+                  "min-w-0 line-clamp-2 text-sm font-semibold leading-5",
+                  task.completed && "text-foreground/45 line-through",
                 )}
-                title={
-                  autoRunPaused
-                    ? `Auto-run paused after ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`
-                    : autoRunRetries > 0
-                      ? `Auto-run has ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`
-                      : "Auto-run enabled"
-                }
+                title={task.title}
               >
-                {autoRunPaused
-                  ? `Auto paused ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
-                  : autoRunRetries > 0
-                    ? `Auto ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
-                    : "Auto"}
+                {task.title}
               </span>
-            )}
-            {hasRecentRun && task.chainBinding?.last_run_id && (
-              <a
-                href={`/runs?runId=${task.chainBinding.last_run_id}`}
-                className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <PlayFilled className="h-2.5 w-2.5" />
-                {task.chainBinding.last_run_id}
-              </a>
-            )}
-            {needsRunReview && task.chainBinding?.last_run_id && (
-              <a
-                href={`/runs?runId=${task.chainBinding.last_run_id}`}
-                className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-300 hover:bg-amber-500/15"
-                onClick={(event) => event.stopPropagation()}
-                title={`Run outcome: ${task.chainBinding.last_run_outcome || "review required"}`}
-              >
-                <PlayFilled className="h-2.5 w-2.5" />
-                review run
-              </a>
-            )}
+              {" "}
+              <span className="ml-1.5 shrink-0 whitespace-nowrap text-[10px] font-normal text-foreground/30">
+                {timeAgo(task.updatedAt)}
+              </span>
+            </div>
+
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden text-[10px] text-foreground/40">
+              <PriorityBadge
+                priority={task.priority}
+                rawPriority={task.rawPriority}
+              />
+              <span className="shrink-0 whitespace-nowrap font-mono text-foreground/25">
+                {task.id}
+              </span>
+              {task.chainBinding && (
+                <span
+                  className="inline-flex min-w-0 items-center gap-1 truncate text-foreground/55"
+                  title={task.chainBinding.chain_name || task.chainBinding.chain_id}
+                >
+                  <Link2Filled className="h-2.5 w-2.5" />
+                  <span className="truncate">
+                    {task.chainBinding.chain_name || task.chainBinding.chain_id}
+                  </span>
+                </span>
+              )}
+              {/* Operational indicator (server read model) supersedes the raw dep
+                  counts; the counts remain the fallback when ops data is absent. */}
+              {op && !task.completed && (
+                <TaskOpIndicator state={op} hide={["running", "paused"]} />
+              )}
+              {!op && blockedByCount > 0 && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
+                  title={`${blockedByCount} dependenc${blockedByCount === 1 ? "y" : "ies"}`}
+                >
+                  <ArrowUpFilled className="h-2 w-2 text-foreground/35" />
+                  <span>{blockedByCount}</span>
+                </span>
+              )}
+              {!op && blocksCount > 0 && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full bg-foreground/5 px-1.5 py-0.5"
+                  title={`Unlocks ${blocksCount} task${blocksCount > 1 ? "s" : ""}`}
+                >
+                  <ArrowDownFilled className="h-2 w-2 text-amber-400/60" />
+                  <span className="text-amber-400/70">{blocksCount}</span>
+                </span>
+              )}
+              {autoRun.enabled && !task.completed && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+                    autoRunPaused
+                      ? "bg-red-500/15 text-red-300"
+                      : autoRunRetries > 0
+                        ? "bg-amber-500/15 text-amber-300"
+                        : "bg-emerald-500/10 text-emerald-300",
+                  )}
+                  title={
+                    autoRunPaused
+                      ? `Auto-run paused after ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`
+                      : autoRunRetries > 0
+                        ? `Auto-run has ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES} failed attempts`
+                        : "Auto-run enabled"
+                  }
+                >
+                  {autoRunPaused
+                    ? `Auto paused ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+                    : autoRunRetries > 0
+                      ? `Auto ${autoRunRetries}/${MAX_AUTO_RUN_RETRIES}`
+                      : "Auto"}
+                </span>
+              )}
+              {hasRecentRun && task.chainBinding?.last_run_id && (
+                <a
+                  href={`/runs?runId=${task.chainBinding.last_run_id}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-300 hover:bg-sky-500/15"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <PlayFilled className="h-2.5 w-2.5" />
+                  {task.chainBinding.last_run_id}
+                </a>
+              )}
+              {needsRunReview && task.chainBinding?.last_run_id && (
+                <a
+                  href={`/runs?runId=${task.chainBinding.last_run_id}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-300 hover:bg-amber-500/15"
+                  onClick={(event) => event.stopPropagation()}
+                  title={`Run outcome: ${task.chainBinding.last_run_outcome || "review required"}`}
+                >
+                  <PlayFilled className="h-2.5 w-2.5" />
+                  review run
+                </a>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </WorkflowSidebarItem>
   );
