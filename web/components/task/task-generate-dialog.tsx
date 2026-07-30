@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CloseCircleFilled as X, MagicStarFilled as Sparkles, ArrowLeftFilled as ArrowLeft, RotateFilled, JudgeFilled, TaskSquareFilled } from "@aliimam/icons";
 import { Button } from "@/components/ui/button";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
+import { unwrapApiData } from "@/lib/api/api-client";
 
 interface GeneratedTask {
   title: string;
@@ -90,6 +91,7 @@ export function TaskGenerateDialog({
   const [step, setStep] = useState<"describe" | "preview">("describe");
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
+  const generationInFlightRef = useRef(false);
   const [error, setError] = useState("");
   const [generated, setGenerated] = useState<GeneratedTask | null>(null);
   const [parent, setParent] = useState("");
@@ -130,7 +132,8 @@ export function TaskGenerateDialog({
   };
 
   const handleGenerate = async (mode: "task" | "decision" = "task") => {
-    if (!prompt.trim() || generating) return;
+    if (!prompt.trim() || generationInFlightRef.current) return;
+    generationInFlightRef.current = true;
     setGenerating(true);
     setError("");
 
@@ -179,12 +182,12 @@ export function TaskGenerateDialog({
       for (let i = 0; i < 300; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const pollRes = await fetchWithNamespace(`/api/jobs/${jobId}`);
-        const job = await pollRes.json() as {
+        const job = unwrapApiData<{
           status?: string;
           taskId?: string;
           result?: (GeneratedTask & { createdTaskIds?: string[] });
           error?: string;
-        };
+        }>(await pollRes.json());
         if (job.status === "complete" && job.result) {
           const result = job.result as GeneratedTask & {
             routedTo?: string;
@@ -219,6 +222,7 @@ export function TaskGenerateDialog({
     } catch {
       setError("failed to connect to generation API");
     } finally {
+      generationInFlightRef.current = false;
       setGenerating(false);
     }
   };

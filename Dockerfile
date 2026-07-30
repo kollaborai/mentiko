@@ -79,6 +79,8 @@ RUN echo "=== assembling platform ===" && \
     cp -r /build/bin/. /context/bin/ 2>/dev/null || true && \
     cp -r /build/lib/. /context/lib/ 2>/dev/null || true && \
     cp -r /build/web/lib/. /context/lib/ 2>/dev/null || true && \
+    mkdir -p /context/docs/orchestration/contracts && \
+    cp /build/docs/orchestration/contracts/*.json /context/docs/orchestration/contracts/ && \
     cp -r server/. /context/server/ 2>/dev/null || true && \
     test -d /build/kollab/agent-bundles/mentiko || (echo "FATAL: missing kollab/agent-bundles/mentiko (kollabor bar bootstrap)" && exit 1) && \
     mkdir -p /context/kollab/agent-bundles && \

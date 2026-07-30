@@ -45,6 +45,25 @@ try {
 require('ws');
 require('@xterm/headless');
 
+// Runner-v2 loads its migration and implementation contracts at runtime from
+// config.codeRoot. Missing contracts fail every typed launch before PTY
+// allocation, so image admission must prove the same path the app reads.
+{
+  const contractPath = '/opt/mentiko/docs/orchestration/contracts/runner-v2-contract.json';
+  let contract;
+  try {
+    contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  } catch (error) {
+    console.error(`FATAL: runner-v2 runtime contract missing or invalid: ${contractPath}`, error);
+    process.exit(1);
+  }
+  if (contract.migration_mode !== 'typed' || contract.default_runner !== 'typed') {
+    console.error('FATAL: runner-v2 runtime contract does not declare the typed default');
+    process.exit(1);
+  }
+  console.log('runner-v2 runtime contract verified');
+}
+
 // ---------------------------------------------------------------------------
 // (a) basic sqlite
 // ---------------------------------------------------------------------------

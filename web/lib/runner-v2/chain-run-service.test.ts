@@ -117,7 +117,7 @@ jest.mock("@/lib/auth/session-token", () => ({
 }));
 
 jest.mock("@/lib/agents/run-agent-profile", () => ({
-  resolveRunAgentProfileId: jest.fn(() => undefined),
+  resolveRunAgentProfile: jest.fn(() => undefined),
 }));
 
 jest.mock("@/lib/runs/run-provenance", () => ({

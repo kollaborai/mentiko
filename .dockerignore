@@ -38,6 +38,9 @@ Thumbs.db
 
 # docs (not needed in image)
 docs/
+!docs/orchestration/
+!docs/orchestration/contracts/
+!docs/orchestration/contracts/*.json
 *.md
 LICENSE
 

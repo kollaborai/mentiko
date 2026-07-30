@@ -42,7 +42,7 @@ describe("Claude run-scoped Mentiko MCP config", () => {
   });
 
   it("does not materialize a config for a Claude session without run capability", () => {
-    expect(() => createClaudeMentikoMcpConfig({}, { serverPath })).toThrow("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN but all were absent/empty");
+    expect(createClaudeMentikoMcpConfig({}, { serverPath })).toBeUndefined();
   });
 
   it("fails closed for partial run context instead of using a global MCP credential", () => {

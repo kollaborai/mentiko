@@ -44,7 +44,7 @@ import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
 import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
-import { resolveRunAgentProfileId } from "@/lib/agents/run-agent-profile";
+import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { executionStartedLifecycleMetadata } from "@/lib/orchestration/task-lifecycle-metadata";
 
@@ -373,12 +373,13 @@ export async function startChainRun({
   if (authorizedWorkspacePath) {
     runChain.config = { ...(runChain.config || {}), project_root: authorizedWorkspacePath };
   }
-  const effectiveAgentProfileId = resolveRunAgentProfileId({
+  const profileResolution = resolveRunAgentProfile({
     requestedProfileId: requestedAgentProfileId,
     chainDefaultProfileId: runChain.default_agent_profile,
     workspaceDefaultProfileId: resolvedWorkspaceRecord?.default_agent_profile,
     profiles,
   });
+  const effectiveAgentProfileId = profileResolution?.id;
   const runtimeProfile = effectiveAgentProfileId
     ? getProfile(namespaceId, orgId, effectiveAgentProfileId)
     : null;
@@ -462,6 +463,7 @@ export async function startChainRun({
     ...(runMetadata ? { metadata: runMetadata } : {}),
     ...(authorizedWorkspacePath ? { workspacePath: authorizedWorkspacePath } : {}),
     ...(runtimeProfile?.id ? { agentProfileId: runtimeProfile.id } : {}),
+    ...(profileResolution?.source ? { agentProfileSource: profileResolution.source } : {}),
     ...(persistedWorkspaceId ? { workspaceId: persistedWorkspaceId } : {}),
     ...(taskId && typeof taskId === "string" ? { taskId } : {}),
   };

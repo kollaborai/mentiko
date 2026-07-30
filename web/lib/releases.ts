@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.43",
+    date: "July 29, 2026",
+    title: "Tenant Agent Launch Reliability",
+    description:
+      "Tenant images now include the runtime contracts required by the typed chain runner, preventing generation jobs from stopping before terminal allocation. Claude profiles can run without Mentiko MCP context when none was supplied while still rejecting partial context, run records expose the selected profile and its resolution source, and task generation prevents duplicate submissions while showing the underlying job error.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.42",
     date: "July 28, 2026",
     title: "Operational Control and Workflow Reliability",

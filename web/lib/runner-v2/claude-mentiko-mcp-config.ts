@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const CONTEXT_DIR_PREFIX = "mentiko-claude-mcp-";
 const CONFIG_FILE_NAME = "mcp.json";
@@ -29,9 +29,11 @@ export function createClaudeMentikoMcpConfig(
   const sessionToken = value(env.MENTIKO_SESSION_TOKEN);
   const contextValues = [webUrl, sessionId, sessionToken];
 
-  if (contextValues.every((entry) => !entry)) {
-    throw new Error("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN but all were absent/empty");
-  }
+  // CLI/system launches may intentionally have no authenticated web session.
+  // They can still run the agent without the optional run-scoped MCP bridge.
+  // Keep rejecting partial context below: silently mixing a global credential
+  // with a run-scoped config would be unsafe.
+  if (contextValues.every((entry) => !entry)) return undefined;
   if (contextValues.some((entry) => !entry)) {
     throw new Error("Claude Mentiko MCP context requires MENTIKO_WEB_URL, MENTIKO_SESSION_ID, and MENTIKO_SESSION_TOKEN");
   }

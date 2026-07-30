@@ -1,4 +1,4 @@
-import { resolveRunAgentProfileId } from "../agents/run-agent-profile";
+import { resolveRunAgentProfile, resolveRunAgentProfileId } from "../agents/run-agent-profile";
 
 const profiles = [
   { id: "claude-sonnet", isDefault: true },
@@ -7,6 +7,21 @@ const profiles = [
 ];
 
 describe("resolveRunAgentProfileId", () => {
+  it("reports the winning source without exposing profile environment values", () => {
+    expect(resolveRunAgentProfile({
+      requestedProfileId: undefined,
+      chainDefaultProfileId: undefined,
+      workspaceDefaultProfileId: undefined,
+      profiles: [{ id: "sonnet", isDefault: true }, { id: "opus" }],
+    })).toEqual({ id: "sonnet", source: "namespace" });
+    expect(resolveRunAgentProfile({
+      requestedProfileId: "opus",
+      chainDefaultProfileId: "sonnet",
+      workspaceDefaultProfileId: undefined,
+      profiles: [{ id: "sonnet", isDefault: true }, { id: "opus" }],
+    })).toEqual({ id: "opus", source: "runtime" });
+  });
+
   it("uses an explicitly requested profile when it exists", () => {
     expect(resolveRunAgentProfileId({
       requestedProfileId: "kollab",
