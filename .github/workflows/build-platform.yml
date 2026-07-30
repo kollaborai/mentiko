@@ -201,6 +201,14 @@ jobs:
         working-directory: web
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+          # This build peaks just under 4GB at the tail of the webpack compile
+          # phase. Node's implicit default on a 16GB runner is ~4.14GB, so the
+          # release gate was decided by GC timing: v0.3.42 finished at 394s,
+          # v0.3.43 OOM'd at 374s on a tree with zero route or dependency
+          # changes. Both commits OOM when pinned to 4096. Pin the ceiling
+          # explicitly — the control-plane's platform build already does
+          # (--max-old-space-size=6144); this job was the one left to chance.
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           ./node_modules/.bin/next build --webpack
           test -f .next/standalone/server.js || { echo "FATAL: standalone build missing server.js"; exit 1; }

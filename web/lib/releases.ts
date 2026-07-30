@@ -10,6 +10,14 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.44",
+    date: "July 29, 2026",
+    title: "Release Build Reliability",
+    description:
+      "The platform release build now pins an explicit Node heap ceiling. The web build peaks just under Node's implicit default, so the release gate was being decided by garbage-collection timing rather than by the code: two consecutive releases with no route or dependency changes between them produced one success and one out-of-memory failure. Both the CI job and the in-image fallback build now declare the ceiling, so a release either builds or fails for a real reason.",
+    category: "fix",
+  },
+  {
     version: "v0.3.43",
     date: "July 29, 2026",
     title: "Tenant Agent Launch Reliability",

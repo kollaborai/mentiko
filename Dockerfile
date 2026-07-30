@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/build/web/.next/cache,id=next-${TARGETARCH} \
       test -f .next/standalone/server.js || (echo "FATAL: SKIP_NEXT_BUILD=1 but .next/standalone/server.js missing — artifact not staged" && exit 1); \
     else \
       echo "=== next.js build (webpack) ===" && \
-      ./node_modules/.bin/next build --webpack && \
+      NODE_OPTIONS="--max-old-space-size=8192" ./node_modules/.bin/next build --webpack && \
       test -f .next/standalone/server.js || (echo "FATAL: standalone build missing server.js" && exit 1); \
     fi
 
