@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.45",
+    date: "July 29, 2026",
+    title: "Tenant MCP Bundle Reliability",
+    description:
+      "Tenant images now preserve the Mentiko MCP bridge at its canonical package path, matching the private run-scoped configuration used by Claude agents. Image smoke tests reject a missing or invalid bridge before publication, and typed bootstrap exits a failed startup shell instead of pasting agent instructions into a plain terminal prompt.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.44",
     date: "July 29, 2026",
     title: "Release Build Reliability",

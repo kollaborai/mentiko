@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { execFileSync, execSync } = require('node:child_process');
 
 console.log('arch:', process.arch, 'platform:', process.platform);
 try {
@@ -62,6 +62,23 @@ require('@xterm/headless');
     process.exit(1);
   }
   console.log('runner-v2 runtime contract verified');
+}
+
+// Claude runner-v2 launches receive a private MCP config pointing at the
+// package's canonical dist/server.js output. Prove that exact path is present
+// and syntactically executable before admitting an image.
+{
+  const mcpServerPath = '/opt/mentiko/lib/mentiko-mcp/dist/server.js';
+  try {
+    const stat = fs.statSync(mcpServerPath);
+    if (!stat.isFile()) throw new Error('path is not a regular file');
+    fs.accessSync(mcpServerPath, fs.constants.R_OK);
+    execFileSync(process.execPath, ['--check', mcpServerPath], { stdio: 'pipe' });
+  } catch (error) {
+    console.error(`FATAL: Mentiko MCP runtime bundle missing or invalid: ${mcpServerPath}`, error);
+    process.exit(1);
+  }
+  console.log('Mentiko MCP runtime bundle verified');
 }
 
 // ---------------------------------------------------------------------------

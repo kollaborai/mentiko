@@ -214,6 +214,11 @@ describe("runner-v2 bootstrap executor", () => {
     expect(startScript).not.toContain("SECRET_THAT_MUST_NOT_BE_IN_SCRIPT");
     expect(startScript).not.toContain("chain-runner.sh");
     expect(calls.map((call) => call.op)).toEqual(["remove", "spawn", "sendKeys", "sendKeys", "remove", "spawn"]);
+    expect(executor.sendKeys).toHaveBeenNthCalledWith(
+      1,
+      "workspace-writer-run-1",
+      `cd '${join(root, "workspace")}' && bash '${join(root, "artifacts", "writer-start.sh")}' || exit $?\r`,
+    );
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
       "zsh",

@@ -28,7 +28,7 @@ function seedStaleClaim(claimDir: string): void {
 }
 
 function spawnFixture(args: string[]): ChildProcess {
-  const [mode, claimDir, artifactPath, gatePath] = args;
+  const [mode, claimDir, artifactPath, gatePath, readyPath] = args;
   const child = spawn(process.execPath, [
     jestBin,
     "--runInBand",
@@ -46,6 +46,7 @@ function spawnFixture(args: string[]): ChildProcess {
       FILE_CLAIM_CHILD_CLAIM: claimDir,
       FILE_CLAIM_CHILD_ARTIFACT: artifactPath,
       FILE_CLAIM_CHILD_GATE: gatePath,
+      FILE_CLAIM_CHILD_READY: readyPath || "",
     },
   });
   fixtureChildren.add(child);
@@ -54,7 +55,7 @@ function spawnFixture(args: string[]): ChildProcess {
   return child;
 }
 
-async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+async function waitForFile(path: string, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
@@ -136,22 +137,25 @@ describe("exclusive file claim", () => {
     withExclusiveFileClaim(claimDir, () => { entered = true; });
     expect(entered).toBe(true);
     expect(existsSync(`${claimDir}.reaper`)).toBe(false);
-  }, 10_000);
+  }, 30_000);
 
   it("allows exactly one of two concurrent stale-claim reclaimers to own the claim", async () => {
     const root = mkdtempSync(join(tmpdir(), "runner-v2-file-claim-contend-"));
     const claimDir = join(root, "delivery.claim");
     const ownersPath = join(root, "owners.txt");
     const gatePath = join(root, "go");
+    const firstReadyPath = join(root, "first-ready");
+    const secondReadyPath = join(root, "second-ready");
     seedStaleClaim(claimDir);
-    const first = spawnFixture(["contend", claimDir, ownersPath, gatePath]);
-    const second = spawnFixture(["contend", claimDir, ownersPath, gatePath]);
+    const first = spawnFixture(["contend", claimDir, ownersPath, gatePath, firstReadyPath]);
+    const second = spawnFixture(["contend", claimDir, ownersPath, gatePath, secondReadyPath]);
+    await Promise.all([waitForFile(firstReadyPath), waitForFile(secondReadyPath)]);
     writeFileSync(gatePath, "go\n");
 
     const exits = await Promise.all([waitForExit(first), waitForExit(second)]);
     expect(exits.map(({ code }) => code)).toEqual([0, 0]);
     expect(readFileSync(ownersPath, "utf8").trim().split("\n")).toHaveLength(1);
-  }, 10_000);
+  }, 30_000);
 
   it("treats EPERM from pid probing as alive", () => {
     const kill = jest.spyOn(process, "kill").mockImplementation(() => {

@@ -260,7 +260,10 @@ export async function executeLocalBootstrap(
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
 
     registerRunSession(context, plan);
-    const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)}`;
+    // The PTY intentionally starts as an interactive shell, but a failed
+    // startup script must terminate that shell. Otherwise readiness can see a
+    // normal zsh prompt and inject agent instructions as shell commands.
+    const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
     await executor.sendKeys(plan.sessionName, `${startCommand}\r`);
     await waitForBootstrapReadiness(plan, executor, attempt.id, runJsonPath);
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });

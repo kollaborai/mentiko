@@ -6,6 +6,7 @@ const mode = process.env.FILE_CLAIM_CHILD_MODE;
 const claimDir = process.env.FILE_CLAIM_CHILD_CLAIM || "";
 const artifactPath = process.env.FILE_CLAIM_CHILD_ARTIFACT || "";
 const gatePath = process.env.FILE_CLAIM_CHILD_GATE || "";
+const readyPath = process.env.FILE_CLAIM_CHILD_READY || "";
 
 async function waitForGate(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -31,6 +32,7 @@ describe("file claim child fixture", () => {
       return;
     }
     if (mode === "contend") {
+      writeFileSync(readyPath, "ready\n");
       await waitForGate(10_000);
       try {
         await withExclusiveFileClaim(claimDir, async () => {

@@ -627,15 +627,16 @@ RUN if [ -f /build/web/lib/process-manager.ts ] && [ ! -f /context/lib/process-m
 
 # compile mentiko-mcp — uses the lib/mentiko-mcp workspace package's own
 # build, which produces dist/server.js cleanly without cross-project alias
-# resolution issues. The bin/mentiko-mcp bash shim prefers this bundle in
-# prod and falls back to tsx in dev.
+# resolution issues. Keep the package's canonical dist/server.js layout:
+# runner-v2 injects this exact path into Claude's private MCP config, and the
+# bin/mentiko-mcp shim also resolves it from the repository root.
 RUN if [ -f /build/lib/mentiko-mcp/package.json ]; then \
       echo "=== building mentiko-mcp package ===" && \
       cd /build/lib/mentiko-mcp && \
       npm install --no-audit --no-fund && \
       npm run build && \
-      mkdir -p /context/lib/mentiko-mcp && \
-      cp /build/lib/mentiko-mcp/dist/server.js /context/lib/mentiko-mcp/server.js && \
+      mkdir -p /context/lib/mentiko-mcp/dist && \
+      cp /build/lib/mentiko-mcp/dist/server.js /context/lib/mentiko-mcp/dist/server.js && \
       rm -f /context/lib/mentiko-mcp/server.ts \
             /context/lib/mentiko-mcp/dispatch.ts \
             /context/lib/mentiko-mcp/tools.ts && \
