@@ -201,6 +201,14 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
     },
     onDied: async (session) => {
       if (await completeFromFreshEvidence(session)) return "complete";
+      const currentRun = safeReadRunJson(context.runJsonPath);
+      if (currentRun?.status === "completed") return "complete";
+      if (
+        currentRun
+        && ["blocked", "failed", "stopped", "cancelled"].includes(currentRun.status)
+      ) {
+        return "terminal";
+      }
       const hasCompletionEvent = Boolean(currentCompletionEventPath(context));
       const verdict = classifyDeath({
         hasCompletionEvent,

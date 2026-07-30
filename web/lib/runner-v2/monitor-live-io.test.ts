@@ -278,6 +278,20 @@ describe("monitor-v2 live IO", () => {
     expect(eventFiles).toContain("agent: writer");
   });
 
+  it("dead-session handling preserves an already terminal run", async () => {
+    const f = fixture();
+    updateRunJson(f.runJsonPath, (run) => ({ ...run!, status: "cancelled" }));
+
+    const result = await liveIo(f).onDied("writer-run-123");
+
+    expect(result).toBe("terminal");
+    expect(readRunJson(f.runJsonPath)).toMatchObject({
+      status: "cancelled",
+      agents: [{ id: "writer", status: "running" }],
+    });
+    expect(readDirNames(f.eventsDir)).toHaveLength(0);
+  });
+
   describe("typed-only completion command (A1 -- fail closed, no shell fallthrough)", () => {
     // No MENTIKO_TRANSCRIPT_JSONL override in these tests, so onComplete's
     // agentCompleteMarker lookup falls through to pty.capture -- pin it to a
@@ -512,6 +526,10 @@ describe("monitor-v2 live IO", () => {
 
 function readDirOne(dir: string): string {
   return jest.requireActual("node:fs").readdirSync(dir)[0];
+}
+
+function readDirNames(dir: string): string[] {
+  return jest.requireActual("node:fs").readdirSync(dir);
 }
 
 describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker resolution)", () => {

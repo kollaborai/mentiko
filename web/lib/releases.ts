@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.46",
+    date: "July 30, 2026",
+    title: "Agent Crash Terminalization",
+    description:
+      "Agent sessions that disappear without durable completion evidence now fail their run instead of leaving it stuck as running. Completion evidence still wins every race, and the monitor preserves runs that were already completed, cancelled, stopped, blocked, or failed while it was checking the session.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.45",
     date: "July 29, 2026",
     title: "Tenant MCP Bundle Reliability",
