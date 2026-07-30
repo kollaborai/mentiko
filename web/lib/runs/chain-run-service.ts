@@ -43,6 +43,7 @@ import { runSyntheticRunnerV2Probe, runSyntheticRunnerV2ProbeWithDispatch } from
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { resolveLinkRunsDir } from "@/lib/links/link-run-runtime";
 import { resolveInternalAuthSecret } from "@/lib/auth/internal-api-auth";
+import { resolveInternalWebOrigin } from "@/lib/auth/internal-web-origin";
 import { mintSessionToken, verifySessionToken } from "@/lib/auth/session-token";
 import { resolveRunAgentProfile } from "@/lib/agents/run-agent-profile";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
@@ -275,7 +276,7 @@ async function buildChainSessionEnv(
   return {
     MENTIKO_SESSION_ID: sessionId,
     MENTIKO_SESSION_TOKEN: sessionToken,
-    MENTIKO_WEB_URL: new URL(request.url).origin,
+    MENTIKO_WEB_URL: resolveInternalWebOrigin(new URL(request.url).origin),
     KOLLABOR_ENGINE_URL: process.env.KOLLABOR_ENGINE_URL,
   };
 }

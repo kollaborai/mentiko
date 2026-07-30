@@ -145,7 +145,7 @@
           "cli": "claude",
           "model": "sonnet",
           "pipe_flag": "-p",
-          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "permission_flag": "--dangerously-skip-permissions",
           "pre_exec": "unset CLAUDECODE",
           "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Balanced performance - always latest Sonnet"
@@ -156,7 +156,7 @@
           "cli": "claude",
           "model": "opus",
           "pipe_flag": "-p",
-          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "permission_flag": "--dangerously-skip-permissions",
           "pre_exec": "unset CLAUDECODE",
           "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Highest capability - always latest Opus"
@@ -167,7 +167,7 @@
           "cli": "claude",
           "model": "haiku",
           "pipe_flag": "-p",
-          "permission_flag": "--allow-dangerously-skip-permissions --permission-mode bypassPermissions",
+          "permission_flag": "--dangerously-skip-permissions",
           "pre_exec": "unset CLAUDECODE",
           "readiness": { "enabled": true, "ready_patterns": [ { "name": "claude input-ready hint", "type": "text", "value": "for agents", "action": "ready", "risk": "low", "enabled": true } ] },
           "description": "Fastest for simple tasks - always latest Haiku"

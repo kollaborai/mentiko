@@ -86,7 +86,7 @@ source ~/.claude/my-setup.sh
 nvm use 18
 
 # Step 3 — invoke CLI (model before extra_args)
-claude -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions --model claude-sonnet-4-6 --extra-flag
+claude -p --dangerously-skip-permissions --model claude-sonnet-4-6 --extra-flag
 ```
 
 Bash construction (safe):
@@ -232,9 +232,9 @@ Sets `claude-sonnet` as default if no default exists.
 
 | ID | Name | cli | flags | model |
 |----|------|-----|-------|-------|
-| claude-sonnet | Claude / Sonnet | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-sonnet-4-6 |
-| claude-opus   | Claude / Opus   | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-opus-4-6 |
-| claude-haiku  | Claude / Haiku  | claude | -p --allow-dangerously-skip-permissions --permission-mode bypassPermissions | claude-haiku-4-5-20251001 |
+| claude-sonnet | Claude / Sonnet | claude | -p --dangerously-skip-permissions | claude-sonnet-4-6 |
+| claude-opus   | Claude / Opus   | claude | -p --dangerously-skip-permissions | claude-opus-4-6 |
+| claude-haiku  | Claude / Haiku  | claude | -p --dangerously-skip-permissions | claude-haiku-4-5-20251001 |
 
 ### Codex
 | ID | Name | cli | flags |

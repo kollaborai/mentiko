@@ -61,8 +61,9 @@ describe("runner-v2 agent profile contract", () => {
     });
 
     const command = buildClaudeProfileCommand({ profilePath, interactive: true, namespaceId: "default", orgId: "default" });
-    expect(command).toContain("'--allow-dangerously-skip-permissions' '--permission-mode' 'bypassPermissions'");
-    expect(command).not.toContain("'--allow-dangerously-skip-permissions --permission-mode bypassPermissions'");
+    expect(command).toContain("'--dangerously-skip-permissions'");
+    expect(command).not.toContain("'--allow-dangerously-skip-permissions'");
+    expect(command).not.toContain("'--permission-mode' 'bypassPermissions'");
     expect(command).not.toContain("{secret:");
     expect(command).not.toContain("resolved-secret");
     expect(command).not.toContain("visible-only-in-file");

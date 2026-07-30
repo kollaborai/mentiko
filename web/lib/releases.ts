@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.47",
+    date: "July 30, 2026",
+    title: "Unattended Claude Generation",
+    description:
+      "Claude tenant agents now use the current non-interactive permission flag, avoiding the first-run consent prompt that blocked unattended execution. Chain sessions also route their private MCP and generation-import calls through the tenant's local HTTP origin, so accepted generation artifacts import into Tasks instead of failing against an invalid HTTPS loopback address.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.46",
     date: "July 30, 2026",
     title: "Agent Crash Terminalization",
