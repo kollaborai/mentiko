@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.48",
+    date: "July 30, 2026",
+    title: "Task Auto-Run Contract Reliability",
+    description:
+      "Generated task chains now receive and enforce the real post-admission runtime contract: tasks may already be in progress, chain selection lives in task metadata, and in-run agents cannot require their own terminal state. Missing declared events fail explicitly instead of being fabricated, while retry reconciliation prevents an obsolete run from routing after a newer task execution takes ownership.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.47",
     date: "July 30, 2026",
     title: "Unattended Claude Generation",
