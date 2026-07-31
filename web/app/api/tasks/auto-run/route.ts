@@ -1856,7 +1856,23 @@ async function startChainRun(
   if (!runRes.ok) {
     const err = await runRes.json().catch(() => ({}));
     const rawError = (err as { error?: unknown }).error;
-    const message = typeof rawError === "string" ? rawError : "Failed to start run";
+    const errorRecord = rawError && typeof rawError === "object" && !Array.isArray(rawError)
+      ? rawError as Record<string, unknown>
+      : undefined;
+    const errorDetails = errorRecord?.details && typeof errorRecord.details === "object" && !Array.isArray(errorRecord.details)
+      ? errorRecord.details as Record<string, unknown>
+      : undefined;
+    const validationErrors = Array.isArray(errorDetails?.errors)
+      ? errorDetails.errors.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    const baseMessage = typeof rawError === "string"
+      ? rawError
+      : typeof errorRecord?.message === "string"
+        ? errorRecord.message
+        : "Failed to start run";
+    const message = validationErrors.length > 0
+      ? `${baseMessage}: ${validationErrors.join("; ")}`
+      : baseMessage;
     return recordTaskRunLaunchFailure({
       taskId,
       namespaceId,

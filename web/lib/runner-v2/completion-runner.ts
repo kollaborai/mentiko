@@ -198,13 +198,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       };
     }
 
-    if (input.completionRecoveryEvidence === "durable-marker") {
-      const salvaged = synthesizeCompletionEventFromAgentCompleteMarker(input);
-      if (salvaged) {
-        match = { matched: true, event: salvaged };
-        completionEvidence = "durable-marker";
-      }
-    } else if (input.completionRecoveryEvidence === "accepted-cross-run-event") {
+    if (input.completionRecoveryEvidence === "accepted-cross-run-event") {
       const salvaged = synthesizeCompletionEventFromAcceptedCrossRunEvent(input);
       if (salvaged) {
         match = { matched: true, event: salvaged };
@@ -214,8 +208,41 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   if (!match.matched || !match.event) {
+    // AGENT_COMPLETE is a durable declaration that the agent has stopped
+    // producing work. It is completion evidence for the monitor, not a routing
+    // event. Once that marker is latched there is no liveness grace left to
+    // wait out and no event to fabricate: fail the declared-event contract
+    // immediately so the typed entrypoint terminalizes the run, preserves the
+    // artifacts, and tears down the agent + monitor PTYs.
+    const expectedEvent = input.agent.emits?.trim();
+    if (input.completionRecoveryEvidence === "durable-marker" && expectedEvent) {
+      const reason = `agent ${input.agent.id} reported AGENT_COMPLETE without declared event '${expectedEvent}'`;
+      const fanGroup = planFanGroupCompletion(input, "failed");
+      updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
+      const run = updateRunStatus(input.runJsonPath, "failed", reason, input.now, input.onRunMutation);
+      markAgentAttemptFailedNoCompletion({
+        runJsonPath: input.runJsonPath,
+        runId: input.runId,
+        agentId: input.agent.id,
+        detail: `declared completion event '${expectedEvent}' missing after AGENT_COMPLETE`,
+        now: input.now,
+        onMutation: input.onRunMutation,
+      });
+      return {
+        action: "fail",
+        reason,
+        fanGroup,
+        run,
+      };
+    }
+
     const liveness = evaluateAgentLiveness(input.liveness);
-    if (liveness.disposition === "working" || liveness.disposition === "grace") {
+    // A durable marker is a sticky "the agent is done" latch. For the
+    // backward-compatible empty-emits terminal-agent case, bypass liveness and
+    // let the explicit terminal rule below complete without inventing an event.
+    // Declared-event agents already failed above when their event was absent.
+    const markerLatched = input.completionRecoveryEvidence === "durable-marker";
+    if (!markerLatched && (liveness.disposition === "working" || liveness.disposition === "grace")) {
       return {
         action: "await-liveness",
         reason: match.reason || "no matching completion event",
@@ -397,27 +424,6 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     loopGuard,
     fanGroup,
     run,
-  };
-}
-
-function synthesizeCompletionEventFromAgentCompleteMarker(input: CompleteAgentInput): RunnerEventRecord | null {
-  if (!input.agent.emits) return null;
-  const timestamp = (input.now || new Date()).toISOString();
-  return {
-    event: input.agent.emits,
-    source: input.agent.id,
-    runId: input.runId,
-    timestamp,
-    processed: false,
-    data: "salvaged-from-agent-complete-marker",
-    fields: {
-      event: input.agent.emits,
-      source: input.agent.id,
-      run_id: input.runId,
-      timestamp,
-      processed: "false",
-      data: "salvaged-from-agent-complete-marker",
-    },
   };
 }
 

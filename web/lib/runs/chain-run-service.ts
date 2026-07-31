@@ -32,6 +32,10 @@ import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
 import { validateChain } from "@/lib/validators";
+import {
+  isGeneratedChainContract,
+  validateGeneratedChainDeliveryContract,
+} from "@/lib/chains/generated-chain-delivery-contract";
 import { resolveMaxConcurrentChains } from "@/lib/system/system-settings";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { BadRequest, Conflict, Forbidden, ValidationError } from "@/lib/api-errors";
@@ -117,6 +121,12 @@ export function assertRunnableChainDefinition(chain: Chain): void {
   const validation = validateChain(chain);
   if (!validation.valid) {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
+  }
+  if (isGeneratedChainContract(chain)) {
+    const errors = validateGeneratedChainDeliveryContract(chain);
+    if (errors.length > 0) {
+      throw new ValidationError("Invalid generated chain delivery contract", { errors });
+    }
   }
 }
 

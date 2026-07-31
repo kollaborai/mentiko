@@ -13,7 +13,10 @@ import { resolveJobWorkspaceCwd } from "@/lib/runs/job-runner-launch";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispatch";
 import { buildChainRecommendationCatalog, getAllChains } from "@/lib/chains/chain-utils";
-import { buildChainGenerationPrompt } from "@/lib/generation/chain-generation-required-rules";
+import {
+  buildChainGenerationPrompt,
+  withRequiredChainRecommendationRules,
+} from "@/lib/generation/chain-generation-required-rules";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
 
@@ -132,7 +135,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
 
     const template = getTemplate(namespaceId, orgId, "chain_recommendation");
-    const prompt = resolveTemplate(template.content, {
+    const prompt = resolveTemplate(withRequiredChainRecommendationRules(template.content), {
       TASK_CONTEXT: taskContext,
       CHAIN_CATALOG: String(input.chainCatalog),
       AGENT_CATALOG: agentCatalog,

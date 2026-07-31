@@ -10,7 +10,10 @@ import { startGenerationChainRun } from "@/lib/generation/generation-chain-dispa
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
 import { buildAgentCatalog } from "@/lib/agents/agent-catalog";
 import { buildProfileCatalog } from "@/lib/agents/profile-catalog";
-import { withRequiredChainGenerationRules } from "@/lib/generation/chain-generation-required-rules";
+import {
+  withRequiredChainGenerationRules,
+  withRequiredChainRecommendationRules,
+} from "@/lib/generation/chain-generation-required-rules";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +54,9 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
   // that never leaves the building.
   const templateContent = templateId === "chain_generation"
     ? withRequiredChainGenerationRules(content)
-    : content;
+    : templateId === "chain_recommendation"
+      ? withRequiredChainRecommendationRules(content)
+      : content;
 
   const generationPrompt = resolveTemplate(templateContent, {
     USER_PROMPT: prompt,

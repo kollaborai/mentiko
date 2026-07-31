@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runRunnerV2CompletionEntrypoint } from "@/lib/runner-v2/completion-entrypoint";
@@ -204,5 +204,81 @@ describe("runner-v2 completion entrypoint liveness", () => {
       ["alive", "writer-run-123"],
       expect.any(Object),
     );
+  });
+
+  it("terminalizes AGENT_COMPLETE without its declared event and removes both PTYs", () => {
+    const root = tempRoot();
+    const { runDir, eventsDir, stateDir, chainPath, runJsonPath } = seedRun(root);
+    const artifactsDir = join(runDir, "artifacts");
+    mkdirSync(artifactsDir, { recursive: true });
+    const summaryPath = join(artifactsDir, "writer-summary.json");
+    writeJson(summaryPath, {
+      status: "partial",
+      summary: "Admission conditions were not satisfied.",
+    });
+
+    const removed = new Set<string>();
+    mockSpawnSync.mockImplementation((_cmd, args) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      const session = argv[1] || "";
+      if (argv[0] === "remove") {
+        removed.add(session);
+        return { status: 0, stdout: "removed\n", stderr: "" } as ReturnType<typeof spawnSync>;
+      }
+      if (argv[0] === "alive") {
+        return {
+          status: removed.has(session) ? 1 : 0,
+          stdout: removed.has(session) ? "" : "alive\n",
+          stderr: removed.has(session) ? "not found" : "",
+        } as ReturnType<typeof spawnSync>;
+      }
+      if (argv[0] === "info") {
+        return {
+          status: 0,
+          stdout: `${JSON.stringify({ alive: true, childPid: process.pid })}\n`,
+          stderr: "",
+        } as ReturnType<typeof spawnSync>;
+      }
+      if (argv[0] === "capture") {
+        return { status: 0, stdout: "AGENT_COMPLETE\n", stderr: "" } as ReturnType<typeof spawnSync>;
+      }
+      return { status: 0, stdout: "", stderr: "" } as ReturnType<typeof spawnSync>;
+    });
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "writer-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_CODE_ROOT: root,
+        MENTIKO_RUNNER_V2: "1",
+        MENTIKO_RUNNER_V2_COMPLETION: "1",
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-06-26T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      status: "handled",
+      decision: "fail",
+      plan: { action: "fail", launches: [] },
+    });
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "failed",
+      status_message: "agent writer reported AGENT_COMPLETE without declared event 'draft-ready'",
+      agents: [{ id: "writer", status: "failed" }],
+      runnerV2: {
+        attempts: [expect.objectContaining({
+          phase: "completion_failed",
+          terminalReason: "no_completion_event",
+          terminalDetail: "declared completion event 'draft-ready' missing after AGENT_COMPLETE",
+        })],
+      },
+    });
+    expect(removed).toEqual(new Set(["monitor-writer-run-123", "writer-run-123"]));
+    expect(JSON.parse(readFileSync(summaryPath, "utf8"))).toMatchObject({ status: "partial" });
   });
 });

@@ -641,6 +641,82 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "default");
   });
 
+  test("returns the temporal contract rejection as typed corrective guidance for regeneration", async () => {
+    let currentJob = {
+      id: "job-temporal-chain",
+      type: "generate",
+      status: "running",
+      taskId: "TASK-TEMPORAL",
+      input: {},
+      runId: "run-temporal-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-07-30T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-TEMPORAL",
+      metadata: {
+        generation_job_id: "job-temporal-chain",
+        generation_status: "running",
+      },
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({
+          name: "Impossible In-Run Task Gate",
+          metadata: {
+            generated_chain_contract: {
+              version: 1,
+              mode: "research",
+              acceptance_criteria: "the runtime evidence is recorded",
+            },
+          },
+          agents: [{
+            id: "runtime-verifier",
+            name: "Runtime Verifier",
+            prompt: "Before emitting, verify that the linked task status is open.",
+            triggers: ["manual-start"],
+            emits: "runtime-verified",
+            deliverable: "an evidence-backed runtime verdict",
+            verification: "compare observed state with the requested postcondition",
+            final_verifier: true,
+            verifies_acceptance_criteria: true,
+            success_assertion: "runtime evidence is recorded",
+          }],
+        }),
+      },
+      runId: "run-temporal-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-temporal-chain" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockPostProcessChain).not.toHaveBeenCalled();
+    expect(mockUpdateJob).toHaveBeenCalledWith(
+      "job-temporal-chain",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining(
+          "TASK_LINKED_CHAIN_RUNTIME: in-run agents execute after admission and must not require task status open",
+        ),
+      }),
+      "default",
+    );
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-TEMPORAL",
+      expect.objectContaining({
+        metadata: expect.objectContaining({ generation_status: "failed" }),
+      }),
+      "default",
+    );
+  });
+
   test("fails a generate completion with no valid chain result and continues auto-recovery", async () => {
     let currentJob = {
       id: "job-chain-empty",

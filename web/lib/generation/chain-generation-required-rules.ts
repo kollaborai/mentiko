@@ -1,7 +1,12 @@
-import { GENERATED_CHAIN_CONTRACT_SHAPE } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  GENERATED_CHAIN_CONTRACT_SHAPE,
+  TASK_LINKED_CHAIN_RUNTIME_RULE,
+} from "@/lib/chains/generated-chain-delivery-contract";
 import { getTemplate } from "@/lib/generation/generation-template-storage";
 import { getChainSchema } from "@/lib/schema-loader";
 import { resolveTemplate } from "@/lib/system/template-resolver";
+
+export { TASK_LINKED_CHAIN_RUNTIME_RULE };
 
 // Matches the exact field rejections thrown by the generated-chain validator.
 // TASK-203 (2026-07-23) burned six generation attempts because the salient
@@ -23,6 +28,11 @@ DYNAMIC_PORT_RUNTIME_PROOF (required): Never assume port 3000 for generated app 
 export const CHAIN_GENERATION_DELIVERY_AUTHORITY_RULE = `
 DELIVERY_CONTRACT_EDIT_AUTHORITY (required): classify the requested end state before choosing metadata.generated_chain_contract.mode. Use "delivery" only when the chain must create or modify workspace files/code; delivery generated chains require an agent with edit_files authority. Use "operations" when the end state is a mutation of external or Mentiko-managed state through a command, API, or MCP tool; operations generated chains require an agent with run_commands authority. Use "research" only when the acceptance criteria are analysis/evidence outputs and no state mutation is required. Running tests does not make a code-writing task "operations"; if workspace files must change, the mode is "delivery". Authorities may be a string array or authorities.can. Never add a fake edit_files agent to an operational chain merely to satisfy validation.`;
 
+export function withRequiredChainRecommendationRules(templateContent: string): string {
+  if (templateContent.includes(TASK_LINKED_CHAIN_RUNTIME_RULE.trim())) return templateContent;
+  return `${templateContent.trim()}\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;
+}
+
 export function withRequiredChainGenerationRules(templateContent: string): string {
   let content = templateContent;
   if (!content.includes("GENERATED_CHAIN_CONTRACT_FIELDS")) {
@@ -33,6 +43,9 @@ export function withRequiredChainGenerationRules(templateContent: string): strin
   }
   if (!content.includes("DELIVERY_CONTRACT_EDIT_AUTHORITY")) {
     content = `${content.trim()}\n\n${CHAIN_GENERATION_DELIVERY_AUTHORITY_RULE.trim()}`;
+  }
+  if (!content.includes(TASK_LINKED_CHAIN_RUNTIME_RULE.trim())) {
+    content = `${content.trim()}\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;
   }
   return content;
 }

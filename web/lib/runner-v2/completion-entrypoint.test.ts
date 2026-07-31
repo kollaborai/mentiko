@@ -232,7 +232,7 @@ describe("runner-v2 completion entrypoint", () => {
     expect(existsSync(join(eventsDir, "archive"))).toBe(false);
   });
 
-  it("routes a monitor-latched AGENT_COMPLETE completion when no event file exists", () => {
+  it("terminalizes a monitor-latched AGENT_COMPLETE completion when no event file exists", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");
     const eventsDir = join(root, "events");
@@ -282,9 +282,15 @@ describe("runner-v2 completion entrypoint", () => {
       status: "handled",
       runId: "run-123",
       agentId: "writer",
-      decision: "route",
-      plan: { action: "route", launches: [{ kind: "single" }] },
+      decision: "fail",
+      plan: {
+        action: "fail",
+        launches: [],
+      },
     });
+    expect(result.status === "handled" ? result.plan.effects : []).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "terminal-failure" })]),
+    );
     expect(readRunJson(runJsonPath).agents[0]).toMatchObject({
       id: "writer",
       status: "running",

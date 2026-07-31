@@ -85,6 +85,8 @@ describe("typed chain generation contract", () => {
     expect(receivedPrompt).toContain("REFERENCE TEMPLATE");
     expect(receivedPrompt).toContain('"delivery"|"operations"|"research"');
     expect(receivedPrompt).toContain("never persist current task IDs");
+    expect(receivedPrompt).toContain("TASK_LINKED_CHAIN_RUNTIME");
+    expect(receivedPrompt).toContain("metadata.last_run_id/task_run_scope identify the active run");
   });
 
   it("accepts an operations-mode chain with run_commands and no fake edit_files step", () => {
@@ -139,6 +141,15 @@ describe("typed chain generation contract", () => {
       name: "activity-only",
       agents: [{ id: "observer", name: "Observer", triggers: ["manual-start"], emits: "observed" }],
     })).toThrow(/generated chain delivery contract invalid/);
+  });
+
+  it("rejects an impossible task-state gate at the typed standalone generation boundary", () => {
+    expect(() => validateGeneratedChain({
+      ...validChain,
+      agents: validChain.agents.map((agent, index) => index === 0
+        ? { ...agent, prompt: "Require the linked task status to equal open before emitting." }
+        : agent),
+    })).toThrow(/TASK_LINKED_CHAIN_RUNTIME.*must not require task status open/);
   });
 
   // Regression: TASK-203 follow-up (2026-07-23). This generator is standalone --

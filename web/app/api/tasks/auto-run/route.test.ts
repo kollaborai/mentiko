@@ -994,6 +994,65 @@ describe("POST /api/tasks/auto-run", () => {
     );
   });
 
+  it("preserves typed resolved-chain validation details when auto-run launch is rejected", async () => {
+    const validationDetail =
+      "agents[0] violates TASK_LINKED_CHAIN_RUNTIME: in-run agents execute after admission";
+    mockTaskGet.mockReturnValue({
+      id: "TASK-RUNTIME-CONTRACT",
+      title: "Reject impossible runtime contract",
+      status: "open",
+      issue_type: "task",
+      priority: 1,
+      metadata: { auto_run: true, chain_id: "generated-chain" },
+    });
+    (global.fetch as jest.Mock).mockImplementation((url: string) => {
+      if (String(url).endsWith("/api/chains/generated-chain")) {
+        return Promise.resolve(jsonResponse({
+          success: true,
+          data: { chain: { name: "Generated Chain", config: {}, agents: [] } },
+        }));
+      }
+      if (String(url).endsWith("/api/chains/run")) {
+        return Promise.resolve(jsonResponse({
+          success: false,
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Invalid generated chain delivery contract",
+            details: { errors: [validationDetail] },
+          },
+        }, 422));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const res = await POST(makeRequest({ taskId: "TASK-RUNTIME-CONTRACT" }) as never);
+    const body = await res.json();
+    const expectedMessage = `Invalid generated chain delivery contract: ${validationDetail}`;
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({
+      triggered: false,
+      taskId: "TASK-RUNTIME-CONTRACT",
+      action: "task_run_launch_failed",
+      error: expectedMessage,
+    });
+    expect(mockTaskUpdate).toHaveBeenLastCalledWith(
+      "default",
+      "TASK-RUNTIME-CONTRACT",
+      expect.objectContaining({
+        status: "blocked",
+        metadata: expect.objectContaining({
+          auto_run_paused: true,
+          auto_run_paused_reason: expectedMessage,
+          task_run_launch_failure: expect.objectContaining({
+            message: expectedMessage,
+          }),
+        }),
+      }),
+      "default",
+    );
+  });
+
   it("blocks and clears the provisional scope when chain launch confirms another id", async () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-RUN-MISMATCH",

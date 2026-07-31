@@ -8,6 +8,7 @@ jest.mock("@/lib/auth/session-token", () => ({
 }));
 
 import { assertRunnableChainDefinition } from "@/lib/runs/chain-run-service";
+import { ValidationError } from "@/lib/api-errors";
 
 describe("assertRunnableChainDefinition", () => {
   it("rejects a self-joining fan-out before a run snapshot is created", () => {
@@ -33,6 +34,49 @@ describe("assertRunnableChainDefinition", () => {
     expect(() => assertRunnableChainDefinition(chain)).toThrow(
       "Invalid chain",
     );
+  });
+
+  it("rejects an impossible generated-agent prompt at the fully resolved launch boundary", () => {
+    const chain = {
+      name: "resolved-generated-chain",
+      description: "The effective runtime snapshot is contract-checked.",
+      version: "1.0.0",
+      config: {},
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "runtime evidence exists",
+        },
+      },
+      agents: [{
+        id: "verifier",
+        name: "Verifier",
+        prompt: "Verify the linked task is open before emitting.",
+        triggers: ["manual-start"],
+        emits: "verified",
+        deliverable: "an evidence-backed verdict",
+        verification: "inspect the runtime evidence",
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "runtime evidence exists",
+      }],
+    } as unknown as Chain;
+
+    try {
+      assertRunnableChainDefinition(chain);
+      throw new Error("expected generated chain rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(error).toMatchObject({
+        code: "VALIDATION_ERROR",
+        statusCode: 422,
+        message: "Invalid generated chain delivery contract",
+        details: {
+          errors: [expect.stringContaining("TASK_LINKED_CHAIN_RUNTIME")],
+        },
+      });
+    }
   });
 });
 

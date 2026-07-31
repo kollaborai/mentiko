@@ -193,4 +193,92 @@ describe("validateGeneratedChainDeliveryContract", () => {
       ],
     })).toEqual([]);
   });
+
+  describe("task-linked temporal contract", () => {
+    const chainWithPrompt = (prompt: string) => ({
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "the agent produces observable evidence",
+        },
+      },
+      agents: [{
+        id: "runtime-verifier",
+        prompt,
+        deliverable: "an evidence-backed verdict",
+        verification: "compare runtime evidence with the requested postcondition",
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "the requested evidence is present",
+      }],
+    });
+
+    it.each([
+      "Before emitting, verify that the linked task status is 'open'.",
+      "The current task record must remain in state OPEN while this agent runs.",
+      "Confirm the assigned task's status equals open.",
+      "Verify the linked task is open before emitting.",
+      "Keep the linked task open until the evidence is written.",
+      "The linked task status has to be open before this agent starts.",
+      "The current task needs to be open while this agent runs.",
+    ])("rejects equivalent pre-admission task-state requirement: %s", (prompt) => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
+        expect.stringContaining("must not require task status open"),
+      );
+    });
+
+    it.each([
+      "The assignee field contains the selected chain identifier.",
+      "Require assignee to hold the chain ID before reporting success.",
+      "Check that the task assignee matches the chain binding.",
+      "Set assignee to the selected chain ID before starting.",
+      "Assignee may be null, but when present it must contain the chain ID.",
+      "The assignee has to contain the selected chain ID.",
+    ])("rejects equivalent assignee-as-chain-binding requirement: %s", (prompt) => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
+        expect.stringContaining("assignee-based chain binding"),
+      );
+    });
+
+    it.each([
+      "Do not finish until this run is terminal and the linked task is reconciled.",
+      "Confirm metadata.last_run_status equals completed for the current run.",
+      "The task run status must be closed before this agent emits its verdict.",
+      "The linked task must be closed before this agent reports success.",
+      "The current run needs to be terminal before this agent emits.",
+    ])("rejects equivalent self-terminal dependency: %s", (prompt) => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
+        expect.stringContaining("must not require its current run or linked task"),
+      );
+    });
+
+    it("accepts the real post-admission contract and external reconciliation boundary", () => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(
+        "Read metadata.chain_id and metadata.last_run_id while the task is in_progress. "
+        + "The assignee may be null. Do not require this run to be terminal; write evidence "
+        + "for the external orchestrator to verify after the chain finishes.",
+      ))).toEqual([]);
+    });
+
+    it("does not reject a check of an explicitly previous terminal run", () => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(
+        "Inspect the previous run's terminal status as historical evidence, then verify the current deliverable.",
+      ))).toEqual([]);
+    });
+
+    it.each([
+      "This task requires you to open the project file and inspect its contents.",
+      "Confirm the assignee does not contain the chain ID; metadata.chain_id is authoritative.",
+      "The linked task must not remain open; do not mutate task lifecycle state from this agent.",
+      "Confirm this run is not terminal yet and leave final reconciliation to the orchestrator.",
+      "The current task must be open to edits and collaboration.",
+      "The task should be open-ended so the verifier can explore sibling cases.",
+      "The linked task does not need to be open; in_progress is valid.",
+      "The assignee does not need to contain the chain ID.",
+      "The current run does not need to be terminal before this agent emits.",
+    ])("does not reject a valid negative or non-state use of contract words: %s", (prompt) => {
+      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toEqual([]);
+    });
+  });
 });

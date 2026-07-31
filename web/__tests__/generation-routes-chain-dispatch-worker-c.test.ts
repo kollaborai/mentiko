@@ -28,8 +28,8 @@ jest.mock("@/lib/generation/generation-template-storage", () => ({
 }));
 
 jest.mock("@/lib/system/template-resolver", () => ({
-  resolveTemplate: (_template: string, vars: Record<string, string>) =>
-    `prompt=${vars.USER_PROMPT} ws=${vars.WORKSPACE_CONTEXT ?? ""} schema=${vars.SCHEMA ?? ""}`,
+  resolveTemplate: (template: string, vars: Record<string, string>) =>
+    `${template}\nprompt=${vars.USER_PROMPT} ws=${vars.WORKSPACE_CONTEXT ?? ""} schema=${vars.SCHEMA ?? ""}`,
 }));
 
 jest.mock("@/lib/namespace-config", () => ({
@@ -120,6 +120,7 @@ describe("worker c generation route migrations", () => {
 
     const response = await POST(makeRequest({
       content: "draft={{USER_PROMPT}} {{WORKSPACE_CONTEXT}}",
+      templateId: "chain_recommendation",
       prompt: "raw output is allowed",
       workspacePath: "/repo/project",
     }));
@@ -148,5 +149,15 @@ describe("worker c generation route migrations", () => {
       workspacePath: "/repo/project",
       prompt: expect.stringContaining("raw output is allowed"),
     }));
+    expect(mockCreateJob).toHaveBeenCalledWith(
+      "template_test",
+      expect.objectContaining({
+        prompt: expect.stringContaining("TASK_LINKED_CHAIN_RUNTIME"),
+      }),
+      undefined,
+      undefined,
+      "user-1",
+      "default",
+    );
   });
 });

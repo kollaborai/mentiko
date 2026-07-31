@@ -959,6 +959,68 @@ describe("GET /api/tasks/reconcile", () => {
     );
   });
 
+  it("holds lifecycle retry while a fresh typed marker failure can still receive its real event", async () => {
+    const run = {
+      id: "run-marker-race",
+      taskId: "TASK-044",
+      status: "failed",
+      completed: new Date().toISOString(),
+      chainId: "build-chain",
+      runnerV2: {
+        attempts: [{
+          agentId: "writer",
+          phase: "completion_failed",
+          terminalReason: "no_completion_event",
+          terminalDetail: "declared completion event 'draft-ready' missing after AGENT_COMPLETE",
+        }],
+      },
+    };
+    mockReadFileSync.mockImplementation((path: unknown) => (
+      String(path).endsWith("/chain.json")
+        ? JSON.stringify({ id: "build-chain", agents: [{ id: "writer", emits: "draft-ready" }] })
+        : JSON.stringify(run)
+    ));
+    mockTaskList.mockReturnValue([
+      {
+        id: "TASK-044",
+        title: "Run recommended chain",
+        status: "open",
+        metadata: {
+          auto_run: true,
+          chain_id: "build-chain",
+          last_run_id: "run-marker-race",
+          last_run_status: "failed",
+          execution_retries: 0,
+        },
+      },
+    ]);
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ reconciled: 0, checked: 1, results: [] });
+    expect(mockRecoverLateCompletionEvents).toHaveBeenCalledTimes(1);
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+    expect(mockApplyTypedExecutorPlan).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalledWith(
+      "default",
+      "TASK-044",
+      expect.objectContaining({
+        metadata: expect.objectContaining({ last_run_status: "retry_requested" }),
+      }),
+      "default",
+    );
+    expect(mockWriteLog).toHaveBeenCalledWith(
+      "default",
+      "default",
+      "info",
+      "task-reconciler",
+      "task TASK-044 run run-marker-race: late completion recovery pending",
+      expect.stringContaining("lifecycle retry is held"),
+    );
+  });
+
   it("stops autonomous outcome-summary retries after two failures for the same execution", async () => {
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-exec",
@@ -1791,7 +1853,7 @@ describe("GET /api/tasks/reconcile", () => {
     });
   });
 
-  it("does not consume a terminal run after another reconcile already cleared its task claim for retry", async () => {
+  it("does not recover or consume a terminal run after last_run_id moved to a retry", async () => {
     mockResolveTaskAutoRunDefault.mockReturnValue(true);
     mockReadFileSync.mockReturnValue(JSON.stringify({
       id: "run-stopped",
@@ -1828,6 +1890,180 @@ describe("GET /api/tasks/reconcile", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
+    expect(mockRecoverLateCompletionEvents).not.toHaveBeenCalled();
+    expect(mockApplyTypedExecutorPlan).not.toHaveBeenCalled();
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+    expect(body.data.results).toEqual([]);
+  });
+
+  it("does not recover or consume an old run when task_run_scope owns a retry run", async () => {
+    const staleSnapshot = {
+      id: "BUG-002",
+      title: "Fix ingestion",
+      status: "open",
+      workspace_id: "/repo/synthyo",
+      metadata: {
+        auto_run: true,
+        chain_id: "bug-fix-chain",
+        last_run_id: "run-stopped",
+        last_run_status: "stopped",
+        execution_retries: 0,
+        task_run_scope: {
+          version: 1,
+          taskId: "BUG-002",
+          runId: "run-stopped",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      },
+    };
+    mockReadFileSync.mockReturnValue(JSON.stringify({
+      id: "run-stopped",
+      taskId: "BUG-002",
+      status: "stopped",
+      chainId: "bug-fix-chain",
+      completed: "2026-07-12T04:03:37.733Z",
+    }));
+    mockTaskList.mockReturnValue([staleSnapshot]);
+    mockTaskGet.mockReturnValue({
+      ...staleSnapshot,
+      metadata: {
+        ...staleSnapshot.metadata,
+        task_run_scope: {
+          version: 1,
+          taskId: "BUG-002",
+          runId: "run-retry",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      },
+    });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockRecoverLateCompletionEvents).not.toHaveBeenCalled();
+    expect(mockApplyTypedExecutorPlan).not.toHaveBeenCalled();
+    expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(body.data.results).toEqual([]);
+  });
+
+  it.each([
+    {
+      ownershipMutation: "last_run_id moves to the retry",
+      retryMetadata: (metadata: Record<string, unknown>) => ({
+        ...metadata,
+        last_run_id: "run-retry",
+        last_run_status: "running",
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-044",
+          runId: "run-retry",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      }),
+    },
+    {
+      ownershipMutation: "task_run_scope moves to the retry while last_run_id is stale",
+      retryMetadata: (metadata: Record<string, unknown>) => ({
+        ...metadata,
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-044",
+          runId: "run-retry",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      }),
+    },
+  ])("releases a claimed late delivery before adapter apply when $ownershipMutation", async ({ retryMetadata }) => {
+    const currentTask = {
+      id: "TASK-044",
+      title: "Recover late completion",
+      status: "open",
+      metadata: {
+        auto_run: true,
+        chain_id: "build-chain",
+        last_run_id: "run-exec",
+        last_run_status: "stopped",
+        execution_retries: 0,
+        task_run_scope: {
+          version: 1,
+          taskId: "TASK-044",
+          runId: "run-exec",
+          namespaceId: "default",
+          orgId: "default",
+        },
+      },
+    };
+    const retryTask = {
+      ...currentTask,
+      metadata: retryMetadata(currentTask.metadata),
+    };
+    const run = {
+      id: "run-exec",
+      taskId: "TASK-044",
+      status: "stopped",
+      chainId: "build-chain",
+      agents: [
+        { id: "writer", status: "complete" },
+        { id: "reviewer", status: "pending" },
+      ],
+    };
+    const chain = {
+      id: "build-chain",
+      agents: [
+        { id: "writer", emits: "draft-ready" },
+        { id: "reviewer", triggers: ["draft-ready"] },
+      ],
+    };
+    const delivery = {
+      deliveryId: "late-delivery-lost-owner",
+      agentId: "writer",
+      event: {
+        event: "draft-ready",
+        source: "writer-run-exec",
+        runId: "run-exec",
+        processed: true,
+        path: "/tmp/late.event",
+      },
+      route: { action: "launch", agentIds: ["reviewer"], reason: "trigger match" },
+    };
+    mockReadFileSync.mockImplementation((path: unknown) => (
+      String(path).endsWith("/chain.json") ? JSON.stringify(chain) : JSON.stringify(run)
+    ));
+    mockTaskList.mockReturnValue([currentTask]);
+    let ownershipReads = 0;
+    mockTaskGet.mockImplementation(() => {
+      ownershipReads += 1;
+      return ownershipReads <= 3 ? currentTask : retryTask;
+    });
+    mockRecoverLateCompletionEvents.mockReturnValue({
+      recovered: [delivery],
+      deliveries: [delivery],
+      run: { ...run, status: "running" },
+    });
+    mockBuildTypedExecutorPlan.mockReturnValue({
+      action: "route",
+      effects: [],
+      launches: [{ command: "launch reviewer" }],
+    });
+
+    const res = await GET(makeRequest() as never);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockRecoverLateCompletionEvents).toHaveBeenCalledTimes(1);
+    expect(mockClaimLateCompletionDelivery).toHaveBeenCalledTimes(1);
+    expect(mockBuildTypedExecutorPlan).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLateCompletionDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: "late-delivery-lost-owner",
+    }));
+    expect(mockApplyTypedExecutorPlan).not.toHaveBeenCalled();
+    expect(mockAcknowledgeLateCompletionDelivery).not.toHaveBeenCalled();
     expect(mockStartTaskOutcomeAudit).not.toHaveBeenCalled();
     expect(body.data.results).toEqual([]);
   });

@@ -129,6 +129,23 @@ describe("task chain recommendation helpers", () => {
       expect(prompt).toContain("do not add a fake edit_files step");
       expect(prompt).toContain("target task ID, dependency task ID");
     });
+
+    it("states the task-linked post-admission ordering next to the generated-chain contract", () => {
+      const prompt = buildGenerationPromptFromTaskRecommendation(
+        {
+          title: "Smoke test auto-run",
+          acceptance_criteria: "The automatically admitted run reaches a truthful terminal result",
+        },
+        recommendation,
+      );
+
+      expect(prompt).toContain("TASK-LINKED RUNTIME ORDER");
+      expect(prompt).toContain("linked task can already be in_progress");
+      expect(prompt).toContain("metadata.chain_id is authoritative");
+      expect(prompt).toContain("assignee may be null");
+      expect(prompt).toContain("No in-run agent may require");
+      expect(prompt).toContain("verified externally after the chain finishes");
+    });
   });
 
   // Regression: TASK-203 (2026-07-23) -- this builder's contract line said "and
