@@ -30,6 +30,28 @@ export const GENERATED_CHAIN_CONTRACT_SHAPE =
 export const TASK_LINKED_CHAIN_RUNTIME_RULE = `
 TASK_LINKED_CHAIN_RUNTIME (required): A chain assigned to a task runs after auto-run admission. During every in-run agent, the linked task can already be status "in_progress"; metadata.chain_id is the authoritative selected-chain binding; assignee may be null; and metadata.last_run_id/task_run_scope identify the active run. Never require the linked task to remain "open", never require assignee to contain the chain identifier, and never treat either as an admission-success condition. No agent inside a run may require that same run, its last_run_status, or the linked task already be terminal, completed, closed, or reconciled: those states are written only after the chain finishes. Agents must verify their own observable deliverables and emit their declared routing events. Verify final run/task terminal reconciliation from the external orchestrator after the run, not from an agent inside that run. Generated chains violating this temporal contract are rejected.`;
 
+/**
+ * Version stamp for the deterministic-rejection fingerprint (see
+ * generated-chain-rejections.ts). Bump whenever a blocking rule in this file
+ * changes so a previously rejected artifact gets one fresh validation under
+ * the new rules instead of being stopped by a stale fingerprint.
+ */
+export const GENERATED_CHAIN_VALIDATOR_REVISION = "2026-07-31.v0349";
+
+// 2026-07-30/31 devv incident (chain-contract-plan-of-record.md): this file
+// used to scan agent prose (prompt/deliverable/verification/...) with keyword
+// matchers -- requiresPreAdmissionTaskState / requiresOwnTerminalReconciliation
+// -- and BLOCK acceptance on the result. The matchers could not tell a created
+// child task from the linked parent (TASK-013), read lifecycle words in
+// evidence prose as lifecycle requirements (TASK-004 attempt 2), and read the
+// compliance phrase "without requiring terminal state" as the violation it
+// disclaims (TASK-004 attempt 3, the Goodhart loop). Generated prose is not a
+// machine contract and can never block acceptance. Do not reintroduce prose
+// classification here in any form -- no keyword lists, no negation lists, no
+// model-based classifiers. The runtime-ownership invariant TASK-002 exposed is
+// owned by prompt guidance (advisory) today and the typed contract-v2
+// subject/phase/owner schema (Track B) permanently.
+
 type RecordValue = Record<string, unknown>;
 
 function record(value: unknown): RecordValue | null {
@@ -47,105 +69,6 @@ function agentHasAuthority(agent: RecordValue, authority: string): boolean {
   if (Array.isArray(authorities)) return authorities.includes(authority);
   const authorityRecord = record(authorities);
   return Array.isArray(authorityRecord?.can) && authorityRecord.can.includes(authority);
-}
-
-const AGENT_RUNTIME_CONTRACT_FIELDS = [
-  "prompt",
-  "instructions",
-  "role",
-  "description",
-  "deliverable",
-  "verification",
-  "success_assertion",
-] as const;
-
-function nestedText(value: unknown, depth = 0): string[] {
-  if (typeof value === "string") return value.trim() ? [value] : [];
-  if (depth >= 2 || !value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap((item) => nestedText(item, depth + 1));
-  return Object.values(value as RecordValue).flatMap((item) => nestedText(item, depth + 1));
-}
-
-function normalizedRuntimeSegments(agent: RecordValue): string[] {
-  const source = AGENT_RUNTIME_CONTRACT_FIELDS
-    .flatMap((field) => nestedText(agent[field]))
-    .map((value) => value
-      .toLowerCase()
-      .replace(/[’']/g, "")
-      .replace(/[_-]+/g, " ")
-      .replace(/\s+/g, " ")
-    .trim())
-    .filter(Boolean);
-
-  // Evaluate local clauses plus adjacent clause windows. Local clauses keep a
-  // safe statement in one sentence from negating an unrelated hard requirement
-  // later in the prompt. Adjacent windows retain subjects across formulations
-  // such as "assignee may be null, but when present it must contain chain id."
-  return source.flatMap((value) => {
-    const clauses = value
-      .split(/[\n.;]+|,\s*(?:but|however|yet)\s+|\b(?:but|however|yet)\b/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-    return [
-      ...clauses,
-      ...clauses.slice(0, -1).map((clause, index) => `${clause} ${clauses[index + 1]}`),
-    ];
-  });
-}
-
-function hardRequirement(segment: string): boolean {
-  return /\b(?:must|should|required?|requires?|verify|confirms?|checks?|ensures?|asserts?|expects?|waits?|until|remains?|stays?|equals?|matches?|contains?|holds?|stores?|populated|sets?|keeps?)\b/.test(segment)
-    || /\b(?:has|have|needs?)\s+to\b/.test(segment);
-}
-
-function negatesOpenRequirement(segment: string): boolean {
-  return /\b(?:do not|dont|does not|doesnt|must not|should not|need not|never)\s+(?:(?:need|have)\s+to\s+)?(?:require|verify|confirm|check|ensure|expect|wait for|remain|stay|keep|be)\b.{0,100}\bopen\b/.test(segment)
-    || /\b(?:not required|not require)\b.{0,100}\bopen\b/.test(segment);
-}
-
-function negatesAssigneeBinding(segment: string): boolean {
-  return /\b(?:do not|dont|does not|doesnt|must not|should not|need not|never)\s+(?:(?:need|have)\s+to\s+)?(?:require|contain|equal|match|hold|store|set|bind|use)\b.{0,100}\bchain(?: id| identifier| binding)?\b/.test(segment)
-    || /\b(?:not required|not require)\b.{0,100}\bassignee\b/.test(segment);
-}
-
-function negatesTerminalRequirement(segment: string): boolean {
-  return /\b(?:do not|dont|does not|doesnt|must not|should not|need not|never)\s+(?:(?:need|have)\s+to\s+)?(?:require|verify|confirm|check|ensure|expect|wait for|be)\b.{0,120}\b(?:terminal|completed|complete|closed|reconciled|failed|stopped|cancelled)\b/.test(segment)
-    || /\b(?:not required|not require)\b.{0,120}\b(?:terminal|completed|complete|closed|reconciled)\b/.test(segment)
-    || /\b(?:run|task)\b.{0,40}\b(?:is|be)\s+not\s+(?:terminal|completed|complete|closed|reconciled)\b/.test(segment);
-}
-
-function requiresPreAdmissionTaskState(agent: RecordValue): boolean {
-  return normalizedRuntimeSegments(agent).some((segment) => {
-    const taskReference = /\b(?:linked |current |assigned |this )?task(?:s| record)?\b/.test(segment);
-    const lifecycleOpen = /\bopen\b(?!\s+(?:to|ended)\b)/.test(segment);
-    const openStateSignal = /\b(?:status|state)\b/.test(segment)
-      || /\b(?:is|be|remain|stay|keep|equal|match)\w*\b.{0,35}\bopen\b/.test(segment);
-    const requiresOpenTask = taskReference
-      && hardRequirement(segment)
-      && openStateSignal
-      && lifecycleOpen
-      && !negatesOpenRequirement(segment);
-    const requiresAssigneeBinding = /\bassignee\b/.test(segment)
-      && /\bchain(?: id| identifier| binding)?\b/.test(segment)
-      && /\b(?:contains?|equals?|matches?|holds?|stores?|populated|set|binding|identifier|id)\b/.test(segment)
-      && hardRequirement(segment)
-      && !negatesAssigneeBinding(segment);
-    return requiresOpenTask || requiresAssigneeBinding;
-  });
-}
-
-function requiresOwnTerminalReconciliation(agent: RecordValue): boolean {
-  return normalizedRuntimeSegments(agent).some((segment) => {
-    const currentRun = /\b(?:current|this|same|active|own) (?:execution )?run\b/.test(segment);
-    const linkedTask = /\b(?:linked|current|this|assigned) task\b/.test(segment);
-    const linkedTaskRunState = /\btask\b/.test(segment)
-      && /\b(?:last run status|last run id|task run scope|run outcome|run status)\b/.test(segment);
-    const terminalState = /\b(?:terminal|completed|complete|closed|reconciled|failed|stopped|cancelled)\b/.test(segment);
-    return terminalState
-      && hardRequirement(segment)
-      && (currentRun || linkedTask || linkedTaskRunState)
-      && !negatesTerminalRequirement(segment);
-  });
 }
 
 /**
@@ -231,16 +154,6 @@ export function validateGeneratedChainDeliveryContract(chain: unknown): string[]
     }
     if (!text(agent.verification)) {
       errors.push(`agents[${index}].verification must state how that output is checked${refHint}`);
-    }
-    if (requiresPreAdmissionTaskState(agent)) {
-      errors.push(
-        `agents[${index}] violates TASK_LINKED_CHAIN_RUNTIME: in-run agents execute after admission and must not require task status open or an assignee-based chain binding; accept in_progress and use metadata.chain_id/last_run_id/task_run_scope`,
-      );
-    }
-    if (requiresOwnTerminalReconciliation(agent)) {
-      errors.push(
-        `agents[${index}] violates TASK_LINKED_CHAIN_RUNTIME: an in-run agent must not require its current run or linked task to already be terminal or reconciled; verify final reconciliation externally after the chain finishes`,
-      );
     }
   });
 

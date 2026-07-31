@@ -78,6 +78,18 @@ jest.mock("@/lib/chains/chain-postprocessor", () => ({
   postProcessChain: (...args: unknown[]) => mockPostProcessChain(...args),
 }));
 
+// Ledger IO is mocked in-memory (the real file-backed ledger has its own unit
+// suite in lib/chains/generated-chain-rejections.test.ts); the envelope
+// builder and canonical hash stay REAL so this route test proves the actual
+// fingerprint flow.
+const mockFindGeneratedChainRejection = jest.fn().mockReturnValue(undefined);
+const mockRecordGeneratedChainRejection = jest.fn();
+jest.mock("@/lib/chains/generated-chain-rejections", () => ({
+  ...jest.requireActual("@/lib/chains/generated-chain-rejections"),
+  findGeneratedChainRejection: (...args: unknown[]) => mockFindGeneratedChainRejection(...args),
+  recordGeneratedChainRejection: (...args: unknown[]) => mockRecordGeneratedChainRejection(...args),
+}));
+
 jest.mock("@/lib/auth/internal-web-origin", () => ({
   internalApiUrl: (path: string) => `http://localhost:3000${path}`,
 }));
@@ -176,6 +188,7 @@ describe("POST /api/jobs/[id]/complete", () => {
     // (inline agents resolve to themselves) or a $ref-specific implementation
     // set by one test leaks into every test after it.
     mockResolveChainAgents.mockImplementation((agents: unknown[]) => agents);
+    mockFindGeneratedChainRejection.mockReturnValue(undefined);
     global.fetch = jest.fn().mockResolvedValue({ ok: true }) as jest.Mock;
     mockOutcomeSummarySourceEligibility.mockImplementation(
       (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string) => ({
@@ -641,7 +654,10 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), "default");
   });
 
-  test("returns the temporal contract rejection as typed corrective guidance for regeneration", async () => {
+  // 2026-07-31 incident (chain-contract-plan-of-record.md A2): lifecycle-
+  // flavored prose used to be rejected here by the prose classifier. Prose
+  // never blocks now -- this exact chain imports and post-processes cleanly.
+  test("accepts lifecycle-flavored prose at the import boundary", async () => {
     let currentJob = {
       id: "job-temporal-chain",
       type: "generate",
@@ -663,55 +679,202 @@ describe("POST /api/jobs/[id]/complete", () => {
         generation_status: "running",
       },
     });
+    const proseChain = {
+      name: "In-Run Lifecycle Prose",
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "the runtime evidence is recorded",
+        },
+      },
+      agents: [{
+        id: "runtime-verifier",
+        name: "Runtime Verifier",
+        prompt: "Before emitting, verify that the linked task status is open.",
+        triggers: ["manual-start"],
+        emits: "runtime-verified",
+        deliverable: "an evidence-backed runtime verdict",
+        verification: "compare observed state with the requested postcondition",
+        final_verifier: true,
+        verifies_acceptance_criteria: true,
+        success_assertion: "runtime evidence is recorded",
+      }],
+    };
+    mockPostProcessChain.mockResolvedValue({ chain: proseChain, createdAgents: [], extractedCount: 0 });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { output: JSON.stringify(proseChain) },
+      runId: "run-temporal-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-temporal-chain" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockPostProcessChain).toHaveBeenCalled();
+    expect(currentJob.status).toBe("complete");
+    expect(mockRecordGeneratedChainRejection).not.toHaveBeenCalled();
+  });
+
+  // A3/A4: a STRUCTURAL rejection produces the typed envelope, records it in
+  // the shared ledger, and persists the fingerprint decision on the task so
+  // the auto-run retry path can branch on typed data.
+  test("records a typed rejection envelope for a structural contract failure", async () => {
+    let currentJob = {
+      id: "job-structural-chain",
+      type: "generate",
+      status: "running",
+      taskId: "TASK-STRUCTURAL",
+      input: {},
+      runId: "run-structural-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-07-30T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    mockTaskGet.mockReturnValue({
+      id: "TASK-STRUCTURAL",
+      metadata: {
+        generation_job_id: "job-structural-chain",
+        generation_status: "running",
+      },
+    });
 
     const { POST } = await import("./route");
     const response = await POST(makeRequest({
       status: "complete",
       result: {
         output: JSON.stringify({
-          name: "Impossible In-Run Task Gate",
+          name: "No Verifier Chain",
           metadata: {
             generated_chain_contract: {
               version: 1,
               mode: "research",
-              acceptance_criteria: "the runtime evidence is recorded",
+              acceptance_criteria: "evidence exists",
             },
           },
           agents: [{
-            id: "runtime-verifier",
-            name: "Runtime Verifier",
-            prompt: "Before emitting, verify that the linked task status is open.",
+            id: "observer",
+            name: "Observer",
             triggers: ["manual-start"],
-            emits: "runtime-verified",
-            deliverable: "an evidence-backed runtime verdict",
-            verification: "compare observed state with the requested postcondition",
-            final_verifier: true,
-            verifies_acceptance_criteria: true,
-            success_assertion: "runtime evidence is recorded",
+            emits: "observed",
+            verification: "re-read the report",
           }],
         }),
       },
-      runId: "run-temporal-chain",
+      runId: "run-structural-chain",
       chainId: "chain-generation",
-    }), { params: Promise.resolve({ id: "job-temporal-chain" }) });
+    }), { params: Promise.resolve({ id: "job-structural-chain" }) });
 
     expect(response.status).toBe(200);
     expect(mockPostProcessChain).not.toHaveBeenCalled();
-    expect(mockUpdateJob).toHaveBeenCalledWith(
-      "job-temporal-chain",
-      expect.objectContaining({
-        status: "failed",
-        error: expect.stringContaining(
-          "TASK_LINKED_CHAIN_RUNTIME: in-run agents execute after admission and must not require task status open",
-        ),
-      }),
+    expect(currentJob.status).toBe("failed");
+    expect(currentJob).toMatchObject({
+      error: expect.stringContaining("agents[0].deliverable"),
+    });
+    expect(mockRecordGeneratedChainRejection).toHaveBeenCalledWith(
       "default",
+      "default",
+      expect.objectContaining({
+        phase: "import",
+        deterministic: true,
+        code: "generated_chain_contract_violation",
+        artifact_hash: expect.stringMatching(/^sha256:/),
+        paths: expect.arrayContaining(["agents[0].deliverable"]),
+      }),
     );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
-      "TASK-TEMPORAL",
+      "TASK-STRUCTURAL",
       expect.objectContaining({
-        metadata: expect.objectContaining({ generation_status: "failed" }),
+        metadata: expect.objectContaining({
+          generation_rejection: expect.objectContaining({ phase: "import" }),
+          generation_rejection_job_id: "job-structural-chain",
+          generation_rejection_fingerprints: [expect.stringMatching(/^sha256:/)],
+        }),
+      }),
+      "default",
+    );
+  });
+
+  // A4: an artifact already in the rejection ledger fails fast (no
+  // re-validation, no post-processing) and the repeat fingerprint stops the
+  // loop via generation_stop_reason.
+  test("stops a known-rejected artifact at the import boundary without re-validating", async () => {
+    const { buildGeneratedChainRejectionEnvelope, generatedChainRejectionFingerprint } =
+      jest.requireActual("@/lib/chains/generated-chain-rejections");
+    const rejectedChain = {
+      name: "Previously Rejected",
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "evidence exists",
+        },
+      },
+      agents: [{
+        id: "observer",
+        name: "Observer",
+        triggers: ["manual-start"],
+        emits: "observed",
+        deliverable: "an observation report",
+        verification: "re-read the report",
+      }],
+    };
+    const priorEnvelope = buildGeneratedChainRejectionEnvelope({
+      phase: "import",
+      chain: rejectedChain,
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockFindGeneratedChainRejection.mockReturnValue(priorEnvelope);
+
+    let currentJob = {
+      id: "job-duplicate-chain",
+      type: "generate",
+      status: "running",
+      taskId: "TASK-DUPLICATE",
+      input: {},
+      runId: "run-duplicate-chain",
+      chainId: "chain-generation",
+      createdAt: "2026-07-30T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+    // The task already saw this fingerprint once -- the repeat must STOP.
+    mockTaskGet.mockReturnValue({
+      id: "TASK-DUPLICATE",
+      metadata: {
+        generation_job_id: "job-duplicate-chain",
+        generation_status: "running",
+        generation_rejection_fingerprints: [generatedChainRejectionFingerprint(priorEnvelope)],
+      },
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(makeRequest({
+      status: "complete",
+      result: { output: JSON.stringify(rejectedChain) },
+      runId: "run-duplicate-chain",
+      chainId: "chain-generation",
+    }), { params: Promise.resolve({ id: "job-duplicate-chain" }) });
+
+    expect(response.status).toBe(200);
+    expect(mockPostProcessChain).not.toHaveBeenCalled();
+    expect(currentJob.status).toBe("failed");
+    // Already recorded: a duplicate must not append another ledger entry.
+    expect(mockRecordGeneratedChainRejection).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).toHaveBeenCalledWith(
+      "default",
+      "TASK-DUPLICATE",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          generation_stop_reason: "deterministic_duplicate",
+        }),
       }),
       "default",
     );

@@ -2,9 +2,35 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import config, { nsPath } from "@/lib/config";
 
+export type SemanticPolicyMode = "enforce" | "warn";
+
+/**
+ * Namespace-scoped circuit breaker for SEMANTIC or experimental policy gates
+ * (chain-contract-plan-of-record.md A6). If a future semantic acceptance rule
+ * regresses the way the v0.3.48 prose classifier did, an admin can demote it
+ * to warn-only here instead of shipping an emergency release.
+ *
+ * HARD BOUNDARY: structural integrity, schema, materialization, security,
+ * authorization, and digest checks are NEVER demotable -- they must not
+ * consult this override. Only rules registered as semantic may call
+ * resolveSemanticPolicyMode. (As of v0.3.49 no such rule exists: the prose
+ * lifecycle checks were removed outright, not parked behind this override.)
+ */
+export interface SemanticPolicyOverride {
+  mode: SemanticPolicyMode;
+  /** Rule IDs the override applies to; empty/absent = every semantic rule. */
+  rule_ids?: string[];
+  reason?: string;
+  actor?: string;
+  changed_at?: string;
+  /** ISO timestamp; past expiry the override is inert and mode is enforce. */
+  expires_at?: string;
+}
+
 export interface SystemSettings {
   max_concurrent_runs: number;
   auto_run_enabled: boolean;
+  semantic_policy?: SemanticPolicyOverride;
 }
 
 const DEFAULTS: SystemSettings = {
@@ -55,4 +81,24 @@ export function resolveMaxConcurrentChains(namespaceId?: string): number {
     if (Number.isFinite(n) && n >= 0) return Math.floor(n);
   }
   return readSystemSettings(namespaceId).max_concurrent_runs;
+}
+
+/**
+ * Effective mode for one SEMANTIC rule. Defaults to enforce; "warn" only while
+ * an unexpired admin override covers the rule. Callers demoted to "warn" must
+ * surface the violation as a typed warning in their result/diagnostics -- a
+ * demoted rule is visible, never silent. Structural/security/authorization/
+ * digest checks must not call this (see SemanticPolicyOverride).
+ */
+export function resolveSemanticPolicyMode(namespaceId?: string, ruleId?: string): SemanticPolicyMode {
+  const override = readSystemSettings(namespaceId).semantic_policy;
+  if (!override || override.mode !== "warn") return "enforce";
+  if (override.expires_at) {
+    const expires = Date.parse(override.expires_at);
+    if (!Number.isNaN(expires) && expires <= Date.now()) return "enforce";
+  }
+  if (Array.isArray(override.rule_ids) && override.rule_ids.length > 0) {
+    if (!ruleId || !override.rule_ids.includes(ruleId)) return "enforce";
+  }
+  return "warn";
 }

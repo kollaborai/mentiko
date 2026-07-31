@@ -561,6 +561,7 @@ export type AutoRunRejectReason =
   | "epic"
   | "auto_run_disabled"
   | "paused"
+  | "generation_stopped"
   | "decision_required"
   | "already_completed"
   | "active_run_exists"
@@ -645,6 +646,7 @@ export function canAdmitAutoRun(
     retries: typeof metadata.auto_run_retries === "number" ? metadata.auto_run_retries : 0,
     userPaused: metadata.auto_run_paused === true,
     pausedReason: typeof metadata.auto_run_paused_reason === "string" ? metadata.auto_run_paused_reason : "",
+    generationStopReason: typeof metadata.generation_stop_reason === "string" ? metadata.generation_stop_reason : "",
     completed: DONE_STATUSES.has(task.status),
   });
 
@@ -653,6 +655,16 @@ export function canAdmitAutoRun(
   }
   if (autoRun.userPaused) {
     return { admit: false, reason: "auto-run is paused for this task", action: "paused" };
+  }
+  if (autoRun.generationStopped) {
+    // Deterministic rejection stop (A4): the same artifact fingerprint failed
+    // repeatedly, so another admission would only re-run a known-failing loop.
+    // Clearing generation_stop_reason (explicit recovery) re-admits.
+    return {
+      admit: false,
+      reason: `chain generation stopped: ${autoRun.generationStopReason}`,
+      action: "generation_stopped",
+    };
   }
   if (metadata.last_run_decision_required === true) {
     return { admit: false, reason: "last run requires review", action: "decision_required" };

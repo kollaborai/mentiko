@@ -23,6 +23,9 @@ export interface AutoRunState {
   /** explicit user pause (distinct from retry exhaustion) */
   userPaused: boolean;
   pausedReason: string;
+  /** deterministic generation rejection stop (metadata.generation_stop_reason) */
+  generationStopped: boolean;
+  generationStopReason: string;
   /** the ONE admit predicate the gate and the UI must agree on */
   willAdmit: boolean;
 }
@@ -41,6 +44,8 @@ export function resolveAutoRunState(input: {
   userPaused?: boolean;
   /** metadata.auto_run_paused_reason */
   pausedReason?: string;
+  /** metadata.generation_stop_reason — deterministic rejection stop (A4) */
+  generationStopReason?: string;
   completed?: boolean;
 }): AutoRunState {
   const explicit = typeof input.explicitAutoRun === "boolean" ? input.explicitAutoRun : undefined;
@@ -58,7 +63,12 @@ export function resolveAutoRunState(input: {
   const pausedReason = input.pausedReason?.trim() ?? "";
   const userPaused = !!input.userPaused || pausedReason.length > 0;
 
-  const willAdmit = enabled && !userPaused && !retriesExhausted && !completed;
+  // A deterministic rejection stop is intentional and permanent until a human
+  // clears it: re-admitting would re-submit the same rejected artifact family.
+  const generationStopReason = input.generationStopReason?.trim() ?? "";
+  const generationStopped = generationStopReason.length > 0 && !completed;
 
-  return { enabled, source, retries, retriesExhausted, userPaused, pausedReason, willAdmit };
+  const willAdmit = enabled && !userPaused && !retriesExhausted && !generationStopped && !completed;
+
+  return { enabled, source, retries, retriesExhausted, userPaused, pausedReason, generationStopped, generationStopReason, willAdmit };
 }

@@ -63,6 +63,13 @@ import {
   extractGeneratedChainResult,
   INVALID_GENERATED_CHAIN_RESULT_ERROR,
 } from "@/lib/chains/generated-chain-result";
+import { GENERATED_CHAIN_VALIDATOR_REVISION } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  canonicalGeneratedChainHash,
+  findGeneratedChainRejection,
+  type GeneratedChainRejectionEnvelope,
+} from "@/lib/chains/generated-chain-rejections";
+import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -96,6 +103,111 @@ function generatedChainSaveFailureMessage(payload: unknown, status: number): str
   return validationErrors.length > 0
     ? `${summary}: ${validationErrors.join("; ")}`
     : summary;
+}
+
+/**
+ * Typed rejection-envelope reader for a chain-save 422 payload. Retry logic
+ * branches on this envelope, never on the message string (A3). Stale
+ * validator revisions are ignored so an upgraded validator re-evaluates.
+ */
+function readRejectionEnvelopeFromSavePayload(payload: unknown): GeneratedChainRejectionEnvelope | undefined {
+  const root = asJsonRecord(payload);
+  const error = asJsonRecord(root?.error);
+  const details = asJsonRecord(error?.details) ?? asJsonRecord(root?.details);
+  const rejection = asJsonRecord(details?.rejection);
+  if (
+    rejection
+    && typeof rejection.artifact_hash === "string"
+    && typeof rejection.code === "string"
+    && rejection.deterministic === true
+    && rejection.validator_revision === GENERATED_CHAIN_VALIDATOR_REVISION
+  ) {
+    return rejection as unknown as GeneratedChainRejectionEnvelope;
+  }
+  return undefined;
+}
+
+/**
+ * Typed rejection recorded on the task by the import door
+ * (/api/jobs/[id]/complete). Only trusted when it was written for THIS failed
+ * job and under the current validator revision -- otherwise the failure is
+ * treated as transient and takes the bounded generic retry path.
+ */
+function readTaskGenerationRejection(
+  metadata: Record<string, unknown>,
+  jobId: string,
+): GeneratedChainRejectionEnvelope | undefined {
+  if (metadata.generation_rejection_job_id !== jobId) return undefined;
+  const rejection = asJsonRecord(metadata.generation_rejection);
+  if (
+    rejection
+    && typeof rejection.artifact_hash === "string"
+    && typeof rejection.code === "string"
+    && rejection.deterministic === true
+    && rejection.validator_revision === GENERATED_CHAIN_VALIDATOR_REVISION
+  ) {
+    return rejection as unknown as GeneratedChainRejectionEnvelope;
+  }
+  return undefined;
+}
+
+/**
+ * Deterministic-rejection policy for the save/recovery door (A4): one guided
+ * regeneration for a fresh fingerprint, immediate stop on a repeat or once
+ * the deterministic allowance is spent. Deterministic stops never consume
+ * auto_run_retries -- that budget is for transient failures only.
+ */
+function handleDeterministicRejection(input: {
+  taskId: string;
+  metadata: Record<string, unknown>;
+  namespaceId: string;
+  orgId: string;
+  envelope: GeneratedChainRejectionEnvelope;
+}): TriggerResult {
+  const decision = decideGenerationRejection({
+    envelope: input.envelope,
+    priorFingerprints: input.metadata.generation_rejection_fingerprints,
+  });
+  if (decision.stop) {
+    // generation_status stays the truthful attempt outcome ("failed");
+    // generation_stop_reason is the one flag that marks the loop as
+    // INTENTIONALLY stopped -- the admission gate and the UI both read it.
+    taskUpdate(input.orgId, input.taskId, {
+      metadata: {
+        ...input.metadata,
+        generation_job_id: undefined,
+        generation_status: "failed",
+        generation_stop_reason: decision.stopReason,
+        generation_rejection: input.envelope,
+        generation_rejection_fingerprints: decision.fingerprints,
+      },
+    }, input.namespaceId);
+    return {
+      triggered: false,
+      taskId: input.taskId,
+      action: "generation_stopped",
+      reason: decision.stopReason,
+      error: input.envelope.message,
+    };
+  }
+  taskUpdate(input.orgId, input.taskId, {
+    metadata: {
+      ...input.metadata,
+      generation_job_id: undefined,
+      generation_status: "rejected",
+      generation_last_error: input.envelope.message,
+      generation_rejection: input.envelope,
+      generation_rejection_fingerprints: decision.fingerprints,
+    },
+  }, input.namespaceId);
+  void triggerAutoRunScan(input.namespaceId, input.orgId);
+  return {
+    triggered: false,
+    taskId: input.taskId,
+    action: "generation_rejected_regenerating",
+    error: input.envelope.message,
+    recoveryScheduled: true,
+  };
 }
 
 /** GET — dry-run scan, returns all ready candidates without triggering anything */
@@ -857,6 +969,34 @@ async function triggerAutoRun(
     }
 
     if (job.status === "failed") {
+      // Import-door contract rejection (typed, deterministic): the completion
+      // route recorded the envelope + fingerprint decision on the task. Run
+      // the one guided regeneration WITHOUT consuming auto_run_retries --
+      // that budget is reserved for transient failures (A4). A rejection the
+      // policy STOPPED never reaches this branch: generation_stop_reason makes
+      // canAdmitAutoRun refuse admission before the job is inspected.
+      const importRejection = readTaskGenerationRejection(metadata, job.id);
+      if (importRejection) {
+        taskUpdate(orgId, taskId, {
+          metadata: {
+            ...metadata,
+            generation_job_id: undefined,
+            generation_status: "rejected",
+            // Carried into the next generate_new attempt as corrective
+            // guidance (buildGenerationPromptFromTaskRecommendation's
+            // priorError), then cleared once consumed by startGenerationJob.
+            generation_last_error: importRejection.message,
+          },
+        }, namespaceId);
+        void triggerAutoRunScan(namespaceId, orgId);
+        return {
+          triggered: false,
+          taskId,
+          action: "generation_rejected_regenerating",
+          error: `Generation contract rejected: ${importRejection.message}`,
+        };
+      }
+
       const message = job.error || "Chain generation job failed";
       const nextRetries = Math.min(
         MAX_AUTO_RUN_RETRIES,
@@ -1569,6 +1709,29 @@ async function autoAcceptGeneratedChain(
   }
 
   const chain = sanitizeGeneratedChain(generated);
+
+  // A4: before resubmitting to save, check the shared rejection ledger for
+  // BOTH candidate forms -- the raw extracted artifact (what the import door
+  // hashed) and the sanitized save candidate (what the save door hashed). This
+  // is what stops the artifact-recovery loop: a previously rejected generation
+  // artifact recovered from run artifacts would otherwise traverse save and
+  // fail identically on every scan.
+  for (const artifactHash of new Set([
+    canonicalGeneratedChainHash(generated),
+    canonicalGeneratedChainHash(chain),
+  ])) {
+    const prior = findGeneratedChainRejection(namespaceId, orgId, artifactHash);
+    if (prior) {
+      return handleDeterministicRejection({
+        taskId,
+        metadata,
+        namespaceId,
+        orgId,
+        envelope: { ...prior, phase: "recovery", at: new Date().toISOString() },
+      });
+    }
+  }
+
   const chainName = String(chain.name || "Generated Chain");
   const chainId = slugifyChainName(chainName);
   const saveRes = await fetch(internalApiUrl("/api/chains/save", request.url), {
@@ -1581,6 +1744,21 @@ async function autoAcceptGeneratedChain(
 
   if (!saveRes.ok) {
     const payload = await saveRes.json().catch(() => ({}));
+
+    // Typed deterministic rejection from the save contract gate: apply the
+    // fingerprint policy (one guided regeneration, then stop) instead of the
+    // transient retry budget.
+    const rejection = readRejectionEnvelopeFromSavePayload(payload);
+    if (rejection) {
+      return handleDeterministicRejection({
+        taskId,
+        metadata,
+        namespaceId,
+        orgId,
+        envelope: rejection,
+      });
+    }
+
     const message = generatedChainSaveFailureMessage(payload, saveRes.status);
     const nextRetries = Math.min(
       MAX_AUTO_RUN_RETRIES,
@@ -1616,6 +1794,13 @@ async function autoAcceptGeneratedChain(
     generation_job_id: undefined,
     generation_status: "accepted",
     analysis_status: "accepted",
+    // A successful acceptance closes this generation loop: clear the
+    // deterministic-rejection attempt state so an unrelated future
+    // regeneration starts with a fresh allowance.
+    generation_rejection: undefined,
+    generation_rejection_job_id: undefined,
+    generation_rejection_fingerprints: undefined,
+    generation_stop_reason: undefined,
   };
   taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
 

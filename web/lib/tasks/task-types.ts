@@ -129,9 +129,25 @@ export interface TaskChainBinding {
   recommendation_run_id?: string;
   recommendation_chain_id?: string;
   generation_job_id?: string;
-  generation_status?: JobStatusType;
+  generation_status?: JobStatusType | "rejected";
   generated_chain_run_id?: string;
   generated_chain_source_chain_id?: string;
+  // A4 deterministic-rejection state (chain-contract-plan-of-record.md):
+  // generation_stop_reason set => automatic retries stopped INTENTIONALLY
+  // (same rejection fingerprint repeated / allowance spent), not a model or
+  // transport failure. The envelope carries the typed phase + message.
+  generation_stop_reason?: "deterministic_duplicate" | "deterministic_budget_exhausted";
+  generation_rejection?: {
+    phase: "import" | "recovery" | "save" | "run_start";
+    code: string;
+    deterministic: boolean;
+    artifact_hash: string;
+    validator_revision: string;
+    contract_version: number;
+    paths: string[];
+    message: string;
+    at: string;
+  };
 }
 
 // normalized task for UI consumption

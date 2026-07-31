@@ -17,6 +17,12 @@ import {
   rewriteBranchAgentIds,
 } from "@/lib/chains/chain-postprocessor";
 import { isGeneratedChainContract, validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  buildGeneratedChainRejectionEnvelope,
+  canonicalGeneratedChainHash,
+  findGeneratedChainRejection,
+  recordGeneratedChainRejection,
+} from "@/lib/chains/generated-chain-rejections";
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -231,9 +237,31 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
   }
   if (isGeneratedChainContract(chain)) {
+    // Ledger check BEFORE revalidating (A4): an artifact already rejected under
+    // the current validator revision fails identically, so answer from the
+    // shared rejection record. `duplicate: true` lets the auto-run caller stop
+    // its retry loop immediately instead of counting another attempt.
+    const artifactHash = canonicalGeneratedChainHash(chain);
+    const priorRejection = findGeneratedChainRejection(namespaceId, orgId, artifactHash);
+    if (priorRejection) {
+      throw new ValidationError("Invalid generated chain delivery contract", {
+        errors: [priorRejection.message],
+        rejection: { ...priorRejection, phase: "save" as const },
+        duplicate: true,
+      });
+    }
     const generatedContractErrors = validateGeneratedChainDeliveryContract(chainForValidation);
     if (generatedContractErrors.length) {
-      throw new ValidationError("Invalid generated chain delivery contract", { errors: generatedContractErrors });
+      const envelope = buildGeneratedChainRejectionEnvelope({
+        phase: "save",
+        chain,
+        errors: generatedContractErrors,
+      });
+      recordGeneratedChainRejection(namespaceId, orgId, envelope);
+      throw new ValidationError("Invalid generated chain delivery contract", {
+        errors: generatedContractErrors,
+        rejection: envelope,
+      });
     }
   }
 

@@ -20,9 +20,17 @@ import {
 } from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
 import {
-  assertValidGeneratedChainDeliveryContract,
   GeneratedChainContractError,
+  validateGeneratedChainDeliveryContract,
 } from "@/lib/chains/generated-chain-delivery-contract";
+import {
+  buildGeneratedChainRejectionEnvelope,
+  canonicalGeneratedChainHash,
+  findGeneratedChainRejection,
+  recordGeneratedChainRejection,
+  type GeneratedChainRejectionEnvelope,
+} from "@/lib/chains/generated-chain-rejections";
+import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
 import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import {
   extractGeneratedChainResult,
@@ -121,6 +129,43 @@ function chainAssignmentAuditMetadata(
   }
 
   return null;
+}
+
+/**
+ * Import-door rejection bookkeeping (A3/A4): persist the typed envelope and
+ * the deterministic-fingerprint decision on the linked task, so the auto-run
+ * retry path can branch on typed data instead of parsing the error message.
+ * The stop decision itself (halt vs one guided regeneration) is applied by
+ * /api/tasks/auto-run when it observes the failed job.
+ */
+function applyImportRejectionToTask(
+  taskId: string | undefined,
+  jobId: string,
+  orgId: string,
+  namespaceId: string,
+  envelope: GeneratedChainRejectionEnvelope,
+): void {
+  if (!taskId) return;
+  try {
+    const task = taskGet(orgId, taskId, namespaceId);
+    if (!task) return;
+    const existing = metadataRecord(task.metadata);
+    const decision = decideGenerationRejection({
+      envelope,
+      priorFingerprints: existing.generation_rejection_fingerprints,
+    });
+    taskUpdate(orgId, taskId, {
+      metadata: {
+        ...existing,
+        generation_rejection: envelope,
+        generation_rejection_job_id: jobId,
+        generation_rejection_fingerprints: decision.fingerprints,
+        ...(decision.stop ? { generation_stop_reason: decision.stopReason } : {}),
+      },
+    }, namespaceId);
+  } catch (error) {
+    console.error("Failed to persist generated-chain rejection on task:", error);
+  }
 }
 
 function removeAuditRunFromExecutionMetadata(
@@ -238,36 +283,54 @@ export const POST = withErrorHandling(async (
             chainForContract.agents = chainJson.agents;
           }
         }
-        assertValidGeneratedChainDeliveryContract(chainForContract);
-        const processed = await postProcessChain(chainJson, nsId, oId);
-        // update result with processed chain
-        result = {
-          ...result,
-          output: JSON.stringify(processed.chain, null, 2),
-          createdAgents: processed.createdAgents,
-          extractedCount: processed.extractedCount,
-        };
-        updateJob(id, { result }, namespaceId);
+        // Deterministic-duplicate check FIRST (A4): an artifact already
+        // rejected under the current validator revision fails identically, so
+        // consult the shared rejection ledger before re-validating. Recovery
+        // and save consult the same ledger -- one decision for every door.
+        const artifactHash = canonicalGeneratedChainHash(chainJson);
+        const priorRejection = findGeneratedChainRejection(nsId, oId, artifactHash);
+        const contractErrors = priorRejection
+          ? [priorRejection.message]
+          : validateGeneratedChainDeliveryContract(chainForContract);
+        if (contractErrors.length > 0) {
+          // A rejected generated-chain payload is an expected outcome of model
+          // generation, not an internal server error: mark the job failed and
+          // let the rest of this handler run (task metadata + auto-run
+          // continuation) -- CHOR-001 (2026-07-20) aborted with a 500 here and
+          // nothing ever learned the generation failed. The typed envelope is
+          // what the retry path branches on; the message is display-only.
+          const envelope: GeneratedChainRejectionEnvelope = priorRejection
+            ? { ...priorRejection, phase: "import", at: new Date().toISOString() }
+            : buildGeneratedChainRejectionEnvelope({ phase: "import", chain: chainJson, errors: contractErrors });
+          if (!priorRejection) recordGeneratedChainRejection(nsId, oId, envelope);
+          updateJob(id, {
+            status: "failed",
+            error: new GeneratedChainContractError(contractErrors).message,
+            completedAt: new Date().toISOString(),
+          }, namespaceId);
+          applyImportRejectionToTask(job.taskId, id, oId, namespaceId, envelope);
+        } else {
+          const processed = await postProcessChain(chainJson, nsId, oId);
+          // update result with processed chain
+          result = {
+            ...result,
+            output: JSON.stringify(processed.chain, null, 2),
+            createdAgents: processed.createdAgents,
+            extractedCount: processed.extractedCount,
+          };
+          updateJob(id, { result }, namespaceId);
+        }
       }
     } catch (e) {
+      // Only unexpected failures (post-processing, storage) reach here now --
+      // contract rejections are handled above without throwing.
       const message = e instanceof Error ? e.message : String(e);
       updateJob(id, {
         status: "failed",
         error: message,
         completedAt: new Date().toISOString(),
       }, namespaceId);
-      // A rejected generated-chain payload is an expected outcome of model
-      // generation, not an internal server error: the job is correctly
-      // terminal-failed above, and the bounded auto-run retry path (see
-      // app/api/tasks/auto-run/route.ts's generation_last_error handling)
-      // re-generates with the validator's message as corrective guidance. Let
-      // the rest of this handler run (task metadata + auto-run continuation)
-      // instead of aborting with an uncaught 500 -- CHOR-001 (2026-07-20) hit
-      // exactly this: the 500 killed the job AND skipped the task metadata
-      // update below, so nothing ever learned the generation failed.
-      if (!(e instanceof GeneratedChainContractError)) {
-        throw e;
-      }
+      throw e;
     }
   }
 

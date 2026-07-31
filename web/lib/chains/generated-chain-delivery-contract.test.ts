@@ -2,6 +2,13 @@ import {
   GENERATED_CHAIN_CONTRACT_SHAPE,
   validateGeneratedChainDeliveryContract,
 } from "./generated-chain-delivery-contract";
+import {
+  INCIDENT_TASK_002_CIRCULAR_CHAIN,
+  INCIDENT_TASK_004_ATTEMPT_1,
+  INCIDENT_TASK_004_ATTEMPT_2,
+  INCIDENT_TASK_004_ATTEMPT_3,
+  INCIDENT_TASK_013_CHILD_TASK_CHAIN,
+} from "./__fixtures__/generated-chain-incident-corpus";
 
 // Regression: TASK-203 (2026-07-23). Six consecutive chain-generation attempts
 // were rejected, alternating between two errors, because the validator stopped
@@ -194,91 +201,48 @@ describe("validateGeneratedChainDeliveryContract", () => {
     })).toEqual([]);
   });
 
-  describe("task-linked temporal contract", () => {
-    const chainWithPrompt = (prompt: string) => ({
-      metadata: {
-        generated_chain_contract: {
-          version: 1,
-          mode: "research",
-          acceptance_criteria: "the agent produces observable evidence",
-        },
-      },
-      agents: [{
-        id: "runtime-verifier",
-        prompt,
-        deliverable: "an evidence-backed verdict",
-        verification: "compare runtime evidence with the requested postcondition",
-        final_verifier: true,
-        verifies_acceptance_criteria: true,
-        success_assertion: "the requested evidence is present",
-      }],
-    });
-
+  // 2026-07-30/31 devv incident corpus (chain-contract-plan-of-record.md).
+  // The v0.3.48 prose classifier (f49b8ec) inferred lifecycle requirements
+  // from agent prose and falsely rejected every one of these real generated
+  // chains. Prose may advise; it may never block. Only structural checks may
+  // reject a generated chain.
+  describe("incident corpus: prose never blocks", () => {
     it.each([
-      "Before emitting, verify that the linked task status is 'open'.",
-      "The current task record must remain in state OPEN while this agent runs.",
-      "Confirm the assigned task's status equals open.",
-      "Verify the linked task is open before emitting.",
-      "Keep the linked task open until the evidence is written.",
-      "The linked task status has to be open before this agent starts.",
-      "The current task needs to be open while this agent runs.",
-    ])("rejects equivalent pre-admission task-state requirement: %s", (prompt) => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
-        expect.stringContaining("must not require task status open"),
-      );
+      ["TASK-013 child-task verifier (agents[3] false positive)", INCIDENT_TASK_013_CHILD_TASK_CHAIN],
+      ["TASK-004 attempt 2: lifecycle terms in evidence prose", INCIDENT_TASK_004_ATTEMPT_2],
+      ["TASK-004 attempt 3: 'without requiring terminal state' compliance language", INCIDENT_TASK_004_ATTEMPT_3],
+    ])("accepts %s", (_label, chain) => {
+      expect(validateGeneratedChainDeliveryContract(chain)).toEqual([]);
     });
 
-    it.each([
-      "The assignee field contains the selected chain identifier.",
-      "Require assignee to hold the chain ID before reporting success.",
-      "Check that the task assignee matches the chain binding.",
-      "Set assignee to the selected chain ID before starting.",
-      "Assignee may be null, but when present it must contain the chain ID.",
-      "The assignee has to contain the selected chain ID.",
-    ])("rejects equivalent assignee-as-chain-binding requirement: %s", (prompt) => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
-        expect.stringContaining("assignee-based chain binding"),
-      );
+    // Attempt 1 is the corpus proof that removing prose blocking did NOT
+    // weaken structural validation: both its agents declare only read_files on
+    // an operations chain, a real capability gap. The prose rejections are
+    // gone; the structural one stays -- and is the ONLY error.
+    it("rejects TASK-004 attempt 1 for its real structural gap only, with no prose errors", () => {
+      expect(validateGeneratedChainDeliveryContract(INCIDENT_TASK_004_ATTEMPT_1)).toEqual([
+        "operations generated chains require an agent with run_commands authority",
+      ]);
     });
 
-    it.each([
-      "Do not finish until this run is terminal and the linked task is reconciled.",
-      "Confirm metadata.last_run_status equals completed for the current run.",
-      "The task run status must be closed before this agent emits its verdict.",
-      "The linked task must be closed before this agent reports success.",
-      "The current run needs to be terminal before this agent emits.",
-    ])("rejects equivalent self-terminal dependency: %s", (prompt) => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toContainEqual(
-        expect.stringContaining("must not require its current run or linked task"),
-      );
+    // The original TASK-002 chain genuinely requires its own run/task to be
+    // terminal -- a real defect family. It is still ACCEPTED here: the typed
+    // subject/phase/owner contract (Track B, contract v2) owns that invariant,
+    // not a prose classifier. Prompt rules already teach against it.
+    it("accepts the TASK-002 circular chain (typed contract v2 owns the invariant, not prose)", () => {
+      expect(validateGeneratedChainDeliveryContract(INCIDENT_TASK_002_CIRCULAR_CHAIN)).toEqual([]);
     });
 
-    it("accepts the real post-admission contract and external reconciliation boundary", () => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(
-        "Read metadata.chain_id and metadata.last_run_id while the task is in_progress. "
-        + "The assignee may be null. Do not require this run to be terminal; write evidence "
-        + "for the external orchestrator to verify after the chain finishes.",
-      ))).toEqual([]);
-    });
-
-    it("does not reject a check of an explicitly previous terminal run", () => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(
-        "Inspect the previous run's terminal status as historical evidence, then verify the current deliverable.",
-      ))).toEqual([]);
-    });
-
-    it.each([
-      "This task requires you to open the project file and inspect its contents.",
-      "Confirm the assignee does not contain the chain ID; metadata.chain_id is authoritative.",
-      "The linked task must not remain open; do not mutate task lifecycle state from this agent.",
-      "Confirm this run is not terminal yet and leave final reconciliation to the orchestrator.",
-      "The current task must be open to edits and collaboration.",
-      "The task should be open-ended so the verifier can explore sibling cases.",
-      "The linked task does not need to be open; in_progress is valid.",
-      "The assignee does not need to contain the chain ID.",
-      "The current run does not need to be terminal before this agent emits.",
-    ])("does not reject a valid negative or non-state use of contract words: %s", (prompt) => {
-      expect(validateGeneratedChainDeliveryContract(chainWithPrompt(prompt))).toEqual([]);
+    it("still blocks a structurally damaged incident chain", () => {
+      const damaged = JSON.parse(JSON.stringify(INCIDENT_TASK_013_CHILD_TASK_CHAIN)) as {
+        agents: Array<Record<string, unknown>>;
+      };
+      delete damaged.agents[3].final_verifier;
+      delete damaged.agents[0].deliverable;
+      expect(validateGeneratedChainDeliveryContract(damaged)).toEqual(expect.arrayContaining([
+        "agents[0].deliverable must name the concrete output this agent hands off",
+        "the last generated-chain agent must declare final_verifier: true",
+      ]));
     });
   });
 });

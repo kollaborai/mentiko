@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.49",
+    date: "July 31, 2026",
+    title: "Generated Chain Acceptance Reliability",
+    description:
+      "Generated-chain acceptance no longer infers lifecycle requirements from agent prose: the keyword classifier that falsely rejected valid chains (including child-task verification and compliance language such as 'without requiring terminal state') is removed, while every structural check remains blocking. Rejections now carry a typed envelope with a canonical artifact hash, and an identical rejected candidate stops immediately across import, artifact recovery, and save instead of consuming the retry budget. The task chain workflow reports the true rejection phase, and an admin-only, audited, namespace-scoped warning mode exists for future semantic policy gates -- structural and security checks are never demotable.",
+    category: "fix",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.48",
     date: "July 30, 2026",
     title: "Task Auto-Run Contract Reliability",

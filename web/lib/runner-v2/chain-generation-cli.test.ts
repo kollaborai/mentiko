@@ -143,13 +143,16 @@ describe("typed chain generation contract", () => {
     })).toThrow(/generated chain delivery contract invalid/);
   });
 
-  it("rejects an impossible task-state gate at the typed standalone generation boundary", () => {
+  // 2026-07-31 incident (chain-contract-plan-of-record.md A2): prose never
+  // blocks. The standalone boundary keeps prompt guidance advisory and rejects
+  // only structural invalidity.
+  it("accepts lifecycle-flavored prose at the typed standalone generation boundary", () => {
     expect(() => validateGeneratedChain({
       ...validChain,
       agents: validChain.agents.map((agent, index) => index === 0
         ? { ...agent, prompt: "Require the linked task status to equal open before emitting." }
         : agent),
-    })).toThrow(/TASK_LINKED_CHAIN_RUNTIME.*must not require task status open/);
+    })).not.toThrow();
   });
 
   // Regression: TASK-203 follow-up (2026-07-23). This generator is standalone --

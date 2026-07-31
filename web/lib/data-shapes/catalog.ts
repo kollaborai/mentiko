@@ -130,6 +130,33 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: ["The typed chain-validation CLI separates the raw JSON5 file gate from normalized semantic and strict graph validation; lib/validate.sh only forwards the file path and strict flag.", "The typed chain-generation CLI owns model-output decoding, normalized generated-chain validation, atomic chain materialization plus agent-spec materialization, and output rendering; lib/chain-generator.sh is invocation-only and retains no CLI fallback.", "A chain that declares metadata.generated_chain_contract is validated as typed delivery, operations, or research work: every agent must state an observable deliverable and repeatable verification, while the last agent is a final acceptance gate with an evidence-backed success assertion. Delivery chains require edit_files; operations chains require run_commands."],
   }),
   shape({
+    id: "generated-chain-rejection-ledger",
+    name: "Generated-Chain Rejection Ledger",
+    category: "core",
+    description: "Typed deterministic-rejection envelopes for generated chains, shared by the import, artifact-recovery, and save doors so an identical rejected candidate stops immediately instead of looping (chain-contract-plan-of-record.md A3/A4).",
+    scope: "organization",
+    format: "json",
+    storage: ["{orgRoot}/chains/.generated-chain-rejections.json"],
+    assurance: "enforced",
+    typePaths: ["web/lib/chains/generated-chain-rejections.ts"],
+    validatorPaths: ["web/lib/chains/generated-chain-rejections.ts"],
+    writers: [
+      "web/lib/chains/generated-chain-rejections.ts",
+      "web/app/api/chains/save/route.ts",
+      "web/app/api/jobs/[id]/complete/route.ts",
+    ],
+    readers: [
+      "web/lib/chains/generated-chain-rejections.ts",
+      "web/app/api/chains/save/route.ts",
+      "web/app/api/jobs/[id]/complete/route.ts",
+      "web/app/api/tasks/auto-run/route.ts",
+    ],
+    notes: [
+      "Append-only with a 100-entry cap; entries are keyed by canonical sha256 artifact hash plus stable error code, contract version, and validator revision. A validator-revision bump deliberately invalidates old entries so upgraded rules re-evaluate a candidate once.",
+      "Best-effort durability: a failed ledger write must never turn a rejection into a crash -- the candidate still fails direct validation.",
+    ],
+  }),
+  shape({
     id: "chain-version-control",
     name: "Chain Version and Metadata",
     category: "core",

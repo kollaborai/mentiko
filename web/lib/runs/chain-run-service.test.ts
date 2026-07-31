@@ -36,7 +36,12 @@ describe("assertRunnableChainDefinition", () => {
     );
   });
 
-  it("rejects an impossible generated-agent prompt at the fully resolved launch boundary", () => {
+  // 2026-07-31 incident, TASK-012: run start re-validated an ALREADY SAVED
+  // chain under the v0.3.48 prose classifier and blocked its launch. Prose may
+  // never block (chain-contract-plan-of-record.md A2) -- run start accepts a
+  // chain whose prose mentions lifecycle state and rejects only structural
+  // invalidity.
+  it("accepts lifecycle-flavored prose at the fully resolved launch boundary", () => {
     const chain = {
       name: "resolved-generated-chain",
       description: "The effective runtime snapshot is contract-checked.",
@@ -63,6 +68,34 @@ describe("assertRunnableChainDefinition", () => {
       }],
     } as unknown as Chain;
 
+    expect(() => assertRunnableChainDefinition(chain)).not.toThrow();
+  });
+
+  it("still rejects a structurally invalid generated chain at the launch boundary", () => {
+    const chain = {
+      name: "resolved-generated-chain",
+      description: "Structural checks stay blocking.",
+      version: "1.0.0",
+      config: {},
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "runtime evidence exists",
+        },
+      },
+      agents: [{
+        id: "verifier",
+        name: "Verifier",
+        prompt: "Verify the runtime evidence.",
+        triggers: ["manual-start"],
+        emits: "verified",
+        deliverable: "an evidence-backed verdict",
+        verification: "inspect the runtime evidence",
+        // final_verifier missing: the structural gate must still block.
+      }],
+    } as unknown as Chain;
+
     try {
       assertRunnableChainDefinition(chain);
       throw new Error("expected generated chain rejection");
@@ -73,7 +106,7 @@ describe("assertRunnableChainDefinition", () => {
         statusCode: 422,
         message: "Invalid generated chain delivery contract",
         details: {
-          errors: [expect.stringContaining("TASK_LINKED_CHAIN_RUNTIME")],
+          errors: [expect.stringContaining("final_verifier")],
         },
       });
     }

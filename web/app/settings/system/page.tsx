@@ -12,9 +12,19 @@ import { getApiErrorMessage } from "@/lib/api/api-client";
 import { PageBanner } from "@/components/ui/page-banner";
 import { Setting2Filled, DangerFilled } from "@aliimam/icons";
 
+interface SemanticPolicyOverride {
+  mode: "enforce" | "warn";
+  rule_ids?: string[];
+  reason?: string;
+  actor?: string;
+  changed_at?: string;
+  expires_at?: string;
+}
+
 interface SystemSettings {
   max_concurrent_runs: number;
   auto_run_enabled: boolean;
+  semantic_policy?: SemanticPolicyOverride;
 }
 
 interface VersionInfo {
@@ -38,6 +48,34 @@ export default function SystemSettingsPage() {
   const [stopping, setStopping] = useState(false);
   const [stopResult, setStopResult] = useState<string | null>(null);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideResult, setOverrideResult] = useState<string | null>(null);
+
+  // Display-only: an expired override renders as active until refresh, but
+  // resolveSemanticPolicyMode (server) is authoritative and treats it as
+  // enforce. Avoids an impure Date.now() in render.
+  const semanticWarnActive = settings.semantic_policy?.mode === "warn";
+
+  const setSemanticPolicy = async (value: SemanticPolicyOverride | null) => {
+    setOverrideResult(null);
+    try {
+      const res = await fetchWithNamespace("/api/system/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ semantic_policy: value }),
+      });
+      const data = await res.json() as { settings?: SystemSettings };
+      if (res.ok && data.settings) {
+        setSettings(data.settings);
+        setOverrideResult(value ? "warning mode enabled" : "override cleared, enforcing");
+      } else {
+        setOverrideResult(getApiErrorMessage(data, "Failed (admin only)"));
+      }
+    } catch {
+      setOverrideResult("Failed to connect");
+    }
+    setTimeout(() => setOverrideResult(null), 4000);
+  };
 
   useEffect(() => {
     (async () => {
@@ -61,10 +99,15 @@ export default function SystemSettingsPage() {
     setSaving(true);
     setSaved(false);
     try {
+      // Only the general knobs: semantic_policy has its own admin-gated,
+      // audited setter below and must not ride along on a normal save.
       const res = await fetchWithNamespace("/api/system/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({
+          max_concurrent_runs: settings.max_concurrent_runs,
+          auto_run_enabled: settings.auto_run_enabled,
+        }),
       });
       if (res.ok) {
         const data = await res.json() as { settings: SystemSettings };
@@ -162,6 +205,63 @@ export default function SystemSettingsPage() {
           {saving ? "saving..." : saved ? "saved" : "save"}
         </Button>
       </div>
+
+      <Card className={`bg-card mb-4 ${semanticWarnActive ? "border border-amber-500/40" : ""}`}>
+        <div className="p-4 space-y-2">
+          <p className="text-xs font-medium mb-1">semantic policy override</p>
+          <p className="text-[10px] text-foreground/30 mb-2">
+            circuit breaker for semantic acceptance rules only (admin). structural, schema,
+            security, authorization, and digest checks always enforce and cannot be demoted.
+          </p>
+          {semanticWarnActive ? (
+            <div className="space-y-2">
+              <p className="text-[10px] text-amber-400 font-medium">
+                WARNING MODE ACTIVE — semantic rules report violations without blocking
+              </p>
+              <div className="text-[10px] text-foreground/40">
+                rules: {settings.semantic_policy?.rule_ids?.join(", ") || "all semantic rules"}
+                {" · "}reason: {settings.semantic_policy?.reason || "—"}
+                {" · "}by {settings.semantic_policy?.actor || "—"}
+                {settings.semantic_policy?.expires_at
+                  ? ` · expires ${new Date(settings.semantic_policy.expires_at).toLocaleString()}`
+                  : " · no expiry"}
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-3 text-xs bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                onClick={() => setSemanticPolicy(null)}
+              >
+                restore enforce mode
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-[10px] text-foreground/40">mode: enforce (default)</p>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="reason (required, audited)"
+                  className="h-7 w-64 bg-muted text-[10px]"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-3 text-xs bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                  disabled={!overrideReason.trim()}
+                  onClick={() => setSemanticPolicy({ mode: "warn", reason: overrideReason.trim() })}
+                >
+                  set warn mode
+                </Button>
+              </div>
+            </div>
+          )}
+          {overrideResult && (
+            <p className="text-[10px] text-foreground/40">{overrideResult}</p>
+          )}
+        </div>
+      </Card>
 
       <Card className="bg-card mb-4">
         <div className="p-4 space-y-2">

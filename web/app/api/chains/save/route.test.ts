@@ -31,7 +31,13 @@ jest.mock("@/lib/api/audit-exec", () => ({ execAuditLog: jest.fn().mockResolvedV
 jest.mock("@/lib/api/audit-queue", () => ({ addAuditLog: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("@/lib/api-errors", () => ({
   BadRequest: class BadRequest extends Error {},
-  ValidationError: class ValidationError extends Error {},
+  ValidationError: class ValidationError extends Error {
+    details: unknown;
+    constructor(message: string, details?: unknown) {
+      super(message);
+      this.details = details;
+    }
+  },
 }));
 jest.mock("@/lib/api-response", () => ({
   withErrorHandling: <T extends (...args: never[]) => unknown>(handler: T) => handler,
@@ -43,9 +49,20 @@ jest.mock("@/lib/agents/agent-loader", () => ({
 jest.mock("@/lib/agents/mcp-task-tool-contract", () => ({
   normalizeMcpTaskToolDeclarations: <T>(agent: T) => agent,
 }));
+const mockIsGeneratedChainContract = jest.fn(() => false);
+const mockValidateGeneratedChain = jest.fn((): string[] => []);
 jest.mock("@/lib/chains/generated-chain-delivery-contract", () => ({
-  isGeneratedChainContract: jest.fn(() => false),
-  validateGeneratedChainDeliveryContract: jest.fn(() => []),
+  ...jest.requireActual("@/lib/chains/generated-chain-delivery-contract"),
+  isGeneratedChainContract: (...args: unknown[]) => mockIsGeneratedChainContract(...args as []),
+  validateGeneratedChainDeliveryContract: (...args: unknown[]) => mockValidateGeneratedChain(...args as []),
+}));
+
+const mockFindGeneratedChainRejection = jest.fn();
+const mockRecordGeneratedChainRejection = jest.fn();
+jest.mock("@/lib/chains/generated-chain-rejections", () => ({
+  ...jest.requireActual("@/lib/chains/generated-chain-rejections"),
+  findGeneratedChainRejection: (...args: unknown[]) => mockFindGeneratedChainRejection(...args),
+  recordGeneratedChainRejection: (...args: unknown[]) => mockRecordGeneratedChainRejection(...args),
 }));
 
 import { POST } from "./route";
@@ -209,5 +226,77 @@ describe("POST /api/chains/save inline agents", () => {
       timeout_agent: "final-verifier-2",
       timeout_handler: "worker",
     });
+  });
+});
+
+// A3/A4 (chain-contract-plan-of-record.md): the save door records a typed
+// rejection envelope in the shared ledger and answers a known-rejected
+// candidate from that record without revalidating.
+describe("POST /api/chains/save generated-contract rejections", () => {
+  const saveRequest = () => new Request("http://localhost/api/chains/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: "generated-chain",
+      chain: {
+        name: "generated-chain",
+        metadata: { generated_chain_contract: { version: 1, mode: "research", acceptance_criteria: "x" } },
+        agents: [{ id: "observer", name: "Observer", prompt: "Observe.", triggers: ["start"], emits: "observed" }],
+      },
+    }),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    existsSync.mockReturnValue(false);
+    mockIsGeneratedChainContract.mockReturnValue(true);
+    mockFindGeneratedChainRejection.mockReturnValue(undefined);
+  });
+
+  it("records a typed envelope when the generated contract rejects a save", async () => {
+    mockValidateGeneratedChain.mockReturnValue([
+      "the last generated-chain agent must declare final_verifier: true",
+    ]);
+
+    await expect(POST(saveRequest() as never)).rejects.toMatchObject({
+      message: "Invalid generated chain delivery contract",
+      details: {
+        errors: ["the last generated-chain agent must declare final_verifier: true"],
+        rejection: expect.objectContaining({
+          phase: "save",
+          deterministic: true,
+          code: "generated_chain_contract_violation",
+          artifact_hash: expect.stringMatching(/^sha256:/),
+        }),
+      },
+    });
+    expect(mockRecordGeneratedChainRejection).toHaveBeenCalledWith(
+      "default",
+      "default",
+      expect.objectContaining({ phase: "save" }),
+    );
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("answers an already-rejected candidate from the ledger without revalidating", async () => {
+    const { buildGeneratedChainRejectionEnvelope } =
+      jest.requireActual("@/lib/chains/generated-chain-rejections");
+    const prior = buildGeneratedChainRejectionEnvelope({
+      phase: "import",
+      chain: { name: "generated-chain" },
+      errors: ["the last generated-chain agent must declare final_verifier: true"],
+    });
+    mockFindGeneratedChainRejection.mockReturnValue(prior);
+
+    await expect(POST(saveRequest() as never)).rejects.toMatchObject({
+      message: "Invalid generated chain delivery contract",
+      details: {
+        duplicate: true,
+        rejection: expect.objectContaining({ phase: "save" }),
+      },
+    });
+    expect(mockValidateGeneratedChain).not.toHaveBeenCalled();
+    expect(mockRecordGeneratedChainRejection).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
   });
 });
