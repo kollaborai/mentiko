@@ -6,6 +6,7 @@ import config from "@/lib/config";
 import {
   agentCompleteMarkerDurable,
   findTranscriptJsonl,
+  findTranscriptJsonlByInstructionPath,
   hasTranscriptIdentityBoundary,
   scoreTranscriptIdentity,
   selectTranscriptFromCapture,
@@ -36,6 +37,7 @@ import {
   saveMonitorState,
   writeLatch,
 } from "@/lib/runner-v2/monitor-io";
+import { confirmComposerSubmission } from "@/lib/runner-v2/composer-submit";
 import type { MonitorDriverIO } from "@/lib/runner-v2/monitor";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunRecord } from "@/lib/runner-v2/run-state";
 import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
@@ -180,11 +182,31 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         contextExhausted: !latched && detectContextExhaustion(capture),
       };
     },
+    // A nudge the CLI never submitted is worse than no nudge: the monitor
+    // believes it asked the agent to finish, the text sits in the composer,
+    // and the run cannot close. This used to send raw text, sleep a blind 1s,
+    // then send a raw \r — but the paste-settle window belongs to the pty
+    // daemon (an external, unpinned dependency), so any window longer than 1s
+    // swallowed that enter into the paste body. Use the daemon-owned send,
+    // which appends its own enter after ITS settle delay, then confirm the
+    // composer actually emptied. Same contract bootstrap uses for the
+    // instruction pointer — one implementation, in composer-submit.ts.
     sendNudge: async (session, message) => {
-      await pty.sendRaw(session, message);
-      await sleepMs(1000);
-      await pty.sendRaw(session, "\r");
-      await sleepMs(500);
+      await pty.sendKeys(session, message);
+      const submitted = await confirmComposerSubmission({
+        capture: (lines) => pty.capture(session, lines),
+        sendEnter: () => pty.sendRaw(session, "\r"),
+      }, {
+        deadlineMs: positiveInt(context.env.MENTIKO_MONITOR_NUDGE_SUBMIT_DEADLINE_MS, 12_000),
+      });
+      if (!submitted) {
+        // Not terminal: the next tick re-evaluates and may nudge again. Log it
+        // so an unsubmittable composer is visible instead of looking like an
+        // agent that ignored the nudge.
+        console.log(
+          `monitor: nudge for ${context.agentId} was not confirmed submitted; composer still holds input after enter retries`,
+        );
+      }
     },
     onComplete: async (session) => {
       completionEvidence = completionEvidence || await probeCompletionEvidence(session, context);
@@ -429,10 +451,35 @@ async function resolveTranscriptJsonl(
   if (!hasTranscriptIdentityBoundary(identity)) return "";
   const capture = await pty.capture(sessionName, positiveInt(env.MENTIKO_TRANSCRIPT_CAPTURE_LINES, 2000)).catch(() => "");
   const root = transcriptRootFromProfile(env.MENTIKO_AGENT_PROFILE_PATH);
-  if (!root) return "";
-  return selectTranscriptFromCapture(capture, (uuid) => {
-    return findTranscriptJsonl(root, uuid, 4);
-  }, identity);
+  if (!root) {
+    // Route B (durable transcript detection) is CLI-agnostic by design, but it
+    // still needs a log directory. An agent profile with no log_path kills it
+    // silently -- name the agent and profile so a misconfigured profile is
+    // diagnosable instead of looking like a run that never completes. Not
+    // fatal: completion still falls back to the declared event file (route A).
+    if (context) {
+      console.log(
+        `monitor: ${context.agentId} has no transcript log_path in its agent profile ` +
+          `(${env.MENTIKO_AGENT_PROFILE_PATH || "unset"}); durable AGENT_COMPLETE transcript ` +
+          "detection is unavailable for this attempt, falling back to the declared completion event",
+      );
+    }
+    return "";
+  }
+  // Two independent finders feed the same scored selection: a session UUID
+  // scraped off the screen (CLI-dependent -- only present when the CLI prints
+  // one), and the instruction-pointer path recorded verbatim in the
+  // transcript's own content the moment it was pasted into the composer at
+  // bootstrap (CLI-agnostic -- see findTranscriptJsonlByInstructionPath).
+  // selectTranscriptFromCapture scores and ambiguity-checks candidates from
+  // both through scoreTranscriptIdentity, so a screen UUID only ever raises a
+  // candidate's score -- its absence never disqualifies the run.
+  return selectTranscriptFromCapture(
+    capture,
+    (uuid) => findTranscriptJsonl(root, uuid, 4),
+    identity,
+    () => findTranscriptJsonlByInstructionPath(root, identity, 4),
+  );
 }
 
 function transcriptIdentityFromContext(context?: LiveMonitorContext): TranscriptIdentityOptions {

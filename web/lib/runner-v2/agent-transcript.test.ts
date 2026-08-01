@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   agentCompleteMarkerDurable,
   findTranscriptJsonl,
+  findTranscriptJsonlByInstructionPath,
   scoreTranscriptIdentity,
   selectTranscriptFromCapture,
 } from "@/lib/runner-v2/agent-transcript";
@@ -146,6 +147,114 @@ describe("agent transcript typed owner", () => {
 
       expect(findTranscriptJsonl(root, REAL, 0)).toBe("");
       expect(findTranscriptJsonl(root, DECOY, 0)).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("findTranscriptJsonlByInstructionPath — CLI-agnostic route B", () => {
+  // buildInstructionPointer (agent-bootstrap-plan.ts) pastes this exact path
+  // into the agent's chat composer at bootstrap; it lands in the transcript's
+  // own content regardless of whether the CLI ever prints a session uuid.
+  const instructionPath = "/runs/run-1/artifacts/writer-instructions.md";
+
+  it("resolves via instruction-pointer content alone -- no uuid anywhere in play", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const transcriptPath = join(root, "session.jsonl");
+    try {
+      writeFileSync(transcriptPath, `${transcriptRecord(REAL, root, `Read ${instructionPath}\nAGENT_COMPLETE`)}\n`);
+
+      expect(findTranscriptJsonlByInstructionPath(root, { instructionPath }, 4)).toEqual([transcriptPath]);
+      // No uuid pattern anywhere in the capture, and resolve() (the uuid
+      // finder) never yields a path -- selection still succeeds.
+      expect(selectTranscriptFromCapture(
+        "no uuids on this screen",
+        () => "",
+        { instructionPath },
+        () => findTranscriptJsonlByInstructionPath(root, { instructionPath }, 4),
+      )).toBe(transcriptPath);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("picks the one file whose content matches this run+agent's instruction path among several candidates", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    const otherAgentInstructionPath = "/runs/run-1/artifacts/reviewer-instructions.md";
+    const unrelatedPath = join(root, "unrelated.jsonl");
+    const otherAgentPath = join(root, "other-agent.jsonl");
+    const realPath = join(root, "real.jsonl");
+    try {
+      writeFileSync(unrelatedPath, `${transcriptRecord(DECOY, root, "unrelated chatter, no instructions pasted here")}\n`);
+      // A sibling agent's own instruction path is a near-miss, not a match --
+      // the full path (including agent id) must match, a prefix is not enough.
+      writeFileSync(otherAgentPath, `${transcriptRecord("33333333-3333-4333-8333-333333333333", root, `Read ${otherAgentInstructionPath}\nAGENT_COMPLETE`)}\n`);
+      writeFileSync(realPath, `${transcriptRecord(REAL, root, `Read ${instructionPath}\nAGENT_COMPLETE`)}\n`);
+
+      expect(findTranscriptJsonlByInstructionPath(root, { instructionPath }, 4)).toEqual([realPath]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns [] with no instructionPath, a missing root, or no textual match -- fails closed, never guesses", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    try {
+      writeFileSync(join(root, "session.jsonl"), `${transcriptRecord(REAL, root, "no pointer text in here")}\n`);
+
+      expect(findTranscriptJsonlByInstructionPath(root, {}, 4)).toEqual([]);
+      expect(findTranscriptJsonlByInstructionPath(join(root, "missing"), { instructionPath }, 4)).toEqual([]);
+      expect(findTranscriptJsonlByInstructionPath(root, { instructionPath }, 4)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("selectTranscriptFromCapture — uuid and instruction-path finders on equal footing", () => {
+  const instructionPathFixture = "/runs/run-1/artifacts/writer-instructions.md";
+
+  function twoCandidatesBothAnchoredOnInstructionPath(root: string): { withUuid: string; withoutUuid: string } {
+    const withUuid = join(root, `${REAL}.jsonl`);
+    const withoutUuid = join(root, "retry.jsonl");
+    writeFileSync(withUuid, `${transcriptRecord(REAL, root, `Read ${instructionPathFixture}\nAGENT_COMPLETE`)}\n`);
+    writeFileSync(withoutUuid, `${transcriptRecord(DECOY, root, `Read ${instructionPathFixture}\nAGENT_COMPLETE`)}\n`);
+    return { withUuid, withoutUuid };
+  }
+
+  it("fails closed (ambiguous) when neither candidate has a uuid to distinguish them", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    try {
+      twoCandidatesBothAnchoredOnInstructionPath(root);
+      expect(selectTranscriptFromCapture(
+        "no uuids on this screen",
+        () => "",
+        { instructionPath: instructionPathFixture },
+        () => findTranscriptJsonlByInstructionPath(root, { instructionPath: instructionPathFixture }, 4),
+      )).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a screen uuid only to break that tie -- it raises a score, it never gates", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-agent-transcript-"));
+    try {
+      const { withUuid } = twoCandidatesBothAnchoredOnInstructionPath(root);
+      const identity = { instructionPath: instructionPathFixture };
+      const findByInstructionPath = () => findTranscriptJsonlByInstructionPath(root, identity, 4);
+
+      // REAL's uuid is on screen and matches withUuid's own sessionId: 30
+      // (instruction match, shared with the other candidate) + 40 (uuid match,
+      // which the other candidate cannot earn since its uuid is not on screen)
+      // outscores the other candidate's 30 outright.
+      expect(selectTranscriptFromCapture(
+        REAL,
+        (uuid) => (uuid === REAL ? withUuid : ""),
+        identity,
+        findByInstructionPath,
+      )).toBe(withUuid);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

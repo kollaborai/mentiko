@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -300,16 +300,38 @@ export function selectTranscriptFromCapture(
   capture: string,
   resolve: (uuid: string) => string,
   identity: TranscriptIdentityOptions = {},
+  findByInstructionPath?: () => string[],
 ): string {
   const uuids = [...new Set((capture.match(TRANSCRIPT_UUID_RE) ?? []).map((u) => u.toLowerCase()))];
   if (!hasTranscriptIdentityBoundary(identity)) return "";
-  const candidates = uuids.flatMap((uuid, position) => {
+
+  const candidates = uuids.flatMap((uuid) => {
     const path = resolve(uuid);
     if (!path) return [];
     const score = scoreTranscriptIdentity(path, uuid, identity);
-    return score === null ? [] : [{ path, position, score }];
-  }).sort((a, b) => b.score - a.score || b.position - a.position);
+    return score === null ? [] : [{ path, score }];
+  });
+
+  // The screen UUID is one finder; the instruction pointer is another. Neither
+  // gates the other -- a CLI that never prints a session UUID (codex, aider,
+  // kollab, an unconfigured claude) still resolves via findByInstructionPath
+  // (findTranscriptJsonlByInstructionPath), scored through the SAME
+  // scoreTranscriptIdentity funnel a uuid-found candidate goes through (uuid
+  // omitted, so no uuid-match bonus -- absence never disqualifies, presence
+  // only ever raises a competing candidate's score). A path the uuid pass
+  // already scored is skipped so the same transcript can't tie against itself.
+  if (identity.instructionPath && findByInstructionPath) {
+    const alreadyScored = new Set(candidates.map((candidate) => candidate.path));
+    for (const path of findByInstructionPath()) {
+      if (alreadyScored.has(path)) continue;
+      alreadyScored.add(path);
+      const score = scoreTranscriptIdentity(path, undefined, identity);
+      if (score !== null) candidates.push({ path, score });
+    }
+  }
+
   if (!candidates.length) return "";
+  candidates.sort((a, b) => b.score - a.score);
   if (candidates.length > 1 && candidates[0].score === candidates[1].score) {
     return "";
   }
@@ -348,4 +370,107 @@ export function findTranscriptJsonl(root: string, uuid: string, depth: number): 
     }
   }
   return "";
+}
+
+/**
+ * Depth-bounded enumeration of every *.jsonl file under a transcript root.
+ * Same traversal boundary as findTranscriptJsonl (a directory or symlink
+ * masquerading as a transcript is stepped over, never guessed at) but
+ * collects every match instead of stopping at the first uuid hit, because the
+ * instruction-path finder below has no uuid to search for.
+ */
+function collectJsonlFiles(root: string, depth: number): string[] {
+  if (depth < 0 || !existsSync(root)) return [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    const path = join(root, entry);
+    try {
+      const entryStat = lstatSync(path);
+      if (entry.endsWith(".jsonl") && entryStat.isFile()) {
+        out.push(path);
+      } else if (entryStat.isDirectory()) {
+        out.push(...collectJsonlFiles(path, depth - 1));
+      }
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+// Hard ceiling on how many time-window survivors get their content read on a
+// single call. A monitor tick must stay cheap even when a transcript root
+// has accumulated many old session logs.
+const TRANSCRIPT_INSTRUCTION_PATH_SCAN_LIMIT = 20;
+
+/**
+ * Find candidate transcripts by CONTENT instead of a screen-scraped session
+ * UUID: buildInstructionPointer (agent-bootstrap-plan.ts) pastes the current
+ * run's per-agent instruction file path into the agent's chat composer at
+ * bootstrap, so it lands verbatim in the transcript JSONL regardless of which
+ * CLI is running -- unlike a session UUID, nothing has to print it to the
+ * screen. This is what makes durable AGENT_COMPLETE detection (route B)
+ * CLI-agnostic instead of depending on a configured Claude status line.
+ *
+ * Cheap by construction: every *.jsonl under root is stat'd (not read) and
+ * narrowed to the current attempt's time window FIRST, using the same
+ * clock-skew/future-tolerance constants scoreTranscriptIdentity applies to
+ * in-content timestamps -- just against mtime, so the filter costs a stat, not
+ * a read. Only the newest TRANSCRIPT_INSTRUCTION_PATH_SCAN_LIMIT survivors are
+ * actually opened to check for the instruction-path substring. With no attempt
+ * clock (instructionPath supplied without an attempt row) the window check is
+ * skipped and the same recency cap is the only bound.
+ *
+ * Returns every surviving path unranked -- the caller (selectTranscript-
+ * FromCapture) scores and ambiguity-checks them with scoreTranscriptIdentity,
+ * the SAME funnel a uuid-found candidate goes through, so a screen UUID stays
+ * an optional tiebreaker rather than the gate. Fails closed to [] when there
+ * is no instructionPath to anchor on, no root, or no textual match -- never a
+ * guess.
+ */
+export function findTranscriptJsonlByInstructionPath(
+  root: string,
+  identity: TranscriptIdentityOptions,
+  depth: number,
+): string[] {
+  if (!identity.instructionPath) return [];
+  const files = collectJsonlFiles(root, depth);
+  if (!files.length) return [];
+
+  const started = identity.attemptStartedAt ? Date.parse(identity.attemptStartedAt) : Number.NaN;
+  const now = (identity.now ?? new Date()).getTime();
+  const withinWindow = (mtimeMs: number): boolean => !Number.isFinite(started) || (
+    mtimeMs >= started - TRANSCRIPT_ATTEMPT_CLOCK_SKEW_MS
+    && mtimeMs <= now + TRANSCRIPT_FUTURE_TIMESTAMP_TOLERANCE_MS
+  );
+
+  const narrowed = files
+    .map((path) => {
+      try {
+        return { path, mtimeMs: statSync(path).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is { path: string; mtimeMs: number } => entry !== null && withinWindow(entry.mtimeMs))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, TRANSCRIPT_INSTRUCTION_PATH_SCAN_LIMIT);
+
+  const matches: string[] = [];
+  for (const { path } of narrowed) {
+    let body: string;
+    try {
+      body = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    if (body.includes(identity.instructionPath)) matches.push(path);
+  }
+  return matches;
 }

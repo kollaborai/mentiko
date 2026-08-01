@@ -229,6 +229,29 @@ describe("monitor-v2 live IO", () => {
     expect(observed.completionEventPresent).toBe(false);
   });
 
+  it("logs a diagnosable reason and falls back to the declared event when the agent profile has no log_path", async () => {
+    const f = fixture();
+    const profile = join(f.root, "profile.json");
+    writeFileSync(profile, JSON.stringify({ cli: "codex" })); // no log_path field
+    ptyMock.capture.mockResolvedValue("no uuid and no status line on this screen");
+    ptyMock.pid.mockResolvedValue(1234);
+    clearMonitorState("writer-run-123");
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const observed = await liveIo(f, { MENTIKO_AGENT_PROFILE_PATH: profile }).observe("writer-run-123");
+      expect(observed.latched).toBe(false);
+      expect(observed.completionEventPresent).toBe(false);
+      expect(logSpy.mock.calls.map((call) => String(call[0]))).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^monitor: writer has no transcript log_path in its agent profile .*falling back to the declared completion event$/),
+        ]),
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("spawns completion in a separate PTY with typed bridge env", async () => {
     const f = fixture();
     const transcript = join(f.root, "transcript.jsonl");
@@ -610,6 +633,50 @@ describe("selectTranscriptFromCapture — decoy-UUID resilience (durable-marker 
       workspacePath: f.workspace,
       attemptStartedAt: attemptAt,
     })).toBe(realPath);
+  });
+
+  it("completes via the instruction-path anchor when the CLI never prints a session uuid (CLI-agnostic route B)", async () => {
+    const f = fixture();
+    const transcriptRoot = join(f.root, "transcripts");
+    mkdirSync(transcriptRoot, { recursive: true });
+    const instructionPath = join(f.runDir, "artifacts", "writer-instructions.md");
+    // Filename carries no uuid either -- e.g. a codex/aider-style session log,
+    // or a claude session with no status line configured to print the uuid.
+    const transcriptPath = join(transcriptRoot, "session-log.jsonl");
+    const attemptAt = new Date(Date.now() - 30_000).toISOString();
+    updateRunJson(f.runJsonPath, (run) => ({
+      ...(run as RunRecord),
+      workspacePath: f.workspace,
+      runnerV2: {
+        attempts: [{
+          id: `${run!.id}:writer:1`, runId: run!.id, agentId: "writer",
+          phase: "instructions_submitted", recoveryDecisionCount: 0,
+          createdAt: attemptAt, updatedAt: attemptAt, transitions: [],
+          instructionLedger: [{
+            idempotencyKey: "k1", submittedAt: attemptAt, instructionPath, pointer: "pointer text",
+          }],
+        }],
+      },
+    }));
+    writeFileSync(transcriptPath, `${JSON.stringify({
+      type: "assistant",
+      cwd: f.workspace,
+      timestamp: new Date().toISOString(),
+      message: { content: [{ type: "text", text: `Read ${instructionPath}\ndone\nAGENT_COMPLETE\n` }] },
+    })}\n`);
+    const profile = join(f.root, "profile.json");
+    writeFileSync(profile, JSON.stringify({ log_path: transcriptRoot }));
+    ptyMock.alive.mockResolvedValue(true);
+    ptyMock.capture.mockResolvedValue("no uuid on this screen at all");
+    ptyMock.pid.mockResolvedValue(undefined);
+    clearMonitorState("writer-run-123");
+    const io = liveIo(f, { MENTIKO_AGENT_PROFILE_PATH: profile });
+
+    const result = await runChainMonitor("writer-run-123", io, {}, 0);
+
+    expect(result.reason).toBe("complete");
+    expect(result.ticks).toBe(1);
+    expect(ptyMock.spawn).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an existing unrelated transcript even when it contains an old AGENT_COMPLETE", () => {
