@@ -210,6 +210,8 @@ export function PageBanner({
     watermarkFill ??
     (!background ? <PageBannerMist sectionColor={sectionColor} /> : undefined);
   const hasWatermarkFill = !!resolvedWatermarkFill;
+  const watermarkFrameClass =
+    "relative h-[125%] aspect-square translate-x-[2%] overflow-visible";
 
   // watermarkFill mode: serialize the rendered icon to a data-URI mask so the
   // provided node (a shader, etc.) shows only through the icon's silhouette.
@@ -280,22 +282,16 @@ export function PageBanner({
 
         {/* watermark - right side, large and pushed to edge */}
         <div
-          className="absolute -right-4 top-2 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none overflow-visible"
+          className="absolute right-0 top-0 bottom-0 w-2/5 hidden sm:flex items-center justify-end pointer-events-none overflow-visible"
         >
           {hasWatermarkFill && iconMask ? (
-            <div
-              className="relative h-64 w-64 translate-x-1 translate-y-1 overflow-visible"
-            >
+            <div className={watermarkFrameClass}>
               {/* The icon is its own overflow-visible layer. */}
               <div
                 className="absolute inset-0 overflow-visible"
                 style={{ color: sectionColor || "#5b9ef5", opacity: 0.15 }}
               >
-                {isCustomIcon ? (
-                  <WatermarkIcon size={400} className="h-64 w-64" />
-                ) : (
-                  <WatermarkIcon size={400} />
-                )}
+                <WatermarkIcon size={400} className="h-full w-full" />
               </div>
 
               {/* Only the mist is masked to the icon silhouette. */}
@@ -316,12 +312,11 @@ export function PageBanner({
               </div>
             </div>
           ) : (
-            <div className="-mr-6" style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}>
-              {isCustomIcon ? (
-                <WatermarkIcon size={400} className="h-64 w-64" />
-              ) : (
-                <WatermarkIcon size={400} />
-              )}
+            <div
+              className={watermarkFrameClass}
+              style={{ color: sectionColor || "#5b9ef5", opacity: background ? 0.22 : 0.15 }}
+            >
+              <WatermarkIcon size={400} className="h-full w-full" />
             </div>
           )}
         </div>
