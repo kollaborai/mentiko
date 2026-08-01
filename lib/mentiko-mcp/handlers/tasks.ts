@@ -33,10 +33,27 @@ export interface CreateTaskInput {
   design?: string;
   estimated_minutes?: number;
   due_at?: string;
+  // Track C parity additions (auto-run, chain binding, idempotency).
+  autoRun?: boolean;
+  chainId?: string;
+  chainName?: string;
+  idempotencyKey?: string;
+  logicalKey?: string;
 }
 
+// sourceRunId/creatingAgent identify the calling agent's chain run for
+// idempotency-key derivation (task-creation-service.ts). Read from the
+// process environment, not from caller-supplied args -- the same trust
+// boundary dispatch.ts already uses for MENTIKO_SESSION_ID -- so an agent
+// can supply a logicalKey but cannot spoof which run/agent it is.
 export async function createTask(input: CreateTaskInput) {
-  return await opsPost("/api/mentiko-mcp/ops/tasks", input);
+  const sourceRunId = process.env.MENTIKO_RUN_ID || undefined;
+  const creatingAgent = process.env.MENTIKO_AGENT_ID || undefined;
+  return await opsPost("/api/mentiko-mcp/ops/tasks", {
+    ...input,
+    ...(sourceRunId ? { sourceRunId } : {}),
+    ...(creatingAgent ? { creatingAgent } : {}),
+  });
 }
 
 export interface UpdateTaskFields {
