@@ -125,14 +125,22 @@ RUN echo 'export PATH="/opt/mentiko/bin:/usr/local/bin:$PATH"' > /etc/profile.d/
 # 5. REQUIRED tools (build MUST fail if these fail)
 # ---------------------------------------------------------------------------
 
+# pty-mgr owns the paste-settle window and the daemon-appended enter that every
+# typed agent launch and monitor nudge depends on. This used to resolve
+# `releases/latest` at build time, so a weekly base rebuild (build-base.yml cron,
+# Mon 04:00 UTC) silently swapped the runtime under a shipped platform image —
+# Pin so a base rebuild cannot change it behind a shipped image. This tracks the
+# CURRENT pty-mgr release, not an older one — bump it deliberately when a new
+# pty-mgr ships. Override per-build with --build-arg PTY_MGR_VERSION=...
+ARG PTY_MGR_VERSION=v1.7.0
+
 RUN echo "=== pty-mgr (required) ===" && \
     ARCH_SUFFIX=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
-    PTY_MGR_TAG=$(curl -fsSL "https://api.github.com/repos/kollaborai/pty-mgr/releases/latest" \
-      | grep '"tag_name"' | head -1 | cut -d'"' -f4) && \
-    echo "installing pty-mgr ${PTY_MGR_TAG} (linux-${ARCH_SUFFIX})..." && \
-    curl -fsSL "https://github.com/kollaborai/pty-mgr/releases/download/${PTY_MGR_TAG}/pty-mgr-linux-${ARCH_SUFFIX}" \
+    echo "installing pty-mgr ${PTY_MGR_VERSION} (linux-${ARCH_SUFFIX})..." && \
+    curl -fsSL "https://github.com/kollaborai/pty-mgr/releases/download/${PTY_MGR_VERSION}/pty-mgr-linux-${ARCH_SUFFIX}" \
       -o /usr/local/bin/pty-mgr && \
-    chmod +x /usr/local/bin/pty-mgr
+    chmod +x /usr/local/bin/pty-mgr && \
+    pty-mgr --version
 
 # ---------------------------------------------------------------------------
 # 6. IMPORTANT tools (build fails if these fail)
