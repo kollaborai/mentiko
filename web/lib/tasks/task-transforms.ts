@@ -10,6 +10,7 @@ import type {
 } from "./task-types";
 import type { GoalStatus } from "@/components/ui/goal-card";
 import { resolveAutoRunState } from "@/lib/tasks/auto-run-state";
+import { readGenerationAttempts } from "@/lib/tasks/generation-attempt-ledger";
 import { isTerminalTaskStatus } from "@/lib/tasks/task-status";
 
 // priority 0-4 -> UI priority
@@ -125,6 +126,7 @@ export function toTask(issue: TaskRecord): Task {
       generation_status: (metadata.generation_status as TaskChainBinding["generation_status"]) || undefined,
       generation_stop_reason: (metadata.generation_stop_reason as TaskChainBinding["generation_stop_reason"]) || undefined,
       generation_rejection: (metadata.generation_rejection as TaskChainBinding["generation_rejection"]) || undefined,
+      generation_attempts: readGenerationAttempts(metadata),
       generated_chain_run_id: stringValue(metadata.generated_chain_run_id) || auditRun.generationRunId,
       generated_chain_source_chain_id: metadata.generated_chain_source_chain_id
         ? String(metadata.generated_chain_source_chain_id)

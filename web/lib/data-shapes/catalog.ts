@@ -157,6 +157,30 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     ],
   }),
   shape({
+    id: "generated-chain-accepted-manifest",
+    name: "Generated-Chain Accepted Execution Manifest",
+    category: "core",
+    description: "The immutable execution manifest a generated chain was accepted as, plus its canonical digest and the contract/acceptance revision that accepted it. Run start executes the accepted manifest instead of reinterpreting the authored chain under a later release's semantics (chain-contract-plan-of-record.md B5).",
+    scope: "organization",
+    format: "json",
+    storage: ["{orgRoot}/chains/{chainId}/manifest.json"],
+    assurance: "enforced",
+    typePaths: ["web/lib/chains/generated-chain-acceptance.ts"],
+    validatorPaths: ["web/lib/chains/generated-chain-acceptance.ts"],
+    writers: [
+      "web/lib/chains/generated-chain-acceptance.ts",
+      "web/app/api/chains/save/route.ts",
+    ],
+    readers: [
+      "web/lib/chains/generated-chain-acceptance.ts",
+      "web/lib/runs/chain-run-service.ts",
+    ],
+    notes: [
+      "Written atomically (temp + rename) and only after every acceptance validation passed, so a rejected candidate leaves no manifest and no registry entry behind.",
+      "digest is the canonical sha256 of the materialized manifest chain. At run start a match executes the accepted semantics; drift means the authored content or its materialized dependencies changed and requires explicit re-acceptance (save again); absence means a legacy or manual chain that validates under current rules.",
+    ],
+  }),
+  shape({
     id: "chain-version-control",
     name: "Chain Version and Metadata",
     category: "core",

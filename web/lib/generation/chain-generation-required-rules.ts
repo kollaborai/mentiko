@@ -21,6 +21,13 @@ GENERATED_CHAIN_CONTRACT_FIELDS (required): metadata.generated_chain_contract mu
 export const CHAIN_GENERATION_RUNTIME_PROOF_RULE = `
 DYNAMIC_PORT_RUNTIME_PROOF (required): Never assume port 3000 for generated app verification. Pick a free port at verification time, bind the target app explicitly to 127.0.0.1 on that port, capture the PID and working directory for the process you started, and verify target-specific content from this workspace. Do not treat an already-listening port as proof. Do not use broad kills such as pkill -f "next dev"; stop only the PID you started.`;
 
+// B2 (chain-contract-plan-of-record.md): the injected launch context holds
+// only facts fixed at launch. Teaching the model this split prevents the
+// TASK-004 family, where chains asserted live lifecycle state from prose
+// beliefs about a snapshot.
+export const CHAIN_GENERATION_RUNTIME_CONTEXT_RULE = `
+RUNTIME_CONTEXT_TRUTH (required): TASK_CONTEXT_JSON is an IMMUTABLE launch snapshot: task identity and criteria, namespace/org identity, source run id, and chain binding. It never reflects live task or run state. For mutable state — task status, assignee, last_run_id, run outcomes, a created child task's record — query the typed tools (mentiko get_task, get_run) at the moment of verification; tool results identify the resource and observation time. Never assert lifecycle state from the launch snapshot, and never treat a snapshot value as proof that state still holds.`;
+
 // Matches the exact capability rejections thrown by the generated-chain
 // validator. This is injected into stored namespace templates too, so an older
 // customized prompt cannot keep teaching the obsolete delivery-vs-research
@@ -43,6 +50,9 @@ export function withRequiredChainGenerationRules(templateContent: string): strin
   }
   if (!content.includes("DELIVERY_CONTRACT_EDIT_AUTHORITY")) {
     content = `${content.trim()}\n\n${CHAIN_GENERATION_DELIVERY_AUTHORITY_RULE.trim()}`;
+  }
+  if (!content.includes("RUNTIME_CONTEXT_TRUTH")) {
+    content = `${content.trim()}\n\n${CHAIN_GENERATION_RUNTIME_CONTEXT_RULE.trim()}`;
   }
   if (!content.includes(TASK_LINKED_CHAIN_RUNTIME_RULE.trim())) {
     content = `${content.trim()}\n\n${TASK_LINKED_CHAIN_RUNTIME_RULE.trim()}`;

@@ -3,7 +3,6 @@ import { getJob, updateJob } from "@/lib/runs/job-store";
 import { taskGet, taskUpdate } from "@/lib/tasks/task-store";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
 import { getDecision, updateDecision } from "@/lib/decisions/decision-storage";
-import { postProcessChain } from "@/lib/chains/chain-postprocessor";
 import { Unauthorized, NotFound } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 import { hasInternalAuth } from "@/lib/auth/internal-api-auth";
@@ -19,19 +18,10 @@ import {
   outcomeSummarySourceEligibility,
 } from "@/lib/tasks/run-outcome-evidence";
 import { unwrapAgentJsonOutput } from "@/lib/tasks/agent-json-output";
-import {
-  GeneratedChainContractError,
-  validateGeneratedChainDeliveryContract,
-} from "@/lib/chains/generated-chain-delivery-contract";
-import {
-  buildGeneratedChainRejectionEnvelope,
-  canonicalGeneratedChainHash,
-  findGeneratedChainRejection,
-  recordGeneratedChainRejection,
-  type GeneratedChainRejectionEnvelope,
-} from "@/lib/chains/generated-chain-rejections";
+import { acceptGeneratedChain, GeneratedChainRejectedError } from "@/lib/chains/generated-chain-acceptance";
+import { type GeneratedChainRejectionEnvelope } from "@/lib/chains/generated-chain-rejections";
+import { appendGenerationAttempt } from "@/lib/tasks/generation-attempt-ledger";
 import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
-import { resolveChainAgents } from "@/lib/agents/agent-loader";
 import {
   extractGeneratedChainResult,
   INVALID_GENERATED_CHAIN_RESULT_ERROR,
@@ -161,6 +151,15 @@ function applyImportRejectionToTask(
         generation_rejection_job_id: jobId,
         generation_rejection_fingerprints: decision.fingerprints,
         ...(decision.stop ? { generation_stop_reason: decision.stopReason } : {}),
+        ...appendGenerationAttempt(existing, {
+          phase: "import",
+          code: envelope.code,
+          class: "deterministic",
+          input_hash: envelope.artifact_hash,
+          revision: envelope.validator_revision,
+          guidance: envelope.message,
+          ...(decision.stop ? { stop_reason: decision.stopReason } : {}),
+        }),
       },
     }, namespaceId);
   } catch (error) {
@@ -262,67 +261,42 @@ export const POST = withErrorHandling(async (
       const chainJson = extractGeneratedChainResult(result);
 
       if (chainJson) {
-        // This is the import boundary for model output. Do not persist agents
-        // from an activity-only chain and hope the later task audit infers an
-        // outcome; every generated agent must declare its handoff and the last
-        // one must assert the task contract from evidence.
-        //
-        // Validate what will actually RUN: a {"$ref": "id"} reuse entry carries
-        // its declarations and authorities in the registry, not inline, so the
-        // raw model output alone made a correct catalog-reuse chain look like it
-        // had no deliverable and no edit_files agent. /api/chains/save has always
-        // resolved before validating (save/route.ts) -- this boundary hadn't, and
-        // the false rejection cost TASK-203 a regeneration round.
-        const chainForContract = { ...chainJson };
-        if (Array.isArray(chainJson.agents)) {
-          try {
-            chainForContract.agents = resolveChainAgents(chainJson.agents, nsId, oId) as unknown[];
-          } catch {
-            // Unresolvable $ref: validate the raw shape so the rejection names
-            // the missing declarations rather than swallowing a broken chain.
-            chainForContract.agents = chainJson.agents;
-          }
-        }
-        // Deterministic-duplicate check FIRST (A4): an artifact already
-        // rejected under the current validator revision fails identically, so
-        // consult the shared rejection ledger before re-validating. Recovery
-        // and save consult the same ledger -- one decision for every door.
-        const artifactHash = canonicalGeneratedChainHash(chainJson);
-        const priorRejection = findGeneratedChainRejection(nsId, oId, artifactHash);
-        const contractErrors = priorRejection
-          ? [priorRejection.message]
-          : validateGeneratedChainDeliveryContract(chainForContract);
-        if (contractErrors.length > 0) {
-          // A rejected generated-chain payload is an expected outcome of model
-          // generation, not an internal server error: mark the job failed and
-          // let the rest of this handler run (task metadata + auto-run
-          // continuation) -- CHOR-001 (2026-07-20) aborted with a 500 here and
-          // nothing ever learned the generation failed. The typed envelope is
-          // what the retry path branches on; the message is display-only.
-          const envelope: GeneratedChainRejectionEnvelope = priorRejection
-            ? { ...priorRejection, phase: "import", at: new Date().toISOString() }
-            : buildGeneratedChainRejectionEnvelope({ phase: "import", chain: chainJson, errors: contractErrors });
-          if (!priorRejection) recordGeneratedChainRejection(nsId, oId, envelope);
-          updateJob(id, {
-            status: "failed",
-            error: new GeneratedChainContractError(contractErrors).message,
-            completedAt: new Date().toISOString(),
-          }, namespaceId);
-          applyImportRejectionToTask(job.taskId, id, oId, namespaceId, envelope);
-        } else {
-          const processed = await postProcessChain(chainJson, nsId, oId);
-          // update result with processed chain
+        // This is the import boundary for model output. ONE authoritative
+        // acceptance pipeline (generated-chain-acceptance.ts) materializes
+        // the candidate, validates structurally + by versioned contract,
+        // consults the deterministic-rejection ledger, and commits registry
+        // writes only after everything passed (B3/B4). A rejected payload is
+        // an expected outcome of model generation, not a server error: mark
+        // the job failed and let the rest of this handler run (task metadata
+        // + auto-run continuation) -- CHOR-001 (2026-07-20) aborted with a
+        // 500 here and nothing ever learned the generation failed.
+        try {
+          const accepted = acceptGeneratedChain({
+            chain: chainJson,
+            namespaceId: nsId,
+            orgId: oId,
+            phase: "import",
+          });
           result = {
             ...result,
-            output: JSON.stringify(processed.chain, null, 2),
-            createdAgents: processed.createdAgents,
-            extractedCount: processed.extractedCount,
+            output: JSON.stringify(accepted.manifestChain, null, 2),
+            createdAgents: accepted.createdAgents,
+            extractedCount: accepted.extractedCount,
+            ...(accepted.warnings.length > 0 ? { acceptanceWarnings: accepted.warnings } : {}),
           };
           updateJob(id, { result }, namespaceId);
+        } catch (rejection) {
+          if (!(rejection instanceof GeneratedChainRejectedError)) throw rejection;
+          updateJob(id, {
+            status: "failed",
+            error: rejection.message,
+            completedAt: new Date().toISOString(),
+          }, namespaceId);
+          applyImportRejectionToTask(job.taskId, id, oId, namespaceId, rejection.envelope);
         }
       }
     } catch (e) {
-      // Only unexpected failures (post-processing, storage) reach here now --
+      // Only unexpected failures (materialization, storage) reach here now --
       // contract rejections are handled above without throwing.
       const message = e instanceof Error ? e.message : String(e);
       updateJob(id, {

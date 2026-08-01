@@ -111,6 +111,70 @@ describe("assertRunnableChainDefinition", () => {
       });
     }
   });
+
+  // B5/B6 (chain-contract-plan-of-record.md): a chain ACCEPTED under one
+  // release must not be re-judged by a later release's semantic rules. Run
+  // start verifies the accepted manifest digest and, on a match, executes it.
+  // Saved chains that predate manifests keep validating under current rules —
+  // that is the frozen-v1 path, and it must never be a silent upgrade.
+  describe("accepted-manifest execution semantics", () => {
+    const acceptedUnderOlderRules = {
+      name: "accepted-generated-chain",
+      description: "Accepted under an earlier release.",
+      version: "1.0.0",
+      config: {},
+      metadata: {
+        generated_chain_contract: {
+          version: 1,
+          mode: "research",
+          acceptance_criteria: "runtime evidence exists",
+        },
+      },
+      agents: [{
+        id: "verifier",
+        name: "Verifier",
+        prompt: "Verify the runtime evidence.",
+        triggers: ["manual-start"],
+        emits: "verified",
+        // deliverable/verification missing: TODAY's contract would reject this.
+      }],
+    } as unknown as Chain;
+
+    it("executes a digest-verified accepted manifest without re-applying current contract rules", () => {
+      expect(() =>
+        assertRunnableChainDefinition(acceptedUnderOlderRules, { acceptedManifestVerified: true }),
+      ).not.toThrow();
+    });
+
+    it("applies current rules to a saved chain with no accepted manifest (frozen-v1 path is explicit, not silent)", () => {
+      expect(() => assertRunnableChainDefinition(acceptedUnderOlderRules)).toThrow(ValidationError);
+    });
+
+    it("never lets manifest verification excuse general chain-graph invalidity", () => {
+      const broken = {
+        ...acceptedUnderOlderRules,
+        agents: [{
+          id: "verifier",
+          name: "Verifier",
+          prompt: "Verify.",
+          triggers: ["manual-start"],
+          emits: "verified",
+        }, {
+          // duplicate id: structural integrity is checked before the manifest
+          // shortcut and stays blocking regardless of acceptance.
+          id: "verifier",
+          name: "Verifier Two",
+          prompt: "Verify again.",
+          triggers: ["verified"],
+          emits: "done",
+        }],
+      } as unknown as Chain;
+
+      expect(() =>
+        assertRunnableChainDefinition(broken, { acceptedManifestVerified: true }),
+      ).toThrow(ValidationError);
+    });
+  });
 });
 
 describe("typed chain launch boundary", () => {

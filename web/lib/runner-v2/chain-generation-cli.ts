@@ -145,6 +145,14 @@ export function validateGeneratedChain(value: unknown): GeneratedChain {
     });
   }
 
+  // Deliberately NOT routed through generated-chain-acceptance (B3): this CLI
+  // is standalone -- it has no namespace/org, writes a chain file to --output,
+  // and never persists to the agent registry, the rejection ledger, or an
+  // accepted manifest. It shares the ONE validator (which includes the typed
+  // v2 lifecycle rules), so it cannot drift from the platform's semantics; it
+  // simply enforces them without the namespace-scoped circuit breaker, which
+  // is the correct default for a tool that has no namespace. A chain produced
+  // here is accepted for real when it enters the platform through save/import.
   assertValidGeneratedChainDeliveryContract(value);
 
   return { ...value, name: value.name, agents };

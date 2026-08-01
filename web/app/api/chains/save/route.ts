@@ -16,13 +16,14 @@ import {
   normalizeAgentAuthorities,
   rewriteBranchAgentIds,
 } from "@/lib/chains/chain-postprocessor";
-import { isGeneratedChainContract, validateGeneratedChainDeliveryContract } from "@/lib/chains/generated-chain-delivery-contract";
+import { isGeneratedChainContract } from "@/lib/chains/generated-chain-delivery-contract";
 import {
-  buildGeneratedChainRejectionEnvelope,
-  canonicalGeneratedChainHash,
-  findGeneratedChainRejection,
-  recordGeneratedChainRejection,
-} from "@/lib/chains/generated-chain-rejections";
+  acceptGeneratedChain,
+  GeneratedChainRejectedError,
+  persistAcceptedManifest,
+  type AcceptedGeneratedChain,
+} from "@/lib/chains/generated-chain-acceptance";
+import { canonicalGeneratedChainHash } from "@/lib/chains/generated-chain-rejections";
 
 function getClientIp(request: NextRequest): string {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -222,46 +223,43 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
 
   normalizeBranchFanInFanOut(chain);
 
-  const chainForValidation = { ...chain };
-  if (Array.isArray(chain.agents)) {
-    try {
-      chainForValidation.agents = resolveChainAgents(chain.agents, namespaceId, orgId) as unknown[];
-    } catch {
-      chainForValidation.agents = chain.agents;
-    }
-  }
-
-  // validate chain before saving
-  const validation = validateChain(chainForValidation);
-  if (!validation.valid) {
-    throw new ValidationError("Invalid chain", { errors: validation.errors });
-  }
+  // Generated chains go through THE acceptance service (B3): one pipeline
+  // materializes, validates structurally + by versioned contract, consults
+  // the deterministic-rejection ledger, and commits registry writes only
+  // after everything passed. Manual chains keep the classic path below.
+  let acceptedGenerated: AcceptedGeneratedChain | null = null;
   if (isGeneratedChainContract(chain)) {
-    // Ledger check BEFORE revalidating (A4): an artifact already rejected under
-    // the current validator revision fails identically, so answer from the
-    // shared rejection record. `duplicate: true` lets the auto-run caller stop
-    // its retry loop immediately instead of counting another attempt.
-    const artifactHash = canonicalGeneratedChainHash(chain);
-    const priorRejection = findGeneratedChainRejection(namespaceId, orgId, artifactHash);
-    if (priorRejection) {
+    try {
+      acceptedGenerated = acceptGeneratedChain({
+        chain,
+        namespaceId,
+        orgId,
+        phase: "save",
+      });
+    } catch (rejection) {
+      if (!(rejection instanceof GeneratedChainRejectedError)) throw rejection;
+      // `duplicate: true` lets the auto-run caller stop its retry loop
+      // immediately instead of counting another attempt (A4).
       throw new ValidationError("Invalid generated chain delivery contract", {
-        errors: [priorRejection.message],
-        rejection: { ...priorRejection, phase: "save" as const },
-        duplicate: true,
+        errors: [rejection.envelope.message],
+        rejection: rejection.envelope,
+        ...(rejection.duplicate ? { duplicate: true } : {}),
       });
     }
-    const generatedContractErrors = validateGeneratedChainDeliveryContract(chainForValidation);
-    if (generatedContractErrors.length) {
-      const envelope = buildGeneratedChainRejectionEnvelope({
-        phase: "save",
-        chain,
-        errors: generatedContractErrors,
-      });
-      recordGeneratedChainRejection(namespaceId, orgId, envelope);
-      throw new ValidationError("Invalid generated chain delivery contract", {
-        errors: generatedContractErrors,
-        rejection: envelope,
-      });
+  } else {
+    const chainForValidation = { ...chain };
+    if (Array.isArray(chain.agents)) {
+      try {
+        chainForValidation.agents = resolveChainAgents(chain.agents, namespaceId, orgId) as unknown[];
+      } catch {
+        chainForValidation.agents = chain.agents;
+      }
+    }
+
+    // validate chain before saving
+    const validation = validateChain(chainForValidation);
+    if (!validation.valid) {
+      throw new ValidationError("Invalid chain", { errors: validation.errors });
     }
   }
 
@@ -294,21 +292,39 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
     }
   }
 
-  // Migrate inline agents to standalone before saving
-  const agents = (chain.agents as unknown[]) || [];
-  const { migratedIds: migratedAgentIds, agentIdMap } = await migrateInlineAgents(
-    agents,
-    namespaceId,
-    orgId,
-  );
-  // Validation above runs against the original inline IDs. Registry collisions
-  // can suffix those IDs during migration, so rewrite every supported branch
-  // and chain-level routing target before persisting the now-ref-based chain.
-  // Without this, a chain can validate successfully and then become invalid at
-  // the write boundary.
-  rewriteBranchAgentIds(chain, agentIdMap);
+  let migratedAgentIds: string[] = [];
+  if (acceptedGenerated) {
+    // The acceptance service already materialized the chain ($ref-rewritten,
+    // registry writes committed post-validation). Persist the accepted
+    // manifest chain, stamp the version, and bind acceptance to these exact
+    // bytes with a digest so run start executes what was accepted (B5).
+    const persisted: Record<string, unknown> = { ...acceptedGenerated.manifestChain, version };
+    writeFileSync(chainPath, JSON.stringify(persisted, null, 2));
+    persistAcceptedManifest(namespaceId, orgId, name, {
+      ...acceptedGenerated,
+      manifestChain: persisted,
+      digest: canonicalGeneratedChainHash(persisted),
+    });
+    migratedAgentIds = acceptedGenerated.createdAgents.map((agent) => agent.id);
+    chain.agents = persisted.agents;
+  } else {
+    // Migrate inline agents to standalone before saving
+    const agents = (chain.agents as unknown[]) || [];
+    const migration = await migrateInlineAgents(
+      agents,
+      namespaceId,
+      orgId,
+    );
+    migratedAgentIds = migration.migratedIds;
+    // Validation above runs against the original inline IDs. Registry collisions
+    // can suffix those IDs during migration, so rewrite every supported branch
+    // and chain-level routing target before persisting the now-ref-based chain.
+    // Without this, a chain can validate successfully and then become invalid at
+    // the write boundary.
+    rewriteBranchAgentIds(chain, migration.agentIdMap);
 
-  writeFileSync(chainPath, JSON.stringify(chain, null, 2));
+    writeFileSync(chainPath, JSON.stringify(chain, null, 2));
+  }
 
   // Log chain save/modify
   const action = isNewChain ? "created" : "modified";

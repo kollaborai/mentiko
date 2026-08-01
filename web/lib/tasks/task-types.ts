@@ -1,5 +1,6 @@
 // task type definitions for UI consumption
 import type { AutoRunState } from "@/lib/tasks/auto-run-state";
+import type { GenerationAttemptEntry } from "@/lib/tasks/generation-attempt-ledger";
 
 // raw task record shape (used by UI transforms)
 export interface TaskRecord {
@@ -148,6 +149,10 @@ export interface TaskChainBinding {
     message: string;
     at: string;
   };
+  // B7 phase-aware attempt ledger. This is what status display reads: the
+  // ordered record of what each door actually decided, replacing inference
+  // from a single generic retry integer.
+  generation_attempts?: GenerationAttemptEntry[];
 }
 
 // normalized task for UI consumption

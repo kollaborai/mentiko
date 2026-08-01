@@ -76,12 +76,34 @@ describe("resolveSemanticPolicyMode", () => {
 
 // The override must be impossible to reach from the structural gate: the
 // generated-chain validator module must not import or consult it.
-test("structural validation has no code path into the semantic override", () => {
+//
+// Checked against CODE, not raw text. A substring scan over the whole file
+// fails on a doc comment that merely names the module -- which is the exact
+// prose-matching mistake chain-contract-plan-of-record.md exists to remove.
+// Comments may describe the boundary; only an import or a call violates it.
+function sourceWithoutComments(path: string): string {
   const { readFileSync } = jest.requireActual("fs") as typeof import("fs");
-  const validatorSource = readFileSync(
+  return readFileSync(path, "utf-8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+test("structural validation has no code path into the semantic override", () => {
+  const code = sourceWithoutComments(
     join(__dirname, "..", "chains", "generated-chain-delivery-contract.ts"),
-    "utf-8",
   );
-  expect(validatorSource).not.toContain("resolveSemanticPolicyMode");
-  expect(validatorSource).not.toContain("system-settings");
+  expect(code).not.toContain("resolveSemanticPolicyMode");
+  expect(code).not.toContain("system-settings");
+});
+
+// The acceptance service is the ONE place allowed to consult the override,
+// and only for typed semantic rules -- proven behaviorally in
+// lib/chains/generated-chain-acceptance.test.ts ("structural failures never
+// demote"). This asserts the coupling exists exactly there and nowhere else
+// in the validator, so the boundary is checked from both sides.
+test("only the acceptance service consults the override", () => {
+  const acceptance = sourceWithoutComments(
+    join(__dirname, "..", "chains", "generated-chain-acceptance.ts"),
+  );
+  expect(acceptance).toContain("resolveSemanticPolicyMode");
 });

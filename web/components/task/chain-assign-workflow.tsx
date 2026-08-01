@@ -13,7 +13,7 @@ import {
   normalizeTaskChainRecommendation,
   type TaskChainRecommendation,
 } from "@/lib/tasks/task-chain-recommendation";
-import type { Task } from "@/lib/tasks/task-types";
+import type { Task, TaskChainBinding } from "@/lib/tasks/task-types";
 
 type WorkflowStep =
   | "idle"
@@ -44,6 +44,41 @@ const GENERATION_STOP_LABELS: Record<string, string> = {
   deterministic_budget_exhausted:
     "Automatic retries stopped intentionally: the corrective regeneration was also rejected, so the deterministic retry allowance is spent.",
 };
+
+const ATTEMPT_PHASE_LABELS: Record<string, string> = {
+  generation: "Generation",
+  import: "Import",
+  recovery: "Recovery",
+  save: "Save",
+  binding: "Binding",
+  execution: "Execution",
+  completion_audit: "Completion Audit",
+};
+
+/**
+ * The phase-aware attempt ledger (B7), rendered as the status story. Each row
+ * is a real recorded decision -- which door, what outcome, deterministic or
+ * transient -- instead of a bare retry integer the reader has to interpret.
+ */
+function AttemptTrail({ attempts }: { attempts?: TaskChainBinding["generation_attempts"] }) {
+  if (!attempts || attempts.length === 0) return null;
+  const recent = attempts.slice(-4);
+  return (
+    <div className="space-y-0.5" data-testid="generation-attempt-trail">
+      {recent.map((attempt, index) => (
+        <div key={`${attempt.at}-${index}`} className="text-[10px] text-foreground/30">
+          {ATTEMPT_PHASE_LABELS[attempt.phase] || attempt.phase}
+          {" · "}{attempt.code}
+          {" · "}
+          <span className={attempt.class === "deterministic" ? "text-amber-400/70" : ""}>
+            {attempt.class}
+          </span>
+          {attempt.stop_reason ? ` · stopped (${attempt.stop_reason})` : ""}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type Recommendation = TaskChainRecommendation;
 
@@ -1032,6 +1067,7 @@ export function ChainAssignWorkflow({
             {(REJECTION_PHASE_LABELS[rejection.phase] || rejection.phase)}: {rejection.message}
           </div>
         )}
+        <AttemptTrail attempts={task.chainBinding?.generation_attempts} />
         <div className="flex items-center gap-2">
           <button
             className="px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-400 text-[10px] font-medium hover:bg-cyan-500/25 transition-colors"

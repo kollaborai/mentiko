@@ -144,5 +144,10 @@ async function loadTypedTaskContext(taskId: string, env: NodeJS.ProcessEnv): Pro
     namespaceId: env.NAMESPACE_ID || "default",
     orgId: env.ORG_ID || "default",
   });
-  return taskContextEnvironment(context);
+  return taskContextEnvironment(context, {
+    namespaceId: env.NAMESPACE_ID || "default",
+    orgId: env.ORG_ID || "default",
+    sourceRunId: env.MENTIKO_RUN_ID || undefined,
+    chainId: env.MENTIKO_CHAIN_ID || undefined,
+  });
 }

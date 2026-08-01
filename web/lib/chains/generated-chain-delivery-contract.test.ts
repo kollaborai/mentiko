@@ -113,12 +113,12 @@ describe("validateGeneratedChainDeliveryContract", () => {
 
   it("reports every broken contract field at once", () => {
     const errors = validateGeneratedChainDeliveryContract({
-      metadata: { generated_chain_contract: { version: 2, mode: "audit" } },
+      metadata: { generated_chain_contract: { version: 3, mode: "audit" } },
       agents: [writer(["read_files", "edit_files"]), finalVerifier()],
     });
 
     expect(errors).toEqual(expect.arrayContaining([
-      "metadata.generated_chain_contract.version must be 1",
+      "metadata.generated_chain_contract.version must be 1 or 2",
       expect.stringContaining("metadata.generated_chain_contract.mode"),
       expect.stringContaining("metadata.generated_chain_contract.acceptance_criteria"),
     ]));

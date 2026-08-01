@@ -78,16 +78,14 @@ jest.mock("@/lib/chains/chain-postprocessor", () => ({
   postProcessChain: (...args: unknown[]) => mockPostProcessChain(...args),
 }));
 
-// Ledger IO is mocked in-memory (the real file-backed ledger has its own unit
-// suite in lib/chains/generated-chain-rejections.test.ts); the envelope
-// builder and canonical hash stay REAL so this route test proves the actual
-// fingerprint flow.
-const mockFindGeneratedChainRejection = jest.fn().mockReturnValue(undefined);
-const mockRecordGeneratedChainRejection = jest.fn();
-jest.mock("@/lib/chains/generated-chain-rejections", () => ({
-  ...jest.requireActual("@/lib/chains/generated-chain-rejections"),
-  findGeneratedChainRejection: (...args: unknown[]) => mockFindGeneratedChainRejection(...args),
-  recordGeneratedChainRejection: (...args: unknown[]) => mockRecordGeneratedChainRejection(...args),
+// The import door is an adapter over THE acceptance service (B3); mock that
+// boundary. The service is covered by lib/chains/generated-chain-acceptance
+// tests against a real fs root. The envelope builder and fingerprint stay
+// REAL so the task-metadata fingerprint flow is proven end to end.
+const mockAcceptGeneratedChain = jest.fn();
+jest.mock("@/lib/chains/generated-chain-acceptance", () => ({
+  ...jest.requireActual("@/lib/chains/generated-chain-acceptance"),
+  acceptGeneratedChain: (...args: unknown[]) => mockAcceptGeneratedChain(...args),
 }));
 
 jest.mock("@/lib/auth/internal-web-origin", () => ({
@@ -188,7 +186,6 @@ describe("POST /api/jobs/[id]/complete", () => {
     // (inline agents resolve to themselves) or a $ref-specific implementation
     // set by one test leaks into every test after it.
     mockResolveChainAgents.mockImplementation((agents: unknown[]) => agents);
-    mockFindGeneratedChainRejection.mockReturnValue(undefined);
     global.fetch = jest.fn().mockResolvedValue({ ok: true }) as jest.Mock;
     mockOutcomeSummarySourceEligibility.mockImplementation(
       (_namespaceId: string, _orgId: string, _runId: string, expectedFingerprint?: string) => ({
@@ -229,6 +226,16 @@ describe("POST /api/jobs/[id]/complete", () => {
       createdAgents: ["processed-agent"],
       extractedCount: 1,
     });
+    mockAcceptGeneratedChain.mockImplementation((input: { chain: Record<string, unknown> }) => ({
+      authoredChain: input.chain,
+      manifestChain: { name: "Processed Chain", agents: [{ $ref: "processed-agent" }] },
+      digest: "sha256:test",
+      contractVersion: 1,
+      acceptanceRevision: "test",
+      warnings: [],
+      createdAgents: ["processed-agent"],
+      extractedCount: 1,
+    }));
     mockApplyCompletionAudit.mockResolvedValue({ action: "closed" });
     mockEnforceDeliveryGate.mockImplementation((audit) => audit);
     mockGetDecision.mockReturnValue(null);
@@ -492,11 +499,12 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), { params: Promise.resolve({ id: "job-chain" }) });
 
     expect(response.status).toBe(200);
-    expect(mockPostProcessChain).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Generated Chain" }),
-      "team-a",
-      "org-a",
-    );
+    expect(mockAcceptGeneratedChain).toHaveBeenCalledWith(expect.objectContaining({
+      chain: expect.objectContaining({ name: "Generated Chain" }),
+      namespaceId: "team-a",
+      orgId: "org-a",
+      phase: "import",
+    }));
     expect(mockUpdateJob).toHaveBeenCalledWith("job-chain", expect.objectContaining({
       result: expect.objectContaining({
         createdAgents: ["processed-agent"],
@@ -569,9 +577,8 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), { params: Promise.resolve({ id: "job-chain" }) });
 
     expect(response.status).toBe(200);
-    expect(mockResolveChainAgents).toHaveBeenCalled();
-    // accepted: it reached post-processing instead of being marked failed
-    expect(mockPostProcessChain).toHaveBeenCalled();
+    // accepted: it reached the acceptance service instead of being marked failed
+    expect(mockAcceptGeneratedChain).toHaveBeenCalled();
     expect(mockUpdateJob).not.toHaveBeenCalledWith("job-chain", expect.objectContaining({
       status: "failed",
     }), expect.anything());
@@ -604,6 +611,15 @@ describe("POST /api/jobs/[id]/complete", () => {
     mockTaskGet.mockReturnValue({
       id: "TASK-008",
       metadata: { generation_job_id: "job-chain", generation_status: "running" },
+    });
+
+    const { buildGeneratedChainRejectionEnvelope: buildEnv500 } =
+      jest.requireActual("@/lib/chains/generated-chain-rejections");
+    const { GeneratedChainRejectedError: Rejected500 } =
+      jest.requireActual("@/lib/chains/generated-chain-acceptance");
+    mockAcceptGeneratedChain.mockImplementation((input: { chain: Record<string, unknown> }) => {
+      const errors = ["delivery generated chains require an agent with edit_files authority"];
+      throw new Rejected500(errors, buildEnv500({ phase: "import", chain: input.chain, errors }));
     });
 
     const { POST } = await import("./route");
@@ -641,8 +657,6 @@ describe("POST /api/jobs/[id]/complete", () => {
 
     // non-5xx: apiSuccess is mocked to always report status 200
     expect(response.status).toBe(200);
-    // rejected before ever reaching postProcessChain
-    expect(mockPostProcessChain).not.toHaveBeenCalled();
     expect(mockUpdateJob).toHaveBeenCalledWith("job-chain", expect.objectContaining({
       status: "failed",
       error: expect.stringContaining("delivery generated chains require an agent with edit_files authority"),
@@ -701,7 +715,16 @@ describe("POST /api/jobs/[id]/complete", () => {
         success_assertion: "runtime evidence is recorded",
       }],
     };
-    mockPostProcessChain.mockResolvedValue({ chain: proseChain, createdAgents: [], extractedCount: 0 });
+    mockAcceptGeneratedChain.mockImplementation((input: { chain: Record<string, unknown> }) => ({
+      authoredChain: input.chain,
+      manifestChain: proseChain,
+      digest: "sha256:prose",
+      contractVersion: 1,
+      acceptanceRevision: "test",
+      warnings: [],
+      createdAgents: [],
+      extractedCount: 0,
+    }));
 
     const { POST } = await import("./route");
     const response = await POST(makeRequest({
@@ -712,9 +735,8 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), { params: Promise.resolve({ id: "job-temporal-chain" }) });
 
     expect(response.status).toBe(200);
-    expect(mockPostProcessChain).toHaveBeenCalled();
+    expect(mockAcceptGeneratedChain).toHaveBeenCalled();
     expect(currentJob.status).toBe("complete");
-    expect(mockRecordGeneratedChainRejection).not.toHaveBeenCalled();
   });
 
   // A3/A4: a STRUCTURAL rejection produces the typed envelope, records it in
@@ -741,6 +763,17 @@ describe("POST /api/jobs/[id]/complete", () => {
         generation_job_id: "job-structural-chain",
         generation_status: "running",
       },
+    });
+    const { buildGeneratedChainRejectionEnvelope } =
+      jest.requireActual("@/lib/chains/generated-chain-rejections");
+    const { GeneratedChainRejectedError } =
+      jest.requireActual("@/lib/chains/generated-chain-acceptance");
+    mockAcceptGeneratedChain.mockImplementation((input: { chain: Record<string, unknown> }) => {
+      const errors = ["agents[0].deliverable must name the concrete output this agent hands off"];
+      throw new GeneratedChainRejectedError(
+        errors,
+        buildGeneratedChainRejectionEnvelope({ phase: "import", chain: input.chain, errors }),
+      );
     });
 
     const { POST } = await import("./route");
@@ -770,22 +803,10 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), { params: Promise.resolve({ id: "job-structural-chain" }) });
 
     expect(response.status).toBe(200);
-    expect(mockPostProcessChain).not.toHaveBeenCalled();
     expect(currentJob.status).toBe("failed");
     expect(currentJob).toMatchObject({
       error: expect.stringContaining("agents[0].deliverable"),
     });
-    expect(mockRecordGeneratedChainRejection).toHaveBeenCalledWith(
-      "default",
-      "default",
-      expect.objectContaining({
-        phase: "import",
-        deterministic: true,
-        code: "generated_chain_contract_violation",
-        artifact_hash: expect.stringMatching(/^sha256:/),
-        paths: expect.arrayContaining(["agents[0].deliverable"]),
-      }),
-    );
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
       "TASK-STRUCTURAL",
@@ -829,7 +850,15 @@ describe("POST /api/jobs/[id]/complete", () => {
       chain: rejectedChain,
       errors: ["the last generated-chain agent must declare final_verifier: true"],
     });
-    mockFindGeneratedChainRejection.mockReturnValue(priorEnvelope);
+    const { GeneratedChainRejectedError } =
+      jest.requireActual("@/lib/chains/generated-chain-acceptance");
+    mockAcceptGeneratedChain.mockImplementation(() => {
+      throw new GeneratedChainRejectedError(
+        [priorEnvelope.message],
+        { ...priorEnvelope, phase: "import" },
+        true,
+      );
+    });
 
     let currentJob = {
       id: "job-duplicate-chain",
@@ -864,10 +893,7 @@ describe("POST /api/jobs/[id]/complete", () => {
     }), { params: Promise.resolve({ id: "job-duplicate-chain" }) });
 
     expect(response.status).toBe(200);
-    expect(mockPostProcessChain).not.toHaveBeenCalled();
     expect(currentJob.status).toBe("failed");
-    // Already recorded: a duplicate must not append another ledger entry.
-    expect(mockRecordGeneratedChainRejection).not.toHaveBeenCalled();
     expect(mockTaskUpdate).toHaveBeenCalledWith(
       "default",
       "TASK-DUPLICATE",
@@ -946,7 +972,7 @@ describe("POST /api/jobs/[id]/complete", () => {
     mockUpdateJob.mockImplementation((_id, updates) => {
       currentJob = { ...currentJob, ...updates };
     });
-    mockPostProcessChain.mockRejectedValueOnce(new Error("registry write failed"));
+    mockAcceptGeneratedChain.mockImplementationOnce(() => { throw new Error("registry write failed"); });
 
     const { POST } = await import("./route");
 

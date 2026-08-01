@@ -32,6 +32,7 @@ import { getWorkspace, listWorkspaces } from "@/lib/workspaces/workspace-storage
 import { fireWebhooks } from "@/lib/webhooks/webhook-utils";
 import type { Chain } from "@/lib/types";
 import { validateChain } from "@/lib/validators";
+import { verifyAcceptedManifest } from "@/lib/chains/generated-chain-acceptance";
 import {
   isGeneratedChainContract,
   validateGeneratedChainDeliveryContract,
@@ -117,11 +118,20 @@ export interface StartChainRunResult {
  * reference resolution and runtime-profile application because those are the
  * exact fields the runner receives.
  */
-export function assertRunnableChainDefinition(chain: Chain): void {
+export function assertRunnableChainDefinition(
+  chain: Chain,
+  options?: { acceptedManifestVerified?: boolean },
+): void {
   const validation = validateChain(chain);
   if (!validation.valid) {
     throw new ValidationError("Invalid chain", { errors: validation.errors });
   }
+  // A digest-verified accepted manifest executes under the semantics it was
+  // ACCEPTED with (plan-of-record B5): general integrity is always checked
+  // above, but the generated-chain contract is not re-interpreted under a
+  // later release's rules. Without a manifest (legacy/manual/ad-hoc chains),
+  // current rules apply.
+  if (options?.acceptedManifestVerified) return;
   if (isGeneratedChainContract(chain)) {
     const errors = validateGeneratedChainDeliveryContract(chain);
     if (errors.length > 0) {
@@ -395,7 +405,31 @@ export async function startChainRun({
     ? getProfile(namespaceId, orgId, effectiveAgentProfileId)
     : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
-  assertRunnableChainDefinition(runChain);
+
+  // B5 run-start manifest gate: verify against the RAW submitted chain (the
+  // persisted definition), not the resolved/profiled runtime copy. A digest
+  // match executes the accepted semantics; drift requires explicit
+  // re-acceptance (re-save); no manifest falls back to current-rules checks.
+  const runStartChainId = callerChainId || validChainName.toLowerCase().replace(/\s+/g, "-");
+  const manifestVerification = verifyAcceptedManifest(
+    namespaceId,
+    orgId,
+    runStartChainId,
+    chain as unknown as Record<string, unknown>,
+  );
+  if (manifestVerification.state === "drifted") {
+    throw new ValidationError(
+      "Generated chain content changed after acceptance; save it again to re-accept before running",
+      {
+        chainId: runStartChainId,
+        accepted_digest: manifestVerification.record.digest,
+        current_digest: manifestVerification.currentDigest,
+      },
+    );
+  }
+  assertRunnableChainDefinition(runChain, {
+    acceptedManifestVerified: manifestVerification.state === "accepted",
+  });
 
   const runId = body.runId && typeof body.runId === "string"
     ? validateRunId(body.runId)

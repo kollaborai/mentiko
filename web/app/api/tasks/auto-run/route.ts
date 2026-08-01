@@ -70,6 +70,7 @@ import {
   type GeneratedChainRejectionEnvelope,
 } from "@/lib/chains/generated-chain-rejections";
 import { decideGenerationRejection } from "@/lib/tasks/generation-rejection-policy";
+import { appendGenerationAttempt } from "@/lib/tasks/generation-attempt-ledger";
 
 export const dynamic = "force-dynamic";
 
@@ -180,6 +181,14 @@ function handleDeterministicRejection(input: {
         generation_stop_reason: decision.stopReason,
         generation_rejection: input.envelope,
         generation_rejection_fingerprints: decision.fingerprints,
+        ...appendGenerationAttempt(input.metadata, {
+          phase: input.envelope.phase === "run_start" ? "binding" : input.envelope.phase,
+          code: input.envelope.code,
+          class: "deterministic",
+          input_hash: input.envelope.artifact_hash,
+          revision: input.envelope.validator_revision,
+          stop_reason: decision.stopReason,
+        }),
       },
     }, input.namespaceId);
     return {
@@ -198,6 +207,14 @@ function handleDeterministicRejection(input: {
       generation_last_error: input.envelope.message,
       generation_rejection: input.envelope,
       generation_rejection_fingerprints: decision.fingerprints,
+      ...appendGenerationAttempt(input.metadata, {
+        phase: input.envelope.phase === "run_start" ? "binding" : input.envelope.phase,
+        code: input.envelope.code,
+        class: "deterministic",
+        input_hash: input.envelope.artifact_hash,
+        revision: input.envelope.validator_revision,
+        guidance: input.envelope.message,
+      }),
     },
   }, input.namespaceId);
   void triggerAutoRunScan(input.namespaceId, input.orgId);
@@ -951,6 +968,12 @@ async function triggerAutoRun(
           generation_status: "missing",
           generation_last_error: message,
           auto_run_retries: nextRetries,
+          ...appendGenerationAttempt(metadata, {
+            phase: "generation",
+            code: "generation_job_missing",
+            class: "transient",
+            guidance: message,
+          }),
         },
       }, namespaceId);
       if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -986,6 +1009,14 @@ async function triggerAutoRun(
             // guidance (buildGenerationPromptFromTaskRecommendation's
             // priorError), then cleared once consumed by startGenerationJob.
             generation_last_error: importRejection.message,
+            ...appendGenerationAttempt(metadata, {
+              phase: "import",
+              code: importRejection.code,
+              class: "deterministic",
+              input_hash: importRejection.artifact_hash,
+              revision: importRejection.validator_revision,
+              guidance: importRejection.message,
+            }),
           },
         }, namespaceId);
         void triggerAutoRunScan(namespaceId, orgId);
@@ -1015,6 +1046,12 @@ async function triggerAutoRun(
           // the existing bounded auto_run_retries loop into a GUIDED retry
           // instead of a blind repeat of the same prompt (CHOR-001).
           generation_last_error: message,
+          ...appendGenerationAttempt(metadata, {
+            phase: "generation",
+            code: "generation_job_failed",
+            class: "transient",
+            guidance: message,
+          }),
         },
       }, namespaceId);
       if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1696,6 +1733,12 @@ async function autoAcceptGeneratedChain(
         generation_status: "failed",
         generation_last_error: INVALID_GENERATED_CHAIN_RESULT_ERROR,
         auto_run_retries: nextRetries,
+        ...appendGenerationAttempt(metadata, {
+          phase: "recovery",
+          code: "invalid_generated_chain_result",
+          class: "transient",
+          guidance: INVALID_GENERATED_CHAIN_RESULT_ERROR,
+        }),
       },
     }, namespaceId);
     if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1771,6 +1814,12 @@ async function autoAcceptGeneratedChain(
         generation_status: "failed",
         generation_last_error: message,
         auto_run_retries: nextRetries,
+        ...appendGenerationAttempt(metadata, {
+          phase: "save",
+          code: "save_failed",
+          class: "transient",
+          guidance: message,
+        }),
       },
     }, namespaceId);
     if (nextRetries < MAX_AUTO_RUN_RETRIES) {
@@ -1801,6 +1850,14 @@ async function autoAcceptGeneratedChain(
     generation_rejection_job_id: undefined,
     generation_rejection_fingerprints: undefined,
     generation_stop_reason: undefined,
+    // The ledger keeps the full attempt history across the cleared retry
+    // state: it is the record of what happened, not a retry counter (B7).
+    ...appendGenerationAttempt(metadata, {
+      phase: "save",
+      code: "accepted",
+      class: "success",
+      input_hash: canonicalGeneratedChainHash(chain),
+    }),
   };
   taskUpdate(orgId, taskId, { metadata: updated }, namespaceId);
 
