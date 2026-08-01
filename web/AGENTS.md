@@ -50,6 +50,13 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## User-Facing Docs and Updates
+
+Before changing the in-app `/docs` or `/updates` surfaces, read
+`../.agents/skills/mentiko-user-docs/SKILL.md`. It separates product
+documentation from internal repository notes and prevents engineering-only
+release work from becoming a user-facing update card.
+
 ## Task Management
 
 Tasks are stored in SQLite (web/lib/task-store.ts) with full CRUD, dependencies, and comments.

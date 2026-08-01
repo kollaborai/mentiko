@@ -96,7 +96,7 @@ export const releases: Release[] = [
     description:
       "The floating code editor's Git panel now covers the full loop. A branch selector views, creates, switches, and deletes branches with validation and keyboard navigation. Stash apply/drop is keyed to each stash's commit hash, so a shifting stash list can never apply or drop the wrong one. Peer review is built in: assign reviewers from your org, leave file- and line-level comments, and gate the commit button until every assigned reviewer approves. Reviews are org-scoped and tied to the signed-in session, not forgeable headers. Also fixes task-triggered chain runs losing their workspace when started by schedulers or service callers, and internal task APIs now forward service credentials correctly.",
     category: "new",
-    docsHref: "/docs/peer-review",
+    docsHref: "/code",
   },
   {
     version: "v0.3.40",
@@ -689,6 +689,9 @@ export const releases: Release[] = [
   },
 ];
 
+// The build tag is tracked separately from the user-facing update feed.
+// Do not add an update card solely for internal release work.
+export const CURRENT_RELEASE_VERSION = "v0.3.50";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 
