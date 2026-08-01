@@ -17,20 +17,38 @@
 // -------------------------------------------------------------------
 
 /**
- * The composer is the LAST line containing the ❯ prompt; content after it
- * means unsubmitted input (an accepted paste re-renders in history with a
- * `>` prefix instead). Menus/dialogs also use ❯ as a selection caret — an
- * enter retry there picks the default option, which the readiness failure
- * classifier already treats as human_action_required territory.
+ * Three distinct states, because "no composer on screen" is NOT the same as
+ * "composer accepted the paste" — conflating them is how a run dies silently:
+ *
+ *   holding — the LAST line with a ❯ has content after it: unsubmitted input.
+ *   empty   — a ❯ is rendered with nothing after it: the CLI took the paste
+ *             (an accepted paste re-renders in history with a `>` prefix).
+ *   absent  — no ❯ anywhere. The CLI has not rendered a composer yet (still
+ *             booting), or the screen is something else entirely. We have NO
+ *             evidence either way, so this must never count as delivery.
+ *
+ * Menus/dialogs also use ❯ as a selection caret — an enter retry there picks
+ * the default option, which the readiness failure classifier already treats
+ * as human_action_required territory.
  */
-export function isComposerHoldingInput(output: string): boolean {
+export type ComposerState = "holding" | "empty" | "absent";
+
+export function composerState(output: string): ComposerState {
   const lines = output.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const idx = lines[i].indexOf("❯"); // ❯
     if (idx === -1) continue;
-    return lines[i].slice(idx + 1).trim().length > 0;
+    return lines[i].slice(idx + 1).trim().length > 0 ? "holding" : "empty";
   }
-  return false;
+  return "absent";
+}
+
+/**
+ * Kept for callers that only care whether input is visibly stuck. Note this
+ * is deliberately NOT the inverse of "submitted" — see composerState.
+ */
+export function isComposerHoldingInput(output: string): boolean {
+  return composerState(output) === "holding";
 }
 
 export interface ConfirmSubmissionIO {
@@ -70,7 +88,13 @@ export async function confirmComposerSubmission(
 
   while (Date.now() < deadline) {
     const output = await io.capture(captureLines).catch(() => null);
-    if (output !== null && !isComposerHoldingInput(output)) return true;
+    // ONLY an empty rendered composer proves the CLI accepted the text. A
+    // capture with no composer at all ("absent") is missing evidence, not
+    // proof of delivery — treating it as success is what let a booting CLI
+    // be recorded as instructions_submitted while the agent sat there having
+    // received nothing, produced no artifacts, and emitted no event, until
+    // the monitor gave up 5 nudges later.
+    if (output !== null && composerState(output) === "empty") return true;
     if (enterRetries < maxEnterRetries) {
       enterRetries += 1;
       await io.sendEnter().catch(() => undefined);

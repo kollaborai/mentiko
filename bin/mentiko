@@ -244,6 +244,26 @@ case "$CMD" in
             echo "usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
             exit 1
         fi
+        # This command is positional after --scope. Sibling CLIs in this repo
+        # (agent-state, readiness, run-record) DO take --flags, so agents
+        # reasonably pattern-match and write `mentiko emit <name> --reason x`.
+        # That used to silently land "--reason" in the SOURCE slot and "x" in
+        # DATA, producing a real .event file whose source matched no agent id.
+        # agentOwnsEvent then rejected it, the completion event was never
+        # found, and the run hung until the monitor escalated 20 minutes later
+        # with "agent exited before producing its completion event" -- while
+        # the agent had in fact emitted. Refuse the flag at the boundary
+        # instead of writing an event that can never be claimed.
+        for arg in "$EVENT_NAME" "$SOURCE" "$DATA"; do
+            if [[ "$arg" == --* ]]; then
+                echo "  error: unrecognized option '$arg'"
+                echo "  mentiko emit takes positional arguments; only --scope is a flag"
+                echo "  usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
+                echo "  to attach detail, pass it as the data positional:"
+                echo "    mentiko emit <event-name> \"\$MENTIKO_AGENT_ID\" '<detail>'"
+                exit 1
+            fi
+        done
         if [[ -z "$SOURCE" ]]; then
             echo "  error: no source given and MENTIKO_AGENT_ID is not set"
             echo "  usage: mentiko emit [--scope run|ingress] <event-name> [source] [data]"
