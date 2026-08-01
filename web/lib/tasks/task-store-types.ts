@@ -10,6 +10,7 @@ export interface TaskRecord {
   priority: number;
   issue_type: string;
   owner: string;
+  /** Human/user identifier only. Never a chain id or name -- see metadata.chainBinding. */
   assignee: string | null;
   parent_id: string | null;
   labels: string[];
@@ -69,6 +70,7 @@ export interface TaskCreateInput {
   issue_type?: string;
   priority?: number;
   parent_id?: string;
+  /** Human/user identifier only. Never a chain id or name -- chain binding lives in metadata.chainBinding (see lib/chains/chain-validation.ts buildChainMetadata). */
   assignee?: string;
   labels?: string[];
   metadata?: Record<string, unknown>;

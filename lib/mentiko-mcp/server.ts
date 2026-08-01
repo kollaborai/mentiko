@@ -386,6 +386,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
         design: args.design,
         estimated_minutes: args.estimated_minutes,
         due_at: args.due_at,
+        autoRun: args.auto_run,
+        chainId: args.chain_id,
+        chainName: args.chain_name,
+        idempotencyKey: args.idempotency_key,
+        logicalKey: args.logical_key,
       });
       const taskId = result?.task?.id;
       if (taskId) await dispatchEffect("navigate", { route: `/tasks/${taskId}` });

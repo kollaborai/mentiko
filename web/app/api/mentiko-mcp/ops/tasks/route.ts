@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import {
-  taskCreate,
   taskList,
   taskCount,
   taskClose,
@@ -12,7 +11,8 @@ import {
 import type { TaskListFilter, TaskRecord, TaskUpdateFields } from "@/lib/tasks/task-store-types";
 import { requireOpsAuth, requireOpsPermission } from "@/lib/ai-engine/mentiko-mcp-ops-auth";
 import { resolveAuthorizedWorkspacePath } from "@/lib/auth/workspace-auth";
-import { createTaskDecision } from "@/lib/tasks/task-decision-link";
+import { createTask } from "@/lib/tasks/task-creation-service";
+import { ApiError } from "@/lib/api-errors";
 
 /**
  * /api/mentiko-mcp/ops/tasks
@@ -24,7 +24,12 @@ import { createTaskDecision } from "@/lib/tasks/task-decision-link";
  * GET   ?id=TASK-123    single task + dependencies + dependents + comments
  * POST  {subject, desc?, parentId?, workspacePath?, issue_type?, priority?,
  *        owner?, assignee?, labels?, notes?, acceptance_criteria?, design?,
- *        estimated_minutes?, due_at?}   create task (owner defaults to the caller)
+ *        estimated_minutes?, due_at?, autoRun?, chainId?, chainName?,
+ *        idempotencyKey?, logicalKey?, sourceRunId?, creatingAgent?}
+ *        create task (owner defaults to the caller). Routed through
+ *        task-creation-service.ts -- see that file for auto-run policy,
+ *        idempotency, and decision-routing semantics shared with the UI
+ *        producer (chain-contract-plan-of-record.md Track C).
  * PATCH {id, done:true}                 close task (back-compat with mark_task_done)
  * PATCH {id, ...TaskUpdateFields}       update task fields
  */
@@ -126,6 +131,12 @@ function toTaskSummary(t: TaskRecord) {
   };
 }
 
+// Thin adapter over task-creation-service.ts (chain-contract Track C). This
+// route implements no defaults of its own -- it only translates the MCP
+// wire shape (subject/desc/parentId/issue_type/workspacePath, snake_case
+// tool-schema fields) into the service's canonical request and back.
+// Decision routing, workspace authorization, auto-run policy, chain
+// binding, and idempotency all live in the shared service now.
 export async function POST(req: Request) {
   const ctx = await requireOpsAuth(req);
   if (ctx instanceof NextResponse) return ctx;
@@ -148,80 +159,71 @@ export async function POST(req: Request) {
     design?: string;
     estimated_minutes?: number;
     due_at?: string;
+    // Track C parity additions (C3 auto-run, C4-adjacent chain binding, C2 idempotency).
+    autoRun?: boolean;
+    chainId?: string;
+    chainName?: string;
+    idempotencyKey?: string;
+    logicalKey?: string;
+    sourceRunId?: string;
+    creatingAgent?: string;
   };
   if (!body.subject) {
     return new NextResponse("subject required", { status: 400 });
   }
-  const authorizedWorkspacePath =
-    body.workspacePath === undefined
-      ? undefined
-      : resolveAuthorizedWorkspacePath(namespaceId, orgId, body.workspacePath, ctx.userId);
-  if (body.workspacePath !== undefined && !authorizedWorkspacePath) {
-    return new NextResponse("workspacePath is not authorized", { status: 403 });
-  }
 
-  // A decision is not a plain task. It needs a real Decision artifact plus the
-  // metadata.decision_id link, or the /tasks + /decisions UI render a hollow
-  // "DEC" shell with no options, tradeoff questions, or resolution flow. Route
-  // issue_type:"decision" through the canonical helper (the same path used by
-  // generate_tasks mode:"decision"), which creates the decision + linked task
-  // together — then apply the create_task fields the helper doesn't take so no
-  // caller input is silently dropped.
-  if (body.issue_type === "decision") {
-    const prompt = [body.subject, body.desc].filter(Boolean).join("\n\n");
-    const { decision, task } = await createTaskDecision({
+  let result;
+  try {
+    result = await createTask({
       namespaceId,
       orgId,
-      prompt,
-      source: "mcp-create-task",
-      workspacePath: authorizedWorkspacePath || undefined,
-      parentTaskId: body.parentId,
-    });
-
-    const fields: TaskUpdateFields = {};
-    if (body.subject) fields.title = body.subject;
-    if (body.priority !== undefined) fields.priority = body.priority;
-    if (body.labels !== undefined) fields.labels = body.labels;
-    if (body.assignee !== undefined) fields.assignee = body.assignee;
-    if (body.acceptance_criteria !== undefined) fields.acceptance_criteria = body.acceptance_criteria;
-    if (body.design !== undefined) fields.design = body.design;
-    if (body.notes !== undefined) fields.notes = body.notes;
-    if (body.estimated_minutes !== undefined) fields.estimated_minutes = body.estimated_minutes;
-    if (body.due_at !== undefined) fields.due_at = body.due_at;
-    if (Object.keys(fields).length > 0) {
-      taskUpdate(orgId, task.id, fields, namespaceId);
-    }
-
-    return NextResponse.json({
-      task: taskGet(orgId, task.id, namespaceId) ?? task,
-      decisionId: decision.id,
-      routedTo: "decision",
-    });
-  }
-
-  const task = taskCreate(
-    orgId,
-    {
+      source: "mcp",
+      actorUserId: ctx.userId,
       title: body.subject,
       description: body.desc,
-      parent_id: body.parentId,
-      workspace_id: authorizedWorkspacePath,
-      issue_type: body.issue_type,
+      issueType: body.issue_type,
       priority: body.priority,
+      parentId: body.parentId,
       // The authenticated MCP identity owns the task unless an explicit owner is given.
       owner: body.owner ?? ctx.userId,
       assignee: body.assignee,
       labels: body.labels,
       notes: body.notes,
-      acceptance_criteria: body.acceptance_criteria,
+      acceptanceCriteria: body.acceptance_criteria,
       design: body.design,
-      estimated_minutes: body.estimated_minutes,
-      due_at: body.due_at,
-      created_by: "mentiko-mcp",
+      estimatedMinutes: body.estimated_minutes,
+      dueAt: body.due_at,
+      createdBy: "mentiko-mcp",
+      workspaceRef: body.workspacePath,
+      chainAssignment:
+        body.chainId || body.autoRun !== undefined
+          ? { chainId: body.chainId, chainName: body.chainName, autoRun: body.autoRun }
+          : undefined,
+      idempotencyKey: body.idempotencyKey,
+      agentContext: {
+        sourceRunId: body.sourceRunId,
+        creatingAgent: body.creatingAgent,
+        logicalKey: body.logicalKey,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return new NextResponse(error.message, { status: error.statusCode });
+    }
+    throw error;
+  }
+
+  return NextResponse.json({
+    task: result.task,
+    // Back-compat top-level fields for the existing decision-routing contract.
+    ...(result.decision ? { decisionId: result.decision.decisionId, routedTo: result.decision.routedTo } : {}),
+    creation: {
+      outcome: result.outcome,
+      effectiveAutoRun: result.effectiveAutoRun,
+      chainBinding: result.chainBinding,
+      ...(result.decision ? { decision: result.decision } : {}),
     },
-    namespaceId,
-  );
-  return NextResponse.json({ task });
+  });
 }
 
 export async function PATCH(req: Request) {

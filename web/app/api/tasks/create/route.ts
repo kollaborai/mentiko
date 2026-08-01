@@ -1,17 +1,21 @@
 import { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/auth/api-auth";
 import { enforceGuestWrites } from "@/lib/middleware";
-import { taskCreate } from "@/lib/tasks/task-store";
 import { getWorkspaceId, hasWorkspaceParam } from "@/lib/workspaces/workspace-params";
 import { getNamespaceIdFromRequest, getOrgIdFromRequest } from "@/lib/namespace-config";
-import { validateChainId, buildChainMetadata } from "@/lib/chains/chain-validation";
-import { resolveTaskAutoRunDefault } from "@/lib/tasks/task-auto-run-default";
+import { getSessionUser } from "@/lib/auth/auth-bridge";
+import { createTask } from "@/lib/tasks/task-creation-service";
 import { BadRequest } from "@/lib/api-errors";
 import { withErrorHandling, apiSuccess } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
 // POST /api/tasks/create - create a new task (requires manage_tasks)
+//
+// Thin adapter over task-creation-service.ts (chain-contract Track C). This
+// route implements no defaults of its own -- it only translates the UI's
+// wire shape (title/type/parent/chainAssignment, ?workspace= query param)
+// into the service's canonical request and back.
 export const POST = requirePermission("manage_tasks")(
   withErrorHandling(async (request: NextRequest) => {
     const blockResult = await enforceGuestWrites(request);
@@ -19,13 +23,9 @@ export const POST = requirePermission("manage_tasks")(
 
     const namespaceId = await getNamespaceIdFromRequest(request);
     const orgId = await getOrgIdFromRequest(request);
+    const actor = await getSessionUser(request);
     const workspaceId = getWorkspaceId(request);
-
-    if (hasWorkspaceParam(request) && !workspaceId) {
-      throw new BadRequest(
-        "Tasks not initialized in this workspace."
-      );
-    }
+    const malformedWorkspaceRef = hasWorkspaceParam(request) && !workspaceId;
 
     const body = await request.json();
     const {
@@ -37,61 +37,49 @@ export const POST = requirePermission("manage_tasks")(
       labels,
       assignee,
       chainAssignment,
+      idempotencyKey,
     } = body;
 
     if (!title) {
       throw new BadRequest("Title is required", { field: "title" });
     }
 
-    // Validate chain assignment if provided
-    let metadata: Record<string, unknown> = {};
-    // Store workspace path so auto-run executes in the right directory
-    if (workspaceId) {
-      metadata.workspace_path = workspaceId;
-    }
-    const resolvedAutoRun = resolveTaskAutoRunDefault({
+    const result = await createTask({
       namespaceId,
       orgId,
-      workspacePath: workspaceId,
-      explicitAutoRun: typeof chainAssignment?.autoRun === "boolean" ? chainAssignment.autoRun : undefined,
-    });
-    if (chainAssignment?.chainId) {
-      const validation = validateChainId(
-        chainAssignment.chainId,
-        namespaceId,
-        orgId
-      );
-      if (!validation.valid) {
-        throw new BadRequest(validation.error || "Chain validation failed");
-      }
-      metadata = {
-        ...metadata,
-        ...buildChainMetadata(
-          chainAssignment.chainId,
-          validation.chainName || chainAssignment.chainName,
-          resolvedAutoRun
-        ),
-      };
-    } else if (resolvedAutoRun) {
-      // auto-run without a specific chain: system will analyze + generate
-      metadata.auto_run = true;
-    }
-
-    const issue = taskCreate(orgId, {
+      source: "ui",
+      actorUserId: actor?.id,
       title,
       description,
-      issue_type: type,
-      priority:
-        priority !== undefined && priority >= 0 && priority <= 4
-          ? priority
-          : undefined,
-      parent_id: parent,
+      issueType: type,
+      priority,
+      parentId: parent,
       assignee,
       labels,
-      workspace_id: workspaceId,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    }, namespaceId);
+      workspaceRef: workspaceId,
+      malformedWorkspaceRef,
+      chainAssignment: chainAssignment
+        ? {
+            chainId: chainAssignment.chainId,
+            chainName: chainAssignment.chainName,
+            autoRun: typeof chainAssignment.autoRun === "boolean" ? chainAssignment.autoRun : undefined,
+          }
+        : undefined,
+      idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined,
+    });
 
-    return apiSuccess({ issue }, undefined, 201);
+    return apiSuccess(
+      {
+        issue: result.task,
+        creation: {
+          outcome: result.outcome,
+          effectiveAutoRun: result.effectiveAutoRun,
+          chainBinding: result.chainBinding,
+          ...(result.decision ? { decision: result.decision } : {}),
+        },
+      },
+      undefined,
+      result.outcome === "existing" ? 200 : 201,
+    );
   })
 );
