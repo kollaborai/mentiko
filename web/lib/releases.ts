@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.51",
+    date: "August 1, 2026",
+    title: "Agent Runs Submit Their Work and Close Reliably",
+    description:
+      "Chain runs no longer hang after an agent finishes. Instructions sent to an agent's CLI are now actually submitted: the platform was pasting text into the composer without ever sending the return keystroke, so an agent could sit holding its assignment unread until an unrelated keypress happened to release it. The submit path is now a single verified contract -- text goes in, and the platform confirms the CLI accepted it before moving on, retrying if it did not. Completion detection is CLI-agnostic again. Recognising that an agent had finished depended on reading a session identifier off the terminal screen, which only one CLI configuration ever prints, so runs driven by any other agent CLI could never close on their own. The platform now identifies an agent's conversation by the instructions it was given, which every CLI records, and a chain event whose name carried incidental whitespace no longer fails to match forever in silence. An agent profile with no configured log location now says so instead of failing quietly.",
+    category: "fix",
+    docsHref: "/runs",
+  },
+  {
     version: "v0.3.50",
     date: "August 1, 2026",
     title: "Typed Chain Lifecycle Contract and Single Acceptance Path",
@@ -691,7 +700,7 @@ export const releases: Release[] = [
 
 // The build tag is tracked separately from the user-facing update feed.
 // Do not add an update card solely for internal release work.
-export const CURRENT_RELEASE_VERSION = "v0.3.50";
+export const CURRENT_RELEASE_VERSION = "v0.3.51";
 export const LATEST_VERSION = releases[0].version;
 export const UPDATES_STORAGE_KEY = "mentiko-last-seen-version";
 
