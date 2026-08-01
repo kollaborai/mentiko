@@ -10,6 +10,15 @@ export interface Release {
 export const releases: Release[] = [
   // --- v0.3.x (2026) ---
   {
+    version: "v0.3.50",
+    date: "August 1, 2026",
+    title: "Typed Chain Lifecycle Contract and Single Acceptance Path",
+    description:
+      "Generated chains can now state lifecycle requirements as typed data instead of prose. A version 2 contract carries explicit lifecycle checks naming their subject, phase, owner, and assertion, so the rules that matter -- an agent may never require its own active run or linked task to already be terminal, and post-run reconciliation belongs to the completion audit alone -- are enforced from structure rather than wording. Existing version 1 chains keep working unchanged and are never silently upgraded. Every acceptance door (generated-chain import, chain save, artifact recovery, and run start) now runs through one authoritative service: it materializes the chain without side effects, validates it, and only then writes anything, so a rejected chain leaves no half-created agents behind. An accepted chain is recorded as an immutable execution manifest with a digest, and a run executes what was accepted rather than being reinterpreted under a later release's rules; changed content asks for an explicit re-save. Each attempt is recorded in a phase-aware ledger -- which door decided what, deterministic or transient -- so task status shows the real story instead of a bare retry count. Agents receive an immutable launch context and query live task and run state through typed tools.",
+    category: "improvement",
+    docsHref: "/tasks",
+  },
+  {
     version: "v0.3.49",
     date: "July 31, 2026",
     title: "Generated Chain Acceptance Reliability",
