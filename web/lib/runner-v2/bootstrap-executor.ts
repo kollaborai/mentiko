@@ -7,6 +7,7 @@ import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
+import { isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
 import {
   decideStartupRecovery,
   recoveryKeyBytes,
@@ -264,7 +265,10 @@ export async function executeLocalBootstrap(
     // startup script must terminate that shell. Otherwise readiness can see a
     // normal zsh prompt and inject agent instructions as shell commands.
     const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
-    await executor.sendKeys(plan.sessionName, `${startCommand}\r`);
+    // No trailing \r: sendKeys now sets the daemon's `enter` flag, which appends
+    // the return itself after its settle delay. A literal \r here would submit a
+    // second, empty line.
+    await executor.sendKeys(plan.sessionName, startCommand);
     await waitForBootstrapReadiness(plan, executor, attempt.id, runJsonPath);
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
     const submission = submitAgentAttemptInstructions({
@@ -874,23 +878,6 @@ async function sleepBeforeSubmissionDeadline(delayMs: number, deadline: number):
   if (remainingMs <= 0) return false;
   await sleep(Math.min(delayMs, remainingMs));
   return Date.now() < deadline;
-}
-
-/**
- * The composer is the LAST line containing the ❯ prompt; content after it
- * means unsubmitted input (an accepted paste re-renders in history with a
- * `>` prefix instead). Menus/dialogs also use ❯ as a selection caret — an
- * enter retry there picks the default option, which the readiness failure
- * classifier already treats as human_action_required territory.
- */
-function isComposerHoldingInput(output: string): boolean {
-  const lines = output.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const idx = lines[i].indexOf("❯"); // ❯
-    if (idx === -1) continue;
-    return lines[i].slice(idx + 1).trim().length > 0;
-  }
-  return false;
 }
 
 async function startMonitorSession(

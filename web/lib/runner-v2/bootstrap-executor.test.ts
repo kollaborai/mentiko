@@ -217,7 +217,8 @@ describe("runner-v2 bootstrap executor", () => {
     expect(executor.sendKeys).toHaveBeenNthCalledWith(
       1,
       "workspace-writer-run-1",
-      `cd '${join(root, "workspace")}' && bash '${join(root, "artifacts", "writer-start.sh")}' || exit $?\r`,
+      // no trailing \r: the daemon appends the return itself (sendKeys sets enter:true)
+      `cd '${join(root, "workspace")}' && bash '${join(root, "artifacts", "writer-start.sh")}' || exit $?`,
     );
     expect(executor.spawn).toHaveBeenCalledWith(
       "workspace-writer-run-1",
