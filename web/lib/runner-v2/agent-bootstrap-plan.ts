@@ -47,10 +47,20 @@ export interface AgentBootstrapPlanInput {
   runId: string;
   agentId?: string;
   workspacePath?: string;
+  /** Stable registered workspace used for profile and PTY identity lookup. */
+  sourceWorkspacePath?: string;
   namespaceId?: string;
   orgId?: string;
   env?: Record<string, string | undefined>;
   now?: Date;
+}
+
+export interface AgentBootstrapMonitorSpec {
+  chainPath: string;
+  emits: string;
+  interval: string;
+  maxStale: string;
+  runId: string;
 }
 
 export interface AgentBootstrapPlan {
@@ -63,6 +73,7 @@ export interface AgentBootstrapPlan {
   artifactsDir: string;
   eventsDir: string;
   projectRoot: string;
+  sourceWorkspacePath: string;
   /** Core generation chains may treat generation-result.json as the handoff. */
   coreGenerationChain?: boolean;
   profileId?: string;
@@ -72,6 +83,7 @@ export interface AgentBootstrapPlan {
   instructionPath: string;
   instructionPointer: string;
   localStartCommand: string;
+  monitorSpec: AgentBootstrapMonitorSpec;
   monitorCommand: string;
 }
 
@@ -79,6 +91,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   const chain = readChain(input.chainPath);
   const agent = resolveAgent(chain, input.agentId);
   const projectRoot = input.workspacePath || chain.config?.project_root || input.env?.MENTIKO_PROJECT_ROOT || input.runDir;
+  const sourceWorkspacePath = input.sourceWorkspacePath || projectRoot;
   const artifactsDir = join(input.runDir, "artifacts");
   // One configured project event root. Runner children may receive the same
   // root through EVENTS_DIR; there is no run-local compatibility directory.
@@ -87,11 +100,11 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
   // record made mixed shell/typed runs invisible to the live stream reader.
   const stateDir = input.env?.STATE_DIR || config.stateDir;
   const sessionPrefix = resolveSessionPrefix(chain, agent);
-  const projectName = basename(projectRoot) || "workspace";
+  const projectName = basename(sourceWorkspacePath) || "workspace";
   const sessionName = `${projectName}-${sessionPrefix}-${input.runId}`;
   const statePath = runnerAgentStatePath(stateDir, sessionPrefix, input.runId);
   const instructionPath = join(artifactsDir, `${agent.id}-instructions.md`);
-  const profile = resolveAgentProfile(input.chainPath, agent.id || "", projectRoot, input.env);
+  const profile = resolveAgentProfile(input.chainPath, agent.id || "", sourceWorkspacePath, input.env);
   const gatewayEnv = resolveLocalAiGatewayProxyEnv(input.env);
   const runContextExports = {
     PATH: `${join(config.codeRoot, "bin")}:${input.env?.PATH || process.env.PATH || ""}`,
@@ -104,7 +117,10 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_AGENT_EMITS: agent.emits || "",
     MENTIKO_AGENT_PROFILE_PATH: profile.path || "",
     MENTIKO_CODE_ROOT: config.codeRoot,
-    MENTIKO_PROJECT_ROOT: input.env?.MENTIKO_PROJECT_ROOT || projectRoot,
+    // Every process-facing workspace value must point at the node worktree.
+    // The registered source path remains plan metadata only and is never
+    // exported to an agent process that could mutate it.
+    MENTIKO_PROJECT_ROOT: projectRoot,
     MENTIKO_ORG_ROOT: input.env?.MENTIKO_ORG_ROOT || "",
     MENTIKO_NAMESPACE_ROOT: input.env?.MENTIKO_NAMESPACE_ROOT || "",
     // Completion copies this typed launch context into routed launches. Keep a
@@ -147,6 +163,15 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     MENTIKO_RUNNER_V2_COMPLETION: input.env?.MENTIKO_RUNNER_V2_COMPLETION || "",
   };
   const instructionPointer = buildInstructionPointer(agent.id || "", instructionPath);
+  const monitorSpec: AgentBootstrapMonitorSpec = {
+    chainPath: input.chainPath,
+    emits: agent.emits || "",
+    interval: input.env?.MENTIKO_MONITOR_INTERVAL
+      || String(agent.monitor_interval || chain.config?.monitor_interval || 5),
+    maxStale: input.env?.MENTIKO_MONITOR_MAX_STALE
+      || String(agent.max_stale_count || 5),
+    runId: input.runId,
+  };
 
   return {
     agentId: agent.id || "",
@@ -158,6 +183,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     artifactsDir,
     eventsDir,
     projectRoot,
+    sourceWorkspacePath,
     ...(chain.metadata?.coreGenerationChain === true ? { coreGenerationChain: true } : {}),
     ...(profile.id ? { profileId: profile.id } : {}),
     ...(profile.path ? { profilePath: profile.path } : {}),
@@ -166,17 +192,50 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     instructionPath,
     instructionPointer,
     localStartCommand: buildLocalStartCommand(projectRoot, runContextExports, profile.path, input.env),
+    monitorSpec,
     monitorCommand: buildMonitorCommand({
       sessionName,
-      chainPath: input.chainPath,
+      chainPath: monitorSpec.chainPath,
       agentId: agent.id || "",
       agentName: agent.name || agent.id || "",
-      emits: agent.emits || "",
-      interval: input.env?.MENTIKO_MONITOR_INTERVAL
-        || String(agent.monitor_interval || chain.config?.monitor_interval || 5),
-      maxStale: input.env?.MENTIKO_MONITOR_MAX_STALE
-        || String(agent.max_stale_count || 5),
-      runId: input.runId,
+      emits: monitorSpec.emits,
+      interval: monitorSpec.interval,
+      maxStale: monitorSpec.maxStale,
+      runId: monitorSpec.runId,
+      env: runContextExports,
+    }),
+  };
+}
+
+/** Retarget process-facing plan fields while preserving registered-workspace identity and profile selection. */
+export function retargetAgentBootstrapPlan(
+  plan: AgentBootstrapPlan,
+  projectRoot: string,
+  env?: Record<string, string | undefined>,
+): AgentBootstrapPlan {
+  const runContextExports = {
+    ...plan.runContextExports,
+    MENTIKO_PROJECT_ROOT: projectRoot,
+  };
+  return {
+    ...plan,
+    projectRoot,
+    runContextExports,
+    localStartCommand: buildLocalStartCommand(
+      projectRoot,
+      runContextExports,
+      plan.profilePath,
+      env,
+    ),
+    monitorCommand: buildMonitorCommand({
+      sessionName: plan.sessionName,
+      chainPath: plan.monitorSpec.chainPath,
+      agentId: plan.agentId,
+      agentName: plan.agentName,
+      emits: plan.monitorSpec.emits,
+      interval: plan.monitorSpec.interval,
+      maxStale: plan.monitorSpec.maxStale,
+      runId: plan.monitorSpec.runId,
       env: runContextExports,
     }),
   };

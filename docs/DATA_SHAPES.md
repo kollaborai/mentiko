@@ -71,7 +71,7 @@ Runner events are physical `.event` files containing line-oriented `key: value` 
 
 `lib/schemas/run.schema.json` covers the current `run.json` envelope plus runner-v2 attempt history, process evidence, instruction ledgers, transition history, stuck events, pending routed handoffs, and run-scoped workspace baseline/handoff pointers.
 
-Workspace execution evidence is split between that durable pointer and immutable run artifacts. `workspace-baseline.json` is claimed before the first agent attempt; each agent occurrence receives a write-once baseline-to-handoff change set. The first version deliberately reports shared-workspace execution as non-isolated: it fixes acceptance attribution without pretending concurrent writers are safe.
+Workspace execution evidence is split between that durable pointer and immutable run artifacts. `workspace-baseline.json` is claimed before the first agent attempt; Git-backed runs anchor that exact state under private run refs and each agent occurrence receives a write-once baseline-to-worktree handoff change set. Such runs report `isolation=git-worktree` and `concurrentWritesIsolated=true`; missing or non-Git workspaces remain explicit shared, unavailable evidence.
 
 Runner-facing shapes also carry explicit lineage from `web/lib/data-shapes/runner-lineage.ts`:
 

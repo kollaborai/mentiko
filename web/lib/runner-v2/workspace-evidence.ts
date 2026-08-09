@@ -9,11 +9,14 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RunRecord } from "@/lib/runs/run-record";
+import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import { readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
+import { initializeGitRunWorkspaceIsolation } from "@/lib/runner-v2/workspace-isolation";
 import {
   captureGitWorkspaceSnapshot,
   compareGitWorkspaceSnapshots,
   createWorkspaceSnapshotScratchDir,
+  type GitWorkspaceSnapshot,
 } from "@/lib/runner-v2/workspace-snapshot";
 import {
   WORKSPACE_EVIDENCE_VERSION,
@@ -36,6 +39,9 @@ interface CaptureAgentWorkspaceHandoffInput {
   agentId: string;
   attemptId: string;
   workspaceExecution: WorkspaceExecutionRecord;
+  workspacePath?: string;
+  nodeBaseCommit?: string;
+  nodeWorkspaceRecordPath?: string;
   now?: Date;
 }
 
@@ -129,7 +135,7 @@ function assertRunIdentity(run: RunRecord | undefined, runId: string): RunRecord
  * Existing launch evidence fails closed to an explicit unavailable record: a
  * late snapshot would relabel prior user or agent work as this run's baseline.
  */
-export function ensureRunWorkspaceBaseline(
+function ensureRunWorkspaceBaselineUnlocked(
   input: EnsureRunWorkspaceBaselineInput,
 ): WorkspaceExecutionRecord {
   const initial = assertRunIdentity(readRunJson(input.runJsonPath), input.runId);
@@ -158,23 +164,14 @@ export function ensureRunWorkspaceBaseline(
       reason: "run has no registered local workspace path",
     });
   } else {
+    let baseline: GitWorkspaceSnapshot | undefined;
     try {
-      const baseline = captureGitWorkspaceSnapshot({
+      baseline = captureGitWorkspaceSnapshot({
         workspacePath: sourceWorkspacePath,
         scratchDir: createWorkspaceSnapshotScratchDir(input.runDir),
         label: `${input.runId}-baseline`,
         capturedAt: recordedAt,
       });
-      candidate = {
-        version: WORKSPACE_EVIDENCE_VERSION,
-        tracking: "git",
-        sourceWorkspacePath: baseline.sourceWorkspacePath,
-        baselineArtifactPath,
-        isolation: "shared",
-        concurrentWritesIsolated: false,
-        baseline,
-        handoffs: [],
-      };
     } catch (error) {
       candidate = unavailableRecord({
         sourceWorkspacePath,
@@ -182,6 +179,35 @@ export function ensureRunWorkspaceBaseline(
         recordedAt,
         reason: error instanceof Error ? error.message : "workspace snapshot capture failed",
       });
+    }
+    if (baseline) {
+      let isolation;
+      try {
+        isolation = initializeGitRunWorkspaceIsolation({
+          runId: input.runId,
+          runDir: input.runDir,
+          baseline,
+          now: input.now,
+        });
+      } catch (error) {
+        throw new WorkspaceEvidenceError(
+          `Git workspace isolation initialization failed for run ${input.runId}`,
+          error,
+        );
+      }
+      candidate = {
+        version: WORKSPACE_EVIDENCE_VERSION,
+        tracking: "git",
+        sourceWorkspacePath: baseline.sourceWorkspacePath,
+        baselineArtifactPath,
+        isolation: "git-worktree",
+        concurrentWritesIsolated: true,
+        baseline,
+        isolationStatePath: isolation.statePath,
+        baselineRef: isolation.baselineRef,
+        integrationRef: isolation.integrationRef,
+        handoffs: [],
+      };
     }
   }
 
@@ -202,6 +228,16 @@ export function ensureRunWorkspaceBaseline(
   if (!persisted) throw new WorkspaceEvidenceError(`run ${input.runId} did not persist workspace evidence`);
   writeJsonOnce(persisted.baselineArtifactPath, baselineArtifact(input.runId, persisted));
   return persisted;
+}
+
+export function ensureRunWorkspaceBaseline(
+  input: EnsureRunWorkspaceBaselineInput,
+): WorkspaceExecutionRecord {
+  return withExclusiveFileClaim(
+    join(input.runDir, ".internal", "workspace-baseline.claim"),
+    () => ensureRunWorkspaceBaselineUnlocked(input),
+    { waitTimeoutMs: 30_000 },
+  );
 }
 
 function safeArtifactSegment(value: string): string {
@@ -256,8 +292,8 @@ export function captureAgentWorkspaceHandoff(
     capturedAt,
     artifactPath,
     baselineArtifactPath: input.workspaceExecution.baselineArtifactPath,
-    isolation: "shared" as const,
-    concurrentWritesIsolated: false as const,
+    isolation: input.workspaceExecution.isolation,
+    concurrentWritesIsolated: input.workspaceExecution.concurrentWritesIsolated,
   };
 
   let candidate: WorkspaceHandoffArtifact;
@@ -270,14 +306,20 @@ export function captureAgentWorkspaceHandoff(
   } else {
     try {
       const observed = captureGitWorkspaceSnapshot({
-        workspacePath: input.workspaceExecution.sourceWorkspacePath,
+        workspacePath: input.workspacePath || input.workspaceExecution.sourceWorkspacePath,
         scratchDir: createWorkspaceSnapshotScratchDir(input.runDir),
         label: input.attemptId,
         capturedAt,
+        ...(input.nodeBaseCommit ? { baseCommit: input.nodeBaseCommit } : {}),
       });
       candidate = {
         ...common,
         tracking: "git",
+        workspacePath: observed.sourceWorkspacePath,
+        ...(input.nodeBaseCommit ? { nodeBaseCommit: input.nodeBaseCommit } : {}),
+        ...(input.nodeWorkspaceRecordPath
+          ? { nodeWorkspaceRecordPath: input.nodeWorkspaceRecordPath }
+          : {}),
         baseline: input.workspaceExecution.baseline,
         observed,
         changeSet: compareGitWorkspaceSnapshots(input.workspaceExecution.baseline, observed),
@@ -320,6 +362,9 @@ export function captureAgentWorkspaceHandoff(
             capturedAt: artifact.capturedAt,
             artifactPath: artifact.artifactPath,
             tracking: artifact.tracking,
+            ...(artifact.tracking === "git" && artifact.nodeWorkspaceRecordPath
+              ? { nodeWorkspaceRecordPath: artifact.nodeWorkspaceRecordPath }
+              : {}),
           },
         ],
       },

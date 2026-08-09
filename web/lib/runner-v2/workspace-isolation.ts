@@ -505,6 +505,26 @@ export function allocateGitNodeWorkspace(input: {
   );
 }
 
+export function readGitNodeWorkspace(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  agentId: string;
+  attemptId: string;
+}): GitNodeWorkspace {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  const recordPath = nodeRecordPath(runWorkspace, input.attemptId);
+  if (!existsSync(recordPath)) {
+    throw new WorkspaceIsolationError(`node workspace record is missing: ${recordPath}`);
+  }
+  return assertNodeWorkspace(runWorkspace, readJson<GitNodeWorkspace>(recordPath), {
+    agentId: input.agentId,
+    attemptId: input.attemptId,
+    recordPath,
+  });
+}
+
 function nodeResultArtifactPath(
   runWorkspace: GitRunWorkspaceIsolation,
   node: GitNodeWorkspace,

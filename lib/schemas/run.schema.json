@@ -120,9 +120,12 @@
         "tracking": { "const": "git" },
         "sourceWorkspacePath": { "type": "string" },
         "baselineArtifactPath": { "type": "string" },
-        "isolation": { "const": "shared" },
-        "concurrentWritesIsolated": { "const": false },
+        "isolation": { "type": "string", "enum": ["shared", "git-worktree"] },
+        "concurrentWritesIsolated": { "type": "boolean" },
         "baseline": { "$ref": "#/definitions/gitWorkspaceSnapshot" },
+        "isolationStatePath": { "type": "string" },
+        "baselineRef": { "type": "string" },
+        "integrationRef": { "type": "string" },
         "handoffs": {
           "type": "array",
           "items": { "$ref": "#/definitions/workspaceHandoffRecord" }
@@ -196,7 +199,8 @@
         "agentId": { "type": "string", "minLength": 1 },
         "capturedAt": { "type": "string", "format": "date-time" },
         "artifactPath": { "type": "string" },
-        "tracking": { "type": "string", "enum": ["git", "unavailable"] }
+        "tracking": { "type": "string", "enum": ["git", "unavailable"] },
+        "nodeWorkspaceRecordPath": { "type": "string" }
       }
     },
     "runAgent": {

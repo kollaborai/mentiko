@@ -3,7 +3,11 @@ import { basename, dirname, join } from "path";
 import { pty } from "@/lib/pty/pty-client";
 import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
-import { buildAgentBootstrapPlan, type AgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import {
+  buildAgentBootstrapPlan,
+  retargetAgentBootstrapPlan,
+  type AgentBootstrapPlan,
+} from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
@@ -13,6 +17,10 @@ import {
   ensureRunWorkspaceBaseline,
 } from "@/lib/runner-v2/workspace-evidence";
 import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidence-types";
+import {
+  allocateGitNodeWorkspace,
+  initializeGitRunWorkspaceIsolation,
+} from "@/lib/runner-v2/workspace-isolation";
 import {
   decideStartupRecovery,
   recoveryKeyBytes,
@@ -213,14 +221,22 @@ export async function executeLocalBootstrap(
     runJsonPath,
     runDir: context.runDir,
     runId: context.runId,
-    workspacePath: context.workspacePath,
+    workspacePath: context.workspacePath || plan.sourceWorkspacePath,
   });
+  const runWorkspace = workspaceExecution.tracking === "git"
+    ? initializeGitRunWorkspaceIsolation({
+      runId: context.runId,
+      runDir: context.runDir,
+      baseline: workspaceExecution.baseline,
+    })
+    : undefined;
   const attempt = createAgentAttempt({
     runJsonPath,
     runId: context.runId,
     agentId: plan.agentId,
     leaseId: plan.sessionName,
   });
+  let executionPlan = plan;
   try {
     const admission = await acquireChainAdmission({
       runJsonPath,
@@ -239,6 +255,16 @@ export async function executeLocalBootstrap(
       return;
     }
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
+    const nodeWorkspace = runWorkspace
+      ? allocateGitNodeWorkspace({
+        runWorkspace,
+        agentId: plan.agentId,
+        attemptId: attempt.id,
+      })
+      : undefined;
+    if (nodeWorkspace) {
+      executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
+    }
     const workspaceHandoff = captureAgentWorkspaceHandoff({
       runJsonPath,
       runDir: context.runDir,
@@ -246,24 +272,31 @@ export async function executeLocalBootstrap(
       agentId: plan.agentId,
       attemptId: attempt.id,
       workspaceExecution,
+      ...(nodeWorkspace
+        ? {
+          workspacePath: nodeWorkspace.workspacePath,
+          nodeBaseCommit: nodeWorkspace.baseCommit,
+          nodeWorkspaceRecordPath: nodeWorkspace.recordPath,
+        }
+        : {}),
     });
 
-    mkdirSync(plan.eventsDir, { recursive: true });
-    mkdirSync(dirname(plan.statePath), { recursive: true });
+    mkdirSync(executionPlan.eventsDir, { recursive: true });
+    mkdirSync(dirname(executionPlan.statePath), { recursive: true });
     writeFileSync(
-      plan.instructionPath,
-      buildInitialInstructions(plan, context, workspaceHandoff),
+      executionPlan.instructionPath,
+      buildInitialInstructions(executionPlan, context, workspaceHandoff),
       { mode: 0o600 },
     );
-    createRunnerAgentState(plan.statePath, buildInitialState(plan));
+    createRunnerAgentState(executionPlan.statePath, buildInitialState(executionPlan));
 
-    const startScriptPath = join(context.runDir, "artifacts", `${plan.agentId}-start.sh`);
-    writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
+    const startScriptPath = join(context.runDir, "artifacts", `${executionPlan.agentId}-start.sh`);
+    writeFileSync(startScriptPath, buildStartScript(executionPlan), { mode: 0o700 });
     chmodSync(startScriptPath, 0o700);
 
-    await executor.remove(plan.sessionName);
-    const spawned = await executor.spawn(plan.sessionName, "zsh", [], {
-      cwd: plan.projectRoot,
+    await executor.remove(executionPlan.sessionName);
+    const spawned = await executor.spawn(executionPlan.sessionName, "zsh", [], {
+      cwd: executionPlan.projectRoot,
       env: sanitizePtyEnv({
         PATH: context.env.PATH || process.env.PATH || "",
         HOME: context.env.HOME || process.env.HOME || "",
@@ -271,7 +304,7 @@ export async function executeLocalBootstrap(
         TERM: context.env.TERM || process.env.TERM || "xterm-256color",
         MENTIKO_RUNNER_V2_ACTIVE: "1",
         MENTIKO_RUNNER_V2_MODE: "typed-plan",
-        ...plan.runContextExports,
+        ...executionPlan.runContextExports,
       }),
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
@@ -283,23 +316,23 @@ export async function executeLocalBootstrap(
     });
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
 
-    registerRunSession(context, plan);
+    registerRunSession(context, executionPlan);
     // The PTY intentionally starts as an interactive shell, but a failed
     // startup script must terminate that shell. Otherwise readiness can see a
     // normal zsh prompt and inject agent instructions as shell commands.
-    const startCommand = `cd ${shellEscape(plan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
+    const startCommand = `cd ${shellEscape(executionPlan.projectRoot)} && bash ${shellEscape(startScriptPath)} || exit $?`;
     // No trailing \r: sendKeys now sets the daemon's `enter` flag, which appends
     // the return itself after its settle delay. A literal \r here would submit a
     // second, empty line.
-    await executor.sendKeys(plan.sessionName, startCommand);
-    await waitForBootstrapReadiness(plan, executor, attempt.id, runJsonPath);
+    await executor.sendKeys(executionPlan.sessionName, startCommand);
+    await waitForBootstrapReadiness(executionPlan, executor, attempt.id, runJsonPath);
     transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
     const submission = submitAgentAttemptInstructions({
       runJsonPath,
       attemptId: attempt.id,
-      idempotencyKey: `${context.runId}:${plan.agentId}:${plan.instructionPath}`,
-      instructionPath: plan.instructionPath,
-      pointer: plan.instructionPointer,
+      idempotencyKey: `${context.runId}:${executionPlan.agentId}:${executionPlan.instructionPath}`,
+      instructionPath: executionPlan.instructionPath,
+      pointer: executionPlan.instructionPointer,
     });
     if (submission.delivered) {
       // no trailing \r: the pointer is multi-line, so the CLI receives it as a
@@ -308,8 +341,8 @@ export async function executeLocalBootstrap(
       // settle delay; confirmInstructionSubmission then verifies the composer
       // actually accepted it (a CLI still running boot checks — e.g. MCP auth —
       // renders the composer but drops enters) and retries bare enters.
-      await executor.sendKeys(plan.sessionName, plan.instructionPointer);
-      const confirmed = await confirmInstructionSubmission(plan, executor);
+      await executor.sendKeys(executionPlan.sessionName, executionPlan.instructionPointer);
+      const confirmed = await confirmInstructionSubmission(executionPlan, executor);
       if (confirmed) {
         transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
       } else {
@@ -322,13 +355,13 @@ export async function executeLocalBootstrap(
         });
       }
     }
-    await startMonitorSession(plan, executor);
+    await startMonitorSession(executionPlan, executor);
   } catch (error) {
     if (error instanceof BootstrapReadinessBlockedError) {
       return;
     }
-    await executor.remove(plan.sessionName).catch(() => undefined);
-    await executor.remove(plan.monitorSessionName).catch(() => undefined);
+    await executor.remove(executionPlan.sessionName).catch(() => undefined);
+    await executor.remove(executionPlan.monitorSessionName).catch(() => undefined);
     releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     throw error;
   }
@@ -382,10 +415,17 @@ function buildStartScript(plan: AgentBootstrapPlan): string {
 }
 
 function buildWorkspaceEvidenceInstructions(evidence: WorkspaceHandoffArtifact): string {
-  const sharedWarning = [
-    "Isolation: shared workspace (concurrent writes are not isolated).",
-    "This artifact is attribution evidence, not a write lock; another agent may mutate the workspace after capture.",
-  ];
+  const isolationNotes = evidence.isolation === "git-worktree"
+    ? [
+      "Isolation: dedicated Git worktree (concurrent node writes are isolated).",
+      ...(evidence.tracking === "git"
+        ? [`Node workspace: ${evidence.workspacePath}`, `Node base commit: ${evidence.nodeBaseCommit}`]
+        : []),
+    ]
+    : [
+      "Isolation: shared workspace (concurrent writes are not isolated).",
+      "This artifact is attribution evidence, not a write lock; another agent may mutate the workspace after capture.",
+    ];
   if (evidence.tracking === "unavailable") {
     return [
       "WORKSPACE EVIDENCE:",
@@ -393,7 +433,7 @@ function buildWorkspaceEvidenceInstructions(evidence: WorkspaceHandoffArtifact):
       `Run baseline artifact: ${evidence.baselineArtifactPath}`,
       `Agent handoff artifact: ${evidence.artifactPath}`,
       `Reason: ${evidence.reason}`,
-      ...sharedWarning,
+      ...isolationNotes,
       "If your role verifies acceptance, report workspace attribution as blocked; do not infer the task delta from HEAD.",
     ].join("\n");
   }
@@ -405,7 +445,7 @@ function buildWorkspaceEvidenceInstructions(evidence: WorkspaceHandoffArtifact):
     `Agent handoff artifact: ${evidence.artifactPath}`,
     `Agent handoff snapshot commit: ${evidence.observed.snapshotCommit}`,
     `Files changed from run baseline before this agent: ${evidence.changeSet.summary.filesChanged}`,
-    ...sharedWarning,
+    ...isolationNotes,
     "HEAD is not the run baseline.",
     "If your role verifies acceptance, the handoff artifact changeSet is the authoritative task delta observed before this agent started; do not substitute git diff against HEAD.",
   ].join("\n");

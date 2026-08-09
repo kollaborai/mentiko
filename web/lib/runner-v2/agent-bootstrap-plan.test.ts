@@ -1,7 +1,10 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildAgentBootstrapPlan } from "@/lib/runner-v2/agent-bootstrap-plan";
+import {
+  buildAgentBootstrapPlan,
+  retargetAgentBootstrapPlan,
+} from "@/lib/runner-v2/agent-bootstrap-plan";
 
 jest.mock("@/lib/config", () => ({
   __esModule: true,
@@ -114,6 +117,16 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(plan.monitorCommand).toContain("MENTIKO_AI_GATEWAY_LOCAL_TOKEN='internal-proxy-token'");
     expect(plan.monitorCommand).not.toContain("ANTHROPIC_API_KEY");
     expect(plan.monitorCommand).not.toContain("monitor-chain-agent");
+
+    const nodeWorkspace = join(root, "run-worktrees", "attempt-writer");
+    const isolated = retargetAgentBootstrapPlan(plan, nodeWorkspace, { PATH: "/bin" });
+    expect(isolated.sessionName).toBe(plan.sessionName);
+    expect(isolated.sourceWorkspacePath).toBe(join(root, "workspace"));
+    expect(isolated.projectRoot).toBe(nodeWorkspace);
+    expect(isolated.runContextExports.MENTIKO_PROJECT_ROOT).toBe(nodeWorkspace);
+    expect(isolated.localStartCommand).toContain(nodeWorkspace);
+    expect(isolated.monitorCommand).toContain(`export MENTIKO_PROJECT_ROOT='${nodeWorkspace}'`);
+    expect(isolated.profilePath).toBe(plan.profilePath);
   });
 
   it("emits the compiled typed monitor command without a shell compatibility route", () => {

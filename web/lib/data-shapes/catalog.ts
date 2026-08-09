@@ -402,8 +402,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "The baseline is claimed before the first AgentAttempt. Existing execution evidence fails closed to tracking=unavailable because a late capture would misattribute prior work.",
       "Git capture uses a private index scoped to the registered workspace subtree and never moves the user's branch, index, or working files. Ignored files are excluded; artifact JSON contains paths, counts, and hashes rather than patch contents.",
-      "Each attempt handoff is write-once. Its changeSet includes tracked and non-ignored untracked files between the run baseline and the state observed immediately before that agent starts.",
-      "Version 1 explicitly records isolation=shared and concurrentWritesIsolated=false. It fixes change attribution but does not claim concurrent-writer safety; run-owned worktrees and write leases remain a separate execution gate.",
+      "Each attempt handoff is write-once. Its changeSet includes tracked and non-ignored untracked files between the run baseline and the isolated state observed immediately before that agent starts.",
+      "Git-backed runs record isolation=git-worktree and concurrentWritesIsolated=true after anchoring the baseline and integration refs. Missing or non-Git workspace evidence remains explicit shared, unavailable state.",
     ],
   }),
   shape({

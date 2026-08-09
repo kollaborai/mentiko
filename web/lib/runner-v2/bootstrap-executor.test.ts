@@ -38,6 +38,7 @@ function plan(root: string): AgentBootstrapPlan {
     artifactsDir: join(root, "artifacts"),
     eventsDir: join(root, "events"),
     projectRoot: join(root, "workspace"),
+    sourceWorkspacePath: join(root, "workspace"),
     profileId: "default",
     profilePath: join(root, "profiles", "default.json"),
     runContextExports: {
@@ -63,6 +64,13 @@ function plan(root: string): AgentBootstrapPlan {
     instructionPath: join(root, "artifacts", "writer-instructions.md"),
     instructionPointer: `Read ${join(root, "artifacts", "writer-instructions.md")}`,
     localStartCommand: "eval \"$(node '/repo/lib/runner-agent-profile.js' command --profile-path '/tmp/profile.json' --interactive true --namespace-id 'default' --org-id 'default')\"",
+    monitorSpec: {
+      chainPath: join(root, "chain.json"),
+      emits: "done",
+      interval: "5",
+      maxStale: "5",
+      runId: "run-1",
+    },
     monitorCommand: "monitor-chain-agent workspace-writer-run-1",
   };
 }
@@ -264,7 +272,7 @@ describe("runner-v2 bootstrap executor", () => {
     );
   });
 
-  it("hands a verifier the run baseline delta instead of a diff against HEAD", async () => {
+  it("launches a Git-backed agent in its run-owned worktree with baseline evidence", async () => {
     const root = tempDir();
     const workspace = initializeGitWorkspace(root);
     writeFileSync(join(workspace, "component.ts"), "export const value = 'preexisting-dirty';\n");
@@ -280,25 +288,43 @@ describe("runner-v2 bootstrap executor", () => {
     const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
     expect(run.workspaceExecution).toMatchObject({
       tracking: "git",
-      isolation: "shared",
-      concurrentWritesIsolated: false,
+      isolation: "git-worktree",
+      concurrentWritesIsolated: true,
       baseline: { dirtyFromHead: true },
-      handoffs: [{ agentId: "writer", tracking: "git" }],
+      baselineRef: expect.stringContaining("refs/mentiko/runs/"),
+      integrationRef: expect.stringContaining("refs/mentiko/runs/"),
+      handoffs: [{
+        agentId: "writer",
+        tracking: "git",
+        nodeWorkspaceRecordPath: expect.any(String),
+      }],
     });
     const handoffPath = run.workspaceExecution.handoffs[0].artifactPath as string;
     const handoff = JSON.parse(readFileSync(handoffPath, "utf8"));
     expect(handoff).toMatchObject({
       kind: "workspace-handoff",
       tracking: "git",
+      isolation: "git-worktree",
+      concurrentWritesIsolated: true,
+      workspacePath: expect.stringContaining(".internal/workspace-isolation/worktrees/"),
+      nodeBaseCommit: run.workspaceExecution.baseline.snapshotCommit,
       changeSet: { summary: { filesChanged: 0 } },
     });
+    const agentSpawn = executor.spawn.mock.calls.find((call) => call[0] === "workspace-writer-run-1");
+    expect(agentSpawn?.[3]).toMatchObject({
+      cwd: handoff.workspacePath,
+      env: expect.objectContaining({ MENTIKO_PROJECT_ROOT: handoff.workspacePath }),
+    });
+    expect(handoff.workspacePath).not.toBe(workspace);
+    expect(readFileSync(join(workspace, "component.ts"), "utf8")).toContain("preexisting-dirty");
     const instructions = readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8");
     expect(instructions).toContain("WORKSPACE EVIDENCE:");
     expect(instructions).toContain(`Run baseline artifact: ${run.workspaceExecution.baselineArtifactPath}`);
     expect(instructions).toContain(`Agent handoff artifact: ${handoffPath}`);
     expect(instructions).toContain("HEAD is not the run baseline.");
     expect(instructions).toContain("the handoff artifact changeSet is the authoritative task delta");
-    expect(instructions).toContain("Isolation: shared workspace (concurrent writes are not isolated).");
+    expect(instructions).toContain("Isolation: dedicated Git worktree (concurrent node writes are isolated).");
+    expect(instructions).toContain(`Node workspace: ${handoff.workspacePath}`);
   });
 
   it("leaves watcher and watchdog ownership with the background worker", async () => {
@@ -1037,7 +1063,12 @@ function writeProfile(root: string, readiness: unknown) {
 function executorWithCapture(output: string) {
   return {
     remove: jest.fn(async () => {}),
-    spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
+    spawn: jest.fn(async (
+      name: string,
+      _cmd?: string,
+      _args?: string[],
+      _opts?: { cwd?: string; env?: Record<string, string> },
+    ) => ({ name, pid: 123 })),
     sendKeys: jest.fn(async () => {}),
     sendRaw: jest.fn(async () => {}),
     capture: jest.fn(async () => output),

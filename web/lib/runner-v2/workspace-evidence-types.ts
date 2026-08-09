@@ -11,14 +11,15 @@ export interface WorkspaceHandoffRecord {
   capturedAt: string;
   artifactPath: string;
   tracking: "git" | "unavailable";
+  nodeWorkspaceRecordPath?: string;
 }
 
 interface WorkspaceExecutionBase {
   version: typeof WORKSPACE_EVIDENCE_VERSION;
   sourceWorkspacePath?: string;
   baselineArtifactPath: string;
-  isolation: "shared";
-  concurrentWritesIsolated: false;
+  isolation: "shared" | "git-worktree";
+  concurrentWritesIsolated: boolean;
   handoffs: WorkspaceHandoffRecord[];
 }
 
@@ -26,6 +27,9 @@ export interface GitWorkspaceExecutionRecord extends WorkspaceExecutionBase {
   tracking: "git";
   sourceWorkspacePath: string;
   baseline: GitWorkspaceSnapshot;
+  isolationStatePath?: string;
+  baselineRef?: string;
+  integrationRef?: string;
 }
 
 export interface UnavailableWorkspaceExecutionRecord extends WorkspaceExecutionBase {
@@ -47,12 +51,15 @@ interface WorkspaceHandoffArtifactBase {
   capturedAt: string;
   artifactPath: string;
   baselineArtifactPath: string;
-  isolation: "shared";
-  concurrentWritesIsolated: false;
+  isolation: "shared" | "git-worktree";
+  concurrentWritesIsolated: boolean;
 }
 
 export interface GitWorkspaceHandoffArtifact extends WorkspaceHandoffArtifactBase {
   tracking: "git";
+  workspacePath: string;
+  nodeBaseCommit?: string;
+  nodeWorkspaceRecordPath?: string;
   baseline: GitWorkspaceSnapshot;
   observed: GitWorkspaceSnapshot;
   changeSet: GitWorkspaceChangeSet;
