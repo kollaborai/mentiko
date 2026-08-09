@@ -993,6 +993,31 @@ export const RUNNER_LINEAGE_BY_SHAPE_ID: Record<string, RunnerContractLineage> =
       paths: ["web/lib/runner-v2/completion-entrypoint.ts", "web/lib/runner-v2/adapters.ts"],
     },
   },
+  "workspace-execution-evidence": {
+    usage: "runner-v2",
+    surfaces: [
+      {
+        id: "typed-workspace-baseline-claim",
+        label: "Claim the immutable workspace baseline before the first agent attempt",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/workspace-evidence.ts",
+          "web/lib/runner-v2/workspace-snapshot.ts",
+          "web/lib/runner-v2/bootstrap-executor.ts",
+        ],
+      },
+      {
+        id: "typed-workspace-attempt-handoff",
+        label: "Capture an immutable baseline-to-handoff change set for each agent attempt",
+        owner: "runner-v2",
+        paths: [
+          "web/lib/runner-v2/workspace-evidence.ts",
+          "web/lib/runner-v2/workspace-snapshot.ts",
+          "web/lib/runner-v2/bootstrap-executor.ts",
+        ],
+      },
+    ],
+  },
   "workspace-registry": {
     usage: "runner-v2",
     surfaces: [

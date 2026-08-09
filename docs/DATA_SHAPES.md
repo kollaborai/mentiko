@@ -69,7 +69,9 @@ Runner events are physical `.event` files containing line-oriented `key: value` 
 
 ## Run and runner-v2 contract
 
-`lib/schemas/run.schema.json` covers the current `run.json` envelope plus runner-v2 attempt history, process evidence, instruction ledgers, transition history, stuck events, and pending routed handoffs.
+`lib/schemas/run.schema.json` covers the current `run.json` envelope plus runner-v2 attempt history, process evidence, instruction ledgers, transition history, stuck events, pending routed handoffs, and run-scoped workspace baseline/handoff pointers.
+
+Workspace execution evidence is split between that durable pointer and immutable run artifacts. `workspace-baseline.json` is claimed before the first agent attempt; each agent occurrence receives a write-once baseline-to-handoff change set. The first version deliberately reports shared-workspace execution as non-isolated: it fixes acceptance attribution without pretending concurrent writers are safe.
 
 Runner-facing shapes also carry explicit lineage from `web/lib/data-shapes/runner-lineage.ts`:
 
@@ -88,7 +90,7 @@ The ledger separately reports live shell execution. `dataShapeShellSources()` co
 
 Catalog tests require every direct `web/lib/runner-v2/*` or runner shell source reference to have lineage, verify the ownership label against current readers and writers, and existence-check every lineage evidence path.
 
-`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **114 shapes**. The live UI reads the same API, so inspect it rather than relying on documentation counts after future changes.
+`GET /api/data-shapes` and `web/lib/data-shapes/catalog.ts` are the count of record; this source revision registers **119 shapes**. The live UI reads the same API, so inspect it rather than relying on documentation counts after future changes.
 
 A one-time drift repair ran on 2026-07-14 against one developer's local default namespace. Those figures are a dated observation of that machine, not a standing property of the system, and the local namespace has since grown well past the run count sampled below:
 

@@ -9,6 +9,11 @@ import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurren
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
 import {
+  captureAgentWorkspaceHandoff,
+  ensureRunWorkspaceBaseline,
+} from "@/lib/runner-v2/workspace-evidence";
+import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidence-types";
+import {
   decideStartupRecovery,
   recoveryKeyBytes,
   type StartupRecoveryInput,
@@ -203,41 +208,59 @@ export async function executeLocalBootstrap(
 ): Promise<void> {
   const runJsonPath = join(context.runDir, "run.json");
   assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId);
+  mkdirSync(plan.artifactsDir, { recursive: true });
+  const workspaceExecution = ensureRunWorkspaceBaseline({
+    runJsonPath,
+    runDir: context.runDir,
+    runId: context.runId,
+    workspacePath: context.workspacePath,
+  });
   const attempt = createAgentAttempt({
     runJsonPath,
     runId: context.runId,
     agentId: plan.agentId,
     leaseId: plan.sessionName,
   });
-  const admission = await acquireChainAdmission({
-    runJsonPath,
-    runId: context.runId,
-    agentId: plan.agentId,
-    env: context.env,
-  });
-  if (!admission.admitted) {
-    transitionAgentAttempt({
-      runJsonPath,
-      attemptId: attempt.id,
-      to: "human_action_required",
-      reason: "concurrency_cap_blocked",
-      detail: admission.reason,
-    });
-    return;
-  }
-  transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
-
-  mkdirSync(plan.artifactsDir, { recursive: true });
-  mkdirSync(plan.eventsDir, { recursive: true });
-  mkdirSync(dirname(plan.statePath), { recursive: true });
-  writeFileSync(plan.instructionPath, buildInitialInstructions(plan, context), { mode: 0o600 });
-  createRunnerAgentState(plan.statePath, buildInitialState(plan));
-
-  const startScriptPath = join(context.runDir, "artifacts", `${plan.agentId}-start.sh`);
-  writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
-  chmodSync(startScriptPath, 0o700);
-
   try {
+    const admission = await acquireChainAdmission({
+      runJsonPath,
+      runId: context.runId,
+      agentId: plan.agentId,
+      env: context.env,
+    });
+    if (!admission.admitted) {
+      transitionAgentAttempt({
+        runJsonPath,
+        attemptId: attempt.id,
+        to: "human_action_required",
+        reason: "concurrency_cap_blocked",
+        detail: admission.reason,
+      });
+      return;
+    }
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
+    const workspaceHandoff = captureAgentWorkspaceHandoff({
+      runJsonPath,
+      runDir: context.runDir,
+      runId: context.runId,
+      agentId: plan.agentId,
+      attemptId: attempt.id,
+      workspaceExecution,
+    });
+
+    mkdirSync(plan.eventsDir, { recursive: true });
+    mkdirSync(dirname(plan.statePath), { recursive: true });
+    writeFileSync(
+      plan.instructionPath,
+      buildInitialInstructions(plan, context, workspaceHandoff),
+      { mode: 0o600 },
+    );
+    createRunnerAgentState(plan.statePath, buildInitialState(plan));
+
+    const startScriptPath = join(context.runDir, "artifacts", `${plan.agentId}-start.sh`);
+    writeFileSync(startScriptPath, buildStartScript(plan), { mode: 0o700 });
+    chmodSync(startScriptPath, 0o700);
+
     await executor.remove(plan.sessionName);
     const spawned = await executor.spawn(plan.sessionName, "zsh", [], {
       cwd: plan.projectRoot,
@@ -358,7 +381,41 @@ function buildStartScript(plan: AgentBootstrapPlan): string {
   ].join("\n");
 }
 
-function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2LaunchContext): string {
+function buildWorkspaceEvidenceInstructions(evidence: WorkspaceHandoffArtifact): string {
+  const sharedWarning = [
+    "Isolation: shared workspace (concurrent writes are not isolated).",
+    "This artifact is attribution evidence, not a write lock; another agent may mutate the workspace after capture.",
+  ];
+  if (evidence.tracking === "unavailable") {
+    return [
+      "WORKSPACE EVIDENCE:",
+      "Tracking: unavailable",
+      `Run baseline artifact: ${evidence.baselineArtifactPath}`,
+      `Agent handoff artifact: ${evidence.artifactPath}`,
+      `Reason: ${evidence.reason}`,
+      ...sharedWarning,
+      "If your role verifies acceptance, report workspace attribution as blocked; do not infer the task delta from HEAD.",
+    ].join("\n");
+  }
+  return [
+    "WORKSPACE EVIDENCE:",
+    "Tracking: git snapshot",
+    `Run baseline artifact: ${evidence.baselineArtifactPath}`,
+    `Run baseline snapshot commit: ${evidence.baseline.snapshotCommit}`,
+    `Agent handoff artifact: ${evidence.artifactPath}`,
+    `Agent handoff snapshot commit: ${evidence.observed.snapshotCommit}`,
+    `Files changed from run baseline before this agent: ${evidence.changeSet.summary.filesChanged}`,
+    ...sharedWarning,
+    "HEAD is not the run baseline.",
+    "If your role verifies acceptance, the handoff artifact changeSet is the authoritative task delta observed before this agent started; do not substitute git diff against HEAD.",
+  ].join("\n");
+}
+
+function buildInitialInstructions(
+  plan: AgentBootstrapPlan,
+  context: RunnerV2LaunchContext,
+  workspaceEvidence: WorkspaceHandoffArtifact,
+): string {
   const taskContext = plan.runContextExports.TASK_CONTEXT;
   return [
     `You are: ${plan.agentName}`,
@@ -372,6 +429,8 @@ function buildInitialInstructions(plan: AgentBootstrapPlan, context: RunnerV2Lau
     "Read the chain JSON for your full task context:",
     context.chainPath,
     ...(taskContext ? ["", "Typed task context:", taskContext] : []),
+    "",
+    buildWorkspaceEvidenceInstructions(workspaceEvidence),
     "",
     buildTypedCompletionContract(plan),
   ].join("\n");

@@ -73,6 +73,12 @@
     "workspacePath": {
       "type": "string"
     },
+    "workspaceExecution": {
+      "oneOf": [
+        { "$ref": "#/definitions/gitWorkspaceExecution" },
+        { "$ref": "#/definitions/unavailableWorkspaceExecution" }
+      ]
+    },
     "taskId": {
       "type": "string"
     },
@@ -96,6 +102,101 @@
     }
   },
   "definitions": {
+    "gitWorkspaceExecution": {
+      "type": "object",
+      "required": [
+        "version",
+        "tracking",
+        "sourceWorkspacePath",
+        "baselineArtifactPath",
+        "isolation",
+        "concurrentWritesIsolated",
+        "baseline",
+        "handoffs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "tracking": { "const": "git" },
+        "sourceWorkspacePath": { "type": "string" },
+        "baselineArtifactPath": { "type": "string" },
+        "isolation": { "const": "shared" },
+        "concurrentWritesIsolated": { "const": false },
+        "baseline": { "$ref": "#/definitions/gitWorkspaceSnapshot" },
+        "handoffs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/workspaceHandoffRecord" }
+        }
+      }
+    },
+    "unavailableWorkspaceExecution": {
+      "type": "object",
+      "required": [
+        "version",
+        "tracking",
+        "baselineArtifactPath",
+        "isolation",
+        "concurrentWritesIsolated",
+        "reason",
+        "recordedAt",
+        "handoffs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "tracking": { "const": "unavailable" },
+        "sourceWorkspacePath": { "type": "string" },
+        "baselineArtifactPath": { "type": "string" },
+        "isolation": { "const": "shared" },
+        "concurrentWritesIsolated": { "const": false },
+        "reason": { "type": "string", "minLength": 1 },
+        "recordedAt": { "type": "string", "format": "date-time" },
+        "handoffs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/workspaceHandoffRecord" }
+        }
+      }
+    },
+    "gitWorkspaceSnapshot": {
+      "type": "object",
+      "required": [
+        "version",
+        "kind",
+        "capturedAt",
+        "sourceWorkspacePath",
+        "repositoryRoot",
+        "relativeWorkspacePath",
+        "snapshotCommit",
+        "snapshotTree",
+        "dirtyFromHead"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "kind": { "const": "git" },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "sourceWorkspacePath": { "type": "string" },
+        "repositoryRoot": { "type": "string" },
+        "relativeWorkspacePath": { "type": "string" },
+        "sourceHead": { "type": "string" },
+        "sourceBranch": { "type": "string" },
+        "snapshotCommit": { "type": "string" },
+        "snapshotTree": { "type": "string" },
+        "dirtyFromHead": { "type": "boolean" }
+      }
+    },
+    "workspaceHandoffRecord": {
+      "type": "object",
+      "required": ["attemptId", "agentId", "capturedAt", "artifactPath", "tracking"],
+      "additionalProperties": false,
+      "properties": {
+        "attemptId": { "type": "string", "minLength": 1 },
+        "agentId": { "type": "string", "minLength": 1 },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "artifactPath": { "type": "string" },
+        "tracking": { "type": "string", "enum": ["git", "unavailable"] }
+      }
+    },
     "runAgent": {
       "type": "object",
       "required": ["id", "name", "session", "status"],

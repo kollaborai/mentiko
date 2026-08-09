@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -261,6 +262,43 @@ describe("runner-v2 bootstrap executor", () => {
       ["-lc", "monitor-chain-agent workspace-writer-run-1"],
       expect.objectContaining({ cwd: join(root, "workspace") }),
     );
+  });
+
+  it("hands a verifier the run baseline delta instead of a diff against HEAD", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(workspace, "component.ts"), "export const value = 'preexisting-dirty';\n");
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const executor = executorWithCapture("claude ready >");
+
+    await executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor);
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    expect(run.workspaceExecution).toMatchObject({
+      tracking: "git",
+      isolation: "shared",
+      concurrentWritesIsolated: false,
+      baseline: { dirtyFromHead: true },
+      handoffs: [{ agentId: "writer", tracking: "git" }],
+    });
+    const handoffPath = run.workspaceExecution.handoffs[0].artifactPath as string;
+    const handoff = JSON.parse(readFileSync(handoffPath, "utf8"));
+    expect(handoff).toMatchObject({
+      kind: "workspace-handoff",
+      tracking: "git",
+      changeSet: { summary: { filesChanged: 0 } },
+    });
+    const instructions = readFileSync(join(root, "artifacts", "writer-instructions.md"), "utf8");
+    expect(instructions).toContain("WORKSPACE EVIDENCE:");
+    expect(instructions).toContain(`Run baseline artifact: ${run.workspaceExecution.baselineArtifactPath}`);
+    expect(instructions).toContain(`Agent handoff artifact: ${handoffPath}`);
+    expect(instructions).toContain("HEAD is not the run baseline.");
+    expect(instructions).toContain("the handoff artifact changeSet is the authoritative task delta");
+    expect(instructions).toContain("Isolation: shared workspace (concurrent writes are not isolated).");
   });
 
   it("leaves watcher and watchdog ownership with the background worker", async () => {
@@ -1004,6 +1042,18 @@ function executorWithCapture(output: string) {
     sendRaw: jest.fn(async () => {}),
     capture: jest.fn(async () => output),
   };
+}
+
+function initializeGitWorkspace(root: string): string {
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: workspace });
+  execFileSync("git", ["config", "user.name", "Bootstrap Test"], { cwd: workspace });
+  execFileSync("git", ["config", "user.email", "bootstrap@example.com"], { cwd: workspace });
+  writeFileSync(join(workspace, "component.ts"), "export const value = 'original';\n");
+  execFileSync("git", ["add", "component.ts"], { cwd: workspace });
+  execFileSync("git", ["commit", "-qm", "initial"], { cwd: workspace });
+  return workspace;
 }
 
 async function flushMicrotasks(iterations = 12): Promise<void> {

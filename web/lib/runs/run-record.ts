@@ -17,6 +17,7 @@ import {
   writeRunJsonAtomic,
   writeRunJsonExclusive,
 } from "@/lib/runs/run-json-lock";
+import type { WorkspaceExecutionRecord } from "@/lib/runner-v2/workspace-evidence-types";
 
 export const RUN_ID_PATTERN = /^run-[A-Za-z0-9_-]{1,120}$/;
 
@@ -68,6 +69,7 @@ export interface RunRecord {
   workspaceId?: string;
   workspacePath?: string;
   taskId?: string;
+  workspaceExecution?: WorkspaceExecutionRecord;
   completed?: string;
   status_message?: string;
   metadata?: Record<string, unknown>;
