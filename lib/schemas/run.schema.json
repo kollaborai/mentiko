@@ -177,9 +177,11 @@
         "capturedAt": { "type": "string", "format": "date-time" },
         "sourceWorkspacePath": { "type": "string" },
         "repositoryRoot": { "type": "string" },
+        "gitCommonDir": { "type": "string" },
         "relativeWorkspacePath": { "type": "string" },
         "sourceHead": { "type": "string" },
         "sourceBranch": { "type": "string" },
+        "baseCommit": { "type": "string" },
         "snapshotCommit": { "type": "string" },
         "snapshotTree": { "type": "string" },
         "dirtyFromHead": { "type": "boolean" }

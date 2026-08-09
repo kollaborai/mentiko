@@ -18,9 +18,11 @@ export interface GitWorkspaceSnapshot {
   capturedAt: string;
   sourceWorkspacePath: string;
   repositoryRoot: string;
+  gitCommonDir: string;
   relativeWorkspacePath: string;
   sourceHead?: string;
   sourceBranch?: string;
+  baseCommit?: string;
   snapshotCommit: string;
   snapshotTree: string;
   dirtyFromHead: boolean;
@@ -54,6 +56,12 @@ export interface CaptureGitWorkspaceSnapshotInput {
   scratchDir: string;
   label: string;
   capturedAt?: string;
+  /**
+   * Seed the private index from this commit instead of the worktree's HEAD.
+   * Node result capture uses the node's immutable launch commit so commits or
+   * edits outside the registered workspace cannot leak into its result.
+   */
+  baseCommit?: string;
 }
 
 interface GitCommandOptions {
@@ -163,10 +171,18 @@ export function captureGitWorkspaceSnapshot(
   if (!pathWithin(repositoryRoot, sourceWorkspacePath)) {
     throw new WorkspaceSnapshotError(`workspace is outside repository root: ${sourceWorkspacePath}`);
   }
+  const gitCommonDirRaw = runGit(repositoryRoot, ["rev-parse", "--git-common-dir"]);
+  const gitCommonDir = requireAbsoluteDirectory(
+    isAbsolute(gitCommonDirRaw) ? gitCommonDirRaw : resolve(repositoryRoot, gitCommonDirRaw),
+    "git common directory",
+  );
 
   const relativeWorkspacePath = relative(repositoryRoot, sourceWorkspacePath) || ".";
   const sourceHead = runGitOptional(repositoryRoot, ["rev-parse", "--verify", "HEAD"]);
   const sourceBranch = runGitOptional(repositoryRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const baseCommit = input.baseCommit
+    ? runGit(repositoryRoot, ["rev-parse", "--verify", `${input.baseCommit}^{commit}`])
+    : sourceHead;
   const capturedAt = input.capturedAt || new Date().toISOString();
   const indexPath = join(
     scratchDir,
@@ -182,9 +198,9 @@ export function captureGitWorkspaceSnapshot(
   };
 
   try {
-    if (sourceHead) runGit(repositoryRoot, ["read-tree", sourceHead], { env: snapshotEnv });
+    if (baseCommit) runGit(repositoryRoot, ["read-tree", baseCommit], { env: snapshotEnv });
     else runGit(repositoryRoot, ["read-tree", "--empty"], { env: snapshotEnv });
-    // Preserve HEAD outside the registered workspace. Besides making nested
+    // Preserve the selected base outside the registered workspace. Besides making nested
     // workspace evidence cheaper, this prevents sibling package changes from
     // being materialized into Mentiko's private snapshot objects.
     runGit(repositoryRoot, ["add", "-A", "--", relativeWorkspacePath], { env: snapshotEnv });
@@ -192,20 +208,24 @@ export function captureGitWorkspaceSnapshot(
     const sourceTree = sourceHead
       ? runGit(repositoryRoot, ["rev-parse", `${sourceHead}^{tree}`])
       : undefined;
+    const baseTree = baseCommit
+      ? runGit(repositoryRoot, ["rev-parse", `${baseCommit}^{tree}`])
+      : undefined;
     const dirtyFromHead = !sourceHead || snapshotTree !== sourceTree;
-    const snapshotCommit = dirtyFromHead
-      ? runGit(
+    const dirtyFromBase = !baseCommit || snapshotTree !== baseTree;
+    const snapshotCommit = baseCommit && !dirtyFromBase
+      ? baseCommit
+      : runGit(
         repositoryRoot,
         [
           "commit-tree",
           snapshotTree,
-          ...(sourceHead ? ["-p", sourceHead] : []),
+          ...(baseCommit ? ["-p", baseCommit] : []),
           "-m",
           `Mentiko workspace snapshot: ${identity.MENTIKO_WORKSPACE_SNAPSHOT_LABEL}`,
         ],
         { env: snapshotEnv },
-      )
-      : sourceHead;
+      );
 
     return {
       version: SNAPSHOT_VERSION,
@@ -213,9 +233,11 @@ export function captureGitWorkspaceSnapshot(
       capturedAt,
       sourceWorkspacePath,
       repositoryRoot,
+      gitCommonDir,
       relativeWorkspacePath,
       ...(sourceHead ? { sourceHead } : {}),
       ...(sourceBranch ? { sourceBranch } : {}),
+      ...(baseCommit ? { baseCommit } : {}),
       snapshotCommit,
       snapshotTree,
       dirtyFromHead,
@@ -296,7 +318,9 @@ export function compareGitWorkspaceSnapshots(
   baseline: GitWorkspaceSnapshot,
   observed: GitWorkspaceSnapshot,
 ): GitWorkspaceChangeSet {
-  if (baseline.repositoryRoot !== observed.repositoryRoot) {
+  const baselineRepositoryIdentity = baseline.gitCommonDir || baseline.repositoryRoot;
+  const observedRepositoryIdentity = observed.gitCommonDir || observed.repositoryRoot;
+  if (baselineRepositoryIdentity !== observedRepositoryIdentity) {
     throw new WorkspaceSnapshotError("workspace snapshots belong to different repositories");
   }
   if (baseline.relativeWorkspacePath !== observed.relativeWorkspacePath) {
