@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { findCompletionEvent, type CompletionAgentRef } from "@/lib/runner-v2/completion";
 import { readRunJson, updateRunAgent, updateRunStatus, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
-import { decideNextRoute, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
+import { decideNextRoute, routingContextForEvents, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
 import type { RunnerEventRecord } from "@/lib/runner-v2/events";
 import { planTerminalCompletion, shouldCompleteEmptyEmitsAgent, type TerminalCompletionInput, type TerminalCompletionPlan } from "@/lib/runner-v2/terminal-plan";
 import { planNoEventRetry, type RetryNoEventPlan, type RetryPolicy } from "@/lib/runner-v2/retry-plan";
@@ -376,7 +376,12 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       run: readCurrentRun(input.runJsonPath),
     };
   }
-  const route = decideNextRoute(input.chain, match.event.event, match.event.timestamp);
+  const route = decideNextRoute(
+    input.chain,
+    match.event.event,
+    match.event.timestamp,
+    routingContextForEvents(input.events, input.runId, match.event.event),
+  );
   const loopGuard = input.loopGuard ? applyLoopGuardToRoute({
     currentAgentId: input.agent.id,
     eventName: match.event.event,

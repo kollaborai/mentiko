@@ -752,6 +752,7 @@ describe("runner-v2 completion entrypoint", () => {
     omitChainId?: boolean;
     runChainId?: string;
     runMetadata?: Record<string, unknown>;
+    chainConfig?: Record<string, unknown>;
   }) {
     const runDir = join(root, "runs", "run-123");
     const eventsDir = join(root, "events");
@@ -764,7 +765,7 @@ describe("runner-v2 completion entrypoint", () => {
     writeJson(chainPath, {
       ...(options?.omitChainId ? {} : { id: "chain" }),
       name: "Build Chain",
-      config: { project_root: root },
+      config: { project_root: root, ...(options?.chainConfig || {}) },
       agents: [
         { id: "verifier", name: "Verifier", emits: "verification-complete" },
         ...(options?.downstream
@@ -893,6 +894,36 @@ describe("runner-v2 completion entrypoint", () => {
       plan: { action: "already-completed", effects: [], launches: [] },
     });
     expect(readFileSync(join(fixture.stateDir, "external-effects.jsonl"), "utf8")).toBe(outboxBeforeReplay);
+  });
+
+  it("carries schedule and on_complete policy from the chain into typed terminal planning", () => {
+    const root = tempRoot();
+    const fixture = seedRoutedRun(root, {
+      chainConfig: {
+        schedule: { cron: "0 * * * *", timezone: "UTC" },
+        on_complete: "chain:deploy",
+      },
+    });
+    emitVerifierEvent(fixture.eventsDir);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "verifier-run-123",
+      chainPath: fixture.chainPath,
+      env: routedEnv(fixture),
+      dryRun: true,
+      now: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    const terminal = result.plan.effects.find((effect) => effect.type === "terminal");
+    expect(terminal).toMatchObject({
+      type: "terminal",
+      plan: {
+        steps: expect.arrayContaining([
+          { type: "schedule-mark", status: "success", chainPath: fixture.chainPath },
+          { type: "next-chain", chainName: "deploy", parentRunId: "run-123" },
+        ]),
+      },
+    });
   });
 
   it("uses run.chainId for terminal external effects when run-local chain.json has no id", () => {

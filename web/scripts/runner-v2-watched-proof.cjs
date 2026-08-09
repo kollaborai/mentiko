@@ -167,7 +167,7 @@ async function main() {
       check("run-completed", terminal === "completed", terminal),
       check("agent-complete", run.agents?.[0]?.status === "complete", run.agents?.[0]?.status),
       check("attempt-completed", run.runnerV2?.attempts?.[0]?.phase === "completed", run.runnerV2?.attempts?.[0]?.phase),
-      check("attempt-terminal-reason", run.runnerV2?.attempts?.[0]?.terminalReason === "completed_from_event", run.runnerV2?.attempts?.[0]?.terminalReason),
+      check("attempt-terminal-reason", run.runnerV2?.attempts?.[0]?.terminalReason === "completed_from_declared_event", run.runnerV2?.attempts?.[0]?.terminalReason),
       check("attempt-process-evidence", !!run.runnerV2?.attempts?.[0]?.processEvidence?.processPid, run.runnerV2?.attempts?.[0]?.processEvidence || null),
       check("event-written", eventExists(eventDir, "draft-ready"), eventDir),
       check("completion-session", Array.isArray(run.sessions) && run.sessions.some((session) => session.includes("writer")), run.sessions || []),

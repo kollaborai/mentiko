@@ -20,7 +20,7 @@ export const COMPLETION_CONTEXT_ENV_KEYS = [
   "MENTIKO_RUN_ID", "RUN_ID", "NAMESPACE_ID", "ORG_ID", "WORKSPACE_TYPE",
   "MENTIKO_RUN_DIR", "RUN_DIR", "RUNS_DIR", "MENTIKO_GLOBAL_ROOT", "MENTIKO_CODE_ROOT",
   "MENTIKO_PROJECT_ROOT", "MENTIKO_ORG_ROOT", "MENTIKO_NAMESPACE_ROOT",
-  "EVENTS_DIR", "STATE_DIR", "AGENT_PROFILES_DIR", "MENTIKO_WEB_URL",
+  "EVENTS_DIR", "STATE_DIR", "SCHEDULES_DIR", "AGENT_PROFILES_DIR", "MENTIKO_WEB_URL",
   // Routed agents can require authenticated Mentiko MCP operations. Keep this
   // run-scoped capability in the private one-shot context, never in argv or
   // durable run state.

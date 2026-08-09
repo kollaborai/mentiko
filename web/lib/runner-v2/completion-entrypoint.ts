@@ -23,6 +23,7 @@ import { runnerV2PtyEnv } from "@/lib/runner-v2/pty-scope";
 import { isPayloadCompatibleWithKind } from "@/lib/generation/payload-contract";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advance";
+import type { OnCompletePolicy, TerminalCompletionInput } from "@/lib/runner-v2/terminal-plan";
 import config from "@/lib/config";
 
 export interface RunnerV2CompletionEntrypointInput {
@@ -197,6 +198,19 @@ export function runRunnerV2CompletionEntrypoint(
     };
   }
 
+    const terminal: TerminalCompletionInput = {
+      runId,
+      chainId: completionChainId,
+      chainName: completionChainName,
+      chainPath: input.chainPath,
+      taskId: executionTaskId,
+      lastAgentId: agent.id,
+      sessions: run.sessions,
+      schedule: configuredSchedule(chain.config?.schedule),
+      onComplete: terminalOnComplete(chain.config?.on_complete),
+      webhookUrl: stringValue(chain.config?.webhook_url),
+    };
+
     const pipeline = runCompletionPipeline({
       runDir,
       runJsonPath,
@@ -206,14 +220,7 @@ export function runRunnerV2CompletionEntrypoint(
       events,
       maxRounds,
       now: input.now,
-      terminal: {
-        runId,
-        chainId: completionChainId,
-        chainName: completionChainName,
-        chainPath: input.chainPath,
-        taskId: executionTaskId,
-        lastAgentId: agent.id,
-      },
+      terminal,
       generation: generationImportPlan(run, runDir, agent.id, env),
       completionRecoveryEvidence: monitorCompletionRecoveryEvidence(env),
       fanGroup,
@@ -261,14 +268,7 @@ export function runRunnerV2CompletionEntrypoint(
       pipeline,
       allEvents: events,
       allAgentIds: chain.agents.map((candidate) => candidate.id),
-      terminal: {
-        runId,
-        chainId: completionChainId,
-        chainName: completionChainName,
-        chainPath: input.chainPath,
-        taskId: executionTaskId,
-        lastAgentId: agent.id,
-      },
+      terminal,
       agentCompletion: {
         runId,
         chainName: completionChainName,
@@ -306,6 +306,7 @@ export function runRunnerV2CompletionEntrypoint(
       orgId: env.ORG_ID || "default",
       eventsDir,
       eventsArchiveDir: join(eventsDir, "archive"),
+      schedulesDir: env.SCHEDULES_DIR,
       dryRun: input.dryRun,
       onRunMutation,
     });
@@ -716,6 +717,11 @@ interface ChainAgent {
   name?: string;
   emits?: string;
   triggers?: string[];
+  wait_for_events?: {
+    events: string[];
+    wait_for?: "all" | "any" | "quorum";
+    quorum?: number;
+  };
   status?: string;
   lastAttemptCreatedAt?: string;
   session_prefix?: string;
@@ -727,6 +733,9 @@ interface ChainConfig {
   max_rounds?: unknown;
   retry?: unknown;
   session_prefix?: unknown;
+  on_complete?: unknown;
+  webhook_url?: unknown;
+  schedule?: unknown;
   webhooks?: unknown;
 }
 
@@ -1059,6 +1068,21 @@ function sessionPrefix(sessionName: string, chain: ChainFile): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function configuredSchedule(value: unknown): string | undefined {
+  const direct = stringValue(value);
+  if (direct) return direct;
+  return stringValue(objectValue(value)?.cron);
+}
+
+function terminalOnComplete(value: unknown): OnCompletePolicy | undefined {
+  const policy = stringValue(value);
+  if (!policy) return undefined;
+  if (policy === "stop" || policy === "keep" || policy === "archive" || policy === "webhook" || policy.startsWith("chain:")) {
+    return policy as OnCompletePolicy;
+  }
+  return undefined;
 }
 
 function resolveCompletionChainId(run: RunRecord, chain: Pick<ChainFile, "id" | "name">): string | undefined {

@@ -1080,11 +1080,16 @@ function recoverLateCompletionIfPossible(input: {
   if (!chain) return { recovered: false };
 
   const events = readEvents(config.eventsDir);
+  // Active events are the only completion candidates. Archived events are
+  // replay evidence only, but they still prove same-run prerequisites for a
+  // typed all/any/quorum route decision.
+  const firedEvents = [...events, ...readEvents(join(config.eventsDir, "archive"))];
   const recovery = recoverLateCompletionEvents({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
     chain,
     events,
+    firedEvents,
   });
   if (recovery.deliveries.length === 0) return { recovered: false };
   // The task pointer is the cross-run arbitration owner. If lifecycle already

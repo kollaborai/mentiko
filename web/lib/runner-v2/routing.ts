@@ -1,7 +1,25 @@
+import { parseRunnerEvent, validateRunnerEventRecord, type RunnerEventRecord } from "@/lib/runner-v2/events";
+
+export type RoutingWaitStrategy = "all" | "any" | "quorum";
+
+export interface RoutingWaitForEvents {
+  events: string[];
+  wait_for?: RoutingWaitStrategy;
+  quorum?: number;
+}
+
+export interface RoutingContext {
+  /** Validated event names already fired for this exact run. */
+  firedEvents?: readonly string[];
+  /** The event currently being routed; supplied by decideNextRoute. */
+  currentEvent?: string;
+}
+
 export interface RoutingAgent {
   id: string;
   emits?: string;
   triggers?: string[];
+  wait_for_events?: RoutingWaitForEvents;
   status?: string;
   lastAttemptCreatedAt?: string;
 }
@@ -23,17 +41,23 @@ export type RoutingDecision =
 
 const ACTIVE_OR_DONE = new Set(["running", "complete", "completed"]);
 
-export function decideNextRoute(chain: RoutingChain, eventName: string, eventTimestamp?: string): RoutingDecision {
+export function decideNextRoute(
+  chain: RoutingChain,
+  eventName: string,
+  eventTimestamp?: string,
+  context?: RoutingContext,
+): RoutingDecision {
+  const routingContext = { ...context, currentEvent: eventName };
   const branch = findBranch(chain.branches, eventName);
   if (branch !== undefined) {
-    return decisionFromBranch(branch, chain.agents, eventName, eventTimestamp);
+    return decisionFromBranch(branch, chain.agents, eventName, eventTimestamp, routingContext);
   }
 
   const triggerMatches = chain.agents
-    .filter((agent) => triggerListMatches(agent.triggers || [], eventName))
+    .filter((agent) => triggerListMatches(routeTriggers(agent), eventName))
     .map((agent) => agent.id);
 
-  return decisionFromTargets(triggerMatches, chain.agents, "trigger match", eventTimestamp);
+  return decisionFromTargets(triggerMatches, chain.agents, "trigger match", eventTimestamp, routingContext);
 }
 
 export function normalizeRouteEvent(value: string): string {
@@ -44,20 +68,32 @@ export function normalizeRouteEvent(value: string): string {
     .replace(/\s+/g, "-");
 }
 
-function decisionFromBranch(branch: unknown, agents: RoutingAgent[], eventName: string, eventTimestamp?: string): RoutingDecision {
+function decisionFromBranch(
+  branch: unknown,
+  agents: RoutingAgent[],
+  eventName: string,
+  eventTimestamp?: string,
+  context?: RoutingContext,
+): RoutingDecision {
   if (typeof branch === "string") {
     if (branch === "stop") {
       return { action: "stop", reason: "explicit stop branch" };
     }
-    return decisionFromTargets([branch], agents, "branch match", eventTimestamp);
+    return decisionFromTargets([branch], agents, "branch match", eventTimestamp, context);
   }
 
   if (Array.isArray(branch)) {
-    return decisionFromTargets(branch.filter((value): value is string => typeof value === "string"), agents, "branch fan-out", eventTimestamp);
+    return decisionFromTargets(
+      branch.filter((value): value is string => typeof value === "string"),
+      agents,
+      "branch fan-out",
+      eventTimestamp,
+      context,
+    );
   }
 
   if (isFanOutBranch(branch)) {
-    const decision = decisionFromTargets(branch.fan_out, agents, "branch fan-out", eventTimestamp);
+    const decision = decisionFromTargets(branch.fan_out, agents, "branch fan-out", eventTimestamp, context);
     if (decision.action !== "launch") return decision;
     // A generated chain once used the same agent as the fan-out member and
     // fan-in target. That launches the agent normally, then launches it again
@@ -79,16 +115,26 @@ function decisionFromBranch(branch: unknown, agents: RoutingAgent[], eventName: 
   if (isConditionalBranch(branch)) {
     const target = branch.conditions.find((condition) => routeConditionMatches(condition.if, eventName))?.then
       ?? branch.default;
-    return target ? decisionFromTargets([target], agents, "branch condition", eventTimestamp) : { action: "wait", reason: "no conditional branch matched" };
+    return target
+      ? decisionFromTargets([target], agents, "branch condition", eventTimestamp, context)
+      : { action: "wait", reason: "no conditional branch matched" };
   }
 
   return { action: "wait", reason: "unsupported branch shape" };
 }
 
-function decisionFromTargets(targets: string[], agents: RoutingAgent[], reason: string, eventTimestamp?: string): RoutingDecision {
+function decisionFromTargets(
+  targets: string[],
+  agents: RoutingAgent[],
+  reason: string,
+  eventTimestamp?: string,
+  context?: RoutingContext,
+): RoutingDecision {
   const runnable = targets.filter((target) => {
     const agent = agents.find((candidate) => candidate.id === target);
-    return agent && !agentIsActiveOrDoneForOccurrence(agent, eventTimestamp) && prerequisitesComplete(agent, agents);
+    return agent
+      && !agentIsActiveOrDoneForOccurrence(agent, eventTimestamp)
+      && prerequisitesComplete(agent, agents, context);
   });
 
   if (runnable.length === 0) {
@@ -132,6 +178,11 @@ function findBranch(branches: Record<string, unknown> | undefined, eventName: st
   return key ? branches[key] : undefined;
 }
 
+function routeTriggers(agent: RoutingAgent): string[] {
+  const configured = agent.wait_for_events?.events;
+  return configured && configured.length > 0 ? configured : agent.triggers || [];
+}
+
 function triggerListMatches(triggers: string[], eventName: string): boolean {
   const normalizedEvent = normalizeRouteEvent(eventName);
   return triggers.some((trigger) => normalizeRouteEvent(trigger) === normalizedEvent);
@@ -148,24 +199,94 @@ function routeConditionMatches(condition: string, eventName: string): boolean {
   }
 }
 
-// NOTE (2026-07-12): multi-trigger MERGE semantics are only half-solved here.
-// `.every()` treats multiple triggers as AND (all upstream must complete) — correct
-// for a parallel fan-in, but it deadlocks an OR-merge of MUTUALLY-EXCLUSIVE branches
-// (e.g. a "diamond": investigator routes to remover OR repointer, then a verifier
-// joins on either fix's event — only one sibling ever runs, so AND can never be
-// satisfied). Fixing that correctly needs the set of events that ACTUALLY fired
-// (a brancher's static `emits` is one of several conditional runtime events, so
-// static-emits reachability guesses wrong on the untaken branch), which is not
-// available at this call site. `completion-entrypoint` hydrates agent status and
-// latest attempt time, but no persisted actually-fired event set is passed into
-// decideNextRoute at completion-runner/recovery/reconcile.
-function prerequisitesComplete(target: RoutingAgent, agents: RoutingAgent[]): boolean {
-  const triggers = target.triggers || [];
+// Explicit wait_for_events policies use the validated same-run event history
+// supplied by completion, recovery, reconcile, and resume. Legacy multi-trigger
+// chains retain their historical AND fallback when no policy is declared.
+function prerequisitesComplete(target: RoutingAgent, agents: RoutingAgent[], context?: RoutingContext): boolean {
+  const triggers = routeTriggers(target);
   if (triggers.length <= 1) return true;
+
+  const fired = normalizedFiredEvents(context);
+  if (target.wait_for_events) {
+    const evidence = context?.firedEvents !== undefined
+      ? fired
+      : new Set([
+          ...fired,
+          ...agents
+            .filter((agent) => agent.status === "complete" || agent.status === "completed")
+            .map((agent) => normalizeRouteEvent(agent.emits || "")),
+        ]);
+    return waitPolicySatisfied(
+      triggers,
+      evidence,
+      target.wait_for_events.wait_for || "all",
+      target.wait_for_events.quorum,
+      true,
+    );
+  }
+
+  // Preserve the pre-existing legacy-chain AND behavior when no explicit
+  // wait_for_events policy exists. A supplied fired-event set is authoritative
+  // for conditional outcomes; static `emits` is only the compatibility
+  // fallback for callers that have no event history.
+  if (context?.firedEvents !== undefined) {
+    return triggers.every((trigger) => fired.has(normalizeRouteEvent(trigger)));
+  }
+  return legacyStaticPrerequisitesComplete(triggers, agents);
+}
+
+function legacyStaticPrerequisitesComplete(triggers: string[], agents: RoutingAgent[]): boolean {
   return triggers.every((trigger) => {
     const emitters = agents.filter((agent) => normalizeRouteEvent(agent.emits || "") === normalizeRouteEvent(trigger));
     return emitters.length === 0 || emitters.some((agent) => agent.status === "complete" || agent.status === "completed");
   });
+}
+
+function normalizedFiredEvents(context?: RoutingContext): Set<string> {
+  const fired = new Set((context?.firedEvents || []).map(normalizeRouteEvent));
+  if (context?.currentEvent) fired.add(normalizeRouteEvent(context.currentEvent));
+  return fired;
+}
+
+function waitPolicySatisfied(
+  triggers: string[],
+  fired: Set<string>,
+  strategy: RoutingWaitStrategy,
+  quorum: number | undefined,
+  hasEventHistory: boolean,
+): boolean {
+  // An explicit policy without history must not guess from static declarations
+  // for all/quorum. The current event is still included in `fired`, so an
+  // explicit any policy remains routable in direct callers and live completion.
+  if (!hasEventHistory && strategy !== "any") return false;
+  const normalizedTriggers = new Set(triggers.map(normalizeRouteEvent));
+  const matched = [...normalizedTriggers].filter((trigger) => fired.has(trigger)).length;
+  if (strategy === "any") return matched >= 1;
+  if (strategy === "quorum") return matched >= Math.max(1, quorum || 0);
+  return matched === normalizedTriggers.size;
+}
+
+/** Build routing evidence from valid event records belonging to one run. */
+export function routingContextForEvents(
+  events: Iterable<RunnerEventRecord | string>,
+  runId: string,
+  currentEvent?: string,
+): RoutingContext {
+  const fired = new Set<string>();
+  for (const candidate of events) {
+    let event: RunnerEventRecord;
+    try {
+      event = typeof candidate === "string" ? parseRunnerEvent(candidate) : candidate;
+    } catch {
+      continue;
+    }
+    if (event.runId !== runId || !validateRunnerEventRecord(event).valid) continue;
+    fired.add(normalizeRouteEvent(event.event));
+  }
+  return {
+    firedEvents: [...fired],
+    ...(currentEvent ? { currentEvent } : {}),
+  };
 }
 
 // Does this agent have a trigger already produced by a COMPLETED in-chain emitter?
@@ -174,9 +295,29 @@ function prerequisitesComplete(target: RoutingAgent, agents: RoutingAgent[]): bo
 // run.json (the resume route does). Correct for merge triggers whose direct emitter
 // has a single unambiguous `emits`; a chain whose upstream emits a *conditional*
 // (branch-key) event differing from its static `emits` needs the actually-fired event
-// set instead — same gap as prerequisitesComplete above.
-export function hasCompletedTrigger(target: RoutingAgent, agents: RoutingAgent[]): boolean {
-  const triggers = target.triggers || [];
+// set supplied by the caller instead of static declarations.
+export function hasCompletedTrigger(target: RoutingAgent, agents: RoutingAgent[], context?: RoutingContext): boolean {
+  const triggers = routeTriggers(target);
+  if (target.wait_for_events) {
+    const fired = context?.firedEvents !== undefined
+      ? normalizedFiredEvents(context)
+      : new Set(
+          agents
+            .filter((agent) => agent.status === "complete" || agent.status === "completed")
+            .map((agent) => normalizeRouteEvent(agent.emits || "")),
+        );
+    return waitPolicySatisfied(
+      triggers,
+      fired,
+      target.wait_for_events.wait_for || "all",
+      target.wait_for_events.quorum,
+      true,
+    );
+  }
+  if (context?.firedEvents !== undefined) {
+    const fired = normalizedFiredEvents(context);
+    return triggers.some((trigger) => fired.has(normalizeRouteEvent(trigger)));
+  }
   return triggers.some((trigger) => {
     const normalized = normalizeRouteEvent(trigger);
     return agents.some((agent) =>

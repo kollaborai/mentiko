@@ -34,13 +34,17 @@ async function main() {
   const runDir = join(tempRoot, "run");
   const profilesDir = join(tempRoot, "profiles");
   const workspaceDir = join(tempRoot, "workspace");
-  const launchChainPath = join(runDir, "typed-launch-chain.json");
+  const launchChainPath = join(runDir, "chain.json");
+  const stubCliPath = join(codeRoot, "web", "e2e", "engine", "fixtures", "stub-agent-cli.sh");
+  const probeEventsDir = join(tempRoot, "global", "namespaces", "runner-v2-proof", "events");
   mkdirSync(runDir, { recursive: true });
   mkdirSync(profilesDir, { recursive: true });
   mkdirSync(workspaceDir, { recursive: true });
+  process.env.AGENT_PROFILES_DIR = profilesDir;
   writeFileSync(join(profilesDir, "stub.json"), JSON.stringify({
     id: "stub",
-    cli: "claude",
+    name: "Stub",
+    cli: stubCliPath,
     env: {
       ANTHROPIC_API_KEY: "{secret:ANTHROPIC_API_KEY}",
       MUST_NOT_INLINE: "proof-secret",
@@ -53,6 +57,8 @@ async function main() {
     agents: [
       { id: "first", name: "First", triggers: [] },
       { id: "manual", name: "Manual", triggers: ["manual-start"] },
+      { id: "writer", name: "Writer", emits: "draft-ready", triggers: [] },
+      { id: "reviewer", name: "Reviewer", triggers: ["draft-ready"] },
     ],
   }, null, 2));
   // typed bootstrap persists AgentAttempt records into run.json; live launches
@@ -149,6 +155,7 @@ async function main() {
   mkdirSync(blockWorkspace, { recursive: true });
   writeFileSync(join(blockProfilesDir, "blocker.json"), JSON.stringify({
     id: "blocker",
+    name: "Blocker",
     cli: "claude",
     readiness: {
       enabled: true,
@@ -165,6 +172,8 @@ async function main() {
     id: "run-block",
     chain: "Typed Block Proof",
     chainId: "typed-block-proof",
+    goal: "prove typed readiness block",
+    started: new Date().toISOString(),
     status: "running",
     agents: [{ id: "manual", name: "Manual", status: "pending", session: "" }],
     sessions: [],
@@ -221,6 +230,7 @@ async function main() {
   mkdirSync(capWorkspace, { recursive: true });
   writeFileSync(join(capProfilesDir, "stub.json"), JSON.stringify({
     id: "stub",
+    name: "Stub",
     cli: "claude",
     readiness: { enabled: true, ready_patterns: [{ name: "ready", value: "claude ready" }] },
   }, null, 2));
@@ -234,6 +244,8 @@ async function main() {
     id: "run-cap",
     chain: "Typed Cap Proof",
     chainId: "typed-cap-proof",
+    goal: "prove typed cap block",
+    started: new Date().toISOString(),
     status: "running",
     agents: [{ id: "manual", name: "Manual", status: "pending", session: "" }],
     sessions: [],
@@ -289,6 +301,7 @@ async function main() {
 
   const result = await runSyntheticRunnerV2ProbeWithDispatch({
     runDir,
+    eventsDir: probeEventsDir,
     env: { MENTIKO_RUNNER_V2: "1" },
     dryRun: false,
     dispatchExternalEffects: true,
@@ -296,13 +309,14 @@ async function main() {
     orgId: "default",
   });
 
-  const eventPath = join(runDir, "events", "run-probe-writer-draft-ready.event");
+  const eventPath = join(probeEventsDir, "run-probe-writer-draft-ready.event");
+  const eventArchivePath = join(probeEventsDir, "archive", "run-probe-writer-draft-ready.event");
   const externalOutboxPath = join(runDir, "external-effects.jsonl");
   const dispatchAuditPath = join(runDir, "external-effects.dispatch.jsonl");
   const checks = [
     check("probe-ok", result.status === "ok", result.status),
     check("live-mode", result.status === "ok" && result.mode === "live", result.status === "ok" ? result.mode : "skipped"),
-    check("event-processed", existsSync(eventPath) && readFileSync(eventPath, "utf8").includes("processed: true"), eventPath),
+    check("event-processed", existsSync(eventArchivePath) && readFileSync(eventArchivePath, "utf8").includes("processed: true"), eventArchivePath),
     check("external-outbox", existsSync(externalOutboxPath) && readFileSync(externalOutboxPath, "utf8").includes("\"status\":\"queued\""), externalOutboxPath),
     check("external-dispatch-audit", existsSync(dispatchAuditPath) && readFileSync(dispatchAuditPath, "utf8").includes("\"status\":\"dispatched\""), dispatchAuditPath),
     check("typed-bootstrap-session", !!sessionSpawn && bootstrapPlan.sessionName.includes("manual"), bootstrapPlan.sessionName),

@@ -404,7 +404,16 @@ function reject(values: Map<string, string>, allowed: string[]): void { for (con
 function isCommand(value: string | undefined): value is Command { return value === "classify" || value === "wait" || value === "result" || value === "result-field"; }
 function usage(): string { return "usage: runner-readiness <classify|wait|result|result-field> [options]"; }
 
-if (require.main === module) {
+// This module is bundled into several runner entrypoints. A plain
+// `require.main === module` guard also fires for those bundles, causing the
+// embedded CLI to parse the runner's arguments and set exitCode=1. Only run
+// the CLI when the readiness entrypoint itself is the process entrypoint.
+function isStandaloneReadinessCli(): boolean {
+  const entrypoint = process.argv[1] || "";
+  return /(?:^|[\\/])(?:runner-readiness|readiness-cli)(?:\.(?:c|m)?[jt]s)?$/.test(entrypoint);
+}
+
+if (require.main === module && isStandaloneReadinessCli()) {
   try { runReadinessCli(process.argv.slice(2)); }
   catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
 }
