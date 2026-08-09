@@ -406,9 +406,9 @@ export async function startChainRun({
     : null;
   runChain = applyRuntimeAgentProfileOverride(runChain, runtimeProfile?.id);
 
-  // B5 run-start manifest gate: verify against the RAW submitted chain (the
-  // persisted definition), not the resolved/profiled runtime copy. A digest
-  // match executes the accepted semantics; drift requires explicit
+  // B5 run-start manifest gate: verify against the persisted definition or its
+  // exact resolved GET read-model equivalent, never the later profiled runtime
+  // copy. A match executes the accepted semantics; drift requires explicit
   // re-acceptance (re-save); no manifest falls back to current-rules checks.
   const runStartChainId = callerChainId || validChainName.toLowerCase().replace(/\s+/g, "-");
   const manifestVerification = verifyAcceptedManifest(

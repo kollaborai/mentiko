@@ -10,7 +10,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "@jest/globals";
 import { join } from "path";
 import { tmpdir } from "os";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from "fs";
 
 type AcceptanceModule = typeof import("./generated-chain-acceptance");
 type SettingsModule = typeof import("../system/system-settings");
@@ -198,6 +198,21 @@ describe("accepted manifest (B5)", () => {
     );
     expect(verification.state).toBe("accepted");
 
+    const resolvedAgent = JSON.parse(
+      readFileSync(join(agentsDir(), "runtime-verifier", "agent.json"), "utf8"),
+    );
+    const resolvedReadModel = {
+      ...accepted.manifestChain,
+      id: "acceptance-example",
+      agents: [resolvedAgent],
+    };
+    expect(acceptance.verifyAcceptedManifest(
+      "ns",
+      "org",
+      "acceptance-example",
+      resolvedReadModel,
+    ).state).toBe("accepted");
+
     const drifted = acceptance.verifyAcceptedManifest(
       "ns",
       "org",
@@ -205,6 +220,17 @@ describe("accepted manifest (B5)", () => {
       { ...accepted.manifestChain, description: "edited after acceptance" },
     );
     expect(drifted.state).toBe("drifted");
+
+    const editedResolvedReadModel = {
+      ...resolvedReadModel,
+      agents: [{ ...resolvedAgent, prompt: "edited after acceptance" }],
+    };
+    expect(acceptance.verifyAcceptedManifest(
+      "ns",
+      "org",
+      "acceptance-example",
+      editedResolvedReadModel,
+    ).state).toBe("drifted");
 
     expect(acceptance.verifyAcceptedManifest("ns", "org", "never-accepted", accepted.manifestChain).state)
       .toBe("none");

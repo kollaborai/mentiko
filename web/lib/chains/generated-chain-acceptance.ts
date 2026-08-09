@@ -258,6 +258,50 @@ export type ManifestVerification =
   | { state: "none" };
 
 /**
+ * The chain GET endpoint exposes a read model: it adds the chain id and
+ * resolves manifest $refs to full agent definitions. That representation is
+ * equivalent to the accepted manifest only when resolving the accepted
+ * manifest produces the exact submitted chain (apart from that transport id).
+ * Keep the raw manifest digest as the fast path; this comparison is only the
+ * representation bridge for callers that obtained a chain through GET.
+ */
+function matchesResolvedAcceptedManifest(
+  namespaceId: string,
+  orgId: string,
+  chainId: string,
+  record: AcceptedManifestRecord,
+  submittedChain: Record<string, unknown>,
+): boolean {
+  const acceptedChain = record.manifest_chain;
+  if (!Array.isArray(acceptedChain.agents) || !Array.isArray(submittedChain.agents)) {
+    return false;
+  }
+  if (acceptedChain.agents.length !== submittedChain.agents.length) {
+    return false;
+  }
+
+  let resolvedAgents: unknown[];
+  try {
+    resolvedAgents = resolveChainAgents(acceptedChain.agents, namespaceId, orgId) as unknown[];
+  } catch {
+    // An unresolved dependency cannot be treated as an equivalent execution
+    // view. The normal manifest digest check remains fail-closed.
+    return false;
+  }
+
+  const resolvedAcceptedChain: Record<string, unknown> = {
+    ...acceptedChain,
+    agents: resolvedAgents,
+  };
+  const submittedComparable = { ...submittedChain };
+  if (!Object.prototype.hasOwnProperty.call(acceptedChain, "id") && submittedComparable.id === chainId) {
+    delete submittedComparable.id;
+  }
+
+  return canonicalGeneratedChainHash(submittedComparable) === canonicalGeneratedChainHash(resolvedAcceptedChain);
+}
+
+/**
  * Run-start verification (B5): a chain with an accepted manifest executes
  * under the semantics it was ACCEPTED with — a later release must not
  * reinterpret it. Digest match => execute; drift => the authored content or
@@ -275,5 +319,8 @@ export function verifyAcceptedManifest(
   if (!record) return { state: "none" };
   const currentDigest = canonicalGeneratedChainHash(effectiveChain);
   if (currentDigest === record.digest) return { state: "accepted", record };
+  if (matchesResolvedAcceptedManifest(namespaceId, orgId, chainId, record, effectiveChain)) {
+    return { state: "accepted", record };
+  }
   return { state: "drifted", record, currentDigest };
 }
