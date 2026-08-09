@@ -413,7 +413,7 @@ function isStandaloneReadinessCli(): boolean {
   return /(?:^|[\\/])(?:runner-readiness|readiness-cli)(?:\.(?:c|m)?[jt]s)?$/.test(entrypoint);
 }
 
-if (require.main === module && isStandaloneReadinessCli()) {
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module && isStandaloneReadinessCli()) {
   try { runReadinessCli(process.argv.slice(2)); }
   catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
 }
