@@ -386,6 +386,42 @@ export function transitionAgentAttempt(input: {
   }, input.onMutation);
 }
 
+/**
+ * Complete a best-effort terminal transition without reopening historical
+ * evidence. A watchdog, stop request, or capacity reaper can release an
+ * attempt between an async admission/readiness step and the caller's terminal
+ * write. In that race, `released -> human_action_required` is not a new state
+ * transition; the released record is already the authoritative outcome.
+ * Preserve strict transition errors for non-terminal programmer mistakes.
+ */
+export function transitionAgentAttemptIfOpen(input: {
+  runJsonPath: string;
+  attemptId: string;
+  to: AgentAttemptPhase;
+  reason?: AgentAttemptTerminalReason;
+  detail?: string;
+  now?: Date;
+  onMutation?: RunMutationObserver;
+}): AgentAttemptRecord | undefined {
+  try {
+    return transitionAgentAttempt(input);
+  } catch (error) {
+    if (!(error instanceof AgentAttemptTransitionError)) throw error;
+    const current = readRunnerV2AttemptState(input.runJsonPath).attempts
+      .find((attempt) => attempt.id === input.attemptId);
+    if (
+      current
+      && (
+        current.phase === input.to
+        || (isTerminalAgentAttemptPhase(current.phase) && !canTransition(current.phase, input.to))
+      )
+    ) {
+      return current;
+    }
+    throw error;
+  }
+}
+
 /** Persist the strict FIFO sequence chosen while the org-scoped capacity
  * claim is held. Replays keep the original position. */
 export function recordAgentAttemptQueueOrder(input: {

@@ -5,6 +5,7 @@ import { shellEscape } from "@/lib/api/audit-exec";
 import config from "@/lib/config";
 import {
   buildAgentBootstrapPlan,
+  writeAgentNodeChainSnapshot,
   retargetAgentBootstrapPlan,
   type AgentBootstrapPlan,
 } from "@/lib/runner-v2/agent-bootstrap-plan";
@@ -22,6 +23,10 @@ import {
   ensureRunWorkspaceBaseline,
 } from "@/lib/runner-v2/workspace-evidence";
 import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidence-types";
+import {
+  loadTaskContext,
+  taskContextEnvironment,
+} from "@/lib/runner-v2/task-context";
 import { cleanupGitNodeWorkspaceDurably } from "@/lib/runner-v2/workspace-cleanup";
 import {
   allocateGitNodeWorkspace,
@@ -46,6 +51,7 @@ import {
   releaseAgentAttempt,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
+  transitionAgentAttemptIfOpen,
 } from "@/lib/runner-v2/agent-attempt";
 import type { RunnerV2LaunchContext, RunnerV2LaunchResult } from "@/lib/runner-v2/types";
 import type { AgentProfileReadinessConfig } from "@/lib/types";
@@ -159,6 +165,54 @@ export function assertTypedMonitorRuntimeAvailable(codeRoot: string = config.cod
   }
 }
 
+/**
+ * Resolve the immutable task snapshot at the typed bootstrap boundary.
+ *
+ * Initial web launches, routed launches, and recovery launches all converge
+ * here. Keeping the fetch here prevents one caller from remembering TASK_ID
+ * while another silently launches with blank TASK_* values. A caller that has
+ * already loaded the same snapshot can carry it forward without a second API
+ * request.
+ */
+export async function resolveRunnerV2LaunchEnv(
+  context: Pick<RunnerV2LaunchContext, "env" | "taskId" | "runId" | "chainId">,
+): Promise<NodeJS.ProcessEnv> {
+  const taskId = context.taskId?.trim();
+  if (!taskId) return context.env;
+
+  if (context.env.TASK_ID === taskId && context.env.TASK_CONTEXT?.trim()) {
+    return context.env;
+  }
+
+  const apiBase = context.env.BETTER_AUTH_URL
+    || context.env.MENTIKO_WEB_URL
+    || `http://localhost:${context.env.WEB_PORT || context.env.PORT || "3000"}`;
+  const task = await loadTaskContext({
+    taskId,
+    apiBase,
+    // BETTER_AUTH_SECRET is intentionally excluded from the child agent env.
+    // The launcher still owns the process-level service credential, so use it
+    // for this server-side task snapshot request without leaking it into the
+    // run-scoped environment.
+    // The task route accepts the Better Auth service bearer, while the
+    // run-scoped session token is intended for APIs that explicitly verify
+    // that token. When both are present (the normal web-launch case), use the
+    // service credential for this server-side snapshot request.
+    authToken: context.env.BETTER_AUTH_SECRET
+      || process.env.BETTER_AUTH_SECRET
+      || context.env.MENTIKO_SESSION_TOKEN,
+    namespaceId: context.env.NAMESPACE_ID || "default",
+    orgId: context.env.ORG_ID || "default",
+  });
+  const taskEnv = taskContextEnvironment(task, {
+    namespaceId: context.env.NAMESPACE_ID || "default",
+    orgId: context.env.ORG_ID || "default",
+    sourceRunId: context.runId,
+    chainId: context.chainId,
+  });
+  return { ...context.env, ...taskEnv };
+}
+
 export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Promise<RunnerV2LaunchResult> {
   if (context.env.WORKSPACE_TYPE && context.env.WORKSPACE_TYPE !== "local") {
     return {
@@ -178,26 +232,29 @@ export async function startRunnerV2Bootstrap(context: RunnerV2LaunchContext): Pr
     };
   }
 
+  let launchContext = context;
   let plan: AgentBootstrapPlan;
   try {
+    const launchEnv = await resolveRunnerV2LaunchEnv(context);
+    launchContext = { ...context, env: launchEnv };
     plan = buildAgentBootstrapPlan({
-      chainPath: context.chainPath,
-      runDir: context.runDir,
-      runId: context.runId,
-      agentId: context.agentId,
-      workspacePath: context.workspacePath,
-      env: context.env,
+      chainPath: launchContext.chainPath,
+      runDir: launchContext.runDir,
+      runId: launchContext.runId,
+      agentId: launchContext.agentId,
+      workspacePath: launchContext.workspacePath,
+      env: launchContext.env,
     });
   } catch (error) {
     return {
       support: "unsupported",
-      reason: error instanceof Error ? error.message : "runner-v2 bootstrap planning failed",
-      fallbackAllowed: true,
+      reason: error instanceof Error ? `runner-v2 bootstrap planning failed: ${error.message}` : "runner-v2 bootstrap planning failed",
+      fallbackAllowed: false,
     };
   }
 
   try {
-    await executeLocalBootstrap(plan, context, pty);
+    await executeLocalBootstrap(plan, launchContext, pty);
     return {
       support: "supported",
       mode: "typed-plan",
@@ -272,7 +329,7 @@ export async function executeLocalBootstrap(
         env: context.env,
       });
       if (!admission.admitted) {
-        transitionAgentAttempt({
+        transitionAgentAttemptIfOpen({
           runJsonPath,
           attemptId: attempt.id,
           to: "human_action_required",
@@ -295,14 +352,19 @@ export async function executeLocalBootstrap(
       env: context.env,
     });
     if (!agentAdmission.admitted) {
-      transitionAgentAttempt({
+      const terminalAttempt = transitionAgentAttemptIfOpen({
         runJsonPath,
         attemptId: attempt.id,
         to: "human_action_required",
         reason: "agent_capacity_timeout",
         detail: agentAdmission.reason,
       });
-      markRunAgentBlocked(runJsonPath, plan.agentId, agentAdmission.reason);
+      // A cancelled capacity wait already released the attempt because the
+      // run became terminal. Do not rewrite that run as blocked or reopen the
+      // released attempt merely because this async caller resumed afterward.
+      if (terminalAttempt?.phase !== "released") {
+        markRunAgentBlocked(runJsonPath, plan.agentId, agentAdmission.reason);
+      }
       return;
     }
     assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
@@ -314,8 +376,29 @@ export async function executeLocalBootstrap(
         baseCommit: context.env.MENTIKO_WORKSPACE_BASE_COMMIT,
       })
       : undefined;
-    if (nodeWorkspace) {
-      executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
+    // nodeWorkspace only exists when runWorkspace was allocated, which itself
+    // only happens for a git-tracked baseline (see runWorkspace above) — but
+    // that link is a runtime invariant, not something the type checker can
+    // see across two separate variables. Re-narrow on the discriminant so the
+    // unavailable variant (no baseline to rewrite chain paths against)
+    // explicitly skips this retarget block instead of throwing.
+    if (nodeWorkspace && workspaceExecution.tracking === "git") {
+      const nodeChainPath = join(
+        executionPlan.artifactsDir,
+        `${safeArtifactName(plan.agentId)}-${safeArtifactName(attempt.id)}-chain.json`,
+      );
+      writeAgentNodeChainSnapshot({
+        chainPath: plan.monitorSpec.chainPath,
+        sourceWorkspacePath: workspaceExecution.baseline.sourceWorkspacePath,
+        nodeWorkspacePath: nodeWorkspace.workspacePath,
+        targetPath: nodeChainPath,
+      });
+      executionPlan = retargetAgentBootstrapPlan(
+        plan,
+        nodeWorkspace.workspacePath,
+        context.env,
+        nodeChainPath,
+      );
     }
     executionPlan = {
       ...executionPlan,
@@ -437,7 +520,7 @@ export async function executeLocalBootstrap(
         });
         if (cleanup.outcome === "preserved-changes") {
           const detail = `failed startup attempt ${attempt.id} changed its isolated worktree; preserved for review`;
-          transitionAgentAttempt({
+          transitionAgentAttemptIfOpen({
             runJsonPath,
             attemptId: attempt.id,
             to: "human_action_required",
@@ -617,23 +700,39 @@ function buildInitialInstructions(
   workspaceEvidence: WorkspaceHandoffArtifact,
 ): string {
   const taskContext = plan.runContextExports.TASK_CONTEXT;
+  const nodeBaseCommit = (workspaceEvidence.tracking === "git" ? workspaceEvidence.nodeBaseCommit : undefined)
+    || "not available";
   return [
     `You are: ${plan.agentName}`,
     `Run-ID: ${context.runId}`,
     `Agent-ID: ${plan.agentId}`,
     "",
+    "CURRENT EXECUTION FACTS (AUTHORITATIVE — COPY THESE VALUES EXACTLY WHEN RECORDING THIS RUN):",
+    `TASK_ID=${plan.runContextExports.TASK_ID || "not supplied"}`,
+    `RUN_ID=${plan.runContextExports.MENTIKO_RUN_ID || context.runId}`,
+    `NODE_WORKSPACE=${plan.projectRoot}`,
+    `NODE_BASE_COMMIT=${nodeBaseCommit}`,
+    "These facts describe this launch, not the task design. If a required fact is unavailable, report blocked instead of guessing.",
+    "Never source current task/run/workspace/base-commit facts from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples.",
+    "",
     `Your chain run is ${context.chainName}.`,
     `Artifacts directory: ${plan.artifactsDir}`,
     `Events directory: ${plan.eventsDir}`,
+    `Node workspace: ${plan.projectRoot}`,
+    "All workspace reads and writes must use this node workspace. Do not use the registered source workspace from run metadata.",
     "",
     "Read the chain JSON for your full task context:",
-    context.chainPath,
+    plan.monitorSpec.chainPath,
     ...(taskContext ? ["", "Typed task context:", taskContext] : []),
     "",
     buildWorkspaceEvidenceInstructions(workspaceEvidence),
     "",
     buildTypedCompletionContract(plan),
   ].join("\n");
+}
+
+function safeArtifactName(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-");
 }
 
 function buildInitialState(plan: AgentBootstrapPlan) {

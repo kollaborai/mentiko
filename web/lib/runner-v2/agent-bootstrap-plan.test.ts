@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
   buildAgentBootstrapPlan,
   retargetAgentBootstrapPlan,
+  writeAgentNodeChainSnapshot,
 } from "@/lib/runner-v2/agent-bootstrap-plan";
 
 jest.mock("@/lib/config", () => ({
@@ -73,6 +74,7 @@ describe("runner-v2 agent bootstrap plan", () => {
         MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
         MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
         MENTIKO_AI_GATEWAY_LOCAL_TOKEN: "internal-proxy-token",
+        TASK_CONTEXT_JSON: "{\"immutable\":true}",
         ANTHROPIC_API_KEY: "must-not-reach-pty",
       },
     });
@@ -94,6 +96,7 @@ describe("runner-v2 agent bootstrap plan", () => {
       MENTIKO_AGENT_EMITS: "draft-ready",
       EVENTS_DIR: join(root, "events"),
       ARTIFACTS_DIR: join(runDir, "artifacts"),
+      TASK_CONTEXT_JSON: "{\"immutable\":true}",
       AGENT_PROFILES_DIR: profilesDir,
       MENTIKO_AI_GATEWAY_LOCAL_PROXY_ENABLED: "true",
       MENTIKO_AI_GATEWAY_LOCAL_BASE_URL: "http://127.0.0.1:3200/api/ai-gateway/local/v1",
@@ -127,6 +130,36 @@ describe("runner-v2 agent bootstrap plan", () => {
     expect(isolated.localStartCommand).toContain(nodeWorkspace);
     expect(isolated.monitorCommand).toContain(`export MENTIKO_PROJECT_ROOT='${nodeWorkspace}'`);
     expect(isolated.profilePath).toBe(plan.profilePath);
+  });
+
+  it("rewrites the agent-facing chain snapshot to the isolated node workspace", () => {
+    const root = tempDir();
+    const sourceWorkspace = join(root, "source-workspace");
+    const nodeWorkspace = join(root, "run-worktrees", "attempt-writer");
+    const chainPath = join(root, "chain.json");
+    const targetPath = join(root, "artifacts", "writer-chain.json");
+    mkdirSync(join(root, "artifacts"), { recursive: true });
+    writeJson(chainPath, {
+      config: {
+        project_root: sourceWorkspace,
+        prompt: `Use ${sourceWorkspace}/docs only as a reference`,
+      },
+      agents: [{ id: "writer", triggers: ["manual-start"] }],
+    });
+
+    writeAgentNodeChainSnapshot({
+      chainPath,
+      sourceWorkspacePath: sourceWorkspace,
+      nodeWorkspacePath: nodeWorkspace,
+      targetPath,
+    });
+
+    const snapshot = JSON.parse(readFileSync(targetPath, "utf8")) as {
+      config: { project_root: string; prompt: string };
+    };
+    expect(snapshot.config.project_root).toBe(nodeWorkspace);
+    expect(snapshot.config.prompt).toBe(`Use ${nodeWorkspace}/docs only as a reference`);
+    expect(readFileSync(targetPath, "utf8")).not.toContain(sourceWorkspace);
   });
 
   it("emits the compiled typed monitor command without a shell compatibility route", () => {

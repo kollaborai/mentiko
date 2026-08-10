@@ -300,6 +300,47 @@ describe("POST /api/jobs/[id]/complete", () => {
     expect(mockTaskUpdate).not.toHaveBeenCalled();
   });
 
+  test("publishes task-generation completion only after import and auto-run handoff", async () => {
+    let currentJob = {
+      id: "job-task",
+      type: "task",
+      status: "running",
+      input: {
+        workspacePath: "/repo/mentiko",
+        autoRun: true,
+      },
+      runId: "run-task",
+      chainId: "task-generation",
+      createdAt: "2026-05-26T00:00:00.000Z",
+    };
+    mockGetJob.mockImplementation(() => currentJob);
+    mockUpdateJob.mockImplementation((_id, updates) => {
+      currentJob = { ...currentJob, ...updates };
+    });
+
+    const { POST } = await import("./route");
+    await POST(makeRequest({
+      status: "complete",
+      result: {
+        output: JSON.stringify({ route: "task", task: generatedTask() }),
+      },
+      runId: "run-task",
+      chainId: "task-generation",
+    }), { params: Promise.resolve({ id: "job-task" }) });
+
+    const updates = mockUpdateJob.mock.calls.map(([, update]) => update as Record<string, unknown>);
+    const terminalUpdateIndex = updates.findIndex(
+      (update) => update.status === "complete" && update.taskId === "EPIC-001",
+    );
+    expect(updates[0]).toEqual(expect.objectContaining({ status: "running" }));
+    expect(terminalUpdateIndex).toBeGreaterThan(0);
+    expect(updates.slice(0, terminalUpdateIndex).some((update) => update.status === "complete")).toBe(false);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/api/tasks/auto-run",
+      expect.objectContaining({ body: JSON.stringify({ taskId: "EPIC-001" }) }),
+    );
+  });
+
   test("unwraps the job runner output envelope before importing a generated task", async () => {
     const { POST } = await import("./route");
 

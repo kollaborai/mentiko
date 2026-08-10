@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 import { buildLocalAiGatewayProxyEnv } from "@/lib/ai-gateway/local-proxy-env";
 import config, { ptyDaemonEnv } from "@/lib/config";
@@ -148,6 +148,7 @@ export function buildAgentBootstrapPlan(input: AgentBootstrapPlanInput): AgentBo
     TASK_NOTES: input.env?.TASK_NOTES || "",
     TASK_COMMENTS: input.env?.TASK_COMMENTS || "",
     TASK_CONTEXT: input.env?.TASK_CONTEXT || "",
+    TASK_CONTEXT_JSON: input.env?.TASK_CONTEXT_JSON || "",
     ...gatewayEnv,
     ...ptyDaemonEnv(),
     MENTIKO_READINESS_FAIL_CLOSED: input.env?.MENTIKO_READINESS_FAIL_CLOSED || "",
@@ -212,15 +213,21 @@ export function retargetAgentBootstrapPlan(
   plan: AgentBootstrapPlan,
   projectRoot: string,
   env?: Record<string, string | undefined>,
+  chainPath?: string,
 ): AgentBootstrapPlan {
   const runContextExports = {
     ...plan.runContextExports,
     MENTIKO_PROJECT_ROOT: projectRoot,
   };
+  const monitorSpec = {
+    ...plan.monitorSpec,
+    ...(chainPath ? { chainPath } : {}),
+  };
   return {
     ...plan,
     projectRoot,
     runContextExports,
+    monitorSpec,
     localStartCommand: buildLocalStartCommand(
       projectRoot,
       runContextExports,
@@ -229,16 +236,64 @@ export function retargetAgentBootstrapPlan(
     ),
     monitorCommand: buildMonitorCommand({
       sessionName: plan.sessionName,
-      chainPath: plan.monitorSpec.chainPath,
+      chainPath: monitorSpec.chainPath,
       agentId: plan.agentId,
       agentName: plan.agentName,
-      emits: plan.monitorSpec.emits,
-      interval: plan.monitorSpec.interval,
-      maxStale: plan.monitorSpec.maxStale,
-      runId: plan.monitorSpec.runId,
+      emits: monitorSpec.emits,
+      interval: monitorSpec.interval,
+      maxStale: monitorSpec.maxStale,
+      runId: monitorSpec.runId,
       env: runContextExports,
     }),
   };
+}
+
+/**
+ * Give the model and monitor a chain snapshot whose workspace references point
+ * at this node's worktree. The run-level chain remains the immutable source
+ * snapshot; exposing its registered source path to a coding agent defeats Git
+ * isolation even when the PTY cwd and MENTIKO_PROJECT_ROOT are correct.
+ */
+export function writeAgentNodeChainSnapshot(input: {
+  chainPath: string;
+  sourceWorkspacePath: string;
+  nodeWorkspacePath: string;
+  targetPath: string;
+}): string {
+  const rawChain = JSON.parse(readFileSync(input.chainPath, "utf8")) as unknown;
+  const rewritten = rewriteWorkspacePaths(
+    rawChain,
+    input.sourceWorkspacePath,
+    input.nodeWorkspacePath,
+  );
+  const chain = isRecord(rewritten) ? { ...rewritten } : {};
+  const config = isRecord(chain.config) ? { ...chain.config } : {};
+  config.project_root = input.nodeWorkspacePath;
+  chain.config = config;
+  writeFileSync(
+    input.targetPath,
+    `${JSON.stringify(chain, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600, flag: "wx" },
+  );
+  return input.targetPath;
+}
+
+function rewriteWorkspacePaths(value: unknown, source: string, node: string): unknown {
+  if (typeof value === "string") {
+    return value.includes(source) ? value.split(source).join(node) : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => rewriteWorkspacePaths(item, source, node));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      rewriteWorkspacePaths(item, source, node),
+    ]),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

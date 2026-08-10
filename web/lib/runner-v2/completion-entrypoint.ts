@@ -443,6 +443,17 @@ export function runRunnerV2CompletionEntrypoint(
           MENTIKO_WEB_URL: env.MENTIKO_WEB_URL,
           MENTIKO_RUNNER_V2: env.MENTIKO_RUNNER_V2,
           MENTIKO_RUNNER_V2_COMPLETION: env.MENTIKO_RUNNER_V2_COMPLETION,
+          TASK_ID: env.TASK_ID,
+          TASK_TITLE: env.TASK_TITLE,
+          TASK_DESCRIPTION: env.TASK_DESCRIPTION,
+          TASK_TYPE: env.TASK_TYPE,
+          TASK_PRIORITY: env.TASK_PRIORITY,
+          TASK_ACCEPTANCE_CRITERIA: env.TASK_ACCEPTANCE_CRITERIA,
+          TASK_DESIGN: env.TASK_DESIGN,
+          TASK_NOTES: env.TASK_NOTES,
+          TASK_COMMENTS: env.TASK_COMMENTS,
+          TASK_CONTEXT: env.TASK_CONTEXT,
+          TASK_CONTEXT_JSON: env.TASK_CONTEXT_JSON,
           MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId,
           MENTIKO_WORKSPACE_BASE_COMMIT: routedWorkspaceBaseCommit,
         },
@@ -652,6 +663,39 @@ function completionAttemptGuard(
   return { runId, agentId, attemptId };
 }
 
+/**
+ * A completion replay can arrive after the original completion already
+ * released the attempt's PTY/capacity lease. The replay still needs to
+ * surface the workspace conflict at run level, but it must not try to move a
+ * historical released attempt back into a live terminal phase.
+ */
+function transitionAttemptToHumanActionRequired(input: {
+  runJsonPath: string;
+  attemptId: string;
+  reason: Parameters<typeof transitionAgentAttempt>[0]["reason"];
+  detail: string;
+  now?: Date;
+}): AgentAttemptRecord | undefined {
+  const attempt = readRunnerV2AttemptState(input.runJsonPath).attempts.find(
+    (candidate) => candidate.id === input.attemptId,
+  );
+  if (!attempt) return undefined;
+  if (attempt.phase === "human_action_required") return attempt;
+  // `completed` is explicitly allowed to transition to a human-resolution
+  // state. Every other terminal phase is historical evidence and cannot be
+  // reopened; leave it intact and let the guarded run-level status carry the
+  // replayed conflict.
+  if (isTerminalAgentAttemptPhase(attempt.phase) && attempt.phase !== "completed") return attempt;
+  return transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    to: "human_action_required",
+    reason: input.reason,
+    detail: input.detail,
+    now: input.now,
+  });
+}
+
 function completionAttemptIsCurrent(
   input: RunAgentAttemptGuard & { runJsonPath: string },
 ): boolean {
@@ -711,10 +755,9 @@ function blockWorkspaceIntegrationConflict(input: {
     `artifact: ${input.integration.artifactPath}`,
   ].join("; ");
 
-  transitionAgentAttempt({
+  transitionAttemptToHumanActionRequired({
     runJsonPath: input.runJsonPath,
     attemptId: input.attemptId,
-    to: "human_action_required",
     reason: "workspace_integration_conflict",
     detail,
     now: input.now,
@@ -782,10 +825,9 @@ function blockSourceWorkspaceChanged(input: {
     `artifact: ${input.publication.artifactPath}`,
   ].join("; ");
 
-  transitionAgentAttempt({
+  transitionAttemptToHumanActionRequired({
     runJsonPath: input.runJsonPath,
     attemptId: input.attemptId,
-    to: "human_action_required",
     reason: "source_workspace_changed",
     detail,
     now: input.now,

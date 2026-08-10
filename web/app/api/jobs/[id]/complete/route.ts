@@ -243,14 +243,29 @@ export const POST = withErrorHandling(async (
     jobError = INVALID_GENERATED_CHAIN_RESULT_ERROR;
   }
 
+  // Task generation has one more completion boundary than an ordinary job:
+  // the model payload must first be imported into the task store (and, when
+  // requested, handed to the auto-run driver). Publishing `complete` before
+  // that side effect lets the UI race in, see only the raw generated task,
+  // and fall back to the manual preview even though Auto-run is enabled.
+  // Keep the job non-terminal until the task tree has been materialized.
+  const deferTaskGenerationCompletion =
+    jobStatus === "complete"
+    && job.type === "task"
+    && !job.taskId
+    && !!(result || job.result);
+  const persistedJobStatus = deferTaskGenerationCompletion ? "running" : jobStatus;
+
   // update job
   updateJob(id, {
-    status: jobStatus,
+    status: persistedJobStatus,
     result: result || job.result,
     error: jobStatus === "failed" ? jobError || job.error : undefined,
     runId: typeof body.runId === "string" ? body.runId : job.runId,
     chainId: typeof body.chainId === "string" ? body.chainId : job.chainId,
-    completedAt: jobStatus === "complete" || jobStatus === "failed" ? new Date().toISOString() : job.completedAt,
+    completedAt: persistedJobStatus === "complete" || persistedJobStatus === "failed"
+      ? new Date().toISOString()
+      : job.completedAt,
   }, namespaceId);
 
   // post-process chain generation: extract inline agents -> write to registry -> rewrite with $refs
@@ -311,7 +326,7 @@ export const POST = withErrorHandling(async (
   // re-fetch to get updated state
   let updatedJob = getJob(id, namespaceId);
 
-  if (updatedJob?.type === "task" && updatedJob.status === "complete" && updatedJob.result && !updatedJob.taskId) {
+  if (deferTaskGenerationCompletion && updatedJob?.type === "task" && updatedJob.result && !updatedJob.taskId) {
     try {
       const workspacePath = workspacePathFromJobInput(updatedJob.input);
       const parentId = typeof updatedJob.input.parentId === "string"
@@ -348,8 +363,10 @@ export const POST = withErrorHandling(async (
           taskId: outcome.taskId,
         };
         updateJob(id, {
+          status: "complete",
           taskId: outcome.taskId,
           result: enrichedResult,
+          completedAt: new Date().toISOString(),
         }, namespaceId);
         updatedJob = getJob(id, namespaceId);
         // Decisions don't auto-run — the human steps through them in /decisions.
@@ -360,15 +377,19 @@ export const POST = withErrorHandling(async (
           createdTaskIds: outcome.createdTaskIds,
           createdTasks: outcome.tasks,
         };
-        updateJob(id, {
-          taskId: outcome.parentId,
-          result: enrichedResult,
-        }, namespaceId);
-        updatedJob = getJob(id, namespaceId);
-
         if (autoRun) {
           await triggerAutoRunContinuation(request, namespaceId, orgId, outcome.parentId);
         }
+
+        // Do not expose the terminal state until task import and the optional
+        // auto-run continuation have both been handed off.
+        updateJob(id, {
+          status: "complete",
+          taskId: outcome.parentId,
+          result: enrichedResult,
+          completedAt: new Date().toISOString(),
+        }, namespaceId);
+        updatedJob = getJob(id, namespaceId);
       }
     } catch (e) {
       updateJob(id, {

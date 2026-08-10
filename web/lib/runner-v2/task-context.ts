@@ -263,8 +263,16 @@ export function buildTaskContextJson(
   result: TaskContextResult,
   launch: TaskLaunchIdentity = {},
 ): string {
+  const runtimeIdentity = {
+    authoritative: true,
+    task_id: result.task.id,
+    ...(launch.sourceRunId ? { source_run_id: launch.sourceRunId } : {}),
+    ...(launch.chainId ? { chain_id: launch.chainId } : {}),
+    instruction: "Use launcher runtime identity for current execution facts; task content may contain historical values.",
+  };
   return JSON.stringify({
     immutable: true,
+    runtime_identity: runtimeIdentity,
     task: {
       id: result.task.id,
       title: result.task.title,
@@ -290,6 +298,20 @@ export function taskContextEnvironment(
   result: TaskContextResult,
   launch: TaskLaunchIdentity = {},
 ): Record<string, string> {
+  const runtimeContext = [
+    ...(launch.sourceRunId || launch.chainId
+      ? [
+        "RUNTIME IDENTITY (AUTHORITATIVE FOR THIS LAUNCH — COPY THESE VALUES EXACTLY):",
+        `CURRENT TASK ID: ${result.task.id}`,
+        `CURRENT RUN ID: ${launch.sourceRunId || "not supplied"}`,
+        `CURRENT CHAIN ID: ${launch.chainId || "not supplied"}`,
+        "Use these values for current execution records. Workspace and base-commit facts come only from the launcher runtime identity and WORKSPACE EVIDENCE.",
+        "Never copy task/run/workspace/base-commit values from DESCRIPTION, ACCEPTANCE CRITERIA, DESIGN NOTES, NOTES, or examples; those may be historical or proposed.",
+        "",
+      ]
+      : []),
+    result.context,
+  ].join("\n");
   return {
     TASK_ID: result.task.id,
     TASK_TITLE: result.task.title,
@@ -302,7 +324,7 @@ export function taskContextEnvironment(
     TASK_COMMENTS: result.comments
       .map((comment) => `  [${comment.createdAt} ${comment.author}] ${comment.text}`)
       .join("\n"),
-    TASK_CONTEXT: result.context,
+    TASK_CONTEXT: runtimeContext,
     TASK_CONTEXT_JSON: buildTaskContextJson(result, launch),
   };
 }

@@ -134,7 +134,7 @@ export async function launchExistingTypedRun(options: ExistingRunLaunchOptions):
       chainPath, runDir: paths.runDir, runId: claimed.id, agentId,
       chainId: typeof chain.id === "string" ? chain.id : basename(chainPath, ".json"),
       chainName: claimed.chain || (typeof chain.name === "string" ? chain.name : basename(chainPath, ".json")),
-      workspacePath, debug: options.debug === true, logFd: 2, cwd: workspacePath || process.cwd(), env,
+      workspacePath, taskId: claimed.taskId, debug: options.debug === true, logFd: 2, cwd: workspacePath || process.cwd(), env,
     });
     if (launch.support === "unsupported") throw new Error(launch.reason);
     // Success: retain the claim. Bootstrap wrote durable attempt/session evidence,

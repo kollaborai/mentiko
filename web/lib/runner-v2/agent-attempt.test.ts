@@ -16,6 +16,7 @@ import {
   resolveAgentAttemptForCompletion,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
+  transitionAgentAttemptIfOpen,
 } from "@/lib/runner-v2/agent-attempt";
 import { createRunRecord, updateRunJson } from "@/lib/runner-v2/run-state";
 
@@ -49,6 +50,25 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
     } catch (error) {
       expect(error).toMatchObject({ reason: "invalid_transition", from: "created", to: "instructions_submitted" });
     }
+  });
+
+  it("treats a released-attempt terminalization race as an idempotent no-op", () => {
+    const path = runPath();
+    const attempt = createAgentAttempt({ runJsonPath: path, runId: "run-1", agentId: "writer" });
+    const released = releaseAgentAttempt({ runJsonPath: path, attemptId: attempt.id });
+
+    expect(transitionAgentAttemptIfOpen({
+      runJsonPath: path,
+      attemptId: attempt.id,
+      to: "human_action_required",
+      reason: "agent_capacity_timeout",
+      detail: "capacity waiter resumed after the run was stopped",
+    })).toMatchObject({
+      id: attempt.id,
+      phase: "released",
+      terminalReason: released.terminalReason,
+    });
+    expect(readRun(path).runnerV2.attempts[0].transitions).toHaveLength(1);
   });
 
   it("records process evidence before instructions are submitted", () => {

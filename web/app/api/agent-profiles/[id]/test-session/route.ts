@@ -37,7 +37,7 @@ function buildReadinessTestChain(profile: AgentProfile): Chain {
           "Do not modify files or run long tasks.",
           "Confirm that the session is ready and briefly identify the profile under test.",
         ].join("\n"),
-        triggers: [],
+        triggers: ["manual-start"],
         emits: "readiness_test_complete",
         timeout: 120,
         agent_profile: profile.id,

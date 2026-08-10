@@ -405,6 +405,70 @@ describe("runner-v2 completion entrypoint", () => {
     expect(existsSync(fixture.node.worktreeRoot)).toBe(true);
   });
 
+  it("keeps a released-attempt source-drift replay idempotent", () => {
+    const fixture = seedIsolatedTerminalFixture();
+    writeJson(fixture.chainPath, {
+      id: "chain",
+      name: "Terminal Chain",
+      config: { project_root: fixture.repositoryRoot },
+      agents: [{ id: "publisher", name: "Publisher", emits: "published" }],
+    });
+    writeFileSync(join(fixture.node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    transitionAgentAttempt({
+      runJsonPath: fixture.runJsonPath,
+      attemptId: fixture.attempt.id,
+      to: "completed",
+      reason: "completed_from_durable_marker",
+    });
+    transitionAgentAttempt({
+      runJsonPath: fixture.runJsonPath,
+      attemptId: fixture.attempt.id,
+      to: "released",
+      reason: "released",
+    });
+    writeFileSync(join(fixture.repositoryRoot, "right.ts"), "export const right = 'user-edit';\n");
+    updateRunJson(fixture.runJsonPath, (current) => ({
+      ...current!,
+      status: "completed",
+      agents: [{
+        id: "publisher",
+        name: "Publisher",
+        session: "publisher-run-123",
+        status: "complete",
+      }],
+    }));
+    writeFileSync(join(fixture.eventsDir, "run-123-publisher-published.event"), runnerEventFixture({
+      event: "published",
+      source: "publisher",
+      runId: "run-123",
+      processed: true,
+      data: "replay",
+    }));
+
+    expect(() => runRunnerV2CompletionEntrypoint({
+      sessionName: "publisher-run-123",
+      chainPath: fixture.chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: fixture.runDir,
+        EVENTS_DIR: fixture.eventsDir,
+        STATE_DIR: fixture.stateDir,
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-08-09T20:04:00.000Z"),
+    })).not.toThrow(/invalid AgentAttempt transition/);
+
+    const replayed = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(replayed.status).toBe("blocked");
+    expect(replayed.status_message).toContain("changes: right.ts");
+    expect(replayed.runnerV2?.attempts?.[0]).toMatchObject({
+      phase: "released",
+      terminalReason: "completed_from_durable_marker",
+    });
+  });
+
   it("blocks the edge before downstream effects when parallel node edits conflict", () => {
     const root = tempRoot();
     const repositoryRoot = join(root, "repository");

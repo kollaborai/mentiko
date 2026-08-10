@@ -452,7 +452,7 @@ function addActivity(msg) {
 }
 
 // notify server that job completed (updates task metadata)
-async function notifyCompletion() {
+async function notifyCompletion(statusOverride) {
   if (!CALLBACK_URL) return; // no callback configured, skip
 
   try {
@@ -466,7 +466,7 @@ async function notifyCompletion() {
     }
 
     const body = JSON.stringify({
-      status: job.status,
+      status: statusOverride || job.status,
       result: job.result,
       error: job.error,
     });
@@ -713,9 +713,15 @@ child.on("close", async (code) => {
     process.exit(1);
   }
 
-  // success - write result back
-  job.status = "complete";
-  job.completedAt = new Date().toISOString();
+  // Task-generation completion has a server-side import step. Persist the
+  // result while the job remains non-terminal so the UI cannot observe the raw
+  // task payload and offer a manual preview before /api/jobs/[id]/complete
+  // materializes the task tree. The callback still receives an explicit
+  // terminal status; that route publishes `complete` only after import and
+  // optional auto-run handoff finish.
+  const callbackStatus = job.type === "task" ? "complete" : job.status;
+  job.status = job.type === "task" ? "running" : "complete";
+  job.completedAt = job.status === "complete" ? new Date().toISOString() : undefined;
   job.result = result;
 
   try {
@@ -727,7 +733,7 @@ child.on("close", async (code) => {
 
   const elapsed = job.startedAt ? Math.round((Date.now() - new Date(job.startedAt).getTime()) / 1000) : 0;
   sysLog("info", `job completed: ${jobId}`, `type: ${job.type}, duration: ${elapsed}s`);
-  await notifyCompletion();
+  await notifyCompletion(callbackStatus);
   process.exit(0);
 });
 

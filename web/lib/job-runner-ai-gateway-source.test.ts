@@ -29,6 +29,15 @@ describe("typed job worker AI gateway source contract", () => {
     expect(source).toContain("timeout: RUNNER_CHILD_TIMEOUT_MS");
   });
 
+  it("keeps task-generation jobs non-terminal until the import callback finishes", () => {
+    const successBoundary = source.indexOf("// Task-generation completion has a server-side import step.");
+    const completionSource = source.slice(successBoundary);
+
+    expect(completionSource).toContain('const callbackStatus = job.type === "task" ? "complete" : job.status;');
+    expect(completionSource).toContain('job.status = job.type === "task" ? "running" : "complete";');
+    expect(completionSource).toContain("await notifyCompletion(callbackStatus);");
+  });
+
   it("parses the final JSON object from kollab tool transcripts", () => {
     const transcript = [
       "I need to inspect this first.",
