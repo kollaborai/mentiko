@@ -14,6 +14,11 @@ see: [ENGINE_MAP.md](./ENGINE_MAP.md) for the visual topology of the whole engin
 (triggers, watchers, runner, generation, tasks, decisions) as mermaid diagrams, plus
 a dead-end / things-to-verify list.
 
+see: [run-workspace-graph-execution-spec.md](./run-workspace-graph-execution-spec.md)
+for the acceptance contract governing exact task-start snapshots, one isolated
+worktree and PTY pair per graph node, integration-gated edges, crash-safe
+capacity, and terminal compare-and-swap publication.
+
 overview
 ========
 
