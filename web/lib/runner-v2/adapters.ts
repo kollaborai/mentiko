@@ -76,6 +76,8 @@ export interface AdapterContext {
   /** Exact completion attempt authorized to apply this plan. */
   attemptGuard?: RunAgentAttemptGuard;
   beforeOperation?: (operation: AdapterOperation) => void;
+  /** Test/instrumentation hook; attempt ownership is revalidated after it returns. */
+  beforeLaunchSpawn?: (launch: RoutedLaunchPlan) => void;
   /** Stable identity for one completion attempt/event/loop occurrence. */
   completionOccurrenceId?: string;
 }
@@ -351,7 +353,7 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
   const acceptanceKey = routedLaunchAcceptanceKey(context.runJsonPath, targets, launchEnv);
   const alreadyAccepted = durableLaunchReceipt(context.runJsonPath, targets, launchEnv, { acceptanceKey });
   if (alreadyAccepted) {
-    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, alreadyAccepted);
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, alreadyAccepted, context.attemptGuard);
     return alreadyAccepted;
   }
   const alreadyAcceptedTargets = new Set(targets.filter((agentId) => durableLaunchReceipt(
@@ -390,21 +392,28 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
       ...routedCliArgsForTargets(launch, targets, targetsToStart),
     ]
     : ["-lc", launch.command];
-  const child = spawnSync(executable, args, {
-    timeout,
-    killSignal: "SIGTERM",
-    stdio: logFd === undefined ? ["ignore", "ignore", "pipe"] : ["ignore", logFd, logFd],
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      ...launchEnv,
-      ...(acceptanceKey ? {
-        MENTIKO_LAUNCH_JOB_ID: acceptanceKey,
-        MENTIKO_LAUNCH_JOB_TARGETS: JSON.stringify(targets),
-      } : {}),
-    },
-  });
-  if (logFd !== undefined) closeSync(logFd);
+  const child = (() => {
+    try {
+      context.beforeLaunchSpawn?.(launch);
+      assertAdapterAttemptCurrent(context);
+      return spawnSync(executable, args, {
+        timeout,
+        killSignal: "SIGTERM",
+        stdio: logFd === undefined ? ["ignore", "ignore", "pipe"] : ["ignore", logFd, logFd],
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ...launchEnv,
+          ...(acceptanceKey ? {
+            MENTIKO_LAUNCH_JOB_ID: acceptanceKey,
+            MENTIKO_LAUNCH_JOB_TARGETS: JSON.stringify(targets),
+          } : {}),
+        },
+      });
+    } finally {
+      if (logFd !== undefined) closeSync(logFd);
+    }
+  })();
   const partialTargets = targets.flatMap((agentId) => durableLaunchReceipt(
     context.runJsonPath,
     [agentId],
@@ -419,7 +428,7 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, {
       pid: child.pid,
       targets: partialTargets,
-    });
+    }, context.attemptGuard);
   }
   const accepted = durableLaunchReceipt(context.runJsonPath, targets, launchEnv, {
     acceptanceKey,
@@ -427,7 +436,7 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     allowNewTerminal: true,
   });
   if (accepted) {
-    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, accepted);
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, accepted, context.attemptGuard);
     return accepted;
   }
   if (child.error) {
@@ -618,11 +627,13 @@ function persistLaunchAcceptance(
   key: string | undefined,
   env: Record<string, string | undefined>,
   receipt: LaunchAcceptanceReceipt,
+  attemptGuard?: RunAgentAttemptGuard,
 ): void {
   if (!key || !receipt.targets || receipt.targets.length === 0) return;
   const targets = receipt.targets;
   updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    if (attemptGuard) assertRunAgentAttemptCurrent(current, attemptGuard);
     const runnerV2 = current.runnerV2 && typeof current.runnerV2 === "object"
       ? current.runnerV2 as Record<string, unknown>
       : {};

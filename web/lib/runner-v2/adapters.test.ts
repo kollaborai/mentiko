@@ -591,6 +591,82 @@ describe("runner-v2 adapters", () => {
     });
   });
 
+  it("revalidates the exact attempt after launch preflight and immediately before spawning", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    let currentId = "";
+    jest.clearAllMocks();
+
+    expect(() => startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo should-not-launch",
+      env: { MENTIKO_RUN_ID: "run-123" },
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+      beforeLaunchSpawn: () => {
+        currentId = createSubmittedAttempt(runJsonPath, "run-123:writer:2").id;
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(readRunJson(runJsonPath).agents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "reviewer" }),
+    ]));
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: [
+        expect.objectContaining({ id: stale.id }),
+        expect.objectContaining({ id: currentId }),
+      ],
+    });
+  });
+
+  it("guards launch-acceptance persistence when a retry becomes current during launch", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    let currentId = "";
+    jest.clearAllMocks();
+    mockAcceptedLaunch(runJsonPath, "reviewer", () => {
+      currentId = createSubmittedAttempt(runJsonPath, "run-123:writer:2").id;
+    });
+
+    expect(() => startLaunch({
+      kind: "single",
+      agentIds: ["reviewer"],
+      command: "echo launch-reviewer",
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_COMPLETION_OCCURRENCE_ID: "run-123:writer:event-1",
+      },
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).toHaveBeenCalledTimes(1);
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: expect.arrayContaining([
+        expect.objectContaining({ id: stale.id }),
+        expect.objectContaining({ id: currentId }),
+        expect.objectContaining({ agentId: "reviewer" }),
+      ]),
+    });
+    expect((readRunJson(runJsonPath).runnerV2 as Record<string, unknown>).launchAcceptances).toBeUndefined();
+  });
+
   it("starts launch plans through the process adapter", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);
