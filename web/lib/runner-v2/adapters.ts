@@ -13,7 +13,15 @@ import { consumeRunnerEvents } from "@/lib/runner-v2/event-lifecycle";
 import type { EventSideEffectPlan } from "@/lib/runner-v2/event-side-effects";
 import { completeFanGroupMemberLocked, createFanGroupIfAbsent } from "@/lib/runner-v2/fan-group-store";
 import type { RoutedLaunchPlan } from "@/lib/runner-v2/routed-launch-plan";
-import { readRunJson, updateRunJson, updateRunStatus, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import {
+  assertRunAgentAttemptCurrent,
+  readRunJson,
+  updateRunJson,
+  updateRunStatus,
+  type RunAgentAttemptGuard,
+  type RunMutationObserver,
+  type RunRecord,
+} from "@/lib/runner-v2/run-state";
 import { runnerV2PtyEnv, type RunnerV2Environment } from "@/lib/runner-v2/pty-scope";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
@@ -65,6 +73,8 @@ export interface AdapterContext {
   runsDir?: string;
   dryRun?: boolean;
   onRunMutation?: RunMutationObserver;
+  /** Exact completion attempt authorized to apply this plan. */
+  attemptGuard?: RunAgentAttemptGuard;
   beforeOperation?: (operation: AdapterOperation) => void;
   /** Stable identity for one completion attempt/event/loop occurrence. */
   completionOccurrenceId?: string;
@@ -97,6 +107,7 @@ export class RoutedLaunchAcceptanceError extends Error {
 }
 
 export function applyTypedExecutorPlan(plan: TypedExecutorPlan, context: AdapterContext): AdapterResult {
+  assertAdapterAttemptCurrent(context);
   const result: AdapterResult = { effectsApplied: [], operations: [], launchesStarted: [] };
   const operationContext = plan.occurrenceId
     ? { ...context, completionOccurrenceId: plan.occurrenceId }
@@ -150,6 +161,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
   const operations = plannedOperations(effect).map((operation) => bindCompletionOperationIdentity(operation, context));
   const launchesStarted: Array<{ command: string; pid?: number }> = [];
   if (context.dryRun) return { operations, launchesStarted };
+  assertAdapterAttemptCurrent(context);
 
   if (effect.type === "event-side-effects") {
     applyEventSideEffects(effect.plan, context);
@@ -202,11 +214,25 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
   } else if (effect.type === "generation-import") {
     applyGenerationImport(effect.plan, context);
   } else if (effect.type === "run-terminal") {
-    updateRunStatus(context.runJsonPath, effect.status, effect.reason, undefined, context.onRunMutation);
+    updateRunStatus(
+      context.runJsonPath,
+      effect.status,
+      effect.reason,
+      undefined,
+      context.onRunMutation,
+      context.attemptGuard,
+    );
   } else if (effect.type === "terminal") {
     for (const step of effect.plan.steps) {
       if (step.type === "run-status") {
-        updateRunStatus(context.runJsonPath, step.status, undefined, undefined, context.onRunMutation);
+        updateRunStatus(
+          context.runJsonPath,
+          step.status,
+          undefined,
+          undefined,
+          context.onRunMutation,
+          context.attemptGuard,
+        );
       } else {
         launchesStarted.push(...applyOperation(step, context));
       }
@@ -214,7 +240,14 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
   } else if (effect.type === "retry") {
     for (const step of effect.plan.steps) {
       if (step.type === "run-status") {
-        updateRunStatus(context.runJsonPath, step.status, step.reason, undefined, context.onRunMutation);
+        updateRunStatus(
+          context.runJsonPath,
+          step.status,
+          step.reason,
+          undefined,
+          context.onRunMutation,
+          context.attemptGuard,
+        );
       } else if (step.type === "retry-state" && step.action === "clear" && effect.plan.action === "exhausted") {
         launchesStarted.push(...applyOperation({ ...step, attempt: effect.plan.currentAttempt }, context));
       } else {
@@ -234,6 +267,7 @@ export function applyEffect(effect: TypedExecutorEffect, context: AdapterContext
 }
 
 function applyGenerationImport(plan: GenerationImportPlan, context: AdapterContext): void {
+  assertAdapterAttemptCurrent(context);
   const mentikoBin = join(config.codeRoot, "bin", "mentiko");
   const result = spawnSync(mentikoBin, ["generation", "import"], {
     encoding: "utf8",
@@ -304,6 +338,7 @@ const ACCEPTED_TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancell
 
 export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): LaunchAcceptanceReceipt | undefined {
   if (context.dryRun) return undefined;
+  assertAdapterAttemptCurrent(context);
   const targets = Array.from(new Set((launch.agentIds || []).filter(Boolean)));
   const occurrenceId = launch.env.MENTIKO_COMPLETION_OCCURRENCE_ID || context.completionOccurrenceId;
   const launchEnv = {
@@ -754,6 +789,7 @@ function bindCompletionOperationIdentity(
 function applyOperation(operation: AdapterOperation, context: AdapterContext): Array<{ command: string; pid?: number }> {
   const boundOperation = bindCompletionOperationIdentity(operation, context);
   context.beforeOperation?.(boundOperation);
+  assertAdapterAttemptCurrent(context);
   if (boundOperation.type === "event") {
     emitTypedEvent(boundOperation, context);
   } else if (boundOperation.type === "schedule-mark") {
@@ -775,6 +811,11 @@ function applyOperation(operation: AdapterOperation, context: AdapterContext): A
     auditRollbackPlan(boundOperation, context);
   }
   return [];
+}
+
+function assertAdapterAttemptCurrent(context: AdapterContext): void {
+  if (!context.attemptGuard) return;
+  assertRunAgentAttemptCurrent(readRunJson(context.runJsonPath), context.attemptGuard);
 }
 
 function emitTypedEvent(

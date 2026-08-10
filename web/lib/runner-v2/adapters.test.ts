@@ -10,6 +10,7 @@ import { fanGroupPath } from "@/lib/runner-v2/fan-group-store";
 import { createRunRecord, readRunJson, updateRunJson, type RunAgentRecord } from "@/lib/runner-v2/run-state";
 import { planTerminalCompletion } from "@/lib/runner-v2/terminal-plan";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
+import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
 
 jest.mock("child_process", () => ({
   ...jest.requireActual("child_process"),
@@ -32,6 +33,27 @@ function seedRun(dir: string) {
     sessions: [],
   }));
   return runJsonPath;
+}
+
+function createSubmittedAttempt(runJsonPath: string, attemptId: string) {
+  const attempt = createAgentAttempt({
+    runJsonPath,
+    runId: "run-123",
+    agentId: "writer",
+    attemptId,
+    leaseId: `${attemptId}-session`,
+  });
+  for (const phase of [
+    "queued",
+    "lease_acquired",
+    "pty_allocated",
+    "process_spawned",
+    "ready_for_instructions",
+    "instructions_submitted",
+  ] as const) {
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: phase });
+  }
+  return attempt;
 }
 
 function eventFile(dir: string, name: string, content: string) {
@@ -530,6 +552,42 @@ describe("runner-v2 adapters", () => {
     expect(readRunJson(runJsonPath)).toMatchObject({
       status: "completed",
       status_message: "visited-agent-event",
+    });
+  });
+
+  it("revalidates the exact attempt inside the adapter before terminal mutation or routing", () => {
+    const dir = tempDir();
+    const runJsonPath = seedRun(dir);
+    const stale = createSubmittedAttempt(runJsonPath, "run-123:writer:1");
+    const current = createSubmittedAttempt(runJsonPath, "run-123:writer:2");
+    jest.clearAllMocks();
+
+    expect(() => applyTypedExecutorPlan({
+      action: "route",
+      effects: [{ type: "run-terminal", status: "completed", reason: "stale completion" }],
+      launches: [{
+        kind: "single",
+        agentIds: ["reviewer"],
+        command: "echo should-not-launch",
+        env: { MENTIKO_RUN_ID: "run-123" },
+      }],
+    }, {
+      runJsonPath,
+      stateDir: dir,
+      attemptGuard: {
+        runId: "run-123",
+        agentId: "writer",
+        attemptId: stale.id,
+      },
+    })).toThrow(`stale completion AgentAttempt ${stale.id}`);
+
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(readRunJson(runJsonPath)).toMatchObject({ status: "running" });
+    expect(readRunJson(runJsonPath).runnerV2).toMatchObject({
+      attempts: [
+        expect.objectContaining({ id: stale.id, phase: "instructions_submitted" }),
+        expect.objectContaining({ id: current.id, phase: "instructions_submitted" }),
+      ],
     });
   });
 

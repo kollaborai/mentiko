@@ -482,6 +482,7 @@ export function runRunnerV2CompletionEntrypoint(
       schedulesDir: env.SCHEDULES_DIR,
       dryRun: input.dryRun,
       onRunMutation,
+      ...(pipeline.decision.action !== "stale-attempt" ? { attemptGuard } : {}),
     });
 
     if (!input.dryRun && runBecameCompletedInPlan(plan)) {
