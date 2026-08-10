@@ -28,6 +28,7 @@ function updatePendingHandoffs(
 
 export function registerLaunchCoordinator(input: {
   runJsonPath: string;
+  handoffId?: string;
   pid: number;
   agentIds: string[];
   now?: Date;
@@ -38,21 +39,34 @@ export function registerLaunchCoordinator(input: {
   const agentIds = targetIds(input.agentIds);
   if (agentIds.length === 0) throw new Error("launch coordinator requires at least one agent");
   const at = (input.now || new Date()).toISOString();
+  const matches = (handoff: PendingHandoff) => input.handoffId
+    ? handoff.id === input.handoffId
+    : !handoff.id && handoff.pid === input.pid;
   updatePendingHandoffs(input.runJsonPath, (current) => [
-    ...current.filter((handoff) => handoff.pid !== input.pid),
-    { pid: input.pid, targetAgentIds: agentIds, startedAt: at, heartbeatAt: at },
+    ...current.filter((handoff) => !matches(handoff)),
+    {
+      ...(input.handoffId ? { id: input.handoffId } : {}),
+      pid: input.pid,
+      targetAgentIds: agentIds,
+      startedAt: at,
+      heartbeatAt: at,
+    },
   ]);
 }
 
 export function heartbeatLaunchCoordinator(input: {
   runJsonPath: string;
+  handoffId?: string;
   pid: number;
   now?: Date;
 }): boolean {
   const at = (input.now || new Date()).toISOString();
   let found = false;
   updatePendingHandoffs(input.runJsonPath, (current) => current.map((handoff) => {
-    if (handoff.pid !== input.pid) return handoff;
+    const matches = input.handoffId
+      ? handoff.id === input.handoffId && handoff.pid === input.pid
+      : !handoff.id && handoff.pid === input.pid;
+    if (!matches) return handoff;
     found = true;
     return { ...handoff, heartbeatAt: at };
   }));
@@ -61,16 +75,20 @@ export function heartbeatLaunchCoordinator(input: {
 
 export function clearLaunchCoordinator(input: {
   runJsonPath: string;
+  handoffId?: string;
   pid: number;
 }): void {
   updatePendingHandoffs(
     input.runJsonPath,
-    (current) => current.filter((handoff) => handoff.pid !== input.pid),
+    (current) => current.filter((handoff) => input.handoffId
+      ? handoff.id !== input.handoffId || handoff.pid !== input.pid
+      : handoff.id || handoff.pid !== input.pid),
   );
 }
 
 export function startLaunchCoordinatorHeartbeat(input: {
   runJsonPath: string;
+  handoffId?: string;
   pid: number;
   agentIds: string[];
 }): () => void {

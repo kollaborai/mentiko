@@ -1103,6 +1103,59 @@ export function removeIntegratedGitNodeWorkspace(input: {
   return existed ? "removed" : "already-removed";
 }
 
+/**
+ * Reclaim an allocation that failed before agent instructions ran. The exact
+ * attempt-owned path/ref are removed only while the worktree is still pristine
+ * at its pinned base. Any commit, staged file, or untracked file preserves the
+ * worktree for recovery instead of guessing that it is disposable.
+ */
+export function removePristineGitNodeWorkspace(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  agentId: string;
+  attemptId: string;
+}): "removed" | "already-removed" | "preserved-changes" {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  const recordPath = nodeRecordPath(runWorkspace, input.attemptId);
+  if (!existsSync(recordPath)) return "already-removed";
+  const candidate = readJson<GitNodeWorkspace>(recordPath);
+  const nodeKey = digest(input.attemptId, 32);
+  const expectedWorktreeRoot = join(runWorkspace.worktreesRoot, nodeKey);
+  const expectedAttemptRef = `${runRefPrefix(runWorkspace.runId)}/attempts/${nodeKey}`;
+  if (
+    candidate.runId !== runWorkspace.runId
+    || candidate.agentId !== input.agentId
+    || candidate.attemptId !== input.attemptId
+    || candidate.recordPath !== recordPath
+    || candidate.worktreeRoot !== expectedWorktreeRoot
+    || candidate.attemptRef !== expectedAttemptRef
+  ) {
+    throw new WorkspaceIsolationError(`node workspace cleanup identity mismatch: ${recordPath}`);
+  }
+  if (!existsSync(candidate.worktreeRoot)) {
+    runGit(runWorkspace.sourceRepositoryRoot, ["update-ref", "-d", candidate.attemptRef]);
+    return "already-removed";
+  }
+  const node = assertNodeWorkspace(runWorkspace, candidate, {
+    agentId: input.agentId,
+    attemptId: input.attemptId,
+    recordPath,
+  });
+  const head = runGit(node.worktreeRoot, ["rev-parse", "HEAD"]);
+  const status = runGit(node.worktreeRoot, ["status", "--porcelain=v1", "--untracked-files=all"]);
+  if (head !== node.baseCommit || status.length > 0) return "preserved-changes";
+  runGit(runWorkspace.sourceRepositoryRoot, [
+    "worktree",
+    "remove",
+    "--force",
+    node.worktreeRoot,
+  ]);
+  runGit(runWorkspace.sourceRepositoryRoot, ["update-ref", "-d", node.attemptRef]);
+  return "removed";
+}
+
 function publicationArtifactPath(runWorkspace: GitRunWorkspaceIsolation): string {
   return join(runWorkspace.runDir, "artifacts", "workspace-publication.json");
 }

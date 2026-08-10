@@ -1,124 +1,100 @@
 #!/usr/bin/env node
 // Keep this import first: routed completion sessions run from the data root.
 import "@/lib/runner-v2/entry-code-root-anchor";
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { startRunnerV2Bootstrap } from "@/lib/runner-v2/bootstrap-executor";
-import { readRunnerV2AttemptState } from "@/lib/runner-v2/agent-attempt";
-import { readRunJson } from "@/lib/runner-v2/run-state";
-import { startLaunchCoordinatorHeartbeat } from "@/lib/runner-v2/launch-coordinator-state";
-
-interface ChainIdentity { id?: string; name?: string }
+import {
+  persistRoutedLaunchJob,
+  routedLaunchJobId,
+} from "@/lib/runner-v2/launch-job";
+import { runRoutedLaunchJob } from "@/lib/runner-v2/launch-job-runner";
 
 async function main(): Promise<void> {
-  const [chainPath, ...agentIds] = process.argv.slice(2);
+  const [chainPath, ...requestedAgentIds] = process.argv.slice(2);
   const runId = process.env.MENTIKO_RUN_ID || process.env.RUN_ID;
   const runDir = process.env.MENTIKO_RUN_DIR;
-  if (!chainPath || agentIds.length === 0 || !runId || !runDir) {
-    throw new Error("usage: runner-v2-launch-agent <chain.json> <agent-id>... (MENTIKO_RUN_ID and MENTIKO_RUN_DIR required)");
+  const occurrenceId = process.env.MENTIKO_COMPLETION_OCCURRENCE_ID;
+  if (!chainPath || requestedAgentIds.length === 0 || !runId || !runDir || !occurrenceId) {
+    throw new Error(
+      "usage: runner-v2-launch-agent <chain.json> <agent-id>... "
+      + "(MENTIKO_RUN_ID, MENTIKO_RUN_DIR, and MENTIKO_COMPLETION_OCCURRENCE_ID required)",
+    );
   }
 
-  const chain = JSON.parse(readFileSync(chainPath, "utf8")) as ChainIdentity;
-  const uniqueAgentIds = Array.from(new Set(agentIds.filter(Boolean)));
+  const allAgentIds = configuredAgentIds(requestedAgentIds);
+  const jobId = process.env.MENTIKO_LAUNCH_JOB_ID || routedLaunchJobId({
+    occurrenceId,
+    runId,
+    targetAgentIds: allAgentIds,
+  });
+  const runJsonPath = join(runDir, "run.json");
   if (process.env.MENTIKO_LAUNCH_COORDINATOR !== "1") {
-    await dispatchCoordinator({ chainPath, runDir, runId, agentIds: uniqueAgentIds });
-    console.log(JSON.stringify({ status: "launched", runId, agentIds: uniqueAgentIds }));
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      jobId,
+      occurrenceId,
+      runId,
+      runDir,
+      chainPath,
+      targetAgentIds: allAgentIds,
+      environment: process.env,
+    });
+    dispatchCoordinator({ chainPath, jobId: job.id, agentIds: allAgentIds });
+    console.log(JSON.stringify({ status: "queued", runId, jobId: job.id, agentIds: allAgentIds }));
     return;
   }
-  const stopHeartbeat = startLaunchCoordinatorHeartbeat({
-    runJsonPath: join(runDir, "run.json"),
-    pid: process.pid,
-    agentIds: uniqueAgentIds,
-  });
-  try {
-    const results = await Promise.all(uniqueAgentIds.map((agentId) => startRunnerV2Bootstrap({
-      chainPath,
-      runDir,
-      runId,
-      agentId,
-      chainId: chain.id || basename(chainPath, ".json"),
-      chainName: chain.name || chain.id || basename(chainPath, ".json"),
-      workspacePath: process.env.MENTIKO_WORKSPACE_PATH,
-      taskId: process.env.MENTIKO_TASK_ID,
-      debug: process.env.MENTIKO_DEBUG === "1",
-      logFd: 2,
-      cwd: process.env.MENTIKO_WORKSPACE_PATH || process.cwd(),
-      env: {
-        ...process.env,
-        ...(process.env.AGENT_FAN_GROUP_ID ? { AGENT_FAN_GROUP_AGENT_ID: agentId } : {}),
-      },
-    })));
 
-    const unsupported = results.find((result) => result.support === "unsupported");
-    if (unsupported?.support === "unsupported") throw new Error(unsupported.reason);
-    console.log(JSON.stringify({ status: "launched", runId, agentIds: uniqueAgentIds }));
-  } finally {
-    stopHeartbeat();
+  const ownerId = process.env.MENTIKO_LAUNCH_JOB_OWNER_ID
+    || `coordinator:${process.pid}:${randomUUID()}`;
+  const result = await runRoutedLaunchJob({ runJsonPath, jobId, ownerId });
+  if (result.status === "requeued") {
+    throw new Error(result.error || `routed launch job ${jobId} was requeued`);
   }
+  console.log(JSON.stringify({ status: result.status, runId, jobId, agentIds: allAgentIds }));
 }
 
-async function dispatchCoordinator(input: {
+function dispatchCoordinator(input: {
   chainPath: string;
-  runDir: string;
-  runId: string;
+  jobId: string;
   agentIds: string[];
-}): Promise<void> {
-  const runJsonPath = join(input.runDir, "run.json");
-  const before = latestAttemptIds(runJsonPath, input.runId, input.agentIds);
+}): void {
   const coordinator = spawn(process.execPath, [process.argv[1], input.chainPath, ...input.agentIds], {
     detached: true,
     stdio: "inherit",
     env: {
       ...process.env,
       MENTIKO_LAUNCH_COORDINATOR: "1",
+      MENTIKO_LAUNCH_JOB_ID: input.jobId,
+      MENTIKO_LAUNCH_JOB_TARGETS: JSON.stringify(input.agentIds),
     },
   });
-  if (!coordinator.pid) throw new Error("could not start routed launch coordinator");
-  coordinator.unref();
-
-  const timeoutMs = positiveInteger(process.env.MENTIKO_LAUNCH_QUEUE_ACCEPT_TIMEOUT_MS, 120_000);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (queuedLaunchAccepted(runJsonPath, input.runId, input.agentIds, before)) return;
-    if (coordinator.exitCode !== null) {
-      throw new Error(`routed launch coordinator exited before durable queue acceptance (${coordinator.exitCode})`);
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  if (!coordinator.pid) {
+    // The job is already durable and the background worker can reclaim it.
+    console.error(`[runner-v2] immediate launch coordinator did not start; job ${input.jobId} remains queued`);
+    return;
   }
-  throw new Error(`routed launch coordinator did not persist queue acceptance within ${timeoutMs}ms`);
+  coordinator.unref();
 }
 
-function latestAttemptIds(runJsonPath: string, runId: string, agentIds: string[]): Map<string, string> {
-  const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
-  return new Map(agentIds.flatMap((agentId) => {
-    const attempt = [...attempts].reverse().find((candidate) =>
-      candidate.runId === runId && candidate.agentId === agentId);
-    return attempt ? [[agentId, attempt.id]] : [];
-  }));
-}
-
-function queuedLaunchAccepted(
-  runJsonPath: string,
-  runId: string,
-  agentIds: string[],
-  before: Map<string, string>,
-): boolean {
-  const run = readRunJson(runJsonPath);
-  const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
-  return agentIds.every((agentId) => {
-    const attempt = [...attempts].reverse().find((candidate) =>
-      candidate.runId === runId && candidate.agentId === agentId);
-    if (!attempt || attempt.id === before.get(agentId) || attempt.phase === "created") return false;
-    const agent = (run.agents || []).find((candidate) => candidate.id === agentId);
-    return Boolean(agent?.session)
-      && (agent?.status === "pending" || agent?.status === "running" || agent?.status === "blocked");
-  });
-}
-
-function positiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+function configuredAgentIds(requestedAgentIds: string[]): string[] {
+  const configured = process.env.MENTIKO_LAUNCH_JOB_TARGETS;
+  let values = requestedAgentIds;
+  if (configured) {
+    const parsed = JSON.parse(configured) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string" && value)) {
+      throw new Error("MENTIKO_LAUNCH_JOB_TARGETS must be a non-empty JSON string array");
+    }
+    values = parsed;
+  }
+  const normalized = Array.from(new Set(values.filter(Boolean))).sort();
+  if (normalized.length === 0) throw new Error("routed launch job requires at least one target");
+  for (const requested of requestedAgentIds) {
+    if (!normalized.includes(requested)) {
+      throw new Error(`requested target ${requested} is absent from the routed launch job`);
+    }
+  }
+  return normalized;
 }
 
 main().catch((error) => {

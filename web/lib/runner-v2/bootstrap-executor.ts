@@ -10,7 +10,11 @@ import {
 } from "@/lib/runner-v2/agent-bootstrap-plan";
 import { createRunnerAgentState, transitionRunnerAgentState } from "@/lib/runner-v2/agent-state";
 import { CONCURRENCY_CAP_BLOCKED_REASON_PREFIX } from "@/lib/runner-v2/concurrency-admission";
-import { waitForTypedAgentCapacity } from "@/lib/runner-v2/agent-capacity";
+import { enqueueAgentAttempt, waitForTypedAgentCapacity } from "@/lib/runner-v2/agent-capacity";
+import {
+  bindRoutedLaunchJobAttempt,
+  routedLaunchJobLeaseOwned,
+} from "@/lib/runner-v2/launch-job";
 import { classifyCliReadiness, type CliReadinessResult } from "@/lib/runner-v2/readiness-policy";
 import { isComposerHoldingInput } from "@/lib/runner-v2/composer-submit";
 import {
@@ -21,6 +25,8 @@ import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidenc
 import {
   allocateGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
+  removePristineGitNodeWorkspace,
+  type GitNodeWorkspace,
 } from "@/lib/runner-v2/workspace-isolation";
 import {
   decideStartupRecovery,
@@ -63,6 +69,8 @@ const TERMINAL_RUN_STATUSES = new Set(["blocked", "failed", "stopped", "complete
 export class TerminalBootstrapStateError extends Error {}
 
 export class TypedMonitorRuntimeMissingError extends Error {}
+
+export class RoutedLaunchJobOwnershipLostError extends Error {}
 
 /**
  * Completion instructions are part of the typed launch contract, not a shell
@@ -216,7 +224,10 @@ export async function executeLocalBootstrap(
   executor: RunnerV2BootstrapExecutor,
 ): Promise<void> {
   const runJsonPath = join(context.runDir, "run.json");
-  assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId);
+  const launchJobId = context.env.MENTIKO_LAUNCH_JOB_ID;
+  const launchOwnerId = context.env.MENTIKO_LAUNCH_JOB_OWNER_ID;
+  const launchOccurrenceId = context.env.MENTIKO_COMPLETION_OCCURRENCE_ID;
+  assertBootstrapLaunchable(runJsonPath, context.runId, plan.agentId, launchJobId);
   mkdirSync(plan.artifactsDir, { recursive: true });
   const workspaceExecution = ensureRunWorkspaceBaseline({
     runJsonPath,
@@ -236,38 +247,46 @@ export async function executeLocalBootstrap(
     runId: context.runId,
     agentId: plan.agentId,
     leaseId: plan.sessionName,
+    launchJobId,
+    launchOccurrenceId,
   });
-  let executionPlan = plan;
-  try {
-    const admission = await acquireChainAdmission({
+  if (launchJobId || launchOwnerId) {
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    bindRoutedLaunchJobAttempt({
       runJsonPath,
-      runId: context.runId,
+      jobId: launchJobId!,
+      ownerId: launchOwnerId!,
       agentId: plan.agentId,
-      env: context.env,
+      attemptId: attempt.id,
     });
-    if (!admission.admitted) {
-      transitionAgentAttempt({
+  }
+  let executionPlan = plan;
+  let nodeWorkspace: GitNodeWorkspace | undefined;
+  try {
+    if (attempt.phase === "created") {
+      const admission = await acquireChainAdmission({
+        runJsonPath,
+        runId: context.runId,
+        agentId: plan.agentId,
+        env: context.env,
+      });
+      if (!admission.admitted) {
+        transitionAgentAttempt({
+          runJsonPath,
+          attemptId: attempt.id,
+          to: "human_action_required",
+          reason: "concurrency_cap_blocked",
+          detail: admission.reason,
+        });
+        return;
+      }
+      enqueueAgentAttempt({
         runJsonPath,
         attemptId: attempt.id,
-        to: "human_action_required",
-        reason: "concurrency_cap_blocked",
-        detail: admission.reason,
+        scopeRoot: context.env.MENTIKO_ORG_ROOT || config.orgRoot,
       });
-      return;
+      markRunAgentQueued(runJsonPath, plan);
     }
-    const nodeWorkspace = runWorkspace
-      ? allocateGitNodeWorkspace({
-        runWorkspace,
-        agentId: plan.agentId,
-        attemptId: attempt.id,
-        baseCommit: context.env.MENTIKO_WORKSPACE_BASE_COMMIT,
-      })
-      : undefined;
-    if (nodeWorkspace) {
-      executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
-    }
-    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "queued" });
-    markRunAgentQueued(runJsonPath, plan);
     const agentAdmission = await acquireAgentCapacityAdmission({
       runJsonPath,
       runId: context.runId,
@@ -284,6 +303,18 @@ export async function executeLocalBootstrap(
       });
       markRunAgentBlocked(runJsonPath, plan.agentId, agentAdmission.reason);
       return;
+    }
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
+    nodeWorkspace = runWorkspace
+      ? allocateGitNodeWorkspace({
+        runWorkspace,
+        agentId: plan.agentId,
+        attemptId: attempt.id,
+        baseCommit: context.env.MENTIKO_WORKSPACE_BASE_COMMIT,
+      })
+      : undefined;
+    if (nodeWorkspace) {
+      executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
     }
     const workspaceHandoff = captureAgentWorkspaceHandoff({
       runJsonPath,
@@ -314,6 +345,7 @@ export async function executeLocalBootstrap(
     writeFileSync(startScriptPath, buildStartScript(executionPlan), { mode: 0o700 });
     chmodSync(startScriptPath, 0o700);
 
+    assertRoutedLaunchJobOwnership(runJsonPath, launchJobId, launchOwnerId);
     await executor.remove(executionPlan.sessionName);
     const spawned = await executor.spawn(executionPlan.sessionName, "zsh", [], {
       cwd: executionPlan.projectRoot,
@@ -380,8 +412,25 @@ export async function executeLocalBootstrap(
     if (error instanceof BootstrapReadinessBlockedError) {
       return;
     }
+    if (error instanceof RoutedLaunchJobOwnershipLostError) {
+      return;
+    }
     await executor.remove(executionPlan.sessionName).catch(() => undefined);
     await executor.remove(executionPlan.monitorSessionName).catch(() => undefined);
+    if (runWorkspace && nodeWorkspace) {
+      try {
+        removePristineGitNodeWorkspace({
+          runWorkspace,
+          agentId: plan.agentId,
+          attemptId: attempt.id,
+        });
+      } catch (cleanupError) {
+        console.error(
+          `[runner-v2] startup worktree cleanup failed for ${attempt.id}: `
+          + `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+    }
     releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     throw error;
   }
@@ -412,10 +461,28 @@ function markRunAgentQueued(
   });
 }
 
+function assertRoutedLaunchJobOwnership(
+  runJsonPath: string,
+  launchJobId?: string,
+  launchOwnerId?: string,
+): void {
+  if (!launchJobId && !launchOwnerId) return;
+  if (!launchJobId || !launchOwnerId || !routedLaunchJobLeaseOwned({
+    runJsonPath,
+    jobId: launchJobId,
+    ownerId: launchOwnerId,
+  })) {
+    throw new RoutedLaunchJobOwnershipLostError(
+      `routed launch job lease is not owned${launchJobId ? `: ${launchJobId}` : ""}`,
+    );
+  }
+}
+
 function assertBootstrapLaunchable(
   runJsonPath: string,
   runId: string,
   agentId: string,
+  launchJobId?: string,
 ): void {
   const run = readRunJson(runJsonPath);
   if (run.id !== runId) {
@@ -429,6 +496,12 @@ function assertBootstrapLaunchable(
     .reverse()
     .find((attempt) => attempt.runId === runId && attempt.agentId === agentId);
   if (!latestAttempt || !isTerminalAgentAttemptPhase(latestAttempt.phase)) return;
+
+  if (
+    launchJobId
+    && latestAttempt.launchJobId === launchJobId
+    && (latestAttempt.phase === "released" || latestAttempt.phase === "startup_failed")
+  ) return;
 
   // A resume route authorizes one fresh occurrence by persisting resumedAt on
   // the run before relaunch. This is durable route state, unlike an environment
@@ -885,11 +958,18 @@ async function acquireAgentCapacityAdmission(input: {
     runId: input.runId,
     attemptId: input.attemptId,
     cap: configuredCap,
+    scopeRoot: input.env.MENTIKO_ORG_ROOT || config.orgRoot,
+    launchJobId: input.env.MENTIKO_LAUNCH_JOB_ID,
+    launchOwnerId: input.env.MENTIKO_LAUNCH_JOB_OWNER_ID,
     maxWaitMs,
     pollMs,
     pollMaxMs,
   });
   if (result.status === "admitted") return { admitted: true };
+  if (result.status === "ownership_lost") {
+    throw new RoutedLaunchJobOwnershipLostError(result.reason);
+  }
+  if (result.status === "cancelled") return { admitted: false, reason: result.reason };
   if (result.status === "timeout") {
     const waitedSeconds = Math.floor(result.waitedMs / 1000);
     return {

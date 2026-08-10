@@ -19,6 +19,11 @@ import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { buildRoutedLaunchPlans } from "@/lib/runner-v2/routed-launch-plan";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
+import {
+  readRoutedLaunchJob,
+  routedLaunchJobId,
+  routedLaunchJobIsAccepted,
+} from "@/lib/runner-v2/launch-job";
 
 type AdapterOperationPayload =
   | { type: "task-status"; status: string; taskId?: string; runId?: string }
@@ -250,8 +255,9 @@ function applyGenerationImport(plan: GenerationImportPlan, context: AdapterConte
 
 interface LaunchTargetProvenance {
   agentId: string;
-  attemptId: string;
-  session: string;
+  jobId?: string;
+  attemptId?: string;
+  session?: string;
 }
 
 interface LaunchAcceptanceReceipt {
@@ -289,20 +295,28 @@ const ACCEPTED_TERMINAL_AGENT_STATUSES = new Set(["complete", "failed", "cancell
 export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): LaunchAcceptanceReceipt | undefined {
   if (context.dryRun) return undefined;
   const targets = Array.from(new Set((launch.agentIds || []).filter(Boolean)));
-  const acceptanceKey = routedLaunchAcceptanceKey(context.runJsonPath, targets, launch.env);
-  const alreadyAccepted = durableLaunchReceipt(context.runJsonPath, targets, launch.env, { acceptanceKey });
+  const occurrenceId = launch.env.MENTIKO_COMPLETION_OCCURRENCE_ID || context.completionOccurrenceId;
+  const launchEnv = {
+    ...launch.env,
+    ...(occurrenceId ? { MENTIKO_COMPLETION_OCCURRENCE_ID: occurrenceId } : {}),
+  };
+  if (launch.cli && !occurrenceId) {
+    throw new RoutedLaunchAcceptanceError("missing_durable_state", "typed routed launch has no completion occurrence id");
+  }
+  const acceptanceKey = routedLaunchAcceptanceKey(context.runJsonPath, targets, launchEnv);
+  const alreadyAccepted = durableLaunchReceipt(context.runJsonPath, targets, launchEnv, { acceptanceKey });
   if (alreadyAccepted) {
-    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launch.env, alreadyAccepted);
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, alreadyAccepted);
     return alreadyAccepted;
   }
   const alreadyAcceptedTargets = new Set(targets.filter((agentId) => durableLaunchReceipt(
     context.runJsonPath,
     [agentId],
-    launch.env,
+    launchEnv,
     { acceptanceKey },
   )));
   const targetsToStart = targets.filter((agentId) => !alreadyAcceptedTargets.has(agentId));
-  const inProgress = inProgressLaunchTarget(context.runJsonPath, targetsToStart, launch.env);
+  const inProgress = inProgressLaunchTarget(context.runJsonPath, targetsToStart, launchEnv, acceptanceKey);
   if (inProgress) {
     throw new RoutedLaunchAcceptanceError("acceptance_pending", `${inProgress} has a bootstrap attempt still in progress`);
   }
@@ -312,7 +326,7 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
       `partial receipt could not be reconciled for targets=${targets.join(",")}`,
     );
   }
-  const baseline = launchAttemptBaseline(context.runJsonPath, targetsToStart, launch.env);
+  const baseline = launchAttemptBaseline(context.runJsonPath, targetsToStart, launchEnv);
 
   const logPath = launch.logPath || join(dirname(context.runJsonPath), "launches.log");
   let logFd: number | undefined;
@@ -338,14 +352,18 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     encoding: "utf8",
     env: {
       ...process.env,
-      ...launch.env,
+      ...launchEnv,
+      ...(acceptanceKey ? {
+        MENTIKO_LAUNCH_JOB_ID: acceptanceKey,
+        MENTIKO_LAUNCH_JOB_TARGETS: JSON.stringify(targets),
+      } : {}),
     },
   });
   if (logFd !== undefined) closeSync(logFd);
   const partialTargets = targets.flatMap((agentId) => durableLaunchReceipt(
     context.runJsonPath,
     [agentId],
-    launch.env,
+    launchEnv,
     {
       acceptanceKey,
       baseline,
@@ -353,18 +371,18 @@ export function startLaunch(launch: RoutedLaunchPlan, context: AdapterContext): 
     },
   )?.targets || []);
   if (partialTargets.length > 0) {
-    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launch.env, {
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, {
       pid: child.pid,
       targets: partialTargets,
     });
   }
-  const accepted = durableLaunchReceipt(context.runJsonPath, targets, launch.env, {
+  const accepted = durableLaunchReceipt(context.runJsonPath, targets, launchEnv, {
     acceptanceKey,
     baseline,
     allowNewTerminal: true,
   });
   if (accepted) {
-    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launch.env, accepted);
+    persistLaunchAcceptance(context.runJsonPath, acceptanceKey, launchEnv, accepted);
     return accepted;
   }
   if (child.error) {
@@ -418,6 +436,36 @@ function durableLaunchReceipt(
   }
   const runId = env.MENTIKO_RUN_ID || env.RUN_ID || run.id;
   const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
+  const occurrenceId = env.MENTIKO_COMPLETION_OCCURRENCE_ID;
+  if (options.acceptanceKey && occurrenceId) {
+    const job = readRoutedLaunchJob(runJsonPath, options.acceptanceKey);
+    const jobTargets = new Set(job?.targets.map((target) => target.agentId) || []);
+    if (
+      job
+      && routedLaunchJobIsAccepted(job)
+      && job.occurrenceId === occurrenceId
+      && job.runId === runId
+      && targetAgentIds.every((agentId) => jobTargets.has(agentId))
+    ) {
+      const targets = targetAgentIds.map((agentId): LaunchTargetProvenance => {
+        const attempt = [...attempts].reverse().find((candidate) =>
+          candidate.runId === runId
+          && candidate.agentId === agentId
+          && candidate.launchJobId === job.id);
+        const agent = (run.agents || []).find((candidate) => candidate.id === agentId);
+        return {
+          agentId,
+          jobId: job.id,
+          ...(attempt ? { attemptId: attempt.id } : {}),
+          ...(typeof agent?.session === "string" && agent.session ? { session: agent.session } : {}),
+        };
+      });
+      return {
+        pid: job.lease?.pid,
+        targets,
+      };
+    }
+  }
   const recorded = options.acceptanceKey
     ? readRoutedLaunchAcceptance(run, options.acceptanceKey)
     : undefined;
@@ -450,7 +498,10 @@ function durableLaunchReceipt(
     const newlyTerminalAccepted = options.allowNewTerminal === true
       && baselineChanged
       && terminalAccepted;
-    if (!recordedAccepted && !admissionAccepted && !runningAccepted && !blockedAccepted && !newlyTerminalAccepted) return undefined;
+    const ownedAdmissionAccepted = Boolean(options.acceptanceKey)
+      && attempt.launchJobId === options.acceptanceKey
+      && admissionAccepted;
+    if (!recordedAccepted && !ownedAdmissionAccepted && !runningAccepted && !blockedAccepted && !newlyTerminalAccepted) return undefined;
     pid ??= attempt.processEvidence?.processPid;
     targets.push({ agentId, attemptId: attempt.id, session });
   }
@@ -490,11 +541,7 @@ function routedLaunchAcceptanceKey(
   const occurrenceId = env.MENTIKO_COMPLETION_OCCURRENCE_ID;
   if (!occurrenceId || targetAgentIds.length === 0) return undefined;
   const runId = env.MENTIKO_RUN_ID || env.RUN_ID || readRunId(runJsonPath);
-  const digest = createHash("sha256")
-    .update(stableSerialize({ occurrenceId, runId, targetAgentIds: [...targetAgentIds].sort() }))
-    .digest("hex")
-    .slice(0, 24);
-  return `routed-launch:${digest}:v1`;
+  return routedLaunchJobId({ occurrenceId, runId, targetAgentIds });
 }
 
 function readRoutedLaunchAcceptance(run: RunRecord, key: string): DurableLaunchAcceptanceRecord | undefined {
@@ -510,8 +557,10 @@ function readRoutedLaunchAcceptance(run: RunRecord, key: string): DurableLaunchA
     || !parsed.targets.every((target) => target
       && typeof target === "object"
       && typeof target.agentId === "string"
-      && typeof target.attemptId === "string"
-      && typeof target.session === "string")
+      && (
+        typeof target.jobId === "string"
+        || (typeof target.attemptId === "string" && typeof target.session === "string")
+      ))
     || typeof parsed.occurrenceId !== "string"
     || typeof parsed.runId !== "string") {
     return undefined;
@@ -548,10 +597,21 @@ function persistLaunchAcceptance(
       const merged = new Map(actual.targets.map((target) => [target.agentId, target]));
       for (const target of targets) {
         const prior = merged.get(target.agentId);
-        if (prior && stableSerialize(prior) !== stableSerialize(target)) {
+        if (
+          prior
+          && prior.jobId !== target.jobId
+          && stableSerialize(prior) !== stableSerialize(target)
+        ) {
           throw new Error(`conflicting routed launch acceptance receipt: ${key}`);
         }
-        merged.set(target.agentId, target);
+        merged.set(target.agentId, prior && prior.jobId === target.jobId
+          ? {
+              ...prior,
+              ...target,
+              attemptId: target.attemptId || prior.attemptId,
+              session: target.session || prior.session,
+            }
+          : target);
       }
       const mergedTargets = [...merged.values()].sort((left, right) =>
         left.agentId.localeCompare(right.agentId));
@@ -589,6 +649,7 @@ function inProgressLaunchTarget(
   runJsonPath: string,
   targetAgentIds: string[],
   env: Record<string, string | undefined>,
+  launchJobId?: string,
 ): string | undefined {
   if (targetAgentIds.length === 0) return undefined;
   let run: RunRecord;
@@ -601,7 +662,9 @@ function inProgressLaunchTarget(
   const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
   return targetAgentIds.find((agentId) => {
     const attempt = [...attempts].reverse().find((candidate) => candidate.runId === runId && candidate.agentId === agentId);
-    return attempt && !TERMINAL_ATTEMPT_PHASES.has(attempt.phase);
+    return attempt
+      && (!launchJobId || attempt.launchJobId === launchJobId)
+      && !TERMINAL_ATTEMPT_PHASES.has(attempt.phase);
   });
 }
 

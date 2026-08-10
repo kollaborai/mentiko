@@ -81,6 +81,12 @@ export interface AgentAttemptRecord {
   leaseReleasedAt?: string;
   capacitySlotAcquiredAt?: string;
   capacitySlotReleasedAt?: string;
+  /** Stable routed-edge job/occurrence ownership for crash-safe launch replay. */
+  launchJobId?: string;
+  launchOccurrenceId?: string;
+  /** Queue order is assigned under the org-scoped capacity claim. */
+  queueEnteredAt?: string;
+  queueSequence?: number;
   processEvidence?: AgentAttemptProcessEvidence;
   instructionLedger: AgentAttemptInstructionLedgerEntry[];
   recoveryDecisionCount: number;
@@ -178,6 +184,8 @@ export function createAgentAttempt(input: {
   agentId: string;
   attemptId?: string;
   leaseId?: string;
+  launchJobId?: string;
+  launchOccurrenceId?: string;
   now?: Date;
 }): AgentAttemptRecord {
   const at = iso(input.now);
@@ -192,7 +200,15 @@ export function createAgentAttempt(input: {
       : latest?.id || `${input.runId}:${input.agentId}:1`
   );
   const existing = state.attempts.find((item) => item.id === attemptId);
-  if (existing) return existing;
+  if (existing) {
+    if (input.launchJobId && existing.launchJobId !== input.launchJobId) {
+      throw new Error(`AgentAttempt ${attemptId} belongs to another launch job`);
+    }
+    if (input.launchOccurrenceId && existing.launchOccurrenceId !== input.launchOccurrenceId) {
+      throw new Error(`AgentAttempt ${attemptId} belongs to another launch occurrence`);
+    }
+    return existing;
+  }
   const attempt: AgentAttemptRecord = {
     id: attemptId,
     runId: input.runId,
@@ -201,6 +217,8 @@ export function createAgentAttempt(input: {
     desiredPhase: "lease_acquired",
     observedPhase: "created",
     leaseId: input.leaseId,
+    launchJobId: input.launchJobId,
+    launchOccurrenceId: input.launchOccurrenceId,
     instructionLedger: [],
     recoveryDecisionCount: 0,
     createdAt: at,
@@ -303,6 +321,7 @@ export function transitionAgentAttempt(input: {
       capacitySlotReleasedAt: input.to === "released" && attempt.capacitySlotAcquiredAt
         ? at
         : attempt.capacitySlotReleasedAt,
+      queueEnteredAt: input.to === "queued" ? at : attempt.queueEnteredAt,
       updatedAt: at,
       transitions: [
         ...attempt.transitions,
@@ -310,6 +329,34 @@ export function transitionAgentAttempt(input: {
       ],
     };
   }, input.onMutation);
+}
+
+/** Persist the strict FIFO sequence chosen while the org-scoped capacity
+ * claim is held. Replays keep the original position. */
+export function recordAgentAttemptQueueOrder(input: {
+  runJsonPath: string;
+  attemptId: string;
+  queueSequence: number;
+  now?: Date;
+}): AgentAttemptRecord {
+  if (!Number.isSafeInteger(input.queueSequence) || input.queueSequence <= 0) {
+    throw new Error("agent queue sequence must be a positive safe integer");
+  }
+  const at = iso(input.now);
+  return updateAttempt(input.runJsonPath, input.attemptId, (attempt) => {
+    if (attempt.phase !== "queued") {
+      throw new Error(`AgentAttempt ${attempt.id} is not queued`);
+    }
+    if (attempt.queueSequence !== undefined && attempt.queueSequence !== input.queueSequence) {
+      throw new Error(`AgentAttempt ${attempt.id} already has queue sequence ${attempt.queueSequence}`);
+    }
+    return {
+      ...attempt,
+      queueSequence: attempt.queueSequence ?? input.queueSequence,
+      queueEnteredAt: attempt.queueEnteredAt || at,
+      updatedAt: at,
+    };
+  });
 }
 
 export function recordAgentAttemptRecoveryDecision(input: {
@@ -566,6 +613,7 @@ export function releaseAgentCapacitySlot(input: {
  * terminalized by an out-of-band owner such as the watchdog. */
 export function releaseRunAgentCapacitySlots(input: {
   runJsonPath: string;
+  attemptIds?: ReadonlySet<string>;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): number {
@@ -579,6 +627,7 @@ export function releaseRunAgentCapacitySlots(input: {
     if (!runnerV2 || !Array.isArray(runnerV2.attempts)) return run;
     const attempts = runnerV2.attempts.map((attempt) => {
       if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return attempt;
+      if (input.attemptIds && !input.attemptIds.has(attempt.id)) return attempt;
       released += 1;
       return { ...attempt, capacitySlotReleasedAt: at, updatedAt: at };
     });

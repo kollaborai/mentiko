@@ -25,17 +25,20 @@ import {
   stopChainWatcherService,
 } from "../lib/runner-v2/chain-watcher-service";
 import { runTypedWatchdogScan } from "../lib/runner-v2/watchdog";
+import { reconcileRoutedLaunchJobs } from "../lib/runner-v2/launch-job-runner";
 import { createBackgroundWorkerShutdown } from "./background-worker-shutdown";
 
 const CHECK_INTERVAL_MS = 60_000;
 const RECONCILE_STARTUP_DELAY_MS = 3000;
 const EXTERNAL_DRAIN_INTERVAL_MS = 15_000;
 const WATCHDOG_INTERVAL_MS = 60_000;
+const LAUNCH_JOB_INTERVAL_MS = 15_000;
 
 let reconcileInterval: ReturnType<typeof setInterval> | null = null;
 let decisionReconcileInterval: ReturnType<typeof setInterval> | null = null;
 let externalDrainInterval: ReturnType<typeof setInterval> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
+let launchJobInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let externalDrainInFlight = false;
 let watchdogInFlight = false;
@@ -70,6 +73,14 @@ const watchdogState: {
   checkCount: number;
   lastStalled?: number;
   transportAvailable?: boolean;
+  lastError?: string;
+} = { checkCount: 0 };
+const launchJobState: {
+  lastCheck?: string;
+  checkCount: number;
+  examined?: number;
+  scheduled?: number;
+  active?: number;
   lastError?: string;
 } = { checkCount: 0 };
 
@@ -123,10 +134,47 @@ function currentStatus(note?: string) {
       transportAvailable: watchdogState.transportAvailable,
       lastError: watchdogState.lastError,
     },
+    launchJobs: {
+      status: shutdownController.isStopping() ? "stopped" as const : "running" as const,
+      lastCheck: launchJobState.lastCheck,
+      checkCount: launchJobState.checkCount,
+      examined: launchJobState.examined,
+      scheduled: launchJobState.scheduled,
+      active: launchJobState.active,
+      lastError: launchJobState.lastError,
+    },
     lastExternalDrain: externalDrainState.lastRun,
     lastExternalDispatched: externalDrainState.lastDispatched,
     note: note || reconcilerState.note || decisionReconcilerState.lastError || externalDrainState.note,
   };
+}
+
+function runLaunchJobReconciler(label: string) {
+  try {
+    const runtimeErrors: string[] = [];
+    const result = reconcileRoutedLaunchJobs({
+      onError: (error) => {
+        runtimeErrors.push(error.message);
+        console.warn(`[worker] routed launch job ${label} failed:`, error);
+      },
+    });
+    launchJobState.lastCheck = new Date().toISOString();
+    launchJobState.checkCount += 1;
+    launchJobState.examined = result.examined;
+    launchJobState.scheduled = result.scheduled;
+    launchJobState.active = result.active;
+    launchJobState.lastError = [...result.errors, ...runtimeErrors].join("; ") || undefined;
+    if (result.scheduled > 0) {
+      console.log(`[worker] routed launch reconciler ${label}: ${result.scheduled} jobs scheduled, ${result.active} active`);
+    }
+  } catch (error) {
+    launchJobState.lastCheck = new Date().toISOString();
+    launchJobState.checkCount += 1;
+    launchJobState.lastError = error instanceof Error ? error.message : String(error);
+    console.warn(`[worker] routed launch reconciler ${label} failed:`, error);
+  } finally {
+    persistStatus();
+  }
 }
 
 async function runDecisionReconciler(label: string) {
@@ -280,6 +328,7 @@ async function start() {
   await runDecisionReconciler("startup");
   await runWatchdog("startup");
   await runExternalDrain("startup");
+  runLaunchJobReconciler("startup");
 
   reconcileInterval = setInterval(() => {
     void runReconciler("periodic");
@@ -296,6 +345,10 @@ async function start() {
   watchdogInterval = setInterval(() => {
     void runWatchdog("periodic");
   }, WATCHDOG_INTERVAL_MS);
+
+  launchJobInterval = setInterval(() => {
+    runLaunchJobReconciler("periodic");
+  }, LAUNCH_JOB_INTERVAL_MS);
 
   heartbeatInterval = setInterval(() => {
     persistStatus();
@@ -320,6 +373,10 @@ async function stopWorkerServices() {
   if (watchdogInterval) {
     clearInterval(watchdogInterval);
     watchdogInterval = null;
+  }
+  if (launchJobInterval) {
+    clearInterval(launchJobInterval);
+    launchJobInterval = null;
   }
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);

@@ -1,4 +1,5 @@
 export interface PendingHandoff {
+  id?: string;
   pid: number;
   targetAgentIds: string[];
   startedAt: string;
@@ -24,6 +25,7 @@ export function pendingHandoffs(run: Record<string, unknown>): PendingHandoff[] 
       : [];
     return Number.isInteger(item?.pid) && Number(item?.pid) > 0 && targetAgentIds.length > 0
       ? [{
+          ...(typeof item?.id === "string" && item.id ? { id: item.id } : {}),
           pid: Number(item?.pid),
           targetAgentIds,
           startedAt: typeof item?.startedAt === "string" ? item.startedAt : "",

@@ -19,7 +19,11 @@ import type { AdapterOperation } from "@/lib/runner-v2/adapters";
 import { enqueueExternalEffectsOnce } from "@/lib/runner-v2/external-effects";
 import { withExclusiveFileClaim } from "@/lib/runner-v2/file-claim";
 import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
-import { releaseRunAgentCapacitySlots } from "@/lib/runner-v2/agent-attempt";
+import {
+  isTerminalAgentAttemptPhase,
+  readRunnerV2AttemptState,
+  releaseRunAgentCapacitySlots,
+} from "@/lib/runner-v2/agent-attempt";
 
 const RESUME_GRACE_MS = 120_000;
 const MISSING_SESSION_STARTUP_GRACE_MS = 10_000;
@@ -109,6 +113,7 @@ export interface TypedWatchdogScanResult {
   sessionsRemoved: string[];
   sessionRemovalFailures: string[];
   orphanSessionsRemoved: string[];
+  capacitySlotsReleased: number;
   externalEffectsQueued: number;
   hookDispatches: number;
   errors: string[];
@@ -158,6 +163,7 @@ export async function runTypedWatchdogScan(
     sessionsRemoved: [],
     sessionRemovalFailures: [],
     orphanSessionsRemoved: [],
+    capacitySlotsReleased: 0,
     externalEffectsQueued: 0,
     hookDispatches: 0,
     errors: [],
@@ -289,6 +295,25 @@ export async function runTypedWatchdogScan(
     } catch (error) {
       result.errors.push(`orphan cleanup skipped: ${errorMessage(error)}`);
     }
+  }
+
+  // Capacity is actual live-agent capacity, not a terminal status counter.
+  // Reconcile after cleanup with a fresh daemon snapshot and release only the
+  // slots whose exact agent PTY is proven absent. A transport failure keeps the
+  // slot held and fails closed.
+  try {
+    const currentSessions = await dependencies.transport.list();
+    for (const scopedRun of readScopedRuns(runsDir, result.errors)) {
+      const releasable = releasableCapacityAttemptIds(scopedRun.runJsonPath, scopedRun.run, currentSessions);
+      if (releasable.size === 0) continue;
+      result.capacitySlotsReleased += releaseRunAgentCapacitySlots({
+        runJsonPath: scopedRun.runJsonPath,
+        attemptIds: releasable,
+        now,
+      });
+    }
+  } catch (error) {
+    result.errors.push(`capacity cleanup skipped: ${errorMessage(error)}`);
   }
 
   return result;
@@ -511,17 +536,6 @@ async function finalizeWatchdogTerminalization(input: {
   let marker = watchdogMarker(currentRun);
   if (!marker) return;
   const assessment = markerAssessment(marker);
-
-  try {
-    releaseRunAgentCapacitySlots({
-      runJsonPath: input.scopedRun.runJsonPath,
-      now: input.now,
-    });
-    currentRun = readRunJson(input.scopedRun.runJsonPath);
-    marker = watchdogMarker(currentRun)!;
-  } catch (error) {
-    input.result.errors.push(`capacity release failed for ${currentRun.id}: ${errorMessage(error)}`);
-  }
 
   if (!marker.eventEmittedAt) {
     try {
@@ -777,6 +791,22 @@ function hasLiveRunSession(run: RunRecord, sessions: WatchdogSession[]): boolean
   }
   names.add(`monitor-${run.id}`);
   return sessions.some((session) => session.alive && names.has(session.name));
+}
+
+function releasableCapacityAttemptIds(
+  runJsonPath: string,
+  run: RunRecord,
+  sessions: WatchdogSession[],
+): Set<string> {
+  const live = new Set(sessions.filter((session) => session.alive).map((session) => session.name));
+  const agentSessionById = new Map((run.agents || []).map((agent) => [agent.id, agent.session]));
+  const runTerminal = TERMINAL_RUN_STATUSES.has(String(run.status)) || run.status === "blocked";
+  return new Set(readRunnerV2AttemptState(runJsonPath).attempts.flatMap((attempt) => {
+    if (!attempt.capacitySlotAcquiredAt || attempt.capacitySlotReleasedAt) return [];
+    if (!runTerminal && !isTerminalAgentAttemptPhase(attempt.phase)) return [];
+    const sessionName = attempt.processEvidence?.ptySessionId || agentSessionById.get(attempt.agentId) || "";
+    return !sessionName || !live.has(sessionName) ? [attempt.id] : [];
+  }));
 }
 
 async function reapProvableScopedOrphans(

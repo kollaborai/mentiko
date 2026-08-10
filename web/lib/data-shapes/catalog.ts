@@ -690,9 +690,9 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     storage: ["run.json → runnerV2.attempts[]"],
     assurance: "drift-checked",
     schemaPath: "lib/schemas/run.schema.json",
-    typePaths: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts"],
-    writers: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/watchdog.ts"],
-    readers: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/completion-runner.ts", "web/lib/runner-v2/watchdog.ts"],
+    typePaths: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/launch-job.ts"],
+    writers: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/watchdog.ts"],
+    readers: ["web/lib/runner-v2/agent-attempt.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/completion-runner.ts", "web/lib/runner-v2/launch-job-runner.ts", "web/lib/runner-v2/watchdog.ts"],
     samples: {
       root: "project",
       patterns: [["runs", "*", "run.json"]],
@@ -703,7 +703,8 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "Completion preserves the specific accepted evidence in terminalReason (declared event, durable marker, verified cross-run event, or handoff artifact) instead of collapsing recovery into a generic event result; terminalDetail remains the producer diagnostic companion.",
       "Invalid agent admission is a typed terminal transition: the TypeScript owner writes the canonical blocked run reason and matching agent state, while the shell boundary forwards only primitive identifiers and exit behavior.",
-      "Queued attempts are ordered FIFO across runs under the project agent-capacity claim. capacitySlotAcquiredAt and capacitySlotReleasedAt are the durable count authority; completion and watchdog terminalization both release held slots idempotently.",
+      "Queued attempts receive a monotonic queueSequence under the organization-scoped agent-capacity claim. capacitySlotAcquiredAt and capacitySlotReleasedAt are the durable count authority; a slot is released only after the owning PTY is absent or cleanup proves that exact session was removed.",
+      "launchJobId and launchOccurrenceId bind each attempt to the one routed event occurrence that may resume it. A replacement coordinator reuses the same attempt instead of creating duplicate agent work.",
     ],
   }),
   shape({
@@ -729,6 +730,42 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     notes: [
       "One detached coordinator owns all targets in a routed fan-out, heartbeats every 15 seconds, and remains watchdog-visible while capacity-delayed targets are queued without PTYs.",
       "Session registration removes each started target from the handoff. A dead or stale coordinator no longer proves liveness, so the watchdog reports the stalled run instead of leaving it silently pending.",
+    ],
+  }),
+  shape({
+    id: "runner-v2-routed-launch-job",
+    name: "Runner-v2 Routed Launch Job",
+    category: "runner",
+    description: "Durable occurrence-bound fan-out launch intent with fenced coordinator lease, per-target attempt ownership, and replay state.",
+    scope: "run",
+    format: "json",
+    storage: ["run.json → runnerV2.launchJobs{jobId}"],
+    assurance: "drift-checked",
+    schemaPath: "lib/schemas/run.schema.json",
+    typePaths: ["web/lib/runner-v2/launch-job.ts", "web/lib/runner-v2/launch-job-runner.ts", "web/lib/runner-v2/run-scope.ts"],
+    writers: ["web/lib/runner-v2/launch-agent-cli.ts", "web/lib/runner-v2/launch-job.ts", "web/lib/runner-v2/launch-job-runner.ts"],
+    readers: ["web/lib/runner-v2/adapters.ts", "web/lib/runner-v2/agent-capacity.ts", "web/lib/runner-v2/bootstrap-executor.ts", "web/lib/runner-v2/launch-job-runner.ts", "web/server/background-worker.ts"],
+    samples: {
+      root: "project",
+      patterns: [["runs", "*", "run.json"]],
+      format: "json",
+      valuePath: "runnerV2.launchJobs",
+      schemaPointer: "/definitions/routedLaunchJob",
+    },
+    sensitive: true,
+    runnerLineage: {
+      usage: "runner-v2",
+      surfaces: [{
+        id: "typed-routed-launch-job",
+        label: "Persist, lease, reclaim, and complete routed fan-out launch work",
+        owner: "runner-v2",
+        paths: ["web/lib/runner-v2/launch-job.ts", "web/lib/runner-v2/launch-job-runner.ts"],
+      }],
+    },
+    notes: [
+      "The job identifier is derived from the accepted event occurrence, run, and sorted target set. Persisting the job is the routed-launch acceptance boundary, so a coordinator crash cannot lose accepted work.",
+      "Only an allowlisted environment subset is stored; provider tokens and arbitrary process environment values are excluded. The worker rehydrates runtime-only credentials from its own process environment.",
+      "Lease ownership is fenced by ownerId and expiry. The background worker reclaims queued or expired jobs, while attempt bindings guarantee exactly one durable attempt per target across coordinator restarts.",
     ],
   }),
   shape({

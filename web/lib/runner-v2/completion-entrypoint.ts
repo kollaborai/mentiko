@@ -147,9 +147,18 @@ export function runRunnerV2CompletionEntrypoint(
       }
     }
     if (!input.dryRun && generationDuplicate) {
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
       if (latestAttempt) {
-        releaseAgentCapacitySlot({ runJsonPath, attemptId: latestAttempt.id, now: input.now });
+        removeAgentSessionsAndReleaseCapacity({
+          sessionName: input.sessionName,
+          stateDir,
+          runId,
+          runJsonPath,
+          attemptId: latestAttempt.id,
+          env,
+          now: input.now,
+        });
+      } else {
+        killAgentSessions(input.sessionName, { stateDir, runId, env });
       }
       updateRunAgent(runJsonPath, agent.id, "complete", input.now);
       updateRunStatus(runJsonPath, "completed", undefined, input.now);
@@ -240,8 +249,10 @@ export function runRunnerV2CompletionEntrypoint(
     } else {
       // shell phase-4 parity: the fallback handler never runs after a typed
       // verdict, so the bridge tears down the agent + monitor sessions itself
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
-      releaseAgentCapacitySlot({ runJsonPath, attemptId: completionAttempt.id, now: input.now });
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: completionAttempt.id, env, now: input.now,
+      });
     }
     return {
       status: "handled",
@@ -455,8 +466,10 @@ export function runRunnerV2CompletionEntrypoint(
       // verdict, so the bridge tears down the agent + monitor sessions itself.
       // Runs for every handled verdict — v1 kills sessions unconditionally in
       // phase 4 before its routing decisions; relaunches use fresh sessions.
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
-      releaseAgentCapacitySlot({ runJsonPath, attemptId: completionAttempt.id, now: input.now });
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: completionAttempt.id, env, now: input.now,
+      });
       if (workspaceIntegration) {
         cleanupNodeWorkspaceAfterCompletion({
           run,
@@ -504,8 +517,10 @@ export function runRunnerV2CompletionEntrypoint(
         now: input.now,
       });
       updateRunStatus(runJsonPath, "failed", error.message, input.now);
-      killAgentSessions(input.sessionName, { stateDir, runId, env });
-      releaseAgentCapacitySlot({ runJsonPath, attemptId: recoveredAttempt.id, now: input.now });
+      removeAgentSessionsAndReleaseCapacity({
+        sessionName: input.sessionName, stateDir, runId, runJsonPath,
+        attemptId: recoveredAttempt.id, env, now: input.now,
+      });
     }
     throw error;
   }
@@ -516,6 +531,32 @@ function latestAgentAttempt(runJsonPath: string, agentId: string): AgentAttemptR
     .filter((attempt) => attempt.agentId === agentId)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
     .at(-1);
+}
+
+function removeAgentSessionsAndReleaseCapacity(input: {
+  sessionName: string;
+  stateDir: string;
+  runId: string;
+  runJsonPath: string;
+  attemptId: string;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): void {
+  const cleanup = killAgentSessions(input.sessionName, {
+    stateDir: input.stateDir,
+    runId: input.runId,
+    env: input.env,
+  });
+  // The monitor does not consume an active-agent slot. Release only after the
+  // agent PTY itself is proven absent; a failed removal stays durably counted
+  // and the watchdog cleanup pass retries it.
+  if (!cleanup.failed.includes(input.sessionName)) {
+    releaseAgentCapacitySlot({
+      runJsonPath: input.runJsonPath,
+      attemptId: input.attemptId,
+      now: input.now,
+    });
+  }
 }
 
 function blockWorkspaceIntegrationConflict(input: {
@@ -549,14 +590,13 @@ function blockWorkspaceIntegrationConflict(input: {
   });
   updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
   updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
-  killAgentSessions(input.sessionName, {
+  removeAgentSessionsAndReleaseCapacity({
+    sessionName: input.sessionName,
     stateDir: input.stateDir,
     runId: input.runId,
-    env: input.env,
-  });
-  releaseAgentCapacitySlot({
     runJsonPath: input.runJsonPath,
     attemptId: input.attemptId,
+    env: input.env,
     now: input.now,
   });
 
@@ -609,14 +649,13 @@ function blockSourceWorkspaceChanged(input: {
   });
   updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
   updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
-  killAgentSessions(input.sessionName, {
+  removeAgentSessionsAndReleaseCapacity({
+    sessionName: input.sessionName,
     stateDir: input.stateDir,
     runId: input.runId,
-    env: input.env,
-  });
-  releaseAgentCapacitySlot({
     runJsonPath: input.runJsonPath,
     attemptId: input.attemptId,
+    env: input.env,
     now: input.now,
   });
 

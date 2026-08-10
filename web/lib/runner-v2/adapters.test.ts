@@ -696,7 +696,7 @@ describe("runner-v2 adapters", () => {
     expect(existsSync(join(eventsDir, "archive", "trigger.event"))).toBe(true);
   });
 
-  it("accepts a durable queued target without waiting for its PTY", () => {
+  it("refuses an unowned queued target with no reclaimable launch job", () => {
     const dir = tempDir();
     const runJsonPath = seedRun(dir);
     updateRunJson(runJsonPath, (current) => ({
@@ -729,18 +729,12 @@ describe("runner-v2 adapters", () => {
     }));
     (spawnSync as jest.Mock).mockClear();
 
-    expect(startLaunch({
+    expect(() => startLaunch({
       kind: "single",
       agentIds: ["reviewer"],
       command: "echo launch-reviewer",
       env: { MENTIKO_RUN_ID: "run-123" },
-    }, { runJsonPath, stateDir: dir })).toMatchObject({
-      targets: [{
-        agentId: "reviewer",
-        attemptId: "run-123:reviewer:1",
-        session: "reviewer-run-123",
-      }],
-    });
+    }, { runJsonPath, stateDir: dir })).toThrow(/acceptance_pending/);
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
