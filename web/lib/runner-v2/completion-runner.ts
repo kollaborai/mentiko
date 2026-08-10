@@ -1,7 +1,16 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { findCompletionEvent, type CompletionAgentRef } from "@/lib/runner-v2/completion";
-import { readRunJson, updateRunAgent, updateRunStatus, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import {
+  assertRunAgentAttemptCurrent,
+  readRunJson,
+  StaleRunAgentAttemptError,
+  updateRunAgent,
+  updateRunStatus,
+  type RunAgentAttemptGuard,
+  type RunMutationObserver,
+  type RunRecord,
+} from "@/lib/runner-v2/run-state";
 import { decideNextRoute, routingContextForEvents, type RoutingChain, type RoutingDecision } from "@/lib/runner-v2/routing";
 import type { RunnerEventRecord } from "@/lib/runner-v2/events";
 import { planTerminalCompletion, shouldCompleteEmptyEmitsAgent, type TerminalCompletionInput, type TerminalCompletionPlan } from "@/lib/runner-v2/terminal-plan";
@@ -21,6 +30,7 @@ import {
 } from "@/lib/runner-v2/agent-attempt";
 
 export type CompletionRunnerDecision =
+  | { action: "stale-attempt"; reason: string; run: RunRecord }
   | { action: "await-liveness"; reason: string; liveness: AgentLivenessDecision; run: RunRecord }
   | { action: "fail"; reason: string; run: RunRecord; fanGroup?: FanGroupCompletionPlan }
   | { action: "retry"; reason: string; retry: Extract<RetryNoEventPlan, { action: "retry" }>; run: RunRecord }
@@ -122,6 +132,56 @@ export function evaluateAgentLiveness(input?: AgentLivenessInput): AgentLiveness
   return { disposition: "grace", reason: "completion session alive but silent; bounded grace active" };
 }
 
+function completionAttemptGuard(input: CompleteAgentInput): RunAgentAttemptGuard | undefined {
+  return input.attemptId ? {
+    runId: input.runId,
+    agentId: input.agent.id,
+    attemptId: input.attemptId,
+  } : undefined;
+}
+
+function recordStaleCompletionAttempt(
+  input: CompleteAgentInput,
+  match: ReturnType<typeof findCompletionEvent>,
+  completionEvidence: CompletionEvidenceProvenance,
+): void {
+  if (!input.attemptId) return;
+  if (match.matched && match.event) {
+    markCompletionEvidence({
+      runJsonPath: input.runJsonPath,
+      runId: input.runId,
+      agentId: input.agent.id,
+      attemptId: input.attemptId,
+      event: match.event.event,
+      evidence: completionEvidence,
+      now: input.now,
+      onMutation: input.onRunMutation,
+    });
+    return;
+  }
+  if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
+    markAgentAttemptCompletedFromGeneration({
+      runJsonPath: input.runJsonPath,
+      runId: input.runId,
+      agentId: input.agent.id,
+      attemptId: input.attemptId,
+      detail: "stale completion attempt had an accepted generation payload",
+      now: input.now,
+      onMutation: input.onRunMutation,
+    });
+    return;
+  }
+  markAgentAttemptFailedNoCompletion({
+    runJsonPath: input.runJsonPath,
+    runId: input.runId,
+    agentId: input.agent.id,
+    attemptId: input.attemptId,
+    detail: "stale completion attempt produced no accepted completion event",
+    now: input.now,
+    onMutation: input.onRunMutation,
+  });
+}
+
 export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecision {
   let completionEvidence: CompletionEvidenceProvenance = "declared-event";
   let match = findCompletionEvent({
@@ -147,6 +207,40 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
   }
 
+  const attemptGuard = completionAttemptGuard(input);
+  if (attemptGuard) {
+    try {
+      assertRunAgentAttemptCurrent(readRunJson(input.runJsonPath), attemptGuard);
+    } catch (error) {
+      if (!(error instanceof StaleRunAgentAttemptError)) throw error;
+      recordStaleCompletionAttempt(input, match, completionEvidence);
+      return {
+        action: "stale-attempt",
+        reason: error.message,
+        run: readCurrentRun(input.runJsonPath),
+      };
+    }
+  }
+  const setAgentStatus = (status: Parameters<typeof updateRunAgent>[2]) => updateRunAgent(
+    input.runJsonPath,
+    input.agent.id,
+    status,
+    input.now,
+    input.onRunMutation,
+    attemptGuard,
+  );
+  const setRunStatus = (
+    status: Parameters<typeof updateRunStatus>[1],
+    statusMessage?: string,
+  ) => updateRunStatus(
+    input.runJsonPath,
+    status,
+    statusMessage,
+    input.now,
+    input.onRunMutation,
+    attemptGuard,
+  );
+
   // Core generation completion has two required proofs: an agent completion
   // signal AND a current, kind-compatible JSON handoff. A declared event or a
   // durable AGENT_COMPLETE marker without that payload is a failed generation,
@@ -161,8 +255,8 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   ) {
     const reason = `generation agent completed without a valid ${input.generation.generationKind} JSON payload`;
     const fanGroup = planFanGroupCompletion(input, "failed");
-    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-    const run = updateRunStatus(input.runJsonPath, "failed", reason, input.now, input.onRunMutation);
+    setAgentStatus("failed");
+    const run = setRunStatus("failed", reason);
     markAgentAttemptFailedNoCompletion({
       runJsonPath: input.runJsonPath,
       runId: input.runId,
@@ -177,8 +271,8 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
 
   if (!match.matched || !match.event) {
     if (input.generation?.jobId && input.generation.generationKind && input.generation.importablePayload) {
-      updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now, input.onRunMutation);
-      const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now, input.onRunMutation);
+      setAgentStatus("complete");
+      const run = setRunStatus("completed");
       markAgentAttemptCompletedFromGeneration({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -222,8 +316,8 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     if (input.completionRecoveryEvidence === "durable-marker" && expectedEvent) {
       const reason = `agent ${input.agent.id} reported AGENT_COMPLETE without declared event '${expectedEvent}'`;
       const fanGroup = planFanGroupCompletion(input, "failed");
-      updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-      const run = updateRunStatus(input.runJsonPath, "failed", reason, input.now, input.onRunMutation);
+      setAgentStatus("failed");
+      const run = setRunStatus("failed", reason);
       markAgentAttemptFailedNoCompletion({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -257,8 +351,8 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
 
     if (shouldCompleteEmptyEmitsAgent(input.agent.emits, hasDownstreamForAgent(input.chain, input.agent.id))) {
-      updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now, input.onRunMutation);
-      const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now, input.onRunMutation);
+      setAgentStatus("complete");
+      const run = setRunStatus("completed");
       markAgentAttemptCompletedFromEmptyEmits({
         runJsonPath: input.runJsonPath,
         runId: input.runId,
@@ -308,13 +402,10 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         };
       }
 
-      updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-      const run = updateRunStatus(
-        input.runJsonPath,
+      setAgentStatus("failed");
+      const run = setRunStatus(
         "stopped",
         `agent ${input.agent.id} completed without declared event; retries exhausted`,
-        input.now,
-        input.onRunMutation,
       );
       markAgentAttemptRetriesExhausted({
         runJsonPath: input.runJsonPath,
@@ -335,13 +426,10 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     }
 
     const fanGroup = planFanGroupCompletion(input, "failed");
-    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-    const run = updateRunStatus(
-      input.runJsonPath,
+    setAgentStatus("failed");
+    const run = setRunStatus(
       "failed",
       `agent ${input.agent.id} completed without declared event: ${match.reason}`,
-      input.now,
-      input.onRunMutation,
     );
     markAgentAttemptFailedNoCompletion({
       runJsonPath: input.runJsonPath,
@@ -361,7 +449,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   const fanGroup = planFanGroupCompletion(input, "complete");
-  updateRunAgent(input.runJsonPath, input.agent.id, "complete", input.now, input.onRunMutation);
+  setAgentStatus("complete");
   markCompletionEvidence({
     runJsonPath: input.runJsonPath,
     runId: input.runId,
@@ -403,7 +491,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }) : undefined;
 
   if (loopGuard?.action === "complete") {
-    const run = updateRunStatus(input.runJsonPath, "completed", undefined, input.now, input.onRunMutation);
+    const run = setRunStatus("completed");
     return {
       action: "loop-complete",
       event: match.event,
@@ -414,12 +502,9 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
   }
 
   if (loopGuard?.action === "stop") {
-    const run = updateRunStatus(
-      input.runJsonPath,
+    const run = setRunStatus(
       "stopped",
       `max rounds exceeded (${loopGuard.maxRounds})`,
-      input.now,
-      input.onRunMutation,
     );
     return {
       action: "max-rounds-stop",

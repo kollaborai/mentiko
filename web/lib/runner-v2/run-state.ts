@@ -25,6 +25,19 @@ export interface RunJsonMutation {
 
 export type RunMutationObserver = (mutation: RunJsonMutation) => void;
 
+export interface RunAgentAttemptGuard {
+  runId: string;
+  agentId: string;
+  attemptId: string;
+}
+
+export class StaleRunAgentAttemptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaleRunAgentAttemptError";
+  }
+}
+
 export interface CreateRunRecordInput {
   runId?: string;
   chainName: string;
@@ -97,9 +110,11 @@ export function updateRunStatus(
   statusMessage?: string,
   now = new Date(),
   onMutation?: RunMutationObserver,
+  attemptGuard?: RunAgentAttemptGuard,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    if (attemptGuard) assertRunAgentAttemptCurrent(current, attemptGuard);
     const successfulTerminal = status === "completed";
     const active = status === "running";
     return {
@@ -182,9 +197,11 @@ export function updateRunAgent(
   status: AgentStatus,
   now = new Date(),
   onMutation?: RunMutationObserver,
+  attemptGuard?: RunAgentAttemptGuard,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
+    if (attemptGuard) assertRunAgentAttemptCurrent(current, attemptGuard);
     return {
       ...current,
       agents: (current.agents || []).map((agent) => {
@@ -197,4 +214,40 @@ export function updateRunAgent(
       }),
     };
   }, undefined, onMutation);
+}
+
+export function assertRunAgentAttemptCurrent(
+  run: RunRecord,
+  guard: RunAgentAttemptGuard,
+): void {
+  if (run.id !== guard.runId) {
+    throw new Error(`completion run identity mismatch: ${run.id} !== ${guard.runId}`);
+  }
+  const runnerV2 = run.runnerV2;
+  const attempts = runnerV2 && typeof runnerV2 === "object" && !Array.isArray(runnerV2)
+    ? (runnerV2 as { attempts?: unknown }).attempts
+    : undefined;
+  const records = Array.isArray(attempts)
+    ? attempts.filter((attempt): attempt is { id: string; runId: string; agentId: string } => (
+      Boolean(attempt)
+      && typeof attempt === "object"
+      && !Array.isArray(attempt)
+      && typeof (attempt as Record<string, unknown>).id === "string"
+      && typeof (attempt as Record<string, unknown>).runId === "string"
+      && typeof (attempt as Record<string, unknown>).agentId === "string"
+    ))
+    : [];
+  const owned = records.filter((attempt) => (
+    attempt.runId === guard.runId && attempt.agentId === guard.agentId
+  ));
+  const exact = owned.find((attempt) => attempt.id === guard.attemptId);
+  if (!exact) {
+    throw new Error(`completion AgentAttempt not found: ${guard.attemptId}`);
+  }
+  const current = owned.at(-1);
+  if (current?.id !== guard.attemptId) {
+    throw new StaleRunAgentAttemptError(
+      `stale completion AgentAttempt ${guard.attemptId}; current attempt is ${current?.id || "unknown"}`,
+    );
+  }
 }

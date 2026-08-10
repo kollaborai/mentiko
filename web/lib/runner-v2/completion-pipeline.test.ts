@@ -29,7 +29,7 @@ function seedRun(dir: string) {
 }
 
 describe("runner-v2 completion pipeline", () => {
-  it("mutates the exact completion attempt without touching a newer retry", () => {
+  it("records a stale completion attempt without mutating or routing the newer retry", () => {
     const dir = runDir();
     const runJsonPath = seedRun(dir);
     const first = createAgentAttempt({
@@ -66,7 +66,7 @@ describe("runner-v2 completion pipeline", () => {
       transitionAgentAttempt({ runJsonPath, attemptId: retry.id, to: phase });
     }
 
-    runCompletionPipeline({
+    const result = runCompletionPipeline({
       runDir: dir,
       runJsonPath,
       runId: "run-123",
@@ -77,6 +77,8 @@ describe("runner-v2 completion pipeline", () => {
       now: new Date("2026-08-09T20:00:00.000Z"),
     });
 
+    expect(result.decision).toMatchObject({ action: "stale-attempt" });
+
     const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
     expect(attempts.find((attempt) => attempt.id === first.id)).toMatchObject({
       phase: "completed",
@@ -85,6 +87,10 @@ describe("runner-v2 completion pipeline", () => {
     const retryAfter = attempts.find((attempt) => attempt.id === retry.id);
     expect(retryAfter).toMatchObject({ phase: "instructions_submitted" });
     expect(retryAfter?.terminalReason).toBeUndefined();
+    expect(readRunJson(runJsonPath)).toMatchObject({
+      status: "running",
+      agents: [{ id: "writer", status: "running" }],
+    });
   });
 
   it("records loop visit and round after a routable completion", () => {

@@ -13,7 +13,19 @@ import { scanRunnerEventFiles } from "@/lib/runner-v2/event-lifecycle";
 import { eventMatchesRunId, type RunnerEventRecord } from "@/lib/runner-v2/events";
 import { buildTypedExecutorPlan, type TypedExecutorPlan } from "@/lib/runner-v2/executor";
 import { captureHash, monitorStatePaths } from "@/lib/runner-v2/monitor-io";
-import { readRunJson, updateRunAgent, updateRunJson, updateRunStatus, type RunAgentRecord, type RunJsonMutation, type RunMutationObserver, type RunRecord } from "@/lib/runner-v2/run-state";
+import {
+  assertRunAgentAttemptCurrent,
+  readRunJson,
+  StaleRunAgentAttemptError,
+  updateRunAgent,
+  updateRunJson,
+  updateRunStatus,
+  type RunAgentAttemptGuard,
+  type RunAgentRecord,
+  type RunJsonMutation,
+  type RunMutationObserver,
+  type RunRecord,
+} from "@/lib/runner-v2/run-state";
 import { livePendingHandoffAgentIds } from "@/lib/runner-v2/handoff-liveness";
 import { evaluateQualityGate, type AgentSummary } from "@/lib/runner-v2/quality-gate";
 import { readLoopState, restoreLoopMutations, type LoopFileMutation, type LoopMutationObserver } from "@/lib/runner-v2/loop-state";
@@ -101,6 +113,7 @@ export function runRunnerV2CompletionEntrypoint(
     || generationDuplicate;
   if (duplicate) {
     let completionAttempt: ReturnType<typeof resolveAgentAttemptForCompletion>;
+    let completionAttemptCurrent = true;
     let integration: GitNodeIntegrationResult | undefined;
     if (!input.dryRun) {
       completionAttempt = resolveAgentAttemptForCompletion({
@@ -110,6 +123,12 @@ export function runRunnerV2CompletionEntrypoint(
         attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
         sessionName: input.sessionName,
       });
+      completionAttemptCurrent = completionAttempt ? completionAttemptIsCurrent({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+      }) : true;
       integration = completionAttempt
         ? integrateCompletedNodeWorkspace({
           run,
@@ -166,8 +185,13 @@ export function runRunnerV2CompletionEntrypoint(
       } else {
         killAgentSessions(input.sessionName, { stateDir, runId, env });
       }
-      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
-      updateRunStatus(runJsonPath, "completed", undefined, input.now);
+      const attemptGuard = completionAttempt && completionAttemptCurrent
+        ? completionAttemptGuard(runId, agent.id, completionAttempt.id)
+        : undefined;
+      if (!completionAttempt || completionAttemptCurrent) {
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, attemptGuard);
+        updateRunStatus(runJsonPath, "completed", undefined, input.now, undefined, attemptGuard);
+      }
     }
     if (!input.dryRun && completionAttempt && integration && integration.status !== "conflict") {
       cleanupNodeWorkspaceAfterCompletion({
@@ -221,6 +245,8 @@ export function runRunnerV2CompletionEntrypoint(
     now: input.now,
     onMutation: onRunMutation,
   });
+  const attemptGuard = completionAttemptGuard(runId, agent.id, completionAttempt.id);
+  assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
 
   const workspacePath = run.workspacePath || stringValue(chain.config?.project_root);
   const completionChainId = resolveCompletionChainId(run, chain);
@@ -249,6 +275,7 @@ export function runRunnerV2CompletionEntrypoint(
     now: input.now,
     dryRun: input.dryRun,
     onRunMutation,
+    attemptGuard,
     });
   if (qualityGate) {
     if (input.dryRun) {
@@ -334,6 +361,9 @@ export function runRunnerV2CompletionEntrypoint(
         occurrenceId: retryOccurrenceId,
       },
     });
+    if (pipeline.decision.action !== "stale-attempt") {
+      assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
+    }
     const workspaceIntegration = integrateAcceptedCompletionWorkspace({
       run,
       runId,
@@ -438,6 +468,10 @@ export function runRunnerV2CompletionEntrypoint(
       });
     }
 
+    if (pipeline.decision.action !== "stale-attempt") {
+      assertRunAgentAttemptCurrent(readRunJson(runJsonPath), attemptGuard);
+    }
+
     const adapter = applyTypedExecutorPlan(plan, {
       runJsonPath,
       stateDir,
@@ -502,6 +536,27 @@ export function runRunnerV2CompletionEntrypoint(
     };
   } catch (error) {
     restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+    if (error instanceof StaleRunAgentAttemptError) {
+      const staleAttempt = resolveAgentAttemptForCompletion({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
+        sessionName: input.sessionName,
+      });
+      if (!input.dryRun && staleAttempt) {
+        removeAgentSessionsAndReleaseCapacity({
+          sessionName: input.sessionName,
+          stateDir,
+          runId,
+          runJsonPath,
+          attemptId: staleAttempt.id,
+          env,
+          now: input.now,
+        });
+      }
+      return staleCompletionEntrypointResult({ runId, agentId: agent.id, runJsonPath, eventsDir });
+    }
     if (!input.dryRun && error instanceof GenerationImportError) {
       // The generation agent did finish and produced an accepted artifact; the
       // system failed while importing that artifact. Do not restore the run to
@@ -517,15 +572,22 @@ export function runRunnerV2CompletionEntrypoint(
         sessionName: input.sessionName,
         now: input.now,
       });
-      updateRunAgent(runJsonPath, agent.id, "complete", input.now);
       markAgentAttemptCompletedFromGeneration({
         runJsonPath,
         runId,
         agentId: agent.id,
+        attemptId: recoveredAttempt.id,
         detail: "generation artifact accepted; import failed after agent completion",
         now: input.now,
       });
-      updateRunStatus(runJsonPath, "failed", error.message, input.now);
+      const recoveredGuard = completionAttemptGuard(runId, agent.id, recoveredAttempt.id);
+      if (completionAttemptIsCurrent({
+        runJsonPath,
+        ...recoveredGuard,
+      })) {
+        updateRunAgent(runJsonPath, agent.id, "complete", input.now, undefined, recoveredGuard);
+        updateRunStatus(runJsonPath, "failed", error.message, input.now, undefined, recoveredGuard);
+      }
       removeAgentSessionsAndReleaseCapacity({
         sessionName: input.sessionName, stateDir, runId, runJsonPath,
         attemptId: recoveredAttempt.id, env, now: input.now,
@@ -581,6 +643,52 @@ function removeAgentSessionsAndReleaseCapacity(input: {
   }
 }
 
+function completionAttemptGuard(
+  runId: string,
+  agentId: string,
+  attemptId: string,
+): RunAgentAttemptGuard {
+  return { runId, agentId, attemptId };
+}
+
+function completionAttemptIsCurrent(
+  input: RunAgentAttemptGuard & { runJsonPath: string },
+): boolean {
+  try {
+    assertRunAgentAttemptCurrent(readRunJson(input.runJsonPath), input);
+    return true;
+  } catch (error) {
+    if (error instanceof StaleRunAgentAttemptError) return false;
+    throw error;
+  }
+}
+
+function staleCompletionEntrypointResult(input: {
+  runId: string;
+  agentId: string;
+  runJsonPath: string;
+  eventsDir: string;
+}): RunnerV2CompletionEntrypointResult {
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "stale-attempt",
+    plan: {
+      action: "stale-attempt",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
+}
+
 function blockWorkspaceIntegrationConflict(input: {
   runJsonPath: string;
   runId: string;
@@ -610,8 +718,9 @@ function blockWorkspaceIntegrationConflict(input: {
     detail,
     now: input.now,
   });
-  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
-  updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
+  const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard);
   removeAgentSessionsAndReleaseCapacity({
     sessionName: input.sessionName,
     stateDir: input.stateDir,
@@ -680,8 +789,9 @@ function blockSourceWorkspaceChanged(input: {
     detail,
     now: input.now,
   });
-  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
-  updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
+  const attemptGuard = completionAttemptGuard(input.runId, input.agentId, input.attemptId);
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now, undefined, attemptGuard);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now, undefined, attemptGuard);
   removeAgentSessionsAndReleaseCapacity({
     sessionName: input.sessionName,
     stateDir: input.stateDir,
@@ -846,6 +956,7 @@ function maybeHandleQualityGateFailure(input: {
   now?: Date;
   dryRun?: boolean;
   onRunMutation?: RunMutationObserver;
+  attemptGuard: RunAgentAttemptGuard;
 }) {
   const artifactsDir = join(input.runDir, "artifacts");
   const summaryPath = join(artifactsDir, `${input.agent.id}-summary.json`);
@@ -866,6 +977,8 @@ function maybeHandleQualityGateFailure(input: {
   // retry blindly. Preserve that distinction for reconciliation and task UI.
   const summaryStatus = summary?.status?.trim().toLowerCase();
   const terminalRunStatus = summaryStatus === "blocked" ? "blocked" : "failed";
+
+  assertRunAgentAttemptCurrent(readRunJson(input.runJsonPath), input.attemptGuard);
 
   const artifact: { status: string; executionId?: string; artifactPath?: string } = !input.dryRun ? runQualityGateEventArtifact({
     namespaceId: input.namespaceId,
@@ -916,8 +1029,22 @@ function maybeHandleQualityGateFailure(input: {
   }) : { status: "planned" as const };
 
   if (!input.dryRun) {
-    updateRunAgent(input.runJsonPath, input.agent.id, "failed", input.now, input.onRunMutation);
-    updateRunStatus(input.runJsonPath, terminalRunStatus, result.reason, input.now, input.onRunMutation);
+    updateRunAgent(
+      input.runJsonPath,
+      input.agent.id,
+      "failed",
+      input.now,
+      input.onRunMutation,
+      input.attemptGuard,
+    );
+    updateRunStatus(
+      input.runJsonPath,
+      terminalRunStatus,
+      result.reason,
+      input.now,
+      input.onRunMutation,
+      input.attemptGuard,
+    );
   }
   return artifact;
 }
