@@ -16,6 +16,7 @@ const TERMINAL_REASON_LABELS: Record<AgentAttemptTerminalReason, string> = {
   readiness_policy_retry: "CLI readiness requires retry",
   readiness_no_ready_signal: "CLI never produced a readiness signal",
   concurrency_cap_blocked: "Concurrency cap blocked launch",
+  workspace_integration_conflict: "Workspace integration needs human resolution",
   auth_prompt_detected: "CLI requires human authentication",
   instruction_submission_unconfirmed: "Instruction delivery was not confirmed",
   invalid_transition: "Runner lifecycle transition was invalid",

@@ -35,6 +35,7 @@ export type AgentAttemptTerminalReason =
   | "readiness_policy_retry"
   | "readiness_no_ready_signal"
   | "concurrency_cap_blocked"
+  | "workspace_integration_conflict"
   | "auth_prompt_detected"
   | "instruction_submission_unconfirmed"
   | "invalid_transition"
@@ -122,7 +123,9 @@ const ALLOWED_TRANSITIONS: Record<AgentAttemptPhase, AgentAttemptPhase[]> = {
   process_spawned: ["ready_for_instructions", "startup_failed", "human_action_required", "stuck", "released"],
   ready_for_instructions: ["instructions_submitted", "startup_failed", "human_action_required", "stuck", "released"],
   instructions_submitted: ["completed", "completion_failed", "startup_failed", "human_action_required", "stuck", "released"],
-  completed: ["released"],
+  // Agent execution can be complete while the graph edge that integrates its
+  // workspace result still needs human resolution.
+  completed: ["human_action_required", "released"],
   completion_failed: ["released"],
   startup_failed: ["released"],
   human_action_required: ["released"],

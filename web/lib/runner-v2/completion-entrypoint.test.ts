@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -9,6 +10,15 @@ import { parseRunnerEvent } from "@/lib/runner-v2/events";
 import { shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson, type AgentStatus } from "@/lib/runner-v2/run-state";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
+import { createAgentAttempt, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
+import { ensureRunWorkspaceBaseline } from "@/lib/runner-v2/workspace-evidence";
+import {
+  allocateGitNodeWorkspace,
+  currentGitRunIntegrationCommit,
+  finalizeGitNodeWorkspace,
+  initializeGitRunWorkspaceIsolation,
+  integrateGitNodeWorkspaceResult,
+} from "@/lib/runner-v2/workspace-isolation";
 
 function tempRoot() {
   return mkdtempSync(join(tmpdir(), "runner-v2-completion-entrypoint-"));
@@ -16,6 +26,14 @@ function tempRoot() {
 
 function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 function seedGenerationArtifactFixture(input: {
@@ -110,6 +128,132 @@ function expectNoGenerationImport(result: ReturnType<typeof completeGenerationFi
 }
 
 describe("runner-v2 completion entrypoint", () => {
+  it("blocks the edge before downstream effects when parallel node edits conflict", () => {
+    const root = tempRoot();
+    const repositoryRoot = join(root, "repository");
+    const runDir = join(root, "runs", "run-123");
+    const eventsDir = join(root, "events");
+    const stateDir = join(root, "state");
+    mkdirSync(repositoryRoot, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    mkdirSync(eventsDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    git(repositoryRoot, "init", "-q");
+    git(repositoryRoot, "config", "user.name", "Completion Test");
+    git(repositoryRoot, "config", "user.email", "completion@example.com");
+    writeFileSync(join(repositoryRoot, "shared.ts"), "export const shared = 'base';\n");
+    git(repositoryRoot, "add", ".");
+    git(repositoryRoot, "commit", "-qm", "initial");
+
+    const chainPath = join(root, "chain.json");
+    writeJson(chainPath, {
+      id: "chain",
+      name: "Conflict Chain",
+      config: { project_root: repositoryRoot },
+      agents: [{ id: "second", name: "Second" }],
+    });
+    const runJsonPath = join(runDir, "run.json");
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({
+        runId: "run-123",
+        chainName: "Conflict Chain",
+        goal: "merge safely",
+        workspacePath: repositoryRoot,
+      }),
+      status: "running",
+      agents: [{ id: "second", name: "Second", session: "", status: "pending" }],
+    }));
+    const workspaceExecution = ensureRunWorkspaceBaseline({
+      runJsonPath,
+      runDir,
+      runId: "run-123",
+      workspacePath: repositoryRoot,
+      now: new Date("2026-08-09T20:00:00.000Z"),
+    });
+    expect(workspaceExecution.tracking).toBe("git");
+    if (workspaceExecution.tracking !== "git") throw new Error("expected Git workspace evidence");
+    const runWorkspace = initializeGitRunWorkspaceIsolation({
+      runId: "run-123",
+      runDir,
+      baseline: workspaceExecution.baseline,
+    });
+    const first = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "first",
+      attemptId: "attempt-first",
+    });
+    const attempt = createAgentAttempt({
+      runJsonPath,
+      runId: "run-123",
+      agentId: "second",
+      leaseId: "second-run-123",
+    });
+    const second = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "second",
+      attemptId: attempt.id,
+    });
+    for (const phase of [
+      "lease_acquired",
+      "pty_allocated",
+      "process_spawned",
+      "ready_for_instructions",
+      "instructions_submitted",
+    ] as const) {
+      transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: phase });
+    }
+    updateRunJson(runJsonPath, (current) => ({
+      ...current!,
+      sessions: ["second-run-123"],
+      agents: [{
+        id: "second",
+        name: "Second",
+        session: "second-run-123",
+        status: "running",
+      }],
+    }));
+
+    writeFileSync(join(first.workspacePath, "shared.ts"), "export const shared = 'first';\n");
+    writeFileSync(join(second.workspacePath, "shared.ts"), "export const shared = 'second';\n");
+    const firstResult = finalizeGitNodeWorkspace({ runWorkspace, node: first });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result: firstResult });
+    const integrationBeforeConflict = currentGitRunIntegrationCommit(runWorkspace);
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "second-run-123",
+      chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: runDir,
+        EVENTS_DIR: eventsDir,
+        STATE_DIR: stateDir,
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-08-09T20:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      decision: "workspace-conflict",
+      plan: { action: "workspace-conflict", launches: [], effects: [] },
+      adapter: { launchesStarted: [], effectsApplied: [] },
+    });
+    const blocked = readRunJson(runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      agents: [{ id: "second", status: "blocked" }],
+    });
+    expect(blocked.status_message).toContain("paths: shared.ts");
+    expect(blocked.runnerV2?.attempts?.[0]).toMatchObject({
+      id: attempt.id,
+      phase: "human_action_required",
+      terminalReason: "workspace_integration_conflict",
+    });
+    expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(integrationBeforeConflict);
+    expect(readFileSync(join(repositoryRoot, "shared.ts"), "utf8")).toContain("'base'");
+  });
+
   it("handles an agent completion event through the typed pipeline", () => {
     const root = tempRoot();
     const runDir = join(root, "runs", "run-123");

@@ -1,11 +1,11 @@
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
@@ -25,6 +25,11 @@ import { shouldRecordTaskExecutionMetadata } from "@/lib/runs/run-provenance";
 import { triggerDecisionImportReplay } from "@/lib/decisions/decision-auto-advance";
 import type { OnCompletePolicy, TerminalCompletionInput } from "@/lib/runner-v2/terminal-plan";
 import config from "@/lib/config";
+import {
+  integrateAcceptedCompletionWorkspace,
+  integrateCompletedNodeWorkspace,
+} from "@/lib/runner-v2/completion-workspace";
+import type { GitNodeIntegrationResult } from "@/lib/runner-v2/workspace-isolation";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -89,6 +94,33 @@ export function runRunnerV2CompletionEntrypoint(
   })
     || generationDuplicate;
   if (duplicate) {
+    if (!input.dryRun) {
+      const latestAttempt = latestAgentAttempt(runJsonPath, agent.id);
+      const integration = latestAttempt
+        ? integrateCompletedNodeWorkspace({
+          run,
+          runId,
+          runDir,
+          agentId: agent.id,
+          attemptId: latestAttempt.id,
+          now: input.now,
+        })
+        : undefined;
+      if (integration?.status === "conflict") {
+        return blockWorkspaceIntegrationConflict({
+          runJsonPath,
+          runId,
+          eventsDir,
+          stateDir,
+          sessionName: input.sessionName,
+          agentId: agent.id,
+          attemptId: latestAttempt!.id,
+          integration,
+          env,
+          now: input.now,
+        });
+      }
+    }
     if (!input.dryRun && generationDuplicate) {
       killAgentSessions(input.sessionName, { stateDir, runId, env });
       updateRunAgent(runJsonPath, agent.id, "complete", input.now);
@@ -244,6 +276,31 @@ export function runRunnerV2CompletionEntrypoint(
         occurrenceId: retryOccurrenceId,
       },
     });
+    const workspaceIntegration = integrateAcceptedCompletionWorkspace({
+      run,
+      runId,
+      runDir,
+      agentId: agent.id,
+      attemptId: completionAttempt.id,
+      completionAction: pipeline.decision.action,
+      dryRun: input.dryRun,
+      now: input.now,
+    });
+    if (workspaceIntegration?.status === "conflict") {
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+      return blockWorkspaceIntegrationConflict({
+        runJsonPath,
+        runId,
+        eventsDir,
+        stateDir,
+        sessionName: input.sessionName,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+        integration: workspaceIntegration,
+        env,
+        now: input.now,
+      });
+    }
     if (pipeline.decision.action === "await-liveness") {
       if (!input.dryRun) {
         recordCompletionLivenessExtension({
@@ -377,6 +434,70 @@ export function runRunnerV2CompletionEntrypoint(
     }
     throw error;
   }
+}
+
+function latestAgentAttempt(runJsonPath: string, agentId: string): AgentAttemptRecord | undefined {
+  return readRunnerV2AttemptState(runJsonPath).attempts
+    .filter((attempt) => attempt.agentId === agentId)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .at(-1);
+}
+
+function blockWorkspaceIntegrationConflict(input: {
+  runJsonPath: string;
+  runId: string;
+  eventsDir: string;
+  stateDir: string;
+  sessionName: string;
+  agentId: string;
+  attemptId: string;
+  integration: GitNodeIntegrationResult;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): RunnerV2CompletionEntrypointResult {
+  const paths = input.integration.conflictPaths.length > 0
+    ? input.integration.conflictPaths.join(", ")
+    : "unknown paths";
+  const detail = [
+    `workspace integration conflict after agent ${input.agentId}`,
+    `paths: ${paths}`,
+    `artifact: ${input.integration.artifactPath}`,
+  ].join("; ");
+
+  transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    to: "human_action_required",
+    reason: "workspace_integration_conflict",
+    detail,
+    now: input.now,
+  });
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
+  killAgentSessions(input.sessionName, {
+    stateDir: input.stateDir,
+    runId: input.runId,
+    env: input.env,
+  });
+
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "workspace-conflict",
+    plan: {
+      action: "workspace-conflict",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
 }
 
 /** True exactly when this completion's plan carries the run to terminal "completed". */
