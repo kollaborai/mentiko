@@ -583,11 +583,13 @@ describe("Git node worktree isolation", () => {
       rollback: {
         status: "failed",
         error: expect.stringContaining("git apply failed"),
+        revertedPaths: ["right.ts"],
+        preservedPaths: ["left.ts"],
       },
     });
     expect(publication.artifactPath).toContain("publication-conflicts");
     expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("user-race");
-    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("agent-right");
+    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("'base'");
     expect(publishGitRunWorkspaceResult({ runWorkspace, baseline })).toEqual(publication);
   });
 

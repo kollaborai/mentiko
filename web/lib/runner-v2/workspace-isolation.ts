@@ -114,6 +114,10 @@ export interface GitRunWorkspacePublicationRollback {
   status: "reverted" | "not-needed" | "failed";
   attemptedAt: string;
   error?: string;
+  /** Result paths proven unchanged after apply and restored to the baseline. */
+  revertedPaths?: string[];
+  /** Result paths changed by an external writer and deliberately left alone. */
+  preservedPaths?: string[];
 }
 
 export interface GitRunWorkspacePublicationResult {
@@ -1611,6 +1615,11 @@ function assertPublicationResult(
     ["reverted", "not-needed", "failed"].includes(publication.rollback.status)
     && typeof publication.rollback.attemptedAt === "string"
     && Number.isFinite(Date.parse(publication.rollback.attemptedAt))
+    && validRollbackPaths(publication.rollback.revertedPaths)
+    && validRollbackPaths(publication.rollback.preservedPaths)
+    && !(publication.rollback.revertedPaths || []).some(
+      (path) => (publication.rollback?.preservedPaths || []).includes(path),
+    )
     && (publication.rollback.status === "failed"
       ? typeof publication.rollback.error === "string" && publication.rollback.error.length > 0
       : publication.rollback.error === undefined)
@@ -1668,6 +1677,14 @@ function assertPublicationResult(
   return publication;
 }
 
+function validRollbackPaths(paths: string[] | undefined): boolean {
+  if (paths === undefined) return true;
+  return Array.isArray(paths)
+    && paths.every((path) => typeof path === "string" && path.length > 0 && !path.includes("\0"))
+    && new Set(paths).size === paths.length
+    && JSON.stringify(paths) === JSON.stringify([...paths].sort());
+}
+
 function sourceStillAtBaseline(
   baseline: GitWorkspaceSnapshot,
   observed: GitWorkspaceSnapshot,
@@ -1695,6 +1712,93 @@ function sourceMatchesIntegrationAfterApply(
       || observed.sourceIndexSha256 === baseline.sourceIndexSha256
     )
     && observed.snapshotTree === integrationTree;
+}
+
+function rollbackUnracedPublicationPaths(input: {
+  repositoryRoot: string;
+  baselineCommit: string;
+  integrationCommit: string;
+  relativeWorkspacePath: string;
+}): { revertedPaths: string[]; preservedPaths: string[]; errors: string[] } {
+  const changed = runGitResult(input.repositoryRoot, [
+    "diff",
+    "--name-only",
+    "-z",
+    "--no-renames",
+    input.baselineCommit,
+    input.integrationCommit,
+    "--",
+    input.relativeWorkspacePath,
+  ]);
+  if (changed.status !== 0) {
+    const detail = changed.stderr.toString("utf8").trim();
+    throw new WorkspaceIsolationError(
+      `git diff failed while enumerating publication paths${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  const paths = changed.stdout.toString("utf8").split("\0").filter(Boolean).sort();
+  const revertedPaths: string[] = [];
+  const preservedPaths: string[] = [];
+  const errors: string[] = [];
+
+  for (const path of paths) {
+    const observed = runGitResult(input.repositoryRoot, [
+      "diff",
+      "--quiet",
+      input.integrationCommit,
+      "--",
+      path,
+    ]);
+    if (observed.status === 1) {
+      preservedPaths.push(path);
+      continue;
+    }
+    if (observed.status !== 0) {
+      const detail = observed.stderr.toString("utf8").trim();
+      preservedPaths.push(path);
+      errors.push(`${path}: could not compare source with integration${detail ? `: ${detail}` : ""}`);
+      continue;
+    }
+
+    const pathPatch = runGitResult(input.repositoryRoot, [
+      "diff",
+      "--binary",
+      "--full-index",
+      "--no-renames",
+      input.baselineCommit,
+      input.integrationCommit,
+      "--",
+      path,
+    ]);
+    if (pathPatch.status !== 0) {
+      const detail = pathPatch.stderr.toString("utf8").trim();
+      preservedPaths.push(path);
+      errors.push(`${path}: could not build inverse patch${detail ? `: ${detail}` : ""}`);
+      continue;
+    }
+    try {
+      runGitWithInput(input.repositoryRoot, [
+        "apply",
+        "--reverse",
+        "--check",
+        "--binary",
+        "--whitespace=nowarn",
+        "-",
+      ], pathPatch.stdout);
+      runGitWithInput(input.repositoryRoot, [
+        "apply",
+        "--reverse",
+        "--binary",
+        "--whitespace=nowarn",
+        "-",
+      ], pathPatch.stdout);
+      revertedPaths.push(path);
+    } catch (error) {
+      preservedPaths.push(path);
+      errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { revertedPaths, preservedPaths, errors };
 }
 
 export function publishGitRunWorkspaceResult(input: {
@@ -1832,12 +1936,33 @@ export function publishGitRunWorkspaceResult(input: {
               ], patch);
               rollback = { status: "reverted", attemptedAt: publishedAt };
             } catch (rollbackError) {
+              const rollbackMessage = rollbackError instanceof Error
+                ? rollbackError.message
+                : String(rollbackError);
+              const pathRollback = rollbackUnracedPublicationPaths({
+                repositoryRoot: runWorkspace.sourceRepositoryRoot,
+                baselineCommit: runWorkspace.baselineCommit,
+                integrationCommit,
+                relativeWorkspacePath: runWorkspace.relativeWorkspacePath,
+              });
+              const fullyReverted = pathRollback.preservedPaths.length === 0
+                && pathRollback.errors.length === 0;
               rollback = {
-                status: "failed",
+                status: fullyReverted ? "reverted" : "failed",
                 attemptedAt: publishedAt,
-                error: rollbackError instanceof Error
-                  ? rollbackError.message
-                  : String(rollbackError),
+                ...(fullyReverted
+                  ? {}
+                  : {
+                    error: [
+                      rollbackMessage,
+                      ...(pathRollback.preservedPaths.length > 0
+                        ? [`preserved externally changed paths: ${pathRollback.preservedPaths.join(", ")}`]
+                        : []),
+                      ...pathRollback.errors,
+                    ].join("; "),
+                  }),
+                revertedPaths: pathRollback.revertedPaths,
+                preservedPaths: pathRollback.preservedPaths,
               };
             }
             sourceSnapshot = captureGitWorkspaceSnapshot({

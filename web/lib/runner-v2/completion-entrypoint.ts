@@ -663,7 +663,11 @@ function blockSourceWorkspaceChanged(input: {
       : input.publication.rollback?.status === "not-needed"
         ? ["post-apply race detected; source returned to the task-start snapshot before rollback"]
         : input.publication.rollback?.status === "failed"
-          ? ["post-apply race detected; automatic rollback was unsafe, so source may contain Mentiko result changes"]
+          ? [
+            "post-apply race detected; unaffected Mentiko result paths were reverted",
+            `externally changed paths preserved: ${input.publication.rollback.preservedPaths?.join(", ") || "unknown"}`,
+            "those preserved paths may contain Mentiko result changes",
+          ]
           : []),
     `artifact: ${input.publication.artifactPath}`,
   ].join("; ");
