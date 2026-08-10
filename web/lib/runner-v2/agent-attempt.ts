@@ -481,6 +481,7 @@ export function markAgentAttemptCompletedFromGeneration(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -495,6 +496,7 @@ export function markAgentAttemptCompletedFromEvent(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -509,6 +511,7 @@ export function markAgentAttemptCompletedFromDurableMarker(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -523,6 +526,7 @@ export function markAgentAttemptCompletedFromCrossRunEvent(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -537,6 +541,7 @@ export function markAgentAttemptCompletedFromHandoffArtifact(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -551,6 +556,7 @@ export function markAgentAttemptCompletedFromEmptyEmits(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -565,6 +571,7 @@ export function markAgentAttemptFailedNoCompletion(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -579,6 +586,7 @@ export function markAgentAttemptRetriesExhausted(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
@@ -763,12 +771,18 @@ function markLatestAttemptCompleted(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
-  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  const attempt = input.attemptId
+    ? readAttempt(input.runJsonPath, input.attemptId)
+    : findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (attempt && (attempt.runId !== input.runId || attempt.agentId !== input.agentId)) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
   if (!attempt || attempt.phase === "completed" || attempt.phase === "released") return attempt;
   // same guard as markLatestAttemptFailed: the ledger records evidence, it must
   // never abort the live completion handoff with an invalid-transition throw
@@ -790,12 +804,18 @@ function markLatestAttemptFailed(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   reason: AgentAttemptTerminalReason;
   detail?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord | undefined {
-  const attempt = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  const attempt = input.attemptId
+    ? readAttempt(input.runJsonPath, input.attemptId)
+    : findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
+  if (attempt && (attempt.runId !== input.runId || attempt.agentId !== input.agentId)) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
   if (!attempt) return undefined;
   // completion failure only applies to an attempt that actually reached a running
   // agent; leave already-terminal or pre-instructions attempts untouched instead

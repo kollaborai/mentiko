@@ -2,6 +2,11 @@ import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { runCompletionPipeline } from "@/lib/runner-v2/completion-pipeline";
+import {
+  createAgentAttempt,
+  readRunnerV2AttemptState,
+  transitionAgentAttempt,
+} from "@/lib/runner-v2/agent-attempt";
 import { readLoopState, shellLoopStatePath, writeLoopState } from "@/lib/runner-v2/loop-state";
 import { createRunRecord, readRunJson, updateRunJson } from "@/lib/runner-v2/run-state";
 import { runnerEventFixture } from "@/lib/runner-v2/test-support/runner-event-fixture";
@@ -24,6 +29,64 @@ function seedRun(dir: string) {
 }
 
 describe("runner-v2 completion pipeline", () => {
+  it("mutates the exact completion attempt without touching a newer retry", () => {
+    const dir = runDir();
+    const runJsonPath = seedRun(dir);
+    const first = createAgentAttempt({
+      runJsonPath,
+      runId: "run-123",
+      agentId: "writer",
+      leaseId: "writer-run-123",
+    });
+    for (const phase of [
+      "queued",
+      "lease_acquired",
+      "pty_allocated",
+      "process_spawned",
+      "ready_for_instructions",
+      "instructions_submitted",
+    ] as const) {
+      transitionAgentAttempt({ runJsonPath, attemptId: first.id, to: phase });
+    }
+    const retry = createAgentAttempt({
+      runJsonPath,
+      runId: "run-123",
+      agentId: "writer",
+      attemptId: "run-123:writer:2",
+      leaseId: "writer-retry-run-123",
+    });
+    for (const phase of [
+      "queued",
+      "lease_acquired",
+      "pty_allocated",
+      "process_spawned",
+      "ready_for_instructions",
+      "instructions_submitted",
+    ] as const) {
+      transitionAgentAttempt({ runJsonPath, attemptId: retry.id, to: phase });
+    }
+
+    runCompletionPipeline({
+      runDir: dir,
+      runJsonPath,
+      runId: "run-123",
+      attemptId: first.id,
+      agent: { id: "writer", emits: "draft-ready" },
+      chain: { agents: [{ id: "writer", emits: "draft-ready" }] },
+      events: [runnerEventFixture({ event: "draft-ready", source: "writer-run-123", runId: "run-123" })],
+      now: new Date("2026-08-09T20:00:00.000Z"),
+    });
+
+    const attempts = readRunnerV2AttemptState(runJsonPath).attempts;
+    expect(attempts.find((attempt) => attempt.id === first.id)).toMatchObject({
+      phase: "completed",
+      terminalReason: "completed_from_declared_event",
+    });
+    const retryAfter = attempts.find((attempt) => attempt.id === retry.id);
+    expect(retryAfter).toMatchObject({ phase: "instructions_submitted" });
+    expect(retryAfter?.terminalReason).toBeUndefined();
+  });
+
   it("records loop visit and round after a routable completion", () => {
     const dir = runDir();
     const runJsonPath = seedRun(dir);

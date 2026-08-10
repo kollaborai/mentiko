@@ -35,6 +35,8 @@ export type CompletionRunnerDecision =
 export interface CompleteAgentInput {
   runJsonPath: string;
   runId: string;
+  /** Exact AgentAttempt owned by this completion handoff. */
+  attemptId?: string;
   agent: CompletionAgentRef;
   chain: RoutingChain;
   events: Array<RunnerEventRecord | string>;
@@ -165,6 +167,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       runJsonPath: input.runJsonPath,
       runId: input.runId,
       agentId: input.agent.id,
+      attemptId: input.attemptId,
       detail: reason,
       now: input.now,
       onMutation: input.onRunMutation,
@@ -180,6 +183,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         runJsonPath: input.runJsonPath,
         runId: input.runId,
         agentId: input.agent.id,
+        attemptId: input.attemptId,
         detail: match.reason || "no matching completion event; generation payload accepted",
         now: input.now,
         onMutation: input.onRunMutation,
@@ -224,6 +228,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         runJsonPath: input.runJsonPath,
         runId: input.runId,
         agentId: input.agent.id,
+        attemptId: input.attemptId,
         detail: `declared completion event '${expectedEvent}' missing after AGENT_COMPLETE`,
         now: input.now,
         onMutation: input.onRunMutation,
@@ -258,6 +263,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         runJsonPath: input.runJsonPath,
         runId: input.runId,
         agentId: input.agent.id,
+        attemptId: input.attemptId,
         detail: "empty emits last agent accepted as terminal completion",
         now: input.now,
         onMutation: input.onRunMutation,
@@ -314,6 +320,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
         runJsonPath: input.runJsonPath,
         runId: input.runId,
         agentId: input.agent.id,
+        attemptId: input.attemptId,
         detail: "declared completion event missing; retries exhausted",
         now: input.now,
         onMutation: input.onRunMutation,
@@ -340,6 +347,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
       runJsonPath: input.runJsonPath,
       runId: input.runId,
       agentId: input.agent.id,
+      attemptId: input.attemptId,
       detail: `declared completion event missing: ${match.reason}`,
       now: input.now,
       onMutation: input.onRunMutation,
@@ -358,6 +366,7 @@ export function completeAgent(input: CompleteAgentInput): CompletionRunnerDecisi
     runJsonPath: input.runJsonPath,
     runId: input.runId,
     agentId: input.agent.id,
+    attemptId: input.attemptId,
     event: match.event.event,
     evidence: completionEvidence,
     now: input.now,
@@ -457,6 +466,7 @@ function markCompletionEvidence(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   event: string;
   evidence: CompletionEvidenceProvenance;
   now?: Date;
@@ -466,6 +476,7 @@ function markCompletionEvidence(input: {
     runJsonPath: input.runJsonPath,
     runId: input.runId,
     agentId: input.agentId,
+    attemptId: input.attemptId,
     now: input.now,
     onMutation: input.onMutation,
   };
@@ -507,7 +518,12 @@ function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): Runner
   // Require the artifact to be at least as new as the current attempt so a
   // stale summary left by a PRIOR attempt (the filename is agent-id-keyed, not
   // attempt-keyed) cannot salvage-complete a fresh retry from old output.
-  const attemptStartMs = latestAttemptStartMs(input.runJsonPath, input.runId, input.agent.id);
+  const attemptStartMs = attemptStartTimeMs(
+    input.runJsonPath,
+    input.runId,
+    input.agent.id,
+    input.attemptId,
+  );
   const artifactPath = candidates.find((candidate) => {
     try {
       if (!existsSync(candidate)) return false;
@@ -541,20 +557,29 @@ function synthesizeCompletionEventFromHandoff(input: CompleteAgentInput): Runner
   };
 }
 
-// Start time of the agent's latest attempt (append order = latest), used to
-// reject stale prior-attempt summary artifacts. Returns null when attempt state
-// is unavailable (e.g. agents whose startup ran outside the typed runtime), in
-// which case the caller falls back to the size-only guard.
-function latestAttemptStartMs(runJsonPath: string, runId: string, agentId: string): number | null {
+// Start time of the exact completion attempt when available; legacy callers
+// without an attempt id retain the append-order fallback. This keeps a stale
+// retry artifact from being attributed to an older completion handoff.
+function attemptStartTimeMs(
+  runJsonPath: string,
+  runId: string,
+  agentId: string,
+  attemptId?: string,
+): number | null {
+  let attempts: ReturnType<typeof readRunnerV2AttemptState>["attempts"];
   try {
-    const attempts = readRunnerV2AttemptState(runJsonPath).attempts
+    attempts = readRunnerV2AttemptState(runJsonPath).attempts
       .filter((attempt) => attempt.runId === runId && attempt.agentId === agentId);
-    if (attempts.length === 0) return null;
-    const startedMs = new Date(attempts[attempts.length - 1].createdAt).getTime();
-    return Number.isFinite(startedMs) ? startedMs : null;
   } catch {
     return null;
   }
+  if (attempts.length === 0) return null;
+  const attempt = attemptId
+    ? attempts.find((candidate) => candidate.id === attemptId)
+    : attempts[attempts.length - 1];
+  if (!attempt) throw new Error(`completion AgentAttempt not found: ${attemptId}`);
+  const startedMs = new Date(attempt.createdAt).getTime();
+  return Number.isFinite(startedMs) ? startedMs : null;
 }
 
 function hasDownstreamForAgent(chain: RoutingChain, agentId: string): boolean {

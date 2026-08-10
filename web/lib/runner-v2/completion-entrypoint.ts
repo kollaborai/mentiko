@@ -304,6 +304,7 @@ export function runRunnerV2CompletionEntrypoint(
       runDir,
       runJsonPath,
       runId,
+      attemptId: completionAttempt.id,
       agent,
       chain,
       events,
