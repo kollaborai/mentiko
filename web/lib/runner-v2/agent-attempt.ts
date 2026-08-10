@@ -41,6 +41,9 @@ export type AgentAttemptTerminalReason =
   | "agent_capacity_timeout"
   | "auth_prompt_detected"
   | "instruction_submission_unconfirmed"
+  | "instruction_delivery_ambiguous"
+  | "interrupted_bootstrap_changes"
+  | "launch_coordinator_interrupted"
   | "invalid_transition"
   | "reconciliation_window_expired"
   | "released";

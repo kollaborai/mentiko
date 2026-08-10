@@ -429,6 +429,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/workspace-isolation.ts",
       "web/lib/runner-v2/workspace-cleanup.ts",
       "web/lib/runner-v2/completion-workspace.ts",
+      "web/lib/runner-v2/bootstrap-recovery.ts",
     ],
     validatorPaths: [
       "web/lib/runner-v2/workspace-isolation.ts",
@@ -437,6 +438,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
     writers: [
       "web/lib/runner-v2/workspace-isolation.ts",
       "web/lib/runner-v2/workspace-cleanup.ts",
+      "web/lib/runner-v2/bootstrap-recovery.ts",
       "web/lib/runner-v2/bootstrap-executor.ts",
       "web/lib/runner-v2/completion-entrypoint.ts",
     ],
@@ -444,6 +446,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "web/lib/runner-v2/workspace-isolation.ts",
       "web/lib/runner-v2/workspace-cleanup.ts",
       "web/lib/runner-v2/completion-workspace.ts",
+      "web/lib/runner-v2/bootstrap-recovery.ts",
       "web/lib/runner-v2/completion-entrypoint.ts",
       "web/server/background-worker.ts",
     ],
@@ -463,6 +466,12 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
           owner: "runner-v2",
           paths: ["web/lib/runner-v2/workspace-cleanup.ts", "web/server/background-worker.ts"],
         },
+        {
+          id: "typed-bootstrap-recovery",
+          label: "Reclaim interrupted pre-instruction launches or repair submitted-attempt monitors",
+          owner: "runner-v2",
+          paths: ["web/lib/runner-v2/bootstrap-recovery.ts"],
+        },
       ],
     },
     notes: [
@@ -472,6 +481,7 @@ export const DATA_SHAPE_CATALOG: DataShapeDefinition[] = [
       "Controller result, integration, and publication receipts live under the private run isolation root, outside the agent artifact directory. Every replay revalidates the node commit/tree and integration ancestry before trusting a receipt.",
       "After successful integration, the node worktree and attempt ref are removed while the immutable private receipts preserve replay evidence. Conflict worktrees stay intact for inspection.",
       "Cleanup intent is persisted before worktree removal. A private completed receipt makes replay idempotent, while the background worker retries pending cleanup after coordinator failure and isolates malformed sibling records.",
+      "Interrupted pre-instruction launches release capacity only after both PTYs are proven absent and pristine worktree cleanup is durable. Changed worktrees and ambiguous instruction delivery remain blocked; submitted attempts repair their monitor without relaunching the agent.",
       "Terminal publication compares the original branch, HEAD, scoped index fingerprint, and dirty file snapshot both before planning and immediately before apply. Source drift leaves the source untouched and writes immutable conflict evidence; restoring the exact baseline permits an explicit retry without deleting that evidence.",
     ],
   }),
