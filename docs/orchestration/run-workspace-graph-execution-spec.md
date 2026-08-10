@@ -2,6 +2,11 @@
 
 Status: implementation acceptance spec, 2026-08-09.
 
+Boundary: this is the execution-isolation sub-spec, not the complete graph
+runtime contract. Graph-definition versioning, occurrence/frontier semantics,
+join policy, durable waits, external effects, replay, migration, and the full
+operator topology remain separate roadmap requirements.
+
 This spec defines how Mentiko executes a graph of coding agents against one
 user workspace without letting concurrent agents overwrite each other or
 publishing a result over source state that changed during the run.
