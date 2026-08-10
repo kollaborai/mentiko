@@ -5,6 +5,7 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   unlinkSync,
@@ -1131,6 +1132,56 @@ function reconcileIntegrationRef(
   }
 }
 
+function reconcilePendingIntegrationReceipts(
+  runWorkspace: GitRunWorkspaceIsolation,
+): void {
+  const receiptsRoot = join(runWorkspace.isolationRoot, "receipts", "integrations");
+  if (!existsSync(receiptsRoot)) return;
+  const receiptPaths = readdirSync(receiptsRoot)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => join(receiptsRoot, name));
+  for (const artifactPath of receiptPaths) {
+    const integration = readJson<GitNodeIntegrationResult>(artifactPath);
+    if (
+      typeof integration.agentId !== "string"
+      || integration.agentId.length === 0
+      || typeof integration.attemptId !== "string"
+      || integration.attemptId.length === 0
+    ) {
+      throw new WorkspaceIsolationError(`node integration identity mismatch: ${artifactPath}`);
+    }
+    assertPersistedIntegrationResult(
+      integration,
+      artifactPath,
+      runWorkspace.runId,
+      integration.agentId,
+      integration.attemptId,
+    );
+    const current = requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
+    if (isAncestor(
+      runWorkspace.sourceRepositoryRoot,
+      integration.integrationCommit,
+      current,
+    )) {
+      continue;
+    }
+    const { result } = readNodeResultForIntegration({
+      runWorkspace,
+      agentId: integration.agentId,
+      attemptId: integration.attemptId,
+    });
+    const verified = assertIntegrationGitEvidence({
+      runWorkspace,
+      result,
+      integration,
+      artifactPath,
+      currentIntegrationCommit: current,
+    });
+    reconcileIntegrationRef(runWorkspace, verified);
+  }
+}
+
 export function readGitNodeIntegrationResult(input: {
   runWorkspace: GitRunWorkspaceIsolation;
   agentId: string;
@@ -1145,10 +1196,11 @@ export function readGitNodeIntegrationResult(input: {
     input.agentId,
     input.attemptId,
   );
-  if (!existsSync(artifactPath)) return undefined;
   return withExclusiveFileClaim(
     join(runWorkspace.isolationRoot, "claims", "integration.claim"),
     () => {
+      reconcilePendingIntegrationReceipts(runWorkspace);
+      if (!existsSync(artifactPath)) return undefined;
       const { result } = readNodeResultForIntegration(input);
       const current = requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
       const integration = assertIntegrationGitEvidence({
@@ -1189,6 +1241,7 @@ export function integrateGitNodeWorkspaceResult(input: {
     () => withExclusiveFileClaim(
       join(runWorkspace.isolationRoot, "claims", "integration.claim"),
       () => {
+        reconcilePendingIntegrationReceipts(runWorkspace);
         const { result } = readNodeResultForIntegration({
           runWorkspace,
           agentId: input.result.agentId,

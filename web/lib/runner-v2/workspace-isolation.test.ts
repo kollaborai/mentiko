@@ -221,6 +221,50 @@ describe("Git node worktree isolation", () => {
     );
   });
 
+  it("reconciles an older pending integration receipt before merging a sibling", () => {
+    const fixture = repository();
+    const { runWorkspace } = initialize({ ...fixture, runId: "run-integration-sibling-replay" });
+    const first = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "first",
+      attemptId: "attempt-first",
+    });
+    const second = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "second",
+      attemptId: "attempt-second",
+    });
+    writeFileSync(join(first.workspacePath, "left.ts"), "export const left = 'first';\n");
+    writeFileSync(join(second.workspacePath, "right.ts"), "export const right = 'second';\n");
+    const firstResult = finalizeGitNodeWorkspace({ runWorkspace, node: first });
+    const secondResult = finalizeGitNodeWorkspace({ runWorkspace, node: second });
+    const baseline = currentGitRunIntegrationCommit(runWorkspace);
+
+    expect(() => integrateGitNodeWorkspaceResult({
+      runWorkspace,
+      result: firstResult,
+      afterIntegrationReceiptPersisted: () => {
+        throw new Error("crash-before-first-ref-cas");
+      },
+    })).toThrow("crash-before-first-ref-cas");
+    expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(baseline);
+
+    const secondIntegration = integrateGitNodeWorkspaceResult({
+      runWorkspace,
+      result: secondResult,
+    });
+    const finalCommit = currentGitRunIntegrationCommit(runWorkspace);
+    expect(secondIntegration.status).toBe("integrated");
+    expect(secondIntegration.previousIntegrationCommit).not.toBe(baseline);
+    expect(finalCommit).toBe(secondIntegration.integrationCommit);
+    expect(git(fixture.root, "show", `${finalCommit}:left.ts`)).toContain("first");
+    expect(git(fixture.root, "show", `${finalCommit}:right.ts`)).toContain("second");
+
+    const firstReplay = integrateGitNodeWorkspaceResult({ runWorkspace, result: firstResult });
+    expect(firstReplay.integrationCommit).toBe(secondIntegration.previousIntegrationCommit);
+    expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(finalCommit);
+  });
+
   it("does not trust a no-change receipt when the node worktree has dirty output", () => {
     const fixture = repository();
     const { runWorkspace } = initialize({ ...fixture, runId: "run-no-change-receipt" });
