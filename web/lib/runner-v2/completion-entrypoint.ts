@@ -5,7 +5,7 @@ import { join } from "path";
 import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, resolveAgentAttemptForCompletion, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
@@ -100,17 +100,23 @@ export function runRunnerV2CompletionEntrypoint(
   })
     || generationDuplicate;
   if (duplicate) {
-    let latestAttempt: AgentAttemptRecord | undefined;
+    let completionAttempt: ReturnType<typeof resolveAgentAttemptForCompletion>;
     let integration: GitNodeIntegrationResult | undefined;
     if (!input.dryRun) {
-      latestAttempt = latestAgentAttempt(runJsonPath, agent.id);
-      integration = latestAttempt
+      completionAttempt = resolveAgentAttemptForCompletion({
+        runJsonPath,
+        runId,
+        agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
+        sessionName: input.sessionName,
+      });
+      integration = completionAttempt
         ? integrateCompletedNodeWorkspace({
           run,
           runId,
           runDir,
           agentId: agent.id,
-          attemptId: latestAttempt.id,
+          attemptId: completionAttempt.id,
           now: input.now,
         })
         : undefined;
@@ -122,7 +128,7 @@ export function runRunnerV2CompletionEntrypoint(
           stateDir,
           sessionName: input.sessionName,
           agentId: agent.id,
-          attemptId: latestAttempt!.id,
+          attemptId: completionAttempt!.id,
           integration,
           env,
           now: input.now,
@@ -139,7 +145,7 @@ export function runRunnerV2CompletionEntrypoint(
           stateDir,
           sessionName: input.sessionName,
           agentId: agent.id,
-          attemptId: latestAttempt!.id,
+          attemptId: completionAttempt!.id,
           publication,
           env,
           now: input.now,
@@ -147,13 +153,13 @@ export function runRunnerV2CompletionEntrypoint(
       }
     }
     if (!input.dryRun && generationDuplicate) {
-      if (latestAttempt) {
+      if (completionAttempt) {
         removeAgentSessionsAndReleaseCapacity({
           sessionName: input.sessionName,
           stateDir,
           runId,
           runJsonPath,
-          attemptId: latestAttempt.id,
+          attemptId: completionAttempt.id,
           env,
           now: input.now,
         });
@@ -163,13 +169,13 @@ export function runRunnerV2CompletionEntrypoint(
       updateRunAgent(runJsonPath, agent.id, "complete", input.now);
       updateRunStatus(runJsonPath, "completed", undefined, input.now);
     }
-    if (!input.dryRun && latestAttempt && integration && integration.status !== "conflict") {
+    if (!input.dryRun && completionAttempt && integration && integration.status !== "conflict") {
       cleanupNodeWorkspaceAfterCompletion({
         run,
         runId,
         runDir,
         agentId: agent.id,
-        attemptId: latestAttempt.id,
+        attemptId: completionAttempt.id,
         now: input.now,
       });
     }
@@ -210,6 +216,7 @@ export function runRunnerV2CompletionEntrypoint(
     runJsonPath,
     runId,
     agentId: agent.id,
+    attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
     sessionName: input.sessionName,
     now: input.now,
     onMutation: onRunMutation,
@@ -505,6 +512,7 @@ export function runRunnerV2CompletionEntrypoint(
         runJsonPath,
         runId,
         agentId: agent.id,
+        attemptId: env.MENTIKO_AGENT_ATTEMPT_ID,
         sessionName: input.sessionName,
         now: input.now,
       });
@@ -526,13 +534,6 @@ export function runRunnerV2CompletionEntrypoint(
   }
 }
 
-function latestAgentAttempt(runJsonPath: string, agentId: string): AgentAttemptRecord | undefined {
-  return readRunnerV2AttemptState(runJsonPath).attempts
-    .filter((attempt) => attempt.agentId === agentId)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .at(-1);
-}
-
 function removeAgentSessionsAndReleaseCapacity(input: {
   sessionName: string;
   stateDir: string;
@@ -542,6 +543,26 @@ function removeAgentSessionsAndReleaseCapacity(input: {
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
   now?: Date;
 }): void {
+  const competingAttempt = readRunnerV2AttemptState(input.runJsonPath).attempts.find((attempt) => (
+    attempt.id !== input.attemptId
+    && attempt.runId === input.runId
+    && !isTerminalAgentAttemptPhase(attempt.phase)
+    && (
+      attempt.leaseId === input.sessionName
+      || attempt.processEvidence?.ptySessionId === input.sessionName
+    )
+  ));
+  if (competingAttempt) {
+    // A stale completion may replay after a retry or loop occurrence reused the
+    // same deterministic PTY name. Release only the exact completed attempt's
+    // capacity; the newer occurrence owns the live session.
+    releaseAgentCapacitySlot({
+      runJsonPath: input.runJsonPath,
+      attemptId: input.attemptId,
+      now: input.now,
+    });
+    return;
+  }
   const cleanup = killAgentSessions(input.sessionName, {
     stateDir: input.stateDir,
     runId: input.runId,

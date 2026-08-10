@@ -13,6 +13,7 @@ import {
   reconcileAgentAttempt,
   recordAgentAttemptProcess,
   releaseAgentAttempt,
+  resolveAgentAttemptForCompletion,
   submitAgentAttemptInstructions,
   transitionAgentAttempt,
 } from "@/lib/runner-v2/agent-attempt";
@@ -311,6 +312,58 @@ describe("runner-v2 AgentAttempt lifecycle", () => {
       now: new Date("2026-07-04T00:04:00.000Z"),
     });
     expect(third.id).toBe("run-1:writer:2");
+  });
+
+  it("resolves the exact completion attempt instead of a newer retry and fails closed without identity", () => {
+    const path = runPath();
+    const first = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      leaseId: "writer-run-1",
+    });
+    transitionAgentAttempt({
+      runJsonPath: path,
+      attemptId: first.id,
+      to: "startup_failed",
+      reason: "readiness_deadline_expired",
+    });
+    const second = createAgentAttempt({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      leaseId: "writer-run-1",
+    });
+
+    expect(resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "writer-run-1",
+    })?.id).toBe(first.id);
+    expect(adoptAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "writer-run-1",
+    }).id).toBe(first.id);
+    expect(second.id).toBe("run-1:writer:2");
+
+    expect(() => resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      sessionName: "writer-run-1",
+    })).toThrow("exact MENTIKO_AGENT_ATTEMPT_ID required");
+    expect(() => resolveAgentAttemptForCompletion({
+      runJsonPath: path,
+      runId: "run-1",
+      agentId: "writer",
+      attemptId: first.id,
+      sessionName: "another-session",
+    })).toThrow("completion AgentAttempt session mismatch");
   });
 
   it("adopts a routed attempt at completion time with explicit provenance", () => {

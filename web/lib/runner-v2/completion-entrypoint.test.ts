@@ -124,6 +124,8 @@ function seedIsolatedTerminalFixture() {
     stateDir,
     chainPath,
     runJsonPath,
+    runWorkspace,
+    attempt,
     node,
   };
 }
@@ -273,6 +275,96 @@ describe("runner-v2 completion entrypoint", () => {
     });
     expect(replay).toMatchObject({ decision: "terminal" });
     expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
+  });
+
+  it("replays a duplicate against its exact attempt without touching a newer retry worktree", () => {
+    const fixture = seedIsolatedTerminalFixture();
+    writeJson(fixture.chainPath, {
+      id: "chain",
+      name: "Terminal Chain",
+      config: { project_root: fixture.repositoryRoot },
+      agents: [{ id: "publisher", name: "Publisher", emits: "published" }],
+    });
+    writeFileSync(join(fixture.node.workspacePath, "left.ts"), "export const left = 'attempt-a';\n");
+    transitionAgentAttempt({
+      runJsonPath: fixture.runJsonPath,
+      attemptId: fixture.attempt.id,
+      to: "completed",
+      reason: "completed_from_event",
+    });
+    const retry = createAgentAttempt({
+      runJsonPath: fixture.runJsonPath,
+      runId: "run-123",
+      agentId: "publisher",
+      leaseId: "publisher-run-123",
+    });
+    const retryNode = allocateGitNodeWorkspace({
+      runWorkspace: fixture.runWorkspace,
+      agentId: "publisher",
+      attemptId: retry.id,
+    });
+    for (const phase of [
+      "queued",
+      "lease_acquired",
+      "pty_allocated",
+      "process_spawned",
+      "ready_for_instructions",
+      "instructions_submitted",
+    ] as const) {
+      transitionAgentAttempt({ runJsonPath: fixture.runJsonPath, attemptId: retry.id, to: phase });
+    }
+    writeFileSync(join(retryNode.workspacePath, "right.ts"), "export const right = 'attempt-b';\n");
+    updateRunJson(fixture.runJsonPath, (current) => ({
+      ...current!,
+      agents: [{
+        id: "publisher",
+        name: "Publisher",
+        session: "publisher-run-123",
+        status: "complete",
+      }],
+      sessions: ["publisher-run-123"],
+    }));
+    writeFileSync(join(fixture.eventsDir, "run-123-publisher-published.event"), runnerEventFixture({
+      event: "published",
+      source: "publisher",
+      runId: "run-123",
+      processed: true,
+      data: "attempt-a",
+    }));
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "publisher-run-123",
+      chainPath: fixture.chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: fixture.runDir,
+        EVENTS_DIR: fixture.eventsDir,
+        STATE_DIR: fixture.stateDir,
+        MENTIKO_AGENT_ATTEMPT_ID: fixture.attempt.id,
+      },
+      now: new Date("2026-08-09T20:03:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ decision: "already-completed" });
+    const run = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    const firstAfter = run.runnerV2?.attempts?.find((attempt) => attempt.id === fixture.attempt.id);
+    const retryAfter = run.runnerV2?.attempts?.find((attempt) => attempt.id === retry.id);
+    expect(firstAfter).toMatchObject({ phase: "completed" });
+    expect(retryAfter).toMatchObject({
+      phase: "instructions_submitted",
+      capacitySlotAcquiredAt: expect.any(String),
+    });
+    expect(retryAfter?.capacitySlotReleasedAt).toBeUndefined();
+    expect(existsSync(fixture.node.worktreeRoot)).toBe(false);
+    expect(existsSync(retryNode.worktreeRoot)).toBe(true);
+    expect(readFileSync(join(retryNode.workspacePath, "right.ts"), "utf8")).toContain("attempt-b");
+    expect(git(
+      fixture.repositoryRoot,
+      "show",
+      `${currentGitRunIntegrationCommit(fixture.runWorkspace)}:left.ts`,
+    )).toContain("attempt-a");
   });
 
   it("blocks terminal success without touching the source when its CAS detects drift", () => {

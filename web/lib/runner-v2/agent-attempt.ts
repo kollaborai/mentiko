@@ -249,10 +249,19 @@ export function adoptAgentAttemptForCompletion(input: {
   runJsonPath: string;
   runId: string;
   agentId: string;
+  attemptId?: string;
   sessionName?: string;
   now?: Date;
   onMutation?: RunMutationObserver;
 }): AgentAttemptRecord {
+  if (input.attemptId) {
+    const exact = readRunnerV2AttemptState(input.runJsonPath).attempts.find(
+      (attempt) => attempt.id === input.attemptId,
+    );
+    if (!exact) throw new Error(`completion AgentAttempt not found: ${input.attemptId}`);
+    assertCompletionAttemptIdentity(exact, input);
+    return exact;
+  }
   const existing = findLatestAttempt(input.runJsonPath, input.runId, input.agentId);
   // a completed latest attempt stays authoritative (duplicate completion events
   // are idempotent downstream). A FAILURE-terminal latest must not wedge the
@@ -290,6 +299,49 @@ export function adoptAgentAttemptForCompletion(input: {
   };
   writeAttempt(input.runJsonPath, attempt, input.onMutation);
   return attempt;
+}
+
+export function resolveAgentAttemptForCompletion(input: {
+  runJsonPath: string;
+  runId: string;
+  agentId: string;
+  attemptId?: string;
+  sessionName?: string;
+}): AgentAttemptRecord | undefined {
+  const attempts = readRunnerV2AttemptState(input.runJsonPath).attempts.filter(
+    (attempt) => attempt.runId === input.runId && attempt.agentId === input.agentId,
+  );
+  if (input.attemptId) {
+    const exact = attempts.find((attempt) => attempt.id === input.attemptId);
+    if (!exact) throw new Error(`completion AgentAttempt not found: ${input.attemptId}`);
+    assertCompletionAttemptIdentity(exact, input);
+    return exact;
+  }
+  if (attempts.length > 1) {
+    throw new Error(
+      `completion AgentAttempt identity is ambiguous for ${input.runId}/${input.agentId}; exact MENTIKO_AGENT_ATTEMPT_ID required`,
+    );
+  }
+  const only = attempts[0];
+  if (only) assertCompletionAttemptIdentity(only, input);
+  return only;
+}
+
+function assertCompletionAttemptIdentity(
+  attempt: AgentAttemptRecord,
+  input: { runId: string; agentId: string; sessionName?: string },
+): void {
+  if (attempt.runId !== input.runId || attempt.agentId !== input.agentId) {
+    throw new Error(`completion AgentAttempt identity mismatch: ${attempt.id}`);
+  }
+  if (!input.sessionName) return;
+  const boundSessions = [attempt.leaseId, attempt.processEvidence?.ptySessionId]
+    .filter((value): value is string => Boolean(value));
+  if (boundSessions.length > 0 && !boundSessions.includes(input.sessionName)) {
+    throw new Error(
+      `completion AgentAttempt session mismatch for ${attempt.id}: expected ${boundSessions.join(" or ")}, received ${input.sessionName}`,
+    );
+  }
 }
 
 export function transitionAgentAttempt(input: {
