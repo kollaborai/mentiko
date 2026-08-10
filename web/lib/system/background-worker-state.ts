@@ -54,6 +54,24 @@ export interface BackgroundWorkerStatus {
     transportAvailable?: boolean;
     lastError?: string;
   };
+  launchJobs?: {
+    status: "running" | "stopped";
+    lastCheck?: string;
+    checkCount?: number;
+    examined?: number;
+    scheduled?: number;
+    active?: number;
+    lastError?: string;
+  };
+  workspaceCleanups?: {
+    status: "running" | "stopped";
+    lastCheck?: string;
+    checkCount?: number;
+    examined?: number;
+    completed?: number;
+    preserved?: number;
+    lastError?: string;
+  };
   note?: string;
 }
 

@@ -22,10 +22,10 @@ import {
   ensureRunWorkspaceBaseline,
 } from "@/lib/runner-v2/workspace-evidence";
 import type { WorkspaceHandoffArtifact } from "@/lib/runner-v2/workspace-evidence-types";
+import { cleanupGitNodeWorkspaceDurably } from "@/lib/runner-v2/workspace-cleanup";
 import {
   allocateGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
-  removePristineGitNodeWorkspace,
   type GitNodeWorkspace,
 } from "@/lib/runner-v2/workspace-isolation";
 import {
@@ -419,10 +419,11 @@ export async function executeLocalBootstrap(
     await executor.remove(executionPlan.monitorSessionName).catch(() => undefined);
     if (runWorkspace && nodeWorkspace) {
       try {
-        removePristineGitNodeWorkspace({
+        cleanupGitNodeWorkspaceDurably({
           runWorkspace,
           agentId: plan.agentId,
           attemptId: attempt.id,
+          mode: "pristine-startup",
         });
       } catch (cleanupError) {
         console.error(

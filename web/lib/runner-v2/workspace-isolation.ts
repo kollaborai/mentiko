@@ -1361,14 +1361,23 @@ export function currentGitRunIntegrationCommitFromRunDir(input: {
   runDir: string;
   runId: string;
 }): string | undefined {
+  const runWorkspace = readGitRunWorkspaceIsolationFromRunDir(input);
+  return runWorkspace
+    ? requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef)
+    : undefined;
+}
+
+export function readGitRunWorkspaceIsolationFromRunDir(input: {
+  runDir: string;
+  runId: string;
+}): GitRunWorkspaceIsolation | undefined {
   const runDir = requireAbsoluteDirectory(input.runDir, "runDir");
   const statePath = join(runDir, ".internal", "workspace-isolation", "run-workspace.json");
   if (!existsSync(statePath)) return undefined;
-  const runWorkspace = assertRunIsolation(
+  return assertRunIsolation(
     readJson<GitRunWorkspaceIsolation>(statePath),
     { runId: input.runId, statePath },
   );
-  return requiredRef(runWorkspace.sourceRepositoryRoot, runWorkspace.integrationRef);
 }
 
 export function removeIntegratedGitNodeWorkspace(input: {

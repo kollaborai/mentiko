@@ -1,4 +1,5 @@
 import type { RunRecord } from "@/lib/runner-v2/run-state";
+import { cleanupGitNodeWorkspaceDurably } from "@/lib/runner-v2/workspace-cleanup";
 import {
   currentGitRunIntegrationCommit,
   finalizeGitNodeWorkspace,
@@ -7,7 +8,6 @@ import {
   publishGitRunWorkspaceResult,
   readGitNodeIntegrationResult,
   readGitNodeWorkspace,
-  removeIntegratedGitNodeWorkspace,
   type GitNodeIntegrationResult,
   type GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
@@ -85,11 +85,13 @@ export function cleanupIntegratedNodeWorkspace(input: {
     baseline: workspaceExecution.baseline,
     now: input.now,
   });
-  return removeIntegratedGitNodeWorkspace({
+  return cleanupGitNodeWorkspaceDurably({
     runWorkspace,
     agentId: input.agentId,
     attemptId: input.attemptId,
-  });
+    mode: "integrated",
+    now: input.now,
+  }).outcome;
 }
 
 export function integrateAcceptedCompletionWorkspace(input: {
