@@ -38,6 +38,7 @@ Technical reference for the Mentiko platform - event-driven AI agent orchestrati
 
 ## System Documentation
 
+- [Roadmap](./ROADMAP.md) - product priorities and graph execution initiative
 - [Architecture](/architecture.md) - Complete system architecture
 - [API Reference](/API_REFERENCE.md) - Full API documentation
 - [Design System](/DESIGN_SYSTEM.md) - UI/UX guidelines

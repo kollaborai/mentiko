@@ -21,12 +21,14 @@ arch for your host automatically.
 
 `ghcr.io/kollaborai/mentiko`
   the platform image. inherits from `mentiko-base`, adds the next.js build
-  and runtime config. this is what `docker compose up` runs.
+  and runtime config. This is the image self-hosters run; the checked-in
+  compose files use `build: .` for source-based development and are not the
+  published release-image path.
   built from `Dockerfile` at the repo root.
-  published by `.github/workflows/build-platform.yml` on:
-    - push of a tag matching `v*` (e.g. `v0.3.5`) — releases
-    - manual `workflow_dispatch` from the Actions UI
-  tags: `:latest`, `:<commit-sha>`, and `:v0.3.5` (when triggered by tag).
+  published by `.github/workflows/build-platform.yml` on a strict `vX.Y.Z`
+  tag push. Manual `workflow_dispatch` runs smoke tests against run-scoped
+  staging refs but does not move release tags.
+  release tags: `:latest`, `:<commit-sha>`, and `:vX.Y.Z` (when triggered by tag).
 
 Both images are **public**.
 
@@ -56,19 +58,17 @@ GitHub-hosted runners are free for public repositories, including the
 base image:
 
 ```
-platform-amd64 (ubuntu-latest)        → push :<sha>-amd64
-platform-arm64 (ubuntu-24.04-arm)     → push :<sha>-arm64
-manifest       (waits on both)        → create + push :<sha>, :latest,
-                                        and :<semver-tag> if applicable,
-                                        all as fat manifests pointing
-                                        at both arch-specific tags
+platform-amd64 (ubuntu-latest)        → push :staging-<run_id>-amd64
+platform-arm64 (ubuntu-24.04-arm)     → push :staging-<run_id>-arm64
+manifest       (tag pushes only)      → promote staging refs to :<sha>,
+                                        :latest, and :<semver-tag>
 ```
 
 Build triggers:
-  - push of a tag matching `v*` — creates `:<commit-sha>`, `:latest`,
+  - push of a strict `vX.Y.Z` tag — creates `:<commit-sha>`, `:latest`,
     and `:<semver-tag>`
-  - manual `workflow_dispatch` — creates `:<commit-sha>` and `:latest`
-    only (no semver tag for an ad-hoc dispatch)
+  - manual `workflow_dispatch` — creates only run-scoped staging refs and
+    does not create or move `:<commit-sha>`, `:latest`, or a semver tag
 
 The workflow accepts a `base_tag` input on `workflow_dispatch` that
 controls which `mentiko-base` to FROM. Default `latest`. Pass a SHA
@@ -77,12 +77,15 @@ for reproducible builds.
 To cut a release:
 
 ```
-git tag v0.3.5
-git push origin v0.3.5
+# First bump web/package.json, web/package-lock.json, and the newest
+# web/lib/releases.ts entry to the same next +0.0.1 patch version.
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 That triggers the workflow, builds both arches, and publishes the
-manifest tags. Self-hosters can then `docker pull ghcr.io/kollaborai/mentiko:v0.3.5`.
+manifest tags. Self-hosters should then pull the exact release tag:
+`docker pull ghcr.io/kollaborai/mentiko:vX.Y.Z`.
 
 ## tags and pinning
 
@@ -98,7 +101,8 @@ ARG BASE_TAG=latest
 FROM ghcr.io/kollaborai/mentiko-base:${BASE_TAG}
 ```
 
-**For local dev or quickstart:** `:latest` is fine.
+**For local development only:** `:latest` may be convenient, but it is not a
+reproducible production deployment.
 
 **For reproducible production builds:** pass `--build-arg BASE_TAG=<sha>`
 to pin a specific base. Example:
@@ -130,9 +134,10 @@ The first push from `build-base.yml` creates `mentiko-base` as a
 
 Subsequent pushes preserve public visibility.
 
-## one-arch local builds
+## one-arch source builds
 
-If you don't need the manifest and just want to build for your host arch:
+If you are developing the Dockerfiles on a Linux host, or inside the CI/VM
+build harness, you can build for one host architecture:
 
 ```
 # build the base for your local arch only
@@ -142,8 +147,9 @@ docker build -f Dockerfile.base -t mentiko-base:local .
 docker build --build-arg BASE_TAG=local -t mentiko:local .
 ```
 
-This skips the workflow entirely. Useful for iterating on
-`Dockerfile.base` before pushing.
+This skips the release workflow and does not create a published release. Do
+not build release images locally on an arm64 Mac; release builds run on the
+GitHub Actions amd64 and arm64 runners.
 
 ## regression test
 
@@ -152,31 +158,40 @@ Two ways to smoke test.
 **Pull the published image:**
 
 ```
-docker pull ghcr.io/kollaborai/mentiko:latest
+export MENTIKO_VERSION=vX.Y.Z
+export BETTER_AUTH_SECRET="$(openssl rand -hex 32)" # generate once; keep stable
+docker pull ghcr.io/kollaborai/mentiko:${MENTIKO_VERSION}
 docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
-  -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
-  ghcr.io/kollaborai/mentiko:latest
+  -e BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET}" \
+  -e BETTER_AUTH_URL=http://localhost:3000 \
+  ghcr.io/kollaborai/mentiko:${MENTIKO_VERSION}
 ```
+
+The container ports are fixed at `3000` and `3099`. To use a different host
+port, change only the host side, for example `-p 13000:3000`; do not pass
+`-e PORT=13000`.
 
 Open `http://localhost:3000/signup` and create the first account. On a fresh
 install, the first email/password signup becomes the workspace owner and
 platform admin. After that, sign in at `http://localhost:3000/login` with the
 same email and password. Passwords must be at least 12 characters.
 
-**Build from source locally:**
+**Build from source (Linux/CI only):**
 
 ```
 docker build -t mentiko:local .
 docker run --rm -p 3000:3000 -p 3099:3099 -v mentiko-data:/app \
-  -e BETTER_AUTH_SECRET=$(openssl rand -hex 32) \
+  -e BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET}" \
+  -e BETTER_AUTH_URL=http://localhost:3000 \
   mentiko:local
 ```
 
 Use the same first-account flow: open `http://localhost:3000/signup`, create the
 initial owner/admin account, then use `/login` for later sessions.
 
-Both should produce a working platform image. If the build fails or
-behavior changes between hosts, that's a regression — file an issue.
+The published-image path is the self-hosting release path. If behavior differs
+between the published image and a source build, test the published image first
+and file the regression with the image tag and commit.
 
 ## related
 

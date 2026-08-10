@@ -4,8 +4,9 @@ event-driven AI agent orchestration system.
 users define chains (agent pipelines) in JSON, system executes them
 via pty-manager sessions with file-based event communication.
 
-evolving into a SaaS product. vision and roadmap tracked in
-the memory system (see MEMORY.md topic files).
+evolving into a SaaS product. the high-level roadmap is in
+`docs/ROADMAP.md`; working vision and decision context remain in the memory
+system (see MEMORY.md topic files).
 
 ## architecture
 
