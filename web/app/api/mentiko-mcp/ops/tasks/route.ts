@@ -4,6 +4,7 @@ import {
   taskCount,
   taskClose,
   taskUpdate,
+  taskMergeMeta,
   taskGet,
   taskGetAllDeps,
   taskGetComments,
@@ -31,7 +32,10 @@ import { ApiError } from "@/lib/api-errors";
  *        idempotency, and decision-routing semantics shared with the UI
  *        producer (chain-contract-plan-of-record.md Track C).
  * PATCH {id, done:true}                 close task (back-compat with mark_task_done)
- * PATCH {id, ...TaskUpdateFields}       update task fields
+ * PATCH {id, ...TaskUpdateFields}       update task fields. metadata is merged
+ *                                       shallowly (taskMergeMeta) -- unlisted
+ *                                       existing keys survive; every other
+ *                                       field is a plain column replace.
  */
 
 export const dynamic = "force-dynamic";
@@ -271,6 +275,21 @@ export async function PATCH(req: Request) {
     return new NextResponse("no updatable fields provided", { status: 400 });
   }
 
-  taskUpdate(orgId, id, fields, namespaceId);
+  // metadata is merged shallowly, not replaced: the tool schema promises
+  // "merged as-is ... (overwrites keys you set)", but taskUpdate()'s metadata
+  // field is a raw column replace (by design -- other callers compute the
+  // full object themselves, see task-store.test.ts "replaces metadata
+  // entirely"). An MCP caller sends a partial patch and has no way to fetch
+  // + recompute the whole blob first, so route metadata through taskMergeMeta
+  // (read-merge-write) instead, same as the UI's task PATCH route does
+  // inline. Was previously passed straight to taskUpdate, which silently
+  // replaced the whole column and dropped every unlisted key.
+  const { metadata, ...rest } = fields;
+  if (metadata !== undefined) {
+    taskMergeMeta(orgId, id, metadata, namespaceId);
+  }
+  if (Object.keys(rest).length > 0) {
+    taskUpdate(orgId, id, rest, namespaceId);
+  }
   return NextResponse.json({ ok: true, id, task: taskGet(orgId, id, namespaceId) });
 }

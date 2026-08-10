@@ -3,6 +3,7 @@ import {
   taskGet,
   taskList,
   taskUpdate,
+  taskMergeMeta,
   taskClaimMetadataKeyIfUnset,
   taskClose,
   taskAddDep,
@@ -404,6 +405,41 @@ describe("task-store", () => {
       taskUpdate("upd", t.id, { title: "Bumped" });
       const fetched = taskGet("upd", t.id)!;
       expect(fetched.updated_at >= before).toBe(true);
+    });
+  });
+
+  // taskMergeMeta is taskUpdate's opt-in counterpart for metadata: taskUpdate
+  // replaces the column wholesale (see "replaces metadata entirely" above),
+  // taskMergeMeta reads-then-merges. The MCP update_task tool routes its
+  // `metadata` field through this (web/app/api/mentiko-mcp/ops/tasks/route.ts)
+  // instead of taskUpdate specifically because a caller sending a partial
+  // patch has no way to fetch + recompute the whole blob first -- regression
+  // coverage for a live bug where a 4-key update wiped ~30 existing keys
+  // (decision lineage, generation history) because it went through the
+  // replace path instead.
+  describe("taskMergeMeta", () => {
+    it("preserves existing keys not named in a partial update", () => {
+      const t = taskCreate("upd", {
+        title: "Merge",
+        metadata: {
+          decision_id: "dec-1",
+          decision_lineage: ["dec-0", "dec-1"],
+          generation_job_id: "job-1",
+          generation_status: "complete",
+          chainBinding: { chain_id: "c-1", chain_name: "Build" },
+        },
+      });
+
+      taskMergeMeta("upd", t.id, { generation_status: "reviewed", new_key: "added" });
+
+      expect(taskGet("upd", t.id)!.metadata).toEqual({
+        decision_id: "dec-1",
+        decision_lineage: ["dec-0", "dec-1"],
+        generation_job_id: "job-1",
+        generation_status: "reviewed", // overwritten
+        chainBinding: { chain_id: "c-1", chain_name: "Build" },
+        new_key: "added", // added
+      });
     });
   });
 
