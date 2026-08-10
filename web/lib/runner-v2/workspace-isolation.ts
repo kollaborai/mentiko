@@ -103,6 +103,25 @@ export interface GitNodeIntegrationResult {
   integratedAt: string;
 }
 
+export type GitRunWorkspacePublicationStatus =
+  | "published"
+  | "already-published"
+  | "no-changes"
+  | "source-changed";
+
+export interface GitRunWorkspacePublicationResult {
+  version: typeof WORKSPACE_ISOLATION_VERSION;
+  kind: "git-run-workspace-publication";
+  runId: string;
+  status: GitRunWorkspacePublicationStatus;
+  baselineCommit: string;
+  integrationCommit: string;
+  artifactPath: string;
+  publishedAt: string;
+  sourceSnapshot: GitWorkspaceSnapshot;
+  sourceChanges: GitWorkspaceChangeSet;
+}
+
 export class WorkspaceIsolationError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
@@ -152,6 +171,29 @@ function runGitOptional(cwd: string, args: string[]): string | undefined {
   if (result.status !== 0) return undefined;
   const value = result.stdout.toString("utf8").trim();
   return value || undefined;
+}
+
+function runGitWithInput(cwd: string, args: string[], input: Buffer): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    env: process.env,
+    input,
+    encoding: "buffer",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BUFFER,
+  });
+  if (result.error) {
+    throw new WorkspaceIsolationError(`git ${args[0] || "command"} could not start`, result.error);
+  }
+  if (result.status !== 0) {
+    const detail = Buffer.isBuffer(result.stderr)
+      ? result.stderr.toString("utf8").trim()
+      : String(result.stderr || "").trim();
+    throw new WorkspaceIsolationError(
+      `git ${args[0] || "command"} failed${detail ? `: ${detail}` : ""}`,
+    );
+  }
 }
 
 function requireAbsoluteDirectory(path: string, field: string): string {
@@ -885,4 +927,164 @@ export function currentGitRunIntegrationCommit(
     statePath: runWorkspace.statePath,
   });
   return requiredRef(current.sourceRepositoryRoot, current.integrationRef);
+}
+
+function publicationArtifactPath(runWorkspace: GitRunWorkspaceIsolation): string {
+  return join(runWorkspace.runDir, "artifacts", "workspace-publication.json");
+}
+
+function assertPublicationResult(
+  runWorkspace: GitRunWorkspaceIsolation,
+  integrationCommit: string,
+  publication: GitRunWorkspacePublicationResult,
+  artifactPath: string,
+): GitRunWorkspacePublicationResult {
+  if (
+    publication.version !== WORKSPACE_ISOLATION_VERSION
+    || publication.kind !== "git-run-workspace-publication"
+    || publication.runId !== runWorkspace.runId
+    || publication.baselineCommit !== runWorkspace.baselineCommit
+    || publication.integrationCommit !== integrationCommit
+    || publication.artifactPath !== artifactPath
+  ) {
+    throw new WorkspaceIsolationError(`run workspace publication identity mismatch: ${artifactPath}`);
+  }
+  return publication;
+}
+
+function sourceStillAtBaseline(
+  baseline: GitWorkspaceSnapshot,
+  observed: GitWorkspaceSnapshot,
+): boolean {
+  return observed.gitCommonDir === baseline.gitCommonDir
+    && observed.relativeWorkspacePath === baseline.relativeWorkspacePath
+    && observed.sourceHead === baseline.sourceHead
+    && observed.sourceBranch === baseline.sourceBranch
+    && observed.snapshotTree === baseline.snapshotTree;
+}
+
+function sourceMatchesIntegrationAfterApply(
+  baseline: GitWorkspaceSnapshot,
+  observed: GitWorkspaceSnapshot,
+  integrationTree: string,
+): boolean {
+  return observed.sourceHead === baseline.sourceHead
+    && observed.sourceBranch === baseline.sourceBranch
+    && observed.snapshotTree === integrationTree;
+}
+
+export function publishGitRunWorkspaceResult(input: {
+  runWorkspace: GitRunWorkspaceIsolation;
+  baseline: GitWorkspaceSnapshot;
+  now?: Date;
+}): GitRunWorkspacePublicationResult {
+  const runWorkspace = assertRunIsolation(input.runWorkspace, {
+    runId: input.runWorkspace.runId,
+    statePath: input.runWorkspace.statePath,
+  });
+  if (
+    input.baseline.snapshotCommit !== runWorkspace.baselineCommit
+    || input.baseline.snapshotTree !== runWorkspace.baselineTree
+    || input.baseline.sourceWorkspacePath !== runWorkspace.sourceWorkspacePath
+    || input.baseline.gitCommonDir !== runWorkspace.gitCommonDir
+  ) {
+    throw new WorkspaceIsolationError("workspace publication baseline does not match run isolation");
+  }
+
+  const integrationCommit = requiredRef(
+    runWorkspace.sourceRepositoryRoot,
+    runWorkspace.integrationRef,
+  );
+  const integrationTree = runGit(
+    runWorkspace.sourceRepositoryRoot,
+    ["rev-parse", `${integrationCommit}^{tree}`],
+  );
+  const artifactPath = publicationArtifactPath(runWorkspace);
+  const publicationClaim = join(
+    runWorkspace.gitCommonDir,
+    "mentiko-workspace-publication-claims",
+    `${digest(runWorkspace.sourceWorkspacePath, 32)}.claim`,
+  );
+
+  return withExclusiveFileClaim(publicationClaim, () => {
+    if (existsSync(artifactPath)) {
+      return assertPublicationResult(
+        runWorkspace,
+        integrationCommit,
+        readJson<GitRunWorkspacePublicationResult>(artifactPath),
+        artifactPath,
+      );
+    }
+
+    const publishedAt = (input.now || new Date()).toISOString();
+    const sourceSnapshot = captureGitWorkspaceSnapshot({
+      workspacePath: runWorkspace.sourceWorkspacePath,
+      scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
+      label: `${runWorkspace.runId}-source-publication-cas`,
+      capturedAt: publishedAt,
+    });
+    const sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
+    let status: GitRunWorkspacePublicationStatus;
+
+    if (integrationTree === runWorkspace.baselineTree) {
+      status = "no-changes";
+    } else if (sourceMatchesIntegrationAfterApply(input.baseline, sourceSnapshot, integrationTree)) {
+      // Crash recovery: the worktree was updated but the immutable receipt was
+      // not written. HEAD and branch staying at the baseline distinguish this
+      // from a user commit that merely happens to have the same tree.
+      status = "already-published";
+    } else if (!sourceStillAtBaseline(input.baseline, sourceSnapshot)) {
+      status = "source-changed";
+    } else {
+      const patch = runGitResult(runWorkspace.sourceRepositoryRoot, [
+        "diff",
+        "--binary",
+        "--full-index",
+        runWorkspace.baselineCommit,
+        integrationCommit,
+        "--",
+        runWorkspace.relativeWorkspacePath,
+      ]).stdout;
+      runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+        "apply",
+        "--check",
+        "--binary",
+        "--whitespace=nowarn",
+        "-",
+      ], patch);
+      runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+        "apply",
+        "--binary",
+        "--whitespace=nowarn",
+        "-",
+      ], patch);
+      const verified = captureGitWorkspaceSnapshot({
+        workspacePath: runWorkspace.sourceWorkspacePath,
+        scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
+        label: `${runWorkspace.runId}-source-publication-verify`,
+        capturedAt: publishedAt,
+      });
+      if (!sourceMatchesIntegrationAfterApply(input.baseline, verified, integrationTree)) {
+        throw new WorkspaceIsolationError(
+          `source workspace changed while publishing run ${runWorkspace.runId}`,
+        );
+      }
+      status = "published";
+    }
+
+    const candidate: GitRunWorkspacePublicationResult = {
+      version: WORKSPACE_ISOLATION_VERSION,
+      kind: "git-run-workspace-publication",
+      runId: runWorkspace.runId,
+      status,
+      baselineCommit: runWorkspace.baselineCommit,
+      integrationCommit,
+      artifactPath,
+      publishedAt,
+      sourceSnapshot,
+      sourceChanges,
+    };
+    const persisted = writeJsonOnce(artifactPath, candidate);
+    return assertPublicationResult(runWorkspace, integrationCommit, persisted, artifactPath);
+  }, { waitTimeoutMs: 30_000 });
 }

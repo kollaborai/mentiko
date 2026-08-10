@@ -12,6 +12,7 @@ import {
   finalizeGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
+  publishGitRunWorkspaceResult,
 } from "./workspace-isolation";
 import { captureGitWorkspaceSnapshot } from "./workspace-snapshot";
 
@@ -218,5 +219,58 @@ describe("Git node worktree isolation", () => {
     expect(result.changeSet.files).toEqual([]);
     expect(integration.status).toBe("no-changes");
     expect(currentGitRunIntegrationCommit(runWorkspace)).toBe(before);
+  });
+
+  it("publishes the combined result only onto the unchanged dirty source workspace", () => {
+    const fixture = repository();
+    writeFileSync(join(fixture.root, "shared.ts"), "export const shared = 'staged';\n");
+    git(fixture.root, "add", "shared.ts");
+    writeFileSync(join(fixture.root, "shared.ts"), "export const shared = 'dirty-baseline';\n");
+    const cachedBefore = git(fixture.root, "diff", "--cached", "--binary");
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-publish" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-publisher",
+    });
+    expect(readFileSync(join(node.workspacePath, "shared.ts"), "utf8")).toContain("dirty-baseline");
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'published';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    const publication = publishGitRunWorkspaceResult({
+      runWorkspace,
+      baseline,
+      now: new Date("2026-08-09T20:02:00.000Z"),
+    });
+
+    expect(publication.status).toBe("published");
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("published");
+    expect(readFileSync(join(fixture.root, "shared.ts"), "utf8")).toContain("dirty-baseline");
+    expect(git(fixture.root, "diff", "--cached", "--binary")).toBe(cachedBefore);
+    expect(publishGitRunWorkspaceResult({ runWorkspace, baseline })).toEqual(publication);
+  });
+
+  it("leaves the source untouched and reports exact drift when publication CAS loses", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-source-drift" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-source-drift",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+    writeFileSync(join(fixture.root, "right.ts"), "export const right = 'user-edit';\n");
+    const sourceBefore = git(fixture.root, "status", "--porcelain=v1", "-z");
+
+    const publication = publishGitRunWorkspaceResult({ runWorkspace, baseline });
+
+    expect(publication.status).toBe("source-changed");
+    expect(publication.sourceChanges.files.map((file) => file.path)).toEqual(["right.ts"]);
+    expect(git(fixture.root, "status", "--porcelain=v1", "-z")).toBe(sourceBefore);
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("'base'");
+    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("user-edit");
   });
 });

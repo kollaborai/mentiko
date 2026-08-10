@@ -28,8 +28,12 @@ import config from "@/lib/config";
 import {
   integrateAcceptedCompletionWorkspace,
   integrateCompletedNodeWorkspace,
+  publishCompletedRunWorkspace,
 } from "@/lib/runner-v2/completion-workspace";
-import type { GitNodeIntegrationResult } from "@/lib/runner-v2/workspace-isolation";
+import type {
+  GitNodeIntegrationResult,
+  GitRunWorkspacePublicationResult,
+} from "@/lib/runner-v2/workspace-isolation";
 
 export interface RunnerV2CompletionEntrypointInput {
   sessionName: string;
@@ -116,6 +120,23 @@ export function runRunnerV2CompletionEntrypoint(
           agentId: agent.id,
           attemptId: latestAttempt!.id,
           integration,
+          env,
+          now: input.now,
+        });
+      }
+      const publication = run.status === "completed" || generationDuplicate
+        ? publishCompletedRunWorkspace({ run, runId, runDir, now: input.now })
+        : undefined;
+      if (publication?.status === "source-changed") {
+        return blockSourceWorkspaceChanged({
+          runJsonPath,
+          runId,
+          eventsDir,
+          stateDir,
+          sessionName: input.sessionName,
+          agentId: agent.id,
+          attemptId: latestAttempt!.id,
+          publication,
           env,
           now: input.now,
         });
@@ -356,6 +377,25 @@ export function runRunnerV2CompletionEntrypoint(
       },
     });
 
+    const publication = !input.dryRun && runBecameCompletedInPlan(plan)
+      ? publishCompletedRunWorkspace({ run, runId, runDir, now: input.now })
+      : undefined;
+    if (publication?.status === "source-changed") {
+      restoreSnapshots(runJsonPath, runMutationJournal, loopMutationJournal);
+      return blockSourceWorkspaceChanged({
+        runJsonPath,
+        runId,
+        eventsDir,
+        stateDir,
+        sessionName: input.sessionName,
+        agentId: agent.id,
+        attemptId: completionAttempt.id,
+        publication,
+        env,
+        now: input.now,
+      });
+    }
+
     const adapter = applyTypedExecutorPlan(plan, {
       runJsonPath,
       stateDir,
@@ -487,6 +527,61 @@ function blockWorkspaceIntegrationConflict(input: {
     decision: "workspace-conflict",
     plan: {
       action: "workspace-conflict",
+      launches: [],
+      effects: [],
+    },
+    adapter: {
+      effectsApplied: [],
+      operations: [],
+      launchesStarted: [],
+    },
+    runJsonPath: input.runJsonPath,
+    eventsDir: input.eventsDir,
+  };
+}
+
+function blockSourceWorkspaceChanged(input: {
+  runJsonPath: string;
+  runId: string;
+  eventsDir: string;
+  stateDir: string;
+  sessionName: string;
+  agentId: string;
+  attemptId: string;
+  publication: GitRunWorkspacePublicationResult;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  now?: Date;
+}): RunnerV2CompletionEntrypointResult {
+  const changedPaths = input.publication.sourceChanges.files.map((file) => file.path);
+  const detail = [
+    `source workspace changed before publishing run ${input.runId}`,
+    `changes: ${changedPaths.length > 0 ? changedPaths.join(", ") : "HEAD or branch identity"}`,
+    `artifact: ${input.publication.artifactPath}`,
+  ].join("; ");
+
+  transitionAgentAttempt({
+    runJsonPath: input.runJsonPath,
+    attemptId: input.attemptId,
+    to: "human_action_required",
+    reason: "source_workspace_changed",
+    detail,
+    now: input.now,
+  });
+  updateRunAgent(input.runJsonPath, input.agentId, "blocked", input.now);
+  updateRunStatus(input.runJsonPath, "blocked", detail, input.now);
+  killAgentSessions(input.sessionName, {
+    stateDir: input.stateDir,
+    runId: input.runId,
+    env: input.env,
+  });
+
+  return {
+    status: "handled",
+    runId: input.runId,
+    agentId: input.agentId,
+    decision: "workspace-source-changed",
+    plan: {
+      action: "workspace-source-changed",
       launches: [],
       effects: [],
     },

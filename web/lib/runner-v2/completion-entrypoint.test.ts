@@ -36,6 +36,97 @@ function git(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
+function seedIsolatedTerminalFixture() {
+  const root = tempRoot();
+  const repositoryRoot = join(root, "repository");
+  const runDir = join(root, "runs", "run-123");
+  const eventsDir = join(root, "events");
+  const stateDir = join(root, "state");
+  mkdirSync(repositoryRoot, { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(eventsDir, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
+  git(repositoryRoot, "init", "-q");
+  git(repositoryRoot, "config", "user.name", "Completion Test");
+  git(repositoryRoot, "config", "user.email", "completion@example.com");
+  writeFileSync(join(repositoryRoot, "left.ts"), "export const left = 'base';\n");
+  writeFileSync(join(repositoryRoot, "right.ts"), "export const right = 'base';\n");
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "-qm", "initial");
+
+  const chainPath = join(root, "chain.json");
+  writeJson(chainPath, {
+    id: "chain",
+    name: "Terminal Chain",
+    config: { project_root: repositoryRoot },
+    agents: [{ id: "publisher", name: "Publisher" }],
+  });
+  const runJsonPath = join(runDir, "run.json");
+  updateRunJson(runJsonPath, () => ({
+    ...createRunRecord({
+      runId: "run-123",
+      chainName: "Terminal Chain",
+      goal: "publish safely",
+      workspacePath: repositoryRoot,
+    }),
+    status: "running",
+    agents: [{ id: "publisher", name: "Publisher", session: "", status: "pending" }],
+  }));
+  const workspaceExecution = ensureRunWorkspaceBaseline({
+    runJsonPath,
+    runDir,
+    runId: "run-123",
+    workspacePath: repositoryRoot,
+    now: new Date("2026-08-09T20:00:00.000Z"),
+  });
+  if (workspaceExecution.tracking !== "git") throw new Error("expected Git workspace evidence");
+  const runWorkspace = initializeGitRunWorkspaceIsolation({
+    runId: "run-123",
+    runDir,
+    baseline: workspaceExecution.baseline,
+  });
+  const attempt = createAgentAttempt({
+    runJsonPath,
+    runId: "run-123",
+    agentId: "publisher",
+    leaseId: "publisher-run-123",
+  });
+  const node = allocateGitNodeWorkspace({
+    runWorkspace,
+    agentId: "publisher",
+    attemptId: attempt.id,
+  });
+  for (const phase of [
+    "lease_acquired",
+    "pty_allocated",
+    "process_spawned",
+    "ready_for_instructions",
+    "instructions_submitted",
+  ] as const) {
+    transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: phase });
+  }
+  updateRunJson(runJsonPath, (current) => ({
+    ...current!,
+    sessions: ["publisher-run-123"],
+    agents: [{
+      id: "publisher",
+      name: "Publisher",
+      session: "publisher-run-123",
+      status: "running",
+    }],
+  }));
+
+  return {
+    repositoryRoot,
+    runDir,
+    eventsDir,
+    stateDir,
+    chainPath,
+    runJsonPath,
+    node,
+  };
+}
+
 function seedGenerationArtifactFixture(input: {
   generationKind: string;
   payload?: unknown;
@@ -128,6 +219,69 @@ function expectNoGenerationImport(result: ReturnType<typeof completeGenerationFi
 }
 
 describe("runner-v2 completion entrypoint", () => {
+  it("publishes a terminal node result before reporting the run completed", () => {
+    const fixture = seedIsolatedTerminalFixture();
+    writeFileSync(join(fixture.node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "publisher-run-123",
+      chainPath: fixture.chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: fixture.runDir,
+        EVENTS_DIR: fixture.eventsDir,
+        STATE_DIR: fixture.stateDir,
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-08-09T20:02:00.000Z"),
+    });
+
+    expect(result.decision).toBe("terminal");
+    expect(readRunJson(fixture.runJsonPath).status).toBe("completed");
+    expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("agent-result");
+    expect(JSON.parse(readFileSync(
+      join(fixture.runDir, "artifacts", "workspace-publication.json"),
+      "utf8",
+    ))).toMatchObject({ status: "published", runId: "run-123" });
+  });
+
+  it("blocks terminal success without touching the source when its CAS detects drift", () => {
+    const fixture = seedIsolatedTerminalFixture();
+    writeFileSync(join(fixture.node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    writeFileSync(join(fixture.repositoryRoot, "right.ts"), "export const right = 'user-edit';\n");
+    const sourceBefore = git(fixture.repositoryRoot, "status", "--porcelain=v1", "-z");
+
+    const result = runRunnerV2CompletionEntrypoint({
+      sessionName: "publisher-run-123",
+      chainPath: fixture.chainPath,
+      env: {
+        MENTIKO_RUN_ID: "run-123",
+        MENTIKO_RUN_DIR: fixture.runDir,
+        EVENTS_DIR: fixture.eventsDir,
+        STATE_DIR: fixture.stateDir,
+        MENTIKO_MONITOR_COMPLETION_LATCH: "durable-marker",
+      },
+      now: new Date("2026-08-09T20:02:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      decision: "workspace-source-changed",
+      plan: { action: "workspace-source-changed", launches: [], effects: [] },
+    });
+    const blocked = readRunJson(fixture.runJsonPath) as ReturnType<typeof readRunJson> & {
+      runnerV2?: { attempts?: Array<Record<string, unknown>> };
+    };
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.status_message).toContain("changes: right.ts");
+    expect(blocked.runnerV2?.attempts?.[0]).toMatchObject({
+      phase: "human_action_required",
+      terminalReason: "source_workspace_changed",
+    });
+    expect(git(fixture.repositoryRoot, "status", "--porcelain=v1", "-z")).toBe(sourceBefore);
+    expect(readFileSync(join(fixture.repositoryRoot, "left.ts"), "utf8")).toContain("'base'");
+    expect(readFileSync(join(fixture.repositoryRoot, "right.ts"), "utf8")).toContain("user-edit");
+  });
+
   it("blocks the edge before downstream effects when parallel node edits conflict", () => {
     const root = tempRoot();
     const repositoryRoot = join(root, "repository");

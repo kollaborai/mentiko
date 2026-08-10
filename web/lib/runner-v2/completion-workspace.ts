@@ -3,8 +3,10 @@ import {
   finalizeGitNodeWorkspace,
   initializeGitRunWorkspaceIsolation,
   integrateGitNodeWorkspaceResult,
+  publishGitRunWorkspaceResult,
   readGitNodeWorkspace,
   type GitNodeIntegrationResult,
+  type GitRunWorkspacePublicationResult,
 } from "@/lib/runner-v2/workspace-isolation";
 
 const WORKSPACE_ACCEPTED_COMPLETION_ACTIONS = new Set([
@@ -66,4 +68,31 @@ export function integrateAcceptedCompletionWorkspace(input: {
     return undefined;
   }
   return integrateCompletedNodeWorkspace(input);
+}
+
+export function publishCompletedRunWorkspace(input: {
+  run: RunRecord;
+  runId: string;
+  runDir: string;
+  now?: Date;
+}): GitRunWorkspacePublicationResult | undefined {
+  const workspaceExecution = input.run.workspaceExecution;
+  if (
+    !workspaceExecution
+    || workspaceExecution.tracking !== "git"
+    || workspaceExecution.isolation !== "git-worktree"
+  ) {
+    return undefined;
+  }
+  const runWorkspace = initializeGitRunWorkspaceIsolation({
+    runId: input.runId,
+    runDir: input.runDir,
+    baseline: workspaceExecution.baseline,
+    now: input.now,
+  });
+  return publishGitRunWorkspaceResult({
+    runWorkspace,
+    baseline: workspaceExecution.baseline,
+    now: input.now,
+  });
 }
