@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("fs");
 const { mkdtemp } = require("fs/promises");
+const { execFileSync } = require("child_process");
 const { tmpdir } = require("os");
 const { dirname, join, resolve } = require("path");
 
@@ -40,6 +41,12 @@ async function main() {
   mkdirSync(runDir, { recursive: true });
   mkdirSync(profilesDir, { recursive: true });
   mkdirSync(workspaceDir, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: workspaceDir });
+  execFileSync("git", ["config", "user.name", "Runner V2 Proof"], { cwd: workspaceDir });
+  execFileSync("git", ["config", "user.email", "runner-v2-proof@mentiko.local"], { cwd: workspaceDir });
+  writeFileSync(join(workspaceDir, "source.txt"), "source remains unchanged\n");
+  execFileSync("git", ["add", "source.txt"], { cwd: workspaceDir });
+  execFileSync("git", ["commit", "-qm", "runtime proof baseline"], { cwd: workspaceDir });
   process.env.AGENT_PROFILES_DIR = profilesDir;
   writeFileSync(join(profilesDir, "stub.json"), JSON.stringify({
     id: "stub",
@@ -97,6 +104,9 @@ async function main() {
     async remove(name) {
       calls.push({ op: "remove", name });
     },
+    async list() {
+      return [];
+    },
     async spawn(name, cmd, args, opts) {
       calls.push({ op: "spawn", name, cmd, args, opts });
       return { name, pid: 123 };
@@ -137,8 +147,11 @@ async function main() {
   const pointerSend = calls.find((call) => call.op === "sendKeys" && String(call.text).includes(bootstrapPlan.instructionPath));
   const startSend = calls.find((call) => call.op === "sendKeys" && String(call.text).includes(startScriptPath));
   const sessionEnv = sessionSpawn && sessionSpawn.opts ? sessionSpawn.opts.env || {} : {};
+  const monitorEnv = monitorSpawn && monitorSpawn.opts ? monitorSpawn.opts.env || {} : {};
   const flattenedCalls = JSON.stringify(calls);
   const admittedRun = JSON.parse(readFileSync(join(runDir, "run.json"), "utf8"));
+  const admittedAttempt = ((admittedRun.runnerV2 || {}).attempts || [])[0] || {};
+  const nodeWorkspacePath = sessionSpawn && sessionSpawn.opts ? sessionSpawn.opts.cwd : "";
   writeFileSync(join(runDir, "typed-bootstrap-calls.json"), JSON.stringify(calls, null, 2));
 
   // --- readiness block scenario: a matched blocked_pattern must block startup
@@ -194,6 +207,7 @@ async function main() {
   const blockCalls = [];
   const blockExecutor = {
     async remove(name) { blockCalls.push({ op: "remove", name }); },
+    async list() { return []; },
     async spawn(name, cmd, args, opts) { blockCalls.push({ op: "spawn", name, cmd, args, opts }); return { name, pid: 456 }; },
     async sendKeys(name, text) { blockCalls.push({ op: "sendKeys", name, text }); },
     async capture() { return "Log in required\nclaude ready >"; },
@@ -273,6 +287,7 @@ async function main() {
   const capCalls = [];
   const capExecutor = {
     async remove(name) { capCalls.push({ op: "remove", name }); },
+    async list() { return []; },
     async spawn(name, cmd, args, opts) { capCalls.push({ op: "spawn", name, cmd, args, opts }); return { name, pid: 789 }; },
     async sendKeys(name, text) { capCalls.push({ op: "sendKeys", name, text }); },
     async capture() { return "claude ready >"; },
@@ -309,7 +324,6 @@ async function main() {
     orgId: "default",
   });
 
-  const eventPath = join(probeEventsDir, "run-probe-writer-draft-ready.event");
   const eventArchivePath = join(probeEventsDir, "archive", "run-probe-writer-draft-ready.event");
   const externalOutboxPath = join(runDir, "external-effects.jsonl");
   const dispatchAuditPath = join(runDir, "external-effects.dispatch.jsonl");
@@ -320,6 +334,26 @@ async function main() {
     check("external-outbox", existsSync(externalOutboxPath) && readFileSync(externalOutboxPath, "utf8").includes("\"status\":\"queued\""), externalOutboxPath),
     check("external-dispatch-audit", existsSync(dispatchAuditPath) && readFileSync(dispatchAuditPath, "utf8").includes("\"status\":\"dispatched\""), dispatchAuditPath),
     check("typed-bootstrap-session", !!sessionSpawn && bootstrapPlan.sessionName.includes("manual"), bootstrapPlan.sessionName),
+    check(
+      "typed-bootstrap-git-worktree",
+      admittedRun.workspaceExecution?.tracking === "git"
+        && admittedRun.workspaceExecution?.isolation === "git-worktree"
+        && nodeWorkspacePath !== workspaceDir
+        && existsSync(nodeWorkspacePath),
+      nodeWorkspacePath,
+    ),
+    check(
+      "typed-bootstrap-attempt-bound",
+      !!admittedAttempt.id
+        && sessionEnv.MENTIKO_AGENT_ATTEMPT_ID === admittedAttempt.id
+        && monitorEnv.MENTIKO_AGENT_ATTEMPT_ID === admittedAttempt.id,
+      admittedAttempt.id || null,
+    ),
+    check(
+      "typed-bootstrap-source-untouched",
+      readFileSync(join(workspaceDir, "source.txt"), "utf8") === "source remains unchanged\n",
+      workspaceDir,
+    ),
     check("typed-bootstrap-no-shell-start", !startScript.includes("chain-runner.sh") && !flattenedCalls.includes("--start 'manual'"), startScriptPath),
     check("typed-bootstrap-no-secret-env", !JSON.stringify(sessionEnv).includes("proof-parent-secret") && !startScript.includes("proof-secret"), startScriptPath),
     check("typed-bootstrap-instructions-written", instructionText.includes("Agent-ID: manual") && !!pointerSend, bootstrapPlan.instructionPath),
