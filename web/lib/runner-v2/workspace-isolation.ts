@@ -110,6 +110,12 @@ export type GitRunWorkspacePublicationStatus =
   | "no-changes"
   | "source-changed";
 
+export interface GitRunWorkspacePublicationRollback {
+  status: "reverted" | "not-needed" | "failed";
+  attemptedAt: string;
+  error?: string;
+}
+
 export interface GitRunWorkspacePublicationResult {
   version: typeof WORKSPACE_ISOLATION_VERSION;
   kind: "git-run-workspace-publication";
@@ -123,6 +129,8 @@ export interface GitRunWorkspacePublicationResult {
   sourceChanges: GitWorkspaceChangeSet;
   /** Verified source state after a successful apply or crash-recovery match. */
   publishedSnapshot?: GitWorkspaceSnapshot;
+  /** Post-apply race recovery evidence. Present only when verification lost. */
+  rollback?: GitRunWorkspacePublicationRollback;
 }
 
 export class WorkspaceIsolationError extends Error {
@@ -1599,21 +1607,36 @@ function assertPublicationResult(
   if (JSON.stringify(expectedChanges) !== JSON.stringify(publication.sourceChanges)) {
     throw new WorkspaceIsolationError(`run workspace publication changes mismatch: ${artifactPath}`);
   }
+  const validRollback = !publication.rollback || (
+    ["reverted", "not-needed", "failed"].includes(publication.rollback.status)
+    && typeof publication.rollback.attemptedAt === "string"
+    && Number.isFinite(Date.parse(publication.rollback.attemptedAt))
+    && (publication.rollback.status === "failed"
+      ? typeof publication.rollback.error === "string" && publication.rollback.error.length > 0
+      : publication.rollback.error === undefined)
+  );
+  if (!validRollback) {
+    throw new WorkspaceIsolationError(`run workspace publication rollback mismatch: ${artifactPath}`);
+  }
   const validStatus = (() => {
     switch (publication.status) {
       case "no-changes":
         return artifactPath === publicationArtifactPath(runWorkspace)
           && integrationTree === runWorkspace.baselineTree
-          && !publication.publishedSnapshot;
+          && !publication.publishedSnapshot
+          && !publication.rollback;
       case "source-changed":
         return artifactPath === publicationConflictArtifactPath(
           runWorkspace,
           publication.sourceSnapshot,
         )
-          && !sourceStillAtBaseline(baseline, publication.sourceSnapshot)
-          && !publication.publishedSnapshot;
+          && !publication.publishedSnapshot
+          && (publication.rollback?.status === "not-needed"
+            ? sourceStillAtBaseline(baseline, publication.sourceSnapshot)
+            : !sourceStillAtBaseline(baseline, publication.sourceSnapshot));
       case "already-published":
         return artifactPath === publicationArtifactPath(runWorkspace)
+          && !publication.rollback
           && validSourceSnapshot(publication.publishedSnapshot)
           && sourceMatchesIntegrationAfterApply(
             baseline,
@@ -1627,6 +1650,7 @@ function assertPublicationResult(
           );
       case "published":
         return artifactPath === publicationArtifactPath(runWorkspace)
+          && !publication.rollback
           && validSourceSnapshot(publication.publishedSnapshot)
           && sourceStillAtBaseline(baseline, publication.sourceSnapshot)
           && sourceMatchesIntegrationAfterApply(
@@ -1679,6 +1703,8 @@ export function publishGitRunWorkspaceResult(input: {
   now?: Date;
   /** Deterministic race hook used by the fault-injection suite. */
   beforeApplyCas?: () => void;
+  /** Deterministic post-apply race hook used by the fault-injection suite. */
+  afterApplyBeforeVerify?: () => void;
 }): GitRunWorkspacePublicationResult {
   const runWorkspace = assertRunIsolation(input.runWorkspace, {
     runId: input.runWorkspace.runId,
@@ -1729,6 +1755,7 @@ export function publishGitRunWorkspaceResult(input: {
     let sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
     let status: GitRunWorkspacePublicationStatus;
     let publishedSnapshot: GitWorkspaceSnapshot | undefined;
+    let rollback: GitRunWorkspacePublicationRollback | undefined;
 
     if (integrationTree === runWorkspace.baselineTree) {
       status = "no-changes";
@@ -1775,6 +1802,7 @@ export function publishGitRunWorkspaceResult(input: {
           "--whitespace=nowarn",
           "-",
         ], patch);
+        input.afterApplyBeforeVerify?.();
         const verified = captureGitWorkspaceSnapshot({
           workspacePath: runWorkspace.sourceWorkspacePath,
           scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
@@ -1782,12 +1810,49 @@ export function publishGitRunWorkspaceResult(input: {
           capturedAt: publishedAt,
         });
         if (!sourceMatchesIntegrationAfterApply(input.baseline, verified, integrationTree)) {
-          throw new WorkspaceIsolationError(
-            `source workspace changed while publishing run ${runWorkspace.runId}`,
-          );
+          if (sourceStillAtBaseline(input.baseline, verified)) {
+            rollback = { status: "not-needed", attemptedAt: publishedAt };
+            sourceSnapshot = verified;
+          } else {
+            try {
+              runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+                "apply",
+                "--reverse",
+                "--check",
+                "--binary",
+                "--whitespace=nowarn",
+                "-",
+              ], patch);
+              runGitWithInput(runWorkspace.sourceRepositoryRoot, [
+                "apply",
+                "--reverse",
+                "--binary",
+                "--whitespace=nowarn",
+                "-",
+              ], patch);
+              rollback = { status: "reverted", attemptedAt: publishedAt };
+            } catch (rollbackError) {
+              rollback = {
+                status: "failed",
+                attemptedAt: publishedAt,
+                error: rollbackError instanceof Error
+                  ? rollbackError.message
+                  : String(rollbackError),
+              };
+            }
+            sourceSnapshot = captureGitWorkspaceSnapshot({
+              workspacePath: runWorkspace.sourceWorkspacePath,
+              scratchDir: createWorkspaceSnapshotScratchDir(runWorkspace.runDir),
+              label: `${runWorkspace.runId}-source-publication-rollback`,
+              capturedAt: publishedAt,
+            });
+          }
+          sourceChanges = compareGitWorkspaceSnapshots(input.baseline, sourceSnapshot);
+          status = "source-changed";
+        } else {
+          status = "published";
+          publishedSnapshot = verified;
         }
-        status = "published";
-        publishedSnapshot = verified;
       }
     }
 
@@ -1806,8 +1871,11 @@ export function publishGitRunWorkspaceResult(input: {
       sourceSnapshot,
       sourceChanges,
       ...(publishedSnapshot ? { publishedSnapshot } : {}),
+      ...(rollback ? { rollback } : {}),
     };
-    const persisted = writeJsonOnce(receiptPath, candidate);
+    const persisted = existsSync(receiptPath)
+      ? readJson<GitRunWorkspacePublicationResult>(receiptPath)
+      : writeJsonOnce(receiptPath, candidate);
     return assertPublicationResult(
       runWorkspace,
       input.baseline,

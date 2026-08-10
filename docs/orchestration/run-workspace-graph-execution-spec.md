@@ -119,11 +119,17 @@ conflict, replay, and a 30-target capacity run.
 
 - Publication rechecks source branch identity, HEAD, scoped index fingerprint,
   and dirty snapshot immediately before apply.
-- If source state changed, publication leaves it untouched and writes immutable
-  conflict evidence.
+- If source state changed before apply, publication leaves it untouched and
+  writes immutable conflict evidence.
 - If source state still exactly matches the task-start snapshot, publication
   applies the integrated result while preserving the intended baseline dirty
   state.
+- Because arbitrary editors do not participate in Mentiko's advisory claim, a
+  writer can still race a multi-file apply. Publication therefore verifies the
+  source again after apply and attempts an exact inverse patch. A proven inverse
+  leaves only the external edit; an unsafe inverse blocks with immutable
+  rollback-failure evidence and explicitly reports that source may contain run
+  changes. It never claims untouched-source semantics without proof.
 - Publication is replay safe. A prior receipt is trusted only after its source
   and result identities revalidate.
 
@@ -170,6 +176,8 @@ At minimum, the implementation gate requires:
 - clean divergent integration and overlapping conflict tests,
 - immutable receipt tamper and replay tests,
 - source-drift publication tests proving no source mutation,
+- post-apply race tests proving exact rollback when safe and explicit blocked
+  evidence when an arbitrary writer makes rollback unsafe,
 - cleanup crash-before-remove and crash-after-remove replay tests,
 - launch restart tests at every pre-instruction phase and after instruction
   submission,

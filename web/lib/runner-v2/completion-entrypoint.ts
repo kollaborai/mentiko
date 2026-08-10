@@ -5,7 +5,7 @@ import { join } from "path";
 import { isDeepStrictEqual } from "util";
 import { runQualityGateEventArtifact } from "@/lib/event-artifacts/event-artifact-runner";
 import { applyTypedExecutorPlan, GenerationImportError, killAgentSessions, readTypedRetryAttempt, type AdapterResult } from "@/lib/runner-v2/adapters";
-import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, resolveAgentAttemptForCompletion, transitionAgentAttempt } from "@/lib/runner-v2/agent-attempt";
+import { adoptAgentAttemptForCompletion, isTerminalAgentAttemptPhase, markAgentAttemptCompletedFromGeneration, readRunnerV2AttemptState, releaseAgentCapacitySlot, resolveAgentAttemptForCompletion, transitionAgentAttempt, type AgentAttemptRecord } from "@/lib/runner-v2/agent-attempt";
 import { agentOwnsEvent } from "@/lib/runner-v2/completion";
 import { runCompletionPipeline, type CompletionPipelineResult } from "@/lib/runner-v2/completion-pipeline";
 import type { AgentLivenessInput, CompletionRecoveryEvidence } from "@/lib/runner-v2/completion-runner";
@@ -657,6 +657,13 @@ function blockSourceWorkspaceChanged(input: {
   const detail = [
     `source workspace changed before publishing run ${input.runId}`,
     `changes: ${changedPaths.length > 0 ? changedPaths.join(", ") : "HEAD or branch identity"}`,
+    ...(input.publication.rollback?.status === "reverted"
+      ? ["post-apply race detected; Mentiko result patch was reverted"]
+      : input.publication.rollback?.status === "not-needed"
+        ? ["post-apply race detected; source returned to the task-start snapshot before rollback"]
+        : input.publication.rollback?.status === "failed"
+          ? ["post-apply race detected; automatic rollback was unsafe, so source may contain Mentiko result changes"]
+          : []),
     `artifact: ${input.publication.artifactPath}`,
   ].join("; ");
 

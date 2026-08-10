@@ -527,6 +527,70 @@ describe("Git node worktree isolation", () => {
     expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("race-edit");
   });
 
+  it("reverts the Mentiko patch when an unrelated source edit lands after apply", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-post-apply-race" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-post-apply-race",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-result';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    const publication = publishGitRunWorkspaceResult({
+      runWorkspace,
+      baseline,
+      afterApplyBeforeVerify: () => {
+        writeFileSync(join(fixture.root, "right.ts"), "export const right = 'user-race';\n");
+      },
+    });
+
+    expect(publication).toMatchObject({
+      status: "source-changed",
+      rollback: { status: "reverted" },
+    });
+    expect(publication.sourceChanges.files.map((file) => file.path)).toEqual(["right.ts"]);
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("'base'");
+    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("user-race");
+    expect(publishGitRunWorkspaceResult({ runWorkspace, baseline })).toEqual(publication);
+  });
+
+  it("blocks with immutable evidence when a same-patch race makes rollback unsafe", () => {
+    const fixture = repository();
+    const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-post-apply-rollback-failure" });
+    const node = allocateGitNodeWorkspace({
+      runWorkspace,
+      agentId: "publisher",
+      attemptId: "attempt-post-apply-rollback-failure",
+    });
+    writeFileSync(join(node.workspacePath, "left.ts"), "export const left = 'agent-left';\n");
+    writeFileSync(join(node.workspacePath, "right.ts"), "export const right = 'agent-right';\n");
+    const result = finalizeGitNodeWorkspace({ runWorkspace, node });
+    integrateGitNodeWorkspaceResult({ runWorkspace, result });
+
+    const publication = publishGitRunWorkspaceResult({
+      runWorkspace,
+      baseline,
+      afterApplyBeforeVerify: () => {
+        writeFileSync(join(fixture.root, "left.ts"), "export const left = 'user-race';\n");
+      },
+    });
+
+    expect(publication).toMatchObject({
+      status: "source-changed",
+      rollback: {
+        status: "failed",
+        error: expect.stringContaining("git apply failed"),
+      },
+    });
+    expect(publication.artifactPath).toContain("publication-conflicts");
+    expect(readFileSync(join(fixture.root, "left.ts"), "utf8")).toContain("user-race");
+    expect(readFileSync(join(fixture.root, "right.ts"), "utf8")).toContain("agent-right");
+    expect(publishGitRunWorkspaceResult({ runWorkspace, baseline })).toEqual(publication);
+  });
+
   it("treats index-only drift as a publication conflict", () => {
     const fixture = repository();
     const { baseline, runWorkspace } = initialize({ ...fixture, runId: "run-index-drift" });
