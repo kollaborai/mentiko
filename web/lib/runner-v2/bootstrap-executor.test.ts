@@ -414,6 +414,53 @@ describe("runner-v2 bootstrap executor", () => {
     expect(existsSync(nodeWorkspacePath)).toBe(true);
   });
 
+  it("blocks the run and preserves a changed startup worktree instead of requeueing it", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async (name: string) => {
+        liveSessions.delete(name);
+      }),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+        const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+        writeFileSync(join(handoff.workspacePath, "component.ts"), "export const value = 'startup-change';\n");
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).resolves.toBeUndefined();
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    expect(run).toMatchObject({
+      status: "blocked",
+      blockedReason: expect.stringContaining("changed its isolated worktree; preserved for review"),
+      agents: [expect.objectContaining({ id: "writer", status: "blocked" })],
+    });
+    expect(attempt).toMatchObject({
+      phase: "released",
+      terminalReason: "interrupted_bootstrap_changes",
+      capacitySlotReleasedAt: expect.any(String),
+    });
+    expect(liveSessions.size).toBe(0);
+    expect(existsSync(handoff.workspacePath)).toBe(true);
+    expect(readFileSync(join(handoff.workspacePath, "component.ts"), "utf8")).toContain("startup-change");
+  });
+
   it("leaves watcher and watchdog ownership with the background worker", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));

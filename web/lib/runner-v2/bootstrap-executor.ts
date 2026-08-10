@@ -429,12 +429,29 @@ export async function executeLocalBootstrap(
         executionPlan.sessionName,
       ]);
       if (runWorkspace && nodeWorkspace) {
-        cleanupGitNodeWorkspaceDurably({
+        const cleanup = cleanupGitNodeWorkspaceDurably({
           runWorkspace,
           agentId: plan.agentId,
           attemptId: attempt.id,
           mode: "pristine-startup",
         });
+        if (cleanup.outcome === "preserved-changes") {
+          const detail = `failed startup attempt ${attempt.id} changed its isolated worktree; preserved for review`;
+          transitionAgentAttempt({
+            runJsonPath,
+            attemptId: attempt.id,
+            to: "human_action_required",
+            reason: "interrupted_bootstrap_changes",
+            detail,
+          });
+          markRunAgentBlocked(runJsonPath, plan.agentId, detail);
+          // Both PTYs are proven absent, so the host-capacity reservation can
+          // be returned without making this attempt launchable again. The
+          // terminal reason keeps the routed launch job blocked and the
+          // changed worktree remains intact for review.
+          releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+          return;
+        }
       }
       releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     } catch (cleanupError) {
