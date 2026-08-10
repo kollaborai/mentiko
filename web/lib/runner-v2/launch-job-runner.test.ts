@@ -71,6 +71,79 @@ function singleTargetFixture(runId: string) {
 }
 
 describe("routed launch job crash recovery", () => {
+  it("keeps the launch lease until every sibling settles before requeueing a failed job", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "routed-launch-sibling-failure-"));
+    const runJsonPath = join(runDir, "run.json");
+    const chainPath = join(runDir, "chain.json");
+    writeFileSync(chainPath, JSON.stringify({ id: "siblings", name: "Siblings" }));
+    updateRunJson(runJsonPath, () => ({
+      ...createRunRecord({ runId: "run-sibling-failure", chainName: "siblings", goal: "join siblings" }),
+      status: "running",
+    }));
+    const job = persistRoutedLaunchJob({
+      runJsonPath,
+      occurrenceId: "run-sibling-failure:source:event-1",
+      runId: "run-sibling-failure",
+      runDir,
+      chainPath,
+      targetAgentIds: ["fast-failure", "slow-success"],
+    });
+    let releaseSlowTarget!: () => void;
+    const slowTargetGate = new Promise<void>((resolve) => {
+      releaseSlowTarget = resolve;
+    });
+
+    let settled = false;
+    const running = runRoutedLaunchJob({
+      runJsonPath,
+      jobId: job.id,
+      ownerId: "single-owner",
+      dependencies: {
+        bootstrap: async (context) => {
+          if (context.agentId === "fast-failure") throw new Error("fast target failed");
+          await slowTargetGate;
+          const attempt = createAgentAttempt({
+            runJsonPath,
+            runId: job.runId,
+            agentId: context.agentId || "",
+            leaseId: `${context.agentId}-${job.runId}`,
+            launchJobId: job.id,
+            launchOccurrenceId: job.occurrenceId,
+          });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "queued" });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "lease_acquired" });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "pty_allocated" });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "process_spawned" });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "ready_for_instructions" });
+          transitionAgentAttempt({ runJsonPath, attemptId: attempt.id, to: "instructions_submitted" });
+          return { support: "supported", mode: "typed-plan", sessionName: attempt.leaseId };
+        },
+      },
+    });
+    void running.then(() => {
+      settled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+    expect(readRoutedLaunchJob(runJsonPath, job.id)).toMatchObject({
+      status: "leased",
+      lease: { ownerId: "single-owner" },
+    });
+
+    releaseSlowTarget();
+    await expect(running).resolves.toEqual({
+      status: "requeued",
+      jobId: job.id,
+      error: "fast target failed",
+    });
+    expect(readRoutedLaunchJob(runJsonPath, job.id)).toMatchObject({
+      status: "queued",
+      lastError: "fast target failed",
+    });
+    expect(readRoutedLaunchJob(runJsonPath, job.id)?.lease).toBeUndefined();
+  });
+
   it("reclaims an expired 30-target coordinator, drains FIFO capacity, and resumes each target exactly once", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "routed-launch-restart-"));
     const runJsonPath = join(runDir, "run.json");

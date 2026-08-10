@@ -94,7 +94,7 @@ export async function runRoutedLaunchJob(input: {
   });
   try {
     const chain = JSON.parse(readFileSync(claimed.chainPath, "utf8")) as { id?: string; name?: string };
-    await Promise.all(claimed.targets.map((target) => runLaunchTarget({
+    const targetResults = await Promise.allSettled(claimed.targets.map((target) => runLaunchTarget({
       runJsonPath: input.runJsonPath,
       job: claimed,
       ownerId: input.ownerId,
@@ -102,6 +102,10 @@ export async function runRoutedLaunchJob(input: {
       chain,
       dependencies,
     })));
+    const rejectedTarget = targetResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (rejectedTarget) throw rejectedTarget.reason;
 
     if (!routedLaunchJobLeaseOwned({
       runJsonPath: input.runJsonPath,
