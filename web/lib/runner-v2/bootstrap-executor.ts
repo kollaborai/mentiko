@@ -52,6 +52,7 @@ import type { AgentProfileReadinessConfig } from "@/lib/types";
 
 export interface RunnerV2BootstrapExecutor {
   remove(name: string): Promise<void>;
+  list(): Promise<Array<{ name: string }>>;
   spawn(name: string, cmd?: string, args?: string[], opts?: { cwd?: string; env?: Record<string, string> }): Promise<{ name: string; pid: number }>;
   sendKeys(name: string, text: string): Promise<void>;
   /** send raw bytes with no daemon-appended enter (used for bare enter retries) */
@@ -316,6 +317,13 @@ export async function executeLocalBootstrap(
     if (nodeWorkspace) {
       executionPlan = retargetAgentBootstrapPlan(plan, nodeWorkspace.workspacePath, context.env);
     }
+    executionPlan = {
+      ...executionPlan,
+      runContextExports: {
+        ...executionPlan.runContextExports,
+        MENTIKO_AGENT_ATTEMPT_ID: attempt.id,
+      },
+    };
     const workspaceHandoff = captureAgentWorkspaceHandoff({
       runJsonPath,
       runDir: context.runDir,
@@ -415,25 +423,41 @@ export async function executeLocalBootstrap(
     if (error instanceof RoutedLaunchJobOwnershipLostError) {
       return;
     }
-    await executor.remove(executionPlan.sessionName).catch(() => undefined);
-    await executor.remove(executionPlan.monitorSessionName).catch(() => undefined);
-    if (runWorkspace && nodeWorkspace) {
-      try {
+    try {
+      await removeBootstrapSessionsAndProveAbsent(executor, [
+        executionPlan.monitorSessionName,
+        executionPlan.sessionName,
+      ]);
+      if (runWorkspace && nodeWorkspace) {
         cleanupGitNodeWorkspaceDurably({
           runWorkspace,
           agentId: plan.agentId,
           attemptId: attempt.id,
           mode: "pristine-startup",
         });
-      } catch (cleanupError) {
-        console.error(
-          `[runner-v2] startup worktree cleanup failed for ${attempt.id}: `
-          + `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        );
       }
+      releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
+    } catch (cleanupError) {
+      const startupMessage = error instanceof Error ? error.message : String(error);
+      const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new Error(
+        `bootstrap failed (${startupMessage}); capacity retained because startup cleanup was not proven: ${cleanupMessage}`,
+      );
     }
-    releaseAgentAttempt({ runJsonPath, attemptId: attempt.id });
     throw error;
+  }
+}
+
+async function removeBootstrapSessionsAndProveAbsent(
+  executor: RunnerV2BootstrapExecutor,
+  sessionNames: string[],
+): Promise<void> {
+  await Promise.allSettled(sessionNames.map((sessionName) => executor.remove(sessionName)));
+  const remaining = await executor.list();
+  const liveNames = new Set(remaining.map((session) => session.name));
+  const unremoved = sessionNames.filter((sessionName) => liveNames.has(sessionName));
+  if (unremoved.length > 0) {
+    throw new Error(`PTY removal could not be proven for ${unremoved.join(", ")}`);
   }
 }
 

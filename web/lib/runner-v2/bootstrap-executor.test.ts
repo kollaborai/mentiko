@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { assertTypedMonitorRuntimeAvailable, buildTypedCompletionContract, executeLocalBootstrap } from "@/lib/runner-v2/bootstrap-executor";
@@ -176,6 +176,7 @@ describe("runner-v2 bootstrap executor", () => {
     const calls: Array<{ op: string; args: unknown[] }> = [];
     const executor = {
       remove: jest.fn(async (...args: unknown[]) => { calls.push({ op: "remove", args }); }),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (...args: unknown[]) => {
         calls.push({ op: "spawn", args });
         return { name: String(args[0]), pid: 123 };
@@ -239,6 +240,7 @@ describe("runner-v2 bootstrap executor", () => {
           MENTIKO_RUNNER_V2_ACTIVE: "1",
           MENTIKO_RUNNER_V2_MODE: "typed-plan",
           MENTIKO_AGENT_ID: "writer",
+          MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1",
         }),
       }),
     );
@@ -268,7 +270,10 @@ describe("runner-v2 bootstrap executor", () => {
       "monitor-workspace-writer-run-1",
       "bash",
       ["-lc", "monitor-chain-agent workspace-writer-run-1"],
-      expect.objectContaining({ cwd: join(root, "workspace") }),
+      expect.objectContaining({
+        cwd: join(root, "workspace"),
+        env: expect.objectContaining({ MENTIKO_AGENT_ATTEMPT_ID: "run-1:writer:1" }),
+      }),
     );
   });
 
@@ -327,6 +332,88 @@ describe("runner-v2 bootstrap executor", () => {
     expect(instructions).toContain(`Node workspace: ${handoff.workspacePath}`);
   });
 
+  it("retains capacity and the worktree when failed startup cannot prove the agent PTY stopped", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async () => {}),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).rejects.toThrow(
+      "capacity retained because startup cleanup was not proven: PTY removal could not be proven",
+    );
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    const nodeWorkspacePath = handoff.workspacePath as string;
+    expect(attempt).toMatchObject({
+      phase: "process_spawned",
+      capacitySlotAcquiredAt: expect.any(String),
+    });
+    expect(attempt.capacitySlotReleasedAt).toBeUndefined();
+    expect(liveSessions.has("workspace-writer-run-1")).toBe(true);
+    expect(existsSync(nodeWorkspacePath)).toBe(true);
+  });
+
+  it("retains capacity when PTYs stop but durable startup worktree cleanup fails", async () => {
+    const root = tempDir();
+    const workspace = initializeGitWorkspace(root);
+    writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
+    const runJsonPath = seedRunJson(root);
+    const liveSessions = new Set<string>();
+    const executor = {
+      remove: jest.fn(async (name: string) => {
+        liveSessions.delete(name);
+      }),
+      list: jest.fn(async () => [...liveSessions].map((name) => ({ name }))),
+      spawn: jest.fn(async (name: string) => {
+        liveSessions.add(name);
+        return { name, pid: 123 };
+      }),
+      sendKeys: jest.fn(async () => {
+        const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+        writeFileSync(run.workspaceExecution.handoffs[0].nodeWorkspaceRecordPath, "{invalid-json");
+        throw new Error("start command transport failed");
+      }),
+      capture: jest.fn(async () => ""),
+    };
+
+    await expect(executeLocalBootstrap(plan(root), {
+      ...context(root),
+      workspacePath: workspace,
+    }, executor)).rejects.toThrow(
+      "capacity retained because startup cleanup was not proven",
+    );
+
+    const run = JSON.parse(readFileSync(runJsonPath, "utf8"));
+    const attempt = run.runnerV2.attempts[0];
+    const handoff = JSON.parse(readFileSync(run.workspaceExecution.handoffs[0].artifactPath, "utf8"));
+    const nodeWorkspacePath = handoff.workspacePath as string;
+    expect(attempt).toMatchObject({
+      phase: "process_spawned",
+      capacitySlotAcquiredAt: expect.any(String),
+    });
+    expect(attempt.capacitySlotReleasedAt).toBeUndefined();
+    expect(liveSessions.size).toBe(0);
+    expect(existsSync(nodeWorkspacePath)).toBe(true);
+  });
+
   it("leaves watcher and watchdog ownership with the background worker", async () => {
     const root = tempDir();
     writeFileSync(join(root, "chain.json"), JSON.stringify({ agents: [{ id: "writer" }] }));
@@ -334,6 +421,7 @@ describe("runner-v2 bootstrap executor", () => {
     const executor = {
       has: jest.fn(async () => false),
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async () => {}),
       capture: jest.fn(async () => "claude ready >"),
@@ -632,6 +720,7 @@ describe("runner-v2 bootstrap executor", () => {
     ];
     const executor = {
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async () => {}),
       sendRaw: jest.fn(async () => {}),
@@ -661,6 +750,7 @@ describe("runner-v2 bootstrap executor", () => {
     let sent = false;
     const executor = {
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async (_name: string, text: string) => { if (text.includes("writer-instructions.md")) sent = true; }),
       sendRaw: jest.fn(async () => {}),
@@ -706,6 +796,7 @@ describe("runner-v2 bootstrap executor", () => {
       let captureCount = 0;
       const executor = {
         remove: jest.fn(async () => {}),
+        list: jest.fn(async () => []),
         spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
         sendKeys: jest.fn(async () => {}),
         sendRaw: jest.fn(async () => {}),
@@ -756,6 +847,7 @@ describe("runner-v2 bootstrap executor", () => {
       const captures = ["claude ready >", "❯ Read instructions"];
       const executor = {
         remove: jest.fn(async () => {}),
+        list: jest.fn(async () => []),
         spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
         sendKeys: jest.fn(async () => {}),
         sendRaw: jest.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 10_000))),
@@ -900,6 +992,7 @@ describe("runner-v2 bootstrap executor", () => {
     let captureCount = 0;
     const executor = {
       remove: jest.fn(async () => {}),
+      list: jest.fn(async () => []),
       spawn: jest.fn(async (name: string) => ({ name, pid: 123 })),
       sendKeys: jest.fn(async () => {}),
       sendRaw: jest.fn(async () => {}),
@@ -1063,6 +1156,7 @@ function writeProfile(root: string, readiness: unknown) {
 function executorWithCapture(output: string) {
   return {
     remove: jest.fn(async () => {}),
+    list: jest.fn(async () => []),
     spawn: jest.fn(async (
       name: string,
       _cmd?: string,
