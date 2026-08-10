@@ -243,8 +243,24 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         await launchCompletionSession(session, context);
         return "complete";
       }
-      updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
-      updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
+      updateRunAgent(
+        context.runJsonPath,
+        context.agentId,
+        verdict.agentStatus,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
+      updateRunStatus(
+        context.runJsonPath,
+        verdict.runStatus,
+        verdict.diagnostic.reason,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
       return "terminal";
     },
@@ -260,8 +276,24 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
         staleCount: count,
         timestamp: timestamp(),
       });
-      updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
-      updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
+      updateRunAgent(
+        context.runJsonPath,
+        context.agentId,
+        verdict.agentStatus,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
+      updateRunStatus(
+        context.runJsonPath,
+        verdict.runStatus,
+        verdict.diagnostic.reason,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
       return "terminal";
     },
@@ -277,8 +309,24 @@ export function createLiveMonitorIO(context: LiveMonitorContext): MonitorDriverI
       });
       // FAILED (not blocked): a context-full agent is unresumable, so surface it in
       // Runs/Activity as failed with a clear reason, not a resumable stall.
-      updateRunAgent(context.runJsonPath, context.agentId, verdict.agentStatus);
-      updateRunStatus(context.runJsonPath, verdict.runStatus, verdict.diagnostic.reason);
+      updateRunAgent(
+        context.runJsonPath,
+        context.agentId,
+        verdict.agentStatus,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
+      updateRunStatus(
+        context.runJsonPath,
+        verdict.runStatus,
+        verdict.diagnostic.reason,
+        undefined,
+        undefined,
+        undefined,
+        { actor: "system", reason: verdict.diagnostic.reason },
+      );
       writeDiagnosticEvent(context.eventsDir, verdict.diagnostic);
       // Tear the session down: a stall leaves the pty for a human to inspect, but a
       // context-exhausted session can never make progress and only holds dead weight.

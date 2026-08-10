@@ -13,10 +13,11 @@ import {
   type RunAgentRecord,
   type RunRecord,
   type RunStatus,
+  type RunStatusReason,
 } from "@/lib/runs/run-record";
 import { clearPendingHandoffAgent } from "@/lib/runner-v2/handoff-liveness";
 
-export type { AgentStatus, RunAgentRecord, RunRecord, RunStatus } from "@/lib/runs/run-record";
+export type { AgentStatus, RunAgentRecord, RunRecord, RunStatus, RunStatusReason } from "@/lib/runs/run-record";
 
 export interface RunJsonMutation {
   before: RunRecord | undefined;
@@ -111,6 +112,7 @@ export function updateRunStatus(
   now = new Date(),
   onMutation?: RunMutationObserver,
   attemptGuard?: RunAgentAttemptGuard,
+  statusReason?: RunStatusReason,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
@@ -123,6 +125,9 @@ export function updateRunStatus(
       ...(statusMessage
         ? { status_message: statusMessage }
         : successfulTerminal || active ? { status_message: undefined } : {}),
+      ...(statusReason
+        ? { statusReason }
+        : successfulTerminal || active ? { statusReason: undefined } : {}),
       ...(TERMINAL_RUN_STATUSES.has(status) && (!current.completed || (successfulTerminal && current.status !== "completed"))
         ? { completed: nowIso(now) }
         : active ? { completed: undefined } : {}),
@@ -198,6 +203,7 @@ export function updateRunAgent(
   now = new Date(),
   onMutation?: RunMutationObserver,
   attemptGuard?: RunAgentAttemptGuard,
+  statusReason?: RunStatusReason,
 ): RunRecord {
   return updateRunJson(runJsonPath, (current) => {
     if (!current) throw new Error(`run.json not found: ${runJsonPath}`);
@@ -210,6 +216,7 @@ export function updateRunAgent(
           ...agent,
           status,
           ...(TERMINAL_AGENT_STATUSES.has(status) && !agent.completed ? { completed: nowIso(now) } : {}),
+          ...(statusReason ? { statusReason } : {}),
         };
       }),
     };

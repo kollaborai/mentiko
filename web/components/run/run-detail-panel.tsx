@@ -62,6 +62,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { useNamespaceFetch } from "@/lib/hooks/use-namespace-fetch";
 import { unwrapApiData, getApiErrorMessage } from "@/lib/api/api-client";
 import { cn } from "@/lib/utils";
+import type { RunStatusReason } from "@/lib/types";
 
 interface RunAgent extends Omit<WorkflowAgent, "emits"> {
   emits?: string;
@@ -69,6 +70,7 @@ interface RunAgent extends Omit<WorkflowAgent, "emits"> {
   lastMessage?: string;
   isStale?: boolean;
   msSinceHeartbeat?: number | null;
+  statusReason?: RunStatusReason;
 }
 
 interface RunArtifact {
@@ -147,6 +149,7 @@ interface Run {
   started: string;
   completed?: string;
   status: string;
+  statusReason?: RunStatusReason;
   agents: RunAgent[];
   sessions: string[];
   taskId?: string;
@@ -1787,6 +1790,13 @@ export function RunDetailPanel({ runId, onBack, onDelete, embedded = false }: Ru
                   </Link>
                 )}
               </div>
+              {(run.status === "stopped" || run.status === "cancelled") && run.statusReason?.reason && (
+                <div className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-foreground/40">
+                  <span className="truncate">
+                    {run.statusReason.actor === "user" ? "stopped by you" : `stopped by ${run.statusReason.actor}`}: {run.statusReason.reason}
+                  </span>
+                </div>
+              )}
             </div>
           </>
         }

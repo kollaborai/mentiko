@@ -135,6 +135,51 @@ describe("run record validation", () => {
     ]));
   });
 
+  it("reloads the validator when the run schema changes in a long-lived process", () => {
+    const root = mkdtempSync(join(tmpdir(), "mentiko-run-record-schema-reload-"));
+    const schemaDir = join(root, "lib");
+    const schemaSchemaDir = join(schemaDir, "schemas");
+    mkdirSync(schemaSchemaDir, { recursive: true });
+    const schemaPath = join(schemaSchemaDir, "run.schema.json");
+    const sourceSchemaPath = join(__dirname, "../../../lib/schemas/run.schema.json");
+    const schema = JSON.parse(readFileSync(sourceSchemaPath, "utf8")) as {
+      definitions: { agentAttempt: { properties: Record<string, unknown> } };
+    };
+    const attempt = {
+      id: "run-123:writer:1",
+      runId: "run-123",
+      agentId: "writer",
+      phase: "queued",
+      instructionLedger: [],
+      recoveryDecisionCount: 0,
+      createdAt: "2026-07-15T12:00:00.000Z",
+      updatedAt: "2026-07-15T12:00:00.000Z",
+      transitions: [],
+      queueSequence: 1,
+    };
+    const value = record({ runnerV2: { attempts: [attempt] } });
+    const previousLibDir = process.env.LIB_DIR;
+
+    try {
+      delete schema.definitions.agentAttempt.properties.queueSequence;
+      writeFileSync(schemaPath, `${JSON.stringify(schema)}\n`);
+      process.env.LIB_DIR = schemaDir;
+      expect(validateRunRecord(value).issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "unknown-field", field: "runnerV2.attempts[0].queueSequence" }),
+      ]));
+
+      schema.definitions.agentAttempt.properties.queueSequence = {
+        type: "integer",
+        minimum: 1,
+      };
+      writeFileSync(schemaPath, `${JSON.stringify(schema)}\n`);
+      expect(validateRunRecord(value).valid).toBe(true);
+    } finally {
+      if (previousLibDir === undefined) delete process.env.LIB_DIR;
+      else process.env.LIB_DIR = previousLibDir;
+    }
+  });
+
   it("preserves unknown top-level, nested, and agent fields byte-semantically", () => {
     const input = record({
       custom: { nested: [1, { keep: true }] },

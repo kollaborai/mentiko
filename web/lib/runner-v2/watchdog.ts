@@ -439,7 +439,8 @@ function terminalizeIfStillStalled(
       status: "stopped",
       completed: current.completed || completedAt,
       status_message: `watchdog: ${currentAssessment.reason}`,
-      agents: current.agents.map((agent) => terminalAgentRecord(agent, completedAt)),
+      statusReason: { actor: "reaper", reason: currentAssessment.reason },
+      agents: current.agents.map((agent) => terminalAgentRecord(agent, completedAt, currentAssessment.reason)),
       runnerV2: {
         ...objectValue(current.runnerV2),
         watchdog: {
@@ -497,6 +498,9 @@ function rollbackWatchdogTerminalization(
       status_message: current.status_message === transition.run.status_message
         ? previous.status_message
         : current.status_message,
+      statusReason: JSON.stringify(current.statusReason) === JSON.stringify(transition.run.statusReason)
+        ? previous.statusReason
+        : current.statusReason,
       agents: current.agents.map((agent) => rollbackWatchdogAgent(agent, transition, previous)),
       runnerV2: Object.keys(nextRunnerV2).length > 0 ? nextRunnerV2 : undefined,
     };
@@ -517,6 +521,10 @@ function rollbackWatchdogAgent(
   if (current.completed === terminalized.completed) {
     if (previous.completed === undefined) delete next.completed;
     else next.completed = previous.completed;
+  }
+  if (JSON.stringify(current.statusReason) === JSON.stringify(terminalized.statusReason)) {
+    if (previous.statusReason === undefined) delete next.statusReason;
+    else next.statusReason = previous.statusReason;
   }
   return next;
 }
@@ -638,14 +646,24 @@ function markerAssessment(marker: WatchdogRunMarker): Extract<WatchdogRunAssessm
   };
 }
 
-function terminalAgentRecord(agent: RunAgentRecord, completedAt: string): RunAgentRecord {
+function terminalAgentRecord(agent: RunAgentRecord, completedAt: string, reason: string): RunAgentRecord {
   const status = stringValue(agent.status);
   if (ACTIVE_AGENT_STATUSES.has(status)) {
     const nextStatus = stringValue(agent.session) ? "stopped" : "cancelled";
-    return { ...agent, status: nextStatus, completed: agent.completed || completedAt };
+    return {
+      ...agent,
+      status: nextStatus,
+      completed: agent.completed || completedAt,
+      statusReason: { actor: "reaper", reason },
+    };
   }
   if (status === "pending") {
-    return { ...agent, status: "cancelled", completed: agent.completed || completedAt };
+    return {
+      ...agent,
+      status: "cancelled",
+      completed: agent.completed || completedAt,
+      statusReason: { actor: "reaper", reason },
+    };
   }
   return agent;
 }

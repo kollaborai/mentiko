@@ -4,6 +4,8 @@ import type {
   RunStatus as PersistedRunStatus,
 } from "@/lib/runs/run-record";
 
+export type { RunStatusReason } from "@/lib/runs/run-record";
+
 // ============================================================
 // utility types
 // ============================================================

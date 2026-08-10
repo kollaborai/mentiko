@@ -110,9 +110,11 @@ export const PATCH = withErrorHandling(async (
   // update run status
   run.status = "cancelled";
   run.completed = new Date().toISOString();
+  run.statusReason = { actor: "user", reason: "cancelled via run detail API" };
   for (const agent of run.agents || []) {
     if (agent.status === "running" || agent.status === "pending") {
       agent.status = "cancelled";
+      agent.statusReason = { actor: "user", reason: "run cancelled via run detail API" };
     }
   }
 

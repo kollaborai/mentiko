@@ -65,6 +65,7 @@ export const POST = withErrorHandling(async (
   if (run.status === "running" || run.status === "pending" || run.status === "blocked") {
     run.status = "stopped";
     run.completed = run.completed || new Date().toISOString();
+    run.statusReason = { actor: "user", reason: "stopped via run stop API" };
     changed = true;
   }
 
@@ -72,9 +73,11 @@ export const POST = withErrorHandling(async (
     for (const agent of run.agents) {
       if (agent.status === "running" || agent.status === "blocked") {
         agent.status = "stopped";
+        agent.statusReason = { actor: "user", reason: "run stopped via run stop API" };
         changed = true;
       } else if (agent.status === "pending") {
         agent.status = "cancelled";
+        agent.statusReason = { actor: "user", reason: "run stopped via run stop API" };
         changed = true;
       }
     }

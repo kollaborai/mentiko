@@ -382,6 +382,7 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
                 // `running:no-terminal-time` and consume retry/audit twice.
                 run.status = "stopped";
                 run.completed = run.completed || new Date().toISOString();
+                run.statusReason = { actor: "reconciler", reason };
                 writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
               }
             }

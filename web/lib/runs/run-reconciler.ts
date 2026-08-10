@@ -19,6 +19,7 @@ import { normalizeRunId } from "../auth/run-acl";
 import { cleanTaskExecutionRunMetadata, isNonExecutionRun } from "./run-provenance";
 import { hasLivePendingHandoff } from "../runner-v2/handoff-liveness";
 import { parseRunnerEvent } from "../runner-v2/events";
+import type { RunStatusReason } from "./run-record";
 
 interface ReconcilerContext {
   namespaceId: string;
@@ -56,6 +57,7 @@ interface RunAgent {
   started?: string;
   completed?: string;
   lastHeartbeat?: string;
+  statusReason?: RunStatusReason;
 }
 
 interface RunJson {
@@ -63,6 +65,7 @@ interface RunJson {
   status: string;
   started?: string;
   completed?: string;
+  statusReason?: RunStatusReason;
   agents?: RunAgent[];
   artifacts?: Array<{
     agentId?: string;
@@ -471,10 +474,18 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           continue;
         }
 
-        // grace period: don't kill young runs (2 min from start)
-        const runTs = runId.replace("run-", "");
-        if (/^\d+$/.test(runTs) && now - Number(runTs) < 120_000) {
-          reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - Number(runTs)) / 1000)}s old (startup window)`);
+        // grace period: don't kill young runs (2 min from start). Run IDs are
+        // intentionally collision-resistant (`run-<millis>-<random>`), so the
+        // ID is not a timestamp parser. Trust the durable run-start field or
+        // this watchdog can stop a freshly queued run before its first PTY is
+        // admitted.
+        const runStartedAt = asTimeMs(run.started);
+        if (!runStartedAt) {
+          reconcilerLog(context, `skipping ${runId}: run has no valid started timestamp (startup age unknown)`, "warn");
+          continue;
+        }
+        if (now - runStartedAt < 120_000) {
+          reconcilerLog(context, `skipping ${runId}: run is ${Math.round((now - runStartedAt) / 1000)}s old (startup window)`);
           continue;
         }
 
@@ -482,6 +493,7 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
         orphaned++;
         run.status = "stopped";
         run.completed = run.completed || new Date().toISOString();
+        run.statusReason = { actor: "reaper", reason: "no live agent session found after startup/handoff grace windows" };
         changed = true;
       }
     }
@@ -496,9 +508,11 @@ export async function reconcileOrphanedRuns(options: ReconcileOptions = {}): Pro
           if (sessionAlive) continue;
           reconcilerLog(context, `fixing agent ${agent.id} in ${runId}: running -> stopped (session alive: ${sessionAlive}, session: ${agent.session || 'none'})`, "warn");
           agent.status = "stopped";
+          agent.statusReason = { actor: "reaper", reason: "agent session was not alive when the run was reconciled" };
           changed = true;
         } else if (agent.status === "pending") {
           agent.status = "cancelled";
+          agent.statusReason = { actor: "reaper", reason: "run reconciled as non-active while agent was still pending" };
           changed = true;
         }
       }
